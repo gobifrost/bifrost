@@ -288,6 +288,28 @@ async def test_async_retry_exhaustion_uses_five_attempts_and_full_jitter(status,
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("encoded", ["report+%281%29%2B.pdf", "report%20%281%29%2B.pdf"])
+async def test_list_objects_v2_decodes_spaces_without_losing_literal_pluses(encoded: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                "<ListBucketResult><EncodingType>url</EncodingType>"
+                f"<Prefix>{encoded}</Prefix><Contents><Key>{encoded}</Key><Size>1</Size></Contents>"
+                f"<CommonPrefixes><Prefix>{encoded}/</Prefix></CommonPrefixes></ListBucketResult>"
+            ),
+            request=request,
+        )
+
+    async with transport_for(httpx.MockTransport(handler)) as client:
+        result = await client.list_objects_v2(Bucket="bucket", Prefix="report (")
+
+    assert result["Contents"][0]["Key"] == "report (1)+.pdf"
+    assert result["Prefix"] == "report (1)+.pdf"
+    assert result["CommonPrefixes"] == [{"Prefix": "report (1)+.pdf/"}]
+
+
+@pytest.mark.asyncio
 async def test_list_objects_v2_paginator_preserves_options_and_continues() -> None:
     seen: list[httpx.Request] = []
 

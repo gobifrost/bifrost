@@ -441,3 +441,13 @@ AWS-specific live credential-chain/conditional-race acceptance remains unmeasure
 for AWS deployments. Production rollout and before/after workflow results are
 recorded separately when completed; this acceptance section is not a deployment
 claim.
+
+The first merge-queue run exposed three file-move recovery regressions. The
+container store encodes spaces as `+` in URL-encoded listing responses; the
+candidate used `unquote` where the previous SDK used `unquote_plus`. Renamed
+copies were therefore absent from recovery's candidate set, producing incorrect
+404s or selecting a different numbered path before the existing-copy permission
+check. The transport now preserves the old decoding contract, including literal
+`%2B` plus signs. Recovery and authorization logic are unchanged. A parser test
+reproduced the defect before repair, and the real-storage wire test now checks
+a space/parentheses/literal-plus key with the rename-candidate prefix.

@@ -21,7 +21,7 @@ from email.utils import parsedate_to_datetime
 from io import BytesIO
 from types import SimpleNamespace
 from typing import Any
-from urllib.parse import quote, unquote, urlencode
+from urllib.parse import quote, unquote_plus, urlencode
 
 import httpx
 from awscrt import auth, checksums, http
@@ -549,7 +549,9 @@ class S3Transport:
         payload = await response.aread()
         await response.aclose()
         root = ET.fromstring(payload)
-        decode = unquote if _xml_text(root, "EncodingType") == "url" else lambda value: value
+        # Match the previous SDK: list responses may encode spaces as '+';
+        # actual plus signs are encoded as %2B and must remain literal.
+        decode = unquote_plus if _xml_text(root, "EncodingType") == "url" else lambda value: value
         contents = []
         for item in root:
             if item.tag.rsplit("}", 1)[-1] != "Contents":

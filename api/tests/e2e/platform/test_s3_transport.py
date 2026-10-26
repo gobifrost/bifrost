@@ -17,7 +17,7 @@ async def test_s3_transport_preserves_objects_across_wire_operations():
     bucket = settings.s3_bucket
     prefix = f"tests/s3-transport/{uuid4().hex}/"
     keys = {name: prefix + name for name in (
-        "café/%2F/source.bin", "copied.bin", "uploaded.bin", "ranged.bin", "browser.bin",
+        "café/%2F/source.bin", "copied.bin", "uploaded.bin", "ranged.bin", "browser.bin", "report (1)+.pdf",
     )}
     source_key = keys["café/%2F/source.bin"]
     payload = b"wire-contract" * (5 * 1024 * 1024 // len(b"wire-contract") + 1)
@@ -39,6 +39,10 @@ async def test_s3_transport_preserves_objects_across_wire_operations():
             source = await s3.head_object(Bucket=bucket, Key=source_key)
             assert source["ContentLength"] == len(payload)
             assert source["Metadata"] == {"recovery-marker": "fixture"}
+
+            await s3.put_object(Bucket=bucket, Key=keys["report (1)+.pdf"], Body=b"rename candidate")
+            candidates = await s3.list_objects_v2(Bucket=bucket, Prefix=prefix + "report (", Delimiter="/")
+            assert [item["Key"] for item in candidates["Contents"]] == [keys["report (1)+.pdf"]]
 
             await s3.copy_object(
                 Bucket=bucket, Key=keys["copied.bin"],
