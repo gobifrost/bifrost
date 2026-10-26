@@ -264,37 +264,71 @@ def test_ai_model_profiles_can_be_merged(e2e_client, platform_admin):
         assert profile_resp.status_code == 201, profile_resp.text
         profiles.append(profile_resp.json())
 
-    assignment_resp = e2e_client.put(
-        "/api/admin/ai/assignments/primary",
-        headers=platform_admin.headers,
-        json={"profile_id": profiles[1]["id"]},
-    )
-    assert assignment_resp.status_code == 200, assignment_resp.text
-
-    merge_resp = e2e_client.post(
-        "/api/admin/ai/profiles/merge",
+    agent_resp = e2e_client.post(
+        "/api/agents",
         headers=platform_admin.headers,
         json={
-            "profile_ids": [profile["id"] for profile in profiles],
-            "target_profile_id": profiles[0]["id"],
+            "name": "Merge profile reference E2E",
+            "system_prompt": "This agent is a settings reference fixture.",
+            "access_level": "authenticated",
+            "llm_profile_id": profiles[1]["id"],
         },
     )
+    assert agent_resp.status_code == 201, agent_resp.text
+    agent_id = agent_resp.json()["id"]
+    try:
+        assignment_resp = e2e_client.put(
+            "/api/admin/ai/assignments/primary",
+            headers=platform_admin.headers,
+            json={"profile_id": profiles[1]["id"]},
+        )
+        assert assignment_resp.status_code == 200, assignment_resp.text
 
-    assert merge_resp.status_code == 200, merge_resp.text
-    result = merge_resp.json()
-    assert result["profile"]["id"] == profiles[0]["id"]
-    assert result["profile"]["enabled_for_chat"] is True
-    assert result["merged_profile_ids"] == [profiles[1]["id"]]
-    assert result["reassigned_agent_count"] == 0
-    assert result["reassigned_assignment_keys"] == ["primary"]
+        merge_resp = e2e_client.post(
+            "/api/admin/ai/profiles/merge",
+            headers=platform_admin.headers,
+            json={
+                "profile_ids": [profile["id"] for profile in profiles],
+                "target_profile_id": profiles[0]["id"],
+            },
+        )
 
-    remaining_profiles = e2e_client.get(
-        "/api/admin/ai/profiles",
-        headers=platform_admin.headers,
-    ).json()
-    assert profiles[1]["id"] not in {
-        profile["id"] for profile in remaining_profiles
-    }
+        assert merge_resp.status_code == 200, merge_resp.text
+        result = merge_resp.json()
+        assert result["profile"]["id"] == profiles[0]["id"]
+        assert result["profile"]["enabled_for_chat"] is True
+        assert result["merged_profile_ids"] == [profiles[1]["id"]]
+        assert result["reassigned_agent_count"] == 1
+        assert result["profile"]["referenced_agent_count"] == 1
+        assert "primary" in result["profile"]["assignment_keys"]
+        assert result["reassigned_assignment_keys"] == ["primary"]
+
+        remaining_profiles = e2e_client.get(
+            "/api/admin/ai/profiles",
+            headers=platform_admin.headers,
+        ).json()
+        assert profiles[1]["id"] not in {
+            profile["id"] for profile in remaining_profiles
+        }
+
+        listed_connections = e2e_client.get(
+            "/api/admin/ai/connections", headers=platform_admin.headers
+        )
+        assert listed_connections.status_code == 200, listed_connections.text
+        assert next(
+            item for item in listed_connections.json() if item["id"] == connection_id
+        )["profile_count"] == 1
+
+        listed_agents = e2e_client.get("/api/agents", headers=platform_admin.headers)
+        assert listed_agents.status_code == 200, listed_agents.text
+        assert next(
+            item for item in listed_agents.json() if item["id"] == agent_id
+        )["llm_profile_id"] == profiles[0]["id"]
+    finally:
+        cleanup = e2e_client.delete(
+            f"/api/agents/{agent_id}", headers=platform_admin.headers
+        )
+        assert cleanup.status_code == 204, cleanup.text
 
 
 def test_profile_verification_reports_a_rejected_key_without_undoing_the_save(

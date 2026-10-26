@@ -16,7 +16,6 @@ from uuid import UUID
 
 from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool
 from src.models.orm.app_roles import AppRole
@@ -328,7 +327,6 @@ async def generate_manifest(
     agent_result = await db.execute(
         _scope(
             select(Agent)
-            .options(selectinload(Agent.llm_profile))
             .where(*export_criteria(Agent)),
             Agent,
         ).order_by(Agent.name)

@@ -2,8 +2,9 @@
 
 This is a local hosting-efficiency spike against `6f411bb9cf3c787acf11fbea2c3faa93ef7c9923`.
 It has not been merged or deployed. The API's fully warmed working set fell
-from **576.7 MiB to 449.3 MiB**, a **127.4 MiB / 22.1%** reduction. The 250 MiB
-target has not been reached. A repeat under concurrent static-analysis load
+from **576.7 MiB to 449.3 MiB**, a **127.4 MiB / 22.1%** reduction in the initial
+pass. The subsequent ORM loading pass measured **441.4 MiB**. The 250 MiB
+target has not been reached. A repeat of the initial pass under concurrent static-analysis load
 settled at 468.8 MiB; these are observed workloads, not a guaranteed ceiling.
 
 ## What changed
@@ -40,6 +41,7 @@ file cache; PSS is a separate process metric and must not be added to it.
 | Shared S3 session only | 473.8 | 461.6 | 490.1 | 30.7 |
 | Combined, isolated validation | 449.3 | 437.2 | 465.7 | 28.9 |
 | Combined, concurrent CodeQL | 468.8 | 456.7 | 484.9 | 46.2 |
+| Follow-up ORM loading pass | 441.4 | 429.3 | 447.3 | 36.6 |
 
 The S3 change accounts for about **103 MiB** in the matched workload. The original
 heap retained nine AioSessions/loaders versus one afterwards. OrderedDict
@@ -69,6 +71,43 @@ Two other controls were rejected:
 - `PYTHONMALLOC=mimalloc` completed the same checks, but settled at 474.5 MiB in
   its run. It demonstrated no memory benefit and is not part of the candidate.
   The temporary Compose setting was removed.
+
+Clearing the three SQLAlchemy compiled-query caches recovered only about 3 MiB
+after diagnostic GC/trimming. Disposing all three database pools recovered less
+than 1 MiB. Their allocation attribution is not a removable 72 MiB budget;
+neither cache clearing nor smaller pools is part of this candidate.
+
+## ORM loading follow-up
+
+The provider/profile/agent relationships previously loaded reverse graphs
+automatically. Resolving one runtime model configuration issued five SQL
+statements; reading one agent issued four. Explicit loading reduces each of
+those warmed relationship reads to one statement, without loading sibling
+profiles or other agents. Catalog freshness checks remain independent and can
+add a query when the catalog's process cache expires.
+
+The same 24 live checks passed in 146.68 seconds. The unforced quiet working set
+was 441.4 MiB. This is about 7.9 MiB below the initial isolated candidate; one
+run does not establish a latency improvement. This pass removes data-dependent
+overfetch as well as retained loader state.
+
+Management responses still need assignment keys, failover names and reference
+counts. Their queries explicitly request those fields. A subsequent refinement
+computes profile/agent counts in SQL, avoiding agent objects even when a profile
+has many references; it is not yet separately included in the 441.4 MiB figure.
+The HTTP merge test now creates an actual referencing agent and checks the
+migrated reference, assignment keys, agent count, and provider profile count.
+Profile/failover/service/manifest/bundle units (84) and four settings/failover HTTP
+checks passed before the additional count-only regression cases.
+
+Two exposing failures received specific corrections: an assignment back-reference
+reloaded a profile and invalidated an explicitly loaded collection, so management
+assignment queries now load only keys and suppress that unused reverse relation.
+A diagnostic command also mixed committed HTTP fixtures with units that require
+an empty transaction-isolated database; verification now runs those groups in
+separate reset-backed commands, matching the harness's unit/E2E modes. The
+query-count regression explicitly warms the independent model catalog before
+measuring relationship loading, so its result does not depend on test order.
 
 ## Speed and compatibility
 

@@ -114,6 +114,7 @@ def _raise_service_error(error: Exception) -> NoReturn:
 
 
 def _connection_response(connection: AIProviderConnection) -> AIProviderConnectionResponse:
+    assert connection.profile_count is not None, "Connection management queries must load profile counts"
     return AIProviderConnectionResponse(
         id=connection.id,
         name=connection.name,
@@ -121,7 +122,7 @@ def _connection_response(connection: AIProviderConnection) -> AIProviderConnecti
         endpoint=connection.endpoint,
         catalog_provider_id=connection.catalog_provider_id,
         api_key_set=bool(connection.encrypted_api_key),
-        profile_count=len(connection.profiles),
+        profile_count=connection.profile_count,
         anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
         created_at=connection.created_at,
         updated_at=connection.updated_at,
@@ -140,6 +141,7 @@ def _connection_summary(connection: AIProviderConnection) -> AIProviderConnectio
 
 
 def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
+    assert profile.referenced_agent_count is not None, "Profile management queries must load agent counts"
     capabilities = ModelCapabilities.model_validate(profile.capabilities) if profile.capabilities else None
     return AIModelProfileResponse(
         id=profile.id,
@@ -156,7 +158,7 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         ),
         connection=_connection_summary(profile.connection),
         assignment_keys=[assignment.assignment_key for assignment in profile.assignments],
-        referenced_agent_count=len(profile.agents),
+        referenced_agent_count=profile.referenced_agent_count,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
