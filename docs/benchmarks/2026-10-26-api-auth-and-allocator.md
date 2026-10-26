@@ -90,7 +90,10 @@ under substantial API load then observed much slower SDK-backed workflows and
 an HTTP read timeout, despite successful execution completion. That did not
 establish causation, but the settings were rolled back rather than accepting
 an unverified latency tradeoff. The base deployment retains its existing
-allocator policy. The broader 250 MiB fully-warmed API target remains unmet.
+allocator policy. The accepted fully warmed baseline is about 350 MiB working set from the prior
+night, not a 250 MiB target. Saved observations included a 342 MiB working-set /
+357 MiB PSS plateau and a final 372 MiB working-set / 386 MiB PSS sweep. These
+are different measurements; the current 670–720 MiB remains a material gap.
 
 ## Worker admission diagnostics
 
@@ -108,9 +111,10 @@ A bounded 30-second production observation counted 94 document-query requests,
 about 70 MiB of response bodies, and 2,561 SQL statements attributed to those
 requests. This is request volume and database elapsed-time evidence, not a
 CPU-share attribution. The API consumed about 29.8 CPU-seconds during the window.
-When the large workload ended, API CPU fell to about 141 millicores while its
-working set remained about 669 MiB. The footprint includes retained allocation;
-it is not evidence of an idle process continually performing that work.
+After the diagnostic-related worker losses described below, API CPU fell to
+about 141 millicores while its working set remained about 669 MiB. This cannot
+be attributed to natural completion of the workload or the auth repair. The
+footprint includes retained allocation; it is not an isolated idle measurement.
 
 Policy-decision recording previously reloaded the run user and workflow powers
 that authentication had just verified. The request collector now seeds its
@@ -124,3 +128,25 @@ with only the recording-cache seed removed: six SELECTs and 14.686 ms versus
 zero SELECTs and 0.156 ms with the seed. These are single recorder-step timings,
 not an end-to-end latency estimate. Collectors without a verified runtime keep
 the existing database-loading path.
+
+
+## Native diagnostic incident and measurement limits
+
+A native sampling diagnostic on October 26 was more intrusive than expected.
+Two health-check timeouts and two HTTP 502 responses overlapped its 19:35 UTC
+window. Both physical execution workers subsequently lost heartbeats and were
+marked lost at 19:36:00.975897 and 19:36:02.952379 UTC. Twelve running workflow
+executions were marked Failed at 19:36:01–03 UTC by lost-worker recovery. The
+prior interpretation that the workers retired naturally was incorrect.
+
+The profiler stopped and was removed; replacement workers started. Running
+workflows are deliberately not automatically replayed after worker loss because
+their external effects may already have completed. Later successful executions
+of the same workflow types do not prove that the interrupted tickets, notes or
+remote commands recovered. Those require per-execution external-state checks.
+
+Lower CPU and faster workflow samples after this incident cannot establish a
+code-only speedup. The incident window and interrupted executions must remain
+visible in availability and benchmark reporting. Native sampling and heap walks
+must be reproduced on disposable local stacks before any further production
+diagnostic is considered.
