@@ -8,7 +8,8 @@ dead pubsub — never reconnecting. This left affected worker pods unable
 to receive cancel or recycle commands.
 
 These tests assert that both loops construct a **new** pubsub after a
-failure and continue delivering messages, without touching a real Redis.
+failure and continue delivering messages. A real Redis regression also verifies
+that unsubscribe failures release checked-out connections.
 """
 
 from __future__ import annotations
@@ -169,6 +170,8 @@ async def test_listener_releases_real_pubsub_when_unsubscribe_fails(
                 raise redis.ConnectionError("connection dropped during unsubscribe")
 
             async def dropped_read(*_args, **_kwargs) -> None:
+                assert pubsub.connection is not None
+                assert len(client.connection_pool._in_use_connections) == 1
                 pool._shutdown = True
                 raise redis.ConnectionError("connection dropped while listening")
 
