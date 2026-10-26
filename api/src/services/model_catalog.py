@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
-from pydantic import TypeAdapter
+from pydantic import SkipValidation, TypeAdapter
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -179,7 +179,7 @@ class CatalogProvider:
     env: list[str] = field(default_factory=list)
     # The mapping keeps validated normalized records as bytes and materializes
     # typed models only as callers request them.
-    models: Any = field(default_factory=dict)
+    models: SkipValidation[Mapping[str, CatalogModel]] = field(default_factory=dict)
 
     @property
     def adapter(self) -> AdapterKind | None:
