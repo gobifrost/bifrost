@@ -73,8 +73,8 @@ class _UpstreamAuthorityError(ValueError):
 
 
 DEV_AUTH_EXPIRED_DETAIL = (
-    "The local preview could not renew your CLI credentials yet. It will keep "
-    "trying automatically; run `bifrost login` only if your refresh session has expired."
+    "The local preview could not renew your CLI credentials. Run `bifrost login` "
+    "to recover this preview."
 )
 _AUTH_REFRESH_LEEWAY_SECONDS = 60.0
 _AUTH_REFRESH_POLL_SECONDS = 30.0
@@ -256,7 +256,9 @@ async def _proactive_auth_refresh_loop(app: web.Application) -> None:
     The shared client refresh coordinator serializes this with any reactive
     HTTP refresh. A transient early failure does not poison the preview while
     the current token remains valid; the loop retries and only marks auth as
-    expired after the actual exp time passes.
+    expired after the actual exp time passes. Once expired, each 30-second
+    poll re-reads local credentials; a terminal 401 remains cached by the
+    coordinator, so the poll does not repeat the rejected upstream refresh.
     """
     cfg: DevProxyConfig = app[_CFG]
     while True:
@@ -283,7 +285,11 @@ async def _proactive_auth_refresh_loop(app: web.Application) -> None:
         )
         if refreshed and cfg.token != observed_access_token:
             continue
-        await asyncio.sleep(_AUTH_REFRESH_RETRY_SECONDS)
+        await asyncio.sleep(
+            _AUTH_REFRESH_POLL_SECONDS
+            if cfg.auth_expired
+            else _AUTH_REFRESH_RETRY_SECONDS
+        )
 
 
 async def _proactive_auth_refresh_context(app: web.Application):
@@ -308,6 +314,10 @@ async def _authed_upstream_request(
     ``drop_headers`` removes headers (lowercase names) after ``_auth_headers``
     builds them — the workflow-execute fallback must not carry ``X-Bifrost-App``
     (an install-scope signal) while every other route keeps it.
+
+    Once a preview is known expired, recover its local credential source before
+    forwarding another request. The shared refresh coordinator suppresses a
+    terminal rejected generation while allowing a new login to be adopted.
     """
     cfg: DevProxyConfig = request.app[_CFG]
     http: httpx.AsyncClient = request.app[_HTTP]
@@ -322,6 +332,9 @@ async def _authed_upstream_request(
             headers = {k: v for k, v in headers.items() if k.lower() not in drop_headers}
         return headers
 
+    observed_access_token = cfg.token
+    if cfg.auth_expired and not await _refresh_cli_token(cfg, observed_access_token):
+        return None
     observed_access_token = cfg.token
     try:
         headers = await _headers()
@@ -433,9 +446,6 @@ async def _dev_auth_expired_page_response(request: web.Request) -> web.Response:
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{escaped_product_name} Dev Auth Expired</title>
-    <script>
-      window.setTimeout(() => window.location.reload(), 3000);
-    </script>
     <script>
       try {{
         if ((localStorage.getItem("theme") || "dark") === "dark") {{
@@ -650,8 +660,8 @@ async def _dev_auth_expired_page_response(request: web.Request) -> web.Response:
           <div class="actions">
             <h2>What you can do:</h2>
             <ul>
-              <li>• This page retries automatically; no CLI restart is needed</li>
-              <li>• If it does not recover, run <code>bifrost login</code> in another terminal</li>
+              <li>• Run <code>bifrost login</code> in another terminal</li>
+              <li>• Then select Try Again to recover this preview</li>
               <li>• Keep <code>bifrost solution start</code> running on this origin</li>
             </ul>
           </div>
