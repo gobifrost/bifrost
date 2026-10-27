@@ -57,9 +57,13 @@ def apply_bench_resources(cluster: Cluster) -> None:
     cluster.kubectl("wait", "--for=condition=Ready", "pod/bench-driver", "--timeout=180s")
 
 
-def store_model_key(cluster: Cluster, onepassword_item: str) -> None:
-    """Copy the DeepSeek key from 1Password into the cluster without touching disk or argv."""
-    read = subprocess.run(["op", "read", onepassword_item], capture_output=True, text=True)
+def store_model_key(cluster: Cluster, onepassword_profile: str, onepassword_item: str) -> None:
+    """Copy the DeepSeek key from 1Password into the cluster without touching disk or argv.
+
+    Uses the ``op-<profile>`` wrapper (see the 1password-secrets skill), which
+    exposes the service-account token only to its own ``op`` child.
+    """
+    read = subprocess.run([f"op-{onepassword_profile}", "read", onepassword_item], capture_output=True, text=True)
     if read.returncode != 0 or not read.stdout.strip():
         raise SystemExit(f"Could not read {onepassword_item} from 1Password: {read.stderr.strip()}")
     secret = json.dumps({
@@ -135,7 +139,7 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
     profile = json.loads((HERE / "profiles" / f"{profile_name}.json").read_text(encoding="utf-8"))
     cluster = Cluster()
     if backend == "deepseek":
-        store_model_key(cluster, profile["onepassword_item"])
+        store_model_key(cluster, profile["onepassword_profile"], profile["onepassword_item"])
     out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-{backend or 'none'}")
     print(f"Shaping the stack for '{profile_name}' ...", flush=True)
     cluster.apply_profile(profile)

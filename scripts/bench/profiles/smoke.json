@@ -44,5 +44,6 @@
     }
   },
   "thp_emulation": false,
-  "onepassword_item": "op://Personal/DeepSeek/credential"
+  "onepassword_item": "op://Development/DeepSeek/API Key",
+  "onepassword_profile": "personal"
 }

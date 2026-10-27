@@ -92,7 +92,7 @@ Deployment runs `python /bench/fake_llm.py` from a ConfigMap on the Bifrost imag
 - `up`: `local-kind.sh up` (honours `BIFROST_KIND_SKIP_BUILD`), apply the bench manifests (fake model, driver pod), apply the profile.
 - `run`: if backend is `deepseek`, read `op read "op://Personal/DeepSeek/credential"` (item path is a profile field) into a Kubernetes Secret via stdin; fail before anything else if `op` fails. Then: snapshot (fresh) → `setup` → restart API pod → snapshot (`boot_seeded`) → for each class in profile order: `run_class`, wait `settle_s`, snapshot → repeat the class list once more (second pass) → idle `idle_s` → snapshot (`idle`). Write `result.json` (profile, backend, git SHA, image id, per-class timings, per-snapshot memory, API pod UID check) and `report.md` to `--out` (default `/tmp/bifrost-bench-<utc-timestamp>/`).
 - `down`: `local-kind.sh down` and remove the bench image.
-- `baseline.json`: classes in spec order, `sequential: 10`, `burst: 10`, `settle_s: 20`, `idle_s: 120`, `seed: {"workflow": 1100, "tool": 701, "data_provider": 50}`, `env: {"MALLOC_ARENA_MAX": "2"}`, `thp_emulation: false`, `worker_replicas: 1`, `onepassword_item: "op://Personal/DeepSeek/credential"`.
+- `baseline.json`: classes in spec order, `sequential: 10`, `burst: 10`, `settle_s: 20`, `idle_s: 120`, `seed: {"workflow": 1100, "tool": 701, "data_provider": 50}`, `env: {"MALLOC_ARENA_MAX": "2"}`, `thp_emulation: false`, `worker_replicas: 1`, `onepassword_profile: "personal", onepassword_item: "op://Development/DeepSeek/API Key"`.
 - [ ] Commit.
 
 ### Task 7: first baseline runs

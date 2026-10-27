@@ -51,10 +51,10 @@ so any build can be measured.
 
 - `fake` (default): `incluster/fake_llm.py`, a deterministic OpenAI-compatible
   model. Agent times measure the platform, not a model.
-- `deepseek`: real DeepSeek. The key is read with
-  `op read op://Personal/DeepSeek/credential` (profile field
-  `onepassword_item`) straight into a Kubernetes Secret in the Kind cluster.
-  It never touches disk, argv or the result.
+- `deepseek`: real DeepSeek. The key is read with the `op-personal` wrapper
+  (profile fields `onepassword_profile` and `onepassword_item`, default
+  `op://Development/DeepSeek/API Key`) straight into a Kubernetes Secret in
+  the Kind cluster. It never touches disk, argv or the result.
 - `none`: skip agent classes.
 
 ## Notes
