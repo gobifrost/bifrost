@@ -2080,6 +2080,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
     "shared.browser_impersonation.validate_browser_impersonation": (2, "cutover"),
+    "shared.device_auth.decide_device_login": (2, "cutover"),  # Index GET and atomic decision EVAL.
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
     "shared.role_cache.get_user_roles": (1, "cutover"),
@@ -2101,7 +2102,6 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.requirements_cache.get_requirements": (2, "cutover"),
     "src.core.requirements_cache.get_requirements_sync": (1, "cutover"),
     "src.repositories.organizations.OrganizationRepository._get_from_cache": (1, "cutover"),
-    "src.routers.auth.authorize_device": (2, "cutover"),
     "src.routers.auth.exchange_device_token": (1, "cutover"),
     "src.routers.auth.has_live_refresh_token_jti": (1, "cutover"),
     "src.routers.oauth_sso.oauth_callback": (1, "cutover"),
