@@ -93,13 +93,18 @@ answers none of them should be cut.
 ## 4. Fixed constraints (decided by Jack)
 
 1. **Tenant topology is API, Client, and Worker.** There is **no scheduler**.
-   Workers are the Jobs that the API's controller launches. Both the
-   `k8s/worker` and `k8s/scheduler` Deployments are retired (`replicas: 0`).
-   Worker capacity is governed by the Settings → Kubernetes policy:
-   `warm_workers` (default 1), `max_workers` (6), `worker_memory_mib` (2048) and
-   `largest_worker_mib`. Workflows also get learned memory requests, so Job
-   sizes vary. The `k8s/local` overlay still runs a worker Deployment and a
-   scheduler; the benchmark overlay runs neither.
+   Worker capacity comes from two supported sources, and an allocation profile
+   may use either or both:
+   - **Worker Deployment replicas:** a fixed, always-on floor. The production
+     manifest ships `replicas: 0`, but normal replicas remain supported
+     (Jack, 2026-10-27).
+   - **API-launched worker Jobs:** elastic capacity, governed by the Settings →
+     Kubernetes policy: `warm_workers` (default 1), `max_workers` (6),
+     `worker_memory_mib` (2048) and `largest_worker_mib`. Workflows get learned
+     memory requests, so Job sizes vary.
+
+   The `k8s/local` overlay also runs a scheduler; the benchmark overlay does
+   not.
 2. **The Kubernetes design does not change.** The suite measures the current
    API/Client/Worker design and variants of it; it does not propose a new
    topology.
@@ -166,7 +171,10 @@ an **allocation profile**, which is a run input; finding the best allocation
 for an envelope is itself a use of the suite. Proposed starting points (my
 calls; these exist to be measured and revised, not trusted):
 
-| Envelope | Quota (CPU / memory / Postgres disk) | API | Worker policy (warm / max × size) | Postgres (CNPG) | Redis, Pooler, Client |
+The worker column below uses Jobs only. Allocation profiles that swap some or
+all of that for fixed Deployment replicas are compared in E5.
+
+| Envelope | Quota (CPU / memory / Postgres disk) | API | Worker Job policy (warm / max × size) | Postgres (CNPG) | Redis, Pooler, Client |
 |---|---|---|---|---|---|
 | S | 2 vCPU / 4 GiB / 20 GiB | 1 × (0.75 CPU, 1 GiB) | 1 / 1 × 1 GiB | 1 instance (0.5 CPU, 1 GiB) | ~0.25 CPU, ~256 MiB total |
 | M | 4 vCPU / 8 GiB / 50 GiB | 2 × (1 CPU, 1 GiB) | 1 / 2 × 1.5 GiB | 1 instance (1 CPU, 2 GiB) | ~0.3 CPU, ~400 MiB total |
@@ -482,6 +490,8 @@ Starting from envelope M, vary one dimension at a time and rerun E2 for
 - API replicas 1 → 2 → 3, with the worker fixed
 - worker policy `max_workers` 1 → 2 → 4, then `worker_memory_mib` 1 → 2 GiB,
   with the API fixed
+- the same worker memory as fixed Deployment replicas instead of Jobs, which
+  trades elasticity for no Job start-up latency
 - Postgres CPU/memory one step up and down
 
 Output: **marginal capacity per added unit of resource**, e.g. "+1 API
@@ -573,12 +583,39 @@ These change what gets built or what the numbers mean:
 6. **Where it runs**: Kind needs a host with roughly the L envelope plus about
    4 vCPU / 8 GiB of headroom. Is that your workstation, or a dedicated VM?
 
-## 13. Build order
+## 13. Final deliverables and when we stop
+
+Each phase ends with a committed, dated report under `docs/benchmarks/` and a
+stop for Jack's review. A phase is done when its exit check passes, not when
+the code exists.
+
+| Phase | Deliverable | Exit check |
+|---|---|---|
+| 1 | **API memory attribution report**: one table that explains production's ~760 MiB API, row by row, each row marked *justified*, *fixable* (with an estimated saving), or *leak*. Plus the per-tenant idle floor. The `./test.sh bench attribution` command reproduces it. | Rows sum to the locally measured working set within 10%, and the reconciliation against production names every remaining gap. Two runs agree within ±20 MiB. |
+| 2 | **Capacity cards** for envelopes S and M × `msp-typical` and `sdk-heavy` (Kind); the **H1 verdict** (pre-#1066 against `main`): did the bottleneck move to the API, with numbers; the **scaling curve**, i.e. what +1 API replica, +1 worker replica and +1 worker Job each buy. | Every card's sustained capacity reproduces within ±5%; the first bottleneck is named for each. |
+| 3 | **Customer-quotable cards** from a disposable DOKS cluster + Spaces (S, M, L); the **storage model** (bytes per execution, monthly growth at a given rate and retention); the soak result (no live-memory slope). | The cloud and Kind cards differ by a stated, explained factor; the soak passes. |
+
+**The overall final deliverable** is the Phase 3 set, a sizing table you can
+price from ("envelope M sustains X executions/min, costs F at idle, grows
+the database G GB/month"), plus a `./test.sh bench` command that reruns it on
+any build. Anything not needed for those three exit checks is out of scope.
+
+**Phase 1 environment (my call, for speed).** Attribution measures the API
+process, which does not depend on how Postgres is deployed. Phase 1 therefore
+runs on the existing Kind harness and its Postgres; CNPG, quotas and the
+envelopes arrive in Phase 2, where they matter.
+
+**Host limits (my call).** This workstation has 8 cores, 62 GB of RAM and about
+36 GB of free disk. Envelopes S and M run locally; L runs only in the cloud
+profile. Each run must clean up its images and volumes, because an earlier
+profiling run filled this disk.
+
+## 14. Build order
 
 Each phase stands on its own and answers questions before the next starts.
 
 1. **Phase 1, attribution (answers Q1, Q2):** memory probe; bench overlay
-   (no scheduler, no worker Deployment, CNPG + Pooler, quota, worker policy); seeder with `small` and `prod-today`
+   (no scheduler; the existing Kind Postgres); seeder with `small` and `prod-today`
    profiles plus the count-collection script; minimal driver for W2, W5, W6,
    A1, U1; fake LLM; E0 and E1; `result.json` + report. **Target: the
    reconciled 760 MiB table.**
@@ -589,7 +626,7 @@ Each phase stands on its own and answers questions before the next starts.
    model, cloud profile on DOKS + Spaces, the first customer-quotable
    capacity cards.
 
-## 14. Left to the builder
+## 15. Left to the builder
 
 - Directory layout and command surface. My suggestion is
   `./test.sh bench <experiment> [--envelope M] [--mix msp-typical] [--variant ...]`,
