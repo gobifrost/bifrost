@@ -565,6 +565,10 @@ async def execute_sdk_workflow(
 
     try:
         if request.code:
+            # All request-side authorization and context reads are complete.
+            # Release the main-pool connection before dispatching
+            # long-running execution work; acceptance uses the dispatch pool.
+            await session.commit()
             # Execute inline code
             result = await run_code(
                 context=shared_ctx,
@@ -627,6 +631,9 @@ async def execute_sdk_workflow(
             # but honor the caller's transient flag: dropdown-options pass
             # transient=True for the fast path, the manual Execute page passes
             # transient=False and expects a tracked execution row.
+            # Dispatch metadata has completed the request-side read phase.
+            # The sync wait below must not retain this main-pool connection.
+            await session.commit()
             result = await run_workflow(
                 context=shared_ctx,
                 workflow_id=str(workflow.id),
@@ -652,6 +659,9 @@ async def execute_sdk_workflow(
                 str(workflow.id),
                 db=session,
             )
+            # Dispatch metadata has completed the request-side read phase.
+            # The sync wait below must not retain this main-pool connection.
+            await session.commit()
             result = await run_workflow(
                 context=shared_ctx,
                 workflow_id=str(workflow.id),
