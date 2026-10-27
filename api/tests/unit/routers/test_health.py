@@ -248,7 +248,7 @@ async def test_s3_check_closes_cached_client_when_settings_change(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_error_output_does_not_include_secret_values(monkeypatch):
+async def test_failed_check_logs_component_without_secret_values(monkeypatch, caplog):
     settings = _settings()
     secret_values = [
         "redis-secret",
@@ -271,7 +271,10 @@ async def test_error_output_does_not_include_secret_values(monkeypatch):
 
     assert component_name == "database"
     assert component["status"] == "unhealthy"
-    output = str(component)
+    assert caplog.messages == [
+        "Readiness dependency check failed: component=database error_type=RuntimeError"
+    ]
+    output = str(component) + caplog.text
     for value in secret_values:
         assert value not in output
 

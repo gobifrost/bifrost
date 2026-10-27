@@ -5,6 +5,7 @@ Provides endpoints for monitoring application health.
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Hashable
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -21,6 +22,7 @@ from src.core.s3_transport import S3Transport
 from shared.version import get_version
 
 router = APIRouter(prefix="/health", tags=["health"])
+logger = logging.getLogger(__name__)
 
 CHECK_TIMEOUT_SECONDS = 2.0
 ComponentStatus = dict[str, str]
@@ -162,7 +164,13 @@ async def _checked_component(
         await asyncio.wait_for(check, timeout=CHECK_TIMEOUT_SECONDS)
         return name, _component("healthy", type_)
     except Exception as exc:
-        return name, _component("unhealthy", type_, _error_name(exc))
+        error_type = _error_name(exc)
+        logger.warning(
+            "Readiness dependency check failed: component=%s error_type=%s",
+            name,
+            error_type,
+        )
+        return name, _component("unhealthy", type_, error_type)
 
 
 async def check_database(db: AsyncSession) -> tuple[str, ComponentStatus]:

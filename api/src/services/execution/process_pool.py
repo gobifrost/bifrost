@@ -70,6 +70,10 @@ _CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
 # that the dangerous-memory stop beats most growth to the kernel.
 MONITOR_INTERVAL_SECONDS = 0.25
 _ACTIVE_EXECUTION_REFRESH_SECONDS = 10 * 60
+# Managed Redis proxies close idle Pub/Sub connections after five minutes.
+# Listener loops call get_message() every second; redis-py emits and filters a
+# health PING before that deadline when this interval has elapsed.
+PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS = 60
 
 # Context fields that must never reach the diagnostic Redis copy of an
 # execution context. The child still receives these over its private work
@@ -475,6 +479,7 @@ class ProcessPoolManager:
             self._redis = redis.from_url(
                 settings.redis_url,
                 decode_responses=True,
+                health_check_interval=PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
             )
         return self._redis
 
