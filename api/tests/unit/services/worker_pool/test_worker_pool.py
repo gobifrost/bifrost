@@ -160,7 +160,7 @@ async def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatc
     wake = AsyncMock()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", AsyncMock)
-    monkeypatch.setattr("src.services.execution.queue_tracker.add_to_queue", AsyncMock())
+    monkeypatch.setattr("src.services.execution.queue_tracker.publish_queue_positions", AsyncMock())
     await _delete_policy(async_session_factory)
     await _store_policy(async_session_factory, POLICY)
     yield SimpleNamespace(sessions=async_session_factory, wake=wake, context=context)
@@ -539,6 +539,13 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
         ).scalars().all()
     assert (execution.status, execution.started_at) == (ExecutionStatus.PENDING, None)
     assert held == []
+    from src.services.execution.queue_tracker import get_queued_executions
+
+    async with db.sessions() as session:
+        queued = await get_queued_executions(session)
+    assert [(entry.execution_id, entry.queued_at) for entry in queued] == [
+        (UUID(execution_id), claim.queued_at)
+    ]
     db.wake.assert_awaited_once()
     second = await _static_executor("second")
     again = await _claim(second)

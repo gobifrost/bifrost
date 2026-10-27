@@ -39,10 +39,7 @@ def harness(
     redis = AsyncMock()
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", lambda: redis)
     monkeypatch.setattr(
-        "src.services.execution.queue_tracker.add_to_queue", AsyncMock()
-    )
-    monkeypatch.setattr(
-        "src.services.execution.queue_tracker.remove_from_queue", AsyncMock()
+        "src.services.execution.queue_tracker.publish_queue_positions", AsyncMock()
     )
     updates = AsyncMock()
     monkeypatch.setattr("src.core.pubsub.publish_execution_update", updates)
@@ -133,6 +130,13 @@ async def test_acceptance_commits_a_pending_run_before_waking_executors(harness)
         1,
     )
     harness.wakes.assert_awaited_once()
+    from src.services.execution.queue_tracker import get_queued_executions
+
+    async with harness.sessions() as session:
+        queued = await get_queued_executions(session)
+    assert [(entry.execution_id, entry.queued_at) for entry in queued] == [
+        (UUID(execution_id), dispatch.created_at)
+    ]
 
 
 async def test_reconciler_leaves_a_young_dispatch_alone(harness) -> None:
@@ -150,10 +154,10 @@ async def test_reconciler_leaves_a_young_dispatch_alone(harness) -> None:
     assert await harness.dispatch(execution_id) is not None
 
 
-async def test_redis_outage_does_not_fail_acceptance(harness, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+async def test_queue_snapshot_outage_does_not_fail_acceptance(harness, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(
-        "src.services.execution.queue_tracker.add_to_queue",
-        AsyncMock(side_effect=ConnectionError("redis down")),
+        "src.services.execution.queue_tracker.publish_queue_positions",
+        AsyncMock(side_effect=ConnectionError("queue snapshot unavailable")),
     )
 
     execution_id = await _accept()
@@ -174,6 +178,10 @@ async def test_claim_takes_the_context_once(harness) -> None:
     assert pending is not None and pending["parameters"] == {"x": 1}
     assert (await harness.execution(execution_id)).status == ExecutionStatus.RUNNING
     assert await harness.dispatch(execution_id) is None
+    from src.services.execution.queue_tracker import get_queued_executions
+
+    async with harness.sessions() as session:
+        assert await get_queued_executions(session) == []
 
     # A duplicate delivery finds nothing to claim.
     async with harness.sessions() as session:

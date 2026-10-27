@@ -281,6 +281,7 @@ class ExecutionReadAdapter:
             select(ExecutionModel)
             .options(selectinload(ExecutionModel.organization), selectinload(ExecutionModel.executed_by_user))
             .where(ExecutionModel.id == execution_id)
+            .with_for_update()
         )
         execution = result.scalar_one_or_none()
 
@@ -309,9 +310,21 @@ class ExecutionReadAdapter:
         execution.status = new_status  # type: ignore[assignment]
 
         await self.db.flush()
-        await self.db.refresh(execution)
+        # Persist the status before readers receive a canonical queue snapshot.
+        await self.db.commit()
 
-        # Publish update
+        if new_status == ExecutionStatus.CANCELLED.value:
+            from src.services.execution.queue_tracker import publish_queue_positions
+
+            try:
+                await publish_queue_positions()
+            except Exception:
+                logger.warning(
+                    "Could not publish queue positions after cancellation",
+                    extra={"execution_id": str(execution_id)},
+                    exc_info=True,
+                )
+
         await publish_execution_update(
             execution_id=execution_id,
             status=new_status,

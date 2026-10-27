@@ -162,3 +162,75 @@ class TestExecutionLogs:
 
         assert plain == ([], None)
         assert child == ([], None)
+
+
+@pytest.mark.asyncio
+async def test_pending_cancellation_commits_before_publishing_queue_snapshot(
+    db_session, async_session_factory, monkeypatch
+) -> None:
+    """A pending cancellation is durable before its canonical queue snapshot."""
+    from unittest.mock import AsyncMock
+
+    from src.models.orm.executions import Execution as ExecutionModel
+    from src.models.orm.work_dispatches import WorkDispatch
+    from src.routers import executions as executions_router
+    from src.services.execution.queue_tracker import get_queued_executions
+    from src.services.authorization.enforce import Caller
+    from src.services.authorization.execution_access import ExecutionReadAccess
+
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="queue-canceller@example.com",
+        organization_id=None,
+        is_superuser=True,
+    )
+    execution = ExecutionModel(
+        workflow_name="queue-cancellation",
+        status=ExecutionStatus.PENDING,
+        executed_by_name="Queue Canceller",
+    )
+    db_session.add(execution)
+    await db_session.flush()
+    db_session.add(
+        WorkDispatch(
+            family="workflow_execution",
+            subject_id=execution.id,
+            handler="workflow.execute",
+            handler_version=1,
+            message={},
+            payload={},
+            memory_request_bytes=1,
+        )
+    )
+    await db_session.commit()
+
+    async def snapshot() -> None:
+        async with async_session_factory() as observer:
+            persisted = await observer.get(ExecutionModel, execution.id)
+            assert persisted is not None
+            assert persisted.status is ExecutionStatus.CANCELLED
+            assert await get_queued_executions(observer) == []
+
+    monkeypatch.setattr(
+        executions_router,
+        "load_caller",
+        AsyncMock(return_value=Caller(principal, None)),
+    )
+    monkeypatch.setattr(executions_router, "execution_cancel_allowed", lambda *_: True)
+    monkeypatch.setattr(
+        executions_router,
+        "execution_read_access",
+        lambda *_: ExecutionReadAccess(visible=True, diagnostics=False),
+    )
+    monkeypatch.setattr(
+        "src.services.execution.queue_tracker.publish_queue_positions",
+        snapshot,
+    )
+    monkeypatch.setattr(executions_router, "publish_execution_update", AsyncMock())
+    monkeypatch.setattr(executions_router, "publish_history_update", AsyncMock())
+
+    cancelled, error = await ExecutionReadAdapter(db_session).cancel_execution(execution.id, principal)
+
+    assert error is None
+    assert cancelled is not None
+    assert cancelled.status == ExecutionStatus.CANCELLED.value

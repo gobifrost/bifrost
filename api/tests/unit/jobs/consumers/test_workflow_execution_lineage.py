@@ -39,7 +39,7 @@ async def _created_with(claimed: dict, *, queue_error: Exception | None = None) 
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
         patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
         patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
-        patch("src.services.execution.queue_tracker.remove_from_queue", new=AsyncMock(side_effect=queue_error)),
+        patch("src.services.execution.queue_tracker.publish_queue_positions", new=AsyncMock(side_effect=queue_error)),
     ):
         consumer = _consumer()
         await consumer.process_message(MESSAGE, claimed)  # type: ignore[arg-type]
@@ -96,7 +96,7 @@ async def test_a_run_that_moved_on_is_discarded_and_wakes_its_sync_caller() -> N
             "src.services.execution.workflow_dispatch.notify_discarded_sync_run",
             new=AsyncMock(),
         ) as notify,
-        patch("src.services.execution.queue_tracker.remove_from_queue", new=AsyncMock()),
+        patch("src.services.execution.queue_tracker.publish_queue_positions", new=AsyncMock()),
     ):
         consumer = _consumer()
         await consumer.process_message({**MESSAGE, "sync": True}, None)

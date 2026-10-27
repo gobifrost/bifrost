@@ -1212,12 +1212,9 @@ class ProcessPoolManager:
         Runs every MONITOR_INTERVAL_SECONDS to:
         1. Check for timed-out executions and kill processes
         2. Check for crashed processes
-        3. Periodically clean stale queue entries (every 60s)
+        3. Sample resource pressure for running children
         """
-        import time as _time
-
         logger.info("Monitor loop started")
-        last_queue_cleanup = 0.0
 
         while not self._shutdown:
             try:
@@ -1241,15 +1238,6 @@ class ProcessPoolManager:
                 self._sample_resources()
                 await self._stop_largest_when_dangerous()
 
-                # Periodic stale queue cleanup
-                now = _time.monotonic()
-                if now - last_queue_cleanup > 60:
-                    last_queue_cleanup = now
-                    try:
-                        from src.services.execution.queue_tracker import cleanup_stale_entries
-                        await cleanup_stale_entries()
-                    except Exception as e:
-                        logger.warning(f"Queue cleanup error: {e}")
             except Exception as e:
                 logger.exception(f"Monitor loop error: {e}")
 

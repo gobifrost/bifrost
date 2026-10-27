@@ -149,13 +149,13 @@ async def stage_workflow_run(
 
 async def hand_off_workflow_run(accepted: AcceptedRun) -> None:
     """After commit: queue position, then wake the executors."""
-    from src.services.execution.queue_tracker import add_to_queue
+    from src.services.execution.queue_tracker import publish_queue_positions
 
     # Sync callers wait on their private result list and cannot consume queue
     # position events.
     if not accepted.pending["sync"]:
         try:
-            await add_to_queue(accepted.pending["execution_id"])
+            await publish_queue_positions()
         except Exception:
             logger.warning(
                 "Could not record queue position",
@@ -196,8 +196,6 @@ async def release_workflow_run(
     claim deadline, and loses this executor's claim record, so another
     executor takes it as if it had never been claimed.
     """
-    from src.core.pubsub import publish_execution_update
-
     execution_id = UUID(payload["execution_id"])
     async with get_db_context() as db:
         released = await db.scalar(
@@ -229,11 +227,10 @@ async def release_workflow_run(
         await db.commit()
     logger.info("Handed a run back for another executor", extra={"execution_id": str(execution_id)})
     if not payload.get("sync"):
-        from src.services.execution.queue_tracker import add_to_queue
+        from src.services.execution.queue_tracker import publish_queue_positions
 
         try:
-            await add_to_queue(str(execution_id))
-            await publish_execution_update(str(execution_id), "Pending")
+            await publish_queue_positions()
         except Exception:
             logger.warning(
                 "Could not show a handed-back run as waiting",
@@ -278,12 +275,12 @@ async def _notify_ended_before_start(
 ) -> None:
     """Tell live views, the queue and any sync caller; all best-effort."""
     from src.core.pubsub import publish_execution_update
-    from src.services.execution.queue_tracker import remove_from_queue
 
-    steps = [
-        remove_from_queue(str(execution_id)),
-        publish_execution_update(execution_id, status, {"error": error}),
-    ]
+    steps = [publish_execution_update(execution_id, status, {"error": error})]
+    if not sync:
+        from src.services.execution.queue_tracker import publish_queue_positions
+
+        steps.insert(0, publish_queue_positions())
     if sync:
         steps.append(
             get_redis_client().push_result(

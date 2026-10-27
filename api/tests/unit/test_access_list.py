@@ -2186,7 +2186,6 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         "Cancel flag; only stops a run.",
     ),
     "src.services.execution.install_progress.report_phase": (1, "Package install progress."),
-    "src.services.execution.queue_tracker.get_all_pending_executions": (1, "Queue positions for display."),
     "src.services.notification_service.NotificationService.find_admin_notification_by_title": (
         2,
         "De-duplicates an admin notification before creating one.",

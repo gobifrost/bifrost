@@ -546,6 +546,7 @@ queue_router = APIRouter(
 )
 async def get_queue(
     _user: CurrentActiveUser,
+    db: DbSession,
     limit: int = Query(50, ge=1, le=500, description="Maximum number of items"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
 ) -> QueueStatusResponse:
@@ -555,20 +556,18 @@ async def get_queue(
     Returns executions waiting to be picked up by a worker,
     ordered by queue position.
     """
-    from src.services.execution.queue_tracker import get_all_queue_positions
+    from src.services.execution.queue_tracker import get_queued_executions
 
-    all_positions = await get_all_queue_positions()
-    total = len(all_positions)
-
-    # Apply pagination
-    paginated = all_positions[offset : offset + limit]
+    queued = await get_queued_executions(db)
+    total = len(queued)
 
     items = [
         QueueItem(
-            execution_id=exec_id,
+            execution_id=str(entry.execution_id),
             position=position,
+            queued_at=entry.queued_at.isoformat(),
         )
-        for exec_id, position in paginated
+        for position, entry in enumerate(queued[offset : offset + limit], start=offset + 1)
     ]
 
     return QueueStatusResponse(total=total, items=items)
