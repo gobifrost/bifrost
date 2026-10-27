@@ -72,9 +72,9 @@ class ModuleSourceError(Exception):
 
 async def module_scope_for_principal(db, user, *, solution_id=None, global_repo_access=False) -> ModuleSourceScope:
     """Derive runtime source scope from its durable workflow; authorize human diagnostics."""
-    from src.models.orm.solutions import Solution
     from src.models.orm.workflows import Workflow
     from src.services.authorization.enforce import allows_permission, load_caller, user_reach
+    from src.services.solution_scope import get_active_solution
 
     runtime = user.runtime_authority
     caller = await load_caller(db, user)
@@ -94,8 +94,8 @@ async def module_scope_for_principal(db, user, *, solution_id=None, global_repo_
         raise ModuleSourceError(403, "Workspace source access is required")
     if solution_id is not None:
         validate_solution_id(str(solution_id))
-        solution = await db.get(Solution, UUID(str(solution_id)))
-        if solution is None or solution.status != "active" or not user_reach(caller).covers(solution.organization_id):
+        solution = await get_active_solution(db, UUID(str(solution_id)))
+        if solution is None or not user_reach(caller).covers(solution.organization_id):
             raise ModuleSourceError(403, "Solution source scope is unavailable")
         if runtime is not None:
             global_repo_access = solution.allow_outbound_access
