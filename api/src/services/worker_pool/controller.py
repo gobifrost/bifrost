@@ -281,6 +281,31 @@ class WorkerPoolController:
             policy, threshold, job_baseline(workers, policy.worker_memory_mib * 2**20, threshold)
         )
 
+    def _lifetime_handoff_imminent(self, worker: ExecutionWorker, now: datetime) -> bool:
+        """Whether a standard warm Job needs its replacement started before it drains.
+
+        ``ready_at`` precedes the worker's claim-loop lifetime clock, so it is
+        a durable, conservative-early deadline for starting the replacement.
+        The existing start-timeout window preserves a logical warm worker while
+        the new Job initializes. Short lifetimes use at most half their
+        lifetime as lead time, so a new worker is never itself immediately
+        considered due for replacement.
+        """
+        if (
+            worker.form != "job"
+            or worker.resource_class != "standard"
+            or worker.state != "ready"
+            or worker.ready_at is None
+        ):
+            return False
+        lead_seconds = min(
+            self.settings.pool_start_timeout_seconds,
+            self.settings.pool_max_lifetime_seconds // 2,
+        )
+        return worker.ready_at + timedelta(
+            seconds=self.settings.pool_max_lifetime_seconds - lead_seconds
+        ) <= now
+
     async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
         """Reserve incarnations for waiting work, sized by memory, within ceilings.
 
@@ -370,9 +395,12 @@ class WorkerPoolController:
                 largest_budget=sizing.largest_budget_bytes,
             )
             jobs = sum(1 for worker in workers if worker.form == "job")
+            now = _now()
             # Only standard Jobs make up the warm minimum; a sized Job exists
-            # for its large work and drains once idle. An outdated Job still
-            # claims until it drains, so replacement stays within Max workers.
+            # for its large work and drains once idle. A standard Job near its
+            # self-managed lifetime is excluded here so its handoff can start
+            # before it stops claiming. An outdated Job still claims until it
+            # drains, so replacements stay within Max workers.
             undrained = sum(
                 1
                 for worker in workers
@@ -380,6 +408,7 @@ class WorkerPoolController:
                 and worker.resource_class == "standard"
                 and worker.state != "draining"
                 and not self.live.outdated(worker)
+                and not self._lifetime_handoff_imminent(worker, now)
             )
             warm = max(0, policy.warm_workers - undrained - plan.standard - len(plan.sized))
             room = max(0, policy.max_workers - jobs)

@@ -1792,6 +1792,129 @@ async def _state(sessions, worker_id: UUID) -> tuple[str, str | None]:  # type: 
     return worker.state, worker.end_reason
 
 
+async def _set_ready_at(sessions, worker_id: UUID, ready_at: datetime | None) -> None:  # type: ignore[no-untyped-def]
+    async with sessions() as session:
+        await session.execute(
+            update(ExecutionWorker).where(ExecutionWorker.id == worker_id).values(ready_at=ready_at)
+        )
+        await session.commit()
+
+
+async def test_an_imminent_lifetime_warm_worker_prelaunches_one_handoff(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Keep a logical warm worker available while its lifetime replacement starts."""
+    policy = replace(WARM, max_workers=2, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    warm = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+    monkeypatch.setattr(controller, "_now", lambda: now)
+    await _set_ready_at(
+        db.sessions,
+        warm,
+        now
+        - timedelta(seconds=SETTINGS.pool_max_lifetime_seconds - SETTINGS.pool_start_timeout_seconds),
+    )
+
+    [handoff] = await _pass(pool, policy)
+    assert await _state(db.sessions, warm) == ("ready", None), "keeps claiming until its lifetime"
+    assert await _state(db.sessions, handoff) == ("starting", None)
+    assert await _pass(pool, policy) == [], "the starting handoff suppresses duplicate launches"
+
+    await _admit(db.sessions, handoff)
+    assert await _pass(pool, policy) == [], "the ready handoff suppresses duplicate launches"
+
+
+async def test_a_lifetime_handoff_waits_until_its_lead_window(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    policy = replace(WARM, max_workers=2, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    warm = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+    monkeypatch.setattr(controller, "_now", lambda: now)
+    await _set_ready_at(
+        db.sessions,
+        warm,
+        now
+        - timedelta(seconds=SETTINGS.pool_max_lifetime_seconds - SETTINGS.pool_start_timeout_seconds)
+        + timedelta(microseconds=1),
+    )
+
+    assert await _pass(pool, policy) == []
+
+
+async def test_a_full_warm_pool_does_not_exceed_max_for_a_lifetime_handoff(db) -> None:
+    policy = replace(WARM, max_workers=1, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    warm = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    await _set_ready_at(
+        db.sessions,
+        warm,
+        datetime.now(timezone.utc)
+        - timedelta(
+            seconds=SETTINGS.pool_max_lifetime_seconds - SETTINGS.pool_start_timeout_seconds + 1
+        ),
+    )
+
+    assert await _pass(pool, policy) == []
+
+
+async def test_short_lifetimes_prelaunch_only_the_warm_shortfall(db) -> None:
+    settings = SimpleNamespace(
+        **{
+            **vars(SETTINGS),
+            "pool_max_lifetime_seconds": 60,
+            "pool_start_timeout_seconds": 300,
+        }
+    )
+    policy = replace(WARM, max_workers=6, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0", settings)
+    workers = [
+        await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+        for _ in range(4)
+    ]
+    for worker_id in workers:
+        await _set_ready_at(db.sessions, worker_id, datetime.now(timezone.utc) - timedelta(seconds=31))
+
+    [handoff] = await _pass(pool, policy)
+    await _admit(db.sessions, handoff)
+    assert await _pass(pool, policy) == []
+
+
+def test_lifetime_handoff_targets_only_ready_standard_jobs() -> None:
+    pool = _controller(FakeCluster(), "2.0")
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+
+    def worker(
+        *, form: str, resource_class: str, state: str = "ready", ready_at: datetime | None
+    ) -> ExecutionWorker:
+        return ExecutionWorker(
+            id=uuid4(),
+            form=form,
+            state=state,
+            resource_class=resource_class,
+            slots=1,
+            ready_at=ready_at,
+        )
+
+    due = now - timedelta(seconds=SETTINGS.pool_max_lifetime_seconds)
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="static", resource_class="standard", ready_at=due), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="sized", ready_at=due), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", ready_at=None), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", ready_at=now + timedelta(seconds=1)), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", state="starting", ready_at=due), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", state="draining", ready_at=due), now
+    )
+
+
 def test_a_job_is_outdated_only_when_its_build_and_its_launcher_are_gone() -> None:
     live_id = uuid4()
     live = controller.LiveControllers(ids=frozenset({live_id}), versions=frozenset({"2.0"}))
