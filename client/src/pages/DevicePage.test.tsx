@@ -124,7 +124,6 @@ describe("DevicePage", () => {
 				}),
 				body: JSON.stringify({
 					user_code: "ABCD-EFGH",
-					approved: true,
 				}),
 			}),
 		);
@@ -146,17 +145,34 @@ describe("DevicePage", () => {
 			).toHaveFocus(),
 		);
 		expect(fetchMock).toHaveBeenCalledWith(
-			"/auth/device/authorize",
+			"/auth/device/deny",
 			expect.objectContaining({
 				body: JSON.stringify({
 					user_code: "ABCD-EFGH",
-					approved: false,
 				}),
 			}),
 		);
 		expect(
 			screen.getByText(/no CLI credentials were issued/i),
 		).toBeInTheDocument();
+	});
+
+	it("never approves when an older API does not support denial", async () => {
+		localStorage.setItem("bifrost_access_token", "access-token");
+		const fetchMock = vi.fn(async () => ({ ok: false, status: 404 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const { user } = renderWithProviders(<DevicePage />, {
+			initialEntries: ["/device?user_code=ABCD-EFGH"],
+		});
+		await user.click(screen.getByRole("button", { name: "Deny" }));
+		await screen.findByRole("heading", { name: "CLI Connection Failed" });
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledWith(
+			"/auth/device/deny",
+			expect.objectContaining({
+				body: JSON.stringify({ user_code: "ABCD-EFGH" }),
+			}),
+		);
 	});
 
 	it.each(["Connect CLI", "Deny"])(

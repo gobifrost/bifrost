@@ -83,7 +83,6 @@ class ProviderCacheWriteResponse(BaseModel):
 
 
 class DeviceAuthorizeRequest(BaseModel):
-    """An explicit approval or denial of a CLI device login."""
+    """The code for a CLI device login being approved or denied."""
 
     user_code: str
-    approved: bool = True

@@ -144,14 +144,17 @@ function DeviceAuthorization() {
 			const accessToken = getActiveToken();
 			if (!accessToken) throw new Error("Not authenticated");
 
-			const response = await fetch("/auth/device/authorize", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${accessToken}`,
+			const response = await fetch(
+				approved ? "/auth/device/authorize" : "/auth/device/deny",
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						Authorization: `Bearer ${accessToken}`,
+					},
+					body: JSON.stringify({ user_code: code }),
 				},
-				body: JSON.stringify({ user_code: code, approved }),
-			});
+			);
 
 			if (response.status === 401) {
 				navigate("/login", {

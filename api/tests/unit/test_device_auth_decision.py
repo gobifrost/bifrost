@@ -33,10 +33,6 @@ async def test_missing_code_does_not_record_a_decision():
     redis.eval.assert_not_called()
 
 
-def test_existing_authorization_requests_still_approve():
-    assert DeviceAuthorizeRequest(user_code="ABCD-EFGH").approved is True
-
-
 def test_public_model_exports_resolve_the_shared_request():
     from src.models import DeviceAuthorizeRequest as root_request
     from src.models.contracts import DeviceAuthorizeRequest as contract_request

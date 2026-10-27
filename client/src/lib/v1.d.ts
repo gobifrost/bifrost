@@ -771,24 +771,29 @@ export interface paths {
         put?: never;
         /**
          * Authorize Device
-         * @description Approve or deny a CLI device login after explicit user confirmation.
-         *
-         *     The first decision is final. The CLI receives tokens or access_denied on
-         *     its next poll to /device/token.
-         *
-         *     Requires authentication - user must be logged in to authorize a device.
-         *
-         *     Args:
-         *         authorize_request: Device authorization request with user_code
-         *         current_user: Current authenticated user (from JWT)
-         *
-         *     Returns:
-         *         Success response
-         *
-         *     Raises:
-         *         HTTPException: If user_code is invalid or expired
+         * @description Approve a CLI login after explicit confirmation. The first decision is final.
          */
         post: operations["authorize_device_auth_device_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/device/deny": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deny Device
+         * @description Deny a CLI login without ever calling the approval endpoint.
+         */
+        post: operations["deny_device_auth_device_deny_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -16442,16 +16447,11 @@ export interface components {
         };
         /**
          * DeviceAuthorizeRequest
-         * @description An explicit approval or denial of a CLI device login.
+         * @description The code for a CLI device login being approved or denied.
          */
         DeviceAuthorizeRequest: {
             /** User Code */
             user_code: string;
-            /**
-             * Approved
-             * @default true
-             */
-            approved: boolean;
         };
         /**
          * DeviceAuthorizeResponse
@@ -32180,6 +32180,39 @@ export interface operations {
         };
     };
     authorize_device_auth_device_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deny_device_auth_device_deny_post: {
         parameters: {
             query?: never;
             header?: never;

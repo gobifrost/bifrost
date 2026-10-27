@@ -1911,24 +1911,22 @@ async def authorize_device(
     authorize_request: DeviceAuthorizeRequest,
     current_user: CurrentActiveUser,
 ) -> DeviceAuthorizeResponse:
-    """
-    Approve or deny a CLI device login after explicit user confirmation.
+    """Approve a CLI login after explicit confirmation. The first decision is final."""
+    return await _record_device_decision(authorize_request.user_code, True, current_user)
 
-    The first decision is final. The CLI receives tokens or access_denied on
-    its next poll to /device/token.
 
-    Requires authentication - user must be logged in to authorize a device.
+@router.post("/device/deny", response_model=DeviceAuthorizeResponse)
+async def deny_device(
+    deny_request: DeviceAuthorizeRequest,
+    current_user: CurrentActiveUser,
+) -> DeviceAuthorizeResponse:
+    """Deny a CLI login without ever calling the approval endpoint."""
+    return await _record_device_decision(deny_request.user_code, False, current_user)
 
-    Args:
-        authorize_request: Device authorization request with user_code
-        current_user: Current authenticated user (from JWT)
 
-    Returns:
-        Success response
-
-    Raises:
-        HTTPException: If user_code is invalid or expired
-    """
+async def _record_device_decision(
+    user_code: str, approved: bool, current_user: UserPrincipal,
+) -> DeviceAuthorizeResponse:
     if is_browser_impersonation(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1936,9 +1934,9 @@ async def authorize_device(
         )
 
     decision = await decide_device_login(
-        authorize_request.user_code,
+        user_code,
         str(current_user.user_id),
-        authorize_request.approved,
+        approved,
     )
     if decision == "expired":
         raise HTTPException(
@@ -1953,7 +1951,7 @@ async def authorize_device(
 
     logger.info(
         "CLI device login %s by user: %s",
-        "approved" if authorize_request.approved else "denied",
+        "approved" if approved else "denied",
         log_safe(current_user.email),
         extra={"user_id": str(current_user.user_id)},
     )

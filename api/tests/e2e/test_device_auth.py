@@ -12,15 +12,15 @@ import httpx
 def test_denied_device_login_is_final(e2e_client: httpx.Client, org1_user):
     code = e2e_client.post("/auth/device/code").json()
     decision = e2e_client.post(
-        "/auth/device/authorize",
-        json={"user_code": code["user_code"], "approved": False},
+        "/auth/device/deny",
+        json={"user_code": code["user_code"]},
         headers=org1_user.headers,
     )
     assert decision.status_code == 200
     # A second browser tab cannot reverse the first decision.
     repeated = e2e_client.post(
         "/auth/device/authorize",
-        json={"user_code": code["user_code"], "approved": True},
+        json={"user_code": code["user_code"]},
         headers=org1_user.headers,
     )
     assert repeated.status_code == 409
@@ -77,8 +77,8 @@ def test_device_flow_complete_success(
     auth_data = response.json()
     assert auth_data["success"] is True
     repeated = e2e_client.post(
-        "/auth/device/authorize",
-        json={"user_code": user_code, "approved": False},
+        "/auth/device/deny",
+        json={"user_code": user_code},
         headers=org1_user.headers,
     )
     assert repeated.status_code == 409
@@ -191,8 +191,9 @@ def test_device_flow_one_time_use(
 
 
 @pytest.mark.e2e
+@pytest.mark.parametrize("endpoint", ["/auth/device/authorize", "/auth/device/deny"])
 def test_device_flow_authorization_requires_auth(
-    e2e_client: httpx.Client,
+    e2e_client: httpx.Client, endpoint: str,
 ):
     """
     Test that device authorization requires authentication.
@@ -205,7 +206,7 @@ def test_device_flow_authorization_requires_auth(
 
     # Try to authorize without token
     response = e2e_client.post(
-        "/auth/device/authorize",
+        endpoint,
         json={"user_code": user_code}
     )
     assert response.status_code == 401

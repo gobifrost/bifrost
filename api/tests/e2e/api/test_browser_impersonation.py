@@ -92,12 +92,13 @@ def test_browser_impersonation_cookie_overrides_human_credentials_and_exits_fail
         refresh = browser.post("/auth/refresh")
         assert refresh.status_code == 401
 
-        device = browser.post(
-            "/auth/device/authorize",
-            headers=caller.headers,
-            json={"user_code": "ABCD-EFGH"},
-        )
-        assert device.status_code == 403
+        for path in ("/auth/device/authorize", "/auth/device/deny"):
+            device = browser.post(
+                path,
+                headers=caller.headers,
+                json={"user_code": "ABCD-EFGH"},
+            )
+            assert device.status_code == 403
 
         # Temporary support authority cannot enroll a lasting target login.
         for path, body in (

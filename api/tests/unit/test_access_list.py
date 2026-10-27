@@ -2998,6 +2998,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/auth/impersonation/end"): "Own browser-session marker; revocation is restricted to its original authenticated operator.",
     ("POST", "/auth/revoke-all"): "Own sessions.",
     ("POST", "/auth/device/authorize"): "Own device-code authorization.",
+    ("POST", "/auth/device/deny"): "Own device-code denial.",
     ("POST", "/auth/mfa/totp/setup"): "Own MFA enrollment.",
     ("POST", "/auth/mfa/totp/verify"): "Own MFA enrollment.",
     ("DELETE", "/auth/mfa"): "Own MFA enrollment.",
