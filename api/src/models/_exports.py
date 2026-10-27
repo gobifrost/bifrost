@@ -620,7 +620,7 @@ CONTRACT_EXPORTS: dict[str, tuple[str, str]] = {
     'DeviceTokenRequest': ('src.models.contracts.auth', 'DeviceTokenRequest'),
     'DeviceTokenResponse': ('src.models.contracts.auth', 'DeviceTokenResponse'),
     'DeviceTokenErrorResponse': ('src.models.contracts.auth', 'DeviceTokenErrorResponse'),
-    'DeviceAuthorizeRequest': ('src.models.contracts.auth', 'DeviceAuthorizeRequest'),
+    'DeviceAuthorizeRequest': ('shared.models', 'DeviceAuthorizeRequest'),
     'PasskeyRegistrationOptionsRequest': ('src.models.contracts.passkeys', 'PasskeyRegistrationOptionsRequest'),
     'PasskeyRegistrationOptionsResponse': ('src.models.contracts.passkeys', 'PasskeyRegistrationOptionsResponse'),
     'PasskeyRegistrationVerifyRequest': ('src.models.contracts.passkeys', 'PasskeyRegistrationVerifyRequest'),

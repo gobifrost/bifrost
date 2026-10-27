@@ -26,7 +26,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.device_auth import decide_device_login
-from shared.models import BrowserImpersonationTokenResponse
+from shared.models import BrowserImpersonationTokenResponse, DeviceAuthorizeRequest
 from src.core.cache import get_shared_redis
 from src.core.cache.keys import (
     device_code_key,
@@ -38,7 +38,6 @@ from src.core.cache.keys import (
 )
 from src.models import (
     AuthStatusResponse,
-    DeviceAuthorizeRequest,
     DeviceCodeResponse,
     DeviceTokenErrorResponse,
     DeviceTokenRequest,

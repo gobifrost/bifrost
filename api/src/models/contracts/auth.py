@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, EmailStr
 
-from shared.models import DeviceAuthorizeRequest as DeviceAuthorizeRequest
-
 if TYPE_CHECKING:
     pass
 
