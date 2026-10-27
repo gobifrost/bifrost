@@ -13,6 +13,7 @@ from typing import Literal
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only
 
 from shared.system_account_guard import is_system_account
 from src.models.enums import LIVE_EXECUTION_STATUSES
@@ -21,7 +22,12 @@ from src.models.orm.agents import Agent
 from src.models.orm.executions import Execution
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition
 from src.models.orm.workflows import Workflow
-from src.services.authorization.explain import Powers, RunUser, load_powers, load_run_user
+from src.services.authorization.explain import (
+    Powers,
+    RunUser,
+    load_powers_for_workflow,
+    load_run_user,
+)
 
 RuntimeKind = Literal["workflow_execution", "service_attempt", "agent_run"]
 
@@ -84,7 +90,26 @@ async def load_runtime_authority(
 
 
 async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> RuntimeAuthority:
-    execution = await db.get(Execution, execution_id, populate_existing=True)
+    execution = await db.get(
+        Execution,
+        execution_id,
+        options=[
+            load_only(
+                Execution.id,
+                Execution.status,
+                Execution.run_user_id,
+                Execution.started_by_user_id,
+                Execution.root_execution_id,
+                Execution.executed_by,
+                Execution.workflow_id,
+                Execution.organization_id,
+                Execution.impersonated_by_user_id,
+                Execution.impersonation_session_id,
+                raiseload=True,
+            )
+        ],
+        populate_existing=True,
+    )
     if execution is None:
         raise RuntimeIdentityError(_EXECUTION_NOT_FOUND)
     if execution.status not in LIVE_EXECUTION_STATUSES:
@@ -104,10 +129,22 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
     powers = None
     solution_id = None
     if execution.workflow_id is not None:
-        workflow = await db.get(Workflow, execution.workflow_id, populate_existing=True)
+        workflow = await db.get(
+            Workflow,
+            execution.workflow_id,
+            options=[
+                load_only(
+                    Workflow.id,
+                    Workflow.solution_id,
+                    Workflow.permission_mode,
+                    raiseload=True,
+                )
+            ],
+            populate_existing=True,
+        )
         if workflow is None:
             raise RuntimeIdentityError(_WORKFLOW_MISSING)
-        powers = await load_powers(db, workflow.id)
+        powers = await load_powers_for_workflow(db, workflow)
         solution_id = workflow.solution_id
 
     return RuntimeAuthority(
@@ -156,7 +193,7 @@ async def _load_service_attempt(
         kind="service_attempt",
         credential_id=attempt.id,
         run_user=run_user,
-        powers=await load_powers(db, workflow.id),
+        powers=await load_powers_for_workflow(db, workflow),
         acting_user_id=run_user.user_id,
         organization_id=definition.organization_id,
         workflow_id=workflow.id,

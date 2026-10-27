@@ -22,9 +22,18 @@ from src.services.authorization.runtime_auth import (
 class _Db:
     def __init__(self, rows: dict[tuple[type, object], object]) -> None:
         self.rows = rows
+        self.load_options: list[tuple[type, object, object]] = []
 
-    async def get(self, model: type, identity: object, *, populate_existing: bool = False) -> object | None:
+    async def get(
+        self,
+        model: type,
+        identity: object,
+        *,
+        options: object = (),
+        populate_existing: bool = False,
+    ) -> object | None:
         assert populate_existing
+        self.load_options.append((model, identity, options))
         return self.rows.get((model, identity))
 
 
@@ -43,7 +52,14 @@ async def test_runtime_principal_uses_database_authority_not_spoofed_token_claim
     run_user_id = uuid4()
     actor_id = uuid4()
     execution_id = uuid4()
-    actor = SimpleNamespace(id=actor_id, email="actor@example.test", name="Actor", organization_id=None, is_external=True)
+    actor = SimpleNamespace(
+        id=actor_id,
+        email="actor@example.test",
+        name="Actor",
+        organization_id=None,
+        is_external=True,
+        organization=None,
+    )
     run_user = SimpleNamespace(id=run_user_id, organization_id=None)
     context = AuthorizationContext(
         user_id=run_user_id,
@@ -92,6 +108,7 @@ async def test_runtime_principal_uses_database_authority_not_spoofed_token_claim
     assert principal.engine_solution_id is None
     assert principal.runtime_authority is authority
     assert principal.engine_execution_id == str(execution_id)
+    assert [model for model, _, _ in db.load_options] == [User, User]
     from src.services.authorization.enforce import Caller, allows_permission
 
     caller = Caller(principal, context)

@@ -6,6 +6,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, load_only
 
 from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.core.principal import UserPrincipal
@@ -65,20 +66,34 @@ async def load_runtime_principal(
 async def _principal_from_authority(
     db: AsyncSession, authority: RuntimeAuthority
 ) -> UserPrincipal | None:
-    actor = await db.get(User, authority.acting_user_id, populate_existing=True)
+    actor = await db.get(
+        User,
+        authority.acting_user_id,
+        options=[
+            load_only(
+                User.id,
+                User.email,
+                User.name,
+                User.organization_id,
+                User.is_external,
+                raiseload=True,
+            ),
+            joinedload(User.organization).load_only(Organization.is_provider, raiseload=True),
+        ],
+        populate_existing=True,
+    )
     run_user = (
         actor
         if authority.acting_user_id == authority.run_user.user_id
-        else await db.get(User, authority.run_user.user_id, populate_existing=True)
+        else await db.get(
+            User,
+            authority.run_user.user_id,
+            options=[load_only(User.id, raiseload=True)],
+            populate_existing=True,
+        )
     )
     if actor is None or run_user is None:
         return None
-
-    provider_org = (
-        None
-        if actor.organization_id is None
-        else await db.get(Organization, actor.organization_id, populate_existing=True)
-    )
 
     role_ids, role_names = await get_user_roles(actor.id, db)
     return UserPrincipal(
@@ -93,7 +108,7 @@ async def _principal_from_authority(
         is_superuser=PLATFORM_ADMIN_ROLE_ID in role_ids,
         is_verified=True,
         is_external=actor.is_external,
-        is_provider_org=bool(provider_org and provider_org.is_provider),
+        is_provider_org=bool(actor.organization and actor.organization.is_provider),
         organization_id=authority.organization_id,
         role_ids=role_ids,
         role_names=role_names,
