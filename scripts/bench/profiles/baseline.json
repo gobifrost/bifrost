@@ -12,6 +12,7 @@
   ],
   "sequential": 10,
   "burst": 10,
+  "burst_rounds": 3,
   "timeout_s": 300,
   "settle_s": 20,
   "idle_s": 120,

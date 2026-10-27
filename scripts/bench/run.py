@@ -144,6 +144,8 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
     print(f"Shaping the stack for '{profile_name}' ...", flush=True)
     cluster.apply_profile(profile)
     apply_bench_resources(cluster)
+    cluster.restart_api()
+    time.sleep(profile["settle_s"])
     current = Run(cluster, profile_name, profile, backend, out)
     current.snapshot("fresh")
     print("Seeding (idempotent) ...", flush=True)
@@ -159,8 +161,9 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
         for name in classes:
             print(f"Pass {pass_number}: {name} ...", flush=True)
             records = current.driver("run_class", {
-                "name": name, "sequential": profile["sequential"], "burst": profile["burst"], "timeout_s": profile["timeout_s"],
-            }, timeout_s=profile["timeout_s"] * (profile["sequential"] + 2))
+                "name": name, "sequential": profile["sequential"], "burst": profile["burst"],
+                "burst_rounds": profile["burst_rounds"], "timeout_s": profile["timeout_s"],
+            }, timeout_s=profile["timeout_s"] * (profile["sequential"] + profile["burst_rounds"] + 1))
             current.result["classes"].append({
                 "name": name,
                 "pass": pass_number,

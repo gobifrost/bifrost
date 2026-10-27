@@ -267,7 +267,7 @@ async def _run_agent(http: httpx.AsyncClient, agent_name: str, timeout_s: int) -
         await asyncio.sleep(0.25)
 
 
-async def run_class(name: str, sequential: int, burst: int, timeout_s: int) -> dict:
+async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burst_rounds: int = 1) -> dict:
     http = await client()
     try:
         workflow_id = (await _workflow_ids(http))[WORKFLOW_CLASSES[name]] if name in WORKFLOW_CLASSES else ""
@@ -283,7 +283,9 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int) -> d
                 return _run_agent(http, agent_name, timeout_s)
 
         sequential_records = [await one() for _ in range(sequential)]
-        burst_records = list(await asyncio.gather(*(one() for _ in range(burst))))
+        burst_records = []
+        for _ in range(burst_rounds):
+            burst_records += await asyncio.gather(*(one() for _ in range(burst)))
         if name in WORKFLOW_CLASSES:
             # The detail route clears created_at once a run starts; the list
             # route keeps the platform's own acceptance time.

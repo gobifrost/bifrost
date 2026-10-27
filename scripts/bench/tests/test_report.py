@@ -21,7 +21,7 @@ RESULT = {
     "profile_name": "baseline",
     "backend": "fake",
     "api_pod_changes": 0,
-    "profile": {"worker_replicas": 1, "env": {"MALLOC_ARENA_MAX": "2"}, "thp_emulation": False, "sequential": 2, "burst": 2},
+    "profile": {"worker_replicas": 1, "env": {"MALLOC_ARENA_MAX": "2"}, "thp_emulation": False, "sequential": 2, "burst": 2, "burst_rounds": 1},
     "classes": [
         {"name": "wf-noop", "pass": 1, "sequential": _OK, "burst": _OK},
         {"name": "agent-codemode", "pass": 1, "sequential": _OK, "burst": _BAD},

@@ -57,7 +57,7 @@ def render(result: dict) -> str:
         f"- Build: git `{result['git_sha']}`, image `{result['image_id']}`",
         f"- Topology: 1 API replica, {profile['worker_replicas']} worker replica(s), no scheduler",
         f"- Allocator env: `{profile['env']}`; THP emulation: {profile['thp_emulation']}",
-        f"- Classes: {profile['sequential']} sequential + burst of {profile['burst']} per class, two passes",
+        f"- Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes",
         f"- API pod restarts during run: {result['api_pod_changes']}",
         "",
         "## Execution times",
