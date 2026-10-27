@@ -42,7 +42,7 @@ def timings(records: list[dict]) -> dict:
     failed: list[dict] = []
     for record in records:
         status = str(record.get("status", "")).lower()
-        if status not in SUCCESS_STATUSES or not record.get("started_at") or not record.get("completed_at"):
+        if status not in SUCCESS_STATUSES or not all(record.get(k) for k in ("created_at", "started_at", "completed_at")):
             failed.append({"id": record.get("id"), "status": record.get("status"), "error": record.get("error")})
             continue
         created = _parse(record["created_at"])
