@@ -28,15 +28,20 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
 ## 2. What we're doing
 
 1. **`agent.run` executes on workers again: autonomous runs, CodeMode and chat
-   turns.** Each run executes in a **short-lived child process** that the worker
-   launcher starts for the run and that exits when the run ends.
-2. **Idle worker memory stays where it is** (75–78 MiB per worker Job in the
-   baseline). The launcher never imports the agent runtime; only the child
-   does, and only while it runs.
-3. **Summaries stay in the API** (`agent.summarize`), Jack's "simple AI
+   turns.** Each run executes in a **child forked from a warm agent template**
+   on the worker, and the child exits when the run ends (Jack, 2026-10-27).
+2. **The agent template exists only while agents are active.** It starts on
+   the first agent dispatch (or when a user opens a chat) and retires after a
+   quiet period. With no recent agent activity, worker idle memory stays where
+   it is (75–78 MiB per worker Job in the baseline).
+3. **Each run costs only its own memory.** Forked children share the template's
+   imports copy-on-write. A run's footprint is what it allocates and touches,
+   measured, not a fixed 128 or 256 MiB reservation (Jack: "I don't want to eat
+   128 MB for every agent thing that runs").
+4. **Summaries stay in the API** (`agent.summarize`), Jack's "simple AI
    request" exception. `agent.summarize_backfill` stays unless the benchmark
    shows it is heavy.
-4. **Proven by the benchmark:** the same Phase 1 profile, before and after.
+5. **Proven by the benchmark:** the same Phase 1 profile, before and after.
 
 ## 3. What we're not doing
 
@@ -70,13 +75,25 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
   Routes are kept until inventory proves them absent, so a lost reply never
   causes a second launch.
 - **Launcher side:** the `agent_run` action applies the memory-pressure check,
-  then spawns `python -m src.jobs.agent_run_child <run_id>` in its own process
-  group, and reports `agent_exit` (return code) with inventory kind
-  `agent_run`. Unlike platform-job processes, agent children are **memory-sampled
+  ensures the agent template is running, forks a child from it for the run,
+  and reports `agent_exit` (return code) with inventory kind `agent_run`. Unlike platform-job processes, agent children are **memory-sampled
   and eligible for the dangerous-pressure kill**, like workflow children
   (`launcher.py:526-576`) *(my call)*.
-- **Child:** a new `src/jobs/agent_run_child.py` initialises the database and
-  runs the existing `AgentRunConsumer.process_message(body)` for that run. As
+- **Agent template:** a second template process next to the launcher's existing
+  workflow template (`services/execution/template_process.py`), built the same
+  way: credentials handled as the workflow template does today, the agent
+  runtime imported (`jobs/consumers/agent_run.py`, Pydantic AI, providers,
+  CodeMode, and the REST bridge's `src.main.app` if a run can reach it), no
+  event loop, threads or connections open at fork time, and `gc.freeze()`
+  called just before it starts accepting forks so the collector doesn't copy
+  shared pages into every child.
+- **Template lifecycle:** started lazily by the first `agent_run` request, or by
+  a pre-warm request when a user opens a chat. It retires after
+  `agent_template_idle_seconds` with no agent child alive (initial value set
+  from the benchmark), and an active conversation keeps it warm. Package
+  installs recycle it with the workflow template.
+- **Child:** forked from the template. It initialises its database and Redis
+  connections after the fork and runs the existing `AgentRunConsumer.process_message(body)` for that run. As
   today, the consumer deletes the dispatch at the start, in the transaction that
   locks the `AgentRun` row (`jobs/consumers/agent_run.py:205-221`). The run's
   outcome is the `AgentRun.status` update, which applies only while the run is
@@ -116,12 +133,16 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
 
 ### 4.4 Memory, capacity and scaling
 
-- **Measured child cost:** about 1.9 s and 170 MiB to import the agent runtime
-  on the production image. That excludes `src.main.app`, which the REST bridge
-  may load. The builder measures the full child peak with the benchmark.
+- **Template cost:** about 170 MiB resident and 1.9 s to build (measured on
+  the production image, excluding `src.main.app`), paid once per worker while
+  agents are active, and released when the template retires.
+- **Per-run cost:** the forked child's **unique** memory (its private, dirtied
+  pages, measured from `smaps_rollup`), not its resident size, which counts the
+  shared template pages. The benchmark records each class's peak child unique
+  memory.
 - **Memory request:** agent dispatches request 32 MiB today
-  (`services/memory_requests.py:31`), sized for the API's shared process. It
-  becomes the measured child peak plus margin.
+  (`services/memory_requests.py:31`). It becomes the measured per-run unique
+  peak plus margin, so admission reserves only what a run really adds.
 - **Scaling:** the Job controller today counts only waiting `workflow.execute`
   dispatches, and capacity only on workers that support it
   (`services/worker_pool/controller.py:337-370`, `services/work_dispatch.py:219-241`).
@@ -131,12 +152,10 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
 
 ### 4.5 Start-up cost and chat
 
-Every run pays child start-up, about 2 s, and so does **every chat turn**.
-That's small next to multi-second model turns, but a user sees it on each
-chat message. The one allowed optimisation is **drain-then-exit**: a child
-that finishes a run takes the next agent run already claimed for that worker,
-and exits as soon as none is waiting. It never lingers idle. (Chat-specific
-latency is open question 1 in section 6.)
+A fork from a warm template starts in milliseconds. Only the first agent run
+after a quiet period pays template build (about 2 s). For chat, opening the chat
+sends a pre-warm so the first message normally finds the template ready. Fresh
+per-run children (2 s on every chat message) were rejected by Jack as too slow.
 
 ## 5. Acceptance
 
@@ -146,23 +165,29 @@ Run `./test.sh bench run --profile baseline` with both backends, before
 | Check | Pass condition |
 |---|---|
 | API memory | Settled API memory after the agent classes falls by at least the agent-runtime import cost (about 30 MiB in the fake-model baseline), and does not grow during agent bursts |
-| Worker idle | Worker working set at idle stays within ±5 MiB of the baseline (75–78 MiB) |
-| Release | After each agent class, worker working set returns to idle (no child left) |
-| Agent latency | Sequential p50 rises by no more than the measured child start-up; burst p50 for `agent-tools` and `agent-codemode` improves |
+| Worker idle | After the template retires, worker working set stays within ±5 MiB of the baseline (75–78 MiB) |
+| Release | No agent child outlives its run; the template retires after its idle period |
+| Per-run memory | Peak unique memory per agent child is reported per class. Target: tens of MiB for the bench classes, nowhere near a 128 MiB fixed cost. A higher number is a finding to explain before merge |
+| Agent latency | With the template warm, sequential p50 for every agent class is no worse than the baseline; burst p50 for `agent-tools` and `agent-codemode` improves; a cold start costs no more than the template build |
+| Chat latency | New class `agent-chat-session`: first message with the template pre-warmed, and a follow-up message, are each no slower than the baseline `agent-chat` p50 plus 100 ms |
 | Workflow classes | No regression beyond run-to-run noise |
 | Correctness | Every agent run completes; tools and CodeMode nested calls execute; the abnormal-exit, handoff-adoption and re-queue-race tests pass; existing agent and chat E2E tests pass |
 
-## 6. Open question for Jack
+## 6. Decisions (Jack, 2026-10-27)
 
-1. **Chat start-up latency.** Moving `agent.run` moves chat, so each chat
-   message would pay about 2 s of child start-up on top of the model's time.
-   Accept that for now (and measure it), or keep chat turns in the API under a
-   separate handler (the dual path this design otherwise avoids)?
+- Chat moves with agent runs, using the forked-template model. Fresh per-run
+  children were too slow; keeping chat in the API was not chosen.
+- Fork from a warm template is the preferred model "for most jobs", as long as
+  RAM doesn't grow much. Applying it to platform jobs is a later change.
+- No fixed 128 MiB-per-run cost: per-run memory is measured and admitted at
+  its measured size.
 
 ## 7. Left to the builder
 
 - Names of the launcher action, events and inventory kind (suggested:
-  `agent_run`, `agent_exit`).
+  `agent_run`, `agent_exit`, `agent_prewarm`).
+- The benchmark additions this needs: per-class peak child unique memory on
+  workers, and the `agent-chat-session` class.
 - Test placement follows the existing remote-runner, thin-launcher and agent
   boundary tests (`tests/unit/dev/test_thin_launcher.py`,
   `tests/e2e/platform/test_remote_runner_lifecycle.py`,
