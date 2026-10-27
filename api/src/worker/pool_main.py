@@ -151,8 +151,13 @@ class PoolWorker:
         self._package_consumer = None
         self.package_generation = 0
         self._service_claim_loop = None
-        # Measured once the executor is ready (src.services.memory_requests).
+        # Measured during executor startup (src.services.memory_requests).
         self.budget: MemoryBudget | None = None
+        # A measured budget is not usable capacity until executor startup has
+        # completed. Remote executors can await inventory reconciliation after
+        # measuring it, while the controller treats a published budget as a
+        # ready replacement that may let an old worker drain.
+        self._claim_ready = False
         # The memory gate every claim goes through (src.worker.admission):
         # workflow runs are held by execution id until their child ends,
         # other work by dispatch, platform job or service attempt id.
@@ -303,6 +308,7 @@ class PoolWorker:
         heartbeat = asyncio.create_task(self._heartbeat_loop(), name="pool-heartbeat")
         try:
             await self._start_executor()
+            self._claim_ready = True
         except BaseException:
             heartbeat.cancel()
             raise
@@ -694,7 +700,11 @@ class PoolWorker:
                     memory_pressured=(
                         self.admission is not None and self.admission.pressured()
                     ),
-                    memory_budget_bytes=None if self.budget is None else self.budget.budget_bytes,
+                    memory_budget_bytes=(
+                        self.budget.budget_bytes
+                        if self._claim_ready and self.budget is not None
+                        else None
+                    ),
                     memory_reserved_bytes=(
                         0 if self.admission is None else self.admission.held_bytes()
                     ),

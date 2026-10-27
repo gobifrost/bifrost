@@ -390,6 +390,65 @@ async def test_an_executor_declared_lost_stops_its_runs_without_a_grace(monkeypa
     pool.drain_active_executions.assert_awaited_once_with(0.0)
 
 
+async def test_heartbeat_withholds_a_measured_budget_until_executor_startup_finishes(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A remote inventory reconcile may await after measuring the budget.
+
+    The controller treats a non-null heartbeat budget as replacement capacity,
+    so liveness must continue without publishing that capacity until startup
+    has finished and the claim loop can actually begin.
+    """
+    worker = PoolWorker(incarnation_id=uuid4(), hosts_remote_work=False)
+    measured = asyncio.Event()
+    release_startup = asyncio.Event()
+    first_heartbeat = asyncio.Event()
+    published_ready_budget = asyncio.Event()
+    heartbeats: list[int | None] = []
+
+    async def start_executor() -> None:
+        worker.budget = MemoryBudget(limit_bytes=4 * GIB, baseline_bytes=0, threshold=0.5)
+        measured.set()
+        await release_startup.wait()
+
+    async def heartbeat_worker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        budget = kwargs["memory_budget_bytes"]
+        heartbeats.append(budget)
+        first_heartbeat.set()
+        if budget is not None:
+            published_ready_budget.set()
+        return "starting"
+
+    async def claim_loop() -> None:
+        await published_ready_budget.wait()
+        worker._stop.set()
+
+    monkeypatch.setattr(worker, "_initialize_runtime", AsyncMock(return_value=True))
+    monkeypatch.setattr(worker, "_start_executor", start_executor)
+    monkeypatch.setattr(worker, "_claim_loop", claim_loop)
+    monkeypatch.setattr(worker, "_wake_listener", AsyncMock())
+    monkeypatch.setattr(worker, "_drain", AsyncMock())
+    monkeypatch.setattr(worker, "_retire", AsyncMock())
+    monkeypatch.setattr(worker, "_close_runtime", AsyncMock())
+    monkeypatch.setattr(pool_main, "heartbeat_worker", heartbeat_worker)
+    monkeypatch.setattr(pool_main, "remove_scheduler_replica", AsyncMock())
+    monkeypatch.setattr(pool_main, "replica_heartbeat_loop", AsyncMock())
+    monkeypatch.setattr(pool_main, "HEARTBEAT_SECONDS", 0.01)
+
+    running = asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(measured.wait(), timeout=1)
+        await asyncio.wait_for(first_heartbeat.wait(), timeout=1)
+        assert heartbeats and all(budget is None for budget in heartbeats)
+
+        release_startup.set()
+        await asyncio.wait_for(running, timeout=1)
+        assert published_ready_budget.is_set()
+        assert heartbeats[-1] == worker.budget.budget_bytes  # type: ignore[union-attr]
+    finally:
+        if not running.done():
+            running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+
+
 async def test_a_database_error_while_claiming_does_not_end_the_executor(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """A failover or dropped connection must not crash the executor and fail
     its runs: the claim loop backs off and looks again."""
