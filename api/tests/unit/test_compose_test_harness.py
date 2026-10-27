@@ -236,7 +236,7 @@ def test_state_reset_reloads_the_mounted_scheduler_fixture_server():
     assert reset_state.index(fixture_start) < reset_state.index(executor_start)
 
 
-def test_state_reset_recreates_application_containers_after_data_reset():
+def test_state_reset_recreates_application_containers_and_removes_anonymous_volumes():
     """A fresh DB/object-store generation cannot reuse an old writable worktree.
 
     GitHubSyncService caches its workspace under ``/tmp/git`` in each
@@ -244,12 +244,13 @@ def test_state_reset_recreates_application_containers_after_data_reset():
     starting the worker leaves a stale ``.git`` directory behind, which can no
     longer be restored from the new object-store generation. Recreate only the
     application containers; postgres, redis, fixture volumes, and the test
-    image remain long-lived.
+    image remain long-lived. Anonymous dependency volumes must be removed with
+    the containers so repeated resets do not fill the host disk.
     """
     script = _find_repo_file("test.sh").read_text()
     reset_state = script.split("reset_state() {", 1)[1].split("\n}", 1)[0]
 
-    recreate = 'docker compose -f "$COMPOSE_FILE" rm -sf api worker scheduler'
+    recreate = 'docker compose -f "$COMPOSE_FILE" rm -sfv api worker scheduler'
     executor_up = 'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build \\\n        api worker scheduler'
 
     assert recreate in reset_state

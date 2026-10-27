@@ -184,7 +184,9 @@ async def test_pending_cancellation_commits_before_publishing_queue_snapshot(
         organization_id=None,
         is_superuser=True,
     )
+    execution_id = uuid4()
     execution = ExecutionModel(
+        id=execution_id,
         workflow_name="queue-cancellation",
         status=ExecutionStatus.PENDING,
         executed_by_name="Queue Canceller",
@@ -194,7 +196,7 @@ async def test_pending_cancellation_commits_before_publishing_queue_snapshot(
     db_session.add(
         WorkDispatch(
             family="workflow_execution",
-            subject_id=execution.id,
+            subject_id=execution_id,
             handler="workflow.execute",
             handler_version=1,
             message={},
@@ -204,33 +206,46 @@ async def test_pending_cancellation_commits_before_publishing_queue_snapshot(
     )
     await db_session.commit()
 
-    async def snapshot() -> None:
-        async with async_session_factory() as observer:
-            persisted = await observer.get(ExecutionModel, execution.id)
-            assert persisted is not None
-            assert persisted.status is ExecutionStatus.CANCELLED
-            assert await get_queued_executions(observer) == []
+    try:
+        async def snapshot() -> None:
+            async with async_session_factory() as observer:
+                persisted = await observer.get(ExecutionModel, execution_id)
+                assert persisted is not None
+                assert persisted.status is ExecutionStatus.CANCELLED
+                assert await get_queued_executions(observer) == []
 
-    monkeypatch.setattr(
-        executions_router,
-        "load_caller",
-        AsyncMock(return_value=Caller(principal, None)),
-    )
-    monkeypatch.setattr(executions_router, "execution_cancel_allowed", lambda *_: True)
-    monkeypatch.setattr(
-        executions_router,
-        "execution_read_access",
-        lambda *_: ExecutionReadAccess(visible=True, diagnostics=False),
-    )
-    monkeypatch.setattr(
-        "src.services.execution.queue_tracker.publish_queue_positions",
-        snapshot,
-    )
-    monkeypatch.setattr(executions_router, "publish_execution_update", AsyncMock())
-    monkeypatch.setattr(executions_router, "publish_history_update", AsyncMock())
+        monkeypatch.setattr(
+            executions_router,
+            "load_caller",
+            AsyncMock(return_value=Caller(principal, None)),
+        )
+        monkeypatch.setattr(executions_router, "execution_cancel_allowed", lambda *_: True)
+        monkeypatch.setattr(
+            executions_router,
+            "execution_read_access",
+            lambda *_: ExecutionReadAccess(visible=True, diagnostics=False),
+        )
+        monkeypatch.setattr(
+            "src.services.execution.queue_tracker.publish_queue_positions",
+            snapshot,
+        )
+        monkeypatch.setattr(executions_router, "publish_execution_update", AsyncMock())
+        monkeypatch.setattr(executions_router, "publish_history_update", AsyncMock())
 
-    cancelled, error = await ExecutionReadAdapter(db_session).cancel_execution(execution.id, principal)
+        cancelled, error = await ExecutionReadAdapter(db_session).cancel_execution(execution_id, principal)
 
-    assert error is None
-    assert cancelled is not None
-    assert cancelled.status == ExecutionStatus.CANCELLED.value
+        assert error is None
+        assert cancelled is not None
+        assert cancelled.status == ExecutionStatus.CANCELLED.value
+    finally:
+        # Cancellation commits by design; a session rollback cannot remove its
+        # fixtures. Release locks before cleaning the committed rows explicitly.
+        await db_session.rollback()
+        async with async_session_factory() as cleanup:
+            await cleanup.execute(
+                WorkDispatch.__table__.delete().where(WorkDispatch.subject_id == execution_id)
+            )
+            await cleanup.execute(
+                ExecutionModel.__table__.delete().where(ExecutionModel.id == execution_id)
+            )
+            await cleanup.commit()
