@@ -321,7 +321,6 @@ class ExecutionReadAdapter:
             except Exception:
                 logger.warning(
                     "Could not publish queue positions after cancellation",
-                    extra={"execution_id": str(execution_id)},
                     exc_info=True,
                 )
 
