@@ -278,6 +278,39 @@ run.
 | U1 | Simulated UI user: page loads, list/search calls, notification WebSocket | API REST and WebSocket load from humans |
 | H1 | Webhook/event-triggered workflow | Event ingress path |
 
+### 7.2a Execution-time classes (Jack, 2026-10-27)
+
+Every run reports execution times for a fixed set of **classes**: one workflow
+or agent per class, run on its own so its numbers aren't mixed with others.
+For each class: N sequential runs on an idle stack (latency floor), then a
+concurrent burst (latency under contention), giving queue wait, run time and
+end-to-end p50/p95/max. The memory of the API and workers is snapshotted after
+each class, so the same run also attributes memory growth to a class.
+
+| Class | Unit | What its time means |
+|---|---|---|
+| `wf-noop` | W1 | Pure platform overhead: dispatch, claim, result |
+| `wf-sdk` | W2 (5 config reads, 1 table query, 1 table insert) | SDK round trips through the API |
+| `wf-wait` | W3 (2 s simulated external wait) | Slot occupancy, not CPU |
+| `wf-cpu` | W4 (~20 MB JSON transform) | Worker CPU and memory |
+| `wf-large` | W5 (~5 MB result) | Result transfer and storage |
+| `agent-chat` | One model turn, no tools | The "simple AI request" path |
+| `agent-tools` | Direct mode, three workflow-tool calls | Agent loop plus tool dispatch |
+| `agent-codemode` | Automatic mode, same tools through CodeMode | CodeMode sandbox in the agent's process |
+
+**Model backends.** Agent classes run against either:
+- `fake`: the in-cluster deterministic OpenAI-compatible model. Exactly
+  repeatable; it isolates platform time from model time.
+- `deepseek`: real DeepSeek through its OpenAI-compatible API, with the key
+  read from Jack's personal 1Password vault at run time and never written to
+  disk or to the repository. Model latency varies, so these numbers are
+  reported with the model's own time separated where the run records it.
+
+**Reproducibility.** A run is fully described by a checked-in profile file
+(seed counts, classes, N, concurrency, backend) plus the build under test. The
+result JSON records both, so `./test.sh bench run --profile <name>` on another
+day or build produces a directly comparable result.
+
 ### 7.3 Workload mixes
 
 A mix gives each unit a share of the arrival rate, plus a fixed number of
@@ -591,7 +624,8 @@ the code exists.
 
 | Phase | Deliverable | Exit check |
 |---|---|---|
-| 1 | **API memory attribution report**: one table that explains production's ~760 MiB API, row by row, each row marked *justified*, *fixable* (with an estimated saving), or *leak*. Plus the per-tenant idle floor. The `./test.sh bench attribution` command reproduces it. | Rows sum to the locally measured working set within 10%, and the reconciliation against production names every remaining gap. Two runs agree within ±20 MiB. |
+| 1 | **Baseline report** for today's build: execution times per class (section 7.2a) with the fake model and with DeepSeek; API and worker memory after each class (the per-class attribution); worker idle memory; the per-tenant idle floor. `./test.sh bench run --profile baseline` reproduces it. | Two runs on the same build agree within ±10% on class p50 times (fake model) and ±20 MiB on settled API memory. |
+| 1b | **Agent runs back on the workers** (Jack, 2026-10-27): autonomous agent runs, including CodeMode, execute in short-lived worker child processes; summaries stay in the API. Proven with the Phase 1 profile, before and after. | The API's settled memory after the agent classes falls; worker idle memory stays within a few MiB of the baseline; each worker returns to idle after every run; agent class times don't regress beyond the stated bound. |
 | 2 | **Capacity cards** for envelopes S and M × `msp-typical` and `sdk-heavy` (Kind); the **H1 verdict** (pre-#1066 against `main`): did the bottleneck move to the API, with numbers; the **scaling curve**, i.e. what +1 API replica, +1 worker replica and +1 worker Job each buy. | Every card's sustained capacity reproduces within ±5%; the first bottleneck is named for each. |
 | 3 | **Customer-quotable cards** from a disposable DOKS cluster + Spaces (S, M, L); the **storage model** (bytes per execution, monthly growth at a given rate and retention); the soak result (no live-memory slope). | The cloud and Kind cards differ by a stated, explained factor; the soak passes. |
 
@@ -614,11 +648,13 @@ profiling run filled this disk.
 
 Each phase stands on its own and answers questions before the next starts.
 
-1. **Phase 1, attribution (answers Q1, Q2):** memory probe; bench overlay
-   (no scheduler; the existing Kind Postgres); seeder with `small` and `prod-today`
-   profiles plus the count-collection script; minimal driver for W2, W5, W6,
-   A1, U1; fake LLM; E0 and E1; `result.json` + report. **Target: the
-   reconciled 760 MiB table.**
+1. **Phase 1, baseline (answers Q1, Q2 and class execution times):** bench
+   profile on the existing Kind harness (no scheduler, one API replica,
+   production allocator settings); external memory reads (`smaps` +
+   kubelet stats, no product change); seeder with the `prod-today` workflow
+   counts; the execution-time classes; fake model and DeepSeek backends;
+   `result.json` + report. Then **1b**: agent runs back on the workers,
+   measured with the same profile.
 2. **Phase 2, capacity (Q3, Q5):** all workload units and mixes, the fake
    external API, the open-loop driver at scale, E2, E4 (starting with H1), E5,
    capacity cards.
