@@ -25,6 +25,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.device_auth import decide_device_login
 from shared.models import BrowserImpersonationTokenResponse
 from src.core.cache import get_shared_redis
 from src.core.cache.keys import (
@@ -1912,10 +1913,9 @@ async def authorize_device(
     current_user: CurrentActiveUser,
 ) -> DeviceAuthorizeResponse:
     """
-    Authorize a device code (user approves CLI access).
+    Approve or deny a CLI device login after explicit user confirmation.
 
-    This endpoint is called by the web UI when a logged-in user enters the
-    user_code and approves CLI access. The CLI will then receive tokens on
+    The first decision is final. The CLI receives tokens or access_denied on
     its next poll to /device/token.
 
     Requires authentication - user must be logged in to authorize a device.
@@ -1930,72 +1930,33 @@ async def authorize_device(
     Raises:
         HTTPException: If user_code is invalid or expired
     """
-    import json
-
     if is_browser_impersonation(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Exit impersonation before authorizing a CLI login",
         )
 
-    r = await get_shared_redis()
-
-    # Look up device_code from user_code (reverse index)
-    device_code = await r.get(device_user_code_index_key(authorize_request.user_code))
-
-    if not device_code:
-        logger.warning(
-            f"Device authorization attempt with invalid user_code: {log_safe(authorize_request.user_code)}",
-            extra={"user_id": str(current_user.user_id)}
-        )
+    decision = await decide_device_login(
+        authorize_request.user_code,
+        str(current_user.user_id),
+        authorize_request.approved,
+    )
+    if decision == "expired":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invalid or expired user code",
         )
-
-    device_code_str = device_code.decode() if isinstance(device_code, bytes) else device_code
-
-    # Get device data
-    device_data_json = await r.get(device_code_key(device_code_str))
-
-    if not device_data_json:
-        logger.warning(
-            f"Device code missing for user_code: {log_safe(authorize_request.user_code)}",
-            extra={"user_id": str(current_user.user_id)}
-        )
+    if decision == "decided":
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invalid or expired user code",
-        )
-
-    # Update device code status to authorized
-    device_data = json.loads(device_data_json)
-    device_data["status"] = "authorized"
-    device_data["user_id"] = str(current_user.user_id)
-
-    # Get remaining TTL and preserve it
-    ttl = await r.ttl(device_code_key(device_code_str))
-    if ttl > 0:
-        await r.setex(
-            device_code_key(device_code_str),
-            ttl,
-            json.dumps(device_data)
-        )
-    else:
-        # Fallback if TTL query fails
-        await r.setex(
-            device_code_key(device_code_str),
-            TTL_DEVICE_CODE,
-            json.dumps(device_data)
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This CLI login has already been approved or denied. Start a new login from your CLI.",
         )
 
     logger.info(
-        f"Device authorized by user: {current_user.email}",
-        extra={
-            "user_id": str(current_user.user_id),
-            "user_code": log_safe(authorize_request.user_code),
-            "device_code": log_safe(device_code_str[:8]) + "...",
-        }
+        "CLI device login %s by user: %s",
+        "approved" if authorize_request.approved else "denied",
+        log_safe(current_user.email),
+        extra={"user_id": str(current_user.user_id)},
     )
 
     return DeviceAuthorizeResponse(success=True)

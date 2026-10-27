@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, EmailStr
 
+from shared.models import DeviceAuthorizeRequest as DeviceAuthorizeRequest
+
 if TYPE_CHECKING:
     pass
 
@@ -144,8 +146,3 @@ class DeviceTokenResponse(BaseModel):
 class DeviceTokenErrorResponse(BaseModel):
     """Error response for device token request."""
     error: str  # "authorization_pending", "expired_token", "access_denied"
-
-
-class DeviceAuthorizeRequest(BaseModel):
-    """Request to authorize a device using user code."""
-    user_code: str

@@ -395,7 +395,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # File move request/response DTOs for `bifrost files move` (2026-10-20).
     # ADDITIVE: new CLI command and routes; existing DTOs are unchanged.
-    "8ec6c3f1511f2f6c6ceb61841acd09ce0ee43df406afd784667d4e38ab78ceb3"
+    # DeviceAuthorizeRequest is shared and gains optional `approved` (2026-10-27).
+    # ADDITIVE: existing browsers omit it and retain explicit approval behavior.
+    "a03b4ec721f9173bd2e5b904c66f4b655ed95469d99d8bd320ead06e2edf0eea"
 )
 
 

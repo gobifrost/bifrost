@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 from uuid import uuid4
 
 import httpx
+
+from bifrost._device_auth import device_login_prompt
 from packaging.version import InvalidVersion, Version
 
 # Import credentials module directly (it's standalone)
@@ -371,9 +373,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             deadline = time.monotonic() + data["expires_in"]
 
             # Step 2: Display instructions
-            full_url = f"{api_url}{verification_url}"
-            print(f"\nOpening browser to {full_url}")
-            print(f"Enter this code: {user_code}\n")
+            full_url = device_login_prompt(api_url, verification_url, user_code)
 
             # Step 3: Open browser
             if auto_open:

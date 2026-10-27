@@ -771,10 +771,9 @@ export interface paths {
         put?: never;
         /**
          * Authorize Device
-         * @description Authorize a device code (user approves CLI access).
+         * @description Approve or deny a CLI device login after explicit user confirmation.
          *
-         *     This endpoint is called by the web UI when a logged-in user enters the
-         *     user_code and approves CLI access. The CLI will then receive tokens on
+         *     The first decision is final. The CLI receives tokens or access_denied on
          *     its next poll to /device/token.
          *
          *     Requires authentication - user must be logged in to authorize a device.
@@ -16443,11 +16442,16 @@ export interface components {
         };
         /**
          * DeviceAuthorizeRequest
-         * @description Request to authorize a device using user code.
+         * @description An explicit approval or denial of a CLI device login.
          */
         DeviceAuthorizeRequest: {
             /** User Code */
             user_code: string;
+            /**
+             * Approved
+             * @default true
+             */
+            approved: boolean;
         };
         /**
          * DeviceAuthorizeResponse

@@ -9,6 +9,29 @@ import httpx
 
 
 @pytest.mark.e2e
+def test_denied_device_login_is_final(e2e_client: httpx.Client, org1_user):
+    code = e2e_client.post("/auth/device/code").json()
+    decision = e2e_client.post(
+        "/auth/device/authorize",
+        json={"user_code": code["user_code"], "approved": False},
+        headers=org1_user.headers,
+    )
+    assert decision.status_code == 200
+    # A second browser tab cannot reverse the first decision.
+    repeated = e2e_client.post(
+        "/auth/device/authorize",
+        json={"user_code": code["user_code"], "approved": True},
+        headers=org1_user.headers,
+    )
+    assert repeated.status_code == 409
+    token = e2e_client.post("/auth/device/token", json={"device_code": code["device_code"]})
+    assert token.json() == {"error": "access_denied"}
+    assert e2e_client.post(
+        "/auth/device/token", json={"device_code": code["device_code"]},
+    ).json() == {"error": "expired_token"}
+
+
+@pytest.mark.e2e
 def test_device_flow_complete_success(
     e2e_client: httpx.Client,
     org1_user,
@@ -53,6 +76,12 @@ def test_device_flow_complete_success(
     assert response.status_code == 200
     auth_data = response.json()
     assert auth_data["success"] is True
+    repeated = e2e_client.post(
+        "/auth/device/authorize",
+        json={"user_code": user_code, "approved": False},
+        headers=org1_user.headers,
+    )
+    assert repeated.status_code == 409
 
     # Step 4: Poll again after authorization (should get tokens)
     response = e2e_client.post(
