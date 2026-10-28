@@ -39,23 +39,6 @@ def test_a_run_reserves_its_request_or_its_growth_when_larger() -> None:
     assert gate.held_bytes() == 64 * MIB + 300 * MIB + 32 * MIB
 
 
-def test_memory_the_executor_takes_on_later_is_reserved_like_work() -> None:
-    own = [0]
-    gate = Admission(
-        budget_bytes=1000 * MIB,
-        under_pressure=lambda: False,
-        running_workflow_ids=set,
-        workflow_growth=dict,
-        own_bytes=lambda: own[0],
-    )
-    gate.hold("agent", 96 * MIB)
-    assert gate.free_bytes() == 904 * MIB
-
-    own[0] = 224 * MIB
-    assert gate.held_bytes() == 320 * MIB
-    assert gate.free_bytes() == 680 * MIB
-
-
 def test_a_workflow_run_is_held_while_routed_and_until_its_child_ends() -> None:
     children: set[str] = set()
     gate = _gate(running=children)

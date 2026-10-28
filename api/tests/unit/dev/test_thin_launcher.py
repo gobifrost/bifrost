@@ -26,6 +26,10 @@ from src.worker.remote.identity import LauncherIdentity
 from src.worker.remote.protocol import ControlEnvelope
 
 
+def _live_template() -> Mock:
+    return Mock(is_alive=Mock(return_value=True), collect_child_exit_statuses=Mock(return_value={}))
+
+
 def _launcher(socket):
     launcher = Launcher(
         socket,
@@ -78,6 +82,7 @@ async def test_template_crash_replacement_retains_live_child_handles() -> None:
     launcher = _launcher(Mock())
     launcher.template = Mock(is_alive=Mock(return_value=False))
     launcher.template.start.side_effect = lambda: setattr(launcher.template.is_alive, "return_value", True)
+    launcher.agent_template = _live_template()
     child = Child("route", "execution", 123, Mock(), Mock(), 0, 0)
     child.sampler = Mock(last_process_rss_bytes=1, peak_cpu_cores=0)
     launcher.children[child.route_id] = child
@@ -147,6 +152,7 @@ async def test_fatal_launcher_exits_instead_of_reconnecting() -> None:
 async def test_monitor_waits_for_intentional_template_replacement() -> None:
     launcher = _launcher(Mock())
     launcher.template = Mock(is_alive=Mock(return_value=False))
+    launcher.agent_template = _live_template()
     sampled = asyncio.Event()
     entered = asyncio.Event()
 
@@ -416,7 +422,6 @@ class _FakeTemplate:
         self.alive = False
         self.starts = 0
         self.shutdowns = 0
-        self.idle_seconds = 300.0
         self.forks: list[tuple[str, Any, Any]] = []
 
     def start(self) -> None:
@@ -443,6 +448,7 @@ class _FakeTemplate:
 def _agent_launcher(socket) -> Launcher:
     launcher = _launcher(socket)
     launcher.pressure_threshold, launcher.dangerous_memory_ratio = .85, .95
+    launcher.agent_template.start()
     return launcher
 
 
@@ -485,19 +491,24 @@ def agent_templates():
 
 
 @pytest.mark.asyncio
-async def test_agent_prewarm_starts_the_agent_template_once(agent_templates) -> None:
-    socket = Mock(send=AsyncMock())
-    launcher = _agent_launcher(socket)
+async def test_launcher_loads_both_templates_before_measuring_its_baseline(agent_templates) -> None:
+    launcher = _launcher(Mock(send=AsyncMock()))
+    launcher.helper = AsyncMock(return_value={})  # type: ignore[method-assign]
+    loaded_at_baseline: list[bool] = []
 
-    for command_id in ("prewarm-1", "prewarm-2"):
-        await launcher.command(
-            {"id": command_id, "action": "agent_prewarm", "payload": {}}, generation=1,
-        )
+    def sample() -> tuple[int, int]:
+        loaded_at_baseline.append(launcher.template.is_alive() and launcher.agent_template.is_alive())
+        return (10, 100)
 
-    assert [template.profile for template in agent_templates] == ["agent"]
-    assert launcher.agent_template is agent_templates[0]
-    assert agent_templates[0].starts == 1
-    assert [event.get("error_type") for event in _sent(socket)] == [None, None]
+    with patch("src.worker.remote.launcher.effective_memory_sample", side_effect=sample):
+        await launcher.start()
+    try:
+        assert [template.profile for template in agent_templates] == ["agent"]
+        assert launcher.agent_template.starts == 1
+        assert loaded_at_baseline[0] is True
+        assert launcher.baseline_bytes == 10
+    finally:
+        await launcher.stop()
 
 
 @pytest.mark.asyncio
@@ -569,45 +580,20 @@ async def test_terminated_agent_child_reports_the_termination_reason(agent_templ
 
 
 @pytest.mark.asyncio
-async def test_idle_agent_template_retires_and_a_later_run_restarts_it(agent_templates) -> None:
+async def test_monitor_replaces_a_dead_agent_template(agent_templates) -> None:
     socket = Mock(send=AsyncMock())
     launcher = _agent_launcher(socket)
     launcher.template = _FakeTemplate()
     launcher.template.start()
-    await launcher.command({"id": "warm", "action": "agent_prewarm", "payload": {}}, generation=1)
-    retired = launcher.agent_template
-    launcher.agent_active_at = time.monotonic() - retired.idle_seconds - 1
+    launcher.agent_template.alive = False
 
     monitor = asyncio.create_task(launcher.monitor())
     try:
-        await _until(lambda: launcher.agent_template is None)
+        await _until(lambda: launcher.agent_template.alive)
     finally:
         monitor.cancel()
         await asyncio.gather(monitor, return_exceptions=True)
-    assert retired.shutdowns == 1
-
-    await launcher.command(_agent_run_command(), generation=1)
-    assert launcher.agent_template is not retired
-    assert launcher.agent_template.starts == 1
-    assert len(launcher.agent_template.forks) == 1
-
-
-@pytest.mark.asyncio
-async def test_agent_template_stays_warm_while_an_agent_child_is_alive(agent_templates) -> None:
-    socket = Mock(send=AsyncMock())
-    launcher = _agent_launcher(socket)
-    launcher.template = _FakeTemplate()
-    launcher.template.start()
-    await launcher.command(_agent_run_command(), generation=1)
-    launcher.agent_active_at = time.monotonic() - launcher.agent_template.idle_seconds - 1
-
-    monitor = asyncio.create_task(launcher.monitor())
-    try:
-        await _until(lambda: any(event.get("event") == "sample" for event in _sent(socket)))
-    finally:
-        monitor.cancel()
-        await asyncio.gather(monitor, return_exceptions=True)
-    assert launcher.agent_template.alive
+    assert launcher.agent_template.starts == 2
     assert launcher.agent_template.shutdowns == 0
 
 
@@ -651,18 +637,6 @@ async def test_terminate_treats_a_zombie_agent_child_as_exited(agent_templates) 
 
     assert _sent(socket)[-1]["error_type"] == "CancelledError"
     assert launcher.children == {}
-
-
-@pytest.mark.asyncio
-async def test_recycle_does_not_start_an_absent_agent_template(agent_templates) -> None:
-    launcher = _agent_launcher(Mock(send=AsyncMock()))
-    launcher.template = _FakeTemplate()
-    launcher.template.start()
-
-    await launcher.command({"id": "recycle", "action": "recycle", "payload": {}}, generation=1)
-
-    assert launcher.agent_template is None
-    assert agent_templates == []
 
 
 @pytest.mark.asyncio

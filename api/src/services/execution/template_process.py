@@ -410,8 +410,6 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
         from genai_prices.data_snapshot import get_snapshot
         from sqlalchemy.orm import configure_mappers
 
-        from src.config import get_settings
-
         # SQLAlchemy configures mappers on first use, rewriting every mapper
         # object. Doing it once here keeps those pages shared instead of
         # copying them into each child's first query.
@@ -422,13 +420,12 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
         # (``get_model_catalog``) still reloads a changed catalog.
         get_snapshot()
         asyncio.run(_warm_model_catalog())
-        idle_seconds = get_settings().agent_template_idle_seconds
     except Exception as e:
         logger.exception(f"Agent template failed to load dependencies: {e}")
         pipe.send({"status": "error", "error": str(e)})
         pipe.close()
         return None
-    return {"idle_seconds": idle_seconds}
+    return {}
 
 
 async def _warm_model_catalog() -> None:
@@ -778,7 +775,6 @@ class TemplateProcess:
         self.start_method: str | None = None
         self.process_name: str | None = None
         self.frozen_objects: int | None = None
-        self.idle_seconds: float | None = None
 
     def start(self) -> None:
         """
@@ -796,7 +792,6 @@ class TemplateProcess:
             self.start_method = None
             self.process_name = None
             self.frozen_objects = None
-            self.idle_seconds = None
             if self._pipe is not None:
                 with suppress(OSError, BrokenPipeError):
                     self._pipe.close()
@@ -841,7 +836,6 @@ class TemplateProcess:
             self.start_method = msg.get("start_method")
             self.process_name = msg.get("process_name")
             self.frozen_objects = msg.get("frozen_objects")
-            self.idle_seconds = msg.get("idle_seconds")
             logger.info(f"Template process ready (PID={self.pid}, profile={self.profile})")
         except Exception:
             with suppress(OSError, BrokenPipeError):
@@ -857,7 +851,6 @@ class TemplateProcess:
             self.start_method = None
             self.process_name = None
             self.frozen_objects = None
-            self.idle_seconds = None
             raise
 
     def fork(
@@ -991,7 +984,6 @@ class TemplateProcess:
         self.start_method = None
         self.process_name = None
         self.frozen_objects = None
-        self.idle_seconds = None
 
     def is_alive(self) -> bool:
         """Check if the template process is still running."""

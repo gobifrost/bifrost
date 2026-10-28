@@ -296,10 +296,6 @@ class PoolWorker:
         """Whether the executor may claim new work at all (memory aside)."""
         return True
 
-    def _own_bytes(self) -> int:
-        """Memory the executor took on after its budget was measured."""
-        return 0
-
     def _make_workflow_consumer(self):  # type: ignore[no-untyped-def]
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
@@ -421,7 +417,6 @@ class PoolWorker:
                     running_workflow_ids=set,
                     workflow_growth=dict,
                     claims_open=self._claims_open,
-                    own_bytes=self._own_bytes,
                 )
             else:
                 pool = self._workflow_consumer._pool
@@ -431,7 +426,6 @@ class PoolWorker:
                     running_workflow_ids=pool.active_execution_ids,
                     workflow_growth=pool.workflow_growth,
                     claims_open=self._claims_open,
-                    own_bytes=self._own_bytes,
                 )
         if self._workflow_consumer is not None:
             pool = self._workflow_consumer._pool

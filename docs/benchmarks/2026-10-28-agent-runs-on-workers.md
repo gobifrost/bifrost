@@ -74,9 +74,9 @@ includes the child's start-up and the agent loop that used to run in the API.
 - The API no longer imports the agent runtime at start-up (about 30 MiB less
   when fresh). Settled memory moves little because summaries still load the
   model client and catalog in the API.
-- Agent memory is released: each child exits with its run, and the template
-  retires after 5 minutes with no agent run alive, returning the worker to its
-  idle size.
+- Agent memory is released: each child exits with its run. In this version
+  the template retired after 5 minutes with no agent run alive; it is now
+  always loaded (see "Production follow-up").
 - Child peaks are sampled every 0.5 s, so they are a lower bound. The
   `agent.run` memory request is 96 MiB, the measured peak plus margin.
 
@@ -89,3 +89,24 @@ transactions/s in all four runs. DeepSeek's after-run showed idle WAL of
 4.2 KiB/s against 1.8 before, but the fake-model pair showed 1.9 against 2.1;
 the idle database work is addressed separately
 (`docs/superpowers/plans/2026-10-28-idle-database-churn.md`).
+
+## Production follow-up: the agent template is always loaded
+
+After deploying, the first agent runs in production waited about 11 s: the
+template took 10.2 s to build (15:08:14 to 15:08:24 UTC). Built alone on a
+production worker it takes 7.3 s, 7.06 s of it CPU, almost all imports:
+
+| Import (production worker) | Seconds |
+|---|---:|
+| `pydantic_ai.models.openai` (with the OpenAI SDK's types) | 3.0 |
+| `src.jobs.agent_run_child` (database layer, MCP server, file storage) | 1.9 |
+| `src.services.agent_executor` | 1.1 |
+| Model catalog and price snapshot | 0.6 |
+
+The same imports take 5.1 s locally on one CPU, so this is their real cost,
+not a production fault. With a 5-minute idle retire, 52% of the previous
+week's 296 production agent runs would have paid it. The template now starts
+with the worker and stays loaded, like the workflow template: a worker idles
+at about 280–290 MiB instead of about 80 MiB, and no run waits for the
+template.
+

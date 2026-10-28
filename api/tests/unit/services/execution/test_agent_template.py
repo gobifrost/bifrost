@@ -78,7 +78,6 @@ def test_agent_template_is_ready_with_a_frozen_heap(agent_template: TemplateProc
     assert agent_template.is_alive()
     assert agent_template.profile == "agent"
     assert agent_template.frozen_objects is not None and agent_template.frozen_objects > 0
-    assert agent_template.idle_seconds == 300
 
 
 def test_agent_template_preloads_shared_state_without_loading_the_api_app() -> None:
@@ -259,12 +258,11 @@ async def test_monitor_reaps_an_agent_child_orphaned_by_its_template(
         _set_child_subreaper(False)
 
 
-def test_workflow_template_does_not_freeze_or_report_an_idle_period() -> None:
+def test_workflow_template_does_not_freeze() -> None:
     template = TemplateProcess()
     template.start()
     try:
         assert template.profile == "workflow"
         assert template.frozen_objects == 0
-        assert template.idle_seconds is None
     finally:
         template.shutdown()

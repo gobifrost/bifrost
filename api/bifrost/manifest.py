@@ -1543,12 +1543,9 @@ def parse_manifest(yaml_str: str) -> Manifest:
     """Parse a YAML string into a Manifest object."""
     if not yaml_str or not yaml_str.strip():
         return Manifest()
+    from bifrost.definition_validation import read_workspace_manifest
 
-    data = yaml.safe_load(yaml_str)
-    if not data or not isinstance(data, dict):
-        return Manifest()
-
-    return Manifest(**data)
+    return read_workspace_manifest(MANIFEST_LEGACY_FILE, yaml_str)
 
 
 def serialize_manifest(manifest: Manifest) -> str:
@@ -1632,16 +1629,16 @@ def parse_manifest_dir(files: dict[str, str]) -> Manifest:
     Missing files are treated as empty.
     """
     merged: dict[str, object] = {}
+    from bifrost.definition_validation import read_workspace_manifest
+
     for key, filename in MANIFEST_FILES.items():
         content = files.get(filename, "")
         if not content or not content.strip():
             continue
-        data = yaml.safe_load(content)
-        if data and isinstance(data, dict):
-            if key == "files":
-                merged[key] = data
-            else:
-                merged[key] = data.get(key)
+        decoded = read_workspace_manifest(filename, content)
+        value = getattr(decoded, key)
+        if value:
+            merged[key] = value
     return Manifest(**merged)  # type: ignore[arg-type]
 
 

@@ -86,6 +86,7 @@ class FakeCluster:
         self.created: list[str] = []
         self.started: list[str] = []
         self.deleted: list[str] = []
+        self.annotated: list[tuple[str, dict[str, str]]] = []
 
     async def get_job(self, name: str) -> dict[str, Any] | None:
         await asyncio.sleep(0)
@@ -117,6 +118,10 @@ class FakeCluster:
         assert self.jobs[name]["metadata"]["uid"] == uid
         del self.jobs[name]
         self.deleted.append(name)
+
+    async def annotate_pod(self, name: str, annotations: dict[str, str]) -> None:
+        await asyncio.sleep(0)
+        self.annotated.append((name, dict(annotations)))
 
 
 async def _delete_policy(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -872,6 +877,48 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
 
     async with db.sessions() as session:
         assert (await session.get(ExecutionWorker, worker_id)).state == "ready"
+
+
+async def test_a_ready_worker_is_evictable_only_while_idle(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The cluster autoscaler may move a worker only while it holds no work;
+    the pod is patched only when that answer changes."""
+    monkeypatch.setattr(controller, "EVICTABLE_AFTER_IDLE_SECONDS", 0.0)
+    cluster = FakeCluster()
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
+    await _accept_pool_run()
+    [worker_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
+    async with db.sessions() as session:
+        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
+    cluster.pods[job_uid] = [{"metadata": {"name": "worker-pod"}}]
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    safe = controller.SAFE_TO_EVICT
+
+    async def reserved(memory: int) -> None:
+        async with db.sessions() as session:
+            await session.execute(
+                update(ExecutionWorker)
+                .where(ExecutionWorker.id == worker_id)
+                .values(memory_reserved_bytes=memory, heartbeat_at=datetime.now(timezone.utc))
+            )
+            await session.commit()
+
+    await reserved(0)
+    await pool.reconcile_worker(worker_id, POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
+    assert cluster.annotated == [("worker-pod", {safe: "true"})]
+
+    await reserved(64 * 2**20)
+    await pool.reconcile_worker(worker_id, POLICY)
+    assert cluster.annotated[-1] == ("worker-pod", {safe: "false"})
+    assert len(cluster.annotated) == 2
+
+
+def test_a_new_worker_pod_starts_not_evictable() -> None:
+    manifest = build_worker_job_manifest(uuid4(), SETTINGS, SPEC, memory_limit_bytes=GIB, sized=False)
+    assert manifest["spec"]["template"]["metadata"]["annotations"] == {
+        controller.SAFE_TO_EVICT: "false"
+    }
 
 
 async def test_reachability_is_measured_by_reaching_the_database(monkeypatch) -> None:  # type: ignore[no-untyped-def]

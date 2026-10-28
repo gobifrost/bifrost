@@ -61,7 +61,6 @@ from src.services.chat_runs import (
     get_chat_state,
     send_chat_message,
 )
-from src.worker.remote.host import schedule_agent_prewarm
 
 logger = logging.getLogger(__name__)
 
@@ -85,13 +84,8 @@ def _chat_file_kind(
 
 @router.get("/model-profiles")
 async def get_model_profiles(db: DbSession, user: CurrentActiveUser) -> ChatModelProfilesResponse:
-    """Return administrator-governed reusable model profiles available in Chat.
-
-    The chat page loads these when it opens, so this also starts warming
-    the launchers' agent templates for its first message.
-    """
+    """Return administrator-governed reusable model profiles available in Chat."""
     del user
-    schedule_agent_prewarm()
     service = AIModelService(db)
     profiles, default_profile_id = await service.list_chat_profiles()
     return ChatModelProfilesResponse(

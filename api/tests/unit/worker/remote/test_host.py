@@ -143,7 +143,7 @@ async def test_connected_session_releases_lease_only_after_worker_drain() -> Non
 
     worker.run = AsyncMock(side_effect=run)
     with patch("src.worker.remote.host.release_remote_owner", new_callable=AsyncMock) as release:
-        session = RemoteSession(bridge, worker, LEASE)
+        session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
         stopping = asyncio.create_task(session.stop())
         await asyncio.sleep(0)
         assert release.await_count == 0
@@ -162,7 +162,7 @@ async def test_disconnected_session_detaches_without_waiting_for_remote_work() -
     worker = Mock(request_stop=Mock(), run=AsyncMock(side_effect=never.wait))
 
     with patch("src.worker.remote.host.release_remote_owner", new_callable=AsyncMock) as release:
-        session = RemoteSession(bridge, worker, LEASE)
+        session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
         await session.detach()
 
     worker.request_stop.assert_called_once_with()
@@ -193,7 +193,7 @@ async def test_finished_session_releases_its_owner_and_is_removed_from_host() ->
     worker = Mock(request_stop=Mock(), run=AsyncMock(return_value=0))
 
     with patch("src.worker.remote.host.release_remote_owner", new_callable=AsyncMock) as release:
-        session = RemoteSession(bridge, worker, LEASE)
+        session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
         host.sessions[LEASE.worker_id] = session
         session.task.add_done_callback(
             lambda task: host._session_finished(LEASE.worker_id, session, task)
@@ -228,7 +228,7 @@ async def test_inventory_reconciliation_does_not_block_its_terminate_reply() -> 
 
     worker.run = AsyncMock(side_effect=run)
     worker.reconcile_transport_inventory = AsyncMock(side_effect=reconcile_transport_inventory)
-    session = RemoteSession(bridge, worker, LEASE)
+    session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
     task = session.reconcile_transport_inventory(socket)
     await asyncio.sleep(0)
     request_id = next(iter(bridge.pending))
@@ -351,7 +351,27 @@ async def test_refused_remote_control_handshake_closes_once(valid_proof: bool) -
     assert host.sessions == {}
 
 
-def test_agent_launches_wait_long_enough_for_a_template_build() -> None:
+def test_agent_launches_wait_long_enough_for_a_template_rebuild() -> None:
     assert _reply_timeout("agent_run") > TEMPLATE_START_TIMEOUT_SECONDS
-    assert _reply_timeout("agent_prewarm") > TEMPLATE_START_TIMEOUT_SECONDS
     assert _reply_timeout("terminate") < TEMPLATE_START_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_telemetry_skips_the_database_fence_only_while_the_lease_is_known_current() -> None:
+    from src.worker.remote import host as host_mod
+
+    session = object.__new__(RemoteSession)
+    session.lease = LEASE
+    session.owned_until = time.monotonic() + 10
+    sample = {"event": "sample", "current": 1, "limit": 100}
+    with patch.object(host_mod, "owns_remote_session", new=AsyncMock(return_value=False)) as fence:
+        assert await session.may_accept("event", sample) is True
+        fence.assert_not_awaited()
+
+        assert await session.may_accept("event", {"event": "result", "route_id": "r"}) is False
+        assert await session.may_accept("event", {"event": "inventory"}) is False
+        assert fence.await_count == 2
+
+        session.owned_until = time.monotonic() - 1
+        assert await session.may_accept("event", sample) is False
+        assert fence.await_count == 3

@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     )
     from src.services.sync_ops import SyncOp
 
+from bifrost.definition_validation import DefinitionValidationError
 from bifrost.manifest import (
     Manifest,
     get_all_entity_ids,
@@ -1939,6 +1940,17 @@ class GitHubSyncService:
                             fix_hint="This file was deleted but the entity is still registered. Use 'Clean up & Retry' to remove orphaned references.",
                             auto_fixable=True,
                         ))
+            except DefinitionValidationError as error:
+                for issue in error.issues:
+                    field = ".".join(map(str, issue.location))
+                    issues.append(PreflightIssue(
+                        path=issue.path,
+                        line=issue.line,
+                        message=f"{field}: {issue.message}" if field else issue.message,
+                        severity="error",
+                        category="manifest",
+                        fix_hint="Correct the manifest field in the repository, then retry.",
+                    ))
             except Exception as e:
                 issues.append(PreflightIssue(
                     path=".bifrost/",
