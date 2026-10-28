@@ -16,6 +16,7 @@
   "timeout_s": 300,
   "settle_s": 20,
   "idle_s": 120,
+  "idle_db_s": 60,
   "seed": {
     "workflow": 1100,
     "tool": 701,

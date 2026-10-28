@@ -53,6 +53,28 @@ def parse_stats_summary(summary: dict, namespace: str) -> list[dict]:
     return rows
 
 
+DB_COUNTERS_SQL = """
+select json_build_object(
+  'xact', (select xact_commit + xact_rollback from pg_stat_database where datname = current_database()),
+  'rows_written', (select tup_inserted + tup_updated + tup_deleted from pg_stat_database where datname = current_database()),
+  'wal_bytes', pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0'),
+  'db_bytes', pg_database_size(current_database()),
+  'tables', (
+    select json_object_agg(relname, json_build_array(
+      n_tup_ins + n_tup_upd + n_tup_del, coalesce(seq_scan, 0) + coalesce(idx_scan, 0)))
+    from pg_stat_user_tables
+  )
+)
+"""
+
+
+def parse_db_counters(raw: str) -> dict:
+    """Cumulative Postgres counters: transactions, rows written, WAL bytes, size, per-table writes/scans."""
+    counters = json.loads(raw.strip())
+    counters["tables"] = counters.get("tables") or {}
+    return counters
+
+
 class Cluster:
     def __init__(self, namespace: str = NAMESPACE) -> None:
         worktree_hash = _worktree_hash()
@@ -117,6 +139,13 @@ class Cluster:
             raw = self.kubectl("get", "--raw", f"/api/v1/nodes/{name}/proxy/stats/summary", namespaced=False)
             rows += parse_stats_summary(json.loads(raw), self.namespace)
         return rows
+
+    def db_counters(self) -> dict:
+        raw = self.kubectl(
+            "exec", "postgres-0", "--", "sh", "-c",
+            'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"', "sh", DB_COUNTERS_SQL,
+        )
+        return parse_db_counters(raw)
 
     def exec_python(self, pod: str, script: Path, args: list[str], timeout_s: int = 3600) -> dict:
         """Run ``script`` with the pod's Python and return its last JSON line."""

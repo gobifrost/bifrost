@@ -47,5 +47,18 @@ class StatsSummaryTest(unittest.TestCase):
         self.assertEqual(cluster.role_for_pod("postgres-0"), "infra")
 
 
+class DbCountersTest(unittest.TestCase):
+    def test_parse_db_counters(self) -> None:
+        raw = '{"xact": 12, "rows_written": 3, "wal_bytes": 4096, "db_bytes": 1048576, "tables": {"users": [0, 7]}}\n'
+        counters = cluster.parse_db_counters(raw)
+        self.assertEqual(counters["xact"], 12)
+        self.assertEqual(counters["wal_bytes"], 4096)
+        self.assertEqual(counters["tables"], {"users": [0, 7]})
+
+    def test_empty_table_list_is_an_empty_dict(self) -> None:
+        raw = '{"xact": 1, "rows_written": 0, "wal_bytes": 0, "db_bytes": 0, "tables": null}'
+        self.assertEqual(cluster.parse_db_counters(raw)["tables"], {})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,11 +23,18 @@ RESULT = {
     "api_pod_changes": 0,
     "profile": {"worker_replicas": 1, "env": {"MALLOC_ARENA_MAX": "2"}, "thp_emulation": False, "sequential": 2, "burst": 2, "burst_rounds": 1},
     "classes": [
-        {"name": "wf-noop", "pass": 1, "sequential": _OK, "burst": _OK},
+        {"name": "wf-noop", "pass": 1, "sequential": _OK, "burst": _OK,
+         "db_per_run": {"xact": 36.4, "rows_written": 12.0, "wal_kib": 21.5}},
         {"name": "agent-codemode", "pass": 1, "sequential": _OK, "burst": _BAD},
     ],
+    "db_idle": {
+        "seconds": 60.0,
+        "rate": {"xact_per_s": 31.2, "rows_written_per_s": 4.0, "wal_kib_per_s": 2.5},
+        "top_tables": [["scheduler_task_state", 120, 0], ["work_dispatches", 0, 900]],
+    },
     "snapshots": [
-        {"label": "fresh", "api": _API, "containers": [{"role": "worker", "working_set_mib": 85.0}]},
+        {"label": "fresh", "api": _API, "containers": [{"role": "worker", "working_set_mib": 85.0}], "db_mib": 40.0, "wal_mib": 10.0},
+        {"label": "idle", "api": _API, "containers": [], "db_mib": 52.5, "wal_mib": 34.0},
     ],
 }
 
@@ -45,6 +52,13 @@ class RenderTest(unittest.TestCase):
         self.assertIn("## Failures", text)
         self.assertIn("boom", text)
         self.assertIn("1 / 2 ⚠", text)
+
+    def test_database_load_is_reported(self) -> None:
+        text = report.render(RESULT)
+        self.assertIn("| 36 | 21.5 |", text)
+        self.assertIn("31.2 transactions/s", text)
+        self.assertIn("`work_dispatches`", text)
+        self.assertIn("Database grew 12.5 MiB; WAL written 24.0 MiB", text)
 
 
 if __name__ == "__main__":

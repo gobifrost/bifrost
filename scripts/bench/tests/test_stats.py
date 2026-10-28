@@ -59,5 +59,35 @@ class CpuTest(unittest.TestCase):
         self.assertEqual(stats.cpu_ms_per_run(before, after, 4), {"api": 500.0, "worker": 250.0})
 
 
+def _db(xact: int, rows: int, wal: int, tables: dict) -> dict:
+    return {"xact": xact, "rows_written": rows, "wal_bytes": wal, "db_bytes": 0, "tables": tables}
+
+
+class DbTest(unittest.TestCase):
+    def test_delta_keeps_only_tables_that_changed(self) -> None:
+        delta = stats.db_delta(
+            _db(100, 10, 1000, {"executions": [5, 50], "users": [0, 9], "quiet": [1, 1]}),
+            _db(160, 40, 9192, {"executions": [25, 80], "users": [0, 30], "quiet": [1, 1], "new": [2, 0]}),
+            seconds=10.0,
+        )
+        self.assertEqual(delta["xact"], 60)
+        self.assertEqual(delta["rows_written"], 30)
+        self.assertEqual(delta["wal_bytes"], 8192)
+        self.assertEqual(delta["tables"], {"executions": [20, 30], "users": [0, 21], "new": [2, 0]})
+
+    def test_per_run_subtracts_idle_rate_over_the_window(self) -> None:
+        idle = stats.db_rate(stats.db_delta(_db(0, 0, 0, {}), _db(30, 10, 10240, {}), seconds=10.0))
+        self.assertEqual(idle, {"xact_per_s": 3.0, "rows_written_per_s": 1.0, "wal_kib_per_s": 1.0})
+        window = stats.db_delta(_db(0, 0, 0, {}), _db(230, 110, 112640, {}), seconds=20.0)
+        self.assertEqual(
+            stats.db_per_run(window, idle, runs=10),
+            {"xact": 17.0, "rows_written": 9.0, "wal_kib": 9.0},
+        )
+
+    def test_top_tables_by_reads_plus_writes(self) -> None:
+        tables = {"a": [1, 1], "b": [10, 0], "c": [0, 5], "d": [3, 3]}
+        self.assertEqual(stats.top_tables(tables, 2), [("b", 10, 0), ("d", 3, 3)])
+
+
 if __name__ == "__main__":
     unittest.main()

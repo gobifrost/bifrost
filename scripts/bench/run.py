@@ -106,6 +106,7 @@ class Run:
             raise SystemExit(f"API pod was replaced during the run (before '{label}'); see {self.out}")
         self.expected_api_uid = uid
         summary = smaps.summarize(self.cluster.smaps(pod, "api"))
+        db = self.cluster.db_counters()
         region = summary.regions.get
 
         def mib(name: str, field: str) -> float:
@@ -126,6 +127,8 @@ class Run:
                 "file_rss_mib": mib("file", "rss_kib"),
             },
             "containers": self.cluster.container_stats(),
+            "db_mib": round(db["db_bytes"] / 1024 / 1024, 1),
+            "wal_mib": round(db["wal_bytes"] / 1024 / 1024, 1),
         })
         self.save()
         api = self.result["snapshots"][-1]["api"]
@@ -156,23 +159,38 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
     current.expected_api_uid = None
     time.sleep(profile["settle_s"])
     current.snapshot("boot_seeded")
+    print(f"Idle database load over {profile['idle_db_s']} s ...", flush=True)
+    db_before, started = cluster.db_counters(), time.monotonic()
+    time.sleep(profile["idle_db_s"])
+    idle_delta = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
+    idle_rate = stats.db_rate(idle_delta)
+    current.result["db_idle"] = {
+        "seconds": round(idle_delta["seconds"], 1),
+        "rate": idle_rate,
+        "top_tables": stats.top_tables(idle_delta["tables"], 8),
+    }
+    print(f"  idle: {idle_rate['xact_per_s']:.1f} transactions/s", flush=True)
     classes = [c for c in profile["classes"] if backend or not c.startswith("agent-")]
     for pass_number in (1, 2):
         for name in classes:
             print(f"Pass {pass_number}: {name} ...", flush=True)
             cpu_before = cluster.container_stats()
+            db_before, started = cluster.db_counters(), time.monotonic()
             records = current.driver("run_class", {
                 "name": name, "sequential": profile["sequential"], "burst": profile["burst"],
                 "burst_rounds": profile["burst_rounds"], "timeout_s": profile["timeout_s"],
             }, timeout_s=profile["timeout_s"] * (profile["sequential"] + profile["burst_rounds"] + 1))
             time.sleep(profile["settle_s"])
             runs = len(records["sequential"]) + len(records["burst"])
+            db_delta = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
             current.result["classes"].append({
                 "name": name,
                 "pass": pass_number,
                 "sequential": stats.timings(records["sequential"]),
                 "burst": stats.timings(records["burst"]),
                 "cpu_ms_per_run": stats.cpu_ms_per_run(cpu_before, cluster.container_stats(), runs),
+                "db_per_run": stats.db_per_run(db_delta, idle_rate, runs),
+                "db_top_tables": stats.top_tables(db_delta["tables"], 8),
                 "raw": records,
             })
             current.snapshot(f"{name} (pass {pass_number})")

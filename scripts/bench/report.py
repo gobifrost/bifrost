@@ -14,10 +14,18 @@ def _cpu(entry: dict, phase: str) -> str:
     return f"{cpu.get('api', 0):.0f} / {cpu.get('worker', 0):.0f}"
 
 
+def _db(entry: dict, phase: str) -> str:
+    db = entry.get("db_per_run")
+    if phase != "sequential" or not db:
+        return " | "
+    return f"{db['xact']:.0f} | {db['wal_kib']:.1f}"
+
+
 def _classes_table(classes: list[dict]) -> list[str]:
     rows = [
-        "| Class | Pass | Phase | OK / runs | Queue p50 / p95 ms | Run p50 / p95 ms | End-to-end p50 / p95 ms | CPU ms/run API / worker |",
-        "|---|---:|---|---:|---:|---:|---:|---:|",
+        "| Class | Pass | Phase | OK / runs | Queue p50 / p95 ms | Run p50 / p95 ms | End-to-end p50 / p95 ms "
+        "| CPU ms/run API / worker | DB transactions/run | WAL KiB/run |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for entry in classes:
         for phase in ("sequential", "burst"):
@@ -25,7 +33,7 @@ def _classes_table(classes: list[dict]) -> list[str]:
             status = "" if t["failed"] == 0 else " ⚠"
             rows.append(
                 f"| `{entry['name']}` | {entry['pass']} | {phase} | {t['succeeded']} / {t['runs']}{status} | "
-                f"{_ms(t['queue_ms'])} | {_ms(t['run_ms'])} | {_ms(t['e2e_ms'])} | {_cpu(entry, phase)} |"
+                f"{_ms(t['queue_ms'])} | {_ms(t['run_ms'])} | {_ms(t['e2e_ms'])} | {_cpu(entry, phase)} | {_db(entry, phase)} |"
             )
     return rows
 
@@ -44,6 +52,31 @@ def _memory_table(snapshots: list[dict]) -> list[str]:
             f"{api['anon_large_rss_mib']:.0f} | {api['thp_mib']:.0f} | {worker} |"
         )
     return rows
+
+
+def _database(result: dict) -> list[str]:
+    idle = result.get("db_idle")
+    if not idle:
+        return []
+    rate = idle["rate"]
+    busiest = ", ".join(f"`{name}` {writes} / {scans}" for name, writes, scans in idle["top_tables"]) or "none"
+    lines = [
+        "## Database",
+        "",
+        "Per-run figures in the table above are net of the idle rate and cover each class's sequential and burst runs.",
+        "",
+        f"- Idle: {rate['xact_per_s']:.1f} transactions/s, {rate['rows_written_per_s']:.1f} rows written/s, "
+        f"{rate['wal_kib_per_s']:.1f} KiB WAL/s (over {idle['seconds']:.0f} s)",
+        f"- Busiest tables while idle (rows written / scans): {busiest}",
+    ]
+    sized = [snap for snap in result["snapshots"] if "db_mib" in snap]
+    if len(sized) >= 2:
+        lines.append(
+            f"- Database grew {sized[-1]['db_mib'] - sized[0]['db_mib']:.1f} MiB; "
+            f"WAL written {sized[-1]['wal_mib'] - sized[0]['wal_mib']:.1f} MiB "
+            f"between '{sized[0]['label']}' and '{sized[-1]['label']}'"
+        )
+    return [*lines, ""]
 
 
 def _failures(classes: list[dict]) -> list[str]:
@@ -75,6 +108,7 @@ def render(result: dict) -> str:
         "",
         *_memory_table(result["snapshots"]),
         "",
+        *_database(result),
     ]
     failures = _failures(result["classes"])
     if failures:

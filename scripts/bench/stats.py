@@ -76,3 +76,46 @@ def cpu_ms_per_run(before: list[dict], after: list[dict], runs: int) -> dict[str
             continue
         totals[row["role"]] = totals.get(row["role"], 0.0) + row["cpu_core_seconds"] - previous["cpu_core_seconds"]
     return {role: round(seconds * 1000 / max(runs, 1), 1) for role, seconds in totals.items() if role in ("api", "worker")}
+
+
+def db_delta(before: dict, after: dict, seconds: float) -> dict:
+    """Postgres work between two counter samples; tables that didn't change are dropped."""
+    tables: dict[str, list[int]] = {}
+    for name, (writes, scans) in after["tables"].items():
+        previous = before["tables"].get(name, [0, 0])
+        change = [writes - previous[0], scans - previous[1]]
+        if any(change):
+            tables[name] = change
+    return {
+        "seconds": seconds,
+        "xact": after["xact"] - before["xact"],
+        "rows_written": after["rows_written"] - before["rows_written"],
+        "wal_bytes": after["wal_bytes"] - before["wal_bytes"],
+        "tables": tables,
+    }
+
+
+def db_rate(delta: dict) -> dict[str, float]:
+    seconds = max(delta["seconds"], 1e-9)
+    return {
+        "xact_per_s": round(delta["xact"] / seconds, 2),
+        "rows_written_per_s": round(delta["rows_written"] / seconds, 2),
+        "wal_kib_per_s": round(delta["wal_bytes"] / 1024 / seconds, 2),
+    }
+
+
+def db_per_run(delta: dict, idle: dict[str, float], runs: int) -> dict[str, float]:
+    """Postgres work per run, net of the idle rate over the same window."""
+    seconds = delta["seconds"]
+    runs = max(runs, 1)
+    return {
+        "xact": round((delta["xact"] - idle["xact_per_s"] * seconds) / runs, 1),
+        "rows_written": round((delta["rows_written"] - idle["rows_written_per_s"] * seconds) / runs, 1),
+        "wal_kib": round((delta["wal_bytes"] / 1024 - idle["wal_kib_per_s"] * seconds) / runs, 1),
+    }
+
+
+def top_tables(tables: dict[str, list[int]], count: int) -> list[tuple[str, int, int]]:
+    """The tables with the most rows written plus scans, as (name, writes, scans)."""
+    ranked = sorted(tables.items(), key=lambda item: item[1][0] + item[1][1], reverse=True)
+    return [(name, writes, scans) for name, (writes, scans) in ranked[:count]]
