@@ -28,6 +28,10 @@ called by production acceptance or runtime paths.
 - Pydantic's per-call `model_validate(..., extra="forbid")` rejects unknown keys
   recursively using existing models. It does not change their default parsing
   policy. A regression test verifies normal parsing before and after the call.
+  This API was added in [Pydantic 2.12](https://pydantic.dev/articles/pydantic-v2-12-release#extra-configuration-per-validation).
+  The API lock pins 2.13.3, but the packaged CLI currently declares
+  `pydantic>=2.0.0`. Production adoption of this approach must raise that minimum
+  to 2.12 or later and verify the distributed CLI, not just the API environment.
 - A typo such as `events.<id>.subscriptions[0].criteria` is rejected at its field
   path rather than disappearing during parsing. Existing event export/install
   golden fixtures still pass strict entity validation.
