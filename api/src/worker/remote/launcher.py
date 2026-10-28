@@ -131,6 +131,13 @@ class Child:
     active_execution: dict[str, Any] | None = None
     started_at: str | None = None
     memory_request_bytes: int | None = None
+    agent_run: bool = False
+
+    @property
+    def kind(self) -> str:
+        if self.agent_run:
+            return "agent_run"
+        return "service" if self.service is not None else "workflow"
 
 
 class Launcher:
@@ -156,10 +163,17 @@ class Launcher:
         self.pending_terminal: dict[str, dict[str, Any]] = {}
         self.pending_terminal_inventory: dict[str, dict[str, Any]] = {}
         self.template = TemplateProcess()
+        # Started by the first agent run or pre-warm, retired when idle.
+        self.agent_template: TemplateProcess | None = None
+        self.agent_active_at = 0.0
         self.children: dict[str, Child] = {}
         self.jobs: dict[str, asyncio.subprocess.Process] = {}
         self.job_claims: dict[str, dict[str, str | int]] = {}
         self._template_lock = asyncio.Lock()
+        # Separate from the workflow template's lock: building the agent
+        # template takes seconds and must not stall workflow forks or the
+        # monitor's liveness check.
+        self._agent_template_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._monitor_task: asyncio.Task[Any] | None = None
@@ -263,9 +277,12 @@ class Launcher:
         """
         routes: list[dict[str, Any]] = []
         for child in self.children.values():
+            if child.agent_run:
+                routes.append(self.agent_route(child, pid=child.pid))
+                continue
             routes.append({
                 "route_id": child.route_id,
-                "kind": "service" if child.service is not None else "workflow",
+                "kind": child.kind,
                 "subject_id": child.execution_id,
                 "pid": child.pid,
                 "service": child.service,
@@ -313,15 +330,7 @@ class Launcher:
         try:
             response: dict[str, Any] = {}
             if action in ("workflow", "service"):
-                current, limit = effective_memory_sample()
-                if self.pressure_threshold is None:
-                    raise RuntimeError("Launcher resource policy has not been configured")
-                if (
-                    current < 0
-                    or limit <= 0
-                    or memory_pressure_ratio() >= self.pressure_threshold
-                ):
-                    raise MemoryError("Launcher memory pressure rejects fork")
+                self.check_fork_pressure()
                 route_id = payload["route_id"]
                 if route_id in self.children or route_id in self.jobs:
                     raise ValueError("Duplicate route")
@@ -343,12 +352,31 @@ class Launcher:
                               active_execution=payload.get("active_execution"),
                               started_at=payload.get("started_at"),
                               memory_request_bytes=payload.get("memory_request_bytes"))
-                child.sampler = CPUSampler(pid=pid, clock_ticks=get_clock_ticks())
-                child.sampler.set_baseline(time.monotonic())
-                child.rss_start = child.sampler.start_process_rss_bytes or 0
-                self.children[route_id] = child
-                asyncio.get_running_loop().add_reader(result.fileno(), self.result_ready, route_id)
+                self.track_child(child)
                 work.put_nowait((child.execution_id, context))
+                response["pid"] = pid
+            elif action == "agent_prewarm":
+                self.check_fork_pressure()
+                async with self._agent_template_lock:
+                    await self.ensure_agent_template()
+            elif action == "agent_run":
+                self.check_fork_pressure()
+                route_id = payload["route_id"]
+                if route_id in self.children or route_id in self.jobs:
+                    raise ValueError("Duplicate route")
+                if generation != self.session_generation:
+                    return
+                async with self._agent_template_lock:
+                    if generation != self.session_generation:
+                        return
+                    template = await self.ensure_agent_template()
+                    pid, work, result = await asyncio.to_thread(template.fork, worker_id=route_id)
+                child = Child(route_id, str(payload["run_id"]), pid, work, result,
+                              time.monotonic(), 0,
+                              memory_request_bytes=int(payload["memory_request_bytes"]),
+                              agent_run=True)
+                self.track_child(child)
+                work.put_nowait({"message": payload["message"]})
                 response["pid"] = pid
             elif action == "platform_job":
                 if self.pressure_threshold is None:
@@ -379,11 +407,18 @@ class Launcher:
                 await self.terminate(payload["route_id"], payload.get("error_type", "CancelledError"),
                                      payload.get("error", "Cancelled"), payload.get("grace_seconds"))
             elif action == "recycle":
-                while self.children:
+                # Agent children keep running from the old agent template's
+                # memory; only workflow and service children hold the recycle.
+                while any(not child.agent_run for child in self.children.values()):
                     await asyncio.sleep(.05)
                 async with self._template_lock:
                     await asyncio.to_thread(self.template.shutdown)
                     await asyncio.to_thread(self.template.start)
+                async with self._agent_template_lock:
+                    agent_template = self.agent_template
+                    if agent_template is not None and agent_template.is_alive():
+                        await asyncio.to_thread(agent_template.shutdown)
+                        await asyncio.to_thread(agent_template.start)
             elif action == "package_tool":
                 response = await self.helper("src.worker.remote.package_helper", json.dumps(payload))
             elif action == "configure":
@@ -404,6 +439,68 @@ class Launcher:
             if generation == self.session_generation:
                 await self.send({"reply": request["id"], "error_type": type(exc).__name__,
                                  "error": str(exc)})
+
+    def check_fork_pressure(self) -> None:
+        """Refuse a fork while the launcher's memory is under pressure."""
+        current, limit = effective_memory_sample()
+        if self.pressure_threshold is None:
+            raise RuntimeError("Launcher resource policy has not been configured")
+        if (
+            current < 0
+            or limit <= 0
+            or memory_pressure_ratio() >= self.pressure_threshold
+        ):
+            raise MemoryError("Launcher memory pressure rejects fork")
+
+    def track_child(self, child: Child) -> None:
+        """Sample a forked child and watch its result pipe."""
+        child.sampler = CPUSampler(pid=child.pid, clock_ticks=get_clock_ticks())
+        child.sampler.set_baseline(time.monotonic())
+        child.rss_start = child.sampler.start_process_rss_bytes or 0
+        self.children[child.route_id] = child
+        asyncio.get_running_loop().add_reader(child.result.fileno(), self.result_ready, child.route_id)
+
+    async def ensure_agent_template(self) -> TemplateProcess:
+        """Start the agent template if needed; the caller holds its lock."""
+        if self.agent_template is None:
+            self.agent_template = TemplateProcess(profile="agent")
+        if not self.agent_template.is_alive():
+            await asyncio.to_thread(self.agent_template.start)
+        self.agent_active_at = time.monotonic()
+        return self.agent_template
+
+    async def retire_idle_agent_template(self, *, collect_exits: bool) -> None:
+        """Stop the agent template after its idle period with no agent child.
+
+        Skips a tick while an agent run or pre-warm holds the template lock.
+        """
+        template = self.agent_template
+        if template is None or self._agent_template_lock.locked():
+            return
+        async with self._agent_template_lock:
+            now = time.monotonic()
+            if any(child.agent_run for child in self.children.values()):
+                self.agent_active_at = now
+            elif not template.is_alive() or (
+                template.idle_seconds is not None
+                and now - self.agent_active_at >= template.idle_seconds
+            ):
+                await asyncio.to_thread(template.shutdown)
+                self.agent_template = None
+                return
+            if collect_exits:
+                await asyncio.to_thread(template.collect_child_exit_statuses)
+
+    @staticmethod
+    def agent_route(child: Child, **extra: Any) -> dict[str, Any]:
+        """Inventory description of an agent child (live or terminal)."""
+        return {
+            "route_id": child.route_id,
+            "kind": "agent_run",
+            "subject_id": child.execution_id,
+            **extra,
+            "memory_request_bytes": child.memory_request_bytes,
+        }
 
     async def wait_job(self, route_id: str, process: asyncio.subprocess.Process) -> None:
         code = await process.wait()
@@ -464,6 +561,14 @@ class Launcher:
         asyncio.get_running_loop().remove_reader(child.result.fileno())
         child.work.close()
         child.result.close()
+        if child.agent_run:
+            self.agent_active_at = time.monotonic()
+            await self.send_terminal(
+                {"event": "agent_exit", "route_id": child.route_id, "ok": result.get("ok") is True,
+                 "error_type": result.get("error_type"), "error": result.get("error")},
+                inventory=self.agent_route(child),
+            )
+            return
         metrics = result.setdefault("metrics", {})
         if isinstance(metrics, dict):
             metrics["peak_memory_growth_bytes"] = max(metrics.get("peak_memory_growth_bytes") or 0,
@@ -480,7 +585,7 @@ class Launcher:
             {"event": "result", "route_id": child.route_id, "result": result},
             inventory={
                 "route_id": child.route_id,
-                "kind": "service" if child.service is not None else "workflow",
+                "kind": child.kind,
                 "subject_id": child.execution_id,
                 "service": child.service,
                 "active_execution": child.active_execution,
@@ -549,6 +654,7 @@ class Launcher:
                 current, limit,
                 dangerous=memory_pressure_ratio() >= (self.dangerous_memory_ratio or 1),
             )
+            await self.retire_idle_agent_template(collect_exits=tick % 4 == 0)
             if tick % 4 == 0:
                 async with self._template_lock:
                     await asyncio.to_thread(self.template.collect_child_exit_statuses)
@@ -588,6 +694,8 @@ class Launcher:
         self.children.clear()
         await asyncio.gather(*(self.kill_process(p) for p in self.jobs.values()))
         await asyncio.to_thread(self.template.shutdown)
+        if self.agent_template is not None:
+            await asyncio.to_thread(self.agent_template.shutdown)
 
     async def begin_drain(self) -> None:
         """Ask the API to drain and retain physical children for its grace."""
