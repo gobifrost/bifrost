@@ -450,7 +450,7 @@ async def test_a_reconnected_launcher_gets_no_work_until_its_inventory_is_reconc
     executor = ApiExecutor(bridge, LEASE.worker_id)
     executor.admission = Admission(
         budget_bytes=512 * MIB, under_pressure=executor._under_pressure,
-        running_workflow_ids=set, workflow_growth=dict,
+        running_workflow_ids=set, workflow_growth=dict, claims_open=executor._claims_open,
     )
     bridge.agents = executor._agent_consumer = consumer = RemoteAgentConsumer(
         launcher, worker_id=LEASE.worker_id,
@@ -475,6 +475,17 @@ async def test_a_reconnected_launcher_gets_no_work_until_its_inventory_is_reconc
     async with executor.admission.claiming() as fits:
         assert fits is None, "service and platform-job claims wait too"
     claim_next_mock.assert_not_awaited()
+    # The hold is not memory pressure: the heartbeat keeps telling the truth.
+    heartbeat = AsyncMock(return_value="ready")
+    monkeypatch.setattr("src.worker.pool_main.heartbeat_worker", heartbeat)
+    beating = asyncio.create_task(executor._heartbeat_loop())
+    for _ in range(100):
+        if heartbeat.await_count:
+            break
+        await asyncio.sleep(0.01)
+    beating.cancel()
+    await asyncio.gather(beating, return_exceptions=True)
+    assert heartbeat.await_args.kwargs["memory_pressured"] is False
 
     # The reconnect inventory, taken before any new command, is reconciled.
     await consumer.reject_missing({"routes": [], "terminal_routes": []})

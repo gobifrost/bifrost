@@ -290,6 +290,10 @@ class PoolWorker:
     def _under_pressure(self) -> bool:
         return under_pressure(self.settings.memory_pressure_threshold)
 
+    def _claims_open(self) -> bool:
+        """Whether the executor may claim new work at all (memory aside)."""
+        return True
+
     def _make_workflow_consumer(self):  # type: ignore[no-untyped-def]
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
@@ -410,6 +414,7 @@ class PoolWorker:
                     under_pressure=self._under_pressure,
                     running_workflow_ids=set,
                     workflow_growth=dict,
+                    claims_open=self._claims_open,
                 )
             else:
                 pool = self._workflow_consumer._pool
@@ -418,6 +423,7 @@ class PoolWorker:
                     under_pressure=self._under_pressure,
                     running_workflow_ids=pool.active_execution_ids,
                     workflow_growth=pool.workflow_growth,
+                    claims_open=self._claims_open,
                 )
         if self._workflow_consumer is not None:
             pool = self._workflow_consumer._pool
