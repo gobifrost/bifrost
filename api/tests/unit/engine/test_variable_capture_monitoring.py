@@ -55,15 +55,15 @@ async def test_captures_locals_at_final_return_of_async_workflow():
     async def awaiting_workflow():
         stage = "started"
         await asyncio.sleep(0)
-        stage = "finished"
+        stage = f"{stage}->finished"
         total = 42
         return f"{stage}:{total}"
 
     result = await execute(_request(func=awaiting_workflow))
 
     assert result.status == ExecutionStatus.SUCCESS
-    assert result.result == "finished:42"
-    assert result.variables == {"stage": "finished", "total": 42}
+    assert result.result == "started->finished:42"
+    assert result.variables == {"stage": "started->finished", "total": 42}
 
 
 async def test_captures_locals_at_early_return():
