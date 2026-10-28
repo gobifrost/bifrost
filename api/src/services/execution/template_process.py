@@ -396,12 +396,17 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
     Returns extra ``ready`` fields, or None after reporting a startup error.
     """
     try:
+        import asyncio
+
+        import asyncpg  # noqa: F401
         import pydantic_ai.models.openai  # noqa: F401
         import pydantic_ai.providers.openai  # noqa: F401
+        import sqlalchemy.dialects.postgresql.asyncpg  # noqa: F401
         import src.jobs.agent_run_child  # noqa: F401
         import src.jobs.consumers.agent_run  # noqa: F401
         import src.services.agent_executor  # noqa: F401
         import src.services.agent_runtime.tool_policy  # noqa: F401
+        from genai_prices.data_snapshot import get_snapshot
         from sqlalchemy.orm import configure_mappers
 
         from src.config import get_settings
@@ -410,6 +415,12 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
         # object. Doing it once here keeps those pages shared instead of
         # copying them into each child's first query.
         configure_mappers()
+        # Every run prices its usage and resolves its model from the catalog.
+        # Parsing either per child cost most of a run's CPU and memory; parsed
+        # here, children share them and the catalog's own freshness check
+        # (``get_model_catalog``) still reloads a changed catalog.
+        get_snapshot()
+        asyncio.run(_warm_model_catalog())
         idle_seconds = get_settings().agent_template_idle_seconds
     except Exception as e:
         logger.exception(f"Agent template failed to load dependencies: {e}")
@@ -417,6 +428,19 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
         pipe.close()
         return None
     return {"idle_seconds": idle_seconds}
+
+
+async def _warm_model_catalog() -> None:
+    """Parse the model catalog once, leaving no connection open for forks."""
+    from src.core.database import close_db, get_db_context, init_db
+    from src.services.model_catalog import get_model_catalog
+
+    await init_db()
+    try:
+        async with get_db_context() as db:
+            await get_model_catalog(db)
+    finally:
+        await close_db()
 
 
 def _template_subprocess_entry(control_fd: int, profile: TemplateProfile) -> None:

@@ -81,7 +81,7 @@ def test_agent_template_is_ready_with_a_frozen_heap(agent_template: TemplateProc
     assert agent_template.idle_seconds == 300
 
 
-def test_agent_template_configures_mappers_without_loading_the_api_app() -> None:
+def test_agent_template_preloads_shared_state_without_loading_the_api_app() -> None:
     probe = textwrap.dedent('''
         import json
         import sys
@@ -96,11 +96,17 @@ def test_agent_template_configures_mappers_without_loading_the_api_app() -> None
                 return {"action": "shutdown"}
 
         _template_main(StartupPipe(), "agent")
+        from genai_prices.data_snapshot import _bundled_snapshot
         from sqlalchemy import inspect
+        from src.core import database
         from src.models.orm.agent_runs import AgentRun
+        from src.services import model_catalog
         print(json.dumps({
             "main_loaded": "src.main" in sys.modules,
             "mappers_configured": inspect(AgentRun).configured,
+            "catalog_parsed": model_catalog._cache.catalog is not None,
+            "prices_parsed": _bundled_snapshot.cache_info().currsize == 1,
+            "engine_left_open": database._engine is not None,
         }))
     ''')
     result = subprocess.run(
@@ -108,7 +114,11 @@ def test_agent_template_configures_mappers_without_loading_the_api_app() -> None
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout.splitlines()[-1]) == {
-        "main_loaded": False, "mappers_configured": True,
+        "main_loaded": False,
+        "mappers_configured": True,
+        "catalog_parsed": True,
+        "prices_parsed": True,
+        "engine_left_open": False,
     }
 
 
