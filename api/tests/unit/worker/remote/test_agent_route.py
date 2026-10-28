@@ -14,7 +14,7 @@ from sqlalchemy import delete
 
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
-from src.services.memory_requests import MIB
+from src.services.memory_requests import AGENT_TEMPLATE_REQUEST_BYTES, MIB
 from src.worker.admission import Admission
 from src.worker.api_agent import ApiAgentExecutor
 from src.worker.remote import agent_route
@@ -150,6 +150,21 @@ async def test_a_lost_launch_reply_keeps_the_route_for_inventory(announce) -> No
     assert route_id not in consumer.routes
 
 
+async def test_a_route_is_released_even_when_its_end_cannot_be_recorded(announce) -> None:
+    announce.side_effect = RuntimeError("database unavailable")
+    launcher = Launcher(refuse=ConnectionError("Launcher disconnected"))
+    consumer = RemoteAgentConsumer(launcher, worker_id=LEASE.worker_id)
+
+    waiting = asyncio.create_task(consumer.process_message(_body()))
+    await asyncio.sleep(0.05)
+    [route_id] = consumer.routes
+
+    with pytest.raises(RuntimeError):
+        await consumer.reject_missing({"routes": [], "terminal_routes": []})
+    await asyncio.wait_for(waiting, 1)
+    assert not consumer.tracks(route_id)
+
+
 async def test_a_run_past_its_timeout_is_terminated(announce, monkeypatch) -> None:
     monkeypatch.setattr(agent_route, "SUPERVISE_SECONDS", 0.01)
     monkeypatch.setattr(agent_route, "DEADLINE_GRACE_SECONDS", 0)
@@ -254,6 +269,21 @@ async def test_the_executor_claims_agent_runs_and_routes_them_to_the_launcher() 
     assert ("workflow.execute", 1) in executor._claimable()
     assert isinstance(consumer, RemoteAgentConsumer)
     assert executor._make_agent_consumer() is consumer is bridge.agents
+
+
+async def test_a_warm_agent_template_reserves_its_memory_until_it_retires() -> None:
+    bridge = _bridge()
+    executor = ApiExecutor(bridge, LEASE.worker_id)
+    sample = {"event": "sample", "current": 1, "limit": 100, "pressure_ratio": 0.01, "runs": {}}
+
+    assert executor._own_bytes() == 0
+    await bridge.receive({**sample, "agent_template": True})
+    assert executor._own_bytes() == AGENT_TEMPLATE_REQUEST_BYTES
+    # A sample that doesn't report the template leaves the last report standing.
+    await bridge.receive(sample)
+    assert executor._own_bytes() == AGENT_TEMPLATE_REQUEST_BYTES
+    await bridge.receive({**sample, "agent_template": False})
+    assert executor._own_bytes() == 0
 
 
 async def test_an_agent_exit_is_acknowledged_only_after_it_was_handled(announce) -> None:

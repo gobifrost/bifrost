@@ -711,7 +711,9 @@ class Launcher:
                     await asyncio.to_thread(self.template.collect_child_exit_statuses)
                 with contextlib.suppress(ConnectionError):
                     await self.send({"event": "sample", "current": current, "limit": limit,
-                                     "pressure_ratio": memory_pressure_ratio(), "runs": samples})
+                                     "pressure_ratio": memory_pressure_ratio(), "runs": samples,
+                                     "agent_template": self.agent_template is not None
+                                     and self.agent_template.is_alive()})
             tick += 1
             await asyncio.sleep(.25)
 

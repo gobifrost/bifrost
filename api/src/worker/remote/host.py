@@ -23,7 +23,8 @@ from src.core.database import get_liveness_db_context
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.schedulers.platform_jobs import claim_platform_job, run_claimed_platform_job
 from src.models.orm.execution_workers import ExecutionWorker
-from src.services.memory_requests import MemoryBudget
+from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
+from src.services.memory_requests import AGENT_TEMPLATE_REQUEST_BYTES, MemoryBudget
 from src.services.worker_pool.claims import (
     REMOTE_WORKER_HANDLER_NAMES,
     REMOTE_WORKER_HANDLERS,
@@ -58,6 +59,18 @@ router = APIRouter()
 # Opening chat asks every launcher to start its agent template. One request
 # per API replica in this window covers every chat page opened meanwhile.
 AGENT_PREWARM_INTERVAL_SECONDS = 30.0
+COMMAND_REPLY_SECONDS = 15
+
+
+def _reply_timeout(action: str) -> float:
+    """How long a launcher command may take to reply."""
+    if action in ("package_tool", "recycle"):
+        # Package installation uses the existing long bounded pip calls.
+        return 600
+    if action in ("agent_run", "agent_prewarm"):
+        # Either may first build the agent template.
+        return TEMPLATE_START_TIMEOUT_SECONDS + COMMAND_REPLY_SECONDS
+    return COMMAND_REPLY_SECONDS
 
 
 class RemoteProcess:
@@ -89,6 +102,8 @@ class Bridge:
             self.current / self.limit if self.limit > 0 else 1.0
         )
         self.baseline_bytes = self.current
+        # Started after the baseline was measured, so it isn't part of it.
+        self.agent_template = False
         self.hostname = hello["hostname"]
         self.sample_at = time.monotonic()
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -138,8 +153,7 @@ class Bridge:
             except (WebSocketDisconnect, OSError, RuntimeError) as exc:
                 self.connected = False
                 raise ConnectionError("Launcher control transport is unavailable") from exc
-            # Package installation uses the existing long bounded pip calls.
-            async with asyncio.timeout(600 if action in ("package_tool", "recycle") else 15):
+            async with asyncio.timeout(_reply_timeout(action)):
                 return await asyncio.shield(future)
         finally:
             self.pending.pop(request_id, None)
@@ -244,6 +258,8 @@ class Bridge:
             self.pressure_ratio = float(event["pressure_ratio"]) if "pressure_ratio" in event else (
                 self.current / self.limit if self.limit > 0 else 1.0
             )
+            if "agent_template" in event:
+                self.agent_template = event["agent_template"] is True
             self.sample_at = time.monotonic()
             if self.pool is not None:
                 await self.pool.handle_event(event)
@@ -519,6 +535,9 @@ class ApiExecutor(PoolWorker):
             or limit <= 0
             or self.bridge.pressure_ratio >= self.settings.memory_pressure_threshold
         )
+
+    def _own_bytes(self) -> int:
+        return AGENT_TEMPLATE_REQUEST_BYTES if self.bridge.agent_template else 0
 
     def _claims_open(self) -> bool:
         """Closed from a reconnect until that socket's inventory is

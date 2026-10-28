@@ -10,7 +10,8 @@ from uuid import UUID
 
 import pytest
 
-from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession
+from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
+from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession, _reply_timeout
 from src.worker.remote.ownership import RemoteOwnerLease
 from src.worker.remote.protocol import Hello, sign_hello
 from src.worker.pool_main import PoolWorker
@@ -348,3 +349,9 @@ async def test_refused_remote_control_handshake_closes_once(valid_proof: bool) -
     ]
     assert send.await_args_list[-1].args[0]["code"] == 1008
     assert host.sessions == {}
+
+
+def test_agent_launches_wait_long_enough_for_a_template_build() -> None:
+    assert _reply_timeout("agent_run") > TEMPLATE_START_TIMEOUT_SECONDS
+    assert _reply_timeout("agent_prewarm") > TEMPLATE_START_TIMEOUT_SECONDS
+    assert _reply_timeout("terminate") < TEMPLATE_START_TIMEOUT_SECONDS

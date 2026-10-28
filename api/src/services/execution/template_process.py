@@ -37,6 +37,9 @@ from typing import Any, Literal, get_args
 
 logger = logging.getLogger(__name__)
 
+# How long a template may take to import and warm before it reports ready.
+TEMPLATE_START_TIMEOUT_SECONDS = 120
+
 
 class _SendQueue:
     """
@@ -824,10 +827,12 @@ class TemplateProcess:
             self._pipe = parent_conn
 
             # Wait for ready signal (with timeout)
-            if not parent_conn.poll(timeout=120):
+            if not parent_conn.poll(timeout=TEMPLATE_START_TIMEOUT_SECONDS):
                 process.kill()
                 process.wait(timeout=5)
-                raise RuntimeError("Template process failed to start within 120 seconds")
+                raise RuntimeError(
+                    f"Template process failed to start within {TEMPLATE_START_TIMEOUT_SECONDS} seconds"
+                )
 
             msg = parent_conn.recv()
             if msg.get("status") == "error":
