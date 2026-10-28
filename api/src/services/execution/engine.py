@@ -211,7 +211,10 @@ def _capture_locals_on_return(
         (t for t in _CAPTURE_TOOL_IDS if monitoring.get_tool(t) is None), None
     )
     if tool_id is None:
-        raise RuntimeError("No free sys.monitoring tool id for variable capture")
+        raise RuntimeError(
+            "Workflow variable capture could not get a sys.monitoring tool id: "
+            f"ids {_CAPTURE_TOOL_IDS} are all in use"
+        )
 
     def on_return(returning_code: CodeType, instruction_offset: int, retval: object) -> None:
         # The returning frame is the caller of this callback.
@@ -1546,8 +1549,9 @@ async def _execute_workflow_with_trace(
 
     # Successful runs capture locals when the workflow (or a script's main())
     # returns. The outer exception handler captures them from the traceback on
-    # failures.
-    capture_code = getattr(func, _CAPTURE_CODE_ATTR, func.__code__)
+    # failures. Unwrap functools.wraps decorators so the user's function, not
+    # a wrapper such as a retry decorator, is the one observed.
+    capture_code = getattr(func, _CAPTURE_CODE_ATTR, None) or inspect.unwrap(func).__code__
 
     try:
         # Inspect function signature to determine if it expects context parameter

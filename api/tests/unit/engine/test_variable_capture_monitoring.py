@@ -8,6 +8,7 @@ roughly ten times slower than the same code run as plain Python.
 
 import asyncio
 import base64
+import functools
 import sys
 
 from src.models.enums import ExecutionStatus
@@ -63,6 +64,43 @@ async def test_captures_locals_at_final_return_of_async_workflow():
     assert result.status == ExecutionStatus.SUCCESS
     assert result.result == "finished:42"
     assert result.variables == {"stage": "finished", "total": 42}
+
+
+async def test_captures_locals_at_early_return():
+    async def early_return_workflow(flag: bool):
+        reason = "short-circuit"
+        if flag:
+            return reason
+        unreachable = "never assigned"
+        return unreachable
+
+    result = await execute(_request(func=early_return_workflow, parameters={"flag": True}))
+
+    assert result.status == ExecutionStatus.SUCCESS
+    assert result.result == "short-circuit"
+    assert result.variables == {"flag": True, "reason": "short-circuit"}
+
+
+async def test_captures_locals_of_function_under_wraps_decorator():
+    def retrying(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            attempt = 1
+            assert attempt
+            return await fn(*args, **kwargs)
+
+        return wrapper
+
+    @retrying
+    async def wrapped_workflow(count: int):
+        doubled = count * 2
+        return doubled
+
+    result = await execute(_request(func=wrapped_workflow, parameters={"count": 4}))
+
+    assert result.status == ExecutionStatus.SUCCESS
+    assert result.result == 8
+    assert result.variables == {"count": 4, "doubled": 8}
 
 
 async def test_await_suspension_does_not_capture_locals():
@@ -152,4 +190,20 @@ async def test_workflow_code_runs_without_line_or_call_tracing():
     assert observed["global_events"] == [0]
     assert observed["workflow_events"] == [monitoring.events.PY_RETURN]
     assert observed["helper_events"] == [0]
+    assert {t for t in range(6) if monitoring.get_tool(t) is not None} == tools_before
+
+
+async def test_monitoring_tool_id_is_freed_after_failing_workflow():
+    monitoring = sys.monitoring
+    tools_before = {t for t in range(6) if monitoring.get_tool(t) is not None}
+
+    async def failing_workflow():
+        marker = "captured from the traceback"
+        await asyncio.sleep(0)
+        raise ValueError(marker)
+
+    result = await execute(_request(func=failing_workflow))
+
+    assert result.status == ExecutionStatus.FAILED
+    assert result.variables == {"marker": "captured from the traceback"}
     assert {t for t in range(6) if monitoring.get_tool(t) is not None} == tools_before
