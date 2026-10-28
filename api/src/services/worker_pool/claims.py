@@ -31,6 +31,15 @@ SUPPORTED_HANDLERS: tuple[tuple[str, int], ...] = (
     ("agent.summarize", 1),
     ("agent.summarize_backfill", 1),
 )
+# What a physical worker (a remote launcher) runs: workflow runs and agent
+# runs, each in its own child process. Summaries stay in the API.
+REMOTE_WORKER_HANDLERS: tuple[tuple[str, int], ...] = (
+    ("workflow.execute", 1),
+    ("agent.run", 1),
+)
+REMOTE_WORKER_HANDLER_NAMES: tuple[str, ...] = tuple(
+    handler for handler, _version in REMOTE_WORKER_HANDLERS
+)
 
 
 @dataclass(frozen=True)
@@ -399,6 +408,8 @@ async def retire_worker(incarnation_id: UUID, *, runs_handled: int) -> None:
 
 __all__ = [
     "PoolClaim",
+    "REMOTE_WORKER_HANDLERS",
+    "REMOTE_WORKER_HANDLER_NAMES",
     "SUPPORTED_HANDLERS",
     "admit_worker",
     "register_static_worker",

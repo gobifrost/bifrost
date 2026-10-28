@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import delete, select, update
@@ -125,3 +125,46 @@ async def test_cancelled_agent_run_dispatch_is_dropped(harness, async_session_fa
     await work_dispatch.reconcile_work_dispatches()
     assert await _dispatch(async_session_factory, run_id) is None
     assert (await _run(async_session_factory, run_id)).status == "cancelled"
+
+
+async def test_a_run_whose_fork_was_refused_goes_back_to_waiting(
+    harness, async_session_factory, monkeypatch
+) -> None:
+    from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
+
+    monkeypatch.setattr(agent_run_dispatch, "get_db_context", async_session_factory)
+    run_id = await _enqueue()
+    worker_id = uuid4()
+    async with async_session_factory() as session:
+        session.add(ExecutionWorker(
+            id=worker_id, form="static", state="ready", resource_class="standard", slots=0,
+        ))
+        await session.flush()
+        session.add(ExecutionWorkerClaim(
+            worker_id=worker_id, family="agent_run", subject_id=UUID(run_id),
+        ))
+        await session.execute(
+            update(WorkDispatch)
+            .where(WorkDispatch.subject_id == UUID(run_id))
+            .values(assigned_worker_id=worker_id)
+        )
+        await session.commit()
+    dispatch = await _dispatch(async_session_factory, run_id)
+    assert dispatch is not None
+    try:
+        await agent_run_dispatch.release_agent_run(
+            worker_id=worker_id, run_id=UUID(run_id), dispatch_id=dispatch.id,
+        )
+
+        released = await _dispatch(async_session_factory, run_id)
+        assert released is not None and released.assigned_worker_id is None
+        assert (await _run(async_session_factory, run_id)).status == "queued"
+        async with async_session_factory() as session:
+            claims = (await session.execute(
+                select(ExecutionWorkerClaim).where(ExecutionWorkerClaim.worker_id == worker_id)
+            )).scalars().all()
+        assert claims == []
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await session.commit()

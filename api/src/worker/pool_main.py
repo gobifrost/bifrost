@@ -4,8 +4,8 @@ Two forms share this loop. A *job* worker is started by the worker-pool
 controller as one Kubernetes Job lifetime (it carries an incarnation). A
 *static* worker is a long-running container (the ``scheduler`` and ``worker``
 services, through their entry points) that registers itself and never idles
-out. Every executor runs workflows, agent runs, summaries, services and
-local platform jobs.
+out. A remote executor runs workflows, agent runs, services and local platform
+jobs in its launcher's children; the API-resident executor runs summaries.
 
 A job worker admits itself
 to its incarnation (Job UID bound before start, pod UID bound once), then
@@ -27,6 +27,7 @@ import os
 import socket
 import time
 from collections.abc import Callable
+from typing import Protocol
 from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
@@ -78,6 +79,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+class AgentConsumer(Protocol):
+    """Runs one claimed ``agent.run`` dispatch and returns when it has ended."""
+
+    async def process_message(self, body: dict) -> None: ...
+
 
 POLL_SECONDS = 1.0
 HEARTBEAT_SECONDS = 5.0
@@ -147,7 +155,7 @@ class PoolWorker:
             "agent.summarize_backfill": set(),
         }
         self._workflow_consumer = None
-        self._agent_consumer = None
+        self._agent_consumer: AgentConsumer | None = None
         self._package_consumer = None
         self.package_generation = 0
         self._service_claim_loop = None
@@ -292,6 +300,11 @@ class PoolWorker:
 
         return PackageInstallConsumer()
 
+    def _make_agent_consumer(self) -> AgentConsumer:
+        from src.jobs.consumers.agent_run import AgentRunConsumer
+
+        return AgentRunConsumer()
+
     async def _execute_platform_job(self, claim: ClaimedPlatformJob) -> bool:
         return await run_claimed_platform_job(claim)
 
@@ -374,8 +387,6 @@ class PoolWorker:
 
     async def _start_executor(self) -> None:
         """Start the pool, consumers, memory gate and service supervision."""
-        from src.jobs.consumers.agent_run import AgentRunConsumer
-
         if self.hosts_remote_work:
             # Read the package generation before the pool installs requirements:
             # a change committed in between is then applied again (installs are
@@ -386,8 +397,8 @@ class PoolWorker:
             await self._workflow_consumer.start_pool()
             # Applies recorded package changes; it never consumes the broadcast.
             self._package_consumer = self._make_package_consumer()
-        if any(handler.startswith("agent.") for handler, _version in self._handlers):
-            self._agent_consumer = AgentRunConsumer()
+        if any(handler == "agent.run" for handler, _version in self._handlers):
+            self._agent_consumer = self._make_agent_consumer()
         # Measured once the parent and fork template are up, before any
         # service claims: what remains is what work may use. API-resident
         # agents receive the API host's shared gate at construction time.

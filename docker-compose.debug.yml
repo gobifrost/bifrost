@@ -261,6 +261,8 @@ services:
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
+      # Agent children call the API's REST routes over HTTP.
+      BIFROST_API_URL: http://api:8000
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
       # C1.5: pip cache parity with k8s (C1.3).

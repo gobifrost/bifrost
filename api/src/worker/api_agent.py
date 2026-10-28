@@ -1,9 +1,8 @@
-"""API-resident executor for agent runs and summaries.
+"""API-resident executor for run summaries.
 
-The API process has one shared :class:`Admission`, so agent work is admitted
-against the memory it actually uses. Remote launchers deliberately do not
-claim these handlers: their capacity is reserved for workflow children,
-services, and platform jobs.
+A summary is one short model request, so it stays in the API process and is
+admitted against the API's one shared :class:`Admission`. Agent runs execute
+on remote workers (``worker.remote.agent_route``).
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ from src.worker.admission import Admission
 from src.worker.pool_main import PoolWorker
 
 API_AGENT_HANDLERS: tuple[tuple[str, int], ...] = (
-    ("agent.run", 1),
     ("agent.summarize", 1),
     ("agent.summarize_backfill", 1),
 )
