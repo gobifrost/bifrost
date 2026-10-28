@@ -387,8 +387,10 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
 
     The agent consumer opens database sessions and decrypts the model
     provider's key, so this profile keeps the environment and settings the
-    workflow profile scrubs. Imports only: no event loop, thread or
-    connection exists when children fork.
+    workflow profile scrubs. Imports and mapper configuration only: no event
+    loop, thread or connection exists when children fork. The API
+    application (``src.main``) is not loaded; children reach REST over HTTP
+    (see ``src.jobs.agent_run_child``).
 
     Returns extra ``ready`` fields, or None after reporting a startup error.
     """
@@ -399,11 +401,14 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
         import src.jobs.consumers.agent_run  # noqa: F401
         import src.services.agent_executor  # noqa: F401
         import src.services.agent_runtime.tool_policy  # noqa: F401
-        # Thin-wrapper system tools call REST through an in-process transport
-        # that serves src.main.app.
-        import src.main  # noqa: F401
+        from sqlalchemy.orm import configure_mappers
+
         from src.config import get_settings
 
+        # SQLAlchemy configures mappers on first use, rewriting every mapper
+        # object. Doing it once here keeps those pages shared instead of
+        # copying them into each child's first query.
+        configure_mappers()
         idle_seconds = get_settings().agent_template_idle_seconds
     except Exception as e:
         logger.exception(f"Agent template failed to load dependencies: {e}")

@@ -8,7 +8,10 @@ without a database or a model.
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
+import sys
 import textwrap
 import time
 from pathlib import Path
@@ -65,6 +68,37 @@ def test_agent_template_is_ready_with_a_frozen_heap(agent_template: TemplateProc
     assert agent_template.profile == "agent"
     assert agent_template.frozen_objects is not None and agent_template.frozen_objects > 0
     assert agent_template.idle_seconds == 300
+
+
+def test_agent_template_configures_mappers_without_loading_the_api_app() -> None:
+    probe = textwrap.dedent('''
+        import json
+        import sys
+        from src.services.execution.template_process import _template_main
+
+        class StartupPipe:
+            def send(self, message):
+                assert message["status"] == "ready", message
+            def poll(self, timeout):
+                return True
+            def recv(self):
+                return {"action": "shutdown"}
+
+        _template_main(StartupPipe(), "agent")
+        from sqlalchemy import inspect
+        from src.models.orm.agent_runs import AgentRun
+        print(json.dumps({
+            "main_loaded": "src.main" in sys.modules,
+            "mappers_configured": inspect(AgentRun).configured,
+        }))
+    ''')
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.splitlines()[-1]) == {
+        "main_loaded": False, "mappers_configured": True,
+    }
 
 
 def test_agent_template_forks_without_threads_or_sockets(agent_template: TemplateProcess) -> None:
