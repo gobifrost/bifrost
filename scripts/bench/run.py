@@ -160,18 +160,21 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
     for pass_number in (1, 2):
         for name in classes:
             print(f"Pass {pass_number}: {name} ...", flush=True)
+            cpu_before = cluster.container_stats()
             records = current.driver("run_class", {
                 "name": name, "sequential": profile["sequential"], "burst": profile["burst"],
                 "burst_rounds": profile["burst_rounds"], "timeout_s": profile["timeout_s"],
             }, timeout_s=profile["timeout_s"] * (profile["sequential"] + profile["burst_rounds"] + 1))
+            time.sleep(profile["settle_s"])
+            runs = len(records["sequential"]) + len(records["burst"])
             current.result["classes"].append({
                 "name": name,
                 "pass": pass_number,
                 "sequential": stats.timings(records["sequential"]),
                 "burst": stats.timings(records["burst"]),
+                "cpu_ms_per_run": stats.cpu_ms_per_run(cpu_before, cluster.container_stats(), runs),
                 "raw": records,
             })
-            time.sleep(profile["settle_s"])
             current.snapshot(f"{name} (pass {pass_number})")
     print(f"Idle {profile['idle_s']} s ...", flush=True)
     time.sleep(profile["idle_s"])

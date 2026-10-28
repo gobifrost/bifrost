@@ -43,5 +43,21 @@ class TimingsTest(unittest.TestCase):
         self.assertEqual(result["e2e_ms"]["max"], 2000.0)
 
 
+class CpuTest(unittest.TestCase):
+    def test_cpu_per_run_by_role_skips_containers_that_came_or_went(self) -> None:
+        before = [
+            {"pod": "bifrost-api-1", "container": "api", "role": "api", "cpu_core_seconds": 10.0},
+            {"pod": "bifrost-worker-a", "container": "worker", "role": "worker", "cpu_core_seconds": 5.0},
+            {"pod": "bifrost-worker-gone", "container": "worker", "role": "worker", "cpu_core_seconds": 1.0},
+        ]
+        after = [
+            {"pod": "bifrost-api-1", "container": "api", "role": "api", "cpu_core_seconds": 12.0},
+            {"pod": "bifrost-worker-a", "container": "worker", "role": "worker", "cpu_core_seconds": 6.0},
+            {"pod": "bifrost-worker-new", "container": "worker", "role": "worker", "cpu_core_seconds": 9.0},
+            {"pod": "postgres-0", "container": "postgres", "role": "infra", "cpu_core_seconds": 3.0},
+        ]
+        self.assertEqual(stats.cpu_ms_per_run(before, after, 4), {"api": 500.0, "worker": 250.0})
+
+
 if __name__ == "__main__":
     unittest.main()

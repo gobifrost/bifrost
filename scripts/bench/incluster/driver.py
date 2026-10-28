@@ -237,63 +237,74 @@ async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int) 
         await http.aclose()
 
 
-async def _run_workflow(http: httpx.AsyncClient, workflow_id: str, timeout_s: int) -> dict:
-    started = _check(await http.post("/api/workflows/execute", json={"workflow_id": workflow_id, "input_data": {}, "sync": False}), "execute").json()
-    execution_id = started["execution_id"]
-    deadline = time.monotonic() + timeout_s
-    while True:
-        record = _check(await http.get(f"/api/executions/{execution_id}"), "get execution").json()
-        if record.get("status") in TERMINAL_WORKFLOW or time.monotonic() > deadline:
-            return {
-                "id": execution_id, "status": record.get("status"), "created_at": record.get("created_at"),
-                "started_at": record.get("started_at"), "completed_at": record.get("completed_at"),
-                "error": record.get("error_message"),
-            }
-        await asyncio.sleep(0.25)
+POLL_INTERVAL_S = 1.0
 
 
-async def _run_agent(http: httpx.AsyncClient, agent_name: str, timeout_s: int) -> dict:
-    queued = _check(await http.post("/api/agent-runs/enqueue", json={"agent_name": agent_name, "input": {"message": AGENT_PROMPT}}), "enqueue agent").json()
-    run_id = queued["run_id"]
+async def _wait_all(http: httpx.AsyncClient, list_path: str, params: dict, ids: list[str], timeout_s: int) -> list[dict]:
+    """Wait for runs with one list request per tick, so polling adds almost no load.
+
+    Workflow executions and agent runs both expose created/started/completed
+    timestamps on their list routes; those are what the stats use.
+    """
+    pending = set(ids)
+    found: dict[str, dict] = {}
     deadline = time.monotonic() + timeout_s
-    while True:
-        record = _check(await http.get(f"/api/agent-runs/{run_id}"), "get agent run").json()
-        if record.get("status") not in ACTIVE_AGENT or time.monotonic() > deadline:
-            return {
-                "id": run_id, "status": record.get("status"), "created_at": record.get("created_at"),
-                "started_at": record.get("started_at"), "completed_at": record.get("completed_at"),
-                "error": record.get("error"), "iterations": record.get("iterations_used"), "tokens": record.get("tokens_used"),
-            }
-        await asyncio.sleep(0.25)
+    while pending and time.monotonic() < deadline:
+        await asyncio.sleep(POLL_INTERVAL_S)
+        listed = _check(await http.get(list_path, params=params), f"list {list_path}").json()
+        rows = listed if isinstance(listed, list) else listed.get("executions") or listed.get("items") or []
+        for row in rows:
+            row_id = str(row.get("execution_id") or row.get("id"))
+            if row_id in pending and _terminal(row):
+                found[row_id] = row
+                pending.discard(row_id)
+    records = []
+    for run_id in ids:
+        row = found.get(run_id, {"status": "TimedOutInBench"})
+        records.append({
+            "id": run_id, "status": row.get("status"), "created_at": row.get("created_at"),
+            "started_at": row.get("started_at"), "completed_at": row.get("completed_at"),
+            "error": row.get("error_message") or row.get("error"),
+            "iterations": row.get("iterations_used"), "tokens": row.get("tokens_used"),
+        })
+    return records
+
+
+def _terminal(row: dict) -> bool:
+    if "execution_id" in row:
+        return row.get("status") in TERMINAL_WORKFLOW
+    return row.get("status") not in ACTIVE_AGENT
 
 
 async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burst_rounds: int = 1) -> dict:
     http = await client()
     try:
-        workflow_id = (await _workflow_ids(http))[WORKFLOW_CLASSES[name]] if name in WORKFLOW_CLASSES else ""
         if name in WORKFLOW_CLASSES:
+            workflow_id = (await _workflow_ids(http))[WORKFLOW_CLASSES[name]]
+            list_path, params = "/api/executions", {"workflowId": workflow_id, "limit": 50}
 
-            def one():  # noqa: ANN202 - local coroutine factory
-                return _run_workflow(http, workflow_id, timeout_s)
+            async def submit() -> str:
+                body = {"workflow_id": workflow_id, "input_data": {}, "sync": False}
+                return _check(await http.post("/api/workflows/execute", json=body), "execute").json()["execution_id"]
         else:
             agent_name, mode = AGENT_CLASSES[name]
             _check(await http.put("/api/admin/ai/behavior", json={"agent_execution_mode": mode}), "set execution mode")
+            listed = _check(await http.get("/api/agents"), "list agents").json()
+            agents = listed if isinstance(listed, list) else listed.get("items", [])
+            agent_id = next(agent["id"] for agent in agents if agent["name"] == agent_name)
+            list_path, params = "/api/agent-runs", {"agent_id": agent_id, "limit": 50}
 
-            def one():  # noqa: ANN202 - local coroutine factory
-                return _run_agent(http, agent_name, timeout_s)
+            async def submit() -> str:
+                body = {"agent_name": agent_name, "input": {"message": AGENT_PROMPT}}
+                return str(_check(await http.post("/api/agent-runs/enqueue", json=body), "enqueue agent").json()["run_id"])
 
-        sequential_records = [await one() for _ in range(sequential)]
-        burst_records = []
+        sequential_records: list[dict] = []
+        for _ in range(sequential):
+            sequential_records += await _wait_all(http, list_path, params, [await submit()], timeout_s)
+        burst_records: list[dict] = []
         for _ in range(burst_rounds):
-            burst_records += await asyncio.gather(*(one() for _ in range(burst)))
-        if name in WORKFLOW_CLASSES:
-            # The detail route clears created_at once a run starts; the list
-            # route keeps the platform's own acceptance time.
-            listed = _check(await http.get("/api/executions", params={"workflowId": workflow_id, "limit": 1000}), "list executions").json()
-            rows = listed if isinstance(listed, list) else listed.get("executions") or listed.get("items") or []
-            created = {row["execution_id"]: row.get("created_at") for row in rows}
-            for record in (*sequential_records, *burst_records):
-                record["created_at"] = created.get(record["id"])
+            ids = list(await asyncio.gather(*(submit() for _ in range(burst))))
+            burst_records += await _wait_all(http, list_path, params, ids, timeout_s)
         return {"class": name, "sequential": sequential_records, "burst": burst_records}
     finally:
         await http.aclose()

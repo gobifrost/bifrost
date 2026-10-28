@@ -60,3 +60,19 @@ def timings(records: list[dict]) -> dict:
         "run_ms": _distribution(run),
         "e2e_ms": _distribution(e2e),
     }
+
+
+def cpu_ms_per_run(before: list[dict], after: list[dict], runs: int) -> dict[str, float]:
+    """CPU each role spent per run, from the kubelet's cumulative counters.
+
+    Only containers present in both samples count (worker Jobs come and go).
+    The window includes the settle period, so a role's idle CPU is included.
+    """
+    start = {(row["pod"], row["container"]): row for row in before}
+    totals: dict[str, float] = {}
+    for row in after:
+        previous = start.get((row["pod"], row["container"]))
+        if previous is None:
+            continue
+        totals[row["role"]] = totals.get(row["role"], 0.0) + row["cpu_core_seconds"] - previous["cpu_core_seconds"]
+    return {role: round(seconds * 1000 / max(runs, 1), 1) for role, seconds in totals.items() if role in ("api", "worker")}

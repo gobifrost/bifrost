@@ -7,10 +7,17 @@ def _ms(dist: dict) -> str:
     return f"{dist['p50']:.0f} / {dist['p95']:.0f}"
 
 
+def _cpu(entry: dict, phase: str) -> str:
+    cpu = entry.get("cpu_ms_per_run")
+    if phase != "sequential" or not cpu:
+        return ""
+    return f"{cpu.get('api', 0):.0f} / {cpu.get('worker', 0):.0f}"
+
+
 def _classes_table(classes: list[dict]) -> list[str]:
     rows = [
-        "| Class | Pass | Phase | OK / runs | Queue p50 / p95 ms | Run p50 / p95 ms | End-to-end p50 / p95 ms |",
-        "|---|---:|---|---:|---:|---:|---:|",
+        "| Class | Pass | Phase | OK / runs | Queue p50 / p95 ms | Run p50 / p95 ms | End-to-end p50 / p95 ms | CPU ms/run API / worker |",
+        "|---|---:|---|---:|---:|---:|---:|---:|",
     ]
     for entry in classes:
         for phase in ("sequential", "burst"):
@@ -18,7 +25,7 @@ def _classes_table(classes: list[dict]) -> list[str]:
             status = "" if t["failed"] == 0 else " ⚠"
             rows.append(
                 f"| `{entry['name']}` | {entry['pass']} | {phase} | {t['succeeded']} / {t['runs']}{status} | "
-                f"{_ms(t['queue_ms'])} | {_ms(t['run_ms'])} | {_ms(t['e2e_ms'])} |"
+                f"{_ms(t['queue_ms'])} | {_ms(t['run_ms'])} | {_ms(t['e2e_ms'])} | {_cpu(entry, phase)} |"
             )
     return rows
 

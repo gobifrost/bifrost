@@ -48,6 +48,7 @@ def parse_stats_summary(summary: dict, namespace: str) -> list[dict]:
                 "working_set_mib": round(memory.get("workingSetBytes", 0) / _MIB, 1),
                 "rss_mib": round(memory.get("rssBytes", 0) / _MIB, 1),
                 "cpu_millicores": round(container.get("cpu", {}).get("usageNanoCores", 0) / 1_000_000, 1),
+                "cpu_core_seconds": container.get("cpu", {}).get("usageCoreNanoSeconds", 0) / 1e9,
             })
     return rows
 
