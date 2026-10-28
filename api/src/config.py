@@ -120,6 +120,11 @@ class Settings(BaseSettings):
         default=0.85,
         description="Reject new forks when container memory usage exceeds this ratio (0.0-1.0)"
     )
+    agent_template_idle_seconds: float = Field(
+        default=300,
+        gt=0,
+        description="A worker's agent template retires after this many seconds with no agent run alive",
+    )
 
     # ==========================================================================
     # Supervised Services (Slice 3)

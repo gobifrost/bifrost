@@ -12,10 +12,19 @@ The template process NEVER:
 - Initializes thread-based logging handlers
 
 This ensures clean fork behavior (no inherited locked mutexes).
+
+Two profiles share the fork protocol:
+- ``workflow`` preloads the execution engine and scrubs platform credentials
+  before forking one-shot workflow children.
+- ``agent`` preloads the agent runtime, keeps platform credentials (the agent
+  consumer opens database sessions and decrypts model keys), freezes the
+  collector before accepting forks, and forks one child per ``agent.run``.
 """
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import logging
 import multiprocessing
 import os
@@ -24,7 +33,7 @@ import subprocess
 import sys
 from contextlib import suppress
 from multiprocessing.connection import Connection
-from typing import Any
+from typing import Any, Literal, get_args
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +100,8 @@ class _RecvQueue:
             # Connection already closed or broken — close is idempotent
             logger.debug(f"_RecvQueue.close ignoring: {e}")
 
+TemplateProfile = Literal["workflow", "agent"]
+
 # Commands sent from consumer to template via pipe
 CMD_FORK = "fork"
 CMD_GET_EXIT_STATUSES = "get_exit_statuses"
@@ -123,16 +134,19 @@ def _reap_children(exit_statuses: dict[int, int]) -> None:
 
 def _template_main(
     pipe: Connection,
+    profile: TemplateProfile = "workflow",
 ) -> None:
     """
     Entry point for the template process.
 
-    Loads all heavy dependencies, installs import hooks, then waits for fork
-    commands on the pipe. This function runs in the template subprocess after
-    the entrypoint restores multiprocessing spawn semantics.
+    Loads the profile's heavy dependencies, then waits for fork commands on
+    the pipe. This function runs in the template subprocess after the
+    entrypoint restores multiprocessing spawn semantics.
 
     Args:
         pipe: Connection to receive commands from and send responses to consumer.
+        profile: ``workflow`` (scrubbed execution engine) or ``agent``
+            (agent runtime with platform credentials).
     """
     # Configure logging (no thread-based handlers)
     logging.basicConfig(
@@ -140,8 +154,81 @@ def _template_main(
         format="[template] %(levelname)s - %(message)s",
     )
 
-    logger.info(f"Template process starting (PID={os.getpid()})")
+    logger.info(f"Template process starting (PID={os.getpid()}, profile={profile})")
 
+    if profile == "agent":
+        ready_fields = _load_agent_runtime(pipe)
+    else:
+        ready_fields = _load_workflow_runtime(pipe)
+    if ready_fields is None:
+        return
+
+    if profile == "agent":
+        # Move everything loaded so far to the permanent generation. A child's
+        # collections then never write to the shared objects' GC headers, so
+        # their pages stay shared with this template instead of being copied
+        # into every run.
+        gc.freeze()
+
+    logger.info("Template process ready — all dependencies loaded")
+    pipe.send({
+        "status": "ready",
+        "pid": os.getpid(),
+        "start_method": multiprocessing.get_start_method(),
+        "process_name": multiprocessing.current_process().name,
+        "frozen_objects": gc.get_freeze_count(),
+        **ready_fields,
+    })
+
+    # ----- Fork loop -----
+    # Single-threaded, no event loop. Just wait for commands and fork.
+    exit_statuses: dict[int, int] = {}
+    while True:
+        _reap_children(exit_statuses)
+
+        try:
+            if not pipe.poll(timeout=1.0):
+                continue
+
+            cmd = pipe.recv()
+        except (EOFError, OSError):
+            # Consumer closed the pipe — shut down
+            logger.info("Template pipe closed, shutting down")
+            break
+
+        if cmd.get("action") == CMD_SHUTDOWN:
+            logger.info("Template received shutdown command")
+            break
+
+        if cmd.get("action") == CMD_GET_EXIT_STATUSES:
+            # A child may have exited after the sweep at the top of the loop.
+            _reap_children(exit_statuses)
+            pipe.send({
+                "status": "exit_statuses",
+                "exit_statuses": list(exit_statuses.items()),
+            })
+            exit_statuses.clear()
+            continue
+
+        if cmd.get("action") == CMD_FORK:
+            worker_id = cmd.get("worker_id", "unknown")
+            persistent = cmd.get("persistent", False)
+            work_recv: Connection = cmd["work_recv"]
+            result_send: Connection = cmd["result_send"]
+            sdk_socket_path = cmd.get("sdk_socket_path")
+            _handle_fork_request(
+                pipe, worker_id, persistent, work_recv, result_send,
+                sdk_socket_path, profile,
+            )
+
+    logger.info("Template process exiting")
+
+
+def _load_workflow_runtime(pipe: Connection) -> dict[str, Any] | None:
+    """Preload the execution engine and scrub platform credentials.
+
+    Returns extra ``ready`` fields, or None after reporting a startup error.
+    """
     # ----- Load heavy dependencies -----
     # These imports pull in the full transitive closure of each library.
     # After fork, children share these pages via COW.
@@ -187,7 +274,7 @@ def _template_main(
         logger.exception(f"Template process failed to load dependencies: {e}")
         pipe.send({"status": "error", "error": str(e)})
         pipe.close()
-        return
+        return None
 
     # ----- Env scrub (Phase 2, M1) -----
     # Scrub credentials that the template loaded during startup but that
@@ -292,59 +379,41 @@ def _template_main(
     if install_virtual_import_hook is not None:
         install_virtual_import_hook()
 
-    logger.info("Template process ready — all dependencies loaded")
-    pipe.send({
-        "status": "ready",
-        "pid": os.getpid(),
-        "start_method": multiprocessing.get_start_method(),
-        "process_name": multiprocessing.current_process().name,
-    })
-
-    # ----- Fork loop -----
-    # Single-threaded, no event loop. Just wait for commands and fork.
-    exit_statuses: dict[int, int] = {}
-    while True:
-        _reap_children(exit_statuses)
-
-        try:
-            if not pipe.poll(timeout=1.0):
-                continue
-
-            cmd = pipe.recv()
-        except (EOFError, OSError):
-            # Consumer closed the pipe — shut down
-            logger.info("Template pipe closed, shutting down")
-            break
-
-        if cmd.get("action") == CMD_SHUTDOWN:
-            logger.info("Template received shutdown command")
-            break
-
-        if cmd.get("action") == CMD_GET_EXIT_STATUSES:
-            # A child may have exited after the sweep at the top of the loop.
-            _reap_children(exit_statuses)
-            pipe.send({
-                "status": "exit_statuses",
-                "exit_statuses": list(exit_statuses.items()),
-            })
-            exit_statuses.clear()
-            continue
-
-        if cmd.get("action") == CMD_FORK:
-            worker_id = cmd.get("worker_id", "unknown")
-            persistent = cmd.get("persistent", False)
-            work_recv: Connection = cmd["work_recv"]
-            result_send: Connection = cmd["result_send"]
-            sdk_socket_path = cmd.get("sdk_socket_path")
-            _handle_fork_request(
-                pipe, worker_id, persistent, work_recv, result_send,
-                sdk_socket_path,
-            )
-
-    logger.info("Template process exiting")
+    return {}
 
 
-def _template_subprocess_entry(control_fd: int) -> None:
+def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
+    """Preload the agent runtime with the platform credentials it needs.
+
+    The agent consumer opens database sessions and decrypts the model
+    provider's key, so this profile keeps the environment and settings the
+    workflow profile scrubs. Imports only: no event loop, thread or
+    connection exists when children fork.
+
+    Returns extra ``ready`` fields, or None after reporting a startup error.
+    """
+    try:
+        import pydantic_ai.models.openai  # noqa: F401
+        import pydantic_ai.providers.openai  # noqa: F401
+        import src.jobs.agent_run_child  # noqa: F401
+        import src.jobs.consumers.agent_run  # noqa: F401
+        import src.services.agent_executor  # noqa: F401
+        import src.services.agent_runtime.tool_policy  # noqa: F401
+        # Thin-wrapper system tools call REST through an in-process transport
+        # that serves src.main.app.
+        import src.main  # noqa: F401
+        from src.config import get_settings
+
+        idle_seconds = get_settings().agent_template_idle_seconds
+    except Exception as e:
+        logger.exception(f"Agent template failed to load dependencies: {e}")
+        pipe.send({"status": "error", "error": str(e)})
+        pipe.close()
+        return None
+    return {"idle_seconds": idle_seconds}
+
+
+def _template_subprocess_entry(control_fd: int, profile: TemplateProfile) -> None:
     """
     Minimal subprocess entrypoint for the template.
 
@@ -360,7 +429,7 @@ def _template_subprocess_entry(control_fd: int) -> None:
     if not authkey:
         raise RuntimeError("template subprocess received an empty authkey")
     multiprocessing.current_process().authkey = authkey
-    _template_main(pipe)
+    _template_main(pipe, profile)
 
 
 def _handle_fork_request(
@@ -370,6 +439,7 @@ def _handle_fork_request(
     work_recv: Connection,
     result_send: Connection,
     sdk_socket_path: str | None = None,
+    profile: TemplateProfile = "workflow",
 ) -> None:
     """
     Handle a fork request: fork and wire up pre-created pipe connections.
@@ -396,11 +466,13 @@ def _handle_fork_request(
         result_send: Write end of result pipe (child writes results here).
         sdk_socket_path: Worker-local Unix socket the child should use for
             engine SDK HTTP calls, or None when no socket is served.
+        profile: The template's profile; selects the child's entry.
     """
-    # The virtual import hook preloads a parent-side HTTP client. Clear that
-    # and any sync Redis source-cache client immediately before fork so the
-    # child reconstructs only its injected worker-UDS transport.
-    _clear_pre_fork_source_clients()
+    if profile == "workflow":
+        # The virtual import hook preloads a parent-side HTTP client. Clear
+        # that and any sync Redis source-cache client immediately before fork
+        # so the child reconstructs only its injected worker-UDS transport.
+        _clear_pre_fork_source_clients()
     child_pid = os.fork()
 
     if child_pid > 0:
@@ -432,10 +504,13 @@ def _handle_fork_request(
             logger.debug(f"child: pipe.close ignored: {e}")
 
         # Run the worker function (this blocks until the child exits)
-        _run_forked_child(
-            work_recv, result_send, worker_id, persistent,
-            sdk_socket_path=sdk_socket_path,
-        )
+        if profile == "agent":
+            _run_agent_child(work_recv, result_send, worker_id)
+        else:
+            _run_forked_child(
+                work_recv, result_send, worker_id, persistent,
+                sdk_socket_path=sdk_socket_path,
+            )
         os._exit(0)
 
 
@@ -613,20 +688,59 @@ def _run_forked_child(
     logger.info(f"Worker {worker_id} exiting")
 
 
+def _run_agent_child(
+    work_recv: Connection,
+    result_send: Connection,
+    worker_id: str,
+) -> None:
+    """Run one ``agent.run`` dispatch in a child forked from the agent template.
+
+    Reads one work item ``{"message": dict}``, runs the agent consumer with
+    connections opened in this child, and replies ``{"ok": True}`` or
+    ``{"ok": False, "error_type": ..., "error": ...}``. A child that dies
+    without replying is reported as a crash by its supervisor.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format=f"[{worker_id}] %(levelname)s - %(message)s",
+        force=True,
+    )
+    try:
+        work_item = work_recv.recv()
+    except (EOFError, OSError):
+        logger.info(f"Agent child {worker_id} work pipe closed before a run arrived")
+        return
+
+    from src.jobs.agent_run_child import run_agent_message
+
+    try:
+        asyncio.run(run_agent_message(work_item["message"]))
+        reply: dict[str, Any] = {"ok": True}
+    except Exception as e:
+        logger.exception(f"Agent child {worker_id} run failed: {e}")
+        reply = {"ok": False, "error_type": type(e).__name__, "error": str(e)}
+    result_send.send(reply)
+
+
 class TemplateProcess:
     """
     Manages the lifecycle of the template process.
 
     The template process is a long-lived, single-threaded process that
     holds all heavy dependencies in memory and forks children on request.
+    ``profile`` selects what it preloads and what its children run (see the
+    module docstring).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, profile: TemplateProfile = "workflow") -> None:
+        self.profile: TemplateProfile = profile
         self._process: subprocess.Popen[bytes] | None = None
         self._pipe: Connection | None = None
         self.pid: int | None = None
         self.start_method: str | None = None
         self.process_name: str | None = None
+        self.frozen_objects: int | None = None
+        self.idle_seconds: float | None = None
 
     def start(self) -> None:
         """
@@ -643,6 +757,8 @@ class TemplateProcess:
             self.pid = None
             self.start_method = None
             self.process_name = None
+            self.frozen_objects = None
+            self.idle_seconds = None
             if self._pipe is not None:
                 with suppress(OSError, BrokenPipeError):
                     self._pipe.close()
@@ -655,6 +771,7 @@ class TemplateProcess:
             "-m",
             "src.services.execution.template_process",
             str(child_conn.fileno()),
+            self.profile,
         ]
 
         process: subprocess.Popen[bytes] | None = None
@@ -683,7 +800,9 @@ class TemplateProcess:
             self.pid = msg.get("pid", process.pid)
             self.start_method = msg.get("start_method")
             self.process_name = msg.get("process_name")
-            logger.info(f"Template process ready (PID={self.pid})")
+            self.frozen_objects = msg.get("frozen_objects")
+            self.idle_seconds = msg.get("idle_seconds")
+            logger.info(f"Template process ready (PID={self.pid}, profile={self.profile})")
         except Exception:
             with suppress(OSError, BrokenPipeError):
                 child_conn.close()
@@ -697,6 +816,8 @@ class TemplateProcess:
             self.pid = None
             self.start_method = None
             self.process_name = None
+            self.frozen_objects = None
+            self.idle_seconds = None
             raise
 
     def fork(
@@ -829,6 +950,8 @@ class TemplateProcess:
         self.pid = None
         self.start_method = None
         self.process_name = None
+        self.frozen_objects = None
+        self.idle_seconds = None
 
     def is_alive(self) -> bool:
         """Check if the template process is still running."""
@@ -838,6 +961,8 @@ class TemplateProcess:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: python -m src.services.execution.template_process <control_fd>")
-    _template_subprocess_entry(int(sys.argv[1]))
+    if len(sys.argv) != 3 or sys.argv[2] not in get_args(TemplateProfile):
+        raise SystemExit(
+            "usage: python -m src.services.execution.template_process <control_fd> <workflow|agent>"
+        )
+    _template_subprocess_entry(int(sys.argv[1]), sys.argv[2])  # pyright: ignore[reportArgumentType]
