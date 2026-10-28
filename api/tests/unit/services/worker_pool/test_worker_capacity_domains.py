@@ -1,4 +1,4 @@
-"""Physical worker scaling must not spend the API's agent memory budget."""
+"""Physical workers run workflow and agent runs; the API's budget runs summaries."""
 
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -31,61 +31,69 @@ async def _executor(db, name: str, handlers: list[str], budget: int) -> None:
     assert await claims.mark_static_ready(worker_id, memory_budget_bytes=budget)
 
 
-async def _agent_dispatch(db, request: int):
+async def _dispatch(db, handler: str, request: int):
     async with db.context() as session:
         row = work_dispatch.stage_dispatch(
-            session, family="agent_run", subject_id=uuid4(), handler="agent.run",
+            session, family="agent_run" if handler == "agent.run" else "agent_summary",
+            subject_id=uuid4(), handler=handler,
             handler_version=1, message={}, payload={}, memory_request_bytes=request,
         )
         await session.flush()
         return row.id
 
 
-async def test_api_agent_capacity_does_not_cover_a_workflow_launch(db) -> None:
-    await _executor(db, "api", ["agent.run", "agent.summarize"], GIB)
+async def test_launched_jobs_advertise_workflow_and_agent_runs(db) -> None:
     await _accept_pool_run()
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
 
-    launched = await pool.launch_for_demand(POLICY)
+    [launched] = await pool.launch_for_demand(POLICY)
 
-    assert len(launched) == 1
     async with db.context() as session:
-        worker = await session.get(ExecutionWorker, launched[0])
+        worker = await session.get(ExecutionWorker, launched)
         assert worker is not None
-        assert worker.supported_handlers == ["workflow.execute"]
+        assert worker.supported_handlers == ["workflow.execute", "agent.run"]
 
 
-async def test_waiting_agent_work_does_not_launch_physical_workers(db) -> None:
-    await _agent_dispatch(db, 32 * MIB)
+async def test_waiting_agent_work_with_no_free_worker_launches_one(db) -> None:
+    await _dispatch(db, "agent.run", 32 * MIB)
+    pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+
+    assert len(await pool.launch_for_demand(POLICY)) == 1
+
+
+async def test_agent_work_fits_a_ready_worker_that_claims_agent_runs(db) -> None:
+    await _executor(db, "launcher", ["workflow.execute", "agent.run"], GIB)
+    await _dispatch(db, "agent.run", 32 * MIB)
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
 
     assert await pool.launch_for_demand(POLICY) == []
 
 
-async def test_largest_budget_uses_only_the_handlers_actual_memory_domain(db) -> None:
-    await _executor(db, "api", ["agent.run", "agent.summarize"], 512 * MIB)
-    await _executor(db, "launcher", ["workflow.execute"], 2 * GIB)
+async def test_api_summary_capacity_never_covers_a_launch_and_summaries_never_launch(db) -> None:
+    await _executor(db, "api-agent", ["agent.summarize", "agent.summarize_backfill"], GIB)
+    await _dispatch(db, "agent.summarize", 16 * MIB)
+    pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    assert await pool.launch_for_demand(POLICY) == []
+
+    await _dispatch(db, "agent.run", 32 * MIB)
+    assert len(await pool.launch_for_demand(POLICY)) == 1
+
+
+async def test_largest_budget_counts_launchable_workers_for_agent_runs(db) -> None:
+    await _executor(db, "api-agent", ["agent.summarize"], 512 * MIB)
+    await _executor(db, "launcher", ["workflow.execute", "agent.run"], 2 * GIB)
     async with get_redis() as redis:
         await redis.set(LAUNCHABLE_KEY, str(4 * GIB))
 
     async with db.context() as session:
-        assert await work_dispatch.largest_budget(session, "agent.run") == 512 * MIB
+        assert await work_dispatch.largest_budget(session, "agent.run") == 4 * GIB
         assert await work_dispatch.largest_budget(session, "workflow.execute") == 4 * GIB
+        assert await work_dispatch.largest_budget(session, "agent.summarize") == 512 * MIB
 
 
-async def test_remote_capacity_does_not_prove_an_agent_request_can_ever_fit(db) -> None:
-    await _executor(db, "launcher", ["workflow.execute"], 2 * GIB)
-    async with get_redis() as redis:
-        await redis.set(LAUNCHABLE_KEY, str(4 * GIB))
-
-    async with db.context() as session:
-        assert await work_dispatch.largest_budget(session, "agent.run") is None
-
-
-async def test_reconciler_reports_oversized_agent_against_api_capacity(db, monkeypatch) -> None:
-    await _executor(db, "api", ["agent.run"], 16 * MIB)
-    await _executor(db, "launcher", ["workflow.execute"], 2 * GIB)
-    dispatch_id = await _agent_dispatch(db, 32 * MIB)
+async def test_reconciler_reports_an_agent_run_larger_than_any_worker(db, monkeypatch) -> None:
+    await _executor(db, "launcher", ["workflow.execute", "agent.run"], 16 * MIB)
+    dispatch_id = await _dispatch(db, "agent.run", 32 * MIB)
     fail, report = AsyncMock(), AsyncMock()
     monkeypatch.setattr(work_dispatch, "_families", lambda: {
         "agent_run": work_dispatch.DispatchFamily(

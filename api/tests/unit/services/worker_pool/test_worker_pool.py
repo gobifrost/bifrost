@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import copy
 import time
 from contextlib import asynccontextmanager
@@ -689,6 +690,166 @@ async def test_a_silent_static_executor_is_lost_and_its_runs_end(db) -> None:
     assert (execution.status, execution.error_message) == (ExecutionStatus.FAILED, EXECUTOR_LOST)
 
 
+async def test_a_lost_executor_s_agent_runs_end_and_their_callers_hear(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Its children cannot report: each started run fails at once and its
+    sync caller, chat stream and run subscribers are woken
+    (announce_ended_agent_run). A run it claimed but never started stays
+    queued for another worker."""
+    from src.models.orm.agent_runs import AgentRun
+    from src.models.orm.agents import Conversation
+    from src.models.orm.users import User
+    from src.services.execution import agent_run_service
+    from src.services.execution.agent_run_service import enqueue_agent_run
+
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
+    monkeypatch.setattr(agent_run_service, "get_db_context", claims.get_db_context)
+    update_published, chat_published = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(agent_run_service, "publish_agent_run_update", update_published)
+    monkeypatch.setattr(agent_run_service, "publish_chat_run_event", chat_published)
+    user = User(
+        id=uuid4(), email=f"lost-{uuid4().hex[:8]}@example.com", name="Lost",
+        is_active=True, is_superuser=True, is_verified=True, is_registered=True,
+    )
+    conversation = Conversation(id=uuid4(), user_id=user.id, title="Lost worker")
+    async with db.sessions() as session:
+        session.add(user)
+        await session.flush()
+        session.add(conversation)
+        await session.commit()
+    silent = await _static_executor("gone")
+    sdk_run, chat_run, unstarted_run = [
+        UUID(await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None, sync=True))
+        for _ in range(3)
+    ]
+    for _ in range(3):
+        claim = await _claim(silent)
+        assert claim is not None and claim.handler == "agent.run"
+    try:
+        async with db.sessions() as session:
+            await session.execute(
+                update(AgentRun).where(AgentRun.id.in_([sdk_run, chat_run])).values(status="running")
+            )
+            await session.execute(
+                update(AgentRun)
+                .where(AgentRun.id == chat_run)
+                .values(trigger_type="chat", conversation_id=conversation.id)
+            )
+            await session.execute(
+                update(ExecutionWorker)
+                .where(ExecutionWorker.id == silent)
+                .values(heartbeat_at=datetime.now(timezone.utc) - timedelta(seconds=45))
+            )
+            await session.commit()
+
+        await liveness.end_silent_static_executors()
+
+        async with db.sessions() as session:
+            for run_id in (sdk_run, chat_run):
+                run = await session.get(AgentRun, run_id)
+                assert (run.status, run.error) == ("failed", recovery.EXECUTOR_LOST)
+            assert (await session.get(AgentRun, unstarted_run)).status == "queued"
+        async with get_redis() as redis:
+            for run_id in (sdk_run, chat_run):
+                pushed = await redis.lpop(f"bifrost:agent_run:{run_id}:result")  # pyright: ignore[reportGeneralTypeIssues]
+                assert pushed is not None and json.loads(pushed)["status"] == "failed"
+            assert await redis.lpop(f"bifrost:agent_run:{unstarted_run}:result") is None  # pyright: ignore[reportGeneralTypeIssues]
+        assert update_published.await_count == 2
+        chat_published.assert_awaited_once()
+        chat = chat_published.await_args.kwargs
+        assert (chat["conversation_id"], chat["run_id"], chat["kind"]) == (
+            conversation.id, chat_run, "error",
+        )
+        assert chat["payload"].error == recovery.EXECUTOR_LOST
+    finally:
+        async with db.sessions() as session:
+            await session.execute(
+                delete(AgentRun).where(AgentRun.id.in_([sdk_run, chat_run, unstarted_run]))
+            )
+            await session.execute(delete(Conversation).where(Conversation.id == conversation.id))
+            await session.execute(delete(User).where(User.id == user.id))
+            await session.commit()
+
+
+async def test_a_requeued_agent_run_claimed_twice_executes_once(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """release_unstarted_claims can hand back a dispatch whose child has not
+    started yet, and a second worker claims it: both children deliver the
+    run. The AgentRun row lock and its queued-status guard let one execute."""
+    from src.jobs.consumers.agent_run import AgentRunConsumer
+    from src.models.orm.agent_runs import AgentRun
+    from src.models.orm.agents import Agent
+    from src.services.execution import agent_run_service
+    from src.services.execution.agent_run_service import enqueue_agent_run
+    from src.services.execution.autonomous_agent_executor import ActingUser
+
+    executed: list[str] = []
+
+    class Executor:
+        subtree_tokens = 0
+
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def run(self, *, run_id, **_kwargs):  # type: ignore[no-untyped-def]
+            executed.append(run_id)
+            await asyncio.sleep(0.05)
+            return {"output": "ok", "status": "completed", "iterations_used": 1, "tokens_used": 1}
+
+        async def flush_to_db(self, _db) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    actor = ActingUser(
+        user_id=str(uuid4()), email="actor@example.com", name="Actor", organization_id=None,
+        is_platform_admin=True, is_external=False, is_provider_org=False,
+    )
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
+    monkeypatch.setattr("src.jobs.consumers.agent_run._load_acting_user", AsyncMock(return_value=actor))
+    monkeypatch.setattr(
+        "src.services.authorization.runtime_auth.load_runtime_principal", AsyncMock(return_value=object())
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.load_caller",
+        AsyncMock(return_value=SimpleNamespace(ctx=object())),
+    )
+    monkeypatch.setattr(
+        "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor", Executor
+    )
+    for name in ("publish_agent_run_update", "publish_chat_run_event"):
+        monkeypatch.setattr(f"src.jobs.consumers.agent_run.{name}", AsyncMock())
+    agent_id = uuid4()
+    async with db.sessions() as session:
+        session.add(Agent(
+            id=agent_id, name=f"requeue-{agent_id.hex}", system_prompt="ok", created_by="test",
+        ))
+        await session.commit()
+    try:
+        run_id = await enqueue_agent_run(agent_id=str(agent_id), trigger_type="sdk", lineage=None)
+        first_worker = await _static_executor("first")
+        first = await _claim(first_worker)
+        assert first is not None
+        # Its reply was lost and the child had not started: handed back.
+        await recovery.release_unstarted_claims(first_worker, set())
+        second = await _claim(await _static_executor("second"))
+        assert second is not None and second.dispatch_id == first.dispatch_id
+
+        consumers = [AgentRunConsumer(), AgentRunConsumer()]
+        for consumer in consumers:
+            consumer._session_factory = db.sessions
+        await asyncio.gather(
+            consumers[0].process_message(first.message),
+            consumers[1].process_message(second.message),
+        )
+
+        assert executed == [run_id]
+        async with db.sessions() as session:
+            run = await session.get(AgentRun, UUID(run_id))
+            assert run.status == "completed"
+            assert await session.get(WorkDispatch, first.dispatch_id) is None
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(Agent).where(Agent.id == agent_id))
+            await session.commit()
+
+
 async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(db) -> None:
     """After a database outage every heartbeat looks old at once; the
     controller waits until executors have had time to heartbeat again."""
@@ -1239,8 +1400,8 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
 
 def _plan(waiting: list[int], free: list[int]) -> controller.LaunchPlan:
     return controller._plan_launches(
-        [(uuid4(), request) for request in waiting],
-        free,
+        [controller.Request(uuid4(), request, "workflow.execute") for request in waiting],
+        [controller.FreeBudget(room, frozenset(claims.REMOTE_WORKER_HANDLER_NAMES)) for room in free],
         standard_budget=1000,
         largest_budget=4000,
     )
@@ -1257,13 +1418,31 @@ def test_overflow_is_packed_first_fit_into_new_standard_workers() -> None:
 def test_work_a_standard_worker_cannot_hold_gets_a_sized_worker() -> None:
     large = uuid4()
     plan = controller._plan_launches(
-        [(large, 1500)], [], standard_budget=1000, largest_budget=4000
+        [controller.Request(large, 1500, "workflow.execute")], [],
+        standard_budget=1000, largest_budget=4000,
     )
     assert plan == controller.LaunchPlan(standard=0, sized=[(large, 1500)])
 
 
 def test_work_larger_than_any_launchable_worker_is_left_out() -> None:
     assert _plan([5000], []) == controller.LaunchPlan(standard=0, sized=[])
+
+
+def test_agent_work_fits_only_free_budgets_of_workers_that_claim_agent_runs() -> None:
+    """A worker from an older build claims workflows only: its room does not
+    hold an agent run, so a new worker is planned for it."""
+    workflow_only = controller.FreeBudget(500, frozenset({"workflow.execute"}))
+    agent = controller.Request(uuid4(), 300, "agent.run")
+    workflow = controller.Request(uuid4(), 300, "workflow.execute")
+    platform_job = controller.Request(uuid4(), 100)
+
+    def plan(*waiting: controller.Request) -> controller.LaunchPlan:
+        return controller._plan_launches(
+            list(waiting), [workflow_only], standard_budget=1000, largest_budget=4000
+        )
+
+    assert plan(agent) == controller.LaunchPlan(standard=1, sized=[])
+    assert plan(workflow, platform_job) == controller.LaunchPlan(standard=0, sized=[])
 
 
 async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:

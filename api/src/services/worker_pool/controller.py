@@ -50,7 +50,7 @@ from src.models.orm.work_dispatches import WorkDispatch
 from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
 from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.services.memory_requests import LAUNCHABLE_KEY
-from src.services.worker_pool.claims import CAPACITY_LOCK
+from src.services.worker_pool.claims import CAPACITY_LOCK, REMOTE_WORKER_HANDLER_NAMES
 from src.services.worker_pool.manifest import (
     WorkerJobSpec,
     build_worker_job_manifest,
@@ -62,7 +62,11 @@ from src.services.worker_pool.liveness import (
     Reachability,
     silent_executor,
 )
-from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
+from src.services.worker_pool.recovery import (
+    LostRuns,
+    announce_lost_runs,
+    end_runs_of_lost_worker,
+)
 from src.services.worker_pool.sizing import LIVE_STATES, JobSizing, job_baseline, launch_limit
 
 logger = logging.getLogger(__name__)
@@ -229,7 +233,7 @@ class WorkerPoolController:
             ):
                 reason = "heartbeat_lost"
             self._watch_drain(worker)
-            ended: list[UUID] = []
+            ended = LostRuns()
             if reason is not None:
                 # Its runs teach their workflows a larger request only when
                 # Kubernetes stopped the worker for memory.
@@ -241,7 +245,7 @@ class WorkerPoolController:
                 self._lose(worker, "out_of_memory" if out_of_memory else reason, now)
                 ended = await end_runs_of_lost_worker(db, worker.id, out_of_memory=out_of_memory)
             await db.commit()
-        await announce_ended_runs(ended)
+        await announce_lost_runs(ended)
 
     def _watch_drain(self, worker: ExecutionWorker) -> None:
         """Warn once when a draining worker's runs outlast the maximum
@@ -333,12 +337,13 @@ class WorkerPoolController:
                         WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
                         WorkDispatch.created_at.label("created_at"),
                         literal(True).label("is_dispatch"),
+                        WorkDispatch.handler.label("handler"),
                     )
                     .where(
                         WorkDispatch.assigned_worker_id.is_(None),
-                        # Agents and summaries use the API's memory domain.
-                        # Launching a physical worker cannot add that capacity.
-                        WorkDispatch.handler == "workflow.execute",
+                        # Summaries use the API's memory domain. Launching a
+                        # physical worker cannot add that capacity.
+                        WorkDispatch.handler.in_(REMOTE_WORKER_HANDLER_NAMES),
                     )
                     .union_all(
                         select(
@@ -346,6 +351,8 @@ class WorkerPoolController:
                             PlatformJob.memory_required_bytes,
                             PlatformJob.created_at,
                             literal(False),
+                            # Any physical worker runs local platform jobs.
+                            literal(None),
                         ).where(
                             PlatformJob.status == "queued",
                             PlatformJob.execution_backend == "local",
@@ -364,11 +371,13 @@ class WorkerPoolController:
             sizing = self._sizing(policy, workers)
 
             requests = {row.id: row.memory_request_bytes for row in waiting}
-            free: list[int] = []
+            free: list[FreeBudget] = []
             covered: set[UUID] = set()
             for worker in workers:
+                # Physical workers only; an API's summary executor never is.
                 if "workflow.execute" not in worker.supported_handlers:
                     continue
+                handlers = frozenset(worker.supported_handlers)
                 if worker.state == "draining" or worker.memory_pressured:
                     continue
                 # A worker launched for one dispatch holds it until it claims it.
@@ -383,13 +392,18 @@ class WorkerPoolController:
                     worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
                 ):
                     budget = sizing.budget_bytes(launch_limit(worker, sizing.standard_limit_bytes))
-                    free.append(max(0, budget - held))
+                    free.append(FreeBudget(max(0, budget - held), handlers))
                 elif worker.state == "ready" and worker.memory_budget_bytes is not None:
-                    free.append(
-                        max(0, worker.memory_budget_bytes - worker.memory_reserved_bytes - held)
-                    )
+                    free.append(FreeBudget(
+                        max(0, worker.memory_budget_bytes - worker.memory_reserved_bytes - held),
+                        handlers,
+                    ))
             plan = _plan_launches(
-                [(row.id, row.memory_request_bytes) for row in waiting if row.id not in covered],
+                [
+                    Request(row.id, row.memory_request_bytes, row.handler)
+                    for row in waiting
+                    if row.id not in covered
+                ],
                 free,
                 standard_budget=sizing.standard_budget_bytes,
                 largest_budget=sizing.largest_budget_bytes,
@@ -443,7 +457,7 @@ class WorkerPoolController:
                     "count": len(launched),
                     "waiting": len(waiting),
                     "sized": len(plan.sized),
-                    "free_mib": sum(free) // 2**20,
+                    "free_mib": sum(budget.bytes for budget in free) // 2**20,
                 },
             )
         return launched
@@ -557,7 +571,7 @@ class WorkerPoolController:
                 slots=0,
                 memory_limit_bytes=memory_limit_bytes,
                 reserved_for_dispatch_id=reserved_for,
-                supported_handlers=["workflow.execute"],
+                supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
                 kubernetes_namespace=self.client.namespace,
                 kubernetes_job_name=worker_job_name(worker_id),
             )
@@ -571,27 +585,49 @@ class LaunchPlan:
     sized: list[tuple[UUID, int]]
 
 
+@dataclass(frozen=True)
+class Request:
+    """Waiting work: a dispatch (with its handler) or a local platform job (None)."""
+
+    id: UUID
+    bytes: int
+    handler: str | None = None
+
+
+@dataclass(frozen=True)
+class FreeBudget:
+    """An executor's free memory and the handlers it can claim."""
+
+    bytes: int
+    handlers: frozenset[str]
+
+    def takes(self, request: Request) -> bool:
+        return request.handler is None or request.handler in self.handlers
+
+
 def _plan_launches(
-    waiting: list[tuple[UUID, int]],
-    free: list[int],
+    waiting: list[Request],
+    free: list[FreeBudget],
     *,
     standard_budget: int,
     largest_budget: int,
 ) -> LaunchPlan:
     """Place requests (oldest first) into free budgets, then into new Jobs.
 
-    First fit: each request takes the first budget that holds it. A request
-    no standard Job can hold gets its own sized Job; one larger than the
-    largest launchable budget is left for the reconciler to fail.
+    First fit: each request takes the first budget that holds it, on an
+    executor that can claim its handler. A request no standard Job can hold
+    gets its own sized Job; one larger than the largest launchable budget is
+    left for the reconciler to fail. New Jobs claim every handler.
     """
-    bins = list(free)
+    rooms = [budget.bytes for budget in free]
     new_bins: list[int] = []
     sized: list[tuple[UUID, int]] = []
-    for dispatch_id, request in waiting:
+    for item in waiting:
+        dispatch_id, request = item.id, item.bytes
         placed = False
-        for index, room in enumerate(bins):
-            if room >= request:
-                bins[index] -= request
+        for index, budget in enumerate(free):
+            if rooms[index] >= request and budget.takes(item):
+                rooms[index] -= request
                 placed = True
                 break
         if placed:

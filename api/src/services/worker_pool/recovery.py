@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.executions import Execution
+from src.services.execution.agent_run_service import announce_ended_agent_run
 from src.services.memory_requests import WORKFLOW_REQUEST_MARGIN_BYTES, record_peak_growth
 from src.services.execution.summary_dispatch import FAMILY as SUMMARY_FAMILY
 from src.services.execution.summary_dispatch import stage_summary
@@ -33,14 +35,33 @@ CLAIM_NOT_STARTED = (
 )
 
 
+@dataclass
+class LostRuns:
+    """What a lost executor was running, to announce once its loss commits."""
+
+    # Workflow runs this transaction failed.
+    workflow_runs: list[UUID] = field(default_factory=list)
+    # Agent runs it had claimed; announce_lost_runs ends those still live.
+    agent_runs: list[UUID] = field(default_factory=list)
+
+    def extend(self, other: LostRuns) -> None:
+        self.workflow_runs.extend(other.workflow_runs)
+        self.agent_runs.extend(other.agent_runs)
+
+
 async def end_runs_of_lost_worker(
     db: AsyncSession, worker_id: UUID, *, out_of_memory: bool = False
-) -> list[UUID]:
-    """Fail the lost worker's runs that are still running; return the workflow runs ended.
+) -> LostRuns:
+    """Fail the lost worker's workflow runs that are still running; return
+    those and its agent runs that had started.
 
-    Runs it finished, or never managed to claim, are left as they are.
-    Summaries it was generating are requested again instead: a summary has
-    no effect outside its own run, so repeating it is safe.
+    Runs it finished, or never managed to claim, are left as they are; an
+    agent run it claimed but never started is still queued and goes to
+    another worker. Its started agent runs are ended by
+    :func:`announce_lost_runs` once this transaction commits, which also
+    wakes their callers. Summaries it was generating are requested again
+    instead: a summary has no effect outside its own run, so repeating it
+    is safe.
 
     When the executor was stopped for memory (``out_of_memory``: Kubernetes
     reported it OOMKilled), its runs could not report what they used: each
@@ -58,6 +79,12 @@ async def end_runs_of_lost_worker(
     ).all()
     workflow_ids = [subject for family, subject in claims if family == "workflow_execution"]
     agent_ids = [subject for family, subject in claims if family == "agent_run"]
+    if agent_ids:
+        agent_ids = list((await db.scalars(
+            select(AgentRun.id).where(
+                AgentRun.id.in_(agent_ids), AgentRun.status.in_(("running", "cancelling"))
+            )
+        )).all())
     summary_ids = [subject for family, subject in claims if family == SUMMARY_FAMILY]
     now = datetime.now(timezone.utc)
     ended: list[UUID] = []
@@ -86,12 +113,6 @@ async def end_runs_of_lost_worker(
                 await record_peak_growth(
                     db, workflow_id, budget - WORKFLOW_REQUEST_MARGIN_BYTES, None
                 )
-    if agent_ids:
-        await db.execute(
-            update(AgentRun)
-            .where(AgentRun.id.in_(agent_ids), AgentRun.status.in_(("running", "cancelling")))
-            .values(status="failed", error=EXECUTOR_LOST, completed_at=now)
-        )
     if summary_ids:
         interrupted = (
             await db.execute(
@@ -106,9 +127,23 @@ async def end_runs_of_lost_worker(
     if ended or agent_ids:
         logger.warning(
             "Ended runs of a lost executor",
-            extra={"worker_id": str(worker_id), "workflow_runs": len(ended)},
+            extra={
+                "worker_id": str(worker_id),
+                "workflow_runs": len(ended),
+                "agent_runs": len(agent_ids),
+            },
         )
-    return ended
+    return LostRuns(workflow_runs=ended, agent_runs=agent_ids)
+
+
+async def announce_lost_runs(lost: LostRuns) -> None:
+    """End a lost executor's live agent runs and wake every caller of its runs."""
+    await announce_ended_runs(lost.workflow_runs)
+    for run_id in lost.agent_runs:
+        try:
+            await announce_ended_agent_run(run_id, EXECUTOR_LOST)
+        except Exception:
+            logger.warning("Could not end a lost agent run", exc_info=True)
 
 
 async def release_unstarted_claims(worker_id: UUID, started: set[str]) -> list[UUID]:
@@ -222,7 +257,9 @@ async def announce_ended_runs(execution_ids: list[UUID], error: str = EXECUTOR_L
 __all__ = [
     "CLAIM_NOT_STARTED",
     "EXECUTOR_LOST",
+    "LostRuns",
     "announce_ended_runs",
+    "announce_lost_runs",
     "end_runs_of_lost_worker",
     "release_unstarted_claims",
 ]
