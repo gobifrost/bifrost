@@ -89,7 +89,13 @@ class AgentConsumer(Protocol):
         raise NotImplementedError
 
 
+# While an executor holds work (room can free up at any moment) or admission
+# holds it back (memory pressure, a reconnect still reconciling), it looks for
+# work every POLL_SECONDS. Idle with nothing to claim, it waits for the wake-up
+# that every hand-off publishes, and sweeps every SWEEP_SECONDS in case a
+# wake-up was lost (Redis pub/sub does not guarantee delivery).
 POLL_SECONDS = 1.0
+SWEEP_SECONDS = 15.0
 HEARTBEAT_SECONDS = 5.0
 # How long a job worker uses the Idle time it read from Settings -> Kubernetes.
 POLICY_REFRESH_SECONDS = 10.0
@@ -147,6 +153,8 @@ class PoolWorker:
         # SIGTERM: the pod is being killed, so a drain's runs get a grace.
         self._terminating = asyncio.Event()
         self._wake = asyncio.Event()
+        # Whether the last claim attempt was held back by admission.
+        self._admission_blocked = False
         # In-flight consumer calls by handler. A workflow call returns once its
         # run is routed to a child (then the pool counts it); agent runs and
         # summaries return when they end.
@@ -483,7 +491,11 @@ class PoolWorker:
                 continue
             stop = asyncio.ensure_future(self._stop.wait())
             wake = asyncio.ensure_future(self._wake.wait())
-            await asyncio.wait({stop, wake}, timeout=POLL_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait(
+                {stop, wake},
+                timeout=POLL_SECONDS if self.busy() or self._admission_blocked else SWEEP_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
             stop.cancel()
             wake.cancel()
         try:
@@ -506,6 +518,7 @@ class PoolWorker:
         async with self.admission.claiming() as fits:
             # Nothing while over the memory threshold: work waits for an
             # executor with room, and the controller starts one if none has it.
+            self._admission_blocked = fits is None
             if fits is None:
                 return None
             claim = await claim_next(

@@ -572,6 +572,7 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     worker_id = await claims.register_static_worker(
         hostname="api-agent", supported_handlers=["agent.run"]
     )
+    wake = AsyncMock()
     assert await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)
     claim = await _claim(worker_id)
     assert claim is not None and claim.handler == "agent.run"
@@ -588,7 +589,9 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
         )
         await session.commit()
     await liveness.end_silent_static_executors()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     await work_dispatch.reconcile_work_dispatches()
+    wake.assert_awaited_once_with()  # the released run is offered to idle executors at once
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -1428,6 +1431,8 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
     assert lost_claim and started_claim and agent_claim
     assert agent_claim.handler == "agent.run"
 
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     ended = await recovery.release_unstarted_claims(
         worker, {str(started_claim.subject_id), str(started_claim.dispatch_id)}
     )
@@ -1440,6 +1445,7 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
     assert (lost.status, lost.error_message) == (ExecutionStatus.FAILED, recovery.CLAIM_NOT_STARTED)
     assert started.status == ExecutionStatus.RUNNING
     assert agent_dispatch.assigned_worker_id is None
+    wake.assert_awaited_once_with()  # idle executors look for the released run now
 
 
 # --- sizing by memory -----------------------------------------------------------

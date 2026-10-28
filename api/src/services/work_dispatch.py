@@ -179,7 +179,11 @@ async def _reconcile_one(
             # The run stopped waiting (cancelled) before an executor claimed it.
             await db.delete(row)
             return
+        held_by = row.assigned_worker_id
         failure = await _settle_pool_dispatch(db, family, row, largest)
+        released = held_by is not None and row.assigned_worker_id is None
+    if released:
+        await wake_pool_workers()
     if failure is not None:
         await family.report_failed(subject_id, *failure)
 
