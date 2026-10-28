@@ -28,7 +28,6 @@ import asyncio
 import json
 import logging
 import time
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -50,6 +49,7 @@ from src.models.orm.work_dispatches import WorkDispatch
 from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
 from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.services.memory_requests import LAUNCHABLE_KEY
+from src.services.work_dispatch import listen_for_pool_wake, wait_for_next_pass
 from src.services.worker_pool.claims import CAPACITY_LOCK, REMOTE_WORKER_HANDLER_NAMES
 from src.services.worker_pool.manifest import (
     SAFE_TO_EVICT,
@@ -74,7 +74,11 @@ logger = logging.getLogger(__name__)
 
 # How long a lost worker's Job is kept under watch for deletion.
 LOST_JOB_CLEANUP = timedelta(hours=1)
+# The controller reconciles on a pool wake-up (new work may need a worker), at
+# most every RECONCILE_SECONDS, and sweeps every SWEEP_SECONDS without one:
+# often enough for worker-loss detection and idle-worker eviction marks.
 RECONCILE_SECONDS = 2.0
+SWEEP_SECONDS = 5.0
 # A ready worker holding no work this long may be evicted by the cluster
 # autoscaler to empty a node; it drains on SIGTERM and is replaced.
 EVICTABLE_AFTER_IDLE_SECONDS = 10.0
@@ -743,8 +747,13 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
         if spec is None:
             return
         controller = WorkerPoolController(client, settings, spec)
+        wake = asyncio.Event()
+        listener = asyncio.create_task(
+            listen_for_pool_wake(settings.redis_url, wake), name="worker-pool-controller-wake"
+        )
         try:
             while not stop_event.is_set():
+                started = time.monotonic()
                 try:
                     if await controller.reachability.check():
                         await controller.reconcile()
@@ -756,9 +765,12 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
                         type(exc).__name__,
                         exc,
                     )
-                with suppress(TimeoutError):
-                    await asyncio.wait_for(stop_event.wait(), timeout=RECONCILE_SECONDS)
+                await wait_for_next_pass(
+                    stop_event, wake, since=started, spacing=RECONCILE_SECONDS, sweep=SWEEP_SECONDS
+                )
         finally:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
             try:
                 await _withdraw_live(controller.id)
             except Exception:

@@ -697,27 +697,9 @@ class PoolWorker:
 
     async def _wake_listener(self) -> None:
         """Turn acceptance hints into an immediate claim attempt."""
-        import redis.asyncio as aioredis
+        from src.services.work_dispatch import listen_for_pool_wake
 
-        from src.services.work_dispatch import POOL_WAKE_CHANNEL
-
-        while True:
-            client = aioredis.from_url(self.settings.redis_url)
-            try:
-                pubsub = client.pubsub()
-                await pubsub.subscribe(POOL_WAKE_CHANNEL)
-                async for message in pubsub.listen():
-                    if message.get("type") == "message":
-                        self._wake.set()
-                        self._platform_wake.set()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Hints are an optimization; polling continues meanwhile.
-                logger.warning("Pool wake listener reconnecting", exc_info=True)
-                await asyncio.sleep(HEARTBEAT_SECONDS)
-            finally:
-                await client.aclose()
+        await listen_for_pool_wake(self.settings.redis_url, self._wake, self._platform_wake)
 
     async def _package_loop(self) -> None:
         """Apply every recorded package change newer than this executor's.

@@ -14,7 +14,9 @@ its domain's terminal sweeps.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
@@ -127,6 +129,51 @@ async def hand_off() -> None:
 
 
 POOL_WAKE_CHANNEL = "bifrost:pool:wake"
+WAKE_RECONNECT_SECONDS = 5.0
+
+
+async def listen_for_pool_wake(redis_url: str, *events: asyncio.Event) -> None:
+    """Set ``events`` on every pool wake-up until cancelled. Wake-ups are
+    hints: a dropped connection reconnects, and listeners sweep meanwhile."""
+    import redis.asyncio as aioredis
+
+    while True:
+        client = aioredis.from_url(redis_url)
+        try:
+            pubsub = client.pubsub()
+            await pubsub.subscribe(POOL_WAKE_CHANNEL)
+            async for message in pubsub.listen():
+                if message.get("type") == "message":
+                    for event in events:
+                        event.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Pool wake listener reconnecting", exc_info=True)
+            await asyncio.sleep(WAKE_RECONNECT_SECONDS)
+        finally:
+            await client.aclose()
+
+
+async def wait_for_next_pass(
+    stop: asyncio.Event, wake: asyncio.Event, *, since: float, spacing: float, sweep: float
+) -> None:
+    """Wait until a loop's next pass: on a wake-up, but no sooner than
+    ``spacing`` after the last pass began (``since``, monotonic), or after
+    ``sweep`` without one. Clears ``wake``. Returns early on ``stop``."""
+    stopped = asyncio.ensure_future(stop.wait())
+    woken = asyncio.ensure_future(wake.wait())
+    try:
+        remaining = sweep - (time.monotonic() - since)
+        await asyncio.wait({stopped, woken}, timeout=max(0.0, remaining), return_when=asyncio.FIRST_COMPLETED)
+        if wake.is_set() and not stop.is_set():
+            delay = spacing - (time.monotonic() - since)
+            if delay > 0:
+                await asyncio.wait({stopped}, timeout=delay)
+    finally:
+        stopped.cancel()
+        woken.cancel()
+        wake.clear()
 
 
 async def wake_pool_workers() -> None:
@@ -292,6 +339,8 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
 
 __all__ = [
     "DispatchFamily",
+    "listen_for_pool_wake",
+    "wait_for_next_pass",
     "POOL_CLAIM_DEADLINE",
     "POOL_WAKE_CHANNEL",
     "hand_off",
