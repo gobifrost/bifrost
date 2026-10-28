@@ -378,9 +378,14 @@ test.describe("Execution History", () => {
 		await expect(
 			page.getByRole("region", { name: "History", exact: true }),
 		).toBeVisible({ timeout: 10_000 });
-		await page
-			.getByRole("switch", { name: "Logs view", exact: true })
-			.check();
+		// The switch reflects `?view=logs`, which the router commits after the
+		// click; wait for that state instead of requiring it synchronously.
+		const logsView = page.getByRole("switch", {
+			name: "Logs view",
+			exact: true,
+		});
+		await logsView.click();
+		await expect(logsView).toBeChecked();
 
 		const logRow = page.getByRole("row").filter({
 			hasText: "execution acceptance output exec-04",
