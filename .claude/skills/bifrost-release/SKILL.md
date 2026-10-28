@@ -119,7 +119,7 @@ or release build.
 
 ### 3. Documentation freshness check
 
-Run the helper script — it compares last-commit timestamps on `bifrost` vs `gobifrost` and lists any user-facing files changed since docs were last updated:
+Run the helper script — it compares last-commit timestamps on `bifrost` vs `public-docs` and lists any user-facing files changed since docs were last updated:
 
 ```bash
 ./scripts/release/check-docs-freshness.sh
