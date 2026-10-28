@@ -54,6 +54,28 @@ def _memory_table(snapshots: list[dict]) -> list[str]:
     return rows
 
 
+def _workers_table(classes: list[dict]) -> list[str]:
+    measured = [entry for entry in classes if entry.get("worker_children")]
+    if not measured:
+        return []
+    rows = [
+        "## Worker processes",
+        "",
+        "Private (unshared) memory sampled every second on each worker pod while the class ran. "
+        "Run children are processes forked for one run; templates are the processes they fork from.",
+        "",
+        "| Class | Pass | Peak run-child private MiB | Peak concurrent run children | Peak template private MiB |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for entry in measured:
+        w = entry["worker_children"]
+        rows.append(
+            f"| `{entry['name']}` | {entry['pass']} | {w['peak_child_private_mib']:.1f} | "
+            f"{w['peak_children']} | {w['peak_template_private_mib']:.1f} |"
+        )
+    return [*rows, ""]
+
+
 def _database(result: dict) -> list[str]:
     idle = result.get("db_idle")
     if not idle:
@@ -108,6 +130,7 @@ def render(result: dict) -> str:
         "",
         *_memory_table(result["snapshots"]),
         "",
+        *_workers_table(result["classes"]),
         *_database(result),
     ]
     failures = _failures(result["classes"])

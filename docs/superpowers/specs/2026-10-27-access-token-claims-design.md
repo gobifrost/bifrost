@@ -55,11 +55,14 @@ The API builds the same `UserPrincipal`, `AuthorizationContext` and
 (`decide`, `decide_for`, `check_target`). Only where the facts come from
 changes.
 
-**Size:** someone with many roles makes a larger token. Before building,
-measure the largest authorization context in production (read-only). If any
-token would exceed 6 KB, bring the numbers back before choosing an encoding.
-Entra's answer for that case ("groups overage", a link instead of the list)
-would be a second path and is not assumed.
+**Size:** measured in production (read-only, 2026-10-28) across 1,703 active
+users. The largest user holds 12 roles with 14 boundaries and 29 permissions;
+their authorization claims are about 1.8 KB as JSON (median 0.3 KB, p99
+0.7 KB). No workflow has permission grants yet. With identity and run claims
+and base64 encoding, the largest token is about 4 KB, under the 6 KB limit, so
+the claims go in as plain JSON. A test fails minting above 6 KB, so growth is
+seen before it breaks a proxy header limit. Entra's answer for the oversized
+case ("groups overage") is a second path and is not built.
 
 **Visibility:** JWT claims are readable, not encrypted. A person can read
 their own grants from their token, and workflow code can read its run user's
@@ -161,7 +164,7 @@ rule change with it.
 | Completeness | The column-enumeration test passes, and fails when a read is added without a stamp |
 | Redis down | Requests keep working, checked against the Postgres stamps; a change made during the outage is enforced on the next request |
 | Redis restarted empty | The warm marker is missing, stamps are read from Postgres and re-copied; nothing stamped in the last 90 minutes is lost |
-| Size | Production's largest authorization context fits the section 3 limit |
+| Size | Minting refuses tokens above 6 KB, with a test; production's largest is about 4 KB |
 | Benchmark | Per SDK call about five fewer transactions; `wf-sdk` burst p50 and API CPU ms per run improve; no class regresses |
 | Existing suites | Authorization, RBAC, Solution, runtime-identity, MCP auth, service-credential, web client auth and CLI login tests pass |
 

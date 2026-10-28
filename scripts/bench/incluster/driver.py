@@ -7,7 +7,9 @@ Modes:
   production-count workflows, create the bench table, configure the model
   backend and agents, set the worker policy. Idempotent.
 - ``run_class``: run one execution class sequentially, then as a burst, and
-  return the platform's own records (timestamps, status, error).
+  return the platform's own records (timestamps, status, error). Chat classes
+  send messages the way the chat page does: ``chat-first`` opens a new chat,
+  ``chat-followup`` times a second message in an existing one.
 """
 
 from __future__ import annotations
@@ -95,6 +97,9 @@ AGENT_CLASSES = {
     "agent-tools": ("bench_agent_tools", "delegated"),
     "agent-codemode": ("bench_agent_tools", "automatic"),
 }
+CHAT_CLASSES = {"chat-first", "chat-followup"}
+CHAT_PROMPT = "Reply with one short sentence about the bench."
+CHAT_AGENT = "bench_agent_chat"
 BACKENDS = {
     "fake": {"endpoint": "http://bench-fake-llm:8080/v1", "model": "bench-fake", "key_env": None},
     "deepseek": {"endpoint": "https://api.deepseek.com", "model": "deepseek-chat", "key_env": "DEEPSEEK_API_KEY"},
@@ -286,6 +291,30 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burs
             async def submit() -> str:
                 body = {"workflow_id": workflow_id, "input_data": {}, "sync": False}
                 return _check(await http.post("/api/workflows/execute", json=body), "execute").json()["execution_id"]
+        elif name in CHAT_CLASSES:
+            _check(await http.put("/api/admin/ai/behavior", json={"agent_execution_mode": "delegated"}), "set execution mode")
+            listed = _check(await http.get("/api/agents"), "list agents").json()
+            agents = listed if isinstance(listed, list) else listed.get("items", [])
+            chat_agent_id = next(agent["id"] for agent in agents if agent["name"] == CHAT_AGENT)
+            list_path, params = "/api/agent-runs", {"trigger_type": "chat", "limit": 50}
+
+            async def send(conversation_id: str | None) -> dict:
+                body = {"content": CHAT_PROMPT, "agent_id": chat_agent_id}
+                if conversation_id:
+                    body["conversation_id"] = conversation_id
+                return _check(await http.post("/api/chat/runs", json=body), "send chat message").json()
+
+            if name == "chat-first":
+                async def submit() -> str:
+                    # What the chat page does when it opens, then the first message.
+                    _check(await http.get("/api/chat/model-profiles"), "load chat model profiles")
+                    return str((await send(None))["run_id"])
+            else:
+                async def submit() -> str:
+                    # An untimed opening message creates the conversation; the follow-up is timed.
+                    opened = await send(None)
+                    await _wait_all(http, list_path, params, [str(opened["run_id"])], timeout_s)
+                    return str((await send(str(opened["conversation"]["id"])))["run_id"])
         else:
             agent_name, mode = AGENT_CLASSES[name]
             _check(await http.put("/api/admin/ai/behavior", json={"agent_execution_mode": mode}), "set execution mode")

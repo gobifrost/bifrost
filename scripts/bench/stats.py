@@ -119,3 +119,25 @@ def top_tables(tables: dict[str, list[int]], count: int) -> list[tuple[str, int,
     """The tables with the most rows written plus scans, as (name, writes, scans)."""
     ranked = sorted(tables.items(), key=lambda item: item[1][0] + item[1][1], reverse=True)
     return [(name, writes, scans) for name, (writes, scans) in ranked[:count]]
+
+
+def worker_children(samples: list[dict[str, list[dict]]]) -> dict:
+    """Peaks over worker process samples: run children (depth 2+) and templates (depth 1)."""
+    child_peak = template_peak = 0.0
+    children_peak = 0
+    for sample in samples:
+        children = 0
+        for processes in sample.values():
+            for process in processes:
+                if process["depth"] >= 2:
+                    children += 1
+                    child_peak = max(child_peak, process["private_mib"])
+                elif process["depth"] == 1:
+                    template_peak = max(template_peak, process["private_mib"])
+        children_peak = max(children_peak, children)
+    return {
+        "samples": len(samples),
+        "peak_child_private_mib": child_peak,
+        "peak_children": children_peak,
+        "peak_template_private_mib": template_peak,
+    }

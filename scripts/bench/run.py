@@ -18,6 +18,7 @@ import argparse
 import json
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -72,6 +73,36 @@ def store_model_key(cluster: Cluster, onepassword_profile: str, onepassword_item
         "type": "Opaque", "stringData": {"DEEPSEEK_API_KEY": read.stdout.strip()},
     })
     cluster.kubectl("apply", "-f", "-", input=secret)
+
+
+class WorkerSampler:
+    """Samples worker process memory once a second while a class runs."""
+
+    def __init__(self, cluster: Cluster) -> None:
+        self.cluster = cluster
+        self.samples: list[dict[str, list[dict]]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def __enter__(self) -> "WorkerSampler":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        self._thread.join()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            started = time.monotonic()
+            sample: dict[str, list[dict]] = {}
+            for pod in self.cluster.worker_pods():
+                try:
+                    sample[pod] = self.cluster.worker_processes(pod)
+                except RuntimeError:
+                    continue  # the Job finished between listing and exec
+            self.samples.append(sample)
+            self._stop.wait(max(0.0, 1.0 - (time.monotonic() - started)))
 
 
 class Run:
@@ -170,16 +201,17 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
         "top_tables": stats.top_tables(idle_delta["tables"], 8),
     }
     print(f"  idle: {idle_rate['xact_per_s']:.1f} transactions/s", flush=True)
-    classes = [c for c in profile["classes"] if backend or not c.startswith("agent-")]
+    classes = [c for c in profile["classes"] if backend or not c.startswith(("agent-", "chat-"))]
     for pass_number in (1, 2):
         for name in classes:
             print(f"Pass {pass_number}: {name} ...", flush=True)
             cpu_before = cluster.container_stats()
             db_before, started = cluster.db_counters(), time.monotonic()
-            records = current.driver("run_class", {
-                "name": name, "sequential": profile["sequential"], "burst": profile["burst"],
-                "burst_rounds": profile["burst_rounds"], "timeout_s": profile["timeout_s"],
-            }, timeout_s=profile["timeout_s"] * (profile["sequential"] + profile["burst_rounds"] + 1))
+            with WorkerSampler(cluster) as sampler:
+                records = current.driver("run_class", {
+                    "name": name, "sequential": profile["sequential"], "burst": profile["burst"],
+                    "burst_rounds": profile["burst_rounds"], "timeout_s": profile["timeout_s"],
+                }, timeout_s=profile["timeout_s"] * (profile["sequential"] + profile["burst_rounds"] + 1))
             time.sleep(profile["settle_s"])
             runs = len(records["sequential"]) + len(records["burst"])
             db_delta = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
@@ -191,6 +223,7 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
                 "cpu_ms_per_run": stats.cpu_ms_per_run(cpu_before, cluster.container_stats(), runs),
                 "db_per_run": stats.db_per_run(db_delta, idle_rate, runs),
                 "db_top_tables": stats.top_tables(db_delta["tables"], 8),
+                "worker_children": stats.worker_children(sampler.samples),
                 "raw": records,
             })
             current.snapshot(f"{name} (pass {pass_number})")

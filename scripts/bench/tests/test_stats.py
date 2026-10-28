@@ -89,5 +89,24 @@ class DbTest(unittest.TestCase):
         self.assertEqual(stats.top_tables(tables, 2), [("b", 10, 0), ("d", 3, 3)])
 
 
+class WorkerSamplesTest(unittest.TestCase):
+    def test_peaks_across_samples_and_pods(self) -> None:
+        def proc(pid: int, depth: int, mib: float) -> dict:
+            return {"pid": pid, "ppid": 0, "depth": depth, "private_mib": mib}
+
+        samples = [
+            {"pod-a": [proc(1, 0, 24), proc(15, 1, 48), proc(40, 2, 20)], "pod-b": [proc(1, 0, 24), proc(15, 1, 50)]},
+            {"pod-a": [proc(1, 0, 24), proc(15, 1, 48), proc(41, 1, 168), proc(52, 2, 31), proc(53, 2, 22)]},
+        ]
+        self.assertEqual(stats.worker_children(samples), {
+            "samples": 2, "peak_child_private_mib": 31.0, "peak_children": 2, "peak_template_private_mib": 168.0,
+        })
+
+    def test_no_samples(self) -> None:
+        self.assertEqual(stats.worker_children([]), {
+            "samples": 0, "peak_child_private_mib": 0.0, "peak_children": 0, "peak_template_private_mib": 0.0,
+        })
+
+
 if __name__ == "__main__":
     unittest.main()

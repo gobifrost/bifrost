@@ -75,6 +75,40 @@ def parse_db_counters(raw: str) -> dict:
     return counters
 
 
+# One awk and shell builtins only, so sampling barely touches the worker's CPU.
+WORKER_PROCESSES_SCRIPT = (
+    "awk '/^Private_(Clean|Dirty):/{s[FILENAME]+=$2} END{for (f in s) print \"M\", f, s[f]}' "
+    "/proc/[0-9]*/smaps_rollup 2>/dev/null; "
+    'for f in /proc/[0-9]*/stat; do read -r line < "$f" 2>/dev/null && echo "S $line"; done'
+)
+
+
+def parse_worker_processes(text: str) -> list[dict]:
+    """Private memory and depth below the launcher (pid 1) for each worker process.
+
+    Depth 1 is a template, depth 2 a run child. Processes not descended from
+    pid 1 (``kubectl exec`` helpers, including this sampler) are dropped.
+    """
+    private_kib: dict[int, int] = {}
+    parent: dict[int, int] = {}
+    for line in text.splitlines():
+        if line.startswith("M "):
+            _, path, kib = line.split()
+            private_kib[int(path.split("/")[2])] = int(kib)
+        elif line.startswith("S "):
+            pid = int(line[2:].split(" ", 1)[0])
+            parent[pid] = int(line[line.rindex(")") + 2:].split()[1])
+    rows: list[dict] = []
+    for pid in parent:
+        depth, current = 0, pid
+        while current != 1 and current in parent and depth <= len(parent):
+            current, depth = parent[current], depth + 1
+        if current != 1:
+            continue
+        rows.append({"pid": pid, "ppid": parent[pid], "depth": depth, "private_mib": round(private_kib.get(pid, 0) / 1024, 1)})
+    return rows
+
+
 class Cluster:
     def __init__(self, namespace: str = NAMESPACE) -> None:
         worktree_hash = _worktree_hash()
@@ -139,6 +173,13 @@ class Cluster:
             raw = self.kubectl("get", "--raw", f"/api/v1/nodes/{name}/proxy/stats/summary", namespaced=False)
             rows += parse_stats_summary(json.loads(raw), self.namespace)
         return rows
+
+    def worker_pods(self) -> list[str]:
+        names = self.kubectl("get", "pods", "--field-selector=status.phase=Running", "-o", "name").split()
+        return [name.removeprefix("pod/") for name in names if name.startswith("pod/bifrost-worker-")]
+
+    def worker_processes(self, pod: str) -> list[dict]:
+        return parse_worker_processes(self.kubectl("exec", pod, "-c", "worker", "--", "sh", "-c", WORKER_PROCESSES_SCRIPT))
 
     def db_counters(self) -> dict:
         raw = self.kubectl(

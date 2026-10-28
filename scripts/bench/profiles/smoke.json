@@ -8,7 +8,9 @@
     "wf-large",
     "agent-chat",
     "agent-tools",
-    "agent-codemode"
+    "agent-codemode",
+    "chat-first",
+    "chat-followup"
   ],
   "sequential": 2,
   "burst": 2,

@@ -24,7 +24,8 @@ RESULT = {
     "profile": {"worker_replicas": 1, "env": {"MALLOC_ARENA_MAX": "2"}, "thp_emulation": False, "sequential": 2, "burst": 2, "burst_rounds": 1},
     "classes": [
         {"name": "wf-noop", "pass": 1, "sequential": _OK, "burst": _OK,
-         "db_per_run": {"xact": 36.4, "rows_written": 12.0, "wal_kib": 21.5}},
+         "db_per_run": {"xact": 36.4, "rows_written": 12.0, "wal_kib": 21.5},
+         "worker_children": {"samples": 9, "peak_child_private_mib": 24.5, "peak_children": 3, "peak_template_private_mib": 168.0}},
         {"name": "agent-codemode", "pass": 1, "sequential": _OK, "burst": _BAD},
     ],
     "db_idle": {
@@ -59,6 +60,11 @@ class RenderTest(unittest.TestCase):
         self.assertIn("31.2 transactions/s", text)
         self.assertIn("`work_dispatches`", text)
         self.assertIn("Database grew 12.5 MiB; WAL written 24.0 MiB", text)
+
+    def test_worker_processes_are_reported(self) -> None:
+        text = report.render(RESULT)
+        self.assertIn("## Worker processes", text)
+        self.assertIn("| `wf-noop` | 1 | 24.5 | 3 | 168.0 |", text)
 
 
 if __name__ == "__main__":
