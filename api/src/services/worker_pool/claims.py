@@ -61,12 +61,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> int | None:
+async def admit_worker(
+    incarnation_id: UUID, *, job_uid: str, pod_uid: str, version: str | None
+) -> int | None:
     """Bind this pod to its incarnation once; None if it was refused.
 
     Only the first pod of the UID-bound Job can admit: a second start of the
-    same Job, or a pod of another Job, is refused. The pod reports the build
-    it runs, which decides when an upgrade replaces it.
+    same Job, or a pod of another Job, is refused. ``version`` is the build
+    the pod runs (not the admitting API's), which decides when an upgrade
+    replaces it; a pod that reports none counts as outdated.
     """
     now = _now()
     async with get_db_context() as db:
@@ -83,7 +86,7 @@ async def admit_worker(incarnation_id: UUID, *, job_uid: str, pod_uid: str) -> i
             .values(
                 state="ready",
                 kubernetes_pod_uid=pod_uid,
-                version=get_version(),
+                version=version,
                 ready_at=now,
                 heartbeat_at=func.now(),
                 last_claim_at=now,

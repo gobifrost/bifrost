@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, NamedTuple
 from uuid import uuid4
 
+from shared.version import get_version
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import effective_memory_sample, memory_pressure_ratio
 from src.services.execution.template_process import TemplateProcess
@@ -285,6 +286,7 @@ class Launcher:
                 "pressure_ratio": memory_pressure_ratio(),
             },
             "requirements": requirements,
+            "version": get_version(),
         }, separators=(",", ":")))
         welcome = json.loads(await self.socket.recv())
         if welcome.get("event") != "welcome" or not isinstance(welcome.get("session_generation"), int):

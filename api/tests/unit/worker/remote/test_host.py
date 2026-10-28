@@ -98,6 +98,35 @@ async def test_one_api_agent_executor_starts_once_per_api_host() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reported", ["1.0.0-old", None])
+async def test_a_job_pod_is_admitted_with_the_build_its_launcher_runs(reported) -> None:
+    socket = Mock(accept=AsyncMock(), send_text=AsyncMock())
+    hello = Hello(
+        launcher_id=LEASE.launcher_id,
+        incarnation_id=LEASE.worker_id,
+        job_uid="job", pod_uid="pod", hostname="runner-0", form="job",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+    )
+    initial = {
+        "event": "hello", "hello": sign_hello("secret", hello).to_dict(),
+        "sample": {"current": 1, "limit": 100}, "requirements": {},
+    }
+    if reported is not None:
+        initial["version"] = reported
+    socket.receive_text = AsyncMock(return_value=json.dumps(initial))
+    with (
+        patch("src.worker.remote.host.get_settings", return_value=Mock(secret_key="secret", memory_pressure_threshold=.85)),
+        patch("src.worker.remote.host.admit_worker", new_callable=AsyncMock) as admit,
+        patch("src.worker.remote.host.acquire_remote_owner", new_callable=AsyncMock, return_value=LEASE),
+        patch("src.worker.remote.host.ApiExecutor"),
+        patch("src.worker.remote.host.RemoteSession", return_value=Mock(task=Mock())),
+    ):
+        await RemoteControlHost().connect(socket)
+
+    assert admit.await_args.kwargs["version"] == reported
+
+
+@pytest.mark.asyncio
 async def test_remote_connect_does_not_create_a_second_api_agent_executor() -> None:
     agent = Mock(run=AsyncMock(return_value=0))
     socket = Mock(accept=AsyncMock(), send_text=AsyncMock())

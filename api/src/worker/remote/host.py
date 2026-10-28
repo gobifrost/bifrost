@@ -912,8 +912,12 @@ class RemoteControlHost:
         # get None here because their pod was already admitted.
         if hello.form == "job":
             assert hello.job_uid is not None and hello.pod_uid is not None
+            # The launcher's own build, not this API's: an API admitting a pod
+            # launched from an older image must leave it outdated.
+            version = initial.get("version")
             admitted = await admit_worker(
-                hello.incarnation_id, job_uid=hello.job_uid, pod_uid=hello.pod_uid
+                hello.incarnation_id, job_uid=hello.job_uid, pod_uid=hello.pod_uid,
+                version=version if isinstance(version, str) else None,
             )
             if admitted is None:
                 async with get_liveness_db_context() as db:

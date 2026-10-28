@@ -31,6 +31,7 @@ from typing import Protocol
 from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
+from shared.version import get_version
 from src.config import Settings, get_settings
 from src.core.database import close_db, get_db_context, get_engine, init_db
 from src.core.redis_client import PendingExecution
@@ -262,7 +263,8 @@ class PoolWorker:
         else:
             assert self.job_uid is not None and self.pod_uid is not None
             if await admit_worker(
-                self.incarnation_id, job_uid=self.job_uid, pod_uid=self.pod_uid
+                self.incarnation_id, job_uid=self.job_uid, pod_uid=self.pod_uid,
+                version=get_version(),
             ) is None:
                 logger.error(
                     "Pool worker was not admitted (not this Job's first pod)",

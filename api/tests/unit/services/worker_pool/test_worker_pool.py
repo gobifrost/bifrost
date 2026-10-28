@@ -280,9 +280,18 @@ async def test_accepted_runs_are_claimable_and_wake_the_executors(db) -> None:
 async def test_only_the_first_pod_of_the_bound_job_is_admitted(db) -> None:
     worker = await _job_worker(db.sessions)
 
-    assert await claims.admit_worker(worker.id, job_uid="other-job", pod_uid="p0") is None
-    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1") == 2
-    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p2") is None
+    assert await claims.admit_worker(worker.id, job_uid="other-job", pod_uid="p0", version=claims.get_version()) is None
+    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version=claims.get_version()) == 2
+    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p2", version=claims.get_version()) is None
+
+
+async def test_an_admitted_worker_records_the_build_its_pod_reports(db) -> None:
+    worker = await _job_worker(db.sessions)
+
+    await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version="1.0.0-old")
+
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, worker.id)).version == "1.0.0-old"
 
 
 async def test_a_ready_worker_claims_each_dispatch_once(db) -> None:
@@ -865,7 +874,7 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
     async with db.sessions() as session:
         await session.execute(
             update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
@@ -891,7 +900,7 @@ async def test_a_ready_worker_is_evictable_only_while_idle(db, monkeypatch) -> N
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     cluster.pods[job_uid] = [{"metadata": {"name": "worker-pod"}}]
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
     safe = controller.SAFE_TO_EVICT
 
     async def reserved(memory: int) -> None:
@@ -1027,7 +1036,7 @@ async def test_warm_minimum_is_kept_ready_until_settings_lower_it(db) -> None:
     await pool.reconcile_worker(worker_id, warm)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
 
     assert not await claims.begin_idle_drain(worker_id)
     # An admin lowers Warm workers: the running idle worker drains.
@@ -1060,7 +1069,7 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
     claim = await _claim(worker_id)
     assert claim is not None
     async with db.sessions() as session:
@@ -1300,7 +1309,7 @@ async def test_stale_remote_owner_cannot_admit_a_starting_worker(db) -> None:
         )
     )
     with remote_owner_context(stale):
-        assert await claims.admit_worker(worker_id, job_uid="job", pod_uid="pod") is None
+        assert await claims.admit_worker(worker_id, job_uid="job", pod_uid="pod", version=claims.get_version()) is None
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -1336,7 +1345,7 @@ async def _lose_running_job_worker(db, *, oom: bool) -> tuple[UUID, UUID]:  # ty
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
     await _report_budget(worker_id, 546 * MIB)
     claim = await _claim(worker_id)
     assert claim is not None
@@ -2014,7 +2023,7 @@ async def _admit(sessions, worker_id: UUID, *, pool_up: bool = True) -> None:  #
     """Admit a launched Job's pod; ``pool_up``: its pool started and it reported its budget."""
     async with sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}") is not None
+    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}", version=claims.get_version()) is not None
     if pool_up:
         await _report_budget(worker_id, GIB)
 
