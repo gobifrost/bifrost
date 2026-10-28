@@ -235,6 +235,58 @@ async def test_emit_topic_marks_invalid_filter_delivery_skipped():
 
 
 @pytest.mark.asyncio
+async def test_workflow_completed_skips_direct_self_subscription():
+    """A workflow completion cannot directly trigger that same workflow."""
+    source = _make_source("workflow.completed")
+    workflow_id = uuid.uuid4()
+    sub = _make_workflow_subscription(workflow_id=workflow_id)
+    processor, session = _make_processor(source=source, subscriptions=[sub])
+
+    added_objects = []
+    session.add = lambda obj: added_objects.append(obj)
+    session.flush = AsyncMock()
+
+    _, count = await processor.emit_topic(
+        topic="workflow.completed",
+        data={"workflow": {"id": str(workflow_id)}},
+    )
+
+    from src.models.enums import EventStatus
+    from src.models.orm.events import Event, EventDelivery
+
+    event = next(obj for obj in added_objects if isinstance(obj, Event))
+    delivery = next(obj for obj in added_objects if isinstance(obj, EventDelivery))
+    assert event.status == EventStatus.COMPLETED
+    assert delivery.status == EventDeliveryStatus.SKIPPED
+    assert delivery.completed_at is not None
+    assert delivery.error_message == "Workflow completion event cannot trigger the same workflow"
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_workflow_completed_allows_a_distinct_target_workflow():
+    """Completion chains between different workflows remain valid."""
+    source = _make_source("workflow.completed")
+    sub = _make_workflow_subscription()
+    processor, session = _make_processor(source=source, subscriptions=[sub])
+
+    added_objects = []
+    session.add = lambda obj: added_objects.append(obj)
+    session.flush = AsyncMock()
+
+    _, count = await processor.emit_topic(
+        topic="workflow.completed",
+        data={"workflow": {"id": str(uuid.uuid4())}},
+    )
+
+    from src.models.orm.events import EventDelivery
+
+    delivery = next(obj for obj in added_objects if isinstance(obj, EventDelivery))
+    assert delivery.status == EventDeliveryStatus.PENDING
+    assert count == 1
+
+
+@pytest.mark.asyncio
 async def test_process_webhook_marks_non_matching_filter_delivery_skipped():
     """Webhook payload filters are enforced before a delivery can be queued."""
     source = _make_source("ticket.created")

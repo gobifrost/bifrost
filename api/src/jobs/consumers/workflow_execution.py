@@ -265,6 +265,21 @@ class WorkflowExecutionConsumer:
             extra={"execution_id": execution_id},
         )
 
+    @staticmethod
+    async def _read_persisted_completion_timing(
+        session: AsyncSession,
+        execution_id: str,
+    ) -> tuple[datetime | None, datetime | None]:
+        """Read timing written by the authoritative terminal-status update."""
+        started_at, completed_at = (
+            await session.execute(
+                select(Execution.started_at, Execution.completed_at).where(
+                    Execution.id == UUID(execution_id)
+                )
+            )
+        ).one()
+        return started_at, completed_at
+
     async def _process_success(
         self,
         execution_id: str,
@@ -310,6 +325,8 @@ class WorkflowExecutionConsumer:
         roi_data = result.get("roi") or {}
         roi_time_saved = roi_data.get("time_saved", 0)
         roi_value = roi_data.get("value", 0.0)
+        started_at: datetime | None = None
+        completed_at: datetime | None = None
 
         # DB operations and log flush — single short-lived session
         # (log flush reads Redis internally but DB writes share the session)
@@ -363,6 +380,11 @@ class WorkflowExecutionConsumer:
                     )
             logs_flushed_ms = (time.perf_counter() - completion_started) * 1000
 
+            if status == ExecutionStatus.SUCCESS:
+                started_at, completed_at = await self._read_persisted_completion_timing(
+                    session, execution_id
+                )
+
             await session.commit()
         durable_ms = (time.perf_counter() - completion_started) * 1000
 
@@ -382,6 +404,27 @@ class WorkflowExecutionConsumer:
 
         if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
+
+        # This is deliberately after the authoritative execution commit and
+        # sync wakeup, before unrelated fan-out. Built-in event emission is
+        # best effort, matching workflow.failed: a crash in this gap can omit
+        # the event while preserving the durable execution result.
+        if status == ExecutionStatus.SUCCESS and completed_at is not None:
+            from src.services.events.builtins import emit_workflow_completed_event
+
+            await emit_workflow_completed_event(
+                workflow_id=workflow_id,
+                workflow_name=workflow_name,
+                execution_id=execution_id,
+                organization_id=org_id,
+                user_id=user_id,
+                user_email=metadata.get("user_email"),
+                user_name=user_name,
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=duration_ms,
+                trigger_event=metadata.get("event"),
+            )
 
         metrics_data = result.get("metrics") or {}
         await self._record_completion_metrics(
@@ -407,7 +450,6 @@ class WorkflowExecutionConsumer:
             {"duration_ms": duration_ms},
         )
 
-        completed_at = datetime.now(timezone.utc)
         await publish_history_update(
             execution_id=execution_id,
             status=status.value,
@@ -415,7 +457,7 @@ class WorkflowExecutionConsumer:
             executed_by_name=user_name,
             workflow_name=workflow_name,
             org_id=org_id,
-            completed_at=completed_at,
+            completed_at=completed_at or datetime.now(timezone.utc),
             duration_ms=duration_ms,
         )
 
