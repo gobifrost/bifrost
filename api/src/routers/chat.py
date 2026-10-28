@@ -21,14 +21,12 @@ from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
-from shared import access_checks
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.services.authorization.enforce import Caller, load_caller
 from src.services.authorization.agent_runtime import (
     AgentRuntimeAuthorizationError,
     authorize_agent_execution,
-    authorize_agentless_ai,
 )
 from src.models.contracts.agents import (
     ChatRequest,
@@ -51,7 +49,6 @@ from src.models.contracts.agents import (
 )
 from src.models.enums import MessageRole
 from src.models.orm import Artifact, Agent, Conversation, Message, MessageAttachment
-from src.services.agent_executor import AgentExecutor
 from src.services.ai_model_service import AIModelService
 from src.services.chat_attachments import (
     MAX_FILES_PER_MESSAGE,
@@ -62,6 +59,7 @@ from src.services.chat_runs import (
     cancel_chat_run,
     create_chat_run,
     get_chat_state,
+    send_chat_message,
 )
 from src.worker.remote.host import schedule_agent_prewarm
 
@@ -751,98 +749,6 @@ async def send_message(
 
     For streaming responses, use the WebSocket endpoint.
     """
-    caller, owner_id = await _chat_caller(db, user)
-    # Verify conversation and optionally get agent
-    result = await db.execute(
-        select(Conversation)
-        .options(
-            selectinload(Conversation.agent).selectinload(Agent.tools),
-            selectinload(Conversation.agent).selectinload(Agent.delegated_agents),
-        )
-        .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == owner_id)
-    )
-    conversation = result.scalar_one_or_none()
-
-    if not conversation:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Conversation {conversation_id} not found",
-        )
-
-    if conversation.agent:
-        try:
-            caller, conversation.agent = await authorize_agent_execution(
-                db, caller, conversation.agent.id
-            )
-        except AgentRuntimeAuthorizationError as exc:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
-        access_checks.note_launch(
-            "agents.execute",
-            conversation.agent.organization_id,
-            caller.ctx.home_organization_id,
-            subject=f"agent:{conversation.agent.id}",
-        )
-    else:
-        try:
-            caller = await authorize_agentless_ai(db, caller)
-        except AgentRuntimeAuthorizationError as exc:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from exc
-        access_checks.note_launch("ai.execute", None, caller.ctx.home_organization_id, subject="ai:chat")
-
-    # Agent is now optional - agentless chat uses default system prompt
-
-    # Execute chat — executor manages its own short-lived sessions
-    from shared.run_lineage import principal_lineage
-    from src.core.database import get_session_factory
-    executor = AgentExecutor(get_session_factory())
-    lineage = await principal_lineage(db, caller.principal)
-
-    # Collect streaming response into a single response
-    final_content = ""
-    final_tool_calls = []
-    final_message_id = None
-    final_input_tokens = None
-    final_output_tokens = None
-    final_duration_ms = None
-    final_artifacts = []
-
-    async for chunk in executor.chat(
-        agent=conversation.agent,  # May be None for agentless chat
-        conversation=conversation,
-        user_message=request.message,
-        stream=False,
-        caller=caller,
-        attachment_ids=request.attachment_ids,
-        model_profile_id=request.model_profile_id,
-        run_user_id=lineage.run_user_id if lineage else None,
-    ):
-        if chunk.type == "delta" and chunk.content:
-            final_content += chunk.content
-        elif chunk.type == "tool_call" and chunk.tool_call:
-            final_tool_calls.append(chunk.tool_call)
-        elif chunk.type == "artifact_ready" and chunk.artifact:
-            final_artifacts.append(chunk.artifact)
-        elif chunk.type == "done":
-            # For non-streaming, content is sent in the done chunk
-            if chunk.content:
-                final_content = chunk.content
-            final_message_id = chunk.message_id
-            final_input_tokens = chunk.token_count_input
-            final_output_tokens = chunk.token_count_output
-            final_duration_ms = chunk.duration_ms
-        elif chunk.type == "error":
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=chunk.error or "Unknown error during chat",
-            )
-
-    return ChatResponse(
-        message_id=UUID(final_message_id) if final_message_id else uuid4(),
-        content=final_content,
-        tool_calls=final_tool_calls if final_tool_calls else None,
-        artifacts=final_artifacts,
-        token_count_input=final_input_tokens,
-        token_count_output=final_output_tokens,
-        duration_ms=final_duration_ms,
-    )
+    # The turn is a chat run on a worker, like POST /api/chat/runs; this waits for it.
+    caller, _ = await _chat_caller(db, user)
+    return await send_chat_message(db, caller, conversation_id, request)
