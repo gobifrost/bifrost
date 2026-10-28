@@ -351,7 +351,6 @@ async def test_refused_remote_control_handshake_closes_once(valid_proof: bool) -
     assert host.sessions == {}
 
 
-def test_agent_launches_wait_long_enough_for_a_template_build() -> None:
+def test_agent_launches_wait_long_enough_for_a_template_rebuild() -> None:
     assert _reply_timeout("agent_run") > TEMPLATE_START_TIMEOUT_SECONDS
-    assert _reply_timeout("agent_prewarm") > TEMPLATE_START_TIMEOUT_SECONDS
     assert _reply_timeout("terminate") < TEMPLATE_START_TIMEOUT_SECONDS

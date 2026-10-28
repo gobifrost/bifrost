@@ -32,9 +32,6 @@ WORKFLOW_REQUEST_MARGIN_BYTES = 16 * MIB
 # the API process. Measured peak child private memory was 62-85 MiB
 # (docs/benchmarks/2026-10-28-agent-runs-on-workers.md).
 AGENT_RUN_REQUEST_BYTES = 96 * MIB
-# A worker's warm agent template (measured 198-202 MiB private), reserved
-# while it is alive: it starts after the worker's budget was measured.
-AGENT_TEMPLATE_REQUEST_BYTES = 224 * MIB
 SUMMARY_REQUEST_BYTES = 16 * MIB
 # Each smaller run moves the learned peak this fraction of the way down.
 LEARNED_DECAY = 10
@@ -172,7 +169,6 @@ def under_pressure(threshold: float) -> bool:
 
 __all__ = [
     "AGENT_RUN_REQUEST_BYTES",
-    "AGENT_TEMPLATE_REQUEST_BYTES",
     "JOB_BASELINE_ESTIMATE_BYTES",
     "LAUNCHABLE_KEY",
     "job_budget_bytes",

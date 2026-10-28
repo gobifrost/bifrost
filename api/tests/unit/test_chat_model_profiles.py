@@ -1,8 +1,5 @@
 """Chat model profile endpoint coverage."""
 
-import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -114,67 +111,3 @@ async def test_omitted_chat_profile_resolves_default_assignment(db_session):
 
     assert resolved_profile.id == profile.id
     assert config.model == "default-model"
-
-
-def _launcher(hostname: str, *, connected: bool = True, **request) -> SimpleNamespace:
-    return SimpleNamespace(
-        connected=connected, hostname=hostname, request=AsyncMock(**request),
-    )
-
-
-def _control_host(monkeypatch, *bridges: SimpleNamespace):
-    from src.worker.remote import host as remote_host
-
-    control = remote_host.RemoteControlHost()
-    control.sessions = {uuid4(): SimpleNamespace(bridge=bridge) for bridge in bridges}
-    monkeypatch.setattr(remote_host, "_host", control)
-    return control
-
-
-async def _open_chat(db_session) -> None:
-    from src.routers.chat import get_model_profiles
-    from src.worker.remote import host as remote_host
-
-    await get_model_profiles(db_session, object())
-    await asyncio.gather(*tuple(remote_host._prewarms))
-
-
-@pytest.mark.asyncio
-async def test_opening_chat_prewarms_each_launcher_once_per_window(db_session, monkeypatch):
-    from src.worker.remote.host import AGENT_PREWARM_INTERVAL_SECONDS
-
-    launcher = _launcher("up", return_value={})
-    disconnected = _launcher("off", connected=False)
-    control = _control_host(monkeypatch, launcher, disconnected)
-
-    await _open_chat(db_session)
-    await _open_chat(db_session)
-
-    launcher.request.assert_awaited_once_with("agent_prewarm", {})
-    disconnected.request.assert_not_awaited()
-
-    control.agents_prewarmed_at -= AGENT_PREWARM_INTERVAL_SECONDS
-    await _open_chat(db_session)
-
-    assert launcher.request.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_a_launcher_that_cannot_prewarm_never_fails_the_route(db_session, monkeypatch):
-    from src.routers.chat import get_model_profiles
-    from src.worker.remote import host as remote_host
-
-    unreachable = _launcher("down", side_effect=ConnectionError("Launcher disconnected"))
-    pressured = _launcher("full", side_effect=MemoryError("memory pressure"))
-    reachable = _launcher("up", return_value={})
-    _control_host(monkeypatch, unreachable, pressured, reachable)
-    finished: list[asyncio.Task] = []
-    monkeypatch.setattr(remote_host, "_observe_task", finished.append)
-
-    response = await get_model_profiles(db_session, object())
-    await asyncio.gather(*tuple(remote_host._prewarms))
-
-    assert response.profiles is not None
-    [prewarm] = finished
-    assert prewarm.exception() is None
-    reachable.request.assert_awaited_once_with("agent_prewarm", {})

@@ -14,7 +14,7 @@ from sqlalchemy import delete
 
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
-from src.services.memory_requests import AGENT_TEMPLATE_REQUEST_BYTES, MIB
+from src.services.memory_requests import MIB
 from src.worker.admission import Admission
 from src.worker.api_agent import ApiAgentExecutor
 from src.worker.remote import agent_route
@@ -269,21 +269,6 @@ async def test_the_executor_claims_agent_runs_and_routes_them_to_the_launcher() 
     assert ("workflow.execute", 1) in executor._claimable()
     assert isinstance(consumer, RemoteAgentConsumer)
     assert executor._make_agent_consumer() is consumer is bridge.agents
-
-
-async def test_a_warm_agent_template_reserves_its_memory_until_it_retires() -> None:
-    bridge = _bridge()
-    executor = ApiExecutor(bridge, LEASE.worker_id)
-    sample = {"event": "sample", "current": 1, "limit": 100, "pressure_ratio": 0.01, "runs": {}}
-
-    assert executor._own_bytes() == 0
-    await bridge.receive({**sample, "agent_template": True})
-    assert executor._own_bytes() == AGENT_TEMPLATE_REQUEST_BYTES
-    # A sample that doesn't report the template leaves the last report standing.
-    await bridge.receive(sample)
-    assert executor._own_bytes() == AGENT_TEMPLATE_REQUEST_BYTES
-    await bridge.receive({**sample, "agent_template": False})
-    assert executor._own_bytes() == 0
 
 
 async def test_an_agent_exit_is_acknowledged_only_after_it_was_handled(announce) -> None:

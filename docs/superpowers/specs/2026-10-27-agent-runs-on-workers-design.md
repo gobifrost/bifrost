@@ -30,10 +30,10 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
 1. **`agent.run` executes on workers again: autonomous runs, CodeMode and chat
    turns.** Each run executes in a **child forked from a warm agent template**
    on the worker, and the child exits when the run ends (Jack, 2026-10-27).
-2. **The agent template exists only while agents are active.** It starts on
-   the first agent dispatch (or when a user opens a chat) and retires after a
-   quiet period. With no recent agent activity, worker idle memory stays where
-   it is (75–78 MiB per worker Job in the baseline).
+2. **The agent template is always loaded, like the workflow template.** It
+   starts with the worker's launcher and stays up, so every run forks from a
+   warm template. A worker's idle memory rises from about 80 MiB to about
+   280–290 MiB (revised 2026-10-28, see section 6).
 3. **Each run costs only its own memory.** Forked children share the template's
    imports copy-on-write. A run's footprint is what it allocates and touches,
    measured, not a fixed 128 or 256 MiB reservation (Jack: "I don't want to eat
@@ -94,11 +94,11 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
   event loop, threads or connections open at fork time, and `gc.freeze()`
   called just before it starts accepting forks so the collector doesn't copy
   shared pages into every child.
-- **Template lifecycle:** started lazily by the first `agent_run` request, or by
-  a pre-warm request when a user opens a chat. It retires after
-  `agent_template_idle_seconds` with no agent child alive (initial value set
-  from the benchmark), and an active conversation keeps it warm. Package
-  installs recycle it with the workflow template.
+- **Template lifecycle:** started with the launcher, alongside the workflow
+  template, before the launcher measures its memory baseline, so admission
+  counts it as part of the worker. The launcher's monitor replaces it if it
+  dies, as it does the workflow template. Package installs recycle only the
+  workflow template.
 - **Child:** forked from the template. It initialises its database and Redis
   connections after the fork and runs the existing `AgentRunConsumer.process_message(body)` for that run. As
   today, the consumer deletes the dispatch at the start, in the transaction that
@@ -154,9 +154,10 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
 
 ### 4.4 Memory, capacity and scaling
 
-- **Template cost:** about 170 MiB resident and 1.9 s to build (measured on
-  the production image, excluding `src.main.app`), paid once per worker while
-  agents are active, and released when the template retires.
+- **Template cost:** about 200 MiB private, paid once per worker for its
+  lifetime. Building it takes 6–7 s of CPU in production (importing
+  `pydantic_ai` with the OpenAI SDK and the agent runtime), paid when the
+  worker starts.
 - **Per-run cost:** the forked child's **unique** memory (its private, dirtied
   pages, measured from `smaps_rollup`), not its resident size, which counts the
   shared template pages. The benchmark records each class's peak child unique
@@ -173,10 +174,9 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
 
 ### 4.5 Start-up cost and chat
 
-A fork from a warm template starts in milliseconds. Only the first agent run
-after a quiet period pays template build (about 2 s). For chat, opening the chat
-sends a pre-warm so the first message normally finds the template ready. Fresh
-per-run children (2 s on every chat message) were rejected by Jack as too slow.
+A fork from a warm template starts in milliseconds, and the template is always
+warm, so no run or chat message waits for it. Fresh per-run children (seconds
+on every chat message) were rejected by Jack as too slow.
 
 ## 5. Acceptance
 
@@ -186,11 +186,11 @@ Run `./test.sh bench run --profile baseline` with both backends, before
 | Check | Pass condition |
 |---|---|
 | API memory | Settled API memory after the agent classes falls by at least the agent-runtime import cost (about 30 MiB in the fake-model baseline), and does not grow during agent bursts |
-| Worker idle | After the template retires, worker working set stays within ±5 MiB of the baseline (75–78 MiB) |
-| Release | No agent child outlives its run; the template retires after its idle period |
+| Worker idle | Worker working set is the baseline plus the agent template (about 280–290 MiB) and stays flat |
+| Release | No agent child outlives its run |
 | Per-run memory | Peak unique memory per agent child is reported per class. Target: tens of MiB for the bench classes, nowhere near a 128 MiB fixed cost. A higher number is a finding to explain before merge |
 | Agent latency | With the template warm, sequential p50 for every agent class is no worse than the baseline; burst p50 for `agent-tools` and `agent-codemode` improves; a cold start costs no more than the template build |
-| Chat latency | New class `agent-chat-session`: first message with the template pre-warmed, and a follow-up message, are each no slower than the baseline `agent-chat` p50 plus 100 ms |
+| Chat latency | New class `agent-chat-session`: a first message and a follow-up message are each no slower than the baseline `agent-chat` p50 plus 100 ms |
 | Workflow classes | No regression beyond run-to-run noise |
 | Correctness | Every agent run completes; tools and CodeMode nested calls execute; the abnormal-exit, handoff-adoption and re-queue-race tests pass; existing agent and chat E2E tests pass |
 
@@ -202,11 +202,17 @@ Run `./test.sh bench run --profile baseline` with both backends, before
   RAM doesn't grow much. Applying it to platform jobs is a later change.
 - No fixed 128 MiB-per-run cost: per-run memory is measured and admitted at
   its measured size.
+- **Revised 2026-10-28: the agent template is always loaded.** In production
+  the first version (started on demand, retired after 5 idle minutes) built the
+  template in about 10 s, and 52% of the previous week's 296 agent runs would
+  have arrived to a cold template (29% with a 15-minute window, 18% with 30).
+  Jack accepted a worker baseline of about 250–300 MiB to keep runs starting
+  immediately, as they did when the API held the agent runtime.
 
 ## 7. Left to the builder
 
 - Names of the launcher action, events and inventory kind (suggested:
-  `agent_run`, `agent_exit`, `agent_prewarm`).
+  `agent_run`, `agent_exit`).
 - The benchmark additions this needs: per-class peak child unique memory on
   workers, and the `agent-chat-session` class.
 - Test placement follows the existing remote-runner, thin-launcher and agent
