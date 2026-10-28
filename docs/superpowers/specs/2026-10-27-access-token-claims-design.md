@@ -82,11 +82,21 @@ earlier than any stamp for its subjects, with a 401 whose error code means
 "refresh required".
 
 - **Subjects:** user, role, organization, run, workflow, Solution,
-  impersonation session. Stamps live in Redis as
-  `bifrost:authz:nbf:<subject>:<id>` and expire after 90 minutes, when every
-  older token has expired anyway.
-- **Per request:** one Redis `MGET` for the token's subjects, replacing the
-  database reads.
+  impersonation session.
+- **Postgres holds the stamps; Redis caches them** (Jack, 2026-10-28). A stamp
+  is a row in a small `authz_not_before` table (subject kind, subject ID,
+  time), written **in the same transaction as the change it records**, so a
+  committed change always has its stamp. After commit it is copied to Redis as
+  `bifrost:authz:nbf:<subject>:<id>`. Rows and keys older than 90 minutes are
+  useless (every older token has expired) and are deleted when new stamps are
+  written. This needs one migration.
+- **Per request:** one Redis `MGET` for the token's subjects plus a warm marker
+  key, replacing the database reads.
+- **When Redis can't answer:** retry once; if it still fails, or the warm
+  marker is missing because Redis restarted empty, read the stamps for those
+  subjects from Postgres (one indexed query) and re-copy the last 90 minutes of
+  stamps to Redis. A Redis outage costs one cheap query per request, never an
+  unchecked token.
 - **Where stamps are written:** in the service or repository write for each
   fact, next to the existing `role_cache.invalidate_user` / `invalidate_role`
   calls for role changes. Not in routers.
@@ -108,9 +118,6 @@ What this does to each change:
 | Run user deactivated mid-run | The run refreshes and continues, as today: runtime refresh doesn't check the active flag (`runtime_auth.py`: "does not retroactively cancel it") |
 | Workflow powers, org provider flag, Solution uninstall, impersonation end | Stamps that subject; next request refreshes or is refused |
 
-**If Redis can't be read,** the API refuses the request with a retryable 503
-rather than accepting tokens it can't check. No second path.
-
 ## 6. Refresh
 
 - **People:** unchanged flow. `/auth/refresh` rotates the single-use refresh
@@ -130,7 +137,7 @@ rather than accepting tokens it can't check. No second path.
 - **Browser impersonation markers** keep their format; ending a session now
   also stamps it.
 - No change to authorization rules or decision functions.
-- No cache.
+- No authorization cache. Redis holds only copies of the not-before stamps.
 
 ## 8. Rule change
 
@@ -152,7 +159,8 @@ rule change with it.
 | Lifetime | Issued lifetimes are spread across 60–90 minutes |
 | One minter | No access token is minted outside `issue_access_token` except embed tokens and impersonation markers (a test enforces it) |
 | Completeness | The column-enumeration test passes, and fails when a read is added without a stamp |
-| Redis down | Requests return 503; nothing is accepted unchecked |
+| Redis down | Requests keep working, checked against the Postgres stamps; a change made during the outage is enforced on the next request |
+| Redis restarted empty | The warm marker is missing, stamps are read from Postgres and re-copied; nothing stamped in the last 90 minutes is lost |
 | Size | Production's largest authorization context fits the section 3 limit |
 | Benchmark | Per SDK call about five fewer transactions; `wf-sdk` burst p50 and API CPU ms per run improve; no class regresses |
 | Existing suites | Authorization, RBAC, Solution, runtime-identity, MCP auth, service-credential, web client auth and CLI login tests pass |
@@ -162,10 +170,13 @@ rule change with it.
 One design, two PRs:
 
 1. **Runs and the shared pieces:** `issue_access_token`, the claims schema,
-   not-before stamps, run refresh tokens, and the README rule.
+   the not-before stamps (table, migration and Redis copy), run refresh
+   tokens, and the README rule.
 2. **People:** login, SSO, MFA, refresh and MCP OAuth switch to
    `issue_access_token`, and per-request grant reads go away.
 
+Each PR is measured with the benchmark before and after (database
+transactions per run and idle, API CPU per run, API memory, burst latency).
 Both come after idle-churn steps 1–2. They are independent of agent runs
 moving to workers. They also fit the later Cloudflare direction: a service
 with no database access can authorize any request from the token and one
