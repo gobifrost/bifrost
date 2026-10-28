@@ -33,6 +33,7 @@ from src.services.run_retention.deleter import (
     delete_event_batch,
     delete_workflow_run_batch,
     plan_run_retention,
+    reclaim_orphaned_execution_log_streams,
 )
 from src.services.run_retention.settings import RunRetentionSettingsService
 
@@ -52,7 +53,10 @@ async def run_run_retention(context: PlatformJobContext, payload: RunRetentionPa
         async with get_db_context() as db:
             settings = await RunRetentionSettingsService(db).get_settings()
         if settings.days is None:
-            return {"dry_run": payload.dry_run, "skipped": "keep_forever"}
+            result = {"dry_run": payload.dry_run, "skipped": "keep_forever"}
+            if not payload.dry_run:
+                result["execution_log_orphans"] = await reclaim_orphaned_execution_log_streams()
+            return result
         state = {
             "dry_run": payload.dry_run,
             "cutoff": (datetime.now(timezone.utc) - timedelta(days=settings.days)).isoformat(),
@@ -103,6 +107,8 @@ async def run_run_retention(context: PlatformJobContext, payload: RunRetentionPa
             await context.report(f"Deleted {state[key]} {label}", current=state[key])
         else:
             state["continues"] = True
+
+    state["execution_log_orphans"] = await reclaim_orphaned_execution_log_streams()
 
     await context.log(
         "info",

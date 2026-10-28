@@ -3,6 +3,8 @@
 Validates that the consumer uses short-lived sessions (no persistent session).
 """
 
+import asyncio
+
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -141,9 +143,19 @@ class TestSuccessfulExecutionCompletionOrder:
                 "user_name": "Test User",
                 "sync": True,
             }
-            consumer._redis_client.push_result.side_effect = (
-                lambda **_kwargs: call_order.append("push_result")
-            )
+            sync_woken = asyncio.Event()
+            recovery_started = asyncio.Event()
+            allow_recovery = asyncio.Event()
+
+            def push_result(**_kwargs):
+                call_order.append("push_result")
+                sync_woken.set()
+
+            async def block_recovery(*_args, **_kwargs):
+                recovery_started.set()
+                await allow_recovery.wait()
+
+            consumer._redis_client.push_result.side_effect = push_result
 
             publish_execution = AsyncMock(
                 side_effect=lambda *_args, **_kwargs: call_order.append(
@@ -156,7 +168,10 @@ class TestSuccessfulExecutionCompletionOrder:
             cleanup_cache = AsyncMock(
                 side_effect=lambda _execution_id: call_order.append("cleanup_cache")
             )
-            flush_logs = AsyncMock(return_value=0)
+            receipt = MagicMock(count=1)
+            stage_logs = AsyncMock(return_value=receipt)
+            acknowledge_logs = AsyncMock()
+            recover_logs = AsyncMock(side_effect=block_recovery)
 
             update_delivery = AsyncMock()
 
@@ -179,9 +194,11 @@ class TestSuccessfulExecutionCompletionOrder:
                     new=update_delivery,
                 ),
                 patch(
-                    "bifrost._logging.flush_logs_to_postgres",
-                    new=flush_logs,
+                    "bifrost._logging.stage_logs_to_postgres",
+                    new=stage_logs,
                 ),
+                patch("bifrost._logging.acknowledge_staged_logs", new=acknowledge_logs),
+                patch("bifrost._logging.recover_terminal_execution_logs", new=recover_logs),
                 patch(
                     "src.core.metrics.update_daily_metrics",
                     new=AsyncMock(
@@ -212,7 +229,7 @@ class TestSuccessfulExecutionCompletionOrder:
                     new_callable=AsyncMock,
                 ),
             ):
-                await consumer._process_success(
+                completion = asyncio.create_task(consumer._process_success(
                     "00000000-0000-0000-0000-000000000004",
                     {
                         "success": True,
@@ -221,7 +238,12 @@ class TestSuccessfulExecutionCompletionOrder:
                         "duration_ms": 123,
                         "sync": True,
                     },
-                )
+                ))
+                await asyncio.wait_for(sync_woken.wait(), timeout=1)
+                await asyncio.wait_for(recovery_started.wait(), timeout=1)
+                assert not completion.done()
+                allow_recovery.set()
+                await completion
 
         assert call_order[:2] == ["durable_commit", "push_result"]
         assert call_order.index("push_result") < call_order.index("daily_metrics")
@@ -231,7 +253,9 @@ class TestSuccessfulExecutionCompletionOrder:
         assert call_order.index("push_result") < call_order.index("publish_history")
         assert call_order.index("push_result") < call_order.index("cleanup_cache")
         update_delivery.assert_not_awaited()
-        flush_logs.assert_not_awaited()
+        stage_logs.assert_awaited_once_with(
+            "00000000-0000-0000-0000-000000000004", durable_session
+        )
 
         terminal_data = publish_execution.await_args.args[2]
         assert terminal_data == {"duration_ms": 123}
@@ -273,6 +297,8 @@ class TestSuccessfulExecutionCompletionOrder:
             completed_event = AsyncMock(
                 side_effect=lambda **_kwargs: call_order.append("completed_event")
             )
+            stage_logs = AsyncMock(return_value=MagicMock(count=0))
+            recover_logs = AsyncMock()
 
             with (
                 patch(
@@ -294,6 +320,8 @@ class TestSuccessfulExecutionCompletionOrder:
                         )
                     ),
                 ),
+                patch("bifrost._logging.stage_logs_to_postgres", new=stage_logs),
+                patch("bifrost._logging.recover_terminal_execution_logs", new=recover_logs),
                 patch(
                     "src.core.metrics.update_daily_metrics",
                     new=AsyncMock(
@@ -509,7 +537,8 @@ class TestFailedExecutionCompletionOrder:
             )
 
             update_delivery = AsyncMock()
-            flush_logs = AsyncMock(return_value=0)
+            stage_logs = AsyncMock(return_value=MagicMock(count=0))
+            recover_logs = AsyncMock()
 
             with (
                 patch(
@@ -525,9 +554,10 @@ class TestFailedExecutionCompletionOrder:
                     new=update_delivery,
                 ),
                 patch(
-                    "bifrost._logging.flush_logs_to_postgres",
-                    new=flush_logs,
+                    "bifrost._logging.stage_logs_to_postgres",
+                    new=stage_logs,
                 ),
+                patch("bifrost._logging.recover_terminal_execution_logs", new=recover_logs),
                 patch(
                     "src.core.metrics.update_daily_metrics",
                     new=AsyncMock(
@@ -584,7 +614,9 @@ class TestFailedExecutionCompletionOrder:
         assert call_order.index("push_result") < call_order.index("publish_history")
         assert call_order.index("push_result") < call_order.index("cleanup_cache")
         update_delivery.assert_not_awaited()
-        flush_logs.assert_not_awaited()
+        stage_logs.assert_awaited_once_with(
+            "00000000-0000-0000-0000-000000000004", durable_session
+        )
 
     @pytest.mark.asyncio
     async def test_event_failure_updates_its_delivery(self):
@@ -600,7 +632,9 @@ class TestFailedExecutionCompletionOrder:
         metrics_context.__aexit__ = AsyncMock(return_value=None)
         session_factory = MagicMock(side_effect=[context, metrics_context])
         update_delivery = AsyncMock()
-        flush_logs = AsyncMock(return_value=1)
+        receipt = MagicMock(count=1)
+        stage_logs = AsyncMock(return_value=receipt)
+        recover_logs = AsyncMock()
 
         with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
             consumer = WorkflowExecutionConsumer()
@@ -630,9 +664,10 @@ class TestFailedExecutionCompletionOrder:
                     new=update_delivery,
                 ),
                 patch(
-                    "bifrost._logging.flush_logs_to_postgres",
-                    new=flush_logs,
+                    "bifrost._logging.stage_logs_to_postgres",
+                    new=stage_logs,
                 ),
+                patch("bifrost._logging.recover_terminal_execution_logs", new=recover_logs),
                 patch(
                     "src.core.metrics.update_daily_metrics",
                     new_callable=AsyncMock,
@@ -672,7 +707,6 @@ class TestFailedExecutionCompletionOrder:
             error_message="boom",
             session=session,
         )
-        flush_logs.assert_awaited_once_with(
-            "00000000-0000-0000-0000-000000000004",
-            session=session,
+        stage_logs.assert_awaited_once_with(
+            "00000000-0000-0000-0000-000000000004", session
         )

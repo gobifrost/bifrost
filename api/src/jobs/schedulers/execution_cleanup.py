@@ -63,6 +63,7 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
         "agent_run_cancelling_timeouts": 0,
         "agent_run_total_cleaned": 0,
         "agent_run_errors": [],
+        "execution_log_recovery": {"scanned": 0, "terminal": 0, "flushed": 0},
     }
 
     now = datetime.now(timezone.utc)
@@ -262,6 +263,13 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
         logger.error("Error in execution cleanup", extra={"error": str(e)}, exc_info=True)
         results["errors"].append({"error": str(e)})
     finally:
+        try:
+            from bifrost._logging import recover_terminal_execution_logs
+
+            results["execution_log_recovery"] = await recover_terminal_execution_logs()
+        except Exception as e:
+            logger.error("Error recovering terminal execution logs", extra={"error": str(e)})
+            results["errors"].append({"execution_log_recovery": str(e)})
         try:
             agent_run_results = await _cleanup_stale_agent_runs(now)
             results.update(agent_run_results)
