@@ -114,4 +114,5 @@ def format_table(summary: SmapsSummary) -> str:
 if __name__ == "__main__":
     import sys
 
-    print(format_table(summarize(open(sys.argv[1], encoding="utf-8").read())))
+    with open(sys.argv[1], encoding="utf-8") as smaps_file:
+        print(format_table(summarize(smaps_file.read())))

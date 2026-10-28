@@ -24,7 +24,7 @@ def _db(entry: dict, phase: str) -> str:
 def _classes_table(classes: list[dict]) -> list[str]:
     rows = [
         "| Class | Pass | Phase | OK / runs | Queue p50 / p95 ms | Run p50 / p95 ms | End-to-end p50 / p95 ms "
-        "| CPU ms/run API / worker | DB transactions/run | WAL KiB/run |",
+        + "| CPU ms/run API / worker | DB transactions/run | WAL KiB/run |",
         "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for entry in classes:
@@ -62,7 +62,7 @@ def _workers_table(classes: list[dict]) -> list[str]:
         "## Worker processes",
         "",
         "Private (unshared) memory sampled twice a second on each worker pod while the class ran; runs shorter than that can be missed, so peaks are a lower bound. "
-        "Run children are processes forked for one run; templates are the processes they fork from.",
+        + "Run children are processes forked for one run; templates are the processes they fork from.",
         "",
         "| Class | Pass | Peak run-child private MiB | Peak concurrent run children | Peak template private MiB |",
         "|---|---:|---:|---:|---:|",
