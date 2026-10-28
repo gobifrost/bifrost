@@ -55,6 +55,10 @@ from src.worker.remote.protocol import (
 
 router = APIRouter()
 
+# Opening chat asks every launcher to start its agent template. One request
+# per API replica in this window covers every chat page opened meanwhile.
+AGENT_PREWARM_INTERVAL_SECONDS = 30.0
+
 
 class RemoteProcess:
     def __init__(self, bridge: Bridge, route_id: str) -> None:
@@ -786,6 +790,7 @@ class RemoteControlHost:
         self.agent_executor: Any = None
         self.agent_task: asyncio.Task[Any] | None = None
         self.stopping = False
+        self.agents_prewarmed_at: float | None = None
 
     async def start(self) -> None:
         """Start the single API-resident agent/summary executor for this replica."""
@@ -818,6 +823,31 @@ class RemoteControlHost:
         ), return_exceptions=True)
         if self.agent_task is not None:
             await asyncio.gather(self.agent_task, return_exceptions=True)
+
+    async def prewarm_agents(self) -> None:
+        """Ask every connected launcher to start its agent template, at most
+        once per ``AGENT_PREWARM_INTERVAL_SECONDS`` on this replica.
+
+        A launcher that cannot (memory pressure, a lost connection) is
+        skipped: its next agent run builds the template instead.
+        """
+        now = time.monotonic()
+        if (
+            self.agents_prewarmed_at is not None
+            and now - self.agents_prewarmed_at < AGENT_PREWARM_INTERVAL_SECONDS
+        ):
+            return
+        self.agents_prewarmed_at = now
+        bridges = [session.bridge for session in self.sessions.values() if session.bridge.connected]
+        results = await asyncio.gather(
+            *(bridge.request("agent_prewarm", {}) for bridge in bridges), return_exceptions=True
+        )
+        for bridge, result in zip(bridges, results):
+            if isinstance(result, Exception):
+                logging.getLogger(__name__).info(
+                    "Agent template pre-warm skipped",
+                    extra={"hostname": bridge.hostname, "error": str(result)},
+                )
 
     async def connect(self, socket: WebSocket) -> tuple[RemoteSession, FragmentAssembler]:
         await socket.accept()
@@ -937,6 +967,20 @@ async def start_remote_control_host(_application: Any) -> None:
     if _host is None:
         _host = RemoteControlHost()
         await _host.start()
+
+
+_prewarms: set[asyncio.Task[None]] = set()
+
+
+def schedule_agent_prewarm() -> None:
+    """Pre-warm launcher agent templates in the background (see
+    :meth:`RemoteControlHost.prewarm_agents`); the caller never waits."""
+    if _host is None or _host.stopping:
+        return
+    task = asyncio.create_task(_host.prewarm_agents(), name="agent-prewarm")
+    _prewarms.add(task)
+    task.add_done_callback(_prewarms.discard)
+    task.add_done_callback(_observe_task)
 
 
 async def stop_remote_control_host() -> None:
