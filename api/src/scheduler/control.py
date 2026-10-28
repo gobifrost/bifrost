@@ -250,14 +250,18 @@ class ControlPlane:
             summary=outcome.summary,
             platform_job_id=outcome.platform_job_id,
         )
-        await self._publish_task_states()
+        # Only this task's next run moved.
+        await self._publish_task_states(task_id)
 
-    async def _publish_task_states(self) -> None:
+    async def _publish_task_states(self, task_id: str | None = None) -> None:
+        """Record next run times: every task's, or only ``task_id``'s."""
         scheduler = self._scheduler
         if scheduler is None:
             return
         states = []
         for definition in self._catalog:
+            if task_id is not None and definition.task_id != task_id:
+                continue
             job = scheduler.get_job(definition.task_id)
             states.append((definition, job.next_run_time if job else None))
         await publish_task_states(states)

@@ -709,10 +709,15 @@ class ApiExecutor(PoolWorker):
 class RemoteSession:
     """A durable worker owner with replaceable socket transport."""
 
-    def __init__(self, bridge: Bridge, worker: ApiExecutor, lease: RemoteOwnerLease) -> None:
+    def __init__(
+        self, bridge: Bridge, worker: ApiExecutor, lease: RemoteOwnerLease, *, owned_until: float
+    ) -> None:
         self.bridge = bridge
         self.worker = worker
         self.lease = lease
+        # Monotonic time before which the database lease is known to be held.
+        # Only an expired lease can pass to another owner.
+        self.owned_until = owned_until
         self.lease_ref = LeaseRef(lease)
         bridge.lease_ref = self.lease_ref
         self.last_sequence = 0
@@ -791,16 +796,27 @@ class RemoteSession:
                         continue
                     await self.lose_ownership("Remote launcher telemetry expired")
                     return
+                renewing_at = time.monotonic()
                 if not await renew_remote_owner(self.lease):
                     await self.lose_ownership("Remote API owner lease expired")
                     return
+                self.owned_until = renewing_at + DEFAULT_OWNER_LEASE_SECONDS
         except asyncio.CancelledError:
             raise
         except Exception:
             logging.getLogger(__name__).exception("Remote owner renewal failed")
             await self.lose_ownership("Remote API owner lease could not be renewed")
 
+    async def may_accept(self, kind: str, payload: dict[str, Any]) -> bool:
+        """Whether this owner may act on a launcher message. Telemetry changes
+        nothing durable, so a lease known to be current is enough; everything
+        else is fenced in the database."""
+        if kind == "event" and payload.get("event") == "sample" and time.monotonic() < self.owned_until:
+            return True
+        return await owns_remote_session(self.lease)
+
     async def lose_ownership(self, reason: str) -> None:
+        self.owned_until = 0.0
         self.worker._lost = True
         if self.bridge.pool is not None:
             await self.bridge.pool.ownership_lost(reason)
@@ -962,6 +978,7 @@ class RemoteControlHost:
                     incarnation_id=hello.incarnation_id,
                     supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
                 )
+        acquiring_at = time.monotonic()
         lease = await acquire_remote_owner(
             worker_id=hello.incarnation_id,
             owner_id=self.owner_id,
@@ -976,6 +993,7 @@ class RemoteControlHost:
         if existing is not None:
             existing.lease = lease
             existing.lease_ref.lease = lease
+            existing.owned_until = acquiring_at + DEFAULT_OWNER_LEASE_SECONDS
             existing.last_sequence = 0
             existing.bridge.replace_socket(socket, lease)
             await socket.send_text(json.dumps({"event": "welcome", "session_generation": lease.session_generation}))
@@ -983,7 +1001,9 @@ class RemoteControlHost:
         bridge = Bridge(socket, bootstrap, lease)
         worker = ApiExecutor(bridge, lease.worker_id, remote_static=hello.form == "static")
         await socket.send_text(json.dumps({"event": "welcome", "session_generation": lease.session_generation}))
-        session = RemoteSession(bridge, worker, lease)
+        session = RemoteSession(
+            bridge, worker, lease, owned_until=acquiring_at + DEFAULT_OWNER_LEASE_SECONDS
+        )
         self.sessions[lease.worker_id] = session
         session.task.add_done_callback(
             lambda task: self._session_finished(lease.worker_id, session, task)
@@ -1062,7 +1082,7 @@ async def remote_control(socket: WebSocket) -> None:
             logical = assembler.feed(frame)
             if logical is None:
                 continue
-            if not await owns_remote_session(session.lease):
+            if not await session.may_accept(logical.kind, logical.payload):
                 await session.lose_ownership("Remote API owner fence was replaced")
                 raise ProtocolError("remote API owner fence was replaced")
             if logical.kind != "event":

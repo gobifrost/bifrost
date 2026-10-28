@@ -243,7 +243,7 @@ async def test_a_detached_session_detaches_its_agent_waits() -> None:
     worker = Mock(request_stop=Mock(), run=AsyncMock(side_effect=never.wait))
 
     with patch("src.worker.remote.host.release_remote_owner", new_callable=AsyncMock):
-        session = RemoteSession(bridge, worker, LEASE)
+        session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
         await session.detach()
 
     bridge.agents.detach.assert_called_once_with()
