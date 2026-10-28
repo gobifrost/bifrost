@@ -167,7 +167,8 @@ def _template_main(
         # Move everything loaded so far to the permanent generation. A child's
         # collections then never write to the shared objects' GC headers, so
         # their pages stay shared with this template instead of being copied
-        # into every run.
+        # into every run. Collect first so garbage is not frozen with them.
+        gc.collect()
         gc.freeze()
 
     logger.info("Template process ready — all dependencies loaded")
@@ -510,7 +511,13 @@ def _handle_fork_request(
 
         # Run the worker function (this blocks until the child exits)
         if profile == "agent":
-            _run_agent_child(work_recv, result_send, worker_id)
+            # Never unwind into the template's fork loop or its exit handlers.
+            exit_code = 1
+            try:
+                _run_agent_child(work_recv, result_send, worker_id)
+                exit_code = 0
+            finally:
+                os._exit(exit_code)
         else:
             _run_forked_child(
                 work_recv, result_send, worker_id, persistent,
@@ -721,7 +728,7 @@ def _run_agent_child(
     try:
         asyncio.run(run_agent_message(work_item["message"]))
         reply: dict[str, Any] = {"ok": True}
-    except Exception as e:
+    except BaseException as e:
         logger.exception(f"Agent child {worker_id} run failed: {e}")
         reply = {"ok": False, "error_type": type(e).__name__, "error": str(e)}
     result_send.send(reply)

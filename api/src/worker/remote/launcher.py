@@ -15,7 +15,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 from uuid import uuid4
 
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
@@ -109,6 +109,23 @@ async def _shutdown_launcher(
     await launcher.stop()
 
 
+class ProcStat(NamedTuple):
+    state: str
+    ppid: int
+    start_ticks: int
+
+
+def proc_stat(pid: int) -> ProcStat | None:
+    """State, parent and start time of ``pid``, or None once it is gone."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    # The command name may contain spaces; fields after it are fixed.
+    fields = stat.rsplit(")", 1)[1].split()
+    return ProcStat(state=fields[0], ppid=int(fields[1]), start_ticks=int(fields[19]))
+
+
 @dataclass
 class Child:
     route_id: str
@@ -132,6 +149,9 @@ class Child:
     started_at: str | None = None
     memory_request_bytes: int | None = None
     agent_run: bool = False
+    # Start time of the forked process, so a reused PID is never mistaken
+    # for it when the launcher reaps an orphaned agent child.
+    start_ticks: int | None = None
 
     @property
     def kind(self) -> str:
@@ -166,6 +186,10 @@ class Launcher:
         # Started by the first agent run or pre-warm, retired when idle.
         self.agent_template: TemplateProcess | None = None
         self.agent_active_at = 0.0
+        # Finished agent children by PID -> start time. If their template
+        # dies they re-parent to the launcher (PID 1 in a pod), which must
+        # reap them.
+        self.exited_agent_children: dict[int, int] = {}
         self.children: dict[str, Child] = {}
         self.jobs: dict[str, asyncio.subprocess.Process] = {}
         self.job_claims: dict[str, dict[str, str | int]] = {}
@@ -407,18 +431,14 @@ class Launcher:
                 await self.terminate(payload["route_id"], payload.get("error_type", "CancelledError"),
                                      payload.get("error", "Cancelled"), payload.get("grace_seconds"))
             elif action == "recycle":
-                # Agent children keep running from the old agent template's
-                # memory; only workflow and service children hold the recycle.
+                # Recycling picks up newly installed workflow packages. Agent
+                # children never import customer packages, so the agent
+                # template and its children are left alone.
                 while any(not child.agent_run for child in self.children.values()):
                     await asyncio.sleep(.05)
                 async with self._template_lock:
                     await asyncio.to_thread(self.template.shutdown)
                     await asyncio.to_thread(self.template.start)
-                async with self._agent_template_lock:
-                    agent_template = self.agent_template
-                    if agent_template is not None and agent_template.is_alive():
-                        await asyncio.to_thread(agent_template.shutdown)
-                        await asyncio.to_thread(agent_template.start)
             elif action == "package_tool":
                 response = await self.helper("src.worker.remote.package_helper", json.dumps(payload))
             elif action == "configure":
@@ -457,8 +477,33 @@ class Launcher:
         child.sampler = CPUSampler(pid=child.pid, clock_ticks=get_clock_ticks())
         child.sampler.set_baseline(time.monotonic())
         child.rss_start = child.sampler.start_process_rss_bytes or 0
+        if child.agent_run:
+            stat = proc_stat(child.pid)
+            child.start_ticks = stat.start_ticks if stat is not None else None
         self.children[child.route_id] = child
         asyncio.get_running_loop().add_reader(child.result.fileno(), self.result_ready, child.route_id)
+
+    def reap_exited_agent_children(self) -> None:
+        """Reap finished agent children that were orphaned to this process.
+
+        Only the known PIDs, and only while the start time still matches:
+        ``waitpid(-1)`` would steal the exit status of asyncio-managed
+        subprocesses such as platform jobs.
+        """
+        for pid, start_ticks in list(self.exited_agent_children.items()):
+            stat = proc_stat(pid)
+            if stat is None or stat.start_ticks != start_ticks:
+                del self.exited_agent_children[pid]
+                continue
+            if stat.ppid != os.getpid():
+                # Still the template's child; the template reaps it.
+                continue
+            try:
+                reaped, _ = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                reaped = pid
+            if reaped:
+                del self.exited_agent_children[pid]
 
     async def ensure_agent_template(self) -> TemplateProcess:
         """Start the agent template if needed; the caller holds its lock."""
@@ -563,6 +608,8 @@ class Launcher:
         child.result.close()
         if child.agent_run:
             self.agent_active_at = time.monotonic()
+            if child.start_ticks is not None:
+                self.exited_agent_children[child.pid] = child.start_ticks
             await self.send_terminal(
                 {"event": "agent_exit", "route_id": child.route_id, "ok": result.get("ok") is True,
                  "error_type": result.get("error_type"), "error": result.get("error")},
@@ -607,7 +654,10 @@ class Launcher:
             os.kill(child.pid, signal.SIGTERM)
         deadline = time.monotonic() + (child.grace if grace is None else grace)
         while route_id in self.children and time.monotonic() < deadline:
-            if not Path(f"/proc/{child.pid}").exists():
+            stat = proc_stat(child.pid)
+            if stat is None or stat.state == "Z":
+                # Gone, or exited and awaiting its reaper (an orphaned child
+                # waits for the launcher's monitor).
                 break
             await asyncio.sleep(.05)
         if route_id in self.children:
@@ -655,6 +705,7 @@ class Launcher:
                 dangerous=memory_pressure_ratio() >= (self.dangerous_memory_ratio or 1),
             )
             await self.retire_idle_agent_template(collect_exits=tick % 4 == 0)
+            self.reap_exited_agent_children()
             if tick % 4 == 0:
                 async with self._template_lock:
                     await asyncio.to_thread(self.template.collect_child_exit_statuses)

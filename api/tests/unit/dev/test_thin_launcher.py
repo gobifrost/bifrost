@@ -16,6 +16,7 @@ from src.services.execution.template_process import _RecvQueue, _SendQueue
 from src.worker.remote.launcher import (
     Child,
     Launcher,
+    ProcStat,
     _shutdown_launcher,
     _next_control_frame,
     _receive_control_commands,
@@ -611,9 +612,7 @@ async def test_agent_template_stays_warm_while_an_agent_child_is_alive(agent_tem
 
 
 @pytest.mark.asyncio
-async def test_recycle_restarts_a_running_agent_template_without_killing_agent_children(
-    agent_templates,
-) -> None:
+async def test_recycle_restarts_only_the_workflow_template(agent_templates) -> None:
     socket = Mock(send=AsyncMock())
     launcher = _agent_launcher(socket)
     launcher.template = _FakeTemplate()
@@ -630,8 +629,28 @@ async def test_recycle_restarts_a_running_agent_template_without_killing_agent_c
     kill.assert_not_called()
     assert list(launcher.children) == ["agent-route"]
     assert (launcher.template.shutdowns, launcher.template.starts) == (1, 2)
-    assert (agent_template.shutdowns, agent_template.starts) == (1, 2)
+    assert (agent_template.shutdowns, agent_template.starts) == (0, 1)
     assert launcher.agent_template is agent_template
+
+
+@pytest.mark.asyncio
+async def test_terminate_treats_a_zombie_agent_child_as_exited(agent_templates) -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _agent_launcher(socket)
+    await launcher.command(_agent_run_command(), generation=1)
+
+    # An orphaned child that has exited stays in /proc as a zombie until it
+    # is reaped; the grace period must not be spent waiting on it.
+    with (
+        patch("src.worker.remote.launcher.os.kill"),
+        patch("src.worker.remote.launcher.proc_stat", return_value=ProcStat("Z", 1, 7)),
+    ):
+        await asyncio.wait_for(
+            launcher.terminate("agent-route", "CancelledError", "Cancelled", grace=30), timeout=1,
+        )
+
+    assert _sent(socket)[-1]["error_type"] == "CancelledError"
+    assert launcher.children == {}
 
 
 @pytest.mark.asyncio
