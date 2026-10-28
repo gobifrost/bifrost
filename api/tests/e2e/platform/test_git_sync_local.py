@@ -5804,6 +5804,95 @@ class TestAbortMerge:
 class TestSyncPublicationOrdering:
     """Validation and confirmation must precede all workspace publication."""
 
+    async def test_unknown_manifest_field_preserves_active_workspace(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+        working_clone,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """An invalid candidate cannot update, delete, publish or refresh active state."""
+        import hashlib
+
+        from src.core import module_cache
+        from src.services.repo_storage import RepoStorage
+
+        workflow_id, omitted_id = uuid4(), uuid4()
+        source_path = "workflows/git_sync_test_strict.py"
+        active_source = SAMPLE_WORKFLOW_PY.encode()
+        active_hash = hashlib.sha256(active_source).hexdigest()
+        db_session.add_all([
+            Workflow(
+                id=workflow_id,
+                name="Active Strict Workspace",
+                function_name="git_sync_test_wf",
+                path=source_path,
+                is_active=True,
+            ),
+            Workflow(
+                id=omitted_id,
+                name="Keep Omitted Workflow",
+                function_name="omitted_wf",
+                path="workflows/git_sync_test_strict_omitted.py",
+                is_active=True,
+            ),
+            FileIndex(path=source_path, content=active_source.decode(), content_hash=active_hash),
+        ])
+        await db_session.commit()
+        storage = RepoStorage()
+        await storage.write(source_path, active_source)
+        await module_cache.set_module(source_path, active_source.decode(), active_hash)
+        active_module = await module_cache.get_module(source_path)
+
+        remote_dir = Path(working_clone.working_dir)
+        write_entity_to_repo(remote_dir, source_path, SAMPLE_WORKFLOW_UPDATED)
+        write_entity_to_repo(remote_dir, ".bifrost/workflows.yaml", yaml.safe_dump({
+            "workflows": {
+                str(workflow_id): {
+                    "id": str(workflow_id),
+                    "name": "Must Not Replace Active Name",
+                    "path": source_path,
+                    "function_name": "git_sync_test_wf",
+                    "timeout_second": 30,
+                },
+            },
+        }))
+        working_clone.index.add([source_path, ".bifrost/workflows.yaml"])
+        working_clone.index.commit("invalid workspace candidate")
+        working_clone.remotes.origin.push()
+        before_remote = Repo(str(bare_repo)).commit("main").hexsha
+        plan_import = AsyncMock(wraps=sync_service._resolver.plan_import)
+        plan_deletions = AsyncMock(wraps=sync_service._resolver._resolve_deletions)
+        refresh_modules = AsyncMock()
+        monkeypatch.setattr(sync_service._resolver, "plan_import", plan_import)
+        monkeypatch.setattr(sync_service._resolver, "_resolve_deletions", plan_deletions)
+        monkeypatch.setattr(module_cache, "refresh_modules_from_directory", refresh_modules)
+
+        try:
+            result = await sync_service.desktop_sync(confirm_deletes=True)
+
+            assert result.success is False
+            assert ".bifrost/workflows.yaml" in (result.error or "")
+            assert "timeout_second" in (result.error or "")
+            plan_import.assert_not_awaited()
+            plan_deletions.assert_not_awaited()
+            refresh_modules.assert_not_awaited()
+            assert sync_service._sync_up_calls == []
+            assert Repo(str(bare_repo)).commit("main").hexsha == before_remote
+            db_session.expire_all()
+            active = await db_session.get(Workflow, workflow_id)
+            omitted = await db_session.get(Workflow, omitted_id)
+            indexed = await db_session.get(FileIndex, source_path)
+            assert active is not None and active.name == "Active Strict Workspace"
+            assert omitted is not None and omitted.is_active is True
+            assert indexed is not None and indexed.content_hash == active_hash
+            assert await storage.read(source_path) == active_source
+            assert await module_cache.get_module(source_path) == active_module
+        finally:
+            await storage.delete(source_path)
+            await module_cache.invalidate_module(source_path)
+
     async def test_import_failure_does_not_push_or_sync_storage(
         self,
         sync_service,

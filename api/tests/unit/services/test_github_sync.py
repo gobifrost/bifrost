@@ -42,6 +42,32 @@ def _status_service(work_dir: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content,field,line", [
+    ("events: {}\nevnts: {}\n", None, None),
+    ("events: {}\nevents: {}\n", None, 2),
+    ("events:\n  x:\n    id: x\n    source_type: topic\n    naem: hidden-value\n", "naem", None),
+])
+async def test_preflight_reports_strict_manifest_errors_at_the_source(
+    tmp_path: Path, content: str, field: str | None, line: int | None,
+) -> None:
+    manifest_dir = tmp_path / ".bifrost"
+    manifest_dir.mkdir()
+    (manifest_dir / "events.yaml").write_text(content)
+
+    result = await _status_service(tmp_path)._run_preflight(tmp_path)
+
+    assert result.valid is False
+    errors = [issue for issue in result.issues if issue.severity == "error"]
+    assert len(errors) == 1
+    assert errors[0].path == ".bifrost/events.yaml"
+    assert errors[0].category == "manifest"
+    assert errors[0].line == line
+    assert "hidden-value" not in errors[0].message
+    if field:
+        assert field in errors[0].message
+
+
+@pytest.mark.asyncio
 async def test_desktop_status_returns_empty_only_for_uninitialized_workspace(tmp_path: Path) -> None:
     service = _status_service(tmp_path)
     service.repo_manager = _StatusRepoManager(tmp_path, is_initialized=False)
