@@ -80,8 +80,15 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
   and eligible for the dangerous-pressure kill**, like workflow children
   (`launcher.py:526-576`) *(my call)*.
 - **Agent template:** a second template process next to the launcher's existing
-  workflow template (`services/execution/template_process.py`), built the same
-  way: credentials handled as the workflow template does today, the agent
+  workflow template (`services/execution/template_process.py`). Unlike the
+  workflow template it **keeps platform credentials**: the agent consumer opens
+  database sessions and decrypts the model provider's key, which the workflow
+  template's credential scrub would prevent. That's the same exposure agent runs
+  have in the API today and platform-job children have on workers; customer
+  workflow code still runs only in scrubbed workflow children (tools dispatch
+  workflows, they don't run inside the agent child). Model-written CodeMode code
+  runs inside the Monty sandbox in that process, as it does in the API today.
+  Built otherwise like the workflow template: the agent
   runtime imported (`jobs/consumers/agent_run.py`, Pydantic AI, providers,
   CodeMode, and the REST bridge's `src.main.app` if a run can reach it), no
   event loop, threads or connections open at fork time, and `gc.freeze()`
