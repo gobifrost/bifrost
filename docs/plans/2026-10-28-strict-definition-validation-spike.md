@@ -79,9 +79,10 @@ called by production acceptance or runtime paths.
    form/agent content. Do not strip valid transport fields to satisfy a schema.
 2. **Record real deprecations.** Classify supported aliases and removed settings
    from their actual history. `global_repo_access` has an explicit alias;
-   descriptor `scope` is currently removed by a pre-validator and needs a
-   deliberate migration diagnostic. Passing `extra="forbid"` alone cannot catch
-   keys a pre-validator removes. Historical silent ignore is not support.
+   descriptor `scope` is currently accepted by blanket `extra="ignore"` and
+   needs a deliberate migration diagnostic instead of a generic unknown-field
+   error. Check supported history before deciding whether a name merits
+   deprecation handling; historical silent ignore alone is not support.
 3. **Complete static source resolution.** The AST experiment does not model
    local rebinding, star imports, imports in nested scopes or indirect factories.
    Resolve these rules and check first-party examples before enforcement. Do not
