@@ -15,9 +15,10 @@ test("previews the audit archive run from Maintenance", async ({ page }) => {
 
 	await card.getByRole("button", { name: "Preview" }).click();
 
+	// Preview is a PlatformJob: claim plus child-process start puts its floor at 4-6s.
 	await expect(
 		card.getByText(
 			/^(Would archive \d[\d,]* events?|Nothing to archive or delete\.)/,
 		),
-	).toBeVisible();
+	).toBeVisible({ timeout: 30_000 });
 });
