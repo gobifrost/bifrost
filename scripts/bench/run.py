@@ -75,8 +75,14 @@ def store_model_key(cluster: Cluster, onepassword_profile: str, onepassword_item
     cluster.kubectl("apply", "-f", "-", input=secret)
 
 
+SAMPLE_INTERVAL_S = 0.5
+
+
 class WorkerSampler:
-    """Samples worker process memory once a second while a class runs."""
+    """Samples worker process memory twice a second while a class runs.
+
+    Runs shorter than the interval can be missed; the peaks are a lower bound.
+    """
 
     def __init__(self, cluster: Cluster) -> None:
         self.cluster = cluster
@@ -102,7 +108,7 @@ class WorkerSampler:
                 except RuntimeError:
                     continue  # the Job finished between listing and exec
             self.samples.append(sample)
-            self._stop.wait(max(0.0, 1.0 - (time.monotonic() - started)))
+            self._stop.wait(max(0.0, SAMPLE_INTERVAL_S - (time.monotonic() - started)))
 
 
 class Run:
@@ -190,17 +196,6 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
     current.expected_api_uid = None
     time.sleep(profile["settle_s"])
     current.snapshot("boot_seeded")
-    print(f"Idle database load over {profile['idle_db_s']} s ...", flush=True)
-    db_before, started = cluster.db_counters(), time.monotonic()
-    time.sleep(profile["idle_db_s"])
-    idle_delta = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
-    idle_rate = stats.db_rate(idle_delta)
-    current.result["db_idle"] = {
-        "seconds": round(idle_delta["seconds"], 1),
-        "rate": idle_rate,
-        "top_tables": stats.top_tables(idle_delta["tables"], 8),
-    }
-    print(f"  idle: {idle_rate['xact_per_s']:.1f} transactions/s", flush=True)
     classes = [c for c in profile["classes"] if backend or not c.startswith(("agent-", "chat-"))]
     for pass_number in (1, 2):
         for name in classes:
@@ -214,21 +209,35 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
                 }, timeout_s=profile["timeout_s"] * (profile["sequential"] + profile["burst_rounds"] + 1))
             time.sleep(profile["settle_s"])
             runs = len(records["sequential"]) + len(records["burst"])
-            db_delta = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
+            db_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
             current.result["classes"].append({
                 "name": name,
                 "pass": pass_number,
                 "sequential": stats.timings(records["sequential"]),
                 "burst": stats.timings(records["burst"]),
                 "cpu_ms_per_run": stats.cpu_ms_per_run(cpu_before, cluster.container_stats(), runs),
-                "db_per_run": stats.db_per_run(db_delta, idle_rate, runs),
-                "db_top_tables": stats.top_tables(db_delta["tables"], 8),
+                "runs": runs,
+                "db_window": db_window,
+                "db_top_tables": stats.top_tables(db_window["tables"], 8),
                 "worker_children": stats.worker_children(sampler.samples),
                 "raw": records,
             })
             current.snapshot(f"{name} (pass {pass_number})")
-    print(f"Idle {profile['idle_s']} s ...", flush=True)
-    time.sleep(profile["idle_s"])
+    print(f"Idle {profile['idle_s']} s, measuring database load over the last {profile['idle_db_s']} s ...", flush=True)
+    time.sleep(profile["idle_s"] - profile["idle_db_s"])
+    db_before, started = cluster.db_counters(), time.monotonic()
+    time.sleep(profile["idle_db_s"])
+    idle_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
+    idle_rate = stats.db_rate(idle_window)
+    current.result["db_idle"] = {
+        "seconds": round(idle_window["seconds"], 1),
+        "rate": idle_rate,
+        "top_tables": stats.top_tables(idle_window["tables"], 8),
+    }
+    # Net each class of the steady idle rate, measured once nothing else is running.
+    for entry in current.result["classes"]:
+        entry["db_per_run"] = stats.db_per_run(entry["db_window"], idle_rate, entry["runs"])
+    print(f"  idle: {idle_rate['xact_per_s']:.1f} transactions/s", flush=True)
     current.snapshot("idle")
     print(f"Done: {out}/report.md", flush=True)
     return out

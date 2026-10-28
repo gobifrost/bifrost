@@ -61,7 +61,7 @@ def _workers_table(classes: list[dict]) -> list[str]:
     rows = [
         "## Worker processes",
         "",
-        "Private (unshared) memory sampled every second on each worker pod while the class ran. "
+        "Private (unshared) memory sampled twice a second on each worker pod while the class ran; runs shorter than that can be missed, so peaks are a lower bound. "
         "Run children are processes forked for one run; templates are the processes they fork from.",
         "",
         "| Class | Pass | Peak run-child private MiB | Peak concurrent run children | Peak template private MiB |",
@@ -85,7 +85,7 @@ def _database(result: dict) -> list[str]:
     lines = [
         "## Database",
         "",
-        "Per-run figures in the table above are net of the idle rate and cover each class's sequential and burst runs.",
+        "Per-run figures in the table above cover each class's sequential and burst runs, net of the idle rate measured at the end of the run.",
         "",
         f"- Idle: {rate['xact_per_s']:.1f} transactions/s, {rate['rows_written_per_s']:.1f} rows written/s, "
         f"{rate['wal_kib_per_s']:.1f} KiB WAL/s (over {idle['seconds']:.0f} s)",

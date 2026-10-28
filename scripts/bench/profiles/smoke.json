@@ -17,8 +17,8 @@
   "burst_rounds": 1,
   "timeout_s": 180,
   "settle_s": 5,
-  "idle_s": 10,
-  "idle_db_s": 10,
+  "idle_s": 40,
+  "idle_db_s": 30,
   "seed": {
     "workflow": 20,
     "tool": 10,
