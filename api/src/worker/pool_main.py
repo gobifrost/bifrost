@@ -84,7 +84,9 @@ logger = logging.getLogger(__name__)
 class AgentConsumer(Protocol):
     """Runs one claimed ``agent.run`` dispatch and returns when it has ended."""
 
-    async def process_message(self, body: dict) -> None: ...
+    async def process_message(self, body: dict) -> None:
+        """Run the dispatch in ``body``."""
+        raise NotImplementedError
 
 
 POLL_SECONDS = 1.0

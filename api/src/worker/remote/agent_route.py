@@ -60,9 +60,13 @@ MISSING_ERROR = "The worker no longer has the process running this agent"
 class AgentTransport(Protocol):
     """The launcher control channel (``host.Bridge``)."""
 
-    async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+    async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send a launcher command and return its reply."""
+        raise NotImplementedError
 
-    def memory_request_bytes(self, key: str) -> int | None: ...
+    def memory_request_bytes(self, key: str) -> int | None:
+        """The memory request held for ``key``, if it is active."""
+        raise NotImplementedError
 
 
 @dataclass

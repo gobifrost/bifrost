@@ -399,13 +399,11 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
     Returns extra ``ready`` fields, or None after reporting a startup error.
     """
     try:
-        import asyncio
-
         import asyncpg  # noqa: F401
         import pydantic_ai.models.openai  # noqa: F401
         import pydantic_ai.providers.openai  # noqa: F401
         import sqlalchemy.dialects.postgresql.asyncpg  # noqa: F401
-        import src.jobs.agent_run_child  # noqa: F401
+        from src.jobs.agent_run_child import run_agent_message  # noqa: F401
         import src.jobs.consumers.agent_run  # noqa: F401
         import src.services.agent_executor  # noqa: F401
         import src.services.agent_runtime.tool_policy  # noqa: F401
@@ -755,7 +753,8 @@ def _run_agent_child(
     try:
         asyncio.run(run_agent_message(work_item["message"]))
         reply: dict[str, Any] = {"ok": True}
-    except BaseException as e:
+    # A run that exits or is cancelled still reports how it ended.
+    except (Exception, SystemExit, asyncio.CancelledError) as e:
         logger.exception(f"Agent child {worker_id} run failed: {e}")
         reply = {"ok": False, "error_type": type(e).__name__, "error": str(e)}
     result_send.send(reply)

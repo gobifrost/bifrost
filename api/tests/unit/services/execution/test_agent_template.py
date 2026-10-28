@@ -71,7 +71,7 @@ def _wait_for_exit(template: TemplateProcess, pid: int, timeout: float = 10.0) -
         if pid in statuses:
             return statuses[pid]
         time.sleep(0.05)
-    pytest.fail(f"agent child {pid} did not exit")
+    raise AssertionError(f"agent child {pid} did not exit")
 
 
 def test_agent_template_is_ready_with_a_frozen_heap(agent_template: TemplateProcess) -> None:
