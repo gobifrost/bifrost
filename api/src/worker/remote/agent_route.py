@@ -14,8 +14,10 @@ events). This side:
   child, because the launcher sets no deadline of its own;
 - re-attaches children an earlier API owner launched (inventory adoption).
 
-Cancelling a wait (an API drain, detach or lost ownership) never kills the
-child; the next owner adopts it.
+Cancelling a wait (detach or lost ownership) never kills the child; the next
+owner adopts it. A drain whose grace runs out is different: the executor then
+retires its launcher, which kills every child, so it first terminates the
+remaining children and ends their runs (:meth:`terminate_active_runs`).
 """
 
 from __future__ import annotations
@@ -187,6 +189,39 @@ class RemoteAgentConsumer:
         for route_id, route in tuple(self.routes.items()):
             if route_id not in observed:
                 await self._settle(route, MISSING_ERROR)
+
+    async def terminate_active_runs(self, *, error_type: str, error: str) -> None:
+        """Terminate every child still running and end its run with ``error``.
+
+        For an executor whose drain grace ran out: retiring its launcher next
+        kills whatever is still running without an exit report, so each run is
+        ended here, waking its callers, while the launcher still listens.
+        """
+        routes = list(self.routes.values())
+        # Their exit reports, if any arrive, find nothing waiting and are ACKed.
+        self.routes.clear()
+
+        async def end(route: AgentRoute) -> None:
+            try:
+                await self.transport.request("terminate", {
+                    "route_id": route.route_id,
+                    "error_type": error_type,
+                    "error": error,
+                    "grace_seconds": TERMINATE_GRACE_SECONDS,
+                })
+            except (ConnectionError, TimeoutError, RuntimeError):
+                # Retiring the launcher stops the child anyway.
+                logger.warning("Could not terminate an agent child at shutdown", exc_info=True)
+            try:
+                await announce_ended_agent_run(route.run_id, error)
+            except Exception:
+                logger.exception(
+                    "Could not end an agent run at shutdown", extra={"run_id": str(route.run_id)}
+                )
+            if not route.exited.done():
+                route.exited.set_result(None)
+
+        await asyncio.gather(*(end(route) for route in routes))
 
     def detach(self) -> None:
         """Stop waiting without touching the children (ownership moved on)."""

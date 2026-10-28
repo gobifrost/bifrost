@@ -394,3 +394,41 @@ async def test_an_adopted_child_holds_its_memory_and_counts_as_a_run_until_it_ex
     assert executor.admission.held_bytes() == 0
     assert executor.active_runs() == 0
     announce.assert_not_awaited()
+
+
+async def test_a_drain_past_its_grace_ends_live_agent_runs_before_retiring(announce, monkeypatch) -> None:
+    """The launcher kills every child once retired, so a run still going at
+    the drain deadline is terminated and ended (waking its callers) first."""
+    monkeypatch.setattr("src.worker.pool_main.DRAIN_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("src.worker.pool_main.replica_heartbeat_loop", AsyncMock())
+    monkeypatch.setattr("src.worker.pool_main.remove_scheduler_replica", AsyncMock())
+    monkeypatch.setattr("src.worker.remote.host.owns_remote_session", AsyncMock(return_value=True))
+    launcher = Launcher()
+    bridge = _bridge()
+    executor = ApiExecutor(bridge, LEASE.worker_id)
+    executor._on_ready = None
+    for name in (
+        "_start_executor", "_claim_loop", "_heartbeat_loop", "_wake_listener",
+        "_package_loop", "_platform_job_loop",
+    ):
+        monkeypatch.setattr(executor, name, AsyncMock())
+    announced_before_retire: list[int] = []
+
+    async def retire() -> None:
+        announced_before_retire.append(announce.await_count)
+
+    monkeypatch.setattr(executor, "_retire", retire)
+    bridge.agents = consumer = RemoteAgentConsumer(launcher, worker_id=LEASE.worker_id)
+    body = _body()
+    waiting, route_id = await _launch(consumer, launcher, body)
+    executor._tasks["agent.run"].add(waiting)
+
+    executor.request_stop()
+    assert await asyncio.wait_for(executor.run(), 5) == 0
+
+    assert launcher.actions() == ["agent_run", "terminate"]
+    assert launcher.requests[1][1]["route_id"] == route_id
+    assert launcher.requests[1][1]["error_type"] == "WorkerShutdown"
+    announce.assert_awaited_once_with(UUID(body["run_id"]), "Remote pool drain deadline exceeded")
+    assert announced_before_retire == [1], "the run ends before the launcher is retired"
+    assert consumer.routes == {}

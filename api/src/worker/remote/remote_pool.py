@@ -34,6 +34,11 @@ from src.services.execution.process_pool import (
 
 logger = logging.getLogger(__name__)
 
+# Why a child still running when the drain grace runs out was stopped. Agent
+# children end their runs with the same reason (``RemoteAgentConsumer``).
+DRAIN_DEADLINE_ERROR_TYPE = "WorkerShutdown"
+DRAIN_DEADLINE_ERROR = "Remote pool drain deadline exceeded"
+
 
 class ThinRemoteTransport(Protocol):
     """Control channel supplied by the API-side thin-runner host."""
@@ -662,8 +667,8 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                     *(
                         self._request_terminate(
                             route_id,
-                            error_type="WorkerShutdown",
-                            error="Remote pool drain deadline exceeded",
+                            error_type=DRAIN_DEADLINE_ERROR_TYPE,
+                            error=DRAIN_DEADLINE_ERROR,
                             grace_seconds=self.graceful_shutdown_seconds,
                         )
                         for route_id, handle in list(self._routes.items())

@@ -639,6 +639,31 @@ class ApiExecutor(PoolWorker):
         in_flight.add(task)
         task.add_done_callback(in_flight.discard)
 
+    async def _drain(self) -> None:
+        """Drain, then end the agent runs the drain grace did not outlast.
+
+        The workflow pool terminates its children at the drain deadline with a
+        recorded shutdown outcome. Agent children get the same treatment here,
+        before ``_retire`` tells the launcher to stop (which kills them with no
+        exit report). An owner that lost the launcher or is handing it over
+        leaves its children alone: the next owner adopts or ends them.
+        """
+        from src.worker.remote.remote_pool import DRAIN_DEADLINE_ERROR, DRAIN_DEADLINE_ERROR_TYPE
+
+        await super()._drain()
+        agents = self.bridge.agents
+        if (
+            agents is None
+            or not agents.routes
+            or self._lost
+            or self.bridge.handoff
+            or not await owns_remote_session(self.bridge.lease)
+        ):
+            return
+        await agents.terminate_active_runs(
+            error_type=DRAIN_DEADLINE_ERROR_TYPE, error=DRAIN_DEADLINE_ERROR
+        )
+
     async def _retire(self) -> None:
         """Only a drained owner can retire the physical launcher.
 
