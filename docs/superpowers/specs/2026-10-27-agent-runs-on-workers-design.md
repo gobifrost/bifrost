@@ -124,7 +124,8 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
   streams the same way a normal failure does, instead of leaving them to the
   stale-run sweep (`jobs/schedulers/execution_cleanup.py`).
 - **Cancellation:** unchanged inside the child. A launcher `terminate`
-  action kills the child's process group when a cancel deadline passes.
+  action signals the child process (it shares the launcher's process group, so
+  only the child's PID is signalled) when a cancel deadline passes.
 - **Lost worker:** existing recovery fails the lost worker's agent runs
   (`services/worker_pool/recovery.py`). It must also wake their callers, as
   above, which it doesn't today for agents.
@@ -133,6 +134,19 @@ keep the agent runtime out of every idle worker. The cost moved to the API:
   workflow children. Adoption is validated against the existing
   `ExecutionWorkerClaim(worker, "agent_run", run_id)` plus
   `AgentRun.status == "running"`; no new lease column.
+- **Package installs:** the launcher's `recycle` restarts only the workflow
+  template. Agent children never import customer packages, so the agent
+  template and its live children are left alone. If the agent template dies,
+  the launcher reaps its orphaned children by their known PIDs.
+- **Workflow endpoint refresh:** an agent that edits an endpoint-enabled
+  workflow must not import `src.main` in its child. The indexer publishes a
+  "workflow endpoint changed" event over Redis, and every API replica refreshes
+  its routes from the database. This also fixes an existing gap: today only the
+  process that indexes the change refreshes its routes.
+- **Rollback hazard:** an API from before this change rejects `agent_run`
+  inventory routes ("Unknown launcher route kind"). Rolling the API back while
+  launchers still hold agent children would fail adoption on reconnect, so roll
+  back the workers with the API.
 - **Re-queue race:** `release_unstarted_claims` can re-queue a dispatch whose
   child hasn't yet started (`recovery.py:167-183`), so two workers could launch
   the same run. The `AgentRun` row lock and the status guard keep it from
