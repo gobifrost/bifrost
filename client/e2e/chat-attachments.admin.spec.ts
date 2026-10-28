@@ -105,32 +105,32 @@ test.describe("Chat attachments and model profiles", () => {
 			streamStarted = true;
 			const conversationId = String(runRequest.conversation_id);
 			const userMessageId = String(runRequest.user_message_id);
-			setTimeout(() => {
-				sendRunEvent(1, "run_status", "running", {
-					type: "run_status",
-					conversation_id: conversationId,
-					run_status: "running",
-				});
+			// Send the opening events now, in sequence order, as the server does.
+			// The test drives later events directly, and the client ignores an
+			// event whose sequence is not newer than one it has already applied.
+			sendRunEvent(1, "run_status", "running", {
+				type: "run_status",
+				conversation_id: conversationId,
+				run_status: "running",
+			});
 
-				sendRunEvent(2, "message_start", "running", {
-					type: "message_start",
-					conversation_id: conversationId,
-					user_message_id: userMessageId,
-					local_id: userMessageId,
-					assistant_message_id:
-						"00000000-0000-4000-8000-000000000020",
-				});
+			sendRunEvent(2, "message_start", "running", {
+				type: "message_start",
+				conversation_id: conversationId,
+				user_message_id: userMessageId,
+				local_id: userMessageId,
+				assistant_message_id: "00000000-0000-4000-8000-000000000020",
+			});
 
-				sendRunEvent(3, "agent_switch", "running", {
-					type: "agent_switch",
-					conversation_id: conversationId,
-					agent_switch: {
-						agent_name: "Document Agent",
-						agent_id: "agent-document",
-						reason: "automatic",
-					},
-				});
-			}, 100);
+			sendRunEvent(3, "agent_switch", "running", {
+				type: "agent_switch",
+				conversation_id: conversationId,
+				agent_switch: {
+					agent_name: "Document Agent",
+					agent_id: "agent-document",
+					reason: "automatic",
+				},
+			});
 			showGenerating = () => {
 				sendRunEvent(4, "delta", "running", {
 					type: "delta",
