@@ -397,6 +397,16 @@ class KubernetesJobClient:
             raise KubernetesApiError("GET", self._pod_path(), response.status_code)
         return items
 
+    async def annotate_pod(self, name: str, annotations: dict[str, str]) -> None:
+        """Merge ``annotations`` into a pod's metadata; a pod already gone is ignored."""
+        await self._request(
+            "PATCH",
+            f"{self._pod_path()}/{quote(name, safe='')}",
+            expected={200, 404},
+            headers={"Content-Type": "application/merge-patch+json"},
+            json={"metadata": {"annotations": annotations}},
+        )
+
     async def close(self) -> None:
         if self._owned_client:
             await self._client.aclose()

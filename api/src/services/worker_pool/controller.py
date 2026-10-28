@@ -52,6 +52,7 @@ from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.services.memory_requests import LAUNCHABLE_KEY
 from src.services.worker_pool.claims import CAPACITY_LOCK, REMOTE_WORKER_HANDLER_NAMES
 from src.services.worker_pool.manifest import (
+    SAFE_TO_EVICT,
     WorkerJobSpec,
     build_worker_job_manifest,
     resolve_job_spec_when_ready,
@@ -74,6 +75,9 @@ logger = logging.getLogger(__name__)
 # How long a lost worker's Job is kept under watch for deletion.
 LOST_JOB_CLEANUP = timedelta(hours=1)
 RECONCILE_SECONDS = 2.0
+# A ready worker holding no work this long may be evicted by the cluster
+# autoscaler to empty a node; it drains on SIGTERM and is replaced.
+EVICTABLE_AFTER_IDLE_SECONDS = 10.0
 # The reconciler treats a missing value as "no controller"; it outlives a
 # few failed reconciles.
 LAUNCHABLE_TTL_SECONDS = 300
@@ -121,6 +125,12 @@ class WorkerPoolController:
         # Draining workers with active runs, by when this instance first saw them.
         self._draining_since: dict[UUID, float] = {}
         self._warned_long_drains: set[UUID] = set()
+        # Ready workers holding no work, by when this instance first saw them idle.
+        self._idle_since: dict[UUID, float] = {}
+        # The safe-to-evict value this instance last applied to each worker's
+        # pod. Unknown until applied once, so a restarted controller corrects
+        # a mark left by its predecessor.
+        self._evictable: dict[UUID, bool] = {}
 
     async def reconcile(self) -> None:
         # Before anything that can fail on the Kubernetes API, so the
@@ -150,6 +160,9 @@ class WorkerPoolController:
             ).all()
         for worker_id in set(self._draining_since) - set(ids):
             del self._draining_since[worker_id]
+        for worker_id in set(self._evictable) - set(ids):
+            self._evictable.pop(worker_id, None)
+            self._idle_since.pop(worker_id, None)
         for worker_id in ids:
             await self._reconcile_one(worker_id, policy)
         for worker_id in await self.launch_for_demand(policy):
@@ -233,6 +246,8 @@ class WorkerPoolController:
             ):
                 reason = "heartbeat_lost"
             self._watch_drain(worker)
+            if reason is None:
+                await self._mark_evictable(worker)
             ended = LostRuns()
             if reason is not None:
                 # Its runs teach their workflows a larger request only when
@@ -246,6 +261,28 @@ class WorkerPoolController:
                 ended = await end_runs_of_lost_worker(db, worker.id, out_of_memory=out_of_memory)
             await db.commit()
         await announce_lost_runs(ended)
+
+    async def _mark_evictable(self, worker: ExecutionWorker) -> None:
+        """Let the cluster autoscaler move a ready worker only while it is idle.
+
+        Kubernetes decides where pods run and which node to empty; this only
+        says when moving this worker interrupts nothing. The pod is patched
+        only when the answer changes.
+        """
+        now = time.monotonic()
+        if worker.state == "ready" and worker.memory_reserved_bytes == 0:
+            since = self._idle_since.setdefault(worker.id, now)
+            evictable = now - since >= EVICTABLE_AFTER_IDLE_SECONDS
+        else:
+            self._idle_since.pop(worker.id, None)
+            evictable = False
+        if self._evictable.get(worker.id) == evictable or worker.kubernetes_job_uid is None:
+            return
+        for pod in await self.client.list_pods(worker.kubernetes_job_uid):
+            await self.client.annotate_pod(
+                pod["metadata"]["name"], {SAFE_TO_EVICT: "true" if evictable else "false"}
+            )
+        self._evictable[worker.id] = evictable
 
     def _watch_drain(self, worker: ExecutionWorker) -> None:
         """Warn once when a draining worker's runs outlast the maximum
