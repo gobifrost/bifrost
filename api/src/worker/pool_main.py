@@ -101,8 +101,10 @@ HEARTBEAT_SECONDS = 5.0
 # How long a job worker uses the Idle time it read from Settings -> Kubernetes.
 POLICY_REFRESH_SECONDS = 10.0
 DRAIN_GRACE_SECONDS = 300.0
-# How long the platform-job loop waits when nothing fits or is queued.
-PLATFORM_JOB_IDLE_SECONDS = 2.0
+# How often the platform-job loop looks while it runs jobs or admission holds
+# it back; idle, it waits for a wake-up and sweeps every SWEEP_SECONDS, which
+# is also how often it recovers jobs whose runner lease expired.
+PLATFORM_JOB_POLL_SECONDS = 2.0
 
 
 def executor_database_settings(settings: Settings) -> Settings:
@@ -154,6 +156,7 @@ class PoolWorker:
         # SIGTERM: the pod is being killed, so a drain's runs get a grace.
         self._terminating = asyncio.Event()
         self._wake = asyncio.Event()
+        self._platform_wake = asyncio.Event()
         # Whether the last claim attempt was held back by admission.
         self._admission_blocked = False
         # In-flight consumer calls by handler. A workflow call returns once its
@@ -641,12 +644,18 @@ class PoolWorker:
         """
         assert self.hosts_remote_work and self.admission is not None
         running: set[asyncio.Task[None]] = set()
+        recovered_at: float | None = None
         while not self._platform_stop.is_set():
             claimed = False
+            blocked = False
+            self._platform_wake.clear()
             try:
-                await recover_expired_platform_jobs()
+                if recovered_at is None or time.monotonic() - recovered_at >= SWEEP_SECONDS:
+                    await recover_expired_platform_jobs()
+                    recovered_at = time.monotonic()
                 claim = None
                 async with self.admission.claiming() as fits:
+                    blocked = fits is None
                     if fits is not None:
                         claim = await self._claim_platform_job(fits)
                         if claim is not None:
@@ -664,10 +673,15 @@ class PoolWorker:
             except Exception:
                 logger.exception("Platform-job claim failed")
             if not claimed:
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(
-                        self._platform_stop.wait(), timeout=PLATFORM_JOB_IDLE_SECONDS
-                    )
+                stop = asyncio.ensure_future(self._platform_stop.wait())
+                wake = asyncio.ensure_future(self._platform_wake.wait())
+                await asyncio.wait(
+                    {stop, wake},
+                    timeout=PLATFORM_JOB_POLL_SECONDS if blocked or running else SWEEP_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                stop.cancel()
+                wake.cancel()
 
     async def _run_platform_job(self, claim) -> None:  # type: ignore[no-untyped-def]
         try:
@@ -678,6 +692,8 @@ class PoolWorker:
             self._platform_jobs.discard(claim.id)
             assert self.admission is not None
             self.admission.release(str(claim.id))
+            # Its memory, concurrency slot and resource lock are free.
+            self._platform_wake.set()
 
     async def _wake_listener(self) -> None:
         """Turn acceptance hints into an immediate claim attempt."""
@@ -693,6 +709,7 @@ class PoolWorker:
                 async for message in pubsub.listen():
                     if message.get("type") == "message":
                         self._wake.set()
+                        self._platform_wake.set()
             except asyncio.CancelledError:
                 raise
             except Exception:

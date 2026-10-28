@@ -47,6 +47,29 @@ def _worker_with_pool(
     return worker
 
 
+async def test_an_idle_platform_job_loop_waits_for_a_wake_up(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Idle, the loop claims on a wake-up (an enqueue or a finished job) or a
+    ``SWEEP_SECONDS`` sweep, which is also when it recovers expired leases."""
+    claims = AsyncMock(return_value=None)
+    recover = AsyncMock(return_value=(0, 0))
+    monkeypatch.setattr(pool_main, "recover_expired_platform_jobs", recover)
+    monkeypatch.setattr(pool_main, "claim_platform_job", claims)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 30.0)
+    worker = _worker_with_pool()
+
+    loop = asyncio.create_task(worker._platform_job_loop())
+    try:
+        await asyncio.sleep(0.2)
+        assert (claims.await_count, recover.await_count) == (1, 1)
+
+        worker._platform_wake.set()
+        await asyncio.sleep(0.05)
+        assert (claims.await_count, recover.await_count) == (2, 1), "claims at once, recovers on the sweep"
+    finally:
+        worker._platform_stop.set()
+        await asyncio.wait_for(loop, timeout=3)
+
+
 def test_services_and_platform_jobs_keep_an_executor_busy_but_free_no_run_slots() -> None:
     idle = _worker_with_pool()
     assert not idle.busy()

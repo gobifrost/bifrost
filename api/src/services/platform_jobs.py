@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
@@ -235,6 +236,22 @@ async def finalize_enqueued_platform_job(
     await publish_platform_job_update(job)
 
 
+_wakes: set[asyncio.Task[None]] = set()
+
+
+def _wake_executors_after_commit(db: AsyncSession) -> None:
+    """Wake idle executors once the job is committed: a hint sent before the
+    commit would find nothing to claim (executors also sweep every 15 s)."""
+    from src.services.work_dispatch import wake_pool_workers
+
+    def publish(_session: Any) -> None:
+        task = asyncio.get_running_loop().create_task(wake_pool_workers())
+        _wakes.add(task)
+        task.add_done_callback(_wakes.discard)
+
+    event.listen(db.sync_session, "after_commit", publish, once=True)
+
+
 async def enqueue_platform_job(
     db: AsyncSession,
     definition: PlatformJobDefinition,
@@ -318,6 +335,8 @@ async def enqueue_platform_job(
         retry_on_runner_loss=definition.policy.retry_on_runner_loss,
     )
     db.add(job)
+    if execution_backend == "local":
+        _wake_executors_after_commit(db)
     await db.flush()
     return job, False
 
