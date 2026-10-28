@@ -513,10 +513,17 @@ class ApiExecutor(PoolWorker):
                             threshold=self.settings.memory_pressure_threshold)
 
     def _under_pressure(self) -> bool:
+        """Every claim (workflow and agent runs, services, platform jobs)
+        passes this gate. Besides real memory pressure and missing
+        telemetry, it holds claims from a reconnected socket until that
+        socket's inventory is reconciled: the launcher's inventory is taken
+        before it reads any command, so a route launched in between would be
+        missing from it and reconciliation would fail its live child."""
         current, limit = self.bridge.memory()
         return (
             current < 0
             or limit <= 0
+            or not self.bridge.reconciliation_ready.is_set()
             or self.bridge.pressure_ratio >= self.settings.memory_pressure_threshold
         )
 

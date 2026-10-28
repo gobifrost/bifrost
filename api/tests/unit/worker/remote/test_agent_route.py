@@ -432,3 +432,57 @@ async def test_a_drain_past_its_grace_ends_live_agent_runs_before_retiring(annou
     announce.assert_awaited_once_with(UUID(body["run_id"]), "Remote pool drain deadline exceeded")
     assert announced_before_retire == [1], "the run ends before the launcher is retired"
     assert consumer.routes == {}
+
+
+async def test_a_reconnected_launcher_gets_no_work_until_its_inventory_is_reconciled(
+    announce, monkeypatch,
+) -> None:
+    """The launcher takes its inventory before it reads any command. A run
+    claimed between the reconnect and reconciliation would be missing from
+    that inventory and failed while its child runs, so nothing is claimed
+    (workflow or agent runs, services, platform jobs) until reconciliation."""
+    from datetime import datetime, timezone
+
+    from src.services.worker_pool.claims import PoolClaim
+
+    launcher = Launcher()
+    bridge = _bridge()
+    executor = ApiExecutor(bridge, LEASE.worker_id)
+    executor.admission = Admission(
+        budget_bytes=512 * MIB, under_pressure=executor._under_pressure,
+        running_workflow_ids=set, workflow_growth=dict,
+    )
+    bridge.agents = executor._agent_consumer = consumer = RemoteAgentConsumer(
+        launcher, worker_id=LEASE.worker_id,
+    )
+    body = _body()
+    claim = PoolClaim(
+        dispatch_id=UUID(body["dispatch_id"]), handler="agent.run", message=body,
+        subject_id=UUID(body["run_id"]), memory_request_bytes=32 * MIB,
+        queued_at=datetime.now(timezone.utc),
+    )
+
+    async def claim_next(*_args: Any, reserve_claim: Any, **_kwargs: Any) -> PoolClaim:
+        reserve_claim(claim)
+        return claim
+
+    claim_next_mock = AsyncMock(side_effect=claim_next)
+    monkeypatch.setattr("src.worker.pool_main.claim_next", claim_next_mock)
+    await bridge.reconciliation_complete()
+
+    bridge.replace_socket(Mock(send_text=AsyncMock()), LEASE)
+    assert await executor._claim_and_start() is None
+    async with executor.admission.claiming() as fits:
+        assert fits is None, "service and platform-job claims wait too"
+    claim_next_mock.assert_not_awaited()
+
+    # The reconnect inventory, taken before any new command, is reconciled.
+    await consumer.reject_missing({"routes": [], "terminal_routes": []})
+    await bridge.reconciliation_complete()
+    assert await executor._claim_and_start() == claim
+    await asyncio.wait_for(launcher.launched.wait(), 1)
+    assert list(consumer.routes.values())[0].run_id == UUID(body["run_id"])
+    announce.assert_not_awaited()
+
+    consumer.detach()
+    await asyncio.gather(*executor._tasks["agent.run"], return_exceptions=True)
