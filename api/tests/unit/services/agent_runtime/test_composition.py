@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai import Agent as PydanticAgent, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
 )
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RunUsage
 
 from src.services.agent_runtime.composition import (
     AgentComposition,
@@ -88,7 +89,12 @@ async def test_callable_identity_uses_entire_composition_before_capability_loadi
         ),
     )
     metadata = composition._tool_metadata()
-    tools = await composition.entry_toolset(AsyncMock()).get_tools(SimpleNamespace(capabilities={}))
+    context = RunContext(
+        deps=None,
+        model=FunctionModel(lambda *_: ModelResponse(parts=[])),
+        usage=RunUsage(),
+    )
+    tools = await composition.entry_toolset(AsyncMock()).get_tools(context)
     assert tools[shared_name].tool_def.metadata == metadata[shared_name]
 
 
