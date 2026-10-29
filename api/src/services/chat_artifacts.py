@@ -28,7 +28,7 @@ from src.models.orm import Conversation, Message, MessageAttachment
 from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
 from src.services.authorization.enforce import Caller
 from src.services.chat_attachments import ChatAttachmentService
-from src.services.llm import ToolDefinition
+from src.services.llm.base import ToolDefinition, bifrost_adapter_return_schema
 from src.services.media_generation import generate_image, record_media_usage
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,8 @@ def artifact_tool_definitions(
                 parameters=VideoArtifactSpec.model_json_schema(),
             )
         )
+    for definition in definitions:
+        definition.return_schema = bifrost_adapter_return_schema()
     return definitions
 
 

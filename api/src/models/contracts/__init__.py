@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from src.models._exports import CONTRACT_ALL, CONTRACT_EXPORTS
 
 if TYPE_CHECKING:
+    from shared.models import DeviceAuthorizeRequest  # noqa: F401
     from src.models.contracts.base import (  # noqa: F401
         DataProviderInputMode,
         IntegrationType,
@@ -85,7 +86,6 @@ if TYPE_CHECKING:
     )
     from src.models.contracts.auth import (  # noqa: F401
         AuthStatusResponse,
-        DeviceAuthorizeRequest,
         DeviceCodeResponse,
         DeviceTokenErrorResponse,
         DeviceTokenRequest,
@@ -442,6 +442,9 @@ if TYPE_CHECKING:
         KubernetesExecutionJobType,
         KubernetesExecutionSettings,
         KubernetesExecutionUpdate,
+        KubernetesPolicyProvenance,
+        KubernetesPolicyUpdate,
+        KubernetesPolicyValues,
         KubernetesStatus,
     )
     from src.models.contracts.notifications import (  # noqa: F401

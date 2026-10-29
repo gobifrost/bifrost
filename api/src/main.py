@@ -4,104 +4,112 @@ Bifrost API - FastAPI Application
 Main entry point for the FastAPI application.
 """
 
+import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
 
 from src.config import get_settings
+from src.core.cache.redis_client import close_shared_redis, initialize_shared_redis
 from src.core.csrf import CSRFMiddleware
 from src.core.embed_middleware import EmbedScopeMiddleware
 from src.core.request_body_limit import RouteBodyLimitMiddleware
 from src.core.database import close_db, get_session_factory, init_db
 from src.core.pubsub import manager as pubsub_manager
+from src.routers.agent_runs import router as agent_runs_router
+from src.routers.agent_tuning import router as agent_tuning_router
+from src.routers.agents import router as agents_router
+from src.routers.ai_models import router as ai_models_router
+from src.routers.ai_pricing import router as ai_pricing_router
+from src.routers.app_code_files import router as app_code_files_router
+from src.routers.app_code_files import render_router as app_render_router
+from src.routers.app_embed_secrets import router as app_embed_secrets_router
+from src.routers.applications import router as applications_router
+from src.routers.audit import router as audit_router
+from src.routers.auth import router as auth_router
+from src.routers.authorization import router as authorization_router
+from src.routers.branding import router as branding_router
+from src.routers.chat import router as chat_router
+from src.routers.claims import router as claims_router
+from src.routers.cli import install_router as cli_install_router
+from src.routers.cli import router as cli_router
+from src.routers.config import router as config_router
+from src.routers.decorator_properties import router as decorator_properties_router
+from src.routers.dependencies import router as dependencies_router
+from src.routers.docs import router as docs_router
+from src.routers.embed import router as embed_router
+from src.routers.endpoints import router as endpoints_router
+from src.routers.events import router as events_router
+from src.routers.executions import router as executions_router
+from src.routers.export_import import router as export_import_router
+from src.routers.files import router as files_router
+from src.routers.form_embed_secrets import router as form_embed_secrets_router
+from src.routers.forms import router as forms_router
+from src.routers.github import router as github_router
 from src.routers.health import close_health_check_clients
-from src.routers import (
-    auth_router,
-    authorization_router,
-    mfa_router,
-    oauth_router,
-    passkeys_router,
-    health_router,
-    organizations_router,
-    users_router,
-    roles_router,
-    permissions_router,
-    executions_router,
-    workflows_router,
-    forms_router,
-    config_router,
-    websocket_router,
-    branding_router,
-    files_router,
-    schedules_router,
-    workflow_keys_router,
-    audit_router,
-    metrics_router,
-    packages_router,
-    github_router,
-    jobs_router,
-    platform_jobs_router,
-    scheduler_diagnostics_router,
-    oauth_connections_router,
-    endpoints_router,
-    cli_router,
-    cli_install_router,
-    notifications_router,
-    profile_router,
-    memory_router,
-    memory_admin_router,
-    kubernetes_admin_router,
-    required_instructions_admin_router,
-    required_instructions_router,
-    agent_runs_router,
-    agent_tuning_router,
-    agents_router,
-    chat_router,
-    llm_config_router,
-    ai_models_router,
-    model_catalog_router,
-    integrations_router,
-    decorator_properties_router,
-    maintenance_router,
-    run_retention_router,
-    identities_router,
-    roi_settings_router,
-    roi_reports_router,
-    usage_reports_router,
-    ai_pricing_router,
-    oauth_config_router,
-    tools_router,
-    mcp_router,
-    events_router,
-    services_router,
-    hooks_router,
-    tables_router,
-    claims_router,
-    solutions_router,
-    knowledge_sources_router,
-    app_embed_secrets_router,
-    applications_router,
-    app_code_files_router,
-    app_render_router,
-    dependencies_router,
-    embed_router,
-    form_embed_secrets_router,
-    export_import_router,
-    docs_router,
-    platform_workers_router,
-    platform_queue_router,
-    platform_stuck_router,
-    version_router,
-    mcp_servers_router,
-    mcp_connections_router,
-    mcp_me_connections_router,
-    mcp_oauth_callback_router,
-    sdk_modules_router,
-    sdk_runtime_router,
-    policy_rules_router,
-    product_updates_router,
+from src.routers.health import router as health_router
+from src.routers.hooks import router as hooks_router
+from src.routers.identities import router as identities_router
+from src.routers.integrations import router as integrations_router
+from src.routers.jobs import router as jobs_router
+from src.routers.knowledge_sources import router as knowledge_sources_router
+from src.routers.kubernetes import admin_router as kubernetes_admin_router
+from src.routers.llm_config import router as llm_config_router
+from src.routers.maintenance import router as maintenance_router
+from src.routers.mcp import router as mcp_router
+from src.routers.mcp_connections import me_router as mcp_me_connections_router
+from src.routers.mcp_connections import router as mcp_connections_router
+from src.routers.mcp_oauth_callback import router as mcp_oauth_callback_router
+from src.routers.mcp_servers import router as mcp_servers_router
+from src.routers.memory import admin_router as memory_admin_router
+from src.routers.memory import router as memory_router
+from src.routers.metrics import router as metrics_router
+from src.routers.mfa import router as mfa_router
+from src.routers.model_catalog import router as model_catalog_router
+from src.routers.notifications import router as notifications_router
+from src.routers.oauth_config import router as oauth_config_router
+from src.routers.oauth_connections import router as oauth_connections_router
+from src.routers.oauth_sso import router as oauth_router
+from src.routers.organizations import router as organizations_router
+from src.routers.packages import router as packages_router
+from src.routers.passkeys import router as passkeys_router
+from src.routers.permissions import router as permissions_router
+from src.routers.platform import queue_router as platform_queue_router
+from src.routers.platform import stuck_router as platform_stuck_router
+from src.routers.platform import workers_router as platform_workers_router
+from src.routers.platform_jobs import router as platform_jobs_router
+from src.routers.policy_rules import router as policy_rules_router
+from src.routers.product_updates import router as product_updates_router
+from src.routers.profile import router as profile_router
+from src.routers.required_instructions import (
+    admin_router as required_instructions_admin_router,
+)
+from src.routers.required_instructions import router as required_instructions_router
+from src.routers.roi_reports import router as roi_reports_router
+from src.routers.roi_settings import router as roi_settings_router
+from src.routers.roles import router as roles_router
+from src.routers.run_retention import router as run_retention_router
+from src.routers.scheduler_diagnostics import router as scheduler_diagnostics_router
+from src.routers.schedules import router as schedules_router
+from src.routers.sdk_modules import router as sdk_modules_router
+from src.routers.sdk_runtime import router as sdk_runtime_router
+from src.routers.services import router as services_router
+from src.routers.solutions import router as solutions_router
+from src.routers.tables import router as tables_router
+from src.routers.tools import router as tools_router
+from src.routers.usage_reports import router as usage_reports_router
+from src.routers.users import router as users_router
+from src.routers.version import router as version_router
+from src.routers.websocket import router as websocket_router
+from src.routers.workflow_keys import router as workflow_keys_router
+from src.routers.workflows import router as workflows_router
+from src.worker.remote.host import (
+    router as remote_control_router,
+    start_remote_control_host,
+    stop_remote_control_host,
 )
 
 # Configure logging
@@ -111,10 +119,7 @@ logging.basicConfig(
 )
 
 # Suppress noisy third-party loggers
-logging.getLogger("aiormq").setLevel(logging.WARNING)
-logging.getLogger("aio_pika").setLevel(logging.WARNING)
-logging.getLogger("botocore").setLevel(logging.WARNING)
-logging.getLogger("aiobotocore").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logging.getLogger("s3transfer").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
@@ -141,6 +146,9 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database connection established")
 
+    await initialize_shared_redis()
+    logger.info("Redis cache connection established")
+
     # Register dynamic workflow endpoints for OpenAPI documentation
     logger.info("Registering workflow endpoints...")
     await register_dynamic_workflow_endpoints(app)
@@ -162,24 +170,43 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Built-in policy rule seeding failed: {e}")
 
-    # Announce Kubernetes execution transitions (enabled/disabled) once per
-    # change. Never fails startup; the snapshot comparison is idempotent
-    # across replicas.
+    # Settings -> Kubernetes takes its deployment variables before this
+    # replica serves: platform control (which also imports) joins only in
+    # the background, and a build enqueued before then would read the
+    # defaults. Idempotent; never fails startup.
     try:
-        from src.services.kubernetes_execution import (
-            announce_detection_if_transitioned,
-        )
+        from src.services.kubernetes_execution import import_kubernetes_policy_from_env
 
-        session_factory = get_session_factory()
-        async with session_factory() as db:
-            outcome = await announce_detection_if_transitioned(db)
-            await db.commit()
-            if outcome is not None:
-                logger.info(
-                    "Kubernetes execution transition announced: %s", outcome
-                )
+        async with get_session_factory()() as db:
+            await import_kubernetes_policy_from_env(db, os.environ)
     except Exception as e:
-        logger.warning(f"Kubernetes detection announcement failed: {e}")
+        logger.warning(f"Kubernetes settings import failed: {e}")
+
+    # Name deployment variables this release no longer reads, or reads under
+    # a new name (API only: worker Jobs copy this pod's environment). Never
+    # fails startup.
+    try:
+        from src.services.deployment_environment import warn_about_environment
+        from src.services.legacy_broker_drain import legacy_broker_drained
+
+        async with get_session_factory()() as db:
+            broker_drained = await legacy_broker_drained(db)
+        warn_about_environment(os.environ, broker_drained=broker_drained)
+    except Exception as e:
+        logger.warning(f"Environment variable check failed: {e}")
+
+    from src.scheduler.api_host import ApiControlHost
+
+    control_host = ApiControlHost()
+    await control_host.start()
+    logger.info("Platform control hosted by this API replica")
+
+    await start_remote_control_host(app)
+    logger.info("Remote execution control hosted by this API replica")
+
+    from src.services.legacy_broker_drain import drain_legacy_broker
+
+    legacy_drain = asyncio.create_task(drain_legacy_broker(), name="legacy-broker-drain")
 
     logger.info(f"Bifrost API started in {settings.environment} mode")
 
@@ -188,12 +215,24 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down Bifrost API...")
 
+    # Stop accepting launchers and drain the API-owned consumers while the
+    # database and transport clients are still available.
+    await stop_remote_control_host()
+
+    # An unfinished drain leaves its unacknowledged message queued.
+    legacy_drain.cancel()
+    await asyncio.gather(legacy_drain, return_exceptions=True)
+
+    # Surrender the trigger lease while the database is still open.
+    await control_host.stop()
+
     from src.services.agent_runtime.retry_transport import (
         close_ai_retry_http_client,
     )
 
     await close_ai_retry_http_client()
     await pubsub_manager.close()
+    await close_shared_redis()
     await close_health_check_clients()
     await close_db()
     logger.info("Bifrost API shutdown complete")
@@ -471,6 +510,9 @@ def create_app() -> FastAPI:
     app.include_router(sdk_runtime_router)
     app.include_router(policy_rules_router)
     app.include_router(product_updates_router)
+    # The FastMCP application below mounts at the root and catches unmatched
+    # paths, so this WebSocket route must precede it.
+    app.include_router(remote_control_router)
 
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount

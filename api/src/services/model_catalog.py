@@ -22,14 +22,17 @@ import gzip
 import json
 import logging
 import time
-from dataclasses import dataclass
+from collections import OrderedDict
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import SkipValidation, TypeAdapter
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,16 +109,18 @@ _MODEL_FIELDS = (
 _PROVIDER_FIELDS = ("id", "name", "api", "npm", "doc", "env")
 
 
-class ReasoningOption(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class ReasoningOption:
     """One way a model accepts reasoning control, as published by models.dev."""
 
     type: str
-    values: list[str] = Field(default_factory=list)
+    values: list[str] = field(default_factory=list)
     min: int | None = None
     max: int | None = None
 
 
-class CatalogCost(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class CatalogCost:
     """USD per million tokens."""
 
     input: Decimal | None = None
@@ -124,16 +129,17 @@ class CatalogCost(BaseModel):
     cache_write: Decimal | None = None
 
 
-class CatalogModel(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class CatalogModel:
     id: str
     name: str
     family: str | None = None
     reasoning: bool = False
-    reasoning_options: list[ReasoningOption] = Field(default_factory=list)
+    reasoning_options: list[ReasoningOption] = field(default_factory=list)
     tool_call: bool = False
     attachment: bool = False
-    input_modalities: list[str] = Field(default_factory=list)
-    output_modalities: list[str] = Field(default_factory=list)
+    input_modalities: list[str] = field(default_factory=list)
+    output_modalities: list[str] = field(default_factory=list)
     context_window: int | None = None
     max_output_tokens: int | None = None
     cost: CatalogCost | None = None
@@ -163,14 +169,17 @@ class CatalogModel(BaseModel):
         return choices
 
 
-class CatalogProvider(BaseModel):
+@pydantic_dataclass(slots=True, kw_only=True)
+class CatalogProvider:
     id: str
     name: str
     api: str | None = None
     npm: str | None = None
     doc: str | None = None
-    env: list[str] = Field(default_factory=list)
-    models: dict[str, CatalogModel] = Field(default_factory=dict)
+    env: list[str] = field(default_factory=list)
+    # The mapping keeps validated normalized records as bytes and materializes
+    # typed models only as callers request them.
+    models: SkipValidation[Mapping[str, CatalogModel]] = field(default_factory=dict)
 
     @property
     def adapter(self) -> AdapterKind | None:
@@ -222,6 +231,46 @@ class CatalogProvider(BaseModel):
             or NATIVE_DEFAULT_ENDPOINTS.get(self.id)
             or OPENAI_COMPATIBLE_ENDPOINTS.get(self.id)
         )
+
+
+_REASONING_OPTION_ADAPTER = TypeAdapter(ReasoningOption)
+_CATALOG_COST_ADAPTER = TypeAdapter(CatalogCost)
+_CATALOG_MODEL_ADAPTER = TypeAdapter(CatalogModel)
+_MODEL_CACHE_SIZE = 128
+
+
+class _CatalogModelMapping(Mapping[str, CatalogModel]):
+    """One provider's records with a catalog-wide parsed LRU cache."""
+
+    __slots__ = ("_provider_id", "_serialized", "_cache")
+
+    def __init__(
+        self,
+        provider_id: str,
+        serialized: dict[str, bytes],
+        cache: OrderedDict[tuple[str, str], CatalogModel],
+    ) -> None:
+        self._provider_id = provider_id
+        self._serialized = serialized
+        self._cache = cache
+
+    def __getitem__(self, model_id: str) -> CatalogModel:
+        cache_key = (self._provider_id, model_id)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            self._cache.move_to_end(cache_key)
+            return cached
+        model = _CATALOG_MODEL_ADAPTER.validate_json(self._serialized[model_id])
+        self._cache[cache_key] = model
+        if len(self._cache) > _MODEL_CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return model
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._serialized)
+
+    def __len__(self) -> int:
+        return len(self._serialized)
 
 
 @dataclass(frozen=True)
@@ -324,11 +373,17 @@ def parse_catalog(
     source: Literal["bundled", "refreshed"],
 ) -> ModelCatalog:
     providers: dict[str, CatalogProvider] = {}
+    model_cache: OrderedDict[tuple[str, str], CatalogModel] = OrderedDict()
     for provider_id, provider in payload.items():
-        models: dict[str, CatalogModel] = {}
+        models: dict[str, bytes] = {}
         for model_id, model in provider.get("models", {}).items():
             try:
-                models[model_id] = _parse_model(model)
+                # Validate and coerce eagerly so malformed models are still
+                # skipped at refresh/load time, while retaining one compact,
+                # normalized representation after parsing finishes.
+                models[model_id] = _CATALOG_MODEL_ADAPTER.dump_json(
+                    _parse_model(model), exclude_defaults=True
+                )
             except (ValueError, TypeError) as exc:
                 logger.debug("Skipping catalog model %s/%s: %s", provider_id, model_id, exc)
         providers[provider_id] = CatalogProvider(
@@ -338,7 +393,7 @@ def parse_catalog(
             npm=provider.get("npm"),
             doc=provider.get("doc"),
             env=list(provider.get("env") or []),
-            models=models,
+            models=_CatalogModelMapping(provider_id, models, model_cache),
         )
     return ModelCatalog(providers=providers, fetched_at=fetched_at, source=source)
 
@@ -354,7 +409,7 @@ def _parse_model(model: dict[str, Any]) -> CatalogModel:
         family=model.get("family"),
         reasoning=bool(model.get("reasoning")),
         reasoning_options=[
-            ReasoningOption.model_validate(option)
+            _REASONING_OPTION_ADAPTER.validate_python(option)
             for option in model.get("reasoning_options") or []
             if isinstance(option, dict) and isinstance(option.get("type"), str)
         ],
@@ -364,7 +419,7 @@ def _parse_model(model: dict[str, Any]) -> CatalogModel:
         output_modalities=list(modalities.get("output") or []),
         context_window=limit.get("context"),
         max_output_tokens=limit.get("output"),
-        cost=CatalogCost.model_validate(cost) if isinstance(cost, dict) else None,
+        cost=_CATALOG_COST_ADAPTER.validate_python(cost) if isinstance(cost, dict) else None,
         status=model.get("status"),
         route_sdk=route.get("npm"),
         route_api=route.get("api"),

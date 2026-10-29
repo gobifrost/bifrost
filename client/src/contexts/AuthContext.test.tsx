@@ -1,6 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
 import { authFetch } from "@/lib/api-client";
 import {
@@ -256,4 +256,36 @@ it("restores the operator token before releasing the override to other tabs", as
 		remove.mockRestore();
 		Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
 	}
+});
+
+it("preserves a CLI code and fragment through the shared sign-in redirect", async () => {
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url.endsWith("/auth/status"))
+				return Response.json({ needs_setup: false });
+			return new Response(null, { status: 401 });
+		}),
+	);
+	function LocationProbe() {
+		const location = useLocation();
+		return (
+			<p>
+				{location.pathname} {JSON.stringify(location.state)}
+			</p>
+		);
+	}
+	render(
+		<MemoryRouter initialEntries={["/device?user_code=ABCD-EFGH#connect"]}>
+			<AuthProvider>
+				<LocationProbe />
+			</AuthProvider>
+		</MemoryRouter>,
+	);
+	expect(
+		await screen.findByText(
+			'/login {"from":"/device?user_code=ABCD-EFGH#connect"}',
+		),
+	).toBeVisible();
 });

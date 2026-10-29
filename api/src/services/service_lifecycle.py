@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from shared.run_lineage import unattended_lineage
+from src.services.memory_requests import workflow_request_sql
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
 
@@ -619,16 +620,23 @@ async def claim_eligible_service(
     db: AsyncSession,
     *,
     worker_id: str,
+    fits_bytes: int,
     lease_ttl_seconds: int = 60,
     now: datetime | None = None,
 ) -> ServiceAttempt | None:
     """Atomically claim one eligible service for this worker.
 
     Eligibility: enabled, desired running, no suppression, backoff elapsed,
-    and no live attempt. The definition row is locked SKIP LOCKED so workers
+    no live attempt, and a memory request (its workflow's learned peak, see
+    src.services.memory_requests) that fits ``fits_bytes``, the claiming
+    executor's free budget. The definition row is locked SKIP LOCKED so workers
     never block each other; the partial unique index backstops races.
     Returns None when nothing is eligible. The caller commits.
     """
+    from src.worker.remote.fencing import fence_remote_owner
+
+    if not await fence_remote_owner(db):
+        return None
     now = now or _now()
     live_exists = (
         select(ServiceAttempt.id)
@@ -653,6 +661,7 @@ async def claim_eligible_service(
             ServiceDefinition.organization_id.is_not(None),
             ServiceDefinition.desired_state == "running",
             ServiceDefinition.blocked_reason.is_(None),
+            workflow_request_sql(Workflow) <= fits_bytes,
             (
                 ServiceDefinition.restart_eligible_at.is_(None)
                 | (ServiceDefinition.restart_eligible_at <= now)
@@ -717,6 +726,10 @@ async def _locked_live_attempt(
     must not renew, report, or complete. Expiry is enforced here as well as
     in expire_leases so a stale owner can never resurrect its lease.
     """
+    from src.worker.remote.fencing import fence_remote_owner
+
+    if not await fence_remote_owner(db):
+        raise StaleLeaseError("The remote API owner is no longer current.")
     result = await db.execute(
         select(ServiceAttempt)
         .where(ServiceAttempt.id == attempt_id)

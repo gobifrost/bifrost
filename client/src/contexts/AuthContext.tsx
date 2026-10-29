@@ -567,9 +567,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		}
 
 		if (!user && !isPublicRoute && !needsSetup) {
-			navigate("/login", { state: { from: location.pathname } });
+			navigate("/login", {
+				state: {
+					from: `${location.pathname}${location.search}${location.hash}`,
+				},
+			});
 		}
-	}, [isLoading, user, needsSetup, location.pathname, navigate]);
+	}, [
+		isLoading,
+		user,
+		needsSetup,
+		location.pathname,
+		location.search,
+		location.hash,
+		navigate,
+	]);
 
 	const value: AuthContextValue = useMemo(
 		() => ({

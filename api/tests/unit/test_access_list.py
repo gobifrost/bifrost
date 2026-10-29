@@ -1011,7 +1011,8 @@ def _inventory(rule, roots: tuple[str, ...] = _SOURCE_ROOTS) -> dict[str, set[st
     return found
 
 
-def _elevated_site_nodes(source: str) -> list[tuple[ast.AST, str]]:
+@functools.cache
+def _elevated_site_nodes(source: str) -> tuple[tuple[ast.AST, str], ...]:
     """``(node, token)`` for every token that makes a function an
     elevated-check site: a read used to decide, widen, or hand the decision
     to a callee. Not a site: a pure echo, where the token is itself a dict
@@ -1021,11 +1022,11 @@ def _elevated_site_nodes(source: str) -> list[tuple[ast.AST, str]]:
     within a dict or f-string still decides something and counts."""
     tree = _parse_source(source)
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    return [
+    return tuple(
         (node, token)
         for node, token in _elevated_token_nodes(tree)
         if token not in _ELEVATED_DEPENDENCY_NAMES and not _is_pure_echo(node, parents.get(node))
-    ]
+    )
 
 
 def _elevated_site_tokens(source: str) -> set[str]:
@@ -1130,15 +1131,18 @@ def _middleware_roots(middleware: list) -> list[object]:
 
 def _mount_roots() -> dict[str, list[object]]:
     """Starlette routes and mounts outside the access list: each mounted
-    app's in-scope ASGI layers, routes, middleware (FastMCP ``on_*``
-    middleware included) and lifespan, plus the dynamically registered MCP
-    ``WorkflowTool.run``."""
+    app's in-scope ASGI layers, routes, middleware and lifespan, plus the MCP
+    SDK's registered policy callbacks and dynamic ``WorkflowTool.run``."""
     from starlette.routing import Mount, Route
 
     from src.services.mcp_server import server as mcp_server
 
     roots: dict[str, list[object]] = {
         "MCP WorkflowTool.run": [mcp_server.WorkflowTool.run],
+        "MCP SDK policy": [
+            mcp_server.BifrostSDKServer.list_tools,
+            mcp_server.BifrostSDKServer.call_tool,
+        ],
         "APP middleware": _middleware_roots(app.user_middleware),
     }
     for route in app.routes:
@@ -1157,10 +1161,6 @@ def _mount_roots() -> dict[str, list[object]]:
                 if isinstance(r, Route) and _in_scope(_unbound(r.endpoint))
             )
             layers.extend(_middleware_roots(getattr(layer, "user_middleware", [])))
-            fastmcp_server = getattr(getattr(layer, "state", None), "fastmcp_server", None)
-            for mw in getattr(fastmcp_server, "middleware", ()):
-                if _in_scope(type(mw)):
-                    layers.extend(_object_methods(mw))
             lifespan = getattr(layer, "lifespan", None)
             if inspect.isfunction(lifespan) and _in_scope(lifespan):
                 layers.append(lifespan)
@@ -1170,50 +1170,24 @@ def _mount_roots() -> dict[str, list[object]]:
 
 
 def _consumer_classes() -> list[type]:
-    """Every RabbitMQ consumer the worker runs."""
-    import src.worker.app  # noqa: F401 - registers every consumer class the worker runs
-    from src.jobs.rabbitmq import _AbstractConsumer
+    """Every consumer class whose handler the executor runs."""
+    from src.jobs.consumers.agent_run import AgentRunConsumer
+    from src.jobs.consumers.package_install import PackageInstallConsumer
+    from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
-    found: list[type] = []
-    pending = [_AbstractConsumer]
-    while pending:
-        for sub in pending.pop().__subclasses__():
-            found.append(sub)
-            pending.append(sub)
-    return found
+    return [AgentRunConsumer, PackageInstallConsumer, WorkflowExecutionConsumer]
 
 
 def _scheduler_job_functions() -> list[object]:
-    """The functions the scheduler hands to ``add_job``."""
-    module = importlib.import_module("src.scheduler.main")
-    return _add_job_functions(ast.parse(Path(inspect.getfile(module)).read_text()), vars(module))
+    """The functions the trigger leader schedules: every catalog callback,
+    whichever process (scheduler or API) hosts control."""
+    from src.scheduler.control import resolve_callback
+    from src.scheduler.registry import SCHEDULED_TASKS
 
-
-def _add_job_functions(tree: ast.Module, module_globals: dict) -> list[object]:
-    """Every in-scope function an ``add_job`` call is given, however it is
-    passed: positionally, as ``func=``, inside ``args=[...]`` or any other
-    keyword, wrapped in ``partial(...)``, by name or as ``mod.func``."""
-    local_imports = _local_imports(tree)
     found: dict[str, object] = {}
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _terminal_name(node.func) == "add_job"):
-            continue
-        pending = [*node.args, *(kw.value for kw in node.keywords)]
-        while pending:
-            candidate = pending.pop()
-            if isinstance(candidate, (ast.List, ast.Tuple)):
-                pending.extend(candidate.elts)
-            elif isinstance(candidate, ast.Call) and _terminal_name(candidate.func) == "partial":
-                pending.extend(candidate.args)
-            elif isinstance(candidate, ast.Name):
-                func = _resolve_name(candidate.id, local_imports, module_globals)
-                if inspect.isfunction(func):
-                    found[_qualname(func)] = func
-            elif isinstance(candidate, ast.Attribute) and isinstance(candidate.value, ast.Name):
-                module = _resolve_name(candidate.value.id, local_imports, module_globals)
-                func = getattr(module, candidate.attr, None) if inspect.ismodule(module) else None
-                if inspect.isfunction(func) and _in_scope(func):
-                    found[_qualname(func)] = func
+    for task in SCHEDULED_TASKS:
+        func = resolve_callback(task.callback)
+        found[_qualname(func)] = func
     return [found[key] for key in sorted(found)]
 
 
@@ -1971,7 +1945,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.jobs.consumers.agent_run._load_acting_user": (2, "actor_facts"),
     "src.jobs.consumers.agent_run._load_run_as": (3, "actor_facts"),
     "src.jobs.platform.application_publish.run_application_publish": (1, "internal_authorized_resource"),
-    "src.jobs.schedulers.deferred_execution_promoter.promote_due_executions": (2, "actor_facts"),
+    "src.jobs.schedulers.deferred_execution_promoter._pending_record": (2, "actor_facts"),
     "src.repositories.oauth.OAuthTokenRepository.get_org_level_for_provider": (1, "internal_authorized_resource"),
     "src.repositories.org_scoped.OrgScopedRepository._authenticated_tier_grants": (1, "internal_authorized_resource"),
     "src.repositories.users.UserRepository.has_any_users": (1, "internal_authorized_resource"),
@@ -1979,7 +1953,6 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.routers.agent_runs.rerun_agent_run": (2, "actor_facts"),
     "src.routers.auth.get_current_user_info": (2, "actor_facts"),
     "src.routers.auth.register_user": (4, "actor_facts"),
-    "src.routers.endpoints._execute_sync": (2, "actor_facts"),
     "src.routers.endpoints.execute_endpoint": (1, "internal_authorized_resource"),
     "src.routers.files._test_principal": (2, "actor_facts"),
     "src.routers.forms.execute_startup_workflow": (3, "internal_authorized_resource"),
@@ -2012,9 +1985,8 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.docs_indexer.index_platform_docs": (2, "internal_authorized_resource"),
     "src.services.embeddings.reindex.run_reindex_for_group": (1, "internal_authorized_resource"),
     "src.services.execution.agent_workflow_tools.execute_agent_workflow_tool": (2, "actor_facts"),
-    "src.services.execution.async_executor._publish_pending": (1, "actor_facts"),
+    "src.services.execution.async_executor._pending_run": (1, "actor_facts"),
     "src.services.execution.async_executor.enqueue_code_execution": (2, "actor_facts"),
-    "src.services.execution.async_executor.enqueue_workflow_execution": (2, "actor_facts"),
     "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor.run": (3, "actor_facts"),
     "src.services.execution.engine.execute": (2, "actor_facts"),
     "src.services.execution.engine.execute_service": (2, "actor_facts"),
@@ -2057,7 +2029,7 @@ _SITE_KINDS = {
 _TOKEN_MINTING_SITES: dict[str, str] = {
     "shared.browser_impersonation.create_browser_impersonation": "cutover",
     "shared.sdk_workflow_execution.insert_scheduled_execution": "cutover",
-    "src.core.redis_client.RedisClient.set_pending_execution": "cutover",
+    "src.core.redis_client.pending_execution_record": "cutover",
     "src.core.security.create_embed_access_token": "route",
     "src.core.security.mint_engine_token": "cutover",
     "src.core.security.mint_service_token": "route",
@@ -2069,7 +2041,9 @@ _TOKEN_MINTING_SITES: dict[str, str] = {
     "src.routers.auth.setup_passkey_verify": "cutover",
     "src.routers.mfa.verify_mfa": "cutover",
     "src.routers.oauth_sso.oauth_callback": "cutover",
-    "src.services.execution.agent_run_service.enqueue_agent_run": "cutover",
+    "src.services.execution.workflow_dispatch.stage_workflow_run": "cutover",
+    "src.services.execution.agent_run_service.stage_agent_run_request": "cutover",
+    "src.services.execution.async_executor._context_fields": "cutover",
     "src.services.mcp_server.auth.BifrostAuthProvider._callback": "cutover",
     "src.services.mcp_server.auth.BifrostAuthProvider._token": "cutover",
     "src.services.mcp_server.auth.BifrostAuthProvider.verify_token": "cutover",
@@ -2106,6 +2080,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
     "shared.browser_impersonation.validate_browser_impersonation": (2, "cutover"),
+    "shared.device_auth.decide_device_login": (2, "cutover"),  # Index GET and atomic decision EVAL.
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
     "shared.role_cache.get_user_roles": (1, "cutover"),
@@ -2122,20 +2097,20 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.module_cache_sync._get_exact_scoped_module": (1, "cutover"),
     "src.core.module_cache_sync.get_module_sync": (1, "cutover"),
     "src.core.redis_client.RedisClient.get_endpoint_workflow_cache": (1, "cutover"),
-    "src.core.redis_client.RedisClient.get_pending_execution": (1, "cutover"),
     "src.core.redis_client.RedisClient.get_workflow_metadata_cache": (1, "cutover"),
     "src.core.redis_client.RedisClient.wait_for_result": (1, "cutover"),
     "src.core.requirements_cache.get_requirements": (2, "cutover"),
     "src.core.requirements_cache.get_requirements_sync": (1, "cutover"),
-    "src.jobs.consumers.agent_run.AgentRunConsumer.process_message": (1, "cutover"),
     "src.repositories.organizations.OrganizationRepository._get_from_cache": (1, "cutover"),
-    "src.routers.auth.authorize_device": (2, "cutover"),
     "src.routers.auth.exchange_device_token": (1, "cutover"),
     "src.routers.auth.has_live_refresh_token_jti": (1, "cutover"),
     "src.routers.oauth_sso.oauth_callback": (1, "cutover"),
     "src.services.app_storage.AppStorageService.get_render_cache": (1, "cutover"),
     "src.services.execution.agent_run_service.wait_for_agent_run_result": (1, "cutover"),
     "src.services.github_sync.GitHubSyncService.load_connect_preview": (1, "cutover"),
+    "src.services.legacy_broker_drain._redis_json": (1, "cutover"),
+    "src.services.legacy_broker_drain.recover_agent_run": (1, "cutover"),
+    "src.services.legacy_broker_drain.recover_workflow_run": (2, "cutover"),
     "src.services.mcp_server.auth.BifrostAuthProvider._callback": (1, "cutover"),
     "src.services.mcp_server.auth.BifrostAuthProvider._token": (1, "cutover"),
     "shared.runtime_io.service_control": (2, "internal_authorized_resource"),
@@ -2150,7 +2125,12 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
 # Redis reads whose value never reaches a principal, a token, an
 # authorization decision or code loading: (count, reason).
 _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
-    "bifrost._logging.flush_logs_to_postgres": (1, "Moves a finished run's log lines into the database."),
+    "bifrost._logging.recover_terminal_execution_logs": (
+        1, "Bounded maintenance scan for terminal execution-log streams.",
+    ),
+    "bifrost._logging.stage_logs_to_postgres": (
+        1, "Reads the Redis source stream before staging durable log rows.",
+    ),
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
@@ -2173,11 +2153,6 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1,
         "Which worker holds a running execution (timeouts, cancel).",
     ),
-    "src.core.redis_client.RedisClient.set_pending_cancelled": (1, "Marks a queued run cancelled."),
-    "src.core.redis_client.RedisClient.update_pending_execution": (
-        1,
-        "Read-modify-write of a queued run's record; its identity is trusted only where the run reads it.",
-    ),
     "src.core.repo_dirty.get_repo_dirty_since": (1, "Workspace dirty timestamp."),
     "src.jobs.consumers.agent_run.AgentRunConsumer._cancel_watcher": (1, "Cancel flag; only stops a run."),
     "src.jobs.schedulers.worker_metrics_sampling.sample_worker_metrics": (1, "Worker metrics."),
@@ -2186,7 +2161,6 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1,
         "Cached org config values, written from the database.",
     ),
-    "src.routers.agent_runs.cancel_agent_run": (1, "Marks a queued agent run cancelled."),
     "src.routers.events._get_rate_limited_count": (1, "Rate-limit counter."),
     "src.routers.files.list_active_watchers": (1, "Active file watchers (diagnostics)."),
     "src.routers.health.check_redis": (1, "Health probe."),
@@ -2204,6 +2178,9 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1,
         "Audit-write marker: whether a report-only row is committed or still being inserted.",
     ),
+    "src.services.run_retention.deleter.reclaim_orphaned_execution_log_streams": (
+        1, "Bounded retention scan for execution-log streams without a durable row.",
+    ),
     "src.services.agent_run_step_streams.inspect_orphaned_agent_run_step_streams": (
         1, "Reads the newest step timestamp for an aggregate-only orphan preview; never grants access or loads code.",
     ),
@@ -2217,7 +2194,6 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         "Cancel flag; only stops a run.",
     ),
     "src.services.execution.install_progress.report_phase": (1, "Package install progress."),
-    "src.services.execution.queue_tracker.get_all_pending_executions": (1, "Queue positions for display."),
     "src.services.notification_service.NotificationService.find_admin_notification_by_title": (
         2,
         "De-duplicates an admin notification before creating one.",
@@ -2231,6 +2207,10 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.services.service_claim.ServiceClaimLoop._report_memory": (1, "Service memory report."),
     "src.services.service_log_flush.flush_attempt_logs": (2, "Moves a service attempt's log lines into the database."),
     "src.services.service_memory.read_service_memory": (1, "Service memory report."),
+    "src.services.work_dispatch.largest_budget": (1, "Largest executor budget the worker controller can launch."),
+    "src.services.worker_pool.controller._publish_live": (
+        1, "Which worker controllers are live and the builds they run (replacing outdated Jobs).",
+    ),
 }
 
 # Package-tool subprocesses that pass no ``env=`` (blind spot B12), mapped
@@ -2877,32 +2857,6 @@ class TestScannerReviewFindings:
         reached = {_qualname(func) for func, _source in _reachable_functions(entry.handler, None)}
         assert "src.synthetic_factories.Gate.authorize" in reached
 
-    def test_add_job_callables_count_however_they_are_passed(self, synthetic_module) -> None:
-        synthetic_module("synthetic_more_jobs", "def tuck():\n    pass\n")
-        source = """
-            from functools import partial
-
-            import src.synthetic_more_jobs as more
-
-            def tick():
-                pass
-
-            def tock():
-                pass
-
-            def tack(n):
-                pass
-
-            def install(scheduler):
-                scheduler.add_job(func=tick)
-                scheduler.add_job(scheduler.run, args=["tock", tock])
-                scheduler.add_job(partial(tack, 1))
-                scheduler.add_job(more.tuck)
-        """
-        module = synthetic_module("synthetic_jobs", source)
-        found = _add_job_functions(ast.parse(textwrap.dedent(source)), vars(module))
-        assert {func.__name__ for func in found} == {"tick", "tock", "tack", "tuck"}
-
     def test_a_new_elevated_branch_in_a_registered_site_fails(self) -> None:
         source = """
             def list_things(user, query):
@@ -3052,6 +3006,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/auth/impersonation/end"): "Own browser-session marker; revocation is restricted to its original authenticated operator.",
     ("POST", "/auth/revoke-all"): "Own sessions.",
     ("POST", "/auth/device/authorize"): "Own device-code authorization.",
+    ("POST", "/auth/device/deny"): "Own device-code denial.",
     ("POST", "/auth/mfa/totp/setup"): "Own MFA enrollment.",
     ("POST", "/auth/mfa/totp/verify"): "Own MFA enrollment.",
     ("DELETE", "/auth/mfa"): "Own MFA enrollment.",

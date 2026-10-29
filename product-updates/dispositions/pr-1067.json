@@ -1,0 +1,14 @@
+{
+  "key": "pr:1067",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflow results containing dates, UUIDs, and decimals complete correctly on thin workers, including after controller ownership loss.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1067",
+      "Jack authorized completing production rollout, fixing the exposed regressions, and preserving existing runner functionality. Focused live checks cover SDK datetime results, ownership-loss replay, and all 23 registered PlatformJob handlers."
+    ]
+  }
+}

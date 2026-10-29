@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -87,6 +87,13 @@ class Workflow(Base):
     disable_global_key: Mapped[bool] = mapped_column(Boolean, default=False)
     execution_mode: Mapped[str] = mapped_column(String(20), default="sync")
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800)  # 30 min default
+    # Decaying maximum of its runs' peak memory growth (memory_requests),
+    # and the code version it was learned from.
+    learned_memory_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    learned_memory_code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Declared memory request (operational setting, API/CLI/MCP/UI); when set
+    # it replaces the learned value.
+    memory_request_mib: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Tool configuration (for AI agent tool calling when type='tool')
     tool_description: Mapped[str | None] = mapped_column(Text, default=None)

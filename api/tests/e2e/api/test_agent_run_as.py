@@ -169,14 +169,12 @@ class _CallsTheToolOnce(TestModel):
 
 
 def _reset_loop_singletons() -> None:
-    """App-side DB, Redis and RabbitMQ clients pin to the loop that made them."""
+    """App-side DB and Redis clients pin to the loop that made them."""
     import src.core.redis_client as redis_module
     from src.core.database import reset_db_state
-    from src.jobs.rabbitmq import rabbitmq
 
     reset_db_state()
     redis_module._redis_client = None
-    rabbitmq.reset_pools()
 
 
 async def _run_agent_tool_as(session_factory, agent_id: str, initiator: E2EUser, target: UUID, org_id: UUID) -> dict:

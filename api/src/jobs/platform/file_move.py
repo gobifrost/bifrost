@@ -18,9 +18,8 @@ from pydantic import BaseModel, Field, model_validator
 from src.jobs.platform.base import (
     PlatformJobCancelled,
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.contracts.cli import FileMoveResult
 
@@ -213,16 +212,6 @@ async def run_file_move(context: PlatformJobContext, raw_payload: BaseModel) -> 
     return _terminal(results, moved, payload.total)
 
 
-FILE_MOVE_DEFINITION = PlatformJobDefinition(
-    job_type=FILE_MOVE_JOB_TYPE,
-    payload_version=1,
-    payload_model=FileMovePayload,
-    handler=run_file_move,
-    policy=PlatformJobPolicy(
-        timeout_seconds=4 * 60 * 60,
-        max_attempts=1,
-        retry_on_runner_loss=False,  # a half-done item is not safely repeatable
-        allow_running_cancellation=False,  # cancel only while queued
-        min_memory_headroom_mb=128,  # copies are server-side; no bytes in memory
-    ),
+FILE_MOVE_DEFINITION = define_platform_job(
+    FILE_MOVE_JOB_TYPE, FileMovePayload, run_file_move
 )

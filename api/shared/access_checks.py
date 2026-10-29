@@ -31,6 +31,10 @@ ALL_ORGS: Literal["*"] = "*"
 NoteTarget = UUID | None | Literal["*"]
 # What a person's own request notes; every kind is noted for a run.
 _DIRECT_KINDS = frozenset({"permission", "scope_switch", "run_as"})
+# The verified runtime subject used only to record an enforced policy decision.
+# Keep this name shared with the policy recorder so the request-local cache
+# cannot silently diverge from its producer.
+POLICY_RECORD_SUBJECT_CACHE_KEY = "policy_record_subject"
 # Objects whose organization and owner are read when the note is judged,
 # after the response, instead of in the request.
 OwnedKind = Literal["execution", "agent_run", "artifact_workspace", "agent_tools"]
@@ -113,6 +117,13 @@ def start_collecting(
         collector.surface = "agent" if collector.agent_run_id else surface
         # An agent adds no workflow power; it is judged on its original user.
         collector.direct = runtime.powers is None
+        # RuntimeAuthority was freshly verified before the collector began.
+        # Recording can reuse its durable subject; authorization still loads
+        # and enforces current policy facts independently.
+        collector.cache[POLICY_RECORD_SUBJECT_CACHE_KEY] = (
+            runtime.run_user,
+            runtime.powers,
+        )
         collector.impersonated_by_user_id = runtime.impersonated_by_user_id
         collector.impersonation_session_id = runtime.impersonation_session_id
         return token

@@ -67,7 +67,11 @@ def test_chat_failed_result_history_retains_receipt_and_partial_effects():
 @pytest.mark.asyncio
 async def test_autonomous_failure_returns_receipt_without_repeating_workflow():
     agent = SimpleNamespace(
-        id=uuid4(), knowledge_sources=[], system_tools=[], mcp_connections=[]
+        id=uuid4(),
+        knowledge_sources=[],
+        system_tools=[],
+        delegated_agents=[],
+        mcp_connections=[],
     )
     caller = MagicMock()
 
@@ -106,7 +110,13 @@ async def test_autonomous_failure_returns_receipt_without_repeating_workflow():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reported_error", [True, False])
 async def test_chat_workflow_failure_retains_the_actual_execution_receipt(reported_error):
-    agent = SimpleNamespace(id=uuid4(), system_tools=[], mcp_connections=[])
+    agent = SimpleNamespace(
+        id=uuid4(),
+        knowledge_sources=[],
+        system_tools=[],
+        delegated_agents=[],
+        mcp_connections=[],
+    )
     caller = MagicMock()
 
     @asynccontextmanager

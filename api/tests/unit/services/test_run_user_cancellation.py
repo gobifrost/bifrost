@@ -94,37 +94,6 @@ async def test_cancelled_queued_run_cannot_be_claimed_for_dispatch(db_session):
 
 
 @pytest.mark.asyncio
-async def test_records_cancelled_redis_queued_run_when_its_user_is_deleted(db_session):
-    from shared.run_cancellation import (
-        RUN_USER_DELETED_ERROR,
-        cancel_redis_queued_run_if_user_deleted,
-    )
-
-    execution_id = uuid4()
-    cancelled = await cancel_redis_queued_run_if_user_deleted(
-        db_session,
-        execution_id=execution_id,
-        run_user_id=uuid4(),
-        workflow_name="queued-contoso-workflow",
-        parameters={"source": "queue"},
-        organization_id=None,
-        workflow_id=None,
-        form_id=None,
-        api_key_id=None,
-        executed_by_name="Departed",
-    )
-
-    assert cancelled is True
-    execution = await db_session.get(Execution, execution_id)
-    assert execution is not None
-    assert (execution.status, execution.error_message, execution.executed_by) == (
-        ExecutionStatus.CANCELLED,
-        RUN_USER_DELETED_ERROR,
-        None,
-    )
-
-
-@pytest.mark.asyncio
 async def test_cancels_unstarted_run_for_a_deleted_custom_identity(db_session):
     from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
 

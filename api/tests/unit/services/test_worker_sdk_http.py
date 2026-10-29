@@ -187,7 +187,8 @@ class TestRouteReuse:
     def test_build_app_mounts_real_sdk_routes_by_identity(self):
         from fastapi.routing import APIRoute
 
-        from src.routers.agent_runs import router as agent_runs_router
+        from src.routers.agent_run_sdk import detail_router, enqueue_router
+        from src.routers.agent_runs import router as api_agent_runs_router
         from src.routers.cli import router as sdk_router
         from src.routers.events import router as events_router
         from src.routers.executions import router as executions_router
@@ -276,7 +277,14 @@ class TestRouteReuse:
         }
         agent_run_originals = {
             (route.path, method): route
-            for route in agent_runs_router.routes
+            for agent_run_router in (detail_router, enqueue_router)
+            for route in agent_run_router.routes
+            if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+        api_agent_run_routes = {
+            (route.path, method): route
+            for route in api_agent_runs_router.routes
             if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
@@ -461,6 +469,10 @@ class TestRouteReuse:
 
         assert set(mounted_agent_runs) == set(agent_run_originals)
         for key, route in mounted_agent_runs.items():
+            assert route is agent_run_originals[key]
+            assert route.endpoint is agent_run_originals[key].endpoint
+        assert set(api_agent_run_routes) == set(agent_run_originals)
+        for key, route in api_agent_run_routes.items():
             assert route is agent_run_originals[key]
             assert route.endpoint is agent_run_originals[key].endpoint
 
@@ -760,6 +772,38 @@ class TestRouteReuse:
 
 
 class TestSocketServerLifecycle:
+    @pytest.mark.asyncio
+    async def test_building_the_app_does_not_block_the_event_loop(self, monkeypatch):
+        """Building the app imports every SDK router (~30 s on a cold,
+        CPU-limited pod); the executor's heartbeat must keep running."""
+        import time
+
+        from src.services.execution import worker_sdk_http
+
+        real_build = worker_sdk_http.build_worker_sdk_app
+
+        def slow_build():  # type: ignore[no-untyped-def]
+            time.sleep(0.3)
+            return real_build()
+
+        monkeypatch.setattr(worker_sdk_http, "build_worker_sdk_app", slow_build)
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticker = asyncio.create_task(tick())
+        server = WorkerSdkHttpServer()
+        try:
+            await server.start()
+        finally:
+            ticker.cancel()
+            await server.stop()
+        assert ticks >= 10, "the event loop kept running while the app was built"
+
     @pytest.mark.asyncio
     async def test_start_binds_private_socket_and_stop_removes_it(self):
         server = WorkerSdkHttpServer()

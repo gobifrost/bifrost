@@ -38,6 +38,7 @@ def test_virtual_import_does_not_load_async_module_cache_or_storage_stack() -> N
             or name == "src.services.repo_storage"
             or name.startswith("aiobotocore")
             or name.startswith("botocore")
+            or name.startswith("awscrt")
         )
 
         print(json.dumps({"blocked": blocked}))

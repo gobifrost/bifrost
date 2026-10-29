@@ -1,5 +1,6 @@
 """Shared helpers for agent execution (used by both chat and autonomous executors)."""
 import logging
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -13,7 +14,7 @@ from src.models.orm.external_mcp import (
     MCPConnection,
     MCPServer,
 )
-from src.services.llm import ToolDefinition
+from src.services.llm.base import ToolDefinition, bifrost_adapter_return_schema
 from src.services.mcp_client.auth_resolution import service_token_binding_error
 from src.services.tool_registry import ToolRegistry
 
@@ -157,6 +158,7 @@ async def resolve_agent_tools(
                     name=t["id"],
                     description=t["description"],
                     parameters=t["parameters"],
+                    return_schema=bifrost_adapter_return_schema(),
                 )
                 seen_names[td.name] = f"system tool '{td.name}'"
                 tool_definitions.append(td)
@@ -177,6 +179,7 @@ async def resolve_agent_tools(
                         name=td.name,
                         description=td.description,
                         parameters=td.parameters,
+                        return_schema=bifrost_adapter_return_schema(),
                     )
                 )
             else:
@@ -206,6 +209,7 @@ async def resolve_agent_tools(
                             },
                             "required": ["task"],
                         },
+                        return_schema=bifrost_adapter_return_schema(),
                     )
                 )
 
@@ -305,6 +309,16 @@ async def resolve_agent_tools(
                     or schema.get("input_schema")
                     or {"type": "object", "properties": {}}
                 )
+                # ``outputSchema`` describes only a successful MCP
+                # ``structuredContent`` payload. Preserve an advertised JSON
+                # Schema as metadata without changing Bifrost's text result
+                # transport or inferring schemas from tool output.
+                output_schema = schema.get("outputSchema")
+                structured_output_schema = (
+                    deepcopy(output_schema)
+                    if isinstance(output_schema, dict)
+                    else None
+                )
 
                 seen_names[qualified_name] = (
                     f"MCP tool '{catalog_row.tool_name}' on connection {connection.id}"
@@ -315,6 +329,8 @@ async def resolve_agent_tools(
                         name=qualified_name,
                         description=description,
                         parameters=parameters,
+                        return_schema=bifrost_adapter_return_schema(),
+                        structured_output_schema=structured_output_schema,
                     )
                 )
 

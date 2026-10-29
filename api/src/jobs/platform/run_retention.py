@@ -13,9 +13,8 @@ from src.core.principal import UserPrincipal
 from src.jobs.platform.base import (
     PlatformJobCancelled,
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.jobs.platform.system_maintenance import enqueue_system_maintenance
 from src.models.orm.platform_jobs import PlatformJob
@@ -34,6 +33,7 @@ from src.services.run_retention.deleter import (
     delete_event_batch,
     delete_workflow_run_batch,
     plan_run_retention,
+    reclaim_orphaned_execution_log_streams,
 )
 from src.services.run_retention.settings import RunRetentionSettingsService
 
@@ -53,7 +53,10 @@ async def run_run_retention(context: PlatformJobContext, payload: RunRetentionPa
         async with get_db_context() as db:
             settings = await RunRetentionSettingsService(db).get_settings()
         if settings.days is None:
-            return {"dry_run": payload.dry_run, "skipped": "keep_forever"}
+            result = {"dry_run": payload.dry_run, "skipped": "keep_forever"}
+            if not payload.dry_run:
+                result["execution_log_orphans"] = await reclaim_orphaned_execution_log_streams()
+            return result
         state = {
             "dry_run": payload.dry_run,
             "cutoff": (datetime.now(timezone.utc) - timedelta(days=settings.days)).isoformat(),
@@ -105,6 +108,8 @@ async def run_run_retention(context: PlatformJobContext, payload: RunRetentionPa
         else:
             state["continues"] = True
 
+    state["execution_log_orphans"] = await reclaim_orphaned_execution_log_streams()
+
     await context.log(
         "info",
         "run_retention_completed",
@@ -115,19 +120,8 @@ async def run_run_retention(context: PlatformJobContext, payload: RunRetentionPa
     return state
 
 
-RUN_RETENTION_DEFINITION = PlatformJobDefinition(
-    job_type=RUN_RETENTION_JOB_TYPE,
-    payload_version=1,
-    payload_model=RunRetentionPayload,
-    handler=run_run_retention,
-    policy=PlatformJobPolicy(
-        timeout_seconds=2 * 60 * 60,
-        max_attempts=3,
-        max_concurrency=1,
-        retry_on_runner_loss=True,
-        min_memory_headroom_mb=256,
-        allow_running_cancellation=True,
-    ),
+RUN_RETENTION_DEFINITION = define_platform_job(
+    RUN_RETENTION_JOB_TYPE, RunRetentionPayload, run_run_retention
 )
 
 

@@ -1083,6 +1083,10 @@ async def update_workflow(
                 )
             workflow.timeout_seconds = request.timeout_seconds
 
+        # Declared memory request; an explicit null returns to the learned value.
+        if "memory_request_mib" in request.model_fields_set:
+            workflow.memory_request_mib = request.memory_request_mib
+
         # Update execution_mode if provided
         if request.execution_mode is not None:
             if request.execution_mode not in ("sync", "async"):

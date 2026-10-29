@@ -9,9 +9,8 @@ from src.core.principal import UserPrincipal
 from src.jobs.platform.audit_archive import AUDIT_ARCHIVE_DEFINITION
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.contracts.audit_retention import AuditExportRequest
 from src.models.orm.platform_jobs import PlatformJob
@@ -36,19 +35,8 @@ async def run_audit_query(context: PlatformJobContext, payload: AuditQueryPayloa
     return await build_export(context, payload, store)
 
 
-AUDIT_QUERY_DEFINITION = PlatformJobDefinition(
-    job_type="audit.query",
-    payload_version=1,
-    payload_model=AuditQueryPayload,
-    handler=run_audit_query,
-    policy=PlatformJobPolicy(
-        timeout_seconds=2 * 60 * 60,
-        max_attempts=2,
-        # A rerun rewrites the same export key from the start.
-        retry_on_runner_loss=True,
-        min_memory_headroom_mb=256,
-        allow_running_cancellation=True,
-    ),
+AUDIT_QUERY_DEFINITION = define_platform_job(
+    "audit.query", AuditQueryPayload, run_audit_query
 )
 
 

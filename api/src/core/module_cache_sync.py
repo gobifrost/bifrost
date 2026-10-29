@@ -2,10 +2,10 @@
 
 Python imports run synchronously. Parent processes may use the supported
 Redis/S3 cache and network API paths. A forked execution child is explicitly
-marked by the worker-installed SDK Unix socket; every one of its module
-resolution and source requests goes through that scoped transport before any
-cache or storage access. Children never read or write Redis and never fall
-back to network HTTP or S3.
+marked after fork; every one of its module resolution and source requests goes
+through the scoped SDK transport before any cache or storage access. The SDK
+uses the worker-local Unix socket when installed and ordinary network HTTP
+otherwise. Children never read or write Redis or S3.
 """
 
 import hashlib
@@ -148,6 +148,15 @@ def _candidate_storage_paths(path: str) -> list[str]:
 _s3_client: Any = None
 _s3_available: bool | None = None
 _sync_redis_client: Any = None
+# Set only by TemplateProcess after fork. It is process-local by virtue of
+# fork's copy-on-write memory and never comes from workflow-controlled input.
+_execution_child = False
+
+
+def mark_execution_child() -> None:
+    """Mark this post-fork process as an execution child."""
+    global _execution_child
+    _execution_child = True
 
 
 @lru_cache(maxsize=1)
@@ -188,24 +197,25 @@ def _get_engine_credentials() -> tuple[str, str] | None:
 
 
 def _get_engine_client() -> Any | None:
-    """Return the engine-local SDK client when the trusted socket is injected.
+    """Return the scoped SDK client for a trusted execution child.
 
-    Non-None only inside a forked engine child whose entrypoint installed the
-    worker's private Unix socket. That socket path is the explicit trusted
-    execution marker. Everywhere else (API processes, plain workers, tests
-    without an injection) this is None and parent cache behavior applies.
+    A worker-installed private Unix socket remains an execution-child marker
+    for existing callers. TemplateProcess also marks every post-fork execution
+    child, including a thin runner that uses the SDK's network transport.
+    Everywhere else (API processes, plain workers, tests without injection)
+    this is None and parent cache behavior applies.
 
     The import is lazy so this module stays importable before the SDK package
     loads. A SDK package that is present but broken raises instead of
-    silently switching an engine child back to HTTP/S3.
+    silently switching an execution child to Redis or S3.
     """
     try:
         from bifrost.client import get_client, get_engine_socket_path
     except ModuleNotFoundError as e:
-        if e.name in {"bifrost", "bifrost.client"}:
+        if not _execution_child and e.name in {"bifrost", "bifrost.client"}:
             return None
         raise
-    if get_engine_socket_path() is None:
+    if not _execution_child and get_engine_socket_path() is None:
         return None
     return get_client()
 
@@ -305,19 +315,18 @@ def _fetch_module_resolution_from_api(name: str) -> ModuleResolution | None:
         return None
 
 
-def _resolve_via_engine_socket(client: Any, name: str) -> ModuleResolution:
-    """Resolve one import name through the trusted engine socket.
+def _resolve_via_engine_transport(client: Any, name: str) -> ModuleResolution:
+    """Resolve one import name through the scoped SDK transport.
 
-    Calls the original ``GET /api/sdk/modules-resolve`` route (mounted on the
-    worker socket by ``worker_sdk_http``) through the synchronous
-    ``engine_request_sync`` entry point, so a cold import never needs a shared
-    pipe or a child DB/S3 connection. The active Solution scope rides the
-    query exactly as the network fallback sends it; the route's signed
-    per-execution claims remain authoritative for engine callers.
+    Calls the original ``GET /api/sdk/modules-resolve`` route through the
+    synchronous ``engine_request_sync`` entry point. That client selects the
+    worker socket when one is installed, otherwise its ordinary network HTTP
+    transport. The active Solution scope rides the query and the route's
+    signed per-execution claims remain authoritative for engine callers.
 
     Raises :class:`ModuleResolutionError` on transport failure, a non-200
-    status, or an invalid payload. A local attempt never falls back to the
-    network API or S3.
+    status, or an invalid payload. An execution-child attempt never falls back
+    to Redis or S3.
     """
     ctx = get_solution_context()
     params: dict[str, object] = {"name": name}
@@ -369,15 +378,14 @@ def _resolve_via_engine_socket(client: Any, name: str) -> ModuleResolution:
     )
 
 
-def _fetch_via_engine_socket(client: Any, storage_path: str) -> CachedModule | None:
-    """Fetch one candidate's source through the trusted engine socket.
+def _fetch_via_engine_transport(client: Any, storage_path: str) -> CachedModule | None:
+    """Fetch one candidate's source through the scoped SDK transport.
 
-    Calls the original ``GET /api/sdk/modules/{path}`` route (mounted on the
-    worker socket by ``worker_sdk_http``) through the synchronous
-    ``engine_request_sync`` entry point. Returns None on a route 404 so the
-    caller advances to the next candidate. Any other failure raises
-    :class:`ModuleResolutionError` — a local attempt never falls back to the
-    network API or S3.
+    Calls the original ``GET /api/sdk/modules/{path}`` route through the
+    synchronous ``engine_request_sync`` entry point. Returns None on a route
+    404 so the caller advances to the next candidate. Any other failure raises
+    :class:`ModuleResolutionError`; an execution child never falls back to
+    Redis or S3.
     """
     try:
         response = client.engine_request_sync(
@@ -524,12 +532,12 @@ def resolve_module_sync(name: str) -> ModuleResolution:
     if cached is not None:
         return cached
 
-    # An injected worker socket is the execution-child marker. Consult it
+    # A worker socket or post-fork marker selects the scoped SDK transport
     # before any Redis helper so an inherited or ambient cache cannot become
     # an authority or credential path for customer code.
     engine_client = _get_engine_client()
     if engine_client is not None:
-        resolution = _resolve_via_engine_socket(engine_client, name)
+        resolution = _resolve_via_engine_transport(engine_client, name)
     else:
         resolution = _get_cached_module_resolution(name)
         if resolution is None:
@@ -544,9 +552,7 @@ def resolve_module_sync(name: str) -> ModuleResolution:
 
 
 def _get_s3_client() -> Any:
-    """
-    Get or create a sync S3 client using botocore (always available via aiobotocore).
-    """
+    """Get or create the parent-only synchronous CRT S3 client."""
     global _s3_client, _s3_available
 
     if _s3_available is False:
@@ -560,28 +566,21 @@ def _get_s3_client() -> Any:
     secret_key = os.environ.get("BIFROST_S3_SECRET_KEY")
     region = os.environ.get("BIFROST_S3_REGION", "us-east-1")
 
-    if not all([access_key, secret_key]):
-        logger.debug("S3 not configured, skipping S3 fallback")
-        _s3_available = False
-        return None
-
     try:
-        import botocore.session  # type: ignore[import-untyped]
+        from src.core.s3_transport import SyncS3Transport
 
-        session = botocore.session.get_session()
-        client = session.create_client(
-            "s3",
+        client = SyncS3Transport(
             endpoint_url=endpoint_url,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name=region,
+            access_key_id=access_key,
+            secret_access_key=secret_key,
+            region=region,
         )
         _s3_client = client
         _s3_available = True
         return client
     except Exception:
         _s3_available = False
-        logger.debug("botocore not available, S3 fallback disabled")
+        logger.debug("S3 transport unavailable; S3 fallback disabled")
         return None
 
 
@@ -641,23 +640,23 @@ def get_module_sync(path: str) -> CachedModule | None:
     global_repo_access is on. With no context, behavior is unchanged: the bare
     path resolves under _repo/.
 
-    A forked execution child is identified by its injected worker socket. It
-    uses the parent-served ``GET /api/sdk/modules/<storage_path>`` route for
-    every candidate, including entries that would be warm in Redis. It never
-    uses Redis, network HTTP, or S3, and a 404 advances to the next candidate.
+    A forked execution child is identified by its injected worker socket or
+    post-fork marker. It uses ``GET /api/sdk/modules/<storage_path>`` through
+    the scoped SDK transport for every candidate, including entries that would
+    be warm in Redis. It never uses Redis or S3, and a 404 advances to the
+    next candidate.
 
     Parent callers retain the existing Redis → network API → S3 lookup and
     re-cache successful fallback reads. The returned CachedModule keeps the
     logical (bare) ``path`` so __file__ and spec origin stay stable regardless
     of where the bytes were stored.
     """
-    # The injected worker socket is an explicit execution-child marker. Route
-    # all child reads through the scoped worker transport before touching any
-    # Redis cache or parent-only fallback.
+    # The worker socket or post-fork marker selects the scoped SDK transport
+    # before touching any Redis cache or parent-only fallback.
     engine_client = _get_engine_client()
     if engine_client is not None:
         for storage_path in _candidate_storage_paths(path):
-            engine_module = _fetch_via_engine_socket(engine_client, storage_path)
+            engine_module = _fetch_via_engine_transport(engine_client, storage_path)
             if engine_module is None:
                 continue
             engine_module["storage_path"] = storage_path
@@ -733,5 +732,8 @@ def reset_sync_redis() -> None:
 def reset_s3_client() -> None:
     """Reset the cached S3 client. Used for testing."""
     global _s3_client, _s3_available
+    if _s3_client is not None:
+        with suppress(Exception):
+            _s3_client.close()
     _s3_client = None
     _s3_available = None

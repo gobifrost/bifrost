@@ -26,8 +26,44 @@ from bifrost.manifest import (
     Manifest,
     read_manifest_from_dir,
 )
+from bifrost.decorator_validation import validate_python_decorators
+from bifrost.definition_validation import DefinitionIssue, DefinitionValidationError
 
 logger = logging.getLogger(__name__)
+
+
+def _read_confined_worktree_source(work_dir: Path, path: str) -> str | None:
+    """Read a manifest source only when it resolves inside its worktree."""
+    candidate = work_dir / path
+    try:
+        root = work_dir.resolve()
+        candidate.resolve(strict=False).relative_to(root)
+        if not candidate.exists() and not candidate.is_symlink():
+            return None
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=path,
+                location=(),
+                code="unsafe_source_path",
+                message="Workflow source must resolve inside the workspace candidate.",
+            )
+        ]) from exc
+    if not resolved.is_file():
+        return None
+    try:
+        return resolved.read_text()
+    except UnicodeDecodeError as exc:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=path,
+                location=(),
+                code="invalid_python",
+                message="Python source must be valid UTF-8.",
+            )
+        ]) from exc
 
 
 @dataclass(frozen=True)
@@ -742,6 +778,29 @@ class ManifestResolver:
 
         if not work_dir and not repo:
             raise ValueError("plan_import requires either work_dir or repo")
+
+        # Source must be accepted before this importer creates a DB operation.
+        # This reads bytes only; it never imports submitted Python.
+        for workflow in manifest.workflows.values():
+            if work_dir:
+                source = _read_confined_worktree_source(work_dir, workflow.path)
+                if source is not None:
+                    validate_python_decorators(source, path=workflow.path)
+            elif repo:
+                source = await repo.read(workflow.path)
+                if source is not None:
+                    try:
+                        decoded = source.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise DefinitionValidationError([
+                            DefinitionIssue(
+                                path=workflow.path,
+                                location=(),
+                                code="invalid_python",
+                                message="Python source must be valid UTF-8.",
+                            )
+                        ]) from exc
+                    validate_python_decorators(decoded, path=workflow.path)
 
         all_ops: list[SyncOp] = []
 

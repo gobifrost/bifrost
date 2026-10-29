@@ -31,7 +31,6 @@ from src.models.contracts.executions import (
 
 from bifrost._logging import read_logs_from_stream
 from shared.sdk_execution_reads import decode_history_cursor
-from shared.pending_execution import pending_execution_cancel_allowed
 from src.core.auth import Context
 from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
@@ -222,7 +221,7 @@ class ExecutionReadAdapter:
         logs_query = (
             select(ExecutionLogORM)
             .where(ExecutionLogORM.execution_id == execution_id)
-            .order_by(ExecutionLogORM.sequence)
+            .order_by(ExecutionLogORM.sequence, ExecutionLogORM.id)
         )
         if not access.diagnostics:
             logs_query = logs_query.where(ExecutionLogORM.level.notin_(["DEBUG", "TRACEBACK"]))
@@ -282,6 +281,7 @@ class ExecutionReadAdapter:
             select(ExecutionModel)
             .options(selectinload(ExecutionModel.organization), selectinload(ExecutionModel.executed_by_user))
             .where(ExecutionModel.id == execution_id)
+            .with_for_update()
         )
         execution = result.scalar_one_or_none()
 
@@ -310,9 +310,20 @@ class ExecutionReadAdapter:
         execution.status = new_status  # type: ignore[assignment]
 
         await self.db.flush()
-        await self.db.refresh(execution)
+        # Persist the status before readers receive a canonical queue snapshot.
+        await self.db.commit()
 
-        # Publish update
+        if new_status == ExecutionStatus.CANCELLED.value:
+            from src.services.execution.queue_tracker import publish_queue_positions
+
+            try:
+                await publish_queue_positions()
+            except Exception:
+                logger.warning(
+                    "Could not publish queue positions after cancellation",
+                    exc_info=True,
+                )
+
         await publish_execution_update(
             execution_id=execution_id,
             status=new_status,
@@ -675,26 +686,20 @@ async def get_execution_variables(
 
 @router.post(
     "/{execution_id}/cancel",
-    response_model=WorkflowExecution | dict,
+    response_model=WorkflowExecution,
     summary="Cancel execution",
     description="Cancel a pending or running execution",
 )
 async def cancel_execution(
     execution_id: UUID,
     ctx: Context,
-) -> WorkflowExecution | dict:
+) -> WorkflowExecution:
     """
     Cancel an execution.
 
-    With Redis-first architecture, the execution may be in one of three states:
-    1. In Redis pending only (worker hasn't picked it up yet)
-    2. In PostgreSQL as Running (worker is executing)
-    3. In PostgreSQL as completed (already done - return error)
-
-    We handle all cases by:
-    1. First check PostgreSQL for authorization and status
-    2. If found and Running/Pending, set Redis cancel flag for pool
-    3. If not in PostgreSQL yet, try to cancel Redis pending record
+    A pending run is cancelled in PostgreSQL directly; nothing has claimed it.
+    A running run becomes Cancelling, and the Redis cancel flag and event tell
+    the executor's pool to terminate it.
     """
     redis_client = get_redis_client()
     repo = ExecutionReadAdapter(ctx.db)
@@ -726,34 +731,6 @@ async def cancel_execution(
             logger.info(f"Execution {log_safe(execution_id)} was PENDING, cancelled directly in DB")
         return execution
 
-    # Not found in PostgreSQL - authorize the pending receipt before mutating
-    # it. A Redis-only run has no DB row yet, so `set_pending_cancelled` alone
-    # cannot make the ownership decision.
-    caller = await load_caller(ctx.db, ctx.user)
-    pending = await redis_client.get_pending_execution(str(execution_id))
-    if pending is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution {execution_id} not found",
-        )
-    if not pending_execution_cancel_allowed(caller, execution_id, pending):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to cancel this execution",
-        )
-    pending_cancelled = await redis_client.set_pending_cancelled(str(execution_id))
-
-    if pending_cancelled:
-        # Execution was in Redis pending, now marked as cancelled
-        # Worker will see this flag and skip execution
-        logger.info(f"Cancelled pending execution in Redis: {log_safe(execution_id)}")
-        return {
-            "execution_id": str(execution_id),
-            "status": "Cancelled",
-            "message": "Execution cancelled before it started",
-        }
-
-    # Not found anywhere
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Execution {execution_id} not found",

@@ -1,0 +1,14 @@
+{
+  "key": "pr:1106",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Agent runs and chat messages start immediately again, without waiting for the worker to load the agent runtime.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1106",
+      "Jack approved keeping the agent template loaded on 2026-10-28 after production agent runs waited ~11 s for an on-demand template build."
+    ]
+  }
+}

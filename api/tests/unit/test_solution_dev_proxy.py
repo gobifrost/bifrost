@@ -232,6 +232,26 @@ def _make_auth_refresh_upstream(record):
     return app
 
 
+def _make_auth_websocket_upstream(record):
+    async def echo(request):
+        record.setdefault("ws_tokens", []).append(request.rel_url.query.get("token"))
+        if request.rel_url.query.get("token") != "fresh-token":
+            return web.json_response({"detail": "Not authenticated"}, status=401)
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        async for msg in ws:
+            if msg.type == web.WSMsgType.TEXT:
+                await ws.send_str(f"echo:{msg.data}")
+                break
+        await ws.close()
+        return ws
+
+    app = web.Application()
+    app.router.add_get("/ws/echo", echo)
+    app.router.add_get("/api/echo", echo)
+    return app
+
+
 async def _serve(app, port):
     sock = _reserved_ports.pop(port)
     runner = web.AppRunner(app)
@@ -775,6 +795,77 @@ async def test_api_proxy_returns_dev_auth_expired_json_when_refresh_fails():
         await up_runner.cleanup()
 
 
+async def test_expired_proxy_recovers_before_forwarding_another_data_request():
+    """An already-rejected preview must not keep sending its stale bearer token."""
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_refresh_upstream(record), up_port)
+    login_replaced_credentials = False
+    refresh_observations: list[str] = []
+
+    async def refresh_token(observed_token):
+        refresh_observations.append(observed_token)
+        return "fresh-token" if login_replaced_credentials else None
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="stale-token",
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+        auth_expired=True,
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _StubHost(set()), vite_url="http://127.0.0.1:1"),
+        dev_port,
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            rejected = await client.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
+            login_replaced_credentials = True
+            recovered = await client.get(f"http://127.0.0.1:{dev_port}/api/auth/me")
+
+        assert rejected.status_code == 401
+        assert recovered.status_code == 200
+        assert refresh_observations == ["stale-token", "stale-token"]
+        assert record["auth_headers"] == ["Bearer fresh-token"]
+        assert cfg.auth_expired is False
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_expired_proactive_refresh_uses_poll_interval_after_failure(monkeypatch):
+    """A rejected credential is polled for replacement; it is not retried every 2s."""
+    from bifrost.solution_dev import proxy as proxy_mod
+
+    sleeps: list[float] = []
+
+    async def refresh_token(_observed_token):
+        return None
+
+    async def stop_after_sleep(seconds):
+        sleeps.append(seconds)
+        raise asyncio.CancelledError
+
+    cfg = DevProxyConfig(
+        upstream_url="http://127.0.0.1:1",
+        token=_jwt_with_exp(time.time() - 1),
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    app = web.Application()
+    app[proxy_mod._CFG] = cfg
+    monkeypatch.setattr(proxy_mod.asyncio, "sleep", stop_after_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await proxy_mod._proactive_auth_refresh_loop(app)
+
+    assert cfg.auth_expired is True
+    assert sleeps == [proxy_mod._AUTH_REFRESH_POLL_SECONDS]
+
+
 async def test_document_reload_recovers_after_credentials_are_replaced():
     record = {}
     up_port, vite_port, dev_port = _free_port(), _free_port(), _free_port()
@@ -911,8 +1002,9 @@ async def test_vite_proxy_serves_branded_auth_expired_page_before_the_app():
         assert "/api/branding/logo/square" not in page.text
         assert "/api/branding/logo/rectangle" not in page.text
         assert "#aa3366" in page.text
-        assert "will keep trying automatically" in page.text
-        assert "no CLI restart is needed" in page.text
+        assert "Run <code>bifrost login</code> in another terminal" in page.text
+        assert "Then select Try Again to recover this preview" in page.text
+        assert "window.location.reload(), 3000" not in page.text
         assert "bifrost solution start" in page.text
         assert "Vite app" not in page.text
         assert record["auth_headers"] == ["Bearer stale-token"]
@@ -979,6 +1071,65 @@ async def test_ws_upgrade_replaces_baked_token_with_live_cli_token():
         # A Vite bundle is static for the lifetime of the child process. The
         # proxy must replace its baked token on every upstream WS handshake.
         assert record["ws_query"] == "channels=x&token=live-cli-token"
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+@pytest.mark.parametrize("path", ["/ws/echo", "/api/echo"])
+async def test_websocket_auth_rejection_blocks_stale_reconnects_and_recovers(path):
+    """API websocket routes close a rejected socket and recover after login."""
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_auth_websocket_upstream(record), up_port)
+    login_replaced_credentials = False
+
+    async def refresh_token(_observed_token):
+        return "fresh-token" if login_replaced_credentials else None
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="stale-token",
+        app_id="A",
+        org_id="O",
+        refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, _StubHost(set()), vite_url="http://127.0.0.1:1"),
+        dev_port,
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            # The first upstream 401 is observed after the browser handshake.
+            # It must mark this API preview expired and close with an auth
+            # policy code, so subsequent reconnects do not keep reaching it.
+            rejected_socket = await session.ws_connect(
+                f"http://127.0.0.1:{dev_port}{path}?token=baked-stale-token"
+            )
+            close_message = await rejected_socket.receive()
+            assert close_message.type == aiohttp.WSMsgType.CLOSE
+            assert rejected_socket.close_code == aiohttp.WSCloseCode.POLICY_VIOLATION
+            assert cfg.auth_expired is True
+            assert record["ws_tokens"] == ["stale-token"]
+
+            with pytest.raises(aiohttp.WSServerHandshakeError) as error:
+                await session.ws_connect(
+                    f"http://127.0.0.1:{dev_port}{path}?token=baked-stale-token"
+                )
+            assert error.value.status == 401
+            assert record["ws_tokens"] == ["stale-token"]
+            login_replaced_credentials = True
+            async with session.ws_connect(
+                f"http://127.0.0.1:{dev_port}{path}?token=baked-stale-token"
+            ) as ws:
+                await ws.send_str("ping")
+                message = await ws.receive()
+
+        assert message.type == aiohttp.WSMsgType.TEXT
+        assert message.data == "echo:ping"
+        assert record["ws_tokens"] == ["stale-token", "fresh-token"]
+        assert cfg.token == "fresh-token"
+        assert cfg.auth_expired is False
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()

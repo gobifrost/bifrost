@@ -1,9 +1,30 @@
-import { useState, type ReactNode } from "react";
-import { ExternalLink, ImageOff } from "lucide-react";
+import {
+	useEffect,
+	useId,
+	useState,
+	type ComponentProps,
+	type ReactNode,
+} from "react";
+import {
+	Bot,
+	Check,
+	ChevronDown,
+	ChevronUp,
+	Copy,
+	ExternalLink,
+	ImageOff,
+} from "lucide-react";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
 import { Github } from "@/components/icons/GithubIcon";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
 	ProductUpdateAsset,
 	ProductUpdateEntry,
@@ -107,6 +128,9 @@ export function UpdateEntry({
 					},
 				}}
 			/>
+			{!compact && entry.agent_prompt && (
+				<AgentPrompt prompt={entry.agent_prompt} />
+			)}
 			{!compact &&
 				(entry.sources.length > 0 || entry.contributors.length > 0) && (
 					<details className="mt-4 text-sm text-muted-foreground">
@@ -294,11 +318,126 @@ function CorrectionLists({
 	);
 }
 
-function UpdateImage({
-	asset,
-}: {
-	asset: ProductUpdateAsset;
-}) {
+function AgentPrompt({ prompt }: { prompt: string }) {
+	const [expanded, setExpanded] = useState(false);
+	const [copyStatus, setCopyStatus] = useState<
+		"idle" | "copying" | "copied" | "error"
+	>("idle");
+	const promptId = useId();
+
+	useEffect(() => {
+		if (copyStatus !== "copied") return;
+		const timer = setTimeout(() => setCopyStatus("idle"), 1500);
+		return () => clearTimeout(timer);
+	}, [copyStatus]);
+
+	async function handleCopy() {
+		if (copyStatus === "copying") return;
+		setCopyStatus("copying");
+		try {
+			if (!navigator.clipboard?.writeText)
+				throw new Error("Clipboard unavailable");
+			await navigator.clipboard.writeText(prompt);
+			setCopyStatus("copied");
+		} catch {
+			setCopyStatus("error");
+		}
+	}
+
+	return (
+		<section
+			aria-label="Agent Prompt"
+			className="mt-5 max-w-[75ch] rounded-[var(--bf-radius-surface)] border bg-muted/40 p-4"
+		>
+			<div className="flex items-start justify-between gap-3">
+				<div className="flex min-w-0 flex-1 items-start gap-3">
+					<Bot
+						aria-hidden="true"
+						className="mt-0.5 size-5 shrink-0 text-primary"
+					/>
+					<div className="min-w-0">
+						<h5 className="font-semibold">Agent Prompt</h5>
+						<p className="text-sm text-muted-foreground">
+							Copy this prompt to have your coding agent help you
+							with this change.
+						</p>
+					</div>
+				</div>
+				<TooltipProvider>
+					<div className="flex shrink-0 items-center gap-1">
+						<IconAction
+							label={expanded ? "Hide Prompt" : "Show Prompt"}
+							aria-expanded={expanded}
+							aria-controls={promptId}
+							onClick={() => setExpanded((value) => !value)}
+						>
+							{expanded ? <ChevronUp /> : <ChevronDown />}
+						</IconAction>
+						<IconAction
+							label={
+								copyStatus === "copied"
+									? "Copied"
+									: "Copy Prompt"
+							}
+							onClick={handleCopy}
+							disabled={copyStatus === "copying"}
+						>
+							{copyStatus === "copied" ? (
+								<Check className="text-[var(--bf-success)]" />
+							) : (
+								<Copy />
+							)}
+						</IconAction>
+					</div>
+				</TooltipProvider>
+			</div>
+			{copyStatus === "error" && (
+				<p role="alert" className="mt-3 text-sm text-destructive">
+					Could not copy. Show the prompt and copy its text, or try
+					again.
+				</p>
+			)}
+			<span role="status" className="sr-only">
+				{copyStatus === "copied" ? "Prompt copied to clipboard." : ""}
+			</span>
+			<pre
+				id={promptId}
+				hidden={!expanded}
+				aria-label="Agent prompt text"
+				tabIndex={0}
+				className="mt-3 max-h-[16.5rem] overflow-auto whitespace-pre-wrap rounded-[var(--bf-radius-control)] border bg-background p-3 font-mono text-xs leading-5 [overflow-wrap:anywhere]"
+			>
+				{prompt}
+			</pre>
+		</section>
+	);
+}
+
+function IconAction({
+	label,
+	children,
+	...props
+}: ComponentProps<typeof Button> & { label: string }) {
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-sm"
+					aria-label={label}
+					className="size-11 sm:size-8 [&_svg]:size-4"
+					{...props}
+				>
+					{children}
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent>{label}</TooltipContent>
+		</Tooltip>
+	);
+}
+
+function UpdateImage({ asset }: { asset: ProductUpdateAsset }) {
 	const [failedToLoad, setFailedToLoad] = useState(false);
 	const missing = failedToLoad;
 	if (missing)

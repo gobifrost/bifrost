@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import httpx
 
+from bifrost._device_auth import device_login_prompt
+
 from .credentials import (
     clear_credentials,
     get_credentials,
@@ -222,6 +224,7 @@ class _ConnectionRefreshCoordinator:
         self.lock = threading.Lock()
         self.latest_access_token: str | None = None
         self.latest_refresh_token: str | None = None
+        self.rejected_credential_generation: tuple[str, str, str] | None = None
 
 
 _refresh_coordinators: dict[str, _ConnectionRefreshCoordinator] = {}
@@ -289,18 +292,30 @@ async def refresh_connection_access_token(
 
         stored_access_token = creds.access_token
         stored_refresh_token = creds.refresh_token
-        process_backed = resolved.source == "process"
+        credential_generation = (
+            credential_source,
+            stored_access_token,
+            stored_refresh_token,
+        )
+
+        # A revoked refresh token is a terminal condition for precisely this
+        # source and generation. Re-read the source on every caller so a
+        # separate login can replace it, but never send the same rejected
+        # generation back to /auth/refresh or log another warning for it.
+        if coordinator.rejected_credential_generation == credential_generation:
+            return None
+        coordinator.rejected_credential_generation = None
 
         if coordinator.latest_access_token is not None:
-            if observed_access_token != coordinator.latest_access_token:
-                return coordinator.latest_access_token
             if (
-                not process_backed
-                and stored_access_token != coordinator.latest_access_token
+                stored_access_token != coordinator.latest_access_token
+                or stored_refresh_token != coordinator.latest_refresh_token
             ):
                 coordinator.latest_access_token = stored_access_token
                 coordinator.latest_refresh_token = stored_refresh_token
                 return stored_access_token
+            if observed_access_token != coordinator.latest_access_token:
+                return coordinator.latest_access_token
         elif observed_access_token is not None and stored_access_token != observed_access_token:
             coordinator.latest_access_token = stored_access_token
             coordinator.latest_refresh_token = stored_refresh_token
@@ -314,6 +329,24 @@ async def refresh_connection_access_token(
                 json={"refresh_token": refresh_token},
             )
         if response.status_code != 200:
+            if response.status_code == 401:
+                # Another process may have completed a refresh while this one
+                # was in flight. Adopt its persisted generation without a
+                # second network attempt; otherwise remember this rejection.
+                coordinator.rejected_credential_generation = credential_generation
+                replacement = resolve_credentials(normalized_url)
+                if replacement is not None:
+                    replacement_creds = replacement.credentials
+                    replacement_generation = (
+                        replacement.source,
+                        replacement_creds.access_token,
+                        replacement_creds.refresh_token,
+                    )
+                    if replacement_generation != credential_generation:
+                        coordinator.latest_access_token = replacement_creds.access_token
+                        coordinator.latest_refresh_token = replacement_creds.refresh_token
+                        coordinator.rejected_credential_generation = None
+                        return replacement_creds.access_token
             logger.warning(
                 "Bifrost token refresh failed for %s using %s credentials: HTTP %s",
                 normalized_url,
@@ -467,9 +500,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             interval = data.get("interval", 5)
 
             # Step 2: Display instructions
-            full_url = f"{api_url}{verification_url}"
-            print(f"\nOpening browser to {full_url}")
-            print(f"Enter this code: {user_code}\n")
+            full_url = device_login_prompt(api_url, verification_url, user_code)
 
             # Step 3: Open browser
             if auto_open:

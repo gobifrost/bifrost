@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
@@ -76,6 +77,34 @@ def test_context_breakdown_uses_native_instruction_fallback_without_contents() -
     assert breakdown["instruction_bytes"] == len(instructions.encode())
     assert breakdown["provider_cache_prefix_bytes"] == len(instructions.encode())
     assert instructions not in str(breakdown)
+
+
+def test_context_breakdown_excludes_tool_return_metadata_from_provider_estimates() -> None:
+    raw_receipt = {"nested_receipt": "audit-only-sentinel-" + "x" * 100_000}
+    result = ToolReturnPart(
+        tool_name="read_record",
+        tool_call_id="call-1",
+        content='{"record_id":"r-7"}',
+        metadata=raw_receipt,
+    )
+    messages = [ModelRequest(parts=[result])]
+    parameters = ModelRequestParameters()
+
+    without_metadata = ObservedModel._context_breakdown(
+        [ModelRequest(parts=[replace(result, metadata=None)])], parameters
+    )
+    with_metadata = ObservedModel._context_breakdown(messages, parameters)
+
+    for field in (
+        "tool_result_bytes",
+        "messages_serialized_bytes",
+        "replayed_history_bytes",
+        "estimated_input_tokens",
+    ):
+        assert with_metadata[field] == without_metadata[field]
+    assert result.metadata == raw_receipt
+    assert messages[0].parts[0].metadata == raw_receipt
+    assert raw_receipt["nested_receipt"] not in str(with_metadata)
 
 
 def test_context_breakdown_separates_active_and_deferred_tool_schemas() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from botocore.exceptions import EndpointConnectionError
+import httpx
 from sqlalchemy import text
 
 from src.core.database import get_db_context
@@ -161,7 +161,7 @@ async def test_recheck_source_head_raising_cleans_up_copy(store, solution_target
 
     async def source_head_fails(key: str) -> None:
         if copied and key == source_key:
-            raise EndpointConnectionError(endpoint_url="http://s3")
+            raise httpx.ConnectError("s3 unavailable")
 
     store.after["copy"] = mark_copied
     store.before["head"] = source_head_fails
@@ -186,7 +186,7 @@ async def test_destination_head_raising_after_copy_deletes_nothing(store, soluti
 
     async def dest_head_fails(key: str) -> None:
         if copied and key == dest_key:
-            raise EndpointConnectionError(endpoint_url="http://s3")
+            raise httpx.ConnectError("s3 unavailable")
 
     store.after["copy"] = mark_copied
     store.before["head"] = dest_head_fails

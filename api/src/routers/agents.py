@@ -452,7 +452,6 @@ async def create_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -561,7 +560,6 @@ async def update_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -763,7 +761,6 @@ async def update_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
-            selectinload(Agent.llm_profile),
             selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
@@ -813,7 +810,6 @@ async def promote_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )

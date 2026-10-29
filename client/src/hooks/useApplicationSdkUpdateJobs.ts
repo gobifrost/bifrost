@@ -38,8 +38,10 @@ export function useApplicationSdkUpdateJobs({
 	solutionId,
 }: { solutionId?: string | null } = {}) {
 	const queryClient = useQueryClient();
+	// Each App's state remembers the job it came from, so an enqueue response
+	// never overwrites a newer update that its own job already delivered.
 	const [states, setStates] = useState<
-		Record<string, ApplicationSdkUpdateState>
+		Record<string, { state: ApplicationSdkUpdateState; jobId: string }>
 	>({});
 
 	const invalidateSdkConsumers = useCallback(() => {
@@ -65,7 +67,7 @@ export function useApplicationSdkUpdateJobs({
 			const nextState = stateFromStatus(job.status);
 			setStates((current) => ({
 				...current,
-				[appId]: nextState,
+				[appId]: { state: nextState, jobId: job.id },
 			}));
 			if (TERMINAL_STATUSES.has(job.status)) {
 				invalidateSdkConsumers();
@@ -78,16 +80,23 @@ export function useApplicationSdkUpdateJobs({
 		setStates((current) => {
 			const next = { ...current };
 			for (const operation of accepted) {
-				next[operation.application_id] = stateFromStatus(
-					operation.status,
-				);
+				if (
+					next[operation.application_id]?.jobId === operation.job_id
+				) {
+					continue;
+				}
+				next[operation.application_id] = {
+					state: stateFromStatus(operation.status),
+					jobId: operation.job_id,
+				};
 			}
 			return next;
 		});
 	}, []);
 
 	const getUpdateState = useCallback(
-		(appId: string): ApplicationSdkUpdateState => states[appId] ?? "idle",
+		(appId: string): ApplicationSdkUpdateState =>
+			states[appId]?.state ?? "idle",
 		[states],
 	);
 
@@ -95,7 +104,8 @@ export function useApplicationSdkUpdateJobs({
 		(appIds: string[]): boolean =>
 			appIds.some(
 				(appId) =>
-					states[appId] === "queued" || states[appId] === "updating",
+					states[appId]?.state === "queued" ||
+					states[appId]?.state === "updating",
 			),
 		[states],
 	);

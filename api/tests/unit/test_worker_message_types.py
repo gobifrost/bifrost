@@ -1,9 +1,9 @@
-"""Worker handles summarize + tune-chat message types.
+"""Worker handles summarize message types.
 
-Validates the thin RabbitMQ consumer wrappers that delegate to
-``run_summarizer`` / ``tuning_service``. The summarizer/tuning logic
-itself is implemented in T12 and T15; this task only wires the message
-plumbing and the failure-swallowing path.
+Validates the summary message handler that delegates to
+``run_summarizer``, and the failure-swallowing path. Summary dispatch
+(claiming, backfill fan-out) is covered in
+``tests/unit/services/execution/test_summary_dispatch.py``.
 """
 import sys
 from types import ModuleType
@@ -18,37 +18,22 @@ from src.models.orm.agent_runs import AgentRun
 
 @pytest.mark.asyncio
 async def test_summarize_message_calls_summarizer():
-    """handle_summarize_message extracts run_id and delegates to summarize_run."""
+    """handle_summarize_message claims the summary, then delegates to summarize_run."""
     from src.jobs.summarize_worker import handle_summarize_message
 
     run_id = uuid4()
-    with patch(
-        "src.jobs.summarize_worker.summarize_run", new=AsyncMock()
-    ) as mock:
-        await handle_summarize_message({"run_id": str(run_id)})
+    with (
+        patch(
+            "src.services.execution.summary_dispatch.claim_summary",
+            new=AsyncMock(return_value=True),
+        ),
+        patch("src.jobs.summarize_worker.summarize_run", new=AsyncMock()) as mock,
+    ):
+        await handle_summarize_message({"run_id": str(run_id), "dispatch_id": str(uuid4())})
         mock.assert_awaited_once()
         called_run_id = mock.await_args.args[0]
         assert isinstance(called_run_id, UUID)
         assert called_run_id == run_id
-
-
-@pytest.mark.asyncio
-async def test_tune_chat_message_appends_and_replies():
-    """handle_tune_chat_message extracts run_id+content and delegates."""
-    from src.jobs.summarize_worker import handle_tune_chat_message
-
-    run_id = uuid4()
-    with patch(
-        "src.jobs.summarize_worker.append_user_message_and_reply",
-        new=AsyncMock(),
-    ) as mock:
-        await handle_tune_chat_message(
-            {"run_id": str(run_id), "content": "wrong route"}
-        )
-        mock.assert_awaited_once()
-        args = mock.await_args.args
-        assert args[0] == run_id
-        assert args[1] == "wrong route"
 
 
 @pytest.mark.asyncio
@@ -75,47 +60,14 @@ async def test_lazy_summarize_wrapper_forwards_to_real_service(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_lazy_tune_chat_wrapper_forwards_to_real_service(monkeypatch):
-    """Patch-compatible worker wrapper imports and forwards on first use."""
-    from src.jobs.summarize_worker import append_user_message_and_reply
-
-    run_id = uuid4()
-    db = object()
-    fake_module = ModuleType("src.services.execution.tuning_service")
-    fake_module.append_user_message_and_reply = AsyncMock(  # type: ignore[attr-defined]
-        return_value="ok"
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "src.services.execution.tuning_service",
-        fake_module,
-    )
-
-    result = await append_user_message_and_reply(  # type: ignore[arg-type]
-        run_id,
-        "wrong route",
-        db,
-    )
-
-    assert result == "ok"
-    append_user_message = fake_module.append_user_message_and_reply  # type: ignore[attr-defined]
-    append_user_message.assert_awaited_once_with(
-        run_id,
-        "wrong route",
-        db,
-    )
-
-
-@pytest.mark.asyncio
 async def test_summarize_failure_marks_run_failed(
     db_session, async_session_factory, seed_agent
 ):
     """A failure inside summarize_run is caught, run.summary_status = 'failed', error stored.
 
-    The handler must NOT re-raise — that would land the message in the DLQ
-    and burn retries for what is almost always a deterministic failure
-    (bad LLM output / missing config). The UI exposes a regenerate button
-    for recovery instead.
+    The handler must NOT re-raise or retry what is almost always a
+    deterministic failure (bad LLM output / missing config). The UI exposes
+    a regenerate button for recovery instead.
     """
     from src.jobs.summarize_worker import handle_summarize_message
 
@@ -134,13 +86,19 @@ async def test_summarize_failure_marks_run_failed(
     await db_session.commit()
 
     try:
-        with patch(
-            "src.jobs.summarize_worker.summarize_run",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
+        with (
+            patch(
+                "src.services.execution.summary_dispatch.claim_summary",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "src.jobs.summarize_worker.summarize_run",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
         ):
             # Should not raise — errors are swallowed to prevent retry loops.
             await handle_summarize_message(
-                {"run_id": str(run.id)},
+                {"run_id": str(run.id), "dispatch_id": str(uuid4())},
                 session_factory=async_session_factory,
             )
 
@@ -161,40 +119,6 @@ async def test_summarize_failure_marks_run_failed(
                 AgentRun.__table__.delete().where(AgentRun.id == run.id)
             )
             await cleanup.commit()
-
-
-@pytest.mark.asyncio
-async def test_enqueue_summarize_publishes_correct_queue():
-    """Live path: enqueue_summarize publishes to 'agent-summarization'."""
-    from src.services.execution.run_summarizer import enqueue_summarize
-
-    run_id = uuid4()
-    with patch(
-        "src.services.execution.run_summarizer.publish_message",
-        new=AsyncMock(),
-    ) as mock:
-        await enqueue_summarize(run_id)
-        mock.assert_awaited_once()
-        args = mock.await_args.args
-        assert args[0] == "agent-summarization"
-        assert args[1]["run_id"] == str(run_id)
-
-
-def test_summarize_consumer_uses_prefetch_one():
-    """Live consumer must run with prefetch=1 so fleet-wide concurrency
-    equals the worker pod count, not pods × max_concurrency.
-
-    Regression guard: bumping this value back up silently melts OpenRouter
-    and re-introduces the burst-429 problem that cost ~525 runs in prod
-    on 2026-04-24."""
-    from src.jobs.summarize_worker import SummarizeBackfillConsumer, SummarizeConsumer
-
-    live = SummarizeConsumer()
-    backfill = SummarizeBackfillConsumer()
-    assert live.prefetch_count == 1
-    assert backfill.prefetch_count == 1
-    assert live.queue_name == "agent-summarization"
-    assert backfill.queue_name == "agent-summarization-backfill"
 
 
 @pytest.mark.asyncio
@@ -296,6 +220,9 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
             assert definition.job_type == "agent.summary_backfill"
             assert payload.run_ids == [run_id]
             assert payload.backfill_job_id == result.job_id
+            run = await db.get(AgentRun, run_id)
+            assert run is not None
+            assert run.summary_backfill_job_id == result.job_id
     finally:
         async with async_session_factory() as db:
             if created_backfill_job_id is not None:
@@ -312,56 +239,3 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
             await db.execute(delete(Role).where(Role.id == role_id))
             await db.execute(delete(Organization).where(Organization.id == organization_id))
             await db.commit()
-
-
-@pytest.mark.asyncio
-async def test_summary_backfill_platform_job_uses_dedicated_queue():
-    """The scheduler parent fans out only to the bulk backfill queue."""
-    from src.jobs.platform.base import PlatformJobDeferred
-    from src.jobs.platform.summary_backfill import (
-        SummaryBackfillPayload,
-        run_summary_backfill,
-    )
-
-    backfill_job_id = uuid4()
-    run_ids = [uuid4(), uuid4()]
-    context = AsyncMock()
-    with patch(
-        "src.jobs.rabbitmq.publish_message",
-        new=AsyncMock(),
-    ) as publish:
-        with pytest.raises(PlatformJobDeferred):
-            await run_summary_backfill(
-                context,
-                SummaryBackfillPayload(
-                    backfill_job_id=backfill_job_id,
-                    run_ids=run_ids,
-                ),
-            )
-
-    context.report.assert_awaited_once()
-    assert publish.await_count == 2
-    for call, run_id in zip(publish.await_args_list, run_ids, strict=True):
-        assert call.args[0] == "agent-summarization-backfill"
-        assert call.args[1] == {
-            "run_id": str(run_id),
-            "backfill_job_id": str(backfill_job_id),
-        }
-
-
-@pytest.mark.asyncio
-async def test_enqueue_tune_chat_publishes_correct_queue():
-    """enqueue_tune_chat publishes to 'agent-tuning-chat' with content."""
-    from src.services.execution.tuning_service import enqueue_tune_chat
-
-    run_id = uuid4()
-    with patch(
-        "src.services.execution.tuning_service.publish_message",
-        new=AsyncMock(),
-    ) as mock:
-        await enqueue_tune_chat(run_id, "hello")
-        mock.assert_awaited_once()
-        args = mock.await_args.args
-        assert args[0] == "agent-tuning-chat"
-        assert args[1]["run_id"] == str(run_id)
-        assert args[1]["content"] == "hello"

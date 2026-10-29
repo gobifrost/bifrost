@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, call
 
 import pytest
-from botocore.exceptions import EndpointConnectionError
+import httpx
 from sqlalchemy import text
 
 from src.core.database import get_db_context
@@ -255,7 +255,7 @@ async def test_missing_source_is_404(store, solution_target) -> None:
 
 async def test_storage_errors_are_flagged(store, solution_target) -> None:
     async def unreachable(_key: str) -> None:
-        raise EndpointConnectionError(endpoint_url="http://s3")
+        raise httpx.ConnectError("s3 unavailable")
 
     store.before["head"] = unreachable
     outcome = await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
@@ -342,7 +342,7 @@ async def test_verify_head_raising_cleans_up_copy(store, solution_target) -> Non
         nonlocal failed
         if copied and key == dest_key and not failed:
             failed = True
-            raise EndpointConnectionError(endpoint_url="http://s3")
+            raise httpx.ConnectError("s3 unavailable")
 
     store.after["copy"] = mark_copied
     store.before["head"] = verify_head_fails
@@ -462,7 +462,7 @@ async def test_cleanup_head_raising_keeps_the_copy_and_reports_cleanup_failed(st
 
     async def destination_head_fails(key: str) -> None:
         if copied and key == dest_key:
-            raise EndpointConnectionError(endpoint_url="http://s3")
+            raise httpx.ConnectError("s3 unavailable")
 
     store.after["copy"] = mark_copied
     store.before["head"] = destination_head_fails

@@ -494,9 +494,10 @@ class TestAutonomousAgentExecutor:
                 },
             ) as mock_child_run,
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
-            ) as mock_enqueue_summarize,
+                return_value=None,
+            ) as mock_stage_summary,
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
@@ -525,7 +526,8 @@ class TestAutonomousAgentExecutor:
         assert child_run.acting_user_id == UUID(caller["user_id"])
         assert child_run.status == "completed"
         assert child_run.completed_at is not None
-        mock_enqueue_summarize.assert_awaited_once_with(child_run.id)
+        mock_stage_summary.assert_awaited_once()
+        assert mock_stage_summary.await_args.args[1] == child_run.id
         mock_child_run.assert_awaited_once_with(
             agent=delegated,
             input_data={
@@ -2435,6 +2437,9 @@ class TestRunAsActingUser:
         caller = _canonical_caller(caller_data)
         run_user_id = caller.principal.user_id
         run_as = _contoso_portal_user(contoso) if with_run_as else None
+        mock_agent.delegated_agents = [SimpleNamespace(
+            id=uuid4(), name="Contoso Specialist", is_active=True,
+        )]
         mock_resolve_tools.return_value = ([_tool("delegate_to_contoso_specialist")], {})
         mock_create_model.return_value = _calls_one_tool("delegate_to_contoso_specialist")
         run_id = str(uuid4())
@@ -2522,8 +2527,9 @@ class TestRunAsActingUser:
                 return_value={"output": "checked", "status": "completed"},
             ) as mock_child_run,
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             await executor.run_delegation(

@@ -30,7 +30,7 @@ def utcnow() -> datetime:
 
 
 async def heartbeat_scheduler_replica(
-    *, replica_id: str, hostname: str, pid: int, job_slots: int, started_at: datetime
+    *, replica_id: str, hostname: str, pid: int, runs_platform_jobs: bool, started_at: datetime
 ) -> None:
     current, limit = get_cgroup_memory()
     heartbeat_at = utcnow()
@@ -38,7 +38,7 @@ async def heartbeat_scheduler_replica(
         "id": replica_id,
         "hostname": hostname,
         "pid": pid,
-        "job_slots": job_slots,
+        "job_slots": 1 if runs_platform_jobs else 0,
         "started_at": started_at,
         "last_heartbeat_at": heartbeat_at,
         "memory_current_bytes": current if current >= 0 else None,

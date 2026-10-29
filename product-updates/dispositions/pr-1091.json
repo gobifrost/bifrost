@@ -1,0 +1,14 @@
+{
+  "key": "pr:1091",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Keep existing workers available while replacements finish starting.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1091",
+      "Codex and Astra reviewed this production readiness repair under the user\u2019s authorization to fix, merge, and deploy. Capacity stays unpublished through executor startup; authorization, database contracts, and deployment settings are preserved. No customer upgrade action is required."
+    ]
+  }
+}

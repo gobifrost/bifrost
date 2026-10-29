@@ -70,6 +70,15 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
 # Global engine and session factory (initialized on startup)
 _engine: AsyncEngine | None = None
 _async_session_factory: async_sessionmaker[AsyncSession] | None = None
+# Work acceptance runs while a request usually still holds a connection from
+# the main pool. Its own small pool means a burst of requests can never wait
+# on each other for a second connection.
+_dispatch_engine: AsyncEngine | None = None
+_dispatch_session_factory: async_sessionmaker[AsyncSession] | None = None
+# An executor's heartbeat has its own connection: a heartbeat that waited
+# behind the runs' queries could make a busy, healthy executor look lost.
+_liveness_engine: AsyncEngine | None = None
+_liveness_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def get_engine(settings: Settings | None = None) -> AsyncEngine:
@@ -195,6 +204,80 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+def _get_dispatch_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _dispatch_engine, _dispatch_session_factory
+
+    if _dispatch_session_factory is None:
+        settings = get_settings()
+        db_url, connect_args = _prepare_asyncpg_url(settings.database_url)
+        _dispatch_engine = create_async_engine(
+            db_url,
+            echo=settings.debug,
+            pool_size=settings.database_dispatch_pool_size,
+            max_overflow=settings.database_dispatch_max_overflow,
+            pool_pre_ping=True,
+            pool_timeout=30,
+            pool_recycle=1800,
+            connect_args=connect_args,
+        )
+        _dispatch_session_factory = async_sessionmaker(
+            _dispatch_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+    return _dispatch_session_factory
+
+
+@asynccontextmanager
+async def get_dispatch_db_context() -> AsyncGenerator[AsyncSession, None]:
+    """Session for accepting work from inside a request (separate pool)."""
+    async with _get_dispatch_session_factory()() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+def _get_liveness_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _liveness_engine, _liveness_session_factory
+
+    if _liveness_session_factory is None:
+        settings = get_settings()
+        db_url, connect_args = _prepare_asyncpg_url(settings.database_url)
+        _liveness_engine = create_async_engine(
+            db_url,
+            echo=settings.debug,
+            pool_size=1,
+            max_overflow=0,
+            pool_pre_ping=True,
+            pool_timeout=10,
+            pool_recycle=1800,
+            connect_args=connect_args,
+        )
+        _liveness_session_factory = async_sessionmaker(
+            _liveness_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+    return _liveness_session_factory
+
+
+@asynccontextmanager
+async def get_liveness_db_context() -> AsyncGenerator[AsyncSession, None]:
+    """Session for an executor's heartbeat (its own single connection)."""
+    async with _get_liveness_session_factory()() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 async def init_db() -> None:
     """
     Initialize database connection and verify connectivity.
@@ -214,12 +297,21 @@ async def close_db() -> None:
 
     Called on application shutdown.
     """
-    global _engine, _async_session_factory
+    global _engine, _async_session_factory, _dispatch_engine, _dispatch_session_factory
+    global _liveness_engine, _liveness_session_factory
 
     if _engine is not None:
         await _engine.dispose()
         _engine = None
         _async_session_factory = None
+    if _dispatch_engine is not None:
+        await _dispatch_engine.dispose()
+        _dispatch_engine = None
+        _dispatch_session_factory = None
+    if _liveness_engine is not None:
+        await _liveness_engine.dispose()
+        _liveness_engine = None
+        _liveness_session_factory = None
 
 
 def reset_db_state() -> None:
@@ -229,6 +321,11 @@ def reset_db_state() -> None:
     Clears the engine and session factory so they are recreated
     with fresh settings on next access.
     """
-    global _engine, _async_session_factory
+    global _engine, _async_session_factory, _dispatch_engine, _dispatch_session_factory
+    global _liveness_engine, _liveness_session_factory
     _engine = None
     _async_session_factory = None
+    _dispatch_engine = None
+    _dispatch_session_factory = None
+    _liveness_engine = None
+    _liveness_session_factory = None

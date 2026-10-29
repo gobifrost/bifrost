@@ -11,6 +11,10 @@ other secret from the result, logs, variables and error message.
 """
 
 import json
+from io import StringIO
+import logging
+
+import pytest
 
 from src.models.enums import ExecutionStatus
 from src.sdk.context import Caller, Organization
@@ -78,6 +82,30 @@ async def test_engine_token_redacted_from_error_message():
     result = await execute(_request(uses_engine_token))
     assert result.status == ExecutionStatus.FAILED
     assert _ENGINE_TOKEN not in (result.error_message or "")
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, TypeError])
+async def test_unknown_header_credential_is_redacted_from_failed_workflow_outputs(error_type):
+    """Both wrapped workflow errors and the outer error path scrub their sinks."""
+    async def fails_with_header():
+        raise error_type("Authorization: Bearer workflow-exception-secret")
+
+    stream = StringIO()
+    console = logging.StreamHandler(stream)
+    console.setFormatter(logging.Formatter("[worker] %(levelname)s - %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(console)
+    try:
+        result = await execute(_request(fails_with_header, engine_token=None))
+    finally:
+        root.removeHandler(console)
+
+    assert result.status == ExecutionStatus.FAILED
+    assert result.error_type == error_type.__name__
+    assert "workflow-exception-secret" not in (result.error_message or "")
+    assert "workflow-exception-secret" not in json.dumps(result.logs)
+    assert "workflow-exception-secret" not in stream.getvalue()
+    assert "[REDACTED]" in (result.error_message or "")
 
 
 async def test_engine_token_redacted_from_variables():

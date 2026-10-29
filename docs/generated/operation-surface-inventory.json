@@ -10197,7 +10197,7 @@
     "cli": 172,
     "manifest": 16,
     "mcp": 94,
-    "rest": 687,
+    "rest": 689,
     "sdk": 21
   },
   "schema_version": 1,
@@ -11376,6 +11376,13 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/admin/kubernetes/execution",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/admin/kubernetes/policy",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -14421,8 +14428,8 @@
         "method": "POST",
         "operation_id": "",
         "path": "/auth/device/authorize",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Records the user's decision for CLI authentication; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "POST",
@@ -14430,6 +14437,13 @@
         "path": "/auth/device/code",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/device/deny",
+        "reason": "Records the user's decision for CLI authentication; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "POST",

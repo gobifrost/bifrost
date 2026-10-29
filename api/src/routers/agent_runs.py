@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func, literal_column, or_, select, update
 from sqlalchemy.orm import selectinload
 
@@ -25,9 +25,6 @@ from src.models.contracts.agent_run_flag_conversations import (
 )
 from src.models.contracts.agent_runs import (
     AgentRunCreateRequest,
-    AgentRunDetailResponse,
-    AgentRunEnqueueRequest,
-    AgentRunEnqueueResponse,
     AgentRunListResponse,
     AgentRunRerunResponse,
     AgentRunResponse,
@@ -39,7 +36,6 @@ from src.models.contracts.agent_runs import (
     DryRunResponse,
     MetadataKeysResponse,
     MetadataValuesResponse,
-    PausedResponse,
     SummaryBackfillJobListResponse,
     SummaryBackfillJobResponse,
     VerdictRequest,
@@ -47,8 +43,6 @@ from src.models.contracts.agent_runs import (
 )
 from shared.sdk_agent_runs import (
     SdkAgentRunError,
-    enqueue_sdk_agent_run,
-    get_sdk_agent_run,
     resolve_agent_run_actor,
     resolve_executable_agent,
     resolve_rerun_actor,
@@ -60,6 +54,7 @@ from src.models.orm.agents import Agent
 from src.models.orm.ai_usage import AIUsage
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.core.redis_client import get_redis_client
+from src.routers.agent_run_sdk import detail_router, enqueue_router
 from src.services.agent_run_usage_summary import summarize_run_usage
 from src.services.agent_write_policy import caller_user_id
 from src.services.authorization.enforce import (
@@ -77,12 +72,11 @@ from src.services.execution.agent_run_service import (
     wait_for_agent_run_result,
 )
 from src.services.execution.dry_run import evaluate_against_prompt
-from src.services.execution.run_summarizer import enqueue_summarize
+from src.services.execution.summary_dispatch import hand_off_summary, request_summary
 from src.services.execution.tuning_service import (
     append_user_message_and_reply,
     get_or_create_conversation,
 )
-from src.services.run_retention.settings import run_not_found_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -544,20 +538,9 @@ async def get_backfill_eligible(
     )
 
 
-@router.get("/{run_id}")
-async def get_agent_run(
-    run_id: UUID,
-    db: DbSession,
-    user: CurrentActiveUser,
-) -> AgentRunDetailResponse:
-    """Get agent run detail with steps."""
-    try:
-        return await get_sdk_agent_run(db, user, run_id=run_id)
-    except SdkAgentRunError as e:
-        detail = e.detail
-        if e.status_code == status.HTTP_404_NOT_FOUND:
-            detail = f"Agent run {run_id} not found." + await run_not_found_suffix(db)
-        raise HTTPException(status_code=e.status_code, detail=detail) from None
+# These routes already carry the public prefix and tags. Append them at their
+# original registration positions so route precedence and OpenAPI stay exact.
+router.routes.extend(detail_router.routes)
 
 
 @router.post("/{run_id}/rerun")
@@ -668,18 +651,6 @@ async def cancel_agent_run(
             await db.refresh(agent_run)
         else:
             await db.commit()
-
-            # Also mark the Redis context so a worker holding the message skips it.
-            from src.core.cache.redis_client import get_redis
-            redis_key = f"bifrost:agent_run:{run_id}:context"
-            async with get_redis() as r:
-                context_raw = await r.get(redis_key)
-                if context_raw:
-                    ctx = json.loads(context_raw)
-                    ctx["cancelled"] = True
-                    ttl = await r.ttl(redis_key)
-                    await r.set(redis_key, json.dumps(ctx), ex=max(ttl, 60))
-
             return {"run_id": str(run_id), "status": "cancelled"}
 
     if agent_run.status in TERMINAL_STATUSES:
@@ -897,7 +868,11 @@ async def regenerate_summary(
 ) -> dict:
     """Reset summary state and re-enqueue a summarization job. Admin-only."""
     run = (
-        await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+        await db.execute(
+            select(AgentRun)
+            .where(AgentRun.id == run_id)
+            .with_for_update(of=AgentRun)
+        )
     ).scalar_one_or_none()
     if not run:
         raise HTTPException(
@@ -907,11 +882,10 @@ async def regenerate_summary(
     caller = await load_caller(db, user)
     require_operation(caller, "POST /api/agent-runs/{run_id}/regenerate-summary", org_target(run.org_id))
 
-    run.summary_status = "pending"
-    run.summary_error = None
+    summary = await request_summary(db, run)
     await db.commit()
 
-    await enqueue_summarize(run_id)
+    await hand_off_summary(summary)
 
     return {"status": "enqueued", "run_id": str(run_id)}
 
@@ -967,32 +941,7 @@ async def dry_run_agent_run(
     )
 
 
-@router.post(
-    "/enqueue",
-    status_code=status.HTTP_202_ACCEPTED,
-    response_model=AgentRunEnqueueResponse | PausedResponse,
-)
-async def enqueue_agent_run_request(
-    request: AgentRunEnqueueRequest,
-    response: Response,
-    db: DbSession,
-    user: CurrentActiveUser,
-) -> AgentRunEnqueueResponse | PausedResponse:
-    """Queue an agent run and return without waiting for execution."""
-    try:
-        result = await enqueue_sdk_agent_run(
-            db,
-            user,
-            agent_name=request.agent_name,
-            input_data=request.input,
-            output_schema=request.output_schema,
-            run_as=request.run_as,
-        )
-    except SdkAgentRunError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
-    if isinstance(result, PausedResponse):
-        response.status_code = status.HTTP_200_OK
-    return result
+router.routes.extend(enqueue_router.routes)
 
 
 @router.post("/execute")
@@ -1172,6 +1121,8 @@ async def backfill_summaries(
         estimated_cost_usd=estimated_total,
     )
     db.add(job)
+    # The runs reference the job, so it must exist before they are updated.
+    await db.flush()
 
     # Flip all targeted runs back to pending so the UI reflects the queued state
     # immediately (the summarizer's idempotent short-circuit on 'completed' will
@@ -1180,7 +1131,11 @@ async def backfill_summaries(
     await db.execute(
         sql_update(AgentRun)
         .where(AgentRun.id.in_(run_ids))
-        .values(summary_status="pending", summary_error=None)
+        .values(
+            summary_status="pending",
+            summary_error=None,
+            summary_backfill_job_id=central_job_id,
+        )
     )
     from src.jobs.platform.summary_backfill import (
         SUMMARY_BACKFILL_DEFINITION,
@@ -1254,17 +1209,15 @@ async def cancel_backfill_job(
 ) -> SummaryBackfillJobResponse:
     """Mark a backfill job as cancelled so the UI unblocks.
 
-    This does NOT drain messages already on the ``agent-summarization``
-    queue — RabbitMQ will keep delivering them and the worker will keep
-    summarising individual runs. What it does do:
+    This does NOT withdraw summaries already dispatched — executors keep
+    summarising those runs. What it does do:
 
     - flips ``status`` from ``running`` to ``cancelled``
     - sets ``completed_at`` so the row stops appearing in "active" queries
     - broadcasts final state so the progress card dismisses itself
 
-    Use this when progress has stalled (e.g. the worker was restarted
-    mid-job and prefetched messages went back on the queue but the counter
-    never advanced) — admins need a way out.
+    Use this when progress has stalled and the counter never advanced —
+    admins need a way out.
     """
     caller = await load_caller(db, user)
     reach = operation_reach(caller, "POST /api/agent-runs/backfill-jobs/{job_id}/cancel")

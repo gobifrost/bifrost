@@ -29,6 +29,7 @@ from src.core.auth import Context, CurrentActiveUser
 from src.core.database import AsyncSession, get_db
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
+from src.services.package_generation import record_package_change
 from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.core.requirements_cache import (
@@ -38,7 +39,6 @@ from src.core.requirements_cache import (
     save_requirements,
     warm_requirements_cache,
 )
-from src.jobs.rabbitmq import publish_broadcast
 
 logger = logging.getLogger(__name__)
 
@@ -312,13 +312,12 @@ async def install_package(
     Install a Python package by updating requirements.txt and recycling workers.
 
     When package_name is provided: appends/updates the package in requirements.txt
-    (S3 + Redis cache), then broadcasts a recycle signal to all workers.
+    (S3 + Redis cache), then records the change for every executor to apply.
 
     When package_name is None: warms the Redis cache from S3 (picking up any
-    manual edits to requirements.txt), then broadcasts recycle.
+    manual edits to requirements.txt), then records a reinstall from it.
 
-    Workers recycle their process pools; new processes pip install from the
-    cached requirements.txt on startup.
+    Executors apply recorded changes in order and recycle their process pools.
 
     Returns immediately — worker recycling happens asynchronously.
     """
@@ -335,7 +334,7 @@ async def install_package(
                 await warm_requirements_cache()
                 cached = await get_requirements()
             current_content = cached["content"] if cached else ""
-            updated_content, is_update = append_package_to_requirements(
+            updated_content, _ = append_package_to_requirements(
                 current_content, request.package_name, request.version
             )
             await save_requirements(updated_content, ctx.db)
@@ -345,22 +344,15 @@ async def install_package(
             # "Install from requirements.txt" — warm cache from S3 so workers
             # pick up the latest file content
             await warm_requirements_cache()
-            # Safe default: requirements.txt may contain updates
-            is_update = True
             logger.info("Warmed requirements cache from S3 for recycle")
 
-        # Broadcast to all workers — they pip install + recycle processes.
-        # run_id ties all workers' phase reports to the same Redis hash so
-        # the frontend sees one aggregate status instead of N per-worker logs.
-        await publish_broadcast(
-            exchange_name="package-installations",
-            message={
-                "type": "recycle_workers",
-                "package": request.package_name,
-                "version": request.version if request.version else None,
-                "is_update": is_update,
-                "run_id": str(uuid4()),
-            },
+        # Executors apply the recorded change. run_id ties every executor's
+        # phase reports to one Redis hash, so the frontend sees one aggregate
+        # status.
+        run_id = str(uuid4())
+        version = request.version if request.version else None
+        await record_package_change(
+            ctx.db, action="install", package=request.package_name, version=version, run_id=run_id
         )
 
         return PackageInstallResponse(
@@ -410,19 +402,11 @@ async def uninstall_package(
             await save_requirements(updated_content, ctx.db)
             logger.info(f"Removed {log_safe(package_name)} from requirements.txt")
 
-        # Tell workers to pip uninstall and recycle. The "action" field
-        # is what distinguishes install from uninstall in the consumer.
-        # run_id ties all workers' phase reports to the same Redis hash.
-        await publish_broadcast(
-            exchange_name="package-installations",
-            message={
-                "type": "recycle_workers",
-                "action": "uninstall",
-                "package": package_name,
-                "version": None,
-                "is_update": True,
-                "run_id": str(uuid4()),
-            },
+        # Executors pip uninstall and recycle when they apply the change.
+        # run_id ties all executors' phase reports to the same Redis hash.
+        run_id = str(uuid4())
+        await record_package_change(
+            ctx.db, action="uninstall", package=package_name, version=None, run_id=run_id
         )
 
         return {

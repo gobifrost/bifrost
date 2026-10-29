@@ -299,6 +299,9 @@ async def test_execute_tool_routes_mcp_prefix(mock_session_factory):
     caller = _caller(agent.organization_id)
     executor._caller = caller
     executor._acting_user_id = caller.principal.user_id
+    executor._tool_workflow_id_map = {
+        f"{MCP_TOOL_PREFIX}{connection_id}__t": connection_id,
+    }
 
     async def authorize(_db, authorized_caller, agent_id):
         assert agent_id == agent.id

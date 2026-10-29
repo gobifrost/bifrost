@@ -97,8 +97,8 @@ async def insert_scheduled_execution(
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
-    Skips Redis/RabbitMQ — the deferred_execution_promoter job will publish
-    the row when scheduled_at matures. Shared with the form execute path.
+    Stages no dispatch — the deferred_execution_promoter job dispatches the
+    row when scheduled_at matures. Shared with the form execute path.
     ``run_as`` (from ``impersonation.scheduled_run_as``) is kept when the row
     acts as another user, so the promoter decides it again when it fires.
     """
@@ -565,6 +565,10 @@ async def execute_sdk_workflow(
 
     try:
         if request.code:
+            # All request-side authorization and context reads are complete.
+            # Release the main-pool connection before dispatching
+            # long-running execution work; acceptance uses the dispatch pool.
+            await session.commit()
             # Execute inline code
             result = await run_code(
                 context=shared_ctx,
@@ -617,7 +621,7 @@ async def execute_sdk_workflow(
 
             # Reuse one hardened dispatch snapshot for the queue boundary. It
             # includes the active-Solution gate and global-repo policy, so the
-            # worker does not repeat this query after RabbitMQ delivery.
+            # executor does not repeat this query when it claims the run.
             dispatch_metadata = await get_workflow_for_execution(
                 str(workflow.id),
                 db=session,
@@ -627,6 +631,9 @@ async def execute_sdk_workflow(
             # but honor the caller's transient flag: dropdown-options pass
             # transient=True for the fast path, the manual Execute page passes
             # transient=False and expects a tracked execution row.
+            # Dispatch metadata has completed the request-side read phase.
+            # The sync wait below must not retain this main-pool connection.
+            await session.commit()
             result = await run_workflow(
                 context=shared_ctx,
                 workflow_id=str(workflow.id),
@@ -652,6 +659,9 @@ async def execute_sdk_workflow(
                 str(workflow.id),
                 db=session,
             )
+            # Dispatch metadata has completed the request-side read phase.
+            # The sync wait below must not retain this main-pool connection.
+            await session.commit()
             result = await run_workflow(
                 context=shared_ctx,
                 workflow_id=str(workflow.id),

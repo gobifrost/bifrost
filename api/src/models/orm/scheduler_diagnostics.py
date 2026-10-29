@@ -18,6 +18,8 @@ class SchedulerReplica(Base):
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
     hostname: Mapped[str] = mapped_column(String(255), nullable=False)
     pid: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 1 when the process runs platform jobs (an executor), 0 for an API
+    # control replica. Releases before #769 stage 6 wrote a slot count here.
     job_slots: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
@@ -42,6 +44,10 @@ class SchedulerTaskState(Base):
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_run_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
+    )
+    # Progress marker for tasks that scan time windows (schedule_processor).
+    cursor_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")

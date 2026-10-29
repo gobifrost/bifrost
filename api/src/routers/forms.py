@@ -24,12 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import Context, CurrentActiveUser
-from src.config import get_settings
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.rate_limit import RateLimiter, get_client_ip
+from src.core.rate_limit import RateLimiter
 from src.models.enums import FormAccessLevel
-from src.repositories.workflows import WorkflowRepository
 from src.services.audit import emit_audit
 from src.models import Execution as ExecutionORM
 from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
@@ -37,17 +35,13 @@ from src.models import FormPublication as FormPublicationORM
 from src.services.solutions.guard import assert_not_solution_managed
 from src.models import Role as RoleORM
 from src.models import Workflow as WorkflowORM
-from src.models.orm.solutions import Solution
 from src.models import FormCreate, FormUpdate, FormPublic
 from src.models import FileUploadRequest, FileUploadResponse, UploadedFileMetadata
 from src.models import FormStartupResponse
-from src.models.enums import ExecutionStatus
 from src.models.contracts.forms import (
     FormPublicationPublic,
     FormPublicationReview,
     FormPublicationUpdate,
-    FormConfirmationResponse,
-    FormExecutionResponse,
     FormCaptchaChallenge,
     FormFieldOptionsRequest,
     FormFieldOptionsResponse,
@@ -55,36 +49,6 @@ from src.models.contracts.forms import (
     FormSubmissionRequest,
     FormSubmissionResponse,
 )
-from shared import access_checks
-from shared.form_publication import build_publication_review
-from shared.form_captcha import (
-    FormCaptchaError,
-    create_form_captcha_challenge,
-    redeem_form_captcha_solution,
-)
-from shared.form_provider import FormProviderError, execute_form_field_provider
-from shared.form_execution import create_form_execution_context
-from shared.run_lineage import principal_lineage
-from shared.form_runtime import (
-    FormRuntimeValidationError,
-    accept_external_submission,
-    clear_embed_upload_references,
-    consume_startup_result,
-    form_capability_fingerprint,
-    load_startup_result,
-    normalize_allowed_origins,
-    release_external_submission,
-    register_embed_upload,
-    reserve_external_submission,
-    store_startup_result,
-    validate_embed_upload_references,
-    validate_form_submission,
-)
-from shared.logo_processing import (
-    LogoProcessingError,
-    process_logo,
-)
-from shared.scope_resolver import shared_read_organization
 from shared.sdk_forms import (
     SdkFormError,
     attach_form_logo_fields,
@@ -149,6 +113,8 @@ _FORM_EMBED_LIMITERS = {
 
 
 async def _limit_embed_action(http_request: Request, ctx, action: str) -> None:
+    from src.core.rate_limit import get_client_ip
+
     if not ctx.user.embed:
         return
     if not ctx.user.jti:
@@ -410,6 +376,8 @@ async def _load_form_for_publication(db: AsyncSession, form_id: UUID) -> FormORM
 async def _publication_response(
     db: AsyncSession, form: FormORM
 ) -> FormPublicationPublic:
+    from shared.form_publication import build_publication_review
+
     review = FormPublicationReview.model_validate(
         await build_publication_review(db, form)
     )
@@ -578,6 +546,8 @@ async def review_form_publication(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationReview:
+    from shared.form_publication import build_publication_review
+
     form = await _load_form_for_publication(db, form_id)
     await _require_form_read_access(db, user, form)
     return FormPublicationReview.model_validate(
@@ -612,6 +582,9 @@ async def publish_form(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationPublic:
+    from shared.form_publication import build_publication_review
+    from shared.form_runtime import normalize_allowed_origins
+
     form = await _load_form_for_publication(db, form_id)
     await _require_form_permission(db, user, form, "forms.readwrite")
     review = FormPublicationReview.model_validate(
@@ -777,6 +750,9 @@ async def create_form_captcha(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormCaptchaChallenge:
+    from src.config import get_settings
+    from shared.form_captcha import FormCaptchaError, create_form_captcha_challenge
+
     result = await db.execute(
         select(FormORM)
         .options(selectinload(FormORM.fields))
@@ -1016,6 +992,8 @@ async def upload_form_logo(
     file: UploadFile = File(..., description="Logo image (PNG/JPEG/SVG, ≤5MB)"),
 ) -> dict:
     """Upload a square logo for a form."""
+    from shared.logo_processing import LogoProcessingError, process_logo
+
     result = await db.execute(select(FormORM).where(FormORM.id == form_id))
     form = result.scalar_one_or_none()
     if not form:
@@ -1063,6 +1041,9 @@ async def get_form_logo(
     ctx: Context,
     db: DbSession,
 ) -> Response:
+    from shared import access_checks
+    from shared.scope_resolver import shared_read_organization
+
     result = await db.execute(select(FormORM).where(FormORM.id == form_id))
     form = result.scalar_one_or_none()
     if form is None or not form.is_active or not form.logo_data:
@@ -1228,6 +1209,10 @@ async def _authorize_form_runtime(
     db: AsyncSession, ctx, form: FormORM
 ) -> FormPublicationORM | None:
     """Authorize one form runtime action and enforce public approval freshness."""
+    from shared import access_checks
+    from shared.form_runtime import form_capability_fingerprint
+    from shared.scope_resolver import shared_read_organization
+    from src.models.orm.solutions import Solution
 
     if ctx.user.embed:
         if form.solution_id is not None:
@@ -1298,6 +1283,8 @@ async def _form_launch_authority(
     execution organization. Shared Global forms run at that caller's selected
     home/runtime organization rather than silently requiring a Global grant.
     """
+    from shared.scope_resolver import shared_read_organization
+
     if ctx.user.embed:
         return (form.organization_id or ctx.org_id), None
 
@@ -1333,7 +1320,26 @@ async def submit_form(
     HMAC sessions and authenticated users retain the execution summary used by
     the existing result journey.
     """
+    from src.config import get_settings
+    from src.models.contracts.forms import FormConfirmationResponse, FormExecutionResponse
+    from src.models.enums import ExecutionStatus
+    from src.repositories.workflows import WorkflowRepository
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from shared import access_checks
+    from shared.form_captcha import FormCaptchaError, redeem_form_captcha_solution
+    from shared.form_execution import create_form_execution_context
+    from shared.form_runtime import (
+        FormRuntimeValidationError,
+        accept_external_submission,
+        clear_embed_upload_references,
+        consume_startup_result,
+        load_startup_result,
+        release_external_submission,
+        reserve_external_submission,
+        validate_embed_upload_references,
+        validate_form_submission,
+    )
+    from shared.run_lineage import principal_lineage
 
     # Default request if None (backward compatibility with empty body)
     if request is None:
@@ -1709,7 +1715,12 @@ async def execute_startup_workflow(
     Returns:
         FormStartupResponse with the launch workflow's result
     """
+    from src.repositories.workflows import WorkflowRepository
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from shared import access_checks
+    from shared.form_execution import create_form_execution_context
+    from shared.form_runtime import store_startup_result
+    from shared.run_lineage import principal_lineage
 
     # Get the form
     result = await db.execute(
@@ -1867,6 +1878,11 @@ async def get_form_field_options(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormFieldOptionsResponse:
+    from shared import access_checks
+    from shared.form_provider import FormProviderError, execute_form_field_provider
+    from shared.run_lineage import principal_lineage
+    from shared.scope_resolver import shared_read_organization
+
     result = await db.execute(
         select(FormORM)
         .options(selectinload(FormORM.fields))
@@ -2030,6 +2046,7 @@ async def generate_upload_url(
         FileUploadResponse with presigned URL and file metadata
     """
     from src.services.file_storage import FileStorageService
+    from shared.form_runtime import register_embed_upload
 
     # Verify form exists and user has access
     result = await db.execute(

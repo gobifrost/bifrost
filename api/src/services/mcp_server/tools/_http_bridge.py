@@ -21,8 +21,8 @@ Why in-process HTTP instead of calling router functions directly:
 
 Auth strategy — two mutually exclusive paths:
 
-1. **FastMCP HTTP context** (a tool call reached the MCP server via HTTP):
-   :func:`fastmcp.server.dependencies.get_access_token` yields the caller's
+1. **MCP SDK HTTP context** (a tool call reached the MCP server via HTTP):
+   :func:`mcp.server.auth.middleware.auth_context.get_access_token` yields the caller's
    bearer token. We reuse it directly.
 2. **Executor / test context** (no FastMCP request on the stack, the MCP
    context was constructed by the agent executor or a unit test): we mint
@@ -55,13 +55,13 @@ _BRIDGE_URL_ENV = "BIFROST_MCP_HTTP_BRIDGE_URL"
 def _token_from_context(context: "MCPContext") -> str:
     """Return a bearer token usable for an in-process REST call.
 
-    Prefers the live FastMCP access token (same bytes the external MCP
+    Prefers the live MCP SDK access token (same bytes the external MCP
     client sent); falls back to minting a short-lived JWT from the
     context's claims so executor / test contexts still go through the
     standard auth path.
     """
     try:
-        from fastmcp.server.dependencies import get_access_token
+        from mcp.server.auth.middleware.auth_context import get_access_token
 
         token = get_access_token()
         if token is not None and getattr(token, "token", None):

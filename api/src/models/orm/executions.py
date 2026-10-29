@@ -60,6 +60,8 @@ class Execution(Base):
     cpu_total_seconds: Mapped[float | None] = mapped_column(Float, default=None)
     peak_cpu_cores: Mapped[float | None] = mapped_column(Float, default=None)
     peak_process_rss_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    # Peak RSS minus RSS at fork: the most memory the run itself added.
+    peak_memory_growth_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
 
     # Economics - final values for this execution
     time_saved: Mapped[int] = mapped_column(Integer, default=0)  # Minutes saved

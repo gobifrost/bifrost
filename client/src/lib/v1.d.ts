@@ -152,7 +152,6 @@ export interface paths {
          *     Checks:
          *     - Database connectivity
          *     - Redis connectivity
-         *     - RabbitMQ connectivity
          *     - S3 bucket availability when S3 is configured
          *
          *     Returns:
@@ -772,25 +771,29 @@ export interface paths {
         put?: never;
         /**
          * Authorize Device
-         * @description Authorize a device code (user approves CLI access).
-         *
-         *     This endpoint is called by the web UI when a logged-in user enters the
-         *     user_code and approves CLI access. The CLI will then receive tokens on
-         *     its next poll to /device/token.
-         *
-         *     Requires authentication - user must be logged in to authorize a device.
-         *
-         *     Args:
-         *         authorize_request: Device authorization request with user_code
-         *         current_user: Current authenticated user (from JWT)
-         *
-         *     Returns:
-         *         Success response
-         *
-         *     Raises:
-         *         HTTPException: If user_code is invalid or expired
+         * @description Approve a CLI login after explicit confirmation. The first decision is final.
          */
         post: operations["authorize_device_auth_device_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/device/deny": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deny Device
+         * @description Deny a CLI login without ever calling the approval endpoint.
+         */
+        post: operations["deny_device_auth_device_deny_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5614,6 +5617,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/kubernetes/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Kubernetes Policy */
+        put: operations["update_kubernetes_policy_api_admin_kubernetes_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/required-instructions": {
         parameters: {
             query?: never;
@@ -6280,17 +6300,15 @@ export interface paths {
          * Cancel Backfill Job
          * @description Mark a backfill job as cancelled so the UI unblocks.
          *
-         *     This does NOT drain messages already on the ``agent-summarization``
-         *     queue — RabbitMQ will keep delivering them and the worker will keep
-         *     summarising individual runs. What it does do:
+         *     This does NOT withdraw summaries already dispatched — executors keep
+         *     summarising those runs. What it does do:
          *
          *     - flips ``status`` from ``running`` to ``cancelled``
          *     - sets ``completed_at`` so the row stops appearing in "active" queries
          *     - broadcasts final state so the progress card dismisses itself
          *
-         *     Use this when progress has stalled (e.g. the worker was restarted
-         *     mid-job and prefetched messages went back on the queue but the counter
-         *     never advanced) — admins need a way out.
+         *     Use this when progress has stalled and the counter never advanced —
+         *     admins need a way out.
          */
         post: operations["cancel_backfill_job_api_agent_runs_backfill_jobs__job_id__cancel_post"];
         delete?: never;
@@ -16429,7 +16447,7 @@ export interface components {
         };
         /**
          * DeviceAuthorizeRequest
-         * @description Request to authorize a device using user code.
+         * @description The code for a CLI device login being approved or denied.
          */
         DeviceAuthorizeRequest: {
             /** User Code */
@@ -21341,7 +21359,7 @@ export interface components {
         };
         /**
          * KubernetesExecutionJobType
-         * @description One remotely-eligible job type with its product opt-in state.
+         * @description One isolatable job type with its per-type state.
          */
         KubernetesExecutionJobType: {
             /** Job Type */
@@ -21354,8 +21372,6 @@ export interface components {
             enabled: boolean;
             /** Default Enabled */
             default_enabled: boolean;
-            /** Allowed By Deployment */
-            allowed_by_deployment: boolean;
             /** Max Concurrency */
             max_concurrency?: number | null;
             /** Default Max Concurrency */
@@ -21363,15 +21379,22 @@ export interface components {
         };
         /**
          * KubernetesExecutionSettings
-         * @description Product opt-in state for remote execution, per job type.
+         * @description Everything Settings -> Kubernetes shows.
          */
         KubernetesExecutionSettings: {
+            policy: components["schemas"]["KubernetesPolicyValues"];
+            /** Imported From Env */
+            imported_from_env: {
+                [key: string]: components["schemas"]["KubernetesPolicyProvenance"];
+            };
             /** Job Types */
             job_types: components["schemas"]["KubernetesExecutionJobType"][];
+            /** Unread Variables */
+            unread_variables: string[];
         };
         /**
          * KubernetesExecutionUpdate
-         * @description Toggle remote execution and/or concurrency for one job type.
+         * @description Toggle isolation and/or concurrency for one job type.
          *
          *     max_concurrency is tri-state: omitted leaves the override unchanged,
          *     null clears it back to the code default, 1-32 sets it.
@@ -21385,14 +21408,65 @@ export interface components {
             max_concurrency?: number | null;
         };
         /**
+         * KubernetesPolicyProvenance
+         * @description A setting whose value was imported from a deployment variable.
+         */
+        KubernetesPolicyProvenance: {
+            /** Variable */
+            variable: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+        };
+        /**
+         * KubernetesPolicyUpdate
+         * @description Change any of the scaling and isolation settings; omitted ones stay.
+         */
+        KubernetesPolicyUpdate: {
+            /** Warm Workers */
+            warm_workers?: number | null;
+            /** Max Workers */
+            max_workers?: number | null;
+            /** Worker Memory Mib */
+            worker_memory_mib?: number | null;
+            /** Largest Worker Mib */
+            largest_worker_mib?: number | null;
+            /** Idle Seconds */
+            idle_seconds?: number | null;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled?: boolean | null;
+            /** Max Isolated Pods */
+            max_isolated_pods?: number | null;
+        };
+        /**
+         * KubernetesPolicyValues
+         * @description Worker scaling and isolated-job settings in effect.
+         */
+        KubernetesPolicyValues: {
+            /** Warm Workers */
+            warm_workers: number;
+            /** Max Workers */
+            max_workers: number;
+            /** Worker Memory Mib */
+            worker_memory_mib: number;
+            /** Largest Worker Mib */
+            largest_worker_mib: number;
+            /** Idle Seconds */
+            idle_seconds: number;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled: boolean;
+            /** Max Isolated Pods */
+            max_isolated_pods: number;
+        };
+        /**
          * KubernetesStatus
-         * @description Whether this deployment configured remote build execution.
+         * @description Whether this API may manage Kubernetes Jobs (the page gate).
          */
         KubernetesStatus: {
             /** Configured */
             configured: boolean;
-            /** Backend */
-            backend: string;
         };
         /**
          * LLMModelInfo
@@ -24599,6 +24673,8 @@ export interface components {
             contributors: components["schemas"]["ProductUpdateContributor"][];
             /** Assets */
             assets: components["schemas"]["ProductUpdateAsset"][];
+            /** Agent Prompt */
+            agent_prompt?: string | null;
             /** Additional Areas */
             additional_areas?: string[] | null;
             /** Release */
@@ -26353,10 +26429,8 @@ export interface components {
         SchedulerCapacityStatus: {
             /** Replicas Online */
             replicas_online: number;
-            /** Slots Total */
-            slots_total: number;
-            /** Slots Running */
-            slots_running: number;
+            /** Platform Jobs Running */
+            platform_jobs_running: number;
             /** Jobs Queued */
             jobs_queued: number;
             /** Jobs Waiting For Memory */
@@ -26365,6 +26439,13 @@ export interface components {
             oldest_queued_seconds?: number | null;
             /** Max Memory Utilization Percent */
             max_memory_utilization_percent?: number | null;
+            /**
+             * Runs Waiting
+             * @default 0
+             */
+            runs_waiting: number;
+            /** Oldest Waiting Run Seconds */
+            oldest_waiting_run_seconds?: number | null;
         };
         /** SchedulerDiagnosticsResponse */
         SchedulerDiagnosticsResponse: {
@@ -26400,8 +26481,8 @@ export interface components {
             hostname: string;
             /** Pid */
             pid: number;
-            /** Job Slots */
-            job_slots: number;
+            /** Runs Platform Jobs */
+            runs_platform_jobs: boolean;
             /** Is Leader */
             is_leader: boolean;
             /** Online */
@@ -27000,7 +27081,7 @@ export interface components {
              * Blocked Reason
              * @description Launch suppression, if any
              */
-            blocked_reason?: ("policy" | "crash_loop" | "disabled") | null;
+            blocked_reason?: ("policy" | "crash_loop" | "disabled" | "too_large") | null;
             /**
              * Restart Eligible At
              * @description Earliest next attempt
@@ -30135,7 +30216,7 @@ export interface components {
             sync?: boolean | null;
             /**
              * Code
-             * @description Optional: Python code to execute as script (base64 encoded). If provided, executes code instead of looking up workflow by ID.
+             * @description Optional: Python code to execute as a script, as plain text. If provided, executes code instead of looking up workflow by ID.
              */
             code?: string | null;
             /**
@@ -30454,6 +30535,16 @@ export interface components {
              * @default 1800
              */
             timeout_seconds: number;
+            /**
+             * Memory Request Mib
+             * @description Declared memory a run of this workflow requests from an executor; when unset, the learned value is used
+             */
+            memory_request_mib?: number | null;
+            /**
+             * Learned Memory Bytes
+             * @description Peak memory its recent runs added (learned per code version); None before a measured run
+             */
+            learned_memory_bytes?: number | null;
             /** @description Retry configuration */
             retry_policy?: components["schemas"]["RetryPolicy"] | null;
             /**
@@ -30882,6 +30973,11 @@ export interface components {
              * @description Cache TTL in seconds for data providers (0-86400, default 300)
              */
             cache_ttl_seconds?: number | null;
+            /**
+             * Memory Request Mib
+             * @description Declared memory (MiB) a run requests from an executor; null uses the learned value
+             */
+            memory_request_mib?: number | null;
             /**
              * Tags
              * @description Tags for categorization and search
@@ -32084,6 +32180,39 @@ export interface operations {
         };
     };
     authorize_device_auth_device_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deny_device_auth_device_deny_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -34589,9 +34718,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkflowExecution"] | {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowExecution"];
                 };
             };
             /** @description Validation Error */
@@ -40836,6 +40963,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["KubernetesExecutionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KubernetesExecutionSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_kubernetes_policy_api_admin_kubernetes_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesPolicyUpdate"];
             };
         };
         responses: {

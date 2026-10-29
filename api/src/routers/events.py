@@ -7,7 +7,7 @@ Supports webhooks as event sources with adapter-based configuration.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -17,9 +17,6 @@ from sqlalchemy.orm import joinedload
 
 from src.core.auth import Context, CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.error_messages import format_exception_message
-from src.core.log_safety import log_safe
-from shared.event_deliveries import can_retry_delivery_status
 from src.models.contracts.events import (
     CreateDeliveryRequest,
     DynamicValuesRequest,
@@ -62,45 +59,10 @@ from src.models.orm.events import (
 from src.models.orm.integrations import Integration
 from src.models.orm.organizations import Organization
 from src.models.orm.workflows import Workflow
-from src.repositories.events import (
-    EventDeliveryRepository,
-    EventRepository,
-    EventSourceRepository,
-    EventSubscriptionRepository,
-)
-from src.core.cache import get_shared_redis
-from src.config import get_settings
-from src.services.audit import emit_audit
-from src.services.cron_parser import is_cron_expression_valid
-from src.services.events.registry import CURATED_TOPICS
-from src.services.events.validation import validate_topic
-from src.services.solutions.guard import assert_not_solution_managed
-from src.services.webhooks.registry import get_adapter_registry
-from src.services.webhooks.auth import (
-    build_webhook_integration_credentials,
-    resolve_webhook_integration_auth,
-)
-from src.services.webhooks.lifecycle import (
-    resubscribe_provider,
-    unsubscribe_provider,
-)
-from src.services.webhooks.signing_secret import (
-    carry_signing_secret,
-    generate_signing_secret,
-    signing_secret_set,
-    split_signing_secret,
-    uses_signing_secret,
-    with_signing_secret,
-)
 from src.services.operation_catalog import operation_route
-from shared.scope_resolver import UNSET, resolve_effective_scope
-from src.services.authorization.enforce import (
-    Caller,
-    load_caller,
-    permitted_organizations,
-    require_permission,
-    user_reach,
-)
+
+if TYPE_CHECKING:
+    from src.services.authorization.enforce import Caller
 
 logger = logging.getLogger(__name__)
 
@@ -112,12 +74,18 @@ async def _require_event_source(
     user: CurrentActiveUser,
     source: EventSource,
     permission: str,
-) -> Caller:
+) -> "Caller":
     """Authorize an EventSource at its persisted organization.
 
     Object lookup intentionally stays separate from admission so callers
     outside original reach receive the same neutral source result as a miss.
     """
+    from src.services.authorization.enforce import (
+        load_caller,
+        require_permission,
+        user_reach,
+    )
+
     caller = await load_caller(db, user)
     if not user_reach(caller).covers(source.organization_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event source not found")
@@ -130,8 +98,14 @@ async def _require_event_target(
     user: CurrentActiveUser,
     organization_id: UUID | None,
     permission: str,
-) -> Caller:
+) -> "Caller":
     """Authorize an explicit event target before creation or lookup."""
+    from src.services.authorization.enforce import (
+        load_caller,
+        require_permission,
+        user_reach,
+    )
+
     caller = await load_caller(db, user)
     if not user_reach(caller).covers(organization_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
@@ -146,11 +120,15 @@ def _build_callback_url(source_id: UUID) -> str:
 
 def _build_public_callback_url(source_id: UUID) -> str:
     """Build the externally reachable callback URL sent to webhook providers."""
+    from src.config import get_settings
+
     return f"{get_settings().public_url.rstrip('/')}{_build_callback_url(source_id)}"
 
 
 async def _get_rate_limited_count(source_id: str) -> int:
     """Read the 24h rate-limit hit counter for a webhook source from Redis."""
+    from src.core.cache import get_shared_redis
+
     r = await get_shared_redis()
     raw = await r.get(f"bifrost:rate_limit_hits:{source_id}")
     return int(raw) if raw else 0
@@ -161,6 +139,10 @@ async def _build_event_source_response(
     db: DbSession,
 ) -> EventSourceResponse:
     """Build EventSourceResponse from ORM model with computed fields."""
+    from src.repositories.events import EventRepository, EventSubscriptionRepository
+    from src.services.webhooks.registry import get_adapter_registry
+    from src.services.webhooks.signing_secret import signing_secret_set
+
     # Get subscription count
     sub_repo = EventSubscriptionRepository(db)
     subscription_count = await sub_repo.count_by_source(source.id, active_only=True)
@@ -229,6 +211,8 @@ async def _build_event_source_response(
 def _split_webhook_secret(config: dict[str, Any], adapter: Any) -> tuple[dict[str, Any], bool, str | None]:
     """Separate the write-only signing secret from adapter config, rejecting
     a secret the adapter would never verify."""
+    from src.services.webhooks.signing_secret import split_signing_secret, uses_signing_secret
+
     try:
         remaining, sent, secret = split_signing_secret(config)
     except ValueError as exc:
@@ -259,6 +243,8 @@ async def _build_event_subscription_response(
     db: DbSession,
 ) -> EventSubscriptionResponse:
     """Build EventSubscriptionResponse from ORM model with computed fields."""
+    from src.repositories.events import EventDeliveryRepository
+
     # Get delivery counts
     delivery_repo = EventDeliveryRepository(db)
     total_count = await delivery_repo.count_by_subscription(subscription.id)
@@ -426,6 +412,8 @@ async def _validate_rescoped_subscriptions(
 
 def _validate_schedule_config(cron_expression: str, timezone_name: str) -> None:
     """Reject schedule values the scheduler cannot execute."""
+    from src.services.cron_parser import is_cron_expression_valid
+
     if not is_cron_expression_valid(cron_expression):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -442,12 +430,17 @@ def _validate_schedule_config(cron_expression: str, timezone_name: str) -> None:
 
 async def _resolve_webhook_integration(
     db: DbSession,
-    caller: Caller,
+    caller: "Caller",
     source: EventSource,
     adapter: Any,
     integration_id: UUID | None,
 ) -> Any | None:
     """Resolve the auth object an adapter's subscribe/unsubscribe call needs."""
+    from src.services.webhooks.auth import (
+        build_webhook_integration_credentials,
+        resolve_webhook_integration_auth,
+    )
+
     if integration_id is None:
         return None
     credentials = await build_webhook_integration_credentials(
@@ -458,7 +451,7 @@ async def _resolve_webhook_integration(
 
 async def _resubscribe_webhook_on_change(
     db: DbSession,
-    caller: Caller,
+    caller: "Caller",
     source: EventSource,
     ws: WebhookSource,
     adapter: Any,
@@ -475,6 +468,9 @@ async def _resubscribe_webhook_on_change(
     matching the existing ``resubscribe_provider`` lifecycle helper's
     tolerance for a provider that already dropped the old registration.
     """
+    from src.services.webhooks.registry import get_adapter_registry
+    from src.services.webhooks.signing_secret import carry_signing_secret, uses_signing_secret
+
     new_integration = await _resolve_webhook_integration(
         db, caller, source, adapter, new_integration_id
     )
@@ -530,6 +526,8 @@ async def list_adapters(
     db: DbSession,
 ) -> WebhookAdapterListResponse:
     """List all available webhook adapters."""
+    from src.services.webhooks.registry import get_adapter_registry
+
     await _require_event_target(db, user, None, "events.read")
     registry = get_adapter_registry()
     adapters_info = registry.list_adapters()
@@ -566,6 +564,13 @@ async def get_dynamic_values(
 
     Returns a list of option objects that the UI uses to populate dropdowns.
     """
+    from src.core.log_safety import log_safe
+    from src.services.webhooks.auth import (
+        build_webhook_integration_credentials,
+        resolve_webhook_integration_auth,
+    )
+    from src.services.webhooks.registry import get_adapter_registry
+
     caller = await _require_event_target(
         db, user, request.organization_id, "events.readwrite"
     )
@@ -652,6 +657,13 @@ async def list_sources(
     - scope=global: show only global (no org) sources
     - organization_id=<uuid>: show that org's sources + global
     """
+    from src.services.authorization.enforce import (
+        load_caller,
+        permitted_organizations,
+        require_permission,
+        user_reach,
+    )
+
     caller = await load_caller(db, user)
     conditions = []
     if scope == "global":
@@ -715,6 +727,21 @@ async def create_source(
     2. Call the adapter's subscribe method (if needed)
     3. Store the webhook configuration, and the signing secret encrypted
     """
+    from shared.scope_resolver import UNSET, resolve_effective_scope
+    from src.services.audit import emit_audit
+    from src.services.authorization.enforce import (
+        load_caller,
+        require_permission,
+        user_reach,
+    )
+    from src.services.events.validation import validate_topic
+    from src.services.webhooks.auth import (
+        build_webhook_integration_credentials,
+        resolve_webhook_integration_auth,
+    )
+    from src.services.webhooks.registry import get_adapter_registry
+    from src.services.webhooks.signing_secret import with_signing_secret
+
     now = datetime.now(timezone.utc)
 
     # Validate topic sources
@@ -941,6 +968,8 @@ async def get_source(
     db: DbSession,
 ) -> EventSourceResponse:
     """Get event source by ID (Platform admin only)."""
+    from src.repositories.events import EventSourceRepository
+
     repo = EventSourceRepository(db)
     source = await repo.get_by_id_with_details(source_id)
 
@@ -968,6 +997,13 @@ async def update_source(
     db: DbSession,
 ) -> EventSourceResponse:
     """Update an event source."""
+    from src.core.log_safety import log_safe
+    from src.repositories.events import EventSourceRepository
+    from src.services.audit import emit_audit
+    from src.services.solutions.guard import assert_not_solution_managed
+    from src.services.webhooks.registry import get_adapter_registry
+    from src.services.webhooks.signing_secret import with_signing_secret
+
     repo = EventSourceRepository(db)
     source = await repo.get_by_id_with_details(source_id)
 
@@ -1134,6 +1170,10 @@ async def resubscribe_source(
     db: DbSession,
 ) -> EventSourceResponse:
     """Replace an external provider subscription for a webhook source."""
+    from src.core.log_safety import log_safe
+    from src.repositories.events import EventSourceRepository
+    from src.services.webhooks.lifecycle import resubscribe_provider
+
     repo = EventSourceRepository(db)
     source = await repo.get_by_id_with_details(source_id)
     if not source:
@@ -1202,6 +1242,15 @@ async def rotate_source_secret(
     No Solution bundle carries the secret, and deploy keeps the stored one, so
     Solution-managed sources may rotate it too.
     """
+    from src.repositories.events import EventSourceRepository
+    from src.services.audit import emit_audit
+    from src.services.webhooks.registry import get_adapter_registry
+    from src.services.webhooks.signing_secret import (
+        generate_signing_secret,
+        uses_signing_secret,
+        with_signing_secret,
+    )
+
     repo = EventSourceRepository(db)
     source = await repo.get_by_id_with_details(source_id)
     if not source:
@@ -1253,6 +1302,13 @@ async def delete_source(
     1. Call adapter unsubscribe (for external subscriptions)
     2. Delete the source and cascade to subscriptions, events, and deliveries
     """
+    from src.core.error_messages import format_exception_message
+    from src.core.log_safety import log_safe
+    from src.repositories.events import EventSourceRepository
+    from src.services.audit import emit_audit
+    from src.services.solutions.guard import assert_not_solution_managed
+    from src.services.webhooks.lifecycle import unsubscribe_provider
+
     repo = EventSourceRepository(db)
     source = await repo.get_by_id_with_details(source_id)
 
@@ -1330,6 +1386,8 @@ async def list_subscriptions(
     offset: int = Query(0, ge=0, description="Skip results"),
 ) -> EventSubscriptionListResponse:
     """List subscriptions for an event source (Platform admin only)."""
+    from src.repositories.events import EventSourceRepository, EventSubscriptionRepository
+
     # Verify source exists
     source_repo = EventSourceRepository(db)
     source = await source_repo.get_by_id(source_id)
@@ -1367,6 +1425,11 @@ async def create_subscription(
     db: DbSession,
 ) -> EventSubscriptionResponse:
     """Create a subscription to an event source."""
+    from src.core.log_safety import log_safe
+    from src.repositories.events import EventSourceRepository
+    from src.services.audit import emit_audit
+    from src.services.authorization.enforce import Caller, user_reach
+
     now = datetime.now(timezone.utc)
 
     # Verify source exists
@@ -1464,6 +1527,11 @@ async def update_subscription(
     db: DbSession,
 ) -> EventSubscriptionResponse:
     """Update an event subscription."""
+    from src.core.log_safety import log_safe
+    from src.repositories.events import EventSourceRepository
+    from src.services.audit import emit_audit
+    from src.services.solutions.guard import assert_not_solution_managed
+
     # Verify source exists
     source_repo = EventSourceRepository(db)
     source = await source_repo.get_by_id(source_id)
@@ -1536,6 +1604,11 @@ async def delete_subscription(
     db: DbSession,
 ) -> None:
     """Permanently delete an event subscription."""
+    from src.core.log_safety import log_safe
+    from src.repositories.events import EventSourceRepository
+    from src.services.audit import emit_audit
+    from src.services.solutions.guard import assert_not_solution_managed
+
     # Verify source exists
     source_repo = EventSourceRepository(db)
     source = await source_repo.get_by_id(source_id)
@@ -1593,6 +1666,8 @@ async def get_subscription(
     db: DbSession,
 ) -> EventSubscriptionResponse:
     """Get a single Event Subscription by ID (platform admin only)."""
+    from src.repositories.events import EventSourceRepository
+
     source_repo = EventSourceRepository(db)
     source = await source_repo.get_by_id(source_id)
     if not source:
@@ -1653,6 +1728,11 @@ async def list_events(
 ) -> EventListResponse:
     """List events for an event source with optional filters (Platform admin only)."""
     from src.models.enums import EventStatus
+    from src.repositories.events import (
+        EventDeliveryRepository,
+        EventRepository,
+        EventSourceRepository,
+    )
 
     # Verify source exists
     source_repo = EventSourceRepository(db)
@@ -1772,6 +1852,9 @@ async def list_topics(
     user: CurrentActiveUser,
 ) -> TopicsRegistryResponse:
     """Return the curated topic registry plus topics currently in use."""
+    from src.repositories.events import EventSourceRepository
+    from src.services.events.registry import CURATED_TOPICS
+
     await _require_event_target(db, user, None, "events.read")
     source_repo = EventSourceRepository(db)
     in_use = await source_repo.get_distinct_topic_types()
@@ -1794,6 +1877,8 @@ async def get_event(
     db: DbSession,
 ) -> EventResponse:
     """Get event by ID (Platform admin only)."""
+    from src.repositories.events import EventDeliveryRepository
+
     # Get event with source
     result = await db.execute(
         select(Event)
@@ -1862,6 +1947,8 @@ async def list_deliveries(
     Includes both existing deliveries AND subscriptions that were added after
     the event arrived (shown as "not_delivered" status with null id).
     """
+    from src.repositories.events import EventDeliveryRepository, EventSubscriptionRepository
+
     # Get event with event source
     result = await db.execute(
         select(Event)
@@ -1975,7 +2062,9 @@ async def create_delivery(
     added after the event originally arrived.
     """
     import uuid
-    from src.services.events.processor import EventProcessor
+    from src.core.error_messages import format_exception_message
+    from src.core.log_safety import log_safe
+    from src.services.events.processor import EventProcessor, QueuedDeliveries
 
     # Get event
     result = await db.execute(
@@ -2038,14 +2127,16 @@ async def create_delivery(
     db.add(delivery)
     await db.flush()
 
-    # Agent runs are created in a separate transaction and reference this
-    # delivery by foreign key, so the delivery must be durable before queueing.
-    await db.commit()
-
-    # Queue the execution
+    # The run commits with this delivery and its record of the run. Only
+    # this delivery is queued: other pending deliveries of the event belong
+    # to whoever created them.
     processor = EventProcessor(db)
+    queued = QueuedDeliveries()
     try:
-        await processor.queue_event_deliveries(event_id)
+        async with db.begin_nested():
+            queued = await processor.queue_event_deliveries(
+                event_id, delivery_ids={delivery.id}
+            )
     except Exception as e:
         error_message = format_exception_message(
             e,
@@ -2055,6 +2146,8 @@ async def create_delivery(
         delivery.status = EventDeliveryStatus.FAILED
         delivery.error_message = error_message
         await db.flush()
+    await db.commit()
+    await queued.hand_off()
 
     logger.info(
         f"Created delivery {delivery.id} for event {log_safe(event_id)} subscription {subscription.id}"
@@ -2096,6 +2189,8 @@ async def retry_delivery(
 
     This will create a new workflow execution for the event.
     """
+    from shared.event_deliveries import can_retry_delivery_status
+    from src.core.log_safety import log_safe
     from src.services.events.processor import EventProcessor
 
     # Get delivery with event
@@ -2127,7 +2222,9 @@ async def retry_delivery(
 
     # Reset delivery status to pending
     processor = EventProcessor(db)
-    message = await processor.retry_delivery(delivery)
+    message, queued = await processor.retry_delivery(delivery)
+    await db.commit()
+    await queued.hand_off()
 
     logger.info(f"Retried delivery {log_safe(delivery_id)}")
 

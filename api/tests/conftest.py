@@ -3,11 +3,11 @@ Pytest fixtures for Bifrost API testing infrastructure.
 
 This module provides:
 1. Database fixtures (PostgreSQL with SQLAlchemy async)
-2. Message queue fixtures (RabbitMQ)
-3. Cache fixtures (Redis)
-4. Authentication/authorization fixtures
+2. Cache fixtures (Redis)
+3. Authentication/authorization fixtures
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -49,11 +49,6 @@ TEST_DATABASE_URL_SYNC = os.getenv(
     "postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test",
 )
 
-TEST_RABBITMQ_URL = os.getenv(
-    "BIFROST_RABBITMQ_URL",
-    "amqp://bifrost:bifrost_test@rabbitmq:5672/",
-)
-
 TEST_REDIS_URL = os.getenv(
     "BIFROST_REDIS_URL",
     "redis://redis:6379/0",
@@ -74,7 +69,6 @@ def setup_test_environment(tmp_path_factory):
     os.environ["BIFROST_ENVIRONMENT"] = "testing"
     os.environ["BIFROST_DATABASE_URL"] = TEST_DATABASE_URL
     os.environ["BIFROST_DATABASE_URL_SYNC"] = TEST_DATABASE_URL_SYNC
-    os.environ["BIFROST_RABBITMQ_URL"] = TEST_RABBITMQ_URL
     os.environ["BIFROST_REDIS_URL"] = TEST_REDIS_URL
     os.environ["BIFROST_SECRET_KEY"] = "test-secret-key-for-e2e-testing-must-be-32-chars"
 
@@ -174,11 +168,19 @@ async def isolate_global_db_engine() -> AsyncGenerator[None, None]:
 
 @pytest_asyncio.fixture(autouse=True)
 async def isolate_global_redis_client() -> AsyncGenerator[None, None]:
-    """Close the process-global async Redis connection on its owning test loop."""
+    """Close process-global Redis pools on their owning test loop."""
+    from src.core.cache.redis_client import close_shared_redis
     from src.core.redis_client import close_redis_client
+    from src.services import platform_jobs
 
     yield
+    # A committed enqueue wakes executors in the background through the shared
+    # client. Let this loop's wakes finish first, or one can bind the shared
+    # client after it is closed and leave it bound to a dead loop.
+    loop = asyncio.get_running_loop()
+    await asyncio.gather(*(wake for wake in platform_jobs._wakes if wake.get_loop() is loop))
     await close_redis_client()
+    await close_shared_redis()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -294,15 +296,6 @@ async def isolate_file_policies(request) -> AsyncGenerator[None, None]:
 
 
 # ==================== MOCK FIXTURES ====================
-
-
-@pytest.fixture
-def mock_rabbitmq():
-    """Mock RabbitMQ connection for unit tests."""
-    mock = AsyncMock()
-    mock.publish = AsyncMock(return_value=None)
-    mock.consume = AsyncMock(return_value=None)
-    return mock
 
 
 @pytest.fixture

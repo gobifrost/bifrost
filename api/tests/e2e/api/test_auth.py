@@ -52,7 +52,6 @@ class TestHealthCheck:
         assert data["status"] == "healthy"
         assert data["components"]["database"]["status"] == "healthy"
         assert data["components"]["redis"]["status"] == "healthy"
-        assert data["components"]["rabbitmq"]["status"] == "healthy"
         assert data["components"]["s3"]["status"] == "healthy"
 
     def test_detailed_health_check(self, e2e_client):
@@ -61,10 +60,9 @@ class TestHealthCheck:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
-        assert set(data["components"]) == {"database", "redis", "rabbitmq", "s3"}
+        assert set(data["components"]) == {"database", "redis", "s3"}
         assert data["components"]["database"]["type"] == "postgresql"
         assert data["components"]["redis"]["type"] == "redis"
-        assert data["components"]["rabbitmq"]["type"] == "rabbitmq"
         assert data["components"]["s3"]["type"] == "s3"
 
 

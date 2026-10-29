@@ -23,7 +23,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 172,
         "manifest": 16,
         "mcp": 94,
-        "rest": 687,
+        "rest": 689,
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -44,6 +44,18 @@ def test_solution_dev_context_is_authentication_transport() -> None:
     assert row["status"] == "transport_only"
     assert row["reason"] == (
         "Issues user-bound context for local Solution development; owns no entity state."
+    )
+
+
+@pytest.mark.parametrize("path", ["/auth/device/authorize", "/auth/device/deny"])
+def test_device_decisions_are_authentication_transport(path: str) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(row for row in inventory["uncataloged"]["rest"] if row["path"] == path)
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Records the user's decision for CLI authentication; owns no entity state."
     )
 
 

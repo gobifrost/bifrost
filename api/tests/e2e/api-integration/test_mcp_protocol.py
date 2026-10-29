@@ -81,6 +81,14 @@ class TestMCPProtocol:
             },
         )
         assert response.status_code == 401
+        challenge = response.headers["WWW-Authenticate"]
+        assert 'resource_metadata="' in challenge
+        assert "/.well-known/oauth-protected-resource/mcp" in challenge
+
+    def test_stateless_mcp_does_not_open_a_notification_stream(self):
+        response = requests.get(f"{TEST_API_URL}/mcp")
+
+        assert response.status_code == 405
 
     def test_mcp_initialize_success(self, platform_admin):
         """POST /mcp with valid admin token should return initialize response."""

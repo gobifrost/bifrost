@@ -41,10 +41,10 @@ from src.services.durable_impersonation import principal_durable_impersonation
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
 from src.services.agent_run_step_streams import append_agent_run_step
+from src.services.capabilities.catalog import resolve_capability_route
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
     find_delegated_agent,
-    parse_mcp_tool_name,
     resolve_agent_tools,
 )
 from src.services.execution.agent_workflow_tools import (
@@ -65,6 +65,8 @@ from src.services.agent_runtime import (
 )
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.agent_runtime.composition import build_agent_composition
+from src.services.agent_runtime.tool_policy import build_automatic_code_mode_capabilities
+from src.services.agent_runtime.toolset import code_mode_safe_name_map
 from src.services.ai_behavior_service import (
     AGENT_EXECUTION_MODE_METADATA_KEY,
     AgentExecutionMode,
@@ -720,6 +722,10 @@ class AutonomousAgentExecutor:
         # default_max_tokens; agent.llm_max_tokens wins when set,
         # otherwise the profile default (or provider default) applies.
         # Fallbacks resolve from their own profile defaults.
+        automatic_code_mode = (
+            self._agent_execution_mode == "automatic"
+            and (tool_definitions or composition is not None)
+        )
         toolset = (
             composition.entry_toolset(
                 execute_tool,
@@ -734,6 +740,10 @@ class AutonomousAgentExecutor:
                 toolset_id=f"bifrost-{agent.id}",
             )
         )
+        if automatic_code_mode and composition is None:
+            toolset = toolset.renamed(
+                code_mode_safe_name_map(tuple(definition.name for definition in tool_definitions))
+            )
         # Blank / repetitive no-tool completions are billed like real output
         # (observed: 131072 output tokens with zero visible content and zero
         # tool calls). Pydantic AI treats them as valid final output, so the
@@ -742,6 +752,11 @@ class AutonomousAgentExecutor:
         # Usage for every attempt — including rejected ones — is already
         # charged to the shared UsageLimits ledger by ObservedModel.
         empty_output_guard = EmptyOutputCircuitBreaker()
+        automatic_code_mode_capabilities = (
+            build_automatic_code_mode_capabilities()
+                if automatic_code_mode
+            else []
+        )
         runtime = PydanticAgent(
             chain.model,
             system_prompt=build_agent_system_prompt(
@@ -752,8 +767,11 @@ class AutonomousAgentExecutor:
             capabilities=[
                 *build_runtime_capabilities(budget, context_window=context_window),
                 empty_output_guard,
-                *(composition.capabilities(execute_tool, record_tool_event)
-                  if composition is not None else []),
+                *(composition.capabilities(
+                    execute_tool,
+                    record_tool_event,
+                ) if composition is not None else []),
+                *automatic_code_mode_capabilities,
             ],
             model_settings=chain.primary_settings,
             # One bounded correction for malformed tool names/arguments. The
@@ -922,16 +940,27 @@ class AutonomousAgentExecutor:
         except AgentRuntimeAuthorizationError as exc:
             raise ToolError(str(exc)) from exc
 
+        active_workflow_ids = (
+            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
+        )
+        route = resolve_capability_route(agent, tool_call.name, active_workflow_ids)
+
         # Knowledge search
-        if tool_call.name == "search_knowledge" and agent.knowledge_sources:
+        if route is not None and route.source == "knowledge" and agent.knowledge_sources:
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Delegation
-        if tool_call.name.startswith("delegate_to_"):
+        if route is not None and route.source == "delegation":
             return await self._execute_delegation(tool_call, agent)
 
         # System tools
-        if tool_call.name in (agent.system_tools or []):
+        if route is not None and (
+            route.source == "system"
+            or (
+                route.source == "knowledge"
+                and tool_call.name in (agent.system_tools or [])
+            )
+        ):
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
@@ -941,23 +970,19 @@ class AutonomousAgentExecutor:
         # execution service. The threaded ``self._acting_user_id`` is
         # what differentiates a chat-claim webhook or Run As (per-user
         # OAuth) from a fully autonomous run (service token only).
-        mcp_route = parse_mcp_tool_name(tool_call.name)
-        if mcp_route is not None:
-            connection_id, remote_tool_name = mcp_route
-            if connection_id not in {connection.id for connection in agent.mcp_connections}:
-                raise ToolError("MCP tool is no longer bound to this agent")
+        if route is not None and route.source == "external_mcp":
+            assert route.source_id is not None
+            assert route.remote_tool_name is not None
             return await self._execute_mcp_tool(
                 tool_call,
-                connection_id=connection_id,
-                remote_tool_name=remote_tool_name,
+                connection_id=route.source_id,
+                remote_tool_name=route.remote_tool_name,
             )
 
         # Workflow tools
-        workflow_id = (
-            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
-        ).get(tool_call.name)
-        if not workflow_id:
+        if route is None or route.source != "workflow" or route.source_id is None:
             raise ToolError(f"Unknown tool: {tool_call.name}")
+        workflow_id = route.source_id
 
         if self._caller is None:
             raise ToolError("Agent run caller is unavailable")
@@ -1475,6 +1500,8 @@ class AutonomousAgentExecutor:
             evidence=evidence,
         )
 
+        from src.services.execution.summary_dispatch import hand_off_summary, stage_summary
+
         async with self._session_factory() as db:
             sub_run_obj = await db.get(AgentRun, sub_run_id)
             if sub_run_obj is None:
@@ -1500,18 +1527,12 @@ class AutonomousAgentExecutor:
                 }
 
             await sub_executor.flush_to_db(db)
+            summary = (
+                await stage_summary(db, sub_run_id) if status == "completed" else None
+            )
             await db.commit()
 
-        if status == "completed":
-            try:
-                from src.services.execution.run_summarizer import enqueue_summarize
-
-                await enqueue_summarize(sub_run_id)
-            except Exception:
-                logger.exception(
-                    "Failed to enqueue summarizer for delegated run %s",
-                    sub_run_id,
-                )
+        await hand_off_summary(summary)
 
         if self.redis_client:
             try:
@@ -1615,13 +1636,16 @@ class AutonomousAgentExecutor:
                 result = await func(context, **tool_call.arguments)
                 await db.commit()
 
-            # Extract result from FastMCP ToolResult format
+            # Preserve the MCP wire representation for Bifrost-owned tool
+            # results when the autonomous executor invokes a tool directly.
             import pydantic_core
+            from src.services.mcp_server.tool_result import ToolResult as MCPToolResult
 
-            if hasattr(result, "content") and hasattr(result, "structured_content"):
+            if isinstance(result, MCPToolResult):
+                wire_result = result.to_call_tool_result()
                 result_data = {
-                    "content": pydantic_core.to_jsonable_python(result.content),
-                    "structured_content": result.structured_content,
+                    "content": pydantic_core.to_jsonable_python(wire_result.content),
+                    "structured_content": wire_result.structuredContent,
                 }
             elif hasattr(result, "content"):
                 result_data = pydantic_core.to_jsonable_python(result.content)

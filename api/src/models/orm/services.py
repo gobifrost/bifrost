@@ -75,7 +75,8 @@ class ServiceDefinition(Base):
     # attempt. Terminal policy outcomes (clean return under on_failure/never,
     # crash-loop entry) set blocked_reason; manual restart or source/config
     # change clears it.
-    # blocked_reason: NULL | 'policy' | 'crash_loop' | 'disabled'
+    # blocked_reason: NULL | 'policy' | 'crash_loop' | 'disabled' | 'too_large'
+    # ('too_large': no executor can hold its memory request; cleared once one can)
     blocked_reason: Mapped[str | None] = mapped_column(String(20), default=None)
     restart_eligible_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

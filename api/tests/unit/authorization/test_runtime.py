@@ -6,7 +6,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, event, inspect
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.sdk_users import set_platform_admin
@@ -21,6 +22,7 @@ from src.models.orm.users import User
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflows import Workflow
 from src.services.authorization.runtime import RuntimeIdentityError, load_runtime_authority
+from src.services.authorization.runtime_auth import load_runtime_principal
 
 
 async def _organization(session: AsyncSession, name: str) -> Organization:
@@ -249,6 +251,108 @@ async def test_runtime_reloads_run_user_roles_on_each_call(db_session: AsyncSess
 
     assert elevated.run_user.is_platform_admin is True
     assert revoked.run_user.is_platform_admin is False
+
+
+@pytest.mark.asyncio
+async def test_same_user_runtime_principal_reuses_current_authority_and_refreshes_next_call(
+    db_session: AsyncSession,
+) -> None:
+    """A same-user execution checks current authority once per request."""
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    workflow = await _workflow(db_session, organization.id, permission_mode="full")
+    execution = await _execution(
+        db_session,
+        workflow=workflow,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    await set_platform_admin(db_session, user, True, assigned_by="runtime-test")
+
+    payload = {"credential_kind": "workflow_execution", "sub": str(execution.id)}
+    initial = await load_runtime_principal(db_session, payload)
+    assert initial is not None
+    assert initial.is_superuser is True
+
+    statements: list[str] = []
+
+    def count_statement(conn, cursor, statement, parameters, context, executemany) -> None:
+        statements.append(statement)
+
+    engine = db_session.get_bind()
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        warmed = await load_runtime_principal(db_session, payload)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert warmed is not None
+    assert warmed.is_superuser is True
+    assert len(statements) <= 8
+
+    # The reuse is request-scoped: the next call must still observe revocation
+    # and deletion from durable state.
+    other_admin = await _person(db_session, organization, "remaining-admin")
+    await set_platform_admin(db_session, other_admin, True, assigned_by="runtime-test")
+    await set_platform_admin(db_session, user, False, assigned_by="runtime-test")
+    revoked = await load_runtime_principal(db_session, payload)
+    assert revoked is not None
+    assert revoked.is_superuser is False
+
+    await db_session.delete(user)
+    await db_session.flush()
+    assert await load_runtime_principal(db_session, payload) is None
+
+
+@pytest.mark.asyncio
+async def test_workflow_runtime_authority_defers_unneeded_execution_payloads(
+    db_session: AsyncSession,
+) -> None:
+    """Authority reads only current authority fields, not historical run payloads."""
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    workflow = await _workflow(db_session, organization.id, permission_mode="full")
+    execution = await _execution(
+        db_session,
+        workflow=workflow,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    execution.parameters = {"payload": "x" * 250_000}
+    execution.result = {"result": "y" * 250_000}
+    execution.variables = {"variables": "z" * 250_000}
+    execution.execution_context = {"context": "a" * 250_000}
+    execution.error_message = "b" * 250_000
+    await db_session.flush()
+
+    execution_id = execution.id
+    root_execution_id = execution.root_execution_id
+    db_session.expire(execution)
+
+    authority = await load_runtime_authority(db_session, "workflow_execution", execution_id)
+
+    assert (authority.credential_id, authority.acting_user_id, authority.run_user.user_id) == (
+        execution_id,
+        user.id,
+        user.id,
+    )
+    assert (authority.workflow_id, authority.organization_id, authority.root_execution_id) == (
+        workflow.id,
+        organization.id,
+        root_execution_id,
+    )
+    assert authority.powers is not None and authority.powers.mode is WorkflowPermissionMode.FULL
+    assert {"parameters", "result", "variables", "execution_context", "error_message"} <= inspect(
+        execution
+    ).unloaded
+    with pytest.raises(InvalidRequestError):
+        _ = execution.parameters
 
 
 @pytest.mark.asyncio

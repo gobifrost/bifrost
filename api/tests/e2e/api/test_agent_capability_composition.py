@@ -13,8 +13,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
-    ToolReturnPart,
     ToolSearchReturnPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -29,6 +29,7 @@ from src.models.orm.agents import Agent, AgentDelegation, AgentTool
 from src.services.agent_runtime.composition import (
     AgentCompositionError,
     _delegate_name,
+    _qualified_tool_name,
     build_agent_composition,
 )
 from src.services.authorization.enforce import load_caller
@@ -44,12 +45,15 @@ pytestmark = pytest.mark.asyncio
 class _LoadsSpecialistCapability(TestModel):
     """Load one deferred capability, then use its child-owned workflow tool."""
 
-    def __init__(self, capability_id: str, child_instruction: str) -> None:
+    def __init__(
+        self, capability_id: str, child_instruction: str, child_id: UUID, tool_name: str
+    ) -> None:
         super().__init__(model_name="test-agent-capability-composition")
         self._capability_id = capability_id
         self._child_instruction = child_instruction
         self.loaded_instruction_text = ""
-        self.child_tool_name: str | None = None
+        self.child_tool_name = _qualified_tool_name(child_id, tool_name)
+        self._source_tool_name = tool_name
 
     def _request(
         self,
@@ -85,6 +89,12 @@ class _LoadsSpecialistCapability(TestModel):
                 model_name=self.model_name,
             )
 
+        assert loaded_instructions == [
+            f"{self._child_instruction}\n\n"
+            "Search for an approved individual tool only after loading this skill. "
+            "Use it only for work this specialist owns and return evidence to the "
+            "owning conversation."
+        ]
         search_completed = any(
             isinstance(message, ModelRequest)
             and any(
@@ -94,24 +104,13 @@ class _LoadsSpecialistCapability(TestModel):
             )
             for message in messages
         )
-        child_tool = next(
-            (
-                tool
-                for tool in model_request_parameters.function_tools
-                if tool.name.startswith("bfa_")
-                and model_request_parameters.visibility_of(tool.name)
-                in {"visible", "via_history"}
-            ),
-            None,
-        )
-        assert loaded_instructions == [
-            f"{self._child_instruction}\n\n"
-            "Search for an approved individual tool only after loading this skill. "
-            "Use it only for work this specialist owns and return evidence to the "
-            "owning conversation."
-        ]
         if not search_completed:
-            assert child_tool is None, "a loaded specialist tool must still be searched"
+            assert self.child_tool_name not in {
+                tool.name
+                for tool in model_request_parameters.function_tools
+                if model_request_parameters.visibility_of(tool.name)
+                in {"visible", "via_history"}
+            }, "a loaded specialist tool must still be searched"
             assert any(
                 tool.name == "search_tools"
                 and model_request_parameters.visibility_of(tool.name)
@@ -122,21 +121,24 @@ class _LoadsSpecialistCapability(TestModel):
                 parts=[
                     ToolCallPart(
                         "search_tools",
-                        {"queries": ["bfa"]},
+                        {"queries": [self._source_tool_name]},
                         tool_call_id="search-specialist-tool",
                     )
                 ],
                 model_name=self.model_name,
             )
 
-        assert child_tool is not None, "searching did not expose the specialist tool"
-        self.child_tool_name = child_tool.name
         if "call-specialist-tool" not in completed:
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        child_tool.name,
-                        {"query": "composition boundary"},
+                        "run_code",
+                        {
+                            "code": (
+                                f"receipt = {self.child_tool_name}(query='composition boundary')\n"
+                                "{'answer': receipt['answer']}"
+                            )
+                        },
                         tool_call_id="call-specialist-tool",
                     )
                 ],
@@ -262,7 +264,8 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
     )
     run_id = uuid4()
     model = _LoadsSpecialistCapability(
-        f"bifrost_agent_{UUID(child['id']).hex}", child_instruction
+        f"bifrost_agent_{UUID(child['id']).hex}", child_instruction,
+        UUID(child["id"]), f"wf_{test_tool_workflow['name']}",
     )
     try:
         root_agent = await _load_agent(db_session, root["id"])
@@ -319,7 +322,7 @@ async def test_loaded_child_capability_uses_its_bound_workflow_in_the_owning_run
                 agent_execution_mode="automatic",
             )
 
-        assert result["status"] == "completed"
+        assert result["status"] == "completed", result
         assert result["output"] == "Specialist capability completed."
         assert model.child_tool_name is not None
         assert model.loaded_instruction_text.count(child_instruction) == 1
@@ -439,8 +442,9 @@ async def test_native_delegate_task_runs_a_transitive_child_without_a_middle_run
                 side_effect=[parent_model, child_model],
             ) as create_model,
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             result = await executor.run(

@@ -22,10 +22,9 @@ from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Literal
 
-from aiobotocore.session import get_session
-
 from src.config import Settings, get_settings
 from src.core.log_safety import log_safe
+from src.core.s3_transport import S3NoSuchKey, S3Transport
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +44,11 @@ class AppStorageService:
 
     @asynccontextmanager
     async def _get_client(self):
-        session = get_session()
-        async with session.create_client(
-            "s3",
+        async with S3Transport(
             endpoint_url=self._settings.s3_endpoint_url,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key,
-            region_name=self._settings.s3_region,
+            access_key_id=self._settings.s3_access_key,
+            secret_access_key=self._settings.s3_secret_key,
+            region=self._settings.s3_region,
         ) as client:
             yield client
 
@@ -275,12 +272,8 @@ class AppStorageService:
             try:
                 response = await client.get_object(Bucket=self._bucket, Key=key)
                 return await response["Body"].read()
-            except client.exceptions.NoSuchKey:
+            except S3NoSuchKey:
                 raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
-            except Exception as e:
-                if "NoSuchKey" in str(type(e).__name__) or "404" in str(e):
-                    raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
-                raise
 
     async def list_files(self, app_id: str, mode: AppMode) -> list[str]:
         """List relative file paths in _apps/{app_id}/{mode}/.

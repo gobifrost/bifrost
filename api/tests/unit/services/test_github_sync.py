@@ -42,6 +42,78 @@ def _status_service(work_dir: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content,field,line", [
+    ("events: {}\nevnts: {}\n", None, None),
+    ("events: {}\nevents: {}\n", None, 2),
+    ("events:\n  x:\n    id: x\n    source_type: topic\n    naem: hidden-value\n", "naem", None),
+])
+async def test_preflight_reports_strict_manifest_errors_at_the_source(
+    tmp_path: Path, content: str, field: str | None, line: int | None,
+) -> None:
+    manifest_dir = tmp_path / ".bifrost"
+    manifest_dir.mkdir()
+    (manifest_dir / "events.yaml").write_text(content)
+
+    result = await _status_service(tmp_path)._run_preflight(tmp_path)
+
+    assert result.valid is False
+    errors = [issue for issue in result.issues if issue.severity == "error"]
+    assert len(errors) == 1
+    assert errors[0].path == ".bifrost/events.yaml"
+    assert errors[0].category == "manifest"
+    assert errors[0].line == line
+    assert "hidden-value" not in errors[0].message
+    if field:
+        assert field in errors[0].message
+
+
+@pytest.mark.asyncio
+async def test_preflight_rejects_decorator_settings_without_changing_candidate_source(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "from bifrost import workflow\n"
+        "@workflow(timeout_seconds=30)\n"
+        "def run(): pass\n"
+    )
+    candidate = tmp_path / "workflows" / "example.py"
+    candidate.parent.mkdir()
+    candidate.write_text(source)
+    result = await _status_service(tmp_path)._run_preflight(tmp_path)
+
+    assert result.valid is False
+    issue = next(issue for issue in result.issues if issue.category == "syntax")
+    assert issue.path == "workflows/example.py"
+    assert issue.line == 2
+    assert candidate.read_text() == source
+
+
+@pytest.mark.parametrize("path", ["../outside.py", "/tmp/outside.py"])
+def test_candidate_python_source_rejects_paths_outside_candidate(
+    tmp_path: Path, path: str,
+) -> None:
+    from bifrost.definition_validation import DefinitionValidationError
+    from src.services.github_sync import _candidate_python_source
+
+    with pytest.raises(DefinitionValidationError, match="resolve inside"):
+        _candidate_python_source(tmp_path, path)
+
+
+def test_candidate_python_source_rejects_symlink_outside_candidate(tmp_path: Path) -> None:
+    from bifrost.definition_validation import DefinitionValidationError
+    from src.services.github_sync import _candidate_python_source
+
+    outside = tmp_path.parent / "outside.py"
+    outside.write_text("from bifrost import workflow\n")
+    source = tmp_path / "workflows" / "outside.py"
+    source.parent.mkdir()
+    source.symlink_to(outside)
+
+    with pytest.raises(DefinitionValidationError, match="resolve inside"):
+        _candidate_python_source(tmp_path, "workflows/outside.py")
+
+
+@pytest.mark.asyncio
 async def test_desktop_status_returns_empty_only_for_uninitialized_workspace(tmp_path: Path) -> None:
     service = _status_service(tmp_path)
     service.repo_manager = _StatusRepoManager(tmp_path, is_initialized=False)

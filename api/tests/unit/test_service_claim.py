@@ -138,8 +138,7 @@ async def _cleanup_services(async_session_factory):
 
 
 class StubPool:
-    def __init__(self, max_service_workers=2):
-        self.max_service_workers = max_service_workers
+    def __init__(self):
         self.service_processes = {}
         self.route_service = AsyncMock()
         self.stop_service_child = AsyncMock(return_value=True)
@@ -187,6 +186,16 @@ async def _ensure_service(db_session, org=None, **overrides):
     return definition, wf, org
 
 
+def _fits(free_bytes):  # type: ignore[no-untyped-def]
+    """An executor gate that always offers ``free_bytes``."""
+
+    @asynccontextmanager
+    async def claiming():  # type: ignore[no-untyped-def]
+        yield free_bytes
+
+    return claiming
+
+
 def _loop(pool, **overrides):
     args = {
         "worker_id": "worker-1",
@@ -194,6 +203,8 @@ def _loop(pool, **overrides):
         "claim_interval_seconds": 0.01,
         "beat_interval_seconds": 0,
         "lease_ttl_seconds": 60,
+        "claiming": _fits(2**40),
+        "hold_memory": lambda attempt_id, request: None,
     }
     args.update(overrides)
     return ServiceClaimLoop(**args)
@@ -249,17 +260,66 @@ async def test_tick_claims_and_routes_with_service_context(
     pool.route_service.assert_not_awaited()
 
 
-async def test_tick_skips_when_pool_full(db_session):
+async def test_tick_skips_a_service_larger_than_the_free_budget(db_session):
     definition, _, _ = await _ensure_service(db_session)
     await db_session.commit()
-    pool = StubPool(max_service_workers=0)
-    loop = _loop(pool)
+    pool = StubPool()
+    loop = _loop(pool, claiming=_fits(1))
 
     await loop.tick()
 
     pool.route_service.assert_not_awaited()
     live = await service_lifecycle.get_live_attempt(db_session, definition.id)
     assert live is None
+
+
+async def test_a_supervised_service_holds_its_request_until_it_ends(db_session):
+    from src.services.memory_requests import DEFAULT_WORKFLOW_REQUEST_BYTES
+
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    holds: dict = {}
+
+    def hold(attempt_id, request):  # type: ignore[no-untyped-def]
+        if request is None:
+            holds.pop(attempt_id, None)
+        else:
+            holds[attempt_id] = request
+
+    pool = StubPool()
+    held_at_fork: list[dict] = []
+    pool.route_service.side_effect = lambda **kwargs: held_at_fork.append(dict(holds))
+    loop = _loop(pool, hold_memory=hold)
+    await loop.tick()
+
+    live = await service_lifecycle.get_live_attempt(db_session, definition.id)
+    assert live is not None
+    assert held_at_fork == [{str(live.id): DEFAULT_WORKFLOW_REQUEST_BYTES}], (
+        "held before the child forks, so no other claim spends the same bytes"
+    )
+    assert holds == {str(live.id): DEFAULT_WORKFLOW_REQUEST_BYTES}
+    await loop._release(loop._owned.pop(str(live.id)))
+    assert holds == {}
+
+
+async def test_a_service_that_fails_to_launch_gives_its_memory_back(db_session):
+    await _ensure_service(db_session)
+    await db_session.commit()
+    holds: dict = {}
+
+    def hold(attempt_id, request):  # type: ignore[no-untyped-def]
+        if request is None:
+            holds.pop(attempt_id, None)
+        else:
+            holds[attempt_id] = request
+
+    pool = StubPool()
+    pool.route_service.side_effect = RuntimeError("fork failed")
+    loop = _loop(pool, hold_memory=hold)
+    await loop.tick()
+
+    pool.route_service.assert_awaited_once()
+    assert holds == {}
 
 
 async def test_beat_renews_lease_and_rotates_token(db_session, redis_holder):
@@ -616,3 +676,21 @@ async def test_startup_grace_breach_fails_unready_attempt(db_session):
     assert attempt.state == "failed"
     assert attempt.exit_reason == "startup_grace_exceeded"
     assert attempt_id not in loop._owned
+
+
+async def test_a_service_no_executor_can_hold_is_blocked_until_one_can(db_session):
+    from src.services.memory_requests import DEFAULT_WORKFLOW_REQUEST_BYTES, MIB
+    from src.services.worker_pool.unfit import TOO_LARGE, block_services_that_never_fit
+
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+
+    await block_services_that_never_fit(db_session, DEFAULT_WORKFLOW_REQUEST_BYTES - MIB)
+    await db_session.commit()
+    await db_session.refresh(definition)
+    assert definition.blocked_reason == TOO_LARGE
+
+    await block_services_that_never_fit(db_session, DEFAULT_WORKFLOW_REQUEST_BYTES)
+    await db_session.commit()
+    await db_session.refresh(definition)
+    assert definition.blocked_reason is None

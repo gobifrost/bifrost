@@ -7,6 +7,7 @@ import pytest
 
 from src.services import node_subprocess
 from src.services.node_subprocess import run_node_script
+from shared.app_build_errors import app_build_memory_message
 
 
 @pytest.mark.asyncio
@@ -16,6 +17,18 @@ async def test_returns_exit_code_and_output(tmp_path):
         "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{process.stdout.write(s.toUpperCase());process.exit(3)});"
     )
     assert await run_node_script(script, b"hi") == (3, b"HI", b"")
+
+
+@pytest.mark.asyncio
+async def test_node_oom_output_includes_recovery_without_allocating_memory(tmp_path):
+    script = tmp_path / "oom.js"
+    script.write_text(
+        "process.stderr.write('FATAL ERROR: JavaScript heap out of memory');process.exit(134);"
+    )
+    code, stdout, stderr = await run_node_script(script, b"")
+    assert code == 134
+    assert stdout == b""
+    assert stderr.decode() == app_build_memory_message()
 
 
 @pytest.mark.asyncio

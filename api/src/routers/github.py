@@ -376,7 +376,11 @@ async def validate_github_token(
         logger.error(f"GitHub API error validating token: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid GitHub token: {e.message}",
+            detail=(
+                f"GitHub token validation failed (HTTP {e.status_code}): {e.message}"
+                if e.status_code is not None
+                else f"GitHub token validation failed: {e.message}"
+            ),
         )
     except HTTPException:
         raise

@@ -16,13 +16,12 @@ from src.scheduler import leadership
 from src.scheduler.leadership import SchedulerLeadershipLease
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def scheduler_lease_context(
+@pytest_asyncio.fixture
+async def lease_name(
     async_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ):
     test_lease_name = f"scheduler-triggers-test-{uuid4()}"
-    monkeypatch.setattr(leadership, "TRIGGER_LEASE_NAME", test_lease_name)
 
     @asynccontextmanager
     async def test_context() -> AsyncGenerator[AsyncSession, None]:
@@ -39,7 +38,7 @@ async def scheduler_lease_context(
         await db.execute(
             delete(SchedulerLease).where(SchedulerLease.name == test_lease_name)
         )
-    yield
+    yield test_lease_name
     async with test_context() as db:
         await db.execute(
             delete(SchedulerLease).where(SchedulerLease.name == test_lease_name)
@@ -47,9 +46,9 @@ async def scheduler_lease_context(
 
 
 @pytest.mark.asyncio
-async def test_only_one_replica_acquires_trigger_leadership() -> None:
-    first = SchedulerLeadershipLease(owner_id="scheduler-a")
-    second = SchedulerLeadershipLease(owner_id="scheduler-b")
+async def test_only_one_replica_acquires_trigger_leadership(lease_name: str) -> None:
+    first = SchedulerLeadershipLease(owner_id="scheduler-a", name=lease_name)
+    second = SchedulerLeadershipLease(owner_id="scheduler-b", name=lease_name)
 
     results = await asyncio.gather(first.try_acquire(), second.try_acquire())
 
@@ -67,15 +66,17 @@ async def test_only_one_replica_acquires_trigger_leadership() -> None:
 
 
 @pytest.mark.asyncio
-async def test_expired_generation_cannot_renew_or_release_new_leader() -> None:
-    stale = SchedulerLeadershipLease(owner_id="scheduler-a")
-    replacement = SchedulerLeadershipLease(owner_id="scheduler-b")
+async def test_expired_generation_cannot_renew_or_release_new_leader(
+    lease_name: str,
+) -> None:
+    stale = SchedulerLeadershipLease(owner_id="scheduler-a", name=lease_name)
+    replacement = SchedulerLeadershipLease(owner_id="scheduler-b", name=lease_name)
     assert await stale.try_acquire()
 
     async with leadership.get_db_context() as db:
         await db.execute(
             update(SchedulerLease)
-            .where(SchedulerLease.name == leadership.TRIGGER_LEASE_NAME)
+            .where(SchedulerLease.name == lease_name)
             .values(lease_expires_at=func.now() - timedelta(seconds=1))
         )
 
@@ -84,3 +85,31 @@ async def test_expired_generation_cannot_renew_or_release_new_leader() -> None:
     await stale.release()
     assert await replacement.renew()
     await replacement.release()
+
+
+@pytest.mark.asyncio
+async def test_local_deadline_ends_before_the_database_lease(lease_name: str) -> None:
+    clock = [100.0]
+    lease = SchedulerLeadershipLease(
+        owner_id="scheduler-a",
+        name=lease_name,
+        lease_duration=timedelta(seconds=30),
+        monotonic=lambda: clock[0],
+    )
+    assert not lease.holds_lease()
+    assert await lease.try_acquire()
+
+    margin = leadership.LOCAL_DEADLINE_MARGIN_SECONDS
+    assert lease.seconds_remaining() == pytest.approx(30 - margin)
+    clock[0] += 30 - margin - 0.01
+    assert lease.holds_lease()
+    clock[0] += 0.02
+    # The database still lists this owner, but the replica must already have
+    # stopped producing triggers.
+    assert not lease.holds_lease()
+    assert lease.is_leader
+
+    assert await lease.renew()
+    assert lease.holds_lease()
+    await lease.release()
+    assert not lease.holds_lease()

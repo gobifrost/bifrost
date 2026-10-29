@@ -107,12 +107,7 @@ def mock_agent():
 
 @pytest.fixture
 def consumer():
-    with (
-        patch("src.jobs.consumers.agent_run.get_settings") as mock_settings,
-        patch("src.jobs.consumers.agent_run.get_session_factory"),
-        patch("src.jobs.consumers.agent_run.BaseConsumer.__init__", return_value=None),
-    ):
-        mock_settings.return_value = MagicMock(max_concurrency=2)
+    with patch("src.jobs.consumers.agent_run.get_session_factory"):
         return AgentRunConsumer()
 
 
@@ -503,8 +498,9 @@ async def test_delegation_task_cannot_name_the_childs_acting_user(
             return_value={"output": "checked", "status": "completed"},
         ) as mock_child_run,
         patch(
-            "src.services.execution.run_summarizer.enqueue_summarize",
+            "src.services.execution.summary_dispatch.stage_summary",
             new_callable=AsyncMock,
+            return_value=None,
         ),
         patch(
             "src.services.execution.autonomous_agent_executor.load_runtime_principal",

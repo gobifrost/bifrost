@@ -14,9 +14,8 @@ from pydantic import BaseModel
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
@@ -152,19 +151,6 @@ async def run_solution_deploy(
             )
 
 
-SOLUTION_DEPLOY_DEFINITION = PlatformJobDefinition(
-    job_type="solution.deploy",
-    payload_version=1,
-    payload_model=SolutionDeployPayload,
-    handler=run_solution_deploy,
-    policy=PlatformJobPolicy(
-        timeout_seconds=60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-        execution_class="build",
-    ),
-    encrypt_payload=True,
-    display_name="Solution deploys",
-    description="Compiles Solution apps in an isolated job pod.",
+SOLUTION_DEPLOY_DEFINITION = define_platform_job(
+    "solution.deploy", SolutionDeployPayload, run_solution_deploy
 )

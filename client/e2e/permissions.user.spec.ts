@@ -7,7 +7,10 @@
  * Forms assignment, forbidden forms, and member form launch are covered in
  * `forms.user.spec.ts`. Execution history behavior is covered by the execution
  * specs. Removed heading-only checks and the placeholder "own organization
- * data only" test because they did not prove a permission boundary.
+ * data only" test because they did not prove a permission boundary. The
+ * Workspace | Dashboard tabs follow `metrics.read`, which the User base role
+ * holds; `WorkspaceTabs.test.tsx` covers that gate, so this journey proves the
+ * non-admin Home by the absent platform-admin navigation instead.
  */
 
 import { test, expect } from "@playwright/test";
@@ -36,10 +39,6 @@ test.describe("Org user denied route recovery", () => {
 				level: 1,
 			}),
 		).toBeVisible({ timeout: 10000 });
-		await expect(
-			page.getByRole("navigation", { name: "Workspace views" }),
-		).toHaveCount(0);
-
 		const primaryNavigation = page.getByRole("navigation", {
 			name: "Primary navigation",
 		});

@@ -226,39 +226,37 @@ class TestToolFilterMiddlewareAgentScope:
     async def test_get_agent_id_from_scope_with_valid_id(self):
         """_get_agent_id_from_scope returns UUID when present."""
         agent_id = uuid4()
-        mock_request = MagicMock()
-        mock_request.scope = {"mcp_agent_id": str(agent_id)}
+        from src.services.mcp_server import agent_scope
 
-        with patch(
-            "src.services.mcp_server.agent_scope.get_http_request",
-            return_value=mock_request,
-        ):
+        token = agent_scope._REQUEST_SCOPE.set({"mcp_agent_id": str(agent_id)})
+        try:
             from src.services.mcp_server.middleware import _get_agent_id_from_scope
 
             result = _get_agent_id_from_scope()
             assert result == agent_id
+        finally:
+            agent_scope._REQUEST_SCOPE.reset(token)
 
     @pytest.mark.asyncio
     async def test_get_agent_id_from_scope_without_id(self):
         """_get_agent_id_from_scope returns None when not present."""
-        mock_request = MagicMock()
-        mock_request.scope = {}
+        from src.services.mcp_server import agent_scope
 
-        with patch(
-            "src.services.mcp_server.agent_scope.get_http_request",
-            return_value=mock_request,
-        ):
+        token = agent_scope._REQUEST_SCOPE.set({})
+        try:
             from src.services.mcp_server.middleware import _get_agent_id_from_scope
 
             result = _get_agent_id_from_scope()
             assert result is None
+        finally:
+            agent_scope._REQUEST_SCOPE.reset(token)
 
     @pytest.mark.asyncio
     async def test_get_agent_id_from_scope_no_request(self):
         """_get_agent_id_from_scope returns None when no request context."""
         with patch(
-            "src.services.mcp_server.agent_scope.get_http_request",
-            side_effect=RuntimeError("No request"),
+            "src.services.mcp_server.agent_scope._REQUEST_SCOPE",
+            MagicMock(get=MagicMock(side_effect=RuntimeError("No request"))),
         ):
             from src.services.mcp_server.middleware import _get_agent_id_from_scope
 

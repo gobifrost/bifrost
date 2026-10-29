@@ -75,3 +75,45 @@ def test_role_sharing_matches_list_and_open_after_grant_and_revocation(
             assert deleted.status_code in (200, 204), deleted.text
         deleted_role = e2e_client.delete(f"/api/roles/{role['id']}", headers=platform_admin.headers)
         assert deleted_role.status_code in (200, 204), deleted_role.text
+
+
+@pytest.mark.e2e
+def test_cross_org_app_opens_by_slug_within_reach(
+    e2e_client, platform_admin, org1, org1_user, org2_user
+):
+    """An org App opens by slug for callers whose reach covers its org.
+
+    The slug lookup used to cascade only through the caller's home org and
+    global, so a Platform Admin opening a client org's App by slug (a page
+    refresh or deep link) got a 404 while the list still showed it.
+    """
+    suffix = uuid4().hex[:8]
+    created = e2e_client.post(
+        "/api/applications",
+        headers=platform_admin.headers,
+        json={
+            "name": f"Cross Org Slug {suffix}",
+            "slug": f"cross-org-slug-{suffix}",
+            "organization_id": org1["id"],
+            "access_level": "authenticated",
+            "app_model": "standalone_v2",
+        },
+    )
+    assert created.status_code == 201, created.text
+    app = created.json()
+    try:
+        detail = f"/api/applications/{app['slug']}"
+        for user, expected in (
+            (platform_admin, 200),
+            (org1_user, 200),
+            (org2_user, 404),
+        ):
+            opened = e2e_client.get(detail, headers=user.headers)
+            assert opened.status_code == expected, (user.email, opened.text)
+            if expected == 200:
+                assert opened.json()["id"] == app["id"]
+    finally:
+        deleted = e2e_client.delete(
+            f"/api/applications/{app['id']}", headers=platform_admin.headers
+        )
+        assert deleted.status_code in (200, 204), deleted.text

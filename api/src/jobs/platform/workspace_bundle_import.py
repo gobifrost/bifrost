@@ -11,9 +11,8 @@ from sqlalchemy import select
 
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.contracts.solutions import WorkspaceBundleDecision, WorkspaceBundlePreview
 from src.core.database import get_db_context
@@ -322,19 +321,6 @@ async def run_workspace_bundle_import(
     return result_body
 
 
-WORKSPACE_BUNDLE_IMPORT_DEFINITION = PlatformJobDefinition(
-    job_type="workspace.bundle_import",
-    payload_version=1,
-    payload_model=WorkspaceBundleImportPayload,
-    handler=run_workspace_bundle_import,
-    encrypt_payload=True,
-    policy=PlatformJobPolicy(
-        timeout_seconds=60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-        retry_on_runner_loss=True,
-        retry_on_failure=True,
-        allow_running_cancellation=True,
-    ),
+WORKSPACE_BUNDLE_IMPORT_DEFINITION = define_platform_job(
+    "workspace.bundle_import", WorkspaceBundleImportPayload, run_workspace_bundle_import
 )

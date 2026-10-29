@@ -5,7 +5,7 @@ import math
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import pydantic_core
@@ -84,14 +84,45 @@ class ObservedModel(WrapperModel):
         return max(1, content_tokens + (messages_count * 8) + (tools_count * 16))
 
     @staticmethod
+    def _provider_facing_messages(
+        messages: list[ModelMessage],
+    ) -> list[ModelMessage]:
+        """Copy messages without Bifrost-only nested-dispatch receipts.
+
+        ``ToolReturnPart.metadata`` remains on the original history for audit
+        and progress handling, but Pydantic AI does not send it as provider
+        context. Measurements and preflight estimates must use the same
+        provider-facing shape.
+        """
+        provider_messages: list[ModelMessage] = []
+        for message in messages:
+            if not isinstance(message, ModelRequest):
+                provider_messages.append(message)
+                continue
+            parts = [
+                replace(part, metadata=None)
+                if isinstance(part, ToolReturnPart) and part.metadata is not None
+                else part
+                for part in message.parts
+            ]
+            provider_messages.append(
+                replace(message, parts=parts)
+                if any(original is not copied for original, copied in zip(message.parts, parts))
+                else message
+            )
+        return provider_messages
+
+    @staticmethod
     def _context_breakdown(
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> dict[str, int | str]:
         """Measure request composition without recording prompt contents.
 
-        Byte fields are raw serialized or UTF-8 sizes for observability, not
-        provider token attribution. ``estimated_input_tokens`` remains the
+        Byte fields measure provider-facing serialized or UTF-8 context, not
+        provider token attribution. Application-only ``ToolReturnPart``
+        metadata is excluded while the original messages retain it for audit.
+        ``estimated_input_tokens`` remains the
         existing conservative whole-request budget estimate; instruction bytes
         are deliberately not added to it because provider instruction handling
         can already include them in serialized message history.
@@ -103,6 +134,7 @@ class ObservedModel(WrapperModel):
         cache key, or billed-token split.
         """
 
+        provider_messages = ObservedModel._provider_facing_messages(messages)
         categories = {
             "system_prompt_bytes": 0,
             "user_history_bytes": 0,
@@ -112,13 +144,13 @@ class ObservedModel(WrapperModel):
             "other_history_bytes": 0,
         }
         last_user_part: tuple[int, int] | None = None
-        for message_index, message in enumerate(messages):
+        for message_index, message in enumerate(provider_messages):
             if isinstance(message, ModelRequest):
                 for part_index, part in enumerate(message.parts):
                     if isinstance(part, UserPromptPart):
                         last_user_part = (message_index, part_index)
 
-        for message_index, message in enumerate(messages):
+        for message_index, message in enumerate(provider_messages):
             if isinstance(message, ModelResponse):
                 categories["assistant_history_bytes"] += len(
                     pydantic_core.to_json(message, fallback=str)
@@ -146,7 +178,7 @@ class ObservedModel(WrapperModel):
                     categories["other_history_bytes"] += size
 
         instructions = Model._get_instruction_parts(
-            messages, model_request_parameters
+            provider_messages, model_request_parameters
         ) or []
         instruction_bytes = sum(len(part.content.encode()) for part in instructions)
         active_tools = []
@@ -167,7 +199,7 @@ class ObservedModel(WrapperModel):
         )
         active_tool_schema = pydantic_core.to_json(active_tools, fallback=str)
         deferred_tool_schema = pydantic_core.to_json(deferred_tools, fallback=str)
-        serialized_messages = ModelMessagesTypeAdapter.dump_json(messages)
+        serialized_messages = ModelMessagesTypeAdapter.dump_json(provider_messages)
         result: dict[str, int | str] = {
             **categories,
             "instruction_bytes": instruction_bytes,

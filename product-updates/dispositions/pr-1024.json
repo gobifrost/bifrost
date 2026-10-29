@@ -4,12 +4,11 @@
   "entry_ids": [
     "250a294a-6072-4b82-a2c7-0027b3b5af65"
   ],
-  "summary": "Try experimental Automatic execution from AI Behavior settings; Delegated remains the default.",
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1024",
-      "Reviewed the experimental default-off execution setting, native two-stage instruction/tool discovery and child lifecycle. Focused settings, runtime, caller authorization, MCP, DTO/CLI and browser checks cover the change. Copy reviewed using General Writing and Humanizer; Delegated remains the default and no model-quality, cost-reduction or autonomous crash-resume claim is made. Existing caller authority and effect checks remain enforced."
+      "Groups Automatic orchestration, CodeMode, and native runtime improvements in the existing Automatic feature UUID at maintainer request on 2026-10-24. Maintainer approved the revised canonical copy and measured claims with “Send it” on 2026-10-24."
     ]
   }
 }

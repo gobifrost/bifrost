@@ -119,16 +119,28 @@ class CPUSampler:
     clock_ticks: int
     peak_cpu_cores: float | None = None
     peak_process_rss_bytes: int | None = None
+    # First and latest RSS readings: how much the run has grown so far.
+    start_process_rss_bytes: int | None = None
+    last_process_rss_bytes: int | None = None
     _baseline_utime: int | None = None
     _baseline_stime: int | None = None
     _baseline_time: float | None = None
 
     def _sample_rss(self) -> None:
         rss = read_proc_status_rss(self.pid)
-        if rss is not None and (
-            self.peak_process_rss_bytes is None or rss > self.peak_process_rss_bytes
-        ):
+        if rss is None:
+            return
+        if self.start_process_rss_bytes is None:
+            self.start_process_rss_bytes = rss
+        self.last_process_rss_bytes = rss
+        if self.peak_process_rss_bytes is None or rss > self.peak_process_rss_bytes:
             self.peak_process_rss_bytes = rss
+
+    def growth_bytes(self) -> int | None:
+        """RSS grown since the first reading; None before two readings."""
+        if self.start_process_rss_bytes is None or self.last_process_rss_bytes is None:
+            return None
+        return max(0, self.last_process_rss_bytes - self.start_process_rss_bytes)
 
     def set_baseline(self, now: float, sample: _ProcSample | None = None) -> None:
         """Record the starting CPU time for this child."""

@@ -102,7 +102,7 @@ async def test_resubscribe_success_subscribes_new_then_unsubscribes_old(monkeypa
     )
     registry = MagicMock()
     registry.get.side_effect = lambda name: {"old_adapter": old_adapter, "new_adapter": new_adapter}[name]
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: registry)
     monkeypatch.setattr(
         "src.routers.events._build_event_source_response",
         AsyncMock(return_value="response"),
@@ -141,7 +141,7 @@ async def test_resubscribe_new_failure_leaves_webhook_source_untouched(monkeypat
     )
     registry = MagicMock()
     registry.get.side_effect = lambda name: {"old_adapter": old_adapter, "new_adapter": new_adapter}[name]
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: registry)
 
     request = EventSourceUpdate.model_validate(
         {"webhook": {"adapter_name": "new_adapter"}}
@@ -185,7 +185,7 @@ async def test_resubscribe_old_unsubscribe_failure_is_logged_and_request_still_s
     )
     registry = MagicMock()
     registry.get.side_effect = lambda name: {"old_adapter": old_adapter, "new_adapter": new_adapter}[name]
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: registry)
     monkeypatch.setattr(
         "src.routers.events._build_event_source_response",
         AsyncMock(return_value="response"),

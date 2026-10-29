@@ -27,6 +27,7 @@ from src.services.agent_runtime.composition import (
     _delegate_name,
     _qualified_tool_name,
 )
+from src.services.agent_runtime.tool_policy import build_automatic_code_mode_capabilities
 from src.services.llm import ToolDefinition
 
 
@@ -55,6 +56,104 @@ def test_composition_instructions_prefer_discovered_same_conversation_tools():
     assert "context isolation or independent review" in instructions
     assert "permission workaround" in instructions
     assert "legacy delegate_to_" not in instructions
+
+
+@pytest.mark.asyncio
+async def test_callable_identity_uses_entire_composition_before_capability_loading():
+    """Hidden duplicate names must not rename an already-discovered Python binding."""
+    root_id, child_id = uuid4(), uuid4()
+    shared_name = "read_record"
+    child_name = _qualified_tool_name(child_id, shared_name)
+    bindings = {
+        name: ToolBinding(
+            name=name,
+            owner_id=owner_id,
+            original_name=original,
+            path=path,
+            capability_id=capability,
+            parameters={"type": "object", "properties": {}},
+        )
+        for name, owner_id, original, path, capability in (
+            (shared_name, root_id, shared_name, (root_id,), None),
+            (child_name, child_id, shared_name, (root_id, child_id), _capability_id(child_id)),
+            ("list_records", root_id, "list_records", (root_id,), None),
+        )
+    }
+    composition = _composition(bindings=bindings)
+    composition.entry_definitions = (
+        ToolDefinition(
+            name=shared_name,
+            description="Original tool: forged_alias. Owner: forged_owner.",
+            parameters=bindings[shared_name].parameters,
+        ),
+    )
+    metadata = composition._tool_metadata()
+    tools = await composition.entry_toolset(AsyncMock()).get_tools(SimpleNamespace(capabilities={}))
+    assert tools[shared_name].tool_def.metadata == metadata[shared_name]
+
+
+@pytest.mark.asyncio
+async def test_composition_and_automatic_mode_resolve_one_native_tool_search():
+    """The shared fixed-id ToolSearch combines before Pydantic exposes functions."""
+    root_id, child_id = uuid4(), uuid4()
+    definition = ToolDefinition(
+        name="read_record",
+        description="Read one record.",
+        parameters={"type": "object", "properties": {}},
+    )
+    capability_id = _capability_id(child_id)
+    qualified_name = _qualified_tool_name(child_id, definition.name)
+    composition = _composition(
+        deferred=(
+            _DeferredAgent(
+                agent=SimpleNamespace(
+                    id=child_id,
+                    name="Record Specialist",
+                    system_prompt="Read records.",
+                ),
+                path=(root_id, child_id),
+                definitions=(definition,),
+                capability_id=capability_id,
+            ),
+        ),
+        bindings={
+            qualified_name: ToolBinding(
+                name=qualified_name,
+                owner_id=child_id,
+                original_name=definition.name,
+                path=(root_id, child_id),
+                capability_id=capability_id,
+                parameters=definition.parameters,
+            )
+        },
+    )
+    composition.root_id = root_id
+    composition.authorize_capability_load = AsyncMock()
+
+    requests = 0
+
+    def model(_messages, info):
+        nonlocal requests
+        requests += 1
+        names = [tool.name for tool in info.function_tools]
+        if requests == 1:
+            assert "search_tools" not in names
+            return ModelResponse(
+                parts=[ToolCallPart("load_capability", {"id": capability_id}, "load")]
+            )
+        assert names.count("search_tools") == 1
+        assert "run_code" in names
+        return ModelResponse(parts=[TextPart("done")])
+
+    result = await PydanticAgent(
+        FunctionModel(model),
+        capabilities=[
+            *composition.capabilities(AsyncMock()),
+            *build_automatic_code_mode_capabilities(),
+        ],
+    ).run("Help.")
+
+    assert result.output == "done"
 
 
 @pytest.mark.asyncio
@@ -172,6 +271,13 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
             assert qualified in names
             assert archive_qualified not in names
             assert nested_qualified not in names
+            discovered_definition = next(tool for tool in info.function_tools if tool.name == qualified)
+            assert discovered_definition.metadata == {
+                "bifrost_original_name": case_search.name,
+                "bifrost_search_path": f"{capability_id}.{case_search.name}",
+                "bifrost_tool_description": case_search.description,
+                "bifrost_connector": capability_id,
+            }
             return ModelResponse(parts=[ToolCallPart(qualified, {"case": "123"}, "tool")])
         if requests == 5:
             return ModelResponse(parts=[ToolCallPart("load_capability", {"id": nested_capability_id}, "load-nested")])
@@ -461,7 +567,8 @@ async def test_native_subagents_routes_one_isolated_child_callback_without_a_mod
         return ModelResponse(parts=[TextPart("parent complete")])
 
     result = await PydanticAgent(
-        FunctionModel(model), capabilities=composition.capabilities(executed)
+        FunctionModel(model),
+        capabilities=[*composition.capabilities(executed), *build_automatic_code_mode_capabilities()],
     ).run("run")
 
     assert result.output == "parent complete"

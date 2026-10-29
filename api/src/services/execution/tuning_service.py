@@ -17,9 +17,6 @@ This module exposes:
 - :func:`append_user_message_and_reply`: append a user turn, call the
   tuning LLM for a reply, persist both on the conversation's JSONB
   ``messages`` column, and record an ``AIUsage`` row for cost tracking.
-- :func:`enqueue_tune_chat`: thin RabbitMQ publish helper used by the API
-  router that accepts a new user message; the worker consumes the message
-  and invokes :func:`append_user_message_and_reply`.
 - :func:`propose_consolidated_tuning`: single LLM call producing one
   consolidated prompt proposal informed by all flagged runs.
 - :func:`dry_run_consolidated`: per-run dry-run of a consolidated
@@ -38,8 +35,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.log_safety import log_safe
-from src.jobs.queue_names import TUNE_CHAT_QUEUE
-from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_prompt_history import AgentPromptHistory
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_runs import AgentRun
@@ -168,13 +163,6 @@ async def append_user_message_and_reply(
     await db.commit()
     await db.refresh(conv)
     return conv
-
-
-async def enqueue_tune_chat(run_id: UUID, content: str) -> None:
-    """Publish a tune-chat message for the agent-tuning-chat worker."""
-    await publish_message(
-        TUNE_CHAT_QUEUE, {"run_id": str(run_id), "content": content}
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,53 @@
+{
+  "description": "Phase 1 baseline: production topology (1 API, API-launched worker Jobs, no scheduler), production limits and allocator env, production-count workflows, eight execution classes, two passes.",
+  "classes": [
+    "wf-noop",
+    "wf-sdk",
+    "wf-wait",
+    "wf-cpu",
+    "wf-large",
+    "agent-chat",
+    "agent-tools",
+    "agent-codemode",
+    "chat-first",
+    "chat-followup"
+  ],
+  "sequential": 10,
+  "burst": 10,
+  "burst_rounds": 3,
+  "timeout_s": 300,
+  "settle_s": 20,
+  "idle_s": 120,
+  "idle_db_s": 60,
+  "seed": {
+    "workflow": 1100,
+    "tool": 701,
+    "data_provider": 50
+  },
+  "table_docs": 200,
+  "worker_replicas": 0,
+  "worker_policy": {
+    "warm_workers": 1,
+    "max_workers": 2,
+    "worker_memory_mib": 2048
+  },
+  "env": {
+    "MALLOC_ARENA_MAX": "2"
+  },
+  "api_env": {
+    "BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB": "2048"
+  },
+  "api_resources": {
+    "limits": {
+      "cpu": "1",
+      "memory": "1Gi"
+    },
+    "requests": {
+      "cpu": "100m",
+      "memory": "512Mi"
+    }
+  },
+  "thp_emulation": false,
+  "onepassword_item": "op://Development/DeepSeek/API Key",
+  "onepassword_profile": "personal"
+}

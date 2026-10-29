@@ -163,7 +163,7 @@ function MemorySummary({
 	const required = job.memory_required_bytes;
 	const waitingForMemory =
 		job.status === "queued" &&
-		job.progress.phase?.toLowerCase().includes("scheduler memory");
+		job.progress.phase?.toLowerCase().includes("executor memory");
 	if (waitingForMemory && required != null) {
 		return (
 			<div className="text-[var(--bf-warning)]">

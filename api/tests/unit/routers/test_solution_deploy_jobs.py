@@ -6,12 +6,14 @@ from uuid import uuid4
 
 import pytest
 
+from shared.app_build_errors import AppBuildMemoryError
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solutions import Solution
 from src.routers.solutions import (
     _enqueue_solution_deploy_job,
     _run_deploy_job,
+    _run_install_job,
 )
 
 
@@ -44,6 +46,7 @@ async def test_deploy_job_is_staged_as_encrypted_central_job(
         requested_by_email="admin@example.com",
         requested_by_name="Admin",
         input_path=path,
+        memory_profile_key="solution.deploy.memory.v1:test",
     )
     central = await db_session.get(PlatformJob, projection.id)
     assert central is not None
@@ -177,6 +180,94 @@ async def test_queued_manual_deploy_rechecks_git_connection_inside_write_lock(
     deploy.assert_not_awaited()
     assert job.status == "failed"
     assert "git-connected" in (job.error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_run_deploy_job_preserves_build_memory_failure(tmp_path, monkeypatch):
+    job = SolutionDeployJob(id=uuid4(), install_id=None, status="queued")
+    solution = Solution(id=uuid4(), slug="memory", name="Memory")
+
+    class FakeDB:
+        async def get(self, model, row_id):  # noqa: ANN001, ANN201
+            if model is SolutionDeployJob:
+                assert row_id == job.id
+                return job
+            if model is Solution:
+                assert row_id == solution.id
+                return solution
+            return None
+
+        async def commit(self) -> None:
+            pass
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield FakeDB()
+
+    @asynccontextmanager
+    async def fake_write_lock(_solution_id):  # noqa: ANN001
+        yield
+
+    from src.core import database
+    from src.services.solutions import write_lock, zip_install
+
+    monkeypatch.setattr(database, "get_db_context", fake_db_context)
+    monkeypatch.setattr(write_lock, "solution_write_lock", fake_write_lock)
+    monkeypatch.setattr(
+        zip_install,
+        "deploy_zip_to_solution_path",
+        AsyncMock(side_effect=AppBuildMemoryError()),
+    )
+    zip_path = tmp_path / "deploy.zip"
+    zip_path.write_bytes(b"not used")
+
+    await _run_deploy_job(job.id, solution.id, zip_path, force=False)
+
+    assert job.status == "failed"
+    assert job.error == str(AppBuildMemoryError())
+
+
+@pytest.mark.asyncio
+async def test_run_install_job_preserves_build_memory_failure(tmp_path, monkeypatch):
+    job = SolutionDeployJob(id=uuid4(), install_id=None, status="queued")
+
+    class FakeDB:
+        async def get(self, model, row_id):  # noqa: ANN001, ANN201
+            assert model is SolutionDeployJob
+            assert row_id == job.id
+            return job
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield FakeDB()
+
+    from src.core import database
+    from src.services.solutions import zip_install
+
+    monkeypatch.setattr(database, "get_db_context", fake_db_context)
+    monkeypatch.setattr(
+        zip_install,
+        "install_zip_path",
+        AsyncMock(side_effect=AppBuildMemoryError()),
+    )
+    zip_path = tmp_path / "install.zip"
+    zip_path.write_bytes(b"not used")
+
+    await _run_install_job(
+        job.id,
+        zip_path,
+        organization_id=None,
+        config_values={},
+        deployer_email="admin@example.test",
+        force=False,
+        password=None,
+        replace_secrets=False,
+        replace_data=False,
+        reactivate=False,
+    )
+
+    assert job.status == "failed"
+    assert job.error == str(AppBuildMemoryError())
 
 
 @pytest.mark.asyncio

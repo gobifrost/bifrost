@@ -1,15 +1,15 @@
 """
 Workflow Execution Consumer
 
-Processes async workflow executions from RabbitMQ queue.
+Runs the workflow dispatches an executor claimed from PostgreSQL.
 
 Architecture (PostgreSQL-durable with Redis acceleration):
-1. API stores pending execution in Redis, publishes to RabbitMQ
-2. Consumer reads pending execution from Redis
-3. Consumer creates the durable PostgreSQL execution row when starting
-4. Consumer routes execution with a compact, parent-owned Redis lease
-5. ProcessPoolManager refreshes that lease while its child remains active
-6. Consumer records the result from the lease or reconstructs it from PostgreSQL
+1. API accepts the run: a PENDING execution row and its dispatch
+2. An executor claims the dispatch and the run (PENDING -> RUNNING) in one
+   transaction, taking the run's context from the dispatch
+3. Consumer routes execution with a compact, parent-owned Redis lease
+4. ProcessPoolManager refreshes that lease while its child remains active
+5. Consumer records the result from the lease or reconstructs it from PostgreSQL
 
 For sync execution requests (sync=True in message):
 - Pushes result to Redis after completion
@@ -25,7 +25,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -33,16 +33,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
 from src.core.pubsub import publish_execution_update, publish_history_update
-from src.core.redis_client import ActiveExecution, get_redis_client
-from src.jobs.rabbitmq import BaseConsumer
+from src.core.redis_client import ActiveExecution, PendingExecution, get_redis_client
 from src.models.enums import ExecutionStatus
 from src.models.orm import Execution, User
 from src.repositories.executions import create_execution, update_execution
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from src.services.execution.process_pool import ProcessPoolManager
 
-# Queue name
-QUEUE_NAME = "workflow-executions"
+logger = logging.getLogger(__name__)
 
 # Sync callers are already awake when derived terminal work begins. A short
 # grace lets sibling authoritative result commits finish before shared daily
@@ -50,11 +49,11 @@ QUEUE_NAME = "workflow-executions"
 _SYNC_DERIVED_WORK_GRACE_SECONDS = 0.025
 
 
-class WorkflowExecutionConsumer(BaseConsumer):
+class WorkflowExecutionConsumer:
     """
-    Consumer for workflow execution queue.
+    Runs claimed workflow dispatches in the executor's process pool.
 
-    Message format (minimal - context is in Redis):
+    Message format (the dispatch's message; the context is the claimed run):
     {
         "execution_id": "uuid",
         "workflow_id": "uuid" (optional, for workflow execution),
@@ -62,110 +61,37 @@ class WorkflowExecutionConsumer(BaseConsumer):
         "script_name": "name" (optional, for inline scripts),
         "sync": false (optional, if true pushes result to Redis for API)
     }
-
-    Full execution context is read from the initial Redis pending execution.
     """
 
-    def __init__(self):
-        from src.config import get_settings
-        from src.services.execution.process_pool import get_process_pool
+    # The executor incarnation this consumer writes results for: a result is
+    # written only while that executor still holds the run.
+    owner_worker_id: UUID | None = None
 
-        settings = get_settings()
-        super().__init__(
-            queue_name=QUEUE_NAME,
-            prefetch_count=settings.max_concurrency,
-        )
+    def __init__(self, pool: ProcessPoolManager | None = None):
         self._redis_client = get_redis_client()
 
-        # Get the global ProcessPoolManager instance
-        # This ensures package_install consumer can also update it
-        self._pool = get_process_pool()
-        # Set the result callback on the global pool
+        # Default to the process-wide manager so package installation keeps
+        # updating the same pool; API hosts may supply their canonical pool.
+        if pool is None:
+            from src.services.execution.process_pool import get_process_pool
+
+            pool = get_process_pool()
+        self._pool = pool
+        # Set the result callback on the selected pool.
         self._pool.on_result = self._handle_result
         self._pool_started = False
 
-    async def start(self) -> None:
-        """Start the process pool, then begin consuming messages.
-
-        The pool must be fully ready (including the template process) before
-        RabbitMQ can deliver work — otherwise route_execution would run while
-        the template is still starting, and there would be no valid way to
-        create worker processes for incoming messages.
-        """
+    async def start_pool(self) -> None:
+        """Start the process pool (and its template process)."""
         await self._pool.start()
         self._pool_started = True
         logger.info("Process pool started")
 
-        # Only now begin accepting messages from RabbitMQ.
-        await super().start()
-
-    async def stop(self) -> None:
-        """Stop the consumer and process pool."""
-        # Stop process pool
+    async def stop_pool(self) -> None:
         if self._pool_started:
             await self._pool.stop()
             self._pool_started = False
             logger.info("Process pool stopped")
-
-        # Call parent stop
-        await super().stop()
-
-    async def drain(self, deadline: float = 300.0) -> None:
-        """Stop deliveries, wait for active child results, then close.
-
-        Workflow messages are acknowledged after dispatch to the forked child,
-        before the child completes. During worker shutdown we therefore need an
-        extra execution-aware phase after RabbitMQ dispatch tasks finish and
-        before the process pool is stopped.
-        """
-        if self._draining:
-            return
-        self._draining = True
-
-        try:
-            if self._queue is not None and self._consumer_tag is not None:
-                try:
-                    await self._queue.cancel(self._consumer_tag)
-                    logger.info(f"Cancelled consumer for {self.queue_name}")
-                except Exception as e:
-                    logger.warning(f"Error cancelling consumer for {self.queue_name}: {e}")
-
-            deadline_at = time.monotonic() + deadline
-            if self._inflight:
-                pending = list(self._inflight)
-                logger.info(
-                    f"Draining {len(pending)} in-flight dispatch task(s) on "
-                    f"{self.queue_name} (deadline={deadline}s)"
-                )
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*pending, return_exceptions=True),
-                        timeout=deadline,
-                    )
-                    logger.info(f"Dispatch drain complete for {self.queue_name}")
-                except asyncio.TimeoutError:
-                    still_running = [task for task in pending if not task.done()]
-                    logger.warning(
-                        f"Drain deadline exceeded on {self.queue_name}: "
-                        f"{len(still_running)} dispatch task(s) still running"
-                    )
-
-            remaining = max(0.0, deadline_at - time.monotonic())
-            if self._pool_started:
-                drained = await self._pool.drain_active_executions(remaining)
-                active_count = self._pool.active_execution_count()
-                if drained:
-                    logger.info(f"Execution drain complete for {self.queue_name}")
-                else:
-                    logger.warning(
-                        f"Execution drain deadline exceeded for {self.queue_name}: "
-                        f"{active_count} active execution(s) remain"
-                    )
-                await self._pool.stop()
-                self._pool_started = False
-                logger.info("Process pool stopped")
-        finally:
-            await super().stop()
 
     async def _handle_result(self, result: dict[str, Any]) -> None:
         """
@@ -331,6 +257,29 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 exc_info=True,
             )
 
+    @staticmethod
+    def _drop_fenced_result(execution_id: str) -> None:
+        logger.warning(
+            "Dropped the result of a run this executor no longer holds "
+            "(it was declared lost and the run already ended)",
+            extra={"execution_id": execution_id},
+        )
+
+    @staticmethod
+    async def _read_persisted_completion_timing(
+        session: AsyncSession,
+        execution_id: str,
+    ) -> tuple[datetime | None, datetime | None]:
+        """Read timing written by the authoritative terminal-status update."""
+        started_at, completed_at = (
+            await session.execute(
+                select(Execution.started_at, Execution.completed_at).where(
+                    Execution.id == UUID(execution_id)
+                )
+            )
+        ).one()
+        return started_at, completed_at
+
     async def _process_success(
         self,
         execution_id: str,
@@ -376,12 +325,15 @@ class WorkflowExecutionConsumer(BaseConsumer):
         roi_data = result.get("roi") or {}
         roi_time_saved = roi_data.get("time_saved", 0)
         roi_value = roi_data.get("value", 0.0)
+        started_at: datetime | None = None
+        completed_at: datetime | None = None
+        log_receipt = None
 
         # DB operations and log flush — single short-lived session
         # (log flush reads Redis internally but DB writes share the session)
         session_factory = get_session_factory()
         async with session_factory() as session:
-            await update_execution(
+            written = await update_execution(
                 execution_id=execution_id,
                 status=status,
                 result=workflow_result,
@@ -394,7 +346,12 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 time_saved=roi_time_saved,
                 value=roi_value,
                 session=session,
+                owner_worker_id=self.owner_worker_id,
             )
+            if not written:
+                await session.rollback()
+                self._drop_fenced_result(execution_id)
+                return
             execution_update_ms = (time.perf_counter() - completion_started) * 1000
 
             if metadata.get("event") is not None or recovered_from_database:
@@ -408,21 +365,23 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
 
-            if result.get("logs"):
-                try:
-                    from bifrost._logging import flush_logs_to_postgres
-                    logs_count = await flush_logs_to_postgres(
-                        execution_id, session=session
-                    )
-                    if logs_count > 0:
-                        logger.debug(
-                            f"Flushed {logs_count} logs for {execution_id[:8]}..."
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to flush logs for {execution_id[:8]}...: {e}"
-                    )
+            try:
+                from bifrost._logging import stage_logs_to_postgres
+
+                # Redis is authoritative for worker-side logs. Inspect it even
+                # when the result payload has no in-memory log list, then only
+                # acknowledge its receipt after this transaction commits.
+                log_receipt = await stage_logs_to_postgres(execution_id, session)
+                if log_receipt.count:
+                    logger.debug("Staged %d logs for %s", log_receipt.count, execution_id[:8])
+            except Exception as e:
+                logger.warning(f"Failed to stage logs for {execution_id[:8]}...: {e}")
             logs_flushed_ms = (time.perf_counter() - completion_started) * 1000
+
+            if status == ExecutionStatus.SUCCESS:
+                started_at, completed_at = await self._read_persisted_completion_timing(
+                    session, execution_id
+                )
 
             await session.commit()
         durable_ms = (time.perf_counter() - completion_started) * 1000
@@ -443,6 +402,36 @@ class WorkflowExecutionConsumer(BaseConsumer):
 
         if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
+
+        if log_receipt is not None:
+            from bifrost._logging import acknowledge_staged_logs, recover_terminal_execution_logs
+
+            await acknowledge_staged_logs(log_receipt)
+            try:
+                await recover_terminal_execution_logs([execution_id], limit=1)
+            except Exception as e:
+                logger.warning(f"Failed terminal log recovery for {execution_id[:8]}...: {e}")
+
+        # This is deliberately after the authoritative execution commit and
+        # sync wakeup, before unrelated fan-out. Built-in event emission is
+        # best effort, matching workflow.failed: a crash in this gap can omit
+        # the event while preserving the durable execution result.
+        if status == ExecutionStatus.SUCCESS and completed_at is not None:
+            from src.services.events.builtins import emit_workflow_completed_event
+
+            await emit_workflow_completed_event(
+                workflow_id=workflow_id,
+                workflow_name=workflow_name,
+                execution_id=execution_id,
+                organization_id=org_id,
+                user_id=user_id,
+                user_email=metadata.get("user_email"),
+                user_name=user_name,
+                started_at=started_at,
+                completed_at=completed_at,
+                duration_ms=duration_ms,
+                trigger_event=metadata.get("event"),
+            )
 
         metrics_data = result.get("metrics") or {}
         await self._record_completion_metrics(
@@ -468,7 +457,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
             {"duration_ms": duration_ms},
         )
 
-        completed_at = datetime.now(timezone.utc)
         await publish_history_update(
             execution_id=execution_id,
             status=status.value,
@@ -476,7 +464,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
             executed_by_name=user_name,
             workflow_name=workflow_name,
             org_id=org_id,
-            completed_at=completed_at,
+            completed_at=completed_at or datetime.now(timezone.utc),
             duration_ms=duration_ms,
         )
 
@@ -486,8 +474,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
             await cleanup_execution_cache(execution_id)
         except Exception as e:
             logger.warning(f"Failed to cleanup cache for {execution_id[:8]}...: {e}")
-
-        await self._redis_client.delete_pending_execution(execution_id)
 
         logger.debug(
             "Completion timing %s: metadata=%.1fms execution_update=%.1fms "
@@ -555,6 +541,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
             status = ExecutionStatus.CANCELLED
         else:
             status = ExecutionStatus.FAILED
+        log_receipt = None
 
         # DB operations and log flush — single short-lived session
         session_factory = get_session_factory()
@@ -564,7 +551,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
             # samples). Failed executions are the highest-memory samples, so
             # dropping them here would bias any future lane-sizing data low.
             failure_metrics = result.get("metrics")
-            await update_execution(
+            written = await update_execution(
                 execution_id=execution_id,
                 status=status,
                 error_message=error,
@@ -572,7 +559,12 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 duration_ms=duration_ms,
                 metrics=failure_metrics,
                 session=session,
+                owner_worker_id=self.owner_worker_id,
             )
+            if not written:
+                await session.rollback()
+                self._drop_fenced_result(execution_id)
+                return
 
             if metadata.get("event") is not None or recovered_from_database:
                 try:
@@ -588,20 +580,16 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
 
-            if result.get("logs"):
-                try:
-                    from bifrost._logging import flush_logs_to_postgres
-                    logs_count = await flush_logs_to_postgres(
-                        execution_id, session=session
+            try:
+                from bifrost._logging import stage_logs_to_postgres
+
+                log_receipt = await stage_logs_to_postgres(execution_id, session)
+                if log_receipt.count:
+                    logger.debug(
+                        "Staged %d logs for failed %s", log_receipt.count, execution_id[:8]
                     )
-                    if logs_count > 0:
-                        logger.debug(
-                            f"Flushed {logs_count} logs for failed {execution_id[:8]}..."
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to flush logs for {execution_id[:8]}...: {e}"
-                    )
+            except Exception as e:
+                logger.warning(f"Failed to stage logs for {execution_id[:8]}...: {e}")
 
             await session.commit()
 
@@ -618,6 +606,15 @@ class WorkflowExecutionConsumer(BaseConsumer):
             )
 
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
+
+        if log_receipt is not None:
+            from bifrost._logging import acknowledge_staged_logs, recover_terminal_execution_logs
+
+            await acknowledge_staged_logs(log_receipt)
+            try:
+                await recover_terminal_execution_logs([execution_id], limit=1)
+            except Exception as e:
+                logger.warning(f"Failed terminal log recovery for {execution_id[:8]}...: {e}")
 
         failure_metrics = result.get("metrics") or {}
         await self._record_completion_metrics(
@@ -655,8 +652,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
         except Exception as e:
             logger.warning(f"Failed to cleanup cache for {execution_id[:8]}...: {e}")
 
-        await self._redis_client.delete_pending_execution(execution_id)
-
         logger.warning(
             f"Execution failed: {execution_id[:8]}... status={status.value} error={error_type}",
             extra={
@@ -685,9 +680,18 @@ class WorkflowExecutionConsumer(BaseConsumer):
             trigger_event=metadata.get("event"),
         )
 
-    async def process_message(self, message_data: dict[str, Any]) -> None:
-        """Process a workflow execution message."""
-        from src.services.execution.queue_tracker import remove_from_queue
+    async def process_message(
+        self,
+        message_data: dict[str, Any],
+        claimed: PendingExecution | None,
+    ) -> None:
+        """Run a claimed workflow dispatch.
+
+        ``claimed`` is the context of the run the executor claimed (PENDING ->
+        RUNNING) in its claim transaction, or None when the run had already
+        moved on (cancelled): the dispatch is then discarded.
+        """
+        from src.services.execution.queue_tracker import publish_queue_positions
 
         dispatch_started = time.perf_counter()
         execution_id = message_data.get("execution_id", "")
@@ -695,36 +699,42 @@ class WorkflowExecutionConsumer(BaseConsumer):
         code_base64 = message_data.get("code")
         script_name = message_data.get("script_name")
         is_sync = message_data.get("sync", False)
-        execution_record_exists = bool(
-            message_data.get("execution_record_exists", False)
-        )
         dispatch_metadata = message_data.get("dispatch_metadata")
         file_path: str | None = None  # Will be set from workflow metadata lookup
         start_time = datetime.now(timezone.utc)
 
         # Sync executions never enter the UI queue tracker: their HTTP caller
-        # waits on a private Redis result list while RabbitMQ/pool admission
-        # remains fully enforced.
+        # waits on a private Redis result list while pool admission remains
+        # fully enforced.
         if not is_sync:
-            await remove_from_queue(execution_id)
-
-        # Read execution context from Redis
-        pending = await self._redis_client.get_pending_execution(execution_id)
-
-        if pending is None:
-            logger.error(f"No pending execution found in Redis: {execution_id}")
-            if is_sync:
-                await self._redis_client.push_result(
-                    execution_id=execution_id,
-                    status="Failed",
-                    error="Pending execution not found in Redis",
-                    error_type="PendingNotFound",
-                    duration_ms=0,
+            # PostgreSQL already owns this claim. Queue notifications must not
+            # strand it before a child starts when publication is unavailable.
+            try:
+                await publish_queue_positions()
+            except Exception:
+                logger.warning(
+                    "Could not update execution queue tracking",
+                    extra={"execution_id": execution_id},
+                    exc_info=True,
                 )
+
+        if claimed is None:
+            logger.info(
+                "Discarding dispatch whose run was not pending",
+                extra={"execution_id": execution_id},
+            )
+            if is_sync:
+                from src.services.execution.workflow_dispatch import (
+                    notify_discarded_sync_run,
+                )
+
+                async with get_db_context() as db:
+                    await notify_discarded_sync_run(db, UUID(execution_id))
             return
+        pending = claimed
         pending_ready_ms = (time.perf_counter() - dispatch_started) * 1000
 
-        # Extract context from Redis pending record.
+        # Extract context from the claimed run.
         parameters = pending["parameters"]
         org_id = pending["org_id"]
         user_id = pending["user_id"]
@@ -740,52 +750,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
         lineage = pending.get("lineage")
         impersonation_provenance = pending.get("impersonation_provenance")
 
-        # Immediate async runs have no durable row until this consumer starts.
-        # If their lineage user was deleted after enqueueing, record the same
-        # terminal cancellation that deletion applies to durable queued rows.
-        if not execution_record_exists and lineage is not None:
-            from shared.run_cancellation import cancel_redis_queued_run_if_user_deleted
-
-            async with get_db_context() as db:
-                cancelled = await cancel_redis_queued_run_if_user_deleted(
-                    db,
-                    execution_id=UUID(execution_id),
-                    run_user_id=UUID(lineage["run_user_id"]),
-                    workflow_name=script_name or "workflow",
-                    parameters=parameters,
-                    organization_id=UUID(org_id) if org_id else None,
-                    workflow_id=UUID(workflow_id) if workflow_id else None,
-                    form_id=UUID(form_id) if form_id else None,
-                    api_key_id=UUID(api_key_id) if api_key_id else None,
-                    executed_by_name=user_name,
-                    impersonation_provenance=impersonation_provenance,
-                )
-                await db.commit()
-            if cancelled:
-                logger.info(
-                    "Discarding Redis-queued execution whose run user was deleted",
-                    extra={"execution_id": execution_id},
-                )
-                await self._redis_client.delete_pending_execution(execution_id)
-                return
-
-        # Scheduled runs have a durable row before their queue message exists.
-        # Claim it atomically before dispatch so a deletion-side cancellation
-        # cannot be overwritten by this consumer after promotion commits.
-        if execution_record_exists:
-            from shared.run_cancellation import claim_pending_run_for_dispatch
-
-            async with get_db_context() as db:
-                claimed = await claim_pending_run_for_dispatch(db, UUID(execution_id))
-                await db.commit()
-            if not claimed:
-                logger.info(
-                    "Discarding queued execution whose durable row was not pending",
-                    extra={"execution_id": execution_id},
-                )
-                await self._redis_client.delete_pending_execution(execution_id)
-                return
-
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
 
@@ -800,50 +764,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     "execution_model": "process",
                 },
             )
-
-            # Check if execution was cancelled in Redis before we started
-            if pending.get("cancelled", False):
-                logger.info(f"Execution {execution_id} was cancelled before starting")
-                await create_execution(
-                    execution_id=execution_id,
-                    workflow_name=script_name or "workflow",
-                    parameters=parameters,
-                    org_id=org_id,
-                    user_id=user_id,
-                    user_name=user_name,
-                    form_id=form_id,
-                    api_key_id=api_key_id,
-                    status=ExecutionStatus.CANCELLED,
-                    execution_model="process",
-                    workflow_id=workflow_id,
-                    check_existing=execution_record_exists,
-                    lineage=lineage,
-                    impersonation_provenance=impersonation_provenance,
-                )
-                await update_execution(
-                    execution_id=execution_id,
-                    status=ExecutionStatus.CANCELLED,
-                    error_message="Execution was cancelled before it could start",
-                    duration_ms=0,
-                )
-                await publish_execution_update(execution_id, "Cancelled")
-                await publish_history_update(
-                    execution_id=execution_id,
-                    status="Cancelled",
-                    executed_by=user_id,
-                    executed_by_name=user_name,
-                    workflow_name=script_name or "workflow",
-                    org_id=org_id,
-                )
-                await self._redis_client.delete_pending_execution(execution_id)
-                if is_sync:
-                    await self._redis_client.push_result(
-                        execution_id=execution_id,
-                        status="Cancelled",
-                        error="Execution was cancelled before it could start",
-                        duration_ms=0,
-                    )
-                return
 
             # Get workflow metadata from database if this is a workflow execution
             workflow_name = script_name or "inline_script"
@@ -923,7 +843,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         status=ExecutionStatus.FAILED,
                         execution_model="process",
                         workflow_id=workflow_id,
-                        check_existing=execution_record_exists,
+                        check_existing=True,
                         lineage=lineage,
                         impersonation_provenance=impersonation_provenance,
                     )
@@ -943,7 +863,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         org_id=org_id,
                         duration_ms=duration_ms,
                     )
-                    await self._redis_client.delete_pending_execution(execution_id)
                     if is_sync:
                         await self._redis_client.push_result(
                             execution_id=execution_id,
@@ -968,7 +887,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 status=ExecutionStatus.RUNNING,
                 execution_model="process",
                 workflow_id=workflow_id,
-                check_existing=execution_record_exists,
+                check_existing=True,
                 lineage=lineage,
                 impersonation_provenance=impersonation_provenance,
             )
@@ -1092,19 +1011,11 @@ class WorkflowExecutionConsumer(BaseConsumer):
 
         except asyncio.CancelledError:
             logger.info(f"Execution task {execution_id} was cancelled")
-            await self._redis_client.delete_pending_execution(execution_id)
             raise
 
-        except MemoryError as e:
-            # Admission rejected due to memory pressure — requeue for retry
-            logger.warning(
-                f"Admission rejected for {execution_id[:8]}: {e}. "
-                "Will requeue for retry."
-            )
-            # Don't mark as failed — the execution hasn't started yet.
-            # Clean up pending state so it can be re-routed.
-            await self._redis_client.delete_pending_execution(execution_id)
-            # Re-raise so the consumer framework NACKs with requeue=True
+        except MemoryError:
+            # The fork was refused before the run started; the executor hands
+            # the run back (pool_main) instead of failing it.
             raise
 
         except Exception as e:
@@ -1139,8 +1050,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 duration_ms=duration_ms,
             )
 
-            await self._redis_client.delete_pending_execution(execution_id)
-
             if is_sync:
                 await self._redis_client.push_result(
                     execution_id=execution_id,
@@ -1161,4 +1070,3 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 },
                 exc_info=True,
             )
-            raise

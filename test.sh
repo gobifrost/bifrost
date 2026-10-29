@@ -16,6 +16,7 @@
 #
 # Local Kubernetes spike (isolated Kind cluster):
 #   ./test.sh kubernetes up|status|down|collect|kubectl
+#   ./test.sh bench up|run|down       (performance benchmark, scripts/bench/README.md)
 #
 # Quality checks:
 #   ./test.sh quality api               Run API pyright + ruff inside Docker.
@@ -47,12 +48,30 @@ if [ "${1:-}" = "kubernetes" ]; then
     exec "$SCRIPT_DIR/scripts/kubernetes/local-kind.sh" "$@"
 fi
 
+# Performance benchmark on the same Kind cluster (scripts/bench/README.md).
+if [ "${1:-}" = "bench" ]; then
+    shift
+    exec python3 "$SCRIPT_DIR/scripts/bench/run.py" "$@"
+fi
+
 # shellcheck source=scripts/lib/test_helpers.sh
 source "$SCRIPT_DIR/scripts/lib/test_helpers.sh"
 
 COMPOSE_FILE="docker-compose.test.yml"
 export COMPOSE_PROJECT_NAME
 COMPOSE_PROJECT_NAME="$(compute_project_name .)"
+
+# Each worktree builds and runs its own API image, so a parallel worktree's
+# build cannot replace the image this one tests. CI pre-builds :latest and
+# sets BIFROST_SKIP_BUILD=1.
+if [ -z "${BIFROST_TEST_IMAGE_TAG:-}" ]; then
+    if [ "${BIFROST_SKIP_BUILD:-0}" = "1" ]; then
+        BIFROST_TEST_IMAGE_TAG=latest
+    else
+        BIFROST_TEST_IMAGE_TAG="$COMPOSE_PROJECT_NAME"
+    fi
+fi
+export BIFROST_TEST_IMAGE_TAG
 
 LOG_DIR="/tmp/bifrost-$COMPOSE_PROJECT_NAME"
 mkdir -p "$LOG_DIR"
@@ -99,6 +118,11 @@ require_stack_up() {
         echo "  ./test.sh stack up" >&2
         exit 1
     fi
+    # A unit-only run stops the API; every caller resets state next, which
+    # starts it again and waits for it to serve.
+    if [ -z "$(docker compose -f "$COMPOSE_FILE" ps -q --status running api)" ]; then
+        return 0
+    fi
     # Containers may report "running" before the API is actually serving
     # traffic (uvicorn boot, alembic, app startup hooks). Block here until
     # /health/ready returns 200 so callers don't race the API. Idempotent
@@ -119,6 +143,14 @@ reset_state() {
     docker compose -f "$COMPOSE_FILE" stop \
         api worker scheduler scheduler-fixtures pgbouncer 2>/dev/null || true
 
+    # A reset creates a new DB/object-store generation. Application containers
+    # keep writable worktrees such as GitHubSyncService's /tmp/git, so merely
+    # stopping them can pair stale on-disk Git state with an empty object store.
+    # Recreate only those ephemeral application containers; infrastructure and
+    # fixture volumes remain intact. Remove anonymous dependency volumes with
+    # the containers so repeated resets do not leave their contents on disk.
+    docker compose -f "$COMPOSE_FILE" rm -sfv api worker scheduler > /dev/null
+
     docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U bifrost -d postgres -c \
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'bifrost_test' AND pid <> pg_backend_pid();" \
         > /dev/null 2>&1 || true
@@ -138,8 +170,11 @@ reset_state() {
 
     docker compose -f "$COMPOSE_FILE" start pgbouncer > /dev/null
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
-    docker compose -f "$COMPOSE_FILE" --profile e2e start \
-        api worker scheduler scheduler-fixtures > /dev/null
+    docker compose -f "$COMPOSE_FILE" --profile e2e start scheduler-fixtures > /dev/null
+    wait_for_service "$COMPOSE_FILE" scheduler-fixtures \
+        python -c "import ssl,urllib.request; urllib.request.urlopen('http://localhost:8080/health'); urllib.request.urlopen('https://fixture.openrouter.ai:8443/health', context=ssl.create_default_context(cafile='/fixture-tls/trust.pem'))"
+    docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build \
+        api worker scheduler > /dev/null
     wait_for_api_ready "$COMPOSE_FILE"
 
     echo "State reset complete."
@@ -213,17 +248,17 @@ stack_up() {
     fi
 
     echo "Booting infrastructure..."
-    docker compose -f "$COMPOSE_FILE" up -d postgres rabbitmq redis seaweedfs
+    docker compose -f "$COMPOSE_FILE" up -d postgres redis seaweedfs
 
     wait_for_service "$COMPOSE_FILE" postgres pg_isready -U bifrost -d postgres
-    wait_for_service "$COMPOSE_FILE" rabbitmq rabbitmq-diagnostics check_running
     wait_for_service "$COMPOSE_FILE" redis redis-cli ping
 
     docker compose -f "$COMPOSE_FILE" up -d pgbouncer
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
 
     # CI pre-builds the API dev image via docker/build-push-action with GHA cache
-    # and tags it as bifrost-test-api-dev:latest before calling stack up.
+    # and tags it as bifrost-test-api-dev:latest before calling stack up
+    # (BIFROST_TEST_IMAGE_TAG; locally each worktree uses its project name).
     # Setting BIFROST_SKIP_BUILD=1 tells compose to
     # use those local images directly instead of building. Local dev leaves
     # this unset so `--build` continues to apply (image layer cache makes the
@@ -329,10 +364,12 @@ run_pytest() {
     require_stack_up
     prepare_test_state
     if [[ "$unit_only" == "1" ]]; then
-        # Unit tests create committed service rows while exercising claim
-        # logic. A live scheduler/worker can claim those rows before the test
-        # loop does, making the result depend on an unrelated process tick.
-        docker compose -f "$COMPOSE_FILE" stop worker scheduler > /dev/null
+        # Unit tests create committed dispatch and service rows while
+        # exercising claim and reconcile logic. The live executors (scheduler
+        # and worker) would claim them and the API's control plane would
+        # reconcile them before the test does, making the result depend on an
+        # unrelated process tick. The next e2e run's state reset starts them.
+        docker compose -f "$COMPOSE_FILE" stop api worker scheduler > /dev/null
     fi
     # LOG_DIR is mkdir'd on the host as the runner/host user, then bind-mounted
     # into the test-runner container at /tmp/bifrost. The container runs as
@@ -428,6 +465,7 @@ repository_ci_checks() {
     bash scripts/lib/test_stack_lock_test.sh
     python3 -m unittest scripts.test_codeql_changed_lines
     python3 -m unittest scripts.test_e2e_shard
+    python3 -m unittest scripts.test_pool_drills
     python3 -m unittest scripts.test_product_updates
     python3 -m unittest scripts.test_release_gate
     bash scripts/test_release_check.sh

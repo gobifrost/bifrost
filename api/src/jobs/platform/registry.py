@@ -1,68 +1,50 @@
-"""Explicit registry for scheduler-owned platform-job handlers."""
+"""Lazy registry for scheduler-owned platform-job handlers."""
 
-from src.jobs.platform.application_publish import (
-    APPLICATION_PUBLISH_DEFINITION,
-)
-from src.jobs.platform.application_deploy import APPLICATION_DEPLOY_DEFINITION
-from src.jobs.platform.application_sdk_update import (
-    APPLICATION_SDK_UPDATE_DEFINITION,
-)
-from src.jobs.platform.audit_archive import AUDIT_ARCHIVE_DEFINITION
-from src.jobs.platform.audit_query import AUDIT_QUERY_DEFINITION
+from __future__ import annotations
+
+from importlib import import_module
+
 from src.jobs.platform.base import PlatformJobDefinition
-from src.jobs.platform.file_move import FILE_MOVE_DEFINITION
-from src.jobs.platform.run_retention import RUN_RETENTION_DEFINITION
-from src.jobs.platform.system_maintenance import (
-    ARTIFACT_RETENTION_CLEANUP_DEFINITION,
-    FILE_INDEX_RECONCILIATION_DEFINITION,
-    MODEL_CATALOG_REFRESH_DEFINITION,
-    OAUTH_REFRESH_DEFINITION,
-    SOLUTION_UPDATE_CHECK_DEFINITION,
-    WEBHOOK_RENEWAL_DEFINITION,
-)
-from src.jobs.platform.solution_export import SOLUTION_EXPORT_DEFINITION
-from src.jobs.platform.solution_deploy import SOLUTION_DEPLOY_DEFINITION
-from src.jobs.platform.solution_git_sync import SOLUTION_GIT_SYNC_DEFINITION
-from src.jobs.platform.embedding_reindex import EMBEDDING_REINDEX_DEFINITION
-from src.jobs.platform.reimport import WORKSPACE_REIMPORT_DEFINITION
-from src.jobs.platform.git_operation import GIT_OPERATION_DEFINITION
-from src.jobs.platform.workspace_bundle_import import WORKSPACE_BUNDLE_IMPORT_DEFINITION
-from src.jobs.platform.summary_backfill import SUMMARY_BACKFILL_DEFINITION
-from src.jobs.platform.video_generation import (
-    SDK_VIDEO_GENERATION_DEFINITION,
-    VIDEO_GENERATION_DEFINITION,
+from src.jobs.platform.catalog import (
+    PlatformJobMetadata,
+    get_platform_job_metadata,
+    list_platform_job_metadata,
 )
 
-_DEFINITIONS = {
-    APPLICATION_DEPLOY_DEFINITION.job_type: APPLICATION_DEPLOY_DEFINITION,
-    APPLICATION_SDK_UPDATE_DEFINITION.job_type: APPLICATION_SDK_UPDATE_DEFINITION,
-    APPLICATION_PUBLISH_DEFINITION.job_type: APPLICATION_PUBLISH_DEFINITION,
-    OAUTH_REFRESH_DEFINITION.job_type: OAUTH_REFRESH_DEFINITION,
-    WEBHOOK_RENEWAL_DEFINITION.job_type: WEBHOOK_RENEWAL_DEFINITION,
-    SOLUTION_UPDATE_CHECK_DEFINITION.job_type: SOLUTION_UPDATE_CHECK_DEFINITION,
-    FILE_INDEX_RECONCILIATION_DEFINITION.job_type: FILE_INDEX_RECONCILIATION_DEFINITION,
-    ARTIFACT_RETENTION_CLEANUP_DEFINITION.job_type: ARTIFACT_RETENTION_CLEANUP_DEFINITION,
-    AUDIT_ARCHIVE_DEFINITION.job_type: AUDIT_ARCHIVE_DEFINITION,
-    AUDIT_QUERY_DEFINITION.job_type: AUDIT_QUERY_DEFINITION,
-    RUN_RETENTION_DEFINITION.job_type: RUN_RETENTION_DEFINITION,
-    MODEL_CATALOG_REFRESH_DEFINITION.job_type: MODEL_CATALOG_REFRESH_DEFINITION,
-    FILE_MOVE_DEFINITION.job_type: FILE_MOVE_DEFINITION,
-    SOLUTION_EXPORT_DEFINITION.job_type: SOLUTION_EXPORT_DEFINITION,
-    SOLUTION_DEPLOY_DEFINITION.job_type: SOLUTION_DEPLOY_DEFINITION,
-    SOLUTION_GIT_SYNC_DEFINITION.job_type: SOLUTION_GIT_SYNC_DEFINITION,
-    EMBEDDING_REINDEX_DEFINITION.job_type: EMBEDDING_REINDEX_DEFINITION,
-    WORKSPACE_REIMPORT_DEFINITION.job_type: WORKSPACE_REIMPORT_DEFINITION,
-    GIT_OPERATION_DEFINITION.job_type: GIT_OPERATION_DEFINITION,
-    WORKSPACE_BUNDLE_IMPORT_DEFINITION.job_type: WORKSPACE_BUNDLE_IMPORT_DEFINITION,
-    SUMMARY_BACKFILL_DEFINITION.job_type: SUMMARY_BACKFILL_DEFINITION,
-    VIDEO_GENERATION_DEFINITION.job_type: VIDEO_GENERATION_DEFINITION,
-    SDK_VIDEO_GENERATION_DEFINITION.job_type: SDK_VIDEO_GENERATION_DEFINITION,
-}
+
+_DEFINITIONS: dict[str, PlatformJobDefinition] = {}
 
 
 def get_platform_job_definition(job_type: str) -> PlatformJobDefinition | None:
-    return _DEFINITIONS.get(job_type)
+    """Load only the requested handler module and materialize its definition."""
+    cached = _DEFINITIONS.get(job_type)
+    if cached is not None:
+        return cached
+    metadata = get_platform_job_metadata(job_type)
+    if metadata is None:
+        return None
+    module = import_module(metadata.module)
+    definition = getattr(module, metadata.definition_name)
+    if not isinstance(definition, PlatformJobDefinition):
+        raise TypeError(
+            f"{metadata.module}.{metadata.definition_name} is not a platform-job definition"
+        )
+    _DEFINITIONS[job_type] = definition
+    return definition
 
 
 def list_platform_job_definitions() -> list[PlatformJobDefinition]:
-    return list(_DEFINITIONS.values())
+    return [
+        definition
+        for metadata in list_platform_job_metadata()
+        if (definition := get_platform_job_definition(metadata.job_type)) is not None
+    ]
+
+
+__all__ = [
+    "PlatformJobMetadata",
+    "get_platform_job_definition",
+    "get_platform_job_metadata",
+    "list_platform_job_definitions",
+    "list_platform_job_metadata",
+]

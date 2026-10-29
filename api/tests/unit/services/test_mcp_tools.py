@@ -18,10 +18,14 @@ and ``tests/e2e/mcp/test_mcp_parity.py`` (live REST round-trip), not here.
 """
 
 from datetime import datetime, timezone
+from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import Field
 
 from src.core.principal import UserPrincipal
 from src.services.authorization.context import AuthorizationContext
@@ -248,6 +252,159 @@ class TestBifrostMCPServer:
 
         server = BifrostMCPServer(org_user_context)
         assert server.context == org_user_context
+
+
+@pytest.mark.asyncio
+async def test_sdk_generator_keeps_json_alias_in_schema_and_calls_python_parameter():
+    """The SDK passes aliases to wrappers, while handlers use Python names."""
+    from src.services.mcp_server.generators.fastmcp_generator import (
+        register_tool_with_context,
+    )
+    from src.services.mcp_server.tool_result import direct_result
+
+    seen: dict[str, Any] = {}
+
+    async def aliased_tool(
+        context: Any,
+        async_: Annotated[bool | None, Field(alias="async")] = None,
+    ):
+        seen["context"] = context
+        seen["async_"] = async_
+        return direct_result({"ok": True})
+
+    mcp = FastMCP("test")
+    context = object()
+    register_tool_with_context(
+        mcp,
+        aliased_tool,
+        "aliased_tool",
+        "Test alias forwarding.",
+        lambda: context,
+    )
+
+    tool = mcp._tool_manager.get_tool("aliased_tool")
+    assert tool is not None
+    assert "async" in tool.parameters["properties"]
+    assert "async_" not in tool.parameters["properties"]
+
+    await tool.run({"async": True}, convert_result=True)
+
+    assert seen == {"context": context, "async_": True}
+
+@pytest.mark.asyncio
+async def test_sdk_refresh_rebinds_a_reused_workflow_tool_name(monkeypatch, org_user_context):
+    """A name reassigned during refresh must call its current workflow."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from src.services.mcp_server import server
+
+    @asynccontextmanager
+    async def database():
+        yield object()
+
+    old_id, current_id = uuid4(), uuid4()
+    workflows = [SimpleNamespace(
+        id=old_id, name="Reused Tool", description="Old description",
+        parameters_schema=[],
+    )]
+    current = SimpleNamespace(
+        id=current_id, name="Reused Tool", description="Current description",
+        parameters_schema=[],
+    )
+    registry = AsyncMock(side_effect=lambda: workflows)
+    execute = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr("src.core.database.get_db_context", database)
+    monkeypatch.setattr("src.services.tool_registry.ToolRegistry.get_all_tools", registry)
+    monkeypatch.setattr(server, "_fastmcp_instance", None)
+    monkeypatch.setattr(server, "_WORKFLOW_ID_TO_TOOL_NAME", {})
+    monkeypatch.setattr(server, "_get_context_from_token", lambda: org_user_context)
+    monkeypatch.setattr(server, "_execute_workflow_tool_impl", execute)
+    mcp = FastMCP("refresh-test")
+
+    assert await server._register_workflow_tools(mcp) == 1
+    original = mcp._tool_manager.get_tool("reused_tool")
+    assert original is not None
+    workflows[:] = [current]
+    assert await server.refresh_workflow_tools() == 1
+    tool = mcp._tool_manager.get_tool("reused_tool")
+    assert tool is not None
+    assert tool.fn is not original.fn
+    await tool.run({})
+
+    execute.assert_awaited_once_with(
+        org_user_context, str(current_id), current.name,
+    )
+    assert tool.description == current.description
+
+
+@pytest.mark.asyncio
+async def test_sdk_workflow_tools_share_metadata_and_keep_dynamic_schema(
+    monkeypatch, org_user_context
+):
+    """Workflow schemas remain per-tool while wrapper metadata is shared."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from src.services.mcp_server import server
+
+    @asynccontextmanager
+    async def database():
+        yield object()
+
+    send_id, count_id = uuid4(), uuid4()
+    workflows = [
+        SimpleNamespace(
+            id=send_id,
+            name="Send Message",
+            description="Send one message.",
+            parameters_schema=[{"name": "message", "type": "string", "required": True}],
+        ),
+        SimpleNamespace(
+            id=count_id,
+            name="Count Items",
+            description="Count one collection.",
+            parameters_schema=[{"name": "count", "type": "integer", "required": True}],
+        ),
+    ]
+    execute = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr("src.core.database.get_db_context", database)
+    monkeypatch.setattr(
+        "src.services.tool_registry.ToolRegistry.get_all_tools",
+        AsyncMock(return_value=workflows),
+    )
+    monkeypatch.setattr(server, "_get_context_from_token", lambda: org_user_context)
+    monkeypatch.setattr(server, "_execute_workflow_tool_impl", execute)
+    mcp = FastMCP("metadata-test")
+
+    assert await server._register_workflow_tools(mcp) == 2
+    listed = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
+    send, count = listed["send_message"], listed["count_items"]
+
+    assert send.parameters == {
+        "type": "object",
+        "properties": {"message": {"type": "string"}},
+        "additionalProperties": False,
+        "required": ["message"],
+    }
+    assert count.parameters == {
+        "type": "object",
+        "properties": {"count": {"type": "integer"}},
+        "additionalProperties": False,
+        "required": ["count"],
+    }
+    assert send.fn_metadata is count.fn_metadata
+    assert send.fn_metadata.output_schema is None
+
+    await send.run({"message": "hello"})
+    execute.assert_awaited_once_with(
+        org_user_context, str(send_id), "Send Message", message="hello"
+    )
+    with pytest.raises(ToolError, match="Invalid arguments for count_items"):
+        await count.run({"count": "not-an-integer"})
+    execute.assert_awaited_once()
+
 
 # ==================== get_system_tool_ids Tests ====================
 

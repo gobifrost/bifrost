@@ -98,6 +98,10 @@ class TestForkedFormsContextTransport:
         runtime_user = User(
             email=f"{stem}-actor@example.test",
             name="Fork Forms Runtime Actor",
+            # NULL-org users must be superuser
+            # (``ck_users_org_requires_superuser``); set_platform_admin below
+            # adds the assignment that makes it true.
+            is_superuser=True,
         )
         db_session.add(runtime_user)
         await db_session.flush()

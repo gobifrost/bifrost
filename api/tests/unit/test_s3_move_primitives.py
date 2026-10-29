@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from botocore.exceptions import ClientError, EndpointConnectionError
+import httpx
+
+from src.core.s3_transport import S3Error
 
 from src.services.file_storage.s3_client import (
     COPY_OBJECT_LIMIT,
@@ -17,11 +19,9 @@ from src.services.file_storage.s3_client import (
 )
 
 
-def client_error(code: str, status: int, operation: str = "Op") -> ClientError:
-    return ClientError(
-        {"Error": {"Code": code, "Message": code}, "ResponseMetadata": {"HTTPStatusCode": status}},
-        operation,
-    )
+def client_error(code: str, status: int, operation: str = "Op") -> S3Error:
+    del operation
+    return S3Error(code, status, code)
 
 
 def storage_with(monkeypatch, **methods):
@@ -53,7 +53,7 @@ async def test_head_object_returns_none_only_for_not_found(monkeypatch) -> None:
     storage, _ = storage_with(
         monkeypatch, head_object=AsyncMock(side_effect=client_error("403", 403, "HeadObject"))
     )
-    with pytest.raises(ClientError):
+    with pytest.raises(S3Error):
         await storage.head_object("k")
 
 
@@ -179,7 +179,7 @@ async def test_default_part_size_respects_part_limits(monkeypatch) -> None:
 
 async def test_delete_object_strict_raises(monkeypatch) -> None:
     storage, _ = storage_with(monkeypatch, delete_object=AsyncMock(side_effect=client_error("InternalError", 500)))
-    with pytest.raises(ClientError):
+    with pytest.raises(S3Error):
         await storage.delete_object_strict("k")
 
 
@@ -195,7 +195,7 @@ async def test_list_keys_follows_continuation(monkeypatch) -> None:
 
 
 def test_storage_unavailable_classification() -> None:
-    assert is_storage_unavailable(EndpointConnectionError(endpoint_url="http://s3"))
+    assert is_storage_unavailable(httpx.ConnectError("connection failed"))
     assert is_storage_unavailable(client_error("AccessDenied", 403))
     assert is_storage_unavailable(client_error("403", 403))
     assert is_storage_unavailable(client_error("Forbidden", 403))
