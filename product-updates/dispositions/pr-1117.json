@@ -1,0 +1,14 @@
+{
+  "key": "pr:1117",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Platform Admins opening a customer’s App now use that customer’s tables, files, and workflow context.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1117",
+      "Product review: the maintainer approved this customer-facing fix and its default runtime behavior on 2026-10-29."
+    ]
+  }
+}

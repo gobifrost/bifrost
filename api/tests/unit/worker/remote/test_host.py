@@ -10,7 +10,8 @@ from uuid import UUID
 
 import pytest
 
-from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession
+from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
+from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession, _reply_timeout
 from src.worker.remote.ownership import RemoteOwnerLease
 from src.worker.remote.protocol import Hello, sign_hello
 from src.worker.pool_main import PoolWorker
@@ -46,6 +47,58 @@ async def test_admission_stale_telemetry_still_renews_the_connected_owner() -> N
 
     renew.assert_awaited_once_with(LEASE)
     session.lose_ownership.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [False, True, RuntimeError("stale renewal failed")])
+async def test_stale_renewal_cannot_drain_a_reconnected_session(outcome: bool | Exception) -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    replacement = RemoteOwnerLease(
+        worker_id=LEASE.worker_id,
+        owner_id=LEASE.owner_id,
+        launcher_id=LEASE.launcher_id,
+        session_generation=2,
+    )
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease = bridge, LEASE
+    session.owned_until = 133
+    session.lose_ownership = AsyncMock()
+    renewal_started = asyncio.Event()
+    release_renewal = asyncio.Event()
+    renewals = 0
+
+    async def renew(lease: RemoteOwnerLease) -> bool:
+        nonlocal renewals
+        renewals += 1
+        if renewals == 1:
+            assert lease == LEASE
+            renewal_started.set()
+            await release_renewal.wait()
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        assert lease == replacement
+        raise asyncio.CancelledError()
+
+    async def sleep(_seconds: float) -> None:
+        return None
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch("src.worker.remote.host.renew_remote_owner", new=renew),
+    ):
+        task = asyncio.create_task(session._renew())
+        await renewal_started.wait()
+        session.lease = replacement
+        release_renewal.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    session.lose_ownership.assert_not_awaited()
+    assert session.owned_until == 133
 
 
 @pytest.mark.asyncio
@@ -97,6 +150,35 @@ async def test_one_api_agent_executor_starts_once_per_api_host() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reported", ["1.0.0-old", None])
+async def test_a_job_pod_is_admitted_with_the_build_its_launcher_runs(reported) -> None:
+    socket = Mock(accept=AsyncMock(), send_text=AsyncMock())
+    hello = Hello(
+        launcher_id=LEASE.launcher_id,
+        incarnation_id=LEASE.worker_id,
+        job_uid="job", pod_uid="pod", hostname="runner-0", form="job",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+    )
+    initial = {
+        "event": "hello", "hello": sign_hello("secret", hello).to_dict(),
+        "sample": {"current": 1, "limit": 100}, "requirements": {},
+    }
+    if reported is not None:
+        initial["version"] = reported
+    socket.receive_text = AsyncMock(return_value=json.dumps(initial))
+    with (
+        patch("src.worker.remote.host.get_settings", return_value=Mock(secret_key="secret", memory_pressure_threshold=.85)),
+        patch("src.worker.remote.host.admit_worker", new_callable=AsyncMock) as admit,
+        patch("src.worker.remote.host.acquire_remote_owner", new_callable=AsyncMock, return_value=LEASE),
+        patch("src.worker.remote.host.ApiExecutor"),
+        patch("src.worker.remote.host.RemoteSession", return_value=Mock(task=Mock())),
+    ):
+        await RemoteControlHost().connect(socket)
+
+    assert admit.await_args.kwargs["version"] == reported
+
+
+@pytest.mark.asyncio
 async def test_remote_connect_does_not_create_a_second_api_agent_executor() -> None:
     agent = Mock(run=AsyncMock(return_value=0))
     socket = Mock(accept=AsyncMock(), send_text=AsyncMock())
@@ -142,7 +224,7 @@ async def test_connected_session_releases_lease_only_after_worker_drain() -> Non
 
     worker.run = AsyncMock(side_effect=run)
     with patch("src.worker.remote.host.release_remote_owner", new_callable=AsyncMock) as release:
-        session = RemoteSession(bridge, worker, LEASE)
+        session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
         stopping = asyncio.create_task(session.stop())
         await asyncio.sleep(0)
         assert release.await_count == 0
@@ -161,7 +243,7 @@ async def test_disconnected_session_detaches_without_waiting_for_remote_work() -
     worker = Mock(request_stop=Mock(), run=AsyncMock(side_effect=never.wait))
 
     with patch("src.worker.remote.host.release_remote_owner", new_callable=AsyncMock) as release:
-        session = RemoteSession(bridge, worker, LEASE)
+        session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
         await session.detach()
 
     worker.request_stop.assert_called_once_with()
@@ -192,7 +274,7 @@ async def test_finished_session_releases_its_owner_and_is_removed_from_host() ->
     worker = Mock(request_stop=Mock(), run=AsyncMock(return_value=0))
 
     with patch("src.worker.remote.host.release_remote_owner", new_callable=AsyncMock) as release:
-        session = RemoteSession(bridge, worker, LEASE)
+        session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
         host.sessions[LEASE.worker_id] = session
         session.task.add_done_callback(
             lambda task: host._session_finished(LEASE.worker_id, session, task)
@@ -227,7 +309,7 @@ async def test_inventory_reconciliation_does_not_block_its_terminate_reply() -> 
 
     worker.run = AsyncMock(side_effect=run)
     worker.reconcile_transport_inventory = AsyncMock(side_effect=reconcile_transport_inventory)
-    session = RemoteSession(bridge, worker, LEASE)
+    session = RemoteSession(bridge, worker, LEASE, owned_until=0.0)
     task = session.reconcile_transport_inventory(socket)
     await asyncio.sleep(0)
     request_id = next(iter(bridge.pending))
@@ -348,3 +430,29 @@ async def test_refused_remote_control_handshake_closes_once(valid_proof: bool) -
     ]
     assert send.await_args_list[-1].args[0]["code"] == 1008
     assert host.sessions == {}
+
+
+def test_agent_launches_wait_long_enough_for_a_template_rebuild() -> None:
+    assert _reply_timeout("agent_run") > TEMPLATE_START_TIMEOUT_SECONDS
+    assert _reply_timeout("terminate") < TEMPLATE_START_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_telemetry_skips_the_database_fence_only_while_the_lease_is_known_current() -> None:
+    from src.worker.remote import host as host_mod
+
+    session = object.__new__(RemoteSession)
+    session.lease = LEASE
+    session.owned_until = time.monotonic() + 10
+    sample = {"event": "sample", "current": 1, "limit": 100}
+    with patch.object(host_mod, "owns_remote_session", new=AsyncMock(return_value=False)) as fence:
+        assert await session.may_accept("event", sample) is True
+        fence.assert_not_awaited()
+
+        assert await session.may_accept("event", {"event": "result", "route_id": "r"}) is False
+        assert await session.may_accept("event", {"event": "inventory"}) is False
+        assert fence.await_count == 2
+
+        session.owned_until = time.monotonic() - 1
+        assert await session.may_accept("event", sample) is False
+        assert fence.await_count == 3

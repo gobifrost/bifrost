@@ -1,16 +1,22 @@
 """OS supervisor contracts that must survive the footprint split."""
 import asyncio
 import json
+import multiprocessing
+import os
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from src.services.execution.template_process import _RecvQueue, _SendQueue
 from src.worker.remote.launcher import (
     Child,
     Launcher,
+    ProcStat,
     _shutdown_launcher,
     _next_control_frame,
     _receive_control_commands,
@@ -18,6 +24,10 @@ from src.worker.remote.launcher import (
 )
 from src.worker.remote.identity import LauncherIdentity
 from src.worker.remote.protocol import ControlEnvelope
+
+
+def _live_template() -> Mock:
+    return Mock(is_alive=Mock(return_value=True), collect_child_exit_statuses=Mock(return_value={}))
 
 
 def _launcher(socket):
@@ -72,6 +82,7 @@ async def test_template_crash_replacement_retains_live_child_handles() -> None:
     launcher = _launcher(Mock())
     launcher.template = Mock(is_alive=Mock(return_value=False))
     launcher.template.start.side_effect = lambda: setattr(launcher.template.is_alive, "return_value", True)
+    launcher.agent_template = _live_template()
     child = Child("route", "execution", 123, Mock(), Mock(), 0, 0)
     child.sampler = Mock(last_process_rss_bytes=1, peak_cpu_cores=0)
     launcher.children[child.route_id] = child
@@ -141,6 +152,7 @@ async def test_fatal_launcher_exits_instead_of_reconnecting() -> None:
 async def test_monitor_waits_for_intentional_template_replacement() -> None:
     launcher = _launcher(Mock())
     launcher.template = Mock(is_alive=Mock(return_value=False))
+    launcher.agent_template = _live_template()
     sampled = asyncio.Event()
     entered = asyncio.Event()
 
@@ -400,3 +412,245 @@ async def test_shutdown_reuses_the_existing_drain_task() -> None:
     gate.set()
     await asyncio.gather(shutdown)
     launcher.stop.assert_awaited_once_with()
+
+
+class _FakeTemplate:
+    """A template stand-in whose forks are real pipes to this test."""
+
+    def __init__(self, profile: str = "workflow") -> None:
+        self.profile = profile
+        self.alive = False
+        self.starts = 0
+        self.shutdowns = 0
+        self.forks: list[tuple[str, Any, Any]] = []
+
+    def start(self) -> None:
+        self.alive = True
+        self.starts += 1
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+    def shutdown(self) -> None:
+        self.alive = False
+        self.shutdowns += 1
+
+    def fork(self, worker_id="worker", persistent=False, *, sdk_socket_path=None):
+        work_recv, work_send = multiprocessing.Pipe(duplex=False)
+        result_recv, result_send = multiprocessing.Pipe(duplex=False)
+        self.forks.append((worker_id, work_recv, result_send))
+        return os.getpid(), _SendQueue(work_send), _RecvQueue(result_recv)
+
+    def collect_child_exit_statuses(self) -> dict[int, int]:
+        return {}
+
+
+def _agent_launcher(socket) -> Launcher:
+    launcher = _launcher(socket)
+    launcher.pressure_threshold, launcher.dangerous_memory_ratio = .85, .95
+    launcher.agent_template.start()
+    return launcher
+
+
+def _sent(socket) -> list[dict]:
+    return [ControlEnvelope.from_json(call.args[0]).payload for call in socket.send.await_args_list]
+
+
+async def _until(predicate, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition not reached"
+        await asyncio.sleep(.01)
+
+
+def _agent_run_command(route_id: str = "agent-route", run_id: str = "run-1") -> dict:
+    return {"id": f"cmd-{route_id}", "action": "agent_run", "payload": {
+        "route_id": route_id, "run_id": run_id,
+        "message": {"run_id": run_id, "agent_id": "agent-1"},
+        "memory_request_bytes": 32 * 1024 * 1024,
+    }}
+
+
+@pytest.fixture
+def agent_templates():
+    created: list[_FakeTemplate] = []
+
+    def factory(profile: str = "workflow") -> _FakeTemplate:
+        # Records agent templates only; every Launcher also builds a workflow one.
+        template = _FakeTemplate(profile)
+        if profile == "agent":
+            created.append(template)
+        return template
+
+    with (
+        patch("src.worker.remote.launcher.TemplateProcess", side_effect=factory),
+        patch("src.worker.remote.launcher.effective_memory_sample", return_value=(10, 100)),
+        patch("src.worker.remote.launcher.memory_pressure_ratio", return_value=.1),
+    ):
+        yield created
+
+
+@pytest.mark.asyncio
+async def test_launcher_loads_both_templates_before_measuring_its_baseline(agent_templates) -> None:
+    launcher = _launcher(Mock(send=AsyncMock()))
+    launcher.helper = AsyncMock(return_value={})  # type: ignore[method-assign]
+    loaded_at_baseline: list[bool] = []
+
+    def sample() -> tuple[int, int]:
+        loaded_at_baseline.append(launcher.template.is_alive() and launcher.agent_template.is_alive())
+        return (10, 100)
+
+    with patch("src.worker.remote.launcher.effective_memory_sample", side_effect=sample):
+        await launcher.start()
+    try:
+        assert [template.profile for template in agent_templates] == ["agent"]
+        assert launcher.agent_template.starts == 1
+        assert loaded_at_baseline[0] is True
+        assert launcher.baseline_bytes == 10
+    finally:
+        await launcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_run_forks_from_the_agent_template_and_reports_agent_exit(agent_templates) -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _agent_launcher(socket)
+    command = _agent_run_command()
+
+    await launcher.command(command, generation=1)
+
+    template = launcher.agent_template
+    assert template is agent_templates[0] and template.profile == "agent" and template.starts == 1
+    route_id, work_recv, result_send = template.forks[0]
+    assert route_id == "agent-route"
+    assert work_recv.recv() == {"message": command["payload"]["message"]}
+    assert _sent(socket)[0] == {"reply": "cmd-agent-route", "result": {"pid": os.getpid()}}
+    assert launcher.inventory()["routes"] == [{
+        "route_id": "agent-route", "kind": "agent_run", "subject_id": "run-1",
+        "pid": os.getpid(), "memory_request_bytes": 32 * 1024 * 1024,
+    }]
+
+    result_send.send({"ok": True})
+    await _until(lambda: launcher.pending_terminal)
+
+    exit_event = _sent(socket)[-1]
+    assert {key: exit_event[key] for key in ("event", "route_id", "ok", "error_type", "error")} == {
+        "event": "agent_exit", "route_id": "agent-route", "ok": True,
+        "error_type": None, "error": None,
+    }
+    assert list(launcher.pending_terminal_inventory.values()) == [{
+        "event_id": exit_event["_event_id"], "route_id": "agent-route", "kind": "agent_run",
+        "subject_id": "run-1", "memory_request_bytes": 32 * 1024 * 1024,
+    }]
+    assert launcher.children == {}
+
+
+@pytest.mark.asyncio
+async def test_agent_child_that_dies_without_a_result_reports_a_crash(agent_templates) -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _agent_launcher(socket)
+    await launcher.command(_agent_run_command(), generation=1)
+
+    _, _, result_send = launcher.agent_template.forks[0]
+    result_send.close()
+    await _until(lambda: launcher.pending_terminal)
+
+    exit_event = _sent(socket)[-1]
+    assert exit_event["event"] == "agent_exit"
+    assert exit_event["ok"] is False
+    assert exit_event["error_type"] == "ProcessCrashError"
+
+
+@pytest.mark.asyncio
+async def test_terminated_agent_child_reports_the_termination_reason(agent_templates) -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _agent_launcher(socket)
+    await launcher.command(_agent_run_command(), generation=1)
+
+    # The fake child's pid is this test process: never deliver the signal.
+    with patch("src.worker.remote.launcher.os.kill") as kill:
+        await launcher.terminate("agent-route", "MemoryLimitExceeded", "Runner memory pressure", grace=0)
+
+    assert kill.call_count == 2
+    exit_event = _sent(socket)[-1]
+    assert (exit_event["event"], exit_event["ok"], exit_event["error_type"]) == (
+        "agent_exit", False, "MemoryLimitExceeded",
+    )
+    assert launcher.children == {}
+
+
+@pytest.mark.asyncio
+async def test_monitor_replaces_a_dead_agent_template(agent_templates) -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _agent_launcher(socket)
+    launcher.template = _FakeTemplate()
+    launcher.template.start()
+    launcher.agent_template.alive = False
+
+    monitor = asyncio.create_task(launcher.monitor())
+    try:
+        await _until(lambda: launcher.agent_template.alive)
+    finally:
+        monitor.cancel()
+        await asyncio.gather(monitor, return_exceptions=True)
+    assert launcher.agent_template.starts == 2
+    assert launcher.agent_template.shutdowns == 0
+
+
+@pytest.mark.asyncio
+async def test_recycle_restarts_only_the_workflow_template(agent_templates) -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _agent_launcher(socket)
+    launcher.template = _FakeTemplate()
+    launcher.template.start()
+    await launcher.command(_agent_run_command(), generation=1)
+    agent_template = launcher.agent_template
+
+    with patch("src.worker.remote.launcher.os.kill") as kill:
+        await asyncio.wait_for(
+            launcher.command({"id": "recycle", "action": "recycle", "payload": {}}, generation=1),
+            timeout=2,
+        )
+
+    kill.assert_not_called()
+    assert list(launcher.children) == ["agent-route"]
+    assert (launcher.template.shutdowns, launcher.template.starts) == (1, 2)
+    assert (agent_template.shutdowns, agent_template.starts) == (0, 1)
+    assert launcher.agent_template is agent_template
+
+
+@pytest.mark.asyncio
+async def test_terminate_treats_a_zombie_agent_child_as_exited(agent_templates) -> None:
+    socket = Mock(send=AsyncMock())
+    launcher = _agent_launcher(socket)
+    await launcher.command(_agent_run_command(), generation=1)
+
+    # An orphaned child that has exited stays in /proc as a zombie until it
+    # is reaped; the grace period must not be spent waiting on it.
+    with (
+        patch("src.worker.remote.launcher.os.kill"),
+        patch("src.worker.remote.launcher.proc_stat", return_value=ProcStat("Z", 1, 7)),
+    ):
+        await asyncio.wait_for(
+            launcher.terminate("agent-route", "CancelledError", "Cancelled", grace=30), timeout=1,
+        )
+
+    assert _sent(socket)[-1]["error_type"] == "CancelledError"
+    assert launcher.children == {}
+
+
+@pytest.mark.asyncio
+async def test_memory_pressure_can_stop_an_agent_child():
+    launcher = _launcher(Mock())
+    launcher.dangerous_memory_ratio = .95
+    launcher.terminate = AsyncMock()
+    workflow = Child("workflow", "a", 1, Mock(), Mock(), 0, 0, current_growth=10)
+    agent = Child("agent", "run-1", 2, Mock(), Mock(), 0, 0, current_growth=20, agent_run=True)
+    launcher.children = {"workflow": workflow, "agent": agent}
+
+    launcher.stop_largest_when_dangerous(95, 100)
+    await asyncio.gather(*launcher._tasks)
+
+    launcher.terminate.assert_awaited_once_with(
+        "agent", "MemoryLimitExceeded", "Runner memory pressure", grace=0,
+    )

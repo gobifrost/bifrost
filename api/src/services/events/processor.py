@@ -274,6 +274,31 @@ class EventProcessor:
         subscription: EventSubscription,
     ) -> tuple[EventDelivery, bool]:
         """Build a pending or observably skipped delivery for a subscription."""
+        source_workflow = (
+            event.data.get("workflow") if isinstance(event.data, dict) else None
+        )
+        if (
+            event.event_type == "workflow.completed"
+            and isinstance(source_workflow, dict)
+            and source_workflow.get("id") is not None
+            and (getattr(subscription, "target_type", "workflow") or "workflow")
+            == "workflow"
+            and subscription.workflow_id is not None
+            and str(source_workflow["id"]) == str(subscription.workflow_id)
+        ):
+            return (
+                EventDelivery(
+                    id=uuid.uuid4(),
+                    event_id=event.id,
+                    event_subscription_id=subscription.id,
+                    workflow_id=subscription.workflow_id,
+                    status=EventDeliveryStatus.SKIPPED,
+                    error_message="Workflow completion event cannot trigger the same workflow",
+                    completed_at=datetime.now(timezone.utc),
+                ),
+                False,
+            )
+
         filter_decision = self._evaluate_subscription_filter(
             subscription,
             event.data,

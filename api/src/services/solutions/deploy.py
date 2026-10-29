@@ -23,7 +23,7 @@ and are added in their sub-plans.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -195,6 +195,18 @@ class SolutionWorkflowNameMismatch(Exception):
     source would deploy a workflow that execution can't resolve. Refused before
     any write so the operator fixes the manifest or the decorator.
     """
+
+
+def _validate_bundle_python_files(python_files: Mapping[str, str]) -> None:
+    """Refuse unsupported decorators before a Solution deploy changes state."""
+    from bifrost.decorator_validation import validate_python_decorators
+    from bifrost.definition_validation import DefinitionValidationError
+
+    for path, source in sorted(python_files.items()):
+        try:
+            validate_python_decorators(source, path=path)
+        except DefinitionValidationError as exc:
+            raise SolutionDeployConflict(str(exc)) from exc
 
 
 def _is_downgrade(new: str | None, current: str | None) -> bool:
@@ -431,6 +443,8 @@ class SolutionDeployer:
         P1-c) NOR a failed build (Codex R4) leaves DB ahead of S3 — a build error
         raises here, before commit; finalize is just retryable PUTs.
         """
+        _validate_bundle_python_files(bundle.python_files)
+
         solution = bundle.solution
         sid = solution.id
         await self._report_phase("Reconciling Solution resources", 20)

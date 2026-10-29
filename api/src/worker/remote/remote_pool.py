@@ -34,6 +34,11 @@ from src.services.execution.process_pool import (
 
 logger = logging.getLogger(__name__)
 
+# Why a child still running when the drain grace runs out was stopped. Agent
+# children end their runs with the same reason (``RemoteAgentConsumer``).
+DRAIN_DEADLINE_ERROR_TYPE = "WorkerShutdown"
+DRAIN_DEADLINE_ERROR = "Remote pool drain deadline exceeded"
+
 
 class ThinRemoteTransport(Protocol):
     """Control channel supplied by the API-side thin-runner host."""
@@ -104,6 +109,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         from src.jobs.platform.catalog import get_platform_job_metadata
         from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
         from src.models.enums import ExecutionStatus
+        from src.models.orm.agent_runs import AgentRun
         from src.models.orm.execution_workers import ExecutionWorkerClaim
         from src.models.orm.executions import Execution
         from src.models.orm.platform_jobs import PlatformJob
@@ -119,6 +125,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         workflows: dict[str, int] = {}
         services: list[OwnedAttempt] = []
         jobs: list[tuple[str, ClaimedPlatformJob]] = []
+        agent_runs: dict[str, tuple[UUID, int]] = {}
         observed: set[str] = set()
         rejected: list[tuple[str, str]] = []
         async with get_db_context() as db:
@@ -211,6 +218,22 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                         hard_memory_ratio=metadata.policy.hard_memory_ratio,
                         memory_required_bytes=job.memory_required_bytes, job_type=job.job_type,
                     )))
+                elif kind == "agent_run":
+                    # A cancelling run's child is still winding down; adopt
+                    # it so its exit settles the run.
+                    valid = await db.scalar(select(AgentRun.id).join(
+                        ExecutionWorkerClaim,
+                        ExecutionWorkerClaim.subject_id == AgentRun.id,
+                    ).where(
+                        AgentRun.id == subject,
+                        AgentRun.status.in_(("queued", "running", "cancelling")),
+                        ExecutionWorkerClaim.worker_id == UUID(self.worker_id),
+                        ExecutionWorkerClaim.family == "agent_run",
+                    ))
+                    if valid is None:
+                        rejected.append((route_id, kind))
+                        continue
+                    agent_runs[route_id] = (subject, request_bytes)
                 else:
                     raise ValueError("Unknown launcher route kind")
             await db.commit()
@@ -228,7 +251,12 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                     "execution_id": handle.current_execution.execution_id if handle.current_execution else None,
                     "error_type": "ProcessCrashError", "error": "Launcher no longer owns this process",
                 })
-        return {"workflow_requests": workflows, "services": services, "platform_jobs": jobs}
+        return {
+            "workflow_requests": workflows,
+            "services": services,
+            "platform_jobs": jobs,
+            "agent_runs": agent_runs,
+        }
 
     def _adopt_handle(self, route_id: str, entry: dict[str, Any], started_at: datetime) -> ProcessHandle:
         handle = ProcessHandle(
@@ -639,8 +667,8 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                     *(
                         self._request_terminate(
                             route_id,
-                            error_type="WorkerShutdown",
-                            error="Remote pool drain deadline exceeded",
+                            error_type=DRAIN_DEADLINE_ERROR_TYPE,
+                            error=DRAIN_DEADLINE_ERROR,
                             grace_seconds=self.graceful_shutdown_seconds,
                         )
                         for route_id, handle in list(self._routes.items())

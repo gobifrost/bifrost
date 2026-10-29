@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Bootstrap a screenshots.yaml manifest for the gobifrost site.
+ * Bootstrap a screenshots.yaml manifest for public Bifrost product documentation.
  *
  * Inputs:
- *   --docs-repo <path>    path to gobifrost checkout
+ *   --docs-repo <path>    path to public-docs checkout
  *   --bifrost-repo <path> path to this bifrost checkout (defaults to script's repo)
  *   --force               overwrite existing screenshots.yaml
  *

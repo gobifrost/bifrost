@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -94,6 +96,44 @@ async def test_enqueue_persists_current_impersonation_provenance(
 
     assert job.impersonated_by_user_id == operator_id
     assert job.impersonation_session_id == session_id
+
+
+@pytest.mark.asyncio
+async def test_enqueue_wakes_executors_only_once_the_job_is_committed(
+    async_session_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import delete
+
+    from src.services import work_dispatch
+
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
+    async with async_session_factory() as session:
+        job = await _enqueue(session)
+        await asyncio.sleep(0)
+        wake.assert_not_awaited()  # executors would find nothing to claim yet
+
+        await session.commit()
+        await asyncio.sleep(0)
+        wake.assert_awaited_once_with()
+
+        await session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_enqueue_wakes_nobody(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.services import work_dispatch
+
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
+    await _enqueue(db_session)
+    await db_session.rollback()
+    await asyncio.sleep(0)
+
+    wake.assert_not_awaited()
 
 
 @pytest.mark.asyncio

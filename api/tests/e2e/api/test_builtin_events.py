@@ -33,6 +33,14 @@ async def e2e_builtin_event_fails() -> dict:
     raise RuntimeError("intentional built-in event failure")
 '''
 
+SUCCESS_WORKFLOW = '''"""Built-in event successful workflow."""
+from bifrost import workflow
+
+@workflow(name="e2e_builtin_event_succeeds")
+async def e2e_builtin_event_succeeds() -> dict:
+    return {"status": "complete"}
+'''
+
 
 @pytest.fixture(scope="module")
 def recorder_workflow(e2e_client, platform_admin):
@@ -62,6 +70,22 @@ def failing_workflow(e2e_client, platform_admin):
     yield workflow
     e2e_client.delete(
         "/api/files/editor?path=e2e_builtin_event_fails.py",
+        headers=platform_admin.headers,
+    )
+
+
+@pytest.fixture(scope="module")
+def successful_workflow(e2e_client, platform_admin):
+    workflow = write_and_register(
+        e2e_client,
+        platform_admin.headers,
+        "e2e_builtin_event_succeeds.py",
+        SUCCESS_WORKFLOW,
+        "e2e_builtin_event_succeeds",
+    )
+    yield workflow
+    e2e_client.delete(
+        "/api/files/editor?path=e2e_builtin_event_succeeds.py",
         headers=platform_admin.headers,
     )
 
@@ -163,6 +187,42 @@ def _admin_principal(platform_admin) -> UserPrincipal:
 
 @pytest.mark.e2e
 class TestBuiltInWorkflowEvents:
+    def test_workflow_completed_event_runs_a_distinct_subscriber(
+        self, e2e_client, platform_admin, recorder_workflow, successful_workflow
+    ):
+        completed_source = _create_topic_source(
+            e2e_client,
+            platform_admin.headers,
+            "workflow.completed",
+            recorder_workflow["id"],
+        )
+        try:
+            execution = execute_workflow_sync(
+                e2e_client,
+                platform_admin.headers,
+                successful_workflow["id"],
+                max_wait=30.0,
+            )
+            assert execution["status"] == "Success"
+            execution_id = execution["execution_id"]
+
+            delivered = _wait_for_successful_delivery(
+                e2e_client,
+                platform_admin.headers,
+                completed_source,
+                lambda event: event["data"]["execution"]["id"] == execution_id,
+            )
+            body = delivered["event"]["data"]
+            assert body["workflow"]["id"] == successful_workflow["id"]
+            assert body["execution"]["status"] == "Success"
+            assert body["execution"]["completed_at"]
+            assert body["execution"]["duration_ms"] >= 0
+            assert "result" not in body
+            assert "variables" not in body
+            assert "parameters" not in body
+        finally:
+            _delete_source(e2e_client, platform_admin.headers, completed_source)
+
     def test_workflow_failure_and_retry_exhausted_events_run_subscribers(
         self, e2e_client, platform_admin, recorder_workflow, failing_workflow
     ):

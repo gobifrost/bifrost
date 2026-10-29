@@ -7,6 +7,7 @@ def test_curated_topics_include_expected_built_ins():
     assert {
         "user.invited",
         "workflow.failed",
+        "workflow.completed",
         "workflow.retry_exhausted",
         "integration.connected",
         "integration.disconnected",

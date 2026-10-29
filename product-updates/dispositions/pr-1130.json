@@ -1,0 +1,18 @@
+{
+  "key": "pr:1130",
+  "classification": "highlight",
+  "entry_ids": [
+    "15fb4f34-d829-453c-88c4-9c6f57e7cbd1"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1130",
+      "Jack authorized maintainer repairs on 2026-10-29 while preserving Will Spence's contribution and authorship. Codex traced provider responses through stable-ID lookup and first-link provisioning, reviewed the security boundary and compatibility, and verified 32 focused service, callback, database and Redis tests plus Python quality checks."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1130"
+  }
+}

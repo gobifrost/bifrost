@@ -15,10 +15,16 @@ const orgScopeState = vi.hoisted(() => ({
 	},
 }));
 
+const authState = vi.hoisted(() => ({ isPlatformAdmin: false }));
+
 const { mockAuthFetch } = vi.hoisted(() => ({ mockAuthFetch: vi.fn() }));
 
 vi.mock("@/lib/api-client", () => ({
 	authFetch: (...args: unknown[]) => mockAuthFetch(...args),
+}));
+
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => ({ isPlatformAdmin: authState.isPlatformAdmin }),
 }));
 
 vi.mock("@/hooks/useOrgScope", () => ({
@@ -94,6 +100,7 @@ beforeEach(() => {
 	localStorage.clear();
 	sessionStorage.clear();
 	orgScopeState.scope = { type: "global", orgId: null };
+	authState.isPlatformAdmin = false;
 	delete window.__BIFROST_APP__;
 	delete window.__BIFROST_APP_MODULES__;
 	mockAuthFetch.mockReset();
@@ -236,6 +243,31 @@ describe("StandaloneV2App", () => {
 			appId: "app-1",
 			basename: "/apps/dash",
 		});
+	});
+
+	it("runs a platform admin against the App's own organization", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		authState.isPlatformAdmin = true;
+		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
+
+		render(<StandaloneV2App {...props("admin-app-org")} appOrgId="client-org" />);
+		await finishModuleLoad("admin-app-org", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+
+		expect(mount.mock.calls[0][1]).toMatchObject({ orgScope: "client-org" });
+	});
+
+	it("runs a platform admin against the selection when the App has no organization", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		authState.isPlatformAdmin = true;
+		orgScopeState.scope = { type: "organization", orgId: "selected-org" };
+		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
+
+		render(<StandaloneV2App {...props("admin-global-app")} />);
+		await finishModuleLoad("admin-global-app", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+
+		expect(mount.mock.calls[0][1]).toMatchObject({ orgScope: "selected-org" });
 	});
 
 	it("remounts when the parent supplies a newer manifest", async () => {

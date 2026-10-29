@@ -37,6 +37,17 @@ APPS_PREFIX = "_apps/"
 # install until process restart (every subsequent deploy 409s).
 _BUILD_STEP_TIMEOUT_S = 600
 
+# How much of a failed step's output is surfaced on the deploy job.
+_FAILURE_OUTPUT_LINES = 20
+
+
+def _output_tail(exc: subprocess.CalledProcessError) -> str:
+    """The last lines of a failed step's stderr, or stdout when stderr is empty."""
+    raw = exc.stderr or exc.output or b""
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    return "\n".join(lines[-_FAILURE_OUTPUT_LINES:]) or "(no output)"
+
 
 class SolutionAppBuilder:
     """Builds a v2 app's dist/ and serves it from ``_apps/{app_id}/dist/``."""
@@ -107,7 +118,15 @@ class SolutionAppBuilder:
                 )
                 if memory_error is not None:
                     raise memory_error from exc
-                raise
+                # Same translation for a non-OOM failing step, carrying the
+                # tool's own error so the deploy job reports why instead of
+                # "see server logs".
+                from src.services.solutions.deploy import SolutionDeployConflict
+
+                raise SolutionDeployConflict(
+                    f"`{' '.join(exc.cmd[:2])}` failed for app {app_id} "
+                    f"(exit {exc.returncode}):\n{_output_tail(exc)}"
+                ) from exc
             except MemoryError as exc:
                 raise AppBuildMemoryError() from exc
 

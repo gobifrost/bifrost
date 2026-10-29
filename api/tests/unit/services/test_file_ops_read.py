@@ -1,7 +1,10 @@
 """Unit tests for read_file module cache guard."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from bifrost.definition_validation import DefinitionValidationError
 
 
 class TestReadFileModuleCacheGuard:
@@ -44,3 +47,26 @@ class TestReadFileModuleCacheGuard:
             await service.read_file("apps/myapp/pages/index.tsx")
 
             mock_get.assert_not_called()
+
+
+class TestWriteFileDecoratorAcceptance:
+    @pytest.mark.asyncio
+    async def test_rejects_decorator_source_before_storage_or_metadata_side_effects(self):
+        from src.services.file_storage.file_ops import FileOperationsService
+
+        service = FileOperationsService.__new__(FileOperationsService)
+        service._s3_client = MagicMock()
+        service._compute_hash = MagicMock()
+        service._guess_content_type = MagicMock()
+        service.db = AsyncMock()
+
+        with pytest.raises(DefinitionValidationError):
+            await service.write_file(
+                "workflows/example.py",
+                b"from bifrost import workflow\n@workflow(timeout_seconds=1)\ndef run(): pass\n",
+            )
+
+        service._s3_client.get_client.assert_not_called()
+        service._compute_hash.assert_not_called()
+        service._guess_content_type.assert_not_called()
+        service.db.flush.assert_not_awaited()

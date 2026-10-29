@@ -21,6 +21,7 @@ agent runs and services run on the executors.
 from __future__ import annotations
 
 import asyncio
+import time
 import importlib
 import logging
 import os
@@ -52,7 +53,11 @@ logger = logging.getLogger(__name__)
 LEADERSHIP_RETRY_SECONDS = 5.0
 LEADERSHIP_RENEW_SECONDS = 10.0
 REPLICA_HEARTBEAT_SECONDS = 10.0
+# The dispatch reconciler runs on a pool wake-up (new work, or work released),
+# at most every DISPATCH_RECONCILE_SECONDS, and sweeps every
+# DISPATCH_SWEEP_SECONDS when nothing wakes it.
 DISPATCH_RECONCILE_SECONDS = 5.0
+DISPATCH_SWEEP_SECONDS = 15.0
 # A new leader spreads its run-at-startup callbacks this far apart so the
 # burst does not take a host's whole shared connection pool at once.
 # Recurring runs are not throttled: a waiting job would count as a running
@@ -191,23 +196,40 @@ class ControlPlane:
     async def _dispatch_reconcile_loop(self) -> None:
         """End silent static executors, settle accepted work no executor holds
         or claimed in time, and fail work no executor can ever hold."""
-        from src.services.work_dispatch import reconcile_work_dispatches
+        from src.config import get_settings
+        from src.services.work_dispatch import (
+            listen_for_pool_wake,
+            reconcile_work_dispatches,
+            wait_for_next_pass,
+        )
         from src.services.worker_pool.liveness import Reachability, end_silent_static_executors
         from src.services.worker_pool.unfit import settle_work_that_never_fits
 
         reachability = Reachability()
-        while not self._stop_event.is_set():
-            try:
-                if await reachability.check():
-                    if reachability.steady():
-                        await end_silent_static_executors()
-                    await reconcile_work_dispatches()
-                    await settle_work_that_never_fits()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Work dispatch reconciliation failed")
-            await wait_or_stop(self._stop_event, DISPATCH_RECONCILE_SECONDS)
+        wake = asyncio.Event()
+        listener = asyncio.create_task(
+            listen_for_pool_wake(get_settings().redis_url, wake), name="dispatch-reconciler-wake"
+        )
+        try:
+            while not self._stop_event.is_set():
+                started = time.monotonic()
+                try:
+                    if await reachability.check():
+                        if reachability.steady():
+                            await end_silent_static_executors()
+                        await reconcile_work_dispatches()
+                        await settle_work_that_never_fits()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Work dispatch reconciliation failed")
+                await wait_for_next_pass(
+                    self._stop_event, wake, since=started,
+                    spacing=DISPATCH_RECONCILE_SECONDS, sweep=DISPATCH_SWEEP_SECONDS,
+                )
+        finally:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
 
     async def _run_scheduled_task(
         self,
@@ -250,14 +272,18 @@ class ControlPlane:
             summary=outcome.summary,
             platform_job_id=outcome.platform_job_id,
         )
-        await self._publish_task_states()
+        # Only this task's next run moved.
+        await self._publish_task_states(task_id)
 
-    async def _publish_task_states(self) -> None:
+    async def _publish_task_states(self, task_id: str | None = None) -> None:
+        """Record next run times: every task's, or only ``task_id``'s."""
         scheduler = self._scheduler
         if scheduler is None:
             return
         states = []
         for definition in self._catalog:
+            if task_id is not None and definition.task_id != task_id:
+                continue
             job = scheduler.get_job(definition.task_id)
             states.append((definition, job.next_run_time if job else None))
         await publish_task_states(states)

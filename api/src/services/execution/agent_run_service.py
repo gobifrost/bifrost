@@ -5,13 +5,17 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
 
-from src.core.database import get_dispatch_db_context
+from src.core.cache.redis_client import get_redis
+from src.core.database import get_db_context, get_dispatch_db_context
 from src.core.log_safety import log_safe
+from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
+from src.models.contracts.agents import ChatStreamChunk
 from src.models.orm.agent_runs import AgentRun
 from src.services.durable_impersonation import current_durable_impersonation
 from src.services.execution.agent_run_dispatch import (
@@ -242,3 +246,53 @@ async def wait_for_agent_run_result(run_id: str, timeout: int = 1800) -> dict | 
         return None
     finally:
         await client.aclose()
+
+
+async def announce_ended_agent_run(run_id: UUID, error: str) -> bool:
+    """End an agent run whose process stopped without recording an outcome,
+    and wake everyone waiting on it.
+
+    A ``queued`` or ``running`` run becomes ``failed``; a ``cancelling`` one,
+    ``cancelled``. The sync result is pushed whatever the run's ``sync`` flag
+    (nobody reads it otherwise, and it expires), chat runs get their terminal
+    chat event, and run-update subscribers hear the new status. A run that
+    already ended is left alone: whoever ended it woke its callers. Returns
+    whether this call ended the run.
+    """
+    async with get_db_context() as db:
+        run = await db.get(AgentRun, run_id, with_for_update={"of": AgentRun})
+        if run is None or run.status not in ("queued", "running", "cancelling"):
+            return False
+        run.status = "cancelled" if run.status == "cancelling" else "failed"
+        run.error = error
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+        agent_name = run.agent.name if run.agent is not None else "Unknown"
+
+    try:
+        result_key = f"{REDIS_PREFIX}:{run_id}:result"
+        async with get_redis() as redis:
+            await redis.lpush(  # pyright: ignore[reportGeneralTypeIssues]
+                result_key,
+                json.dumps({"output": None, "status": run.status, "error": error}),
+            )
+            await redis.expire(result_key, 300)
+    except Exception:
+        logger.warning("Could not wake the sync caller of an ended agent run", exc_info=True)
+    if run.trigger_type == "chat" and run.conversation_id is not None:
+        kind = "cancelled" if run.status == "cancelled" else "error"
+        try:
+            await publish_chat_run_event(
+                conversation_id=run.conversation_id,
+                run_id=run_id,
+                kind=kind,
+                status=run.status,
+                payload=ChatStreamChunk(type=kind, error=error, run_status=run.status),
+            )
+        except Exception:
+            logger.warning("Could not end the chat stream of an ended agent run", exc_info=True)
+    try:
+        await publish_agent_run_update(run, agent_name)
+    except Exception:
+        logger.warning("Could not publish an ended agent run", exc_info=True)
+    return True

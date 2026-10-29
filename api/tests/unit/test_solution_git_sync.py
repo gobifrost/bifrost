@@ -158,7 +158,8 @@ class TestConnectedBundleCompleteness:
         )
         form_id = str(uuid.uuid4())
         (tmp_path / ".bifrost" / "forms.yaml").write_text(
-            f"forms:\n  {form_id}:\n    id: {form_id}\n    name: intake\n    fields: []\n"
+            f"forms:\n  {form_id}:\n    id: {form_id}\n    name: intake\n"
+            "    form_schema:\n      fields: []\n"
         )
         agent_id = str(uuid.uuid4())
         (tmp_path / ".bifrost" / "agents.yaml").write_text(
@@ -274,6 +275,30 @@ class TestReadWorkspaceBundleFileLocations:
         sol = Solution(id=uuid.uuid4(), slug="fl", name="FL", organization_id=None)
         bundle = read_workspace_bundle(sol, tmp_path)
         assert bundle.file_locations == ["reports", "invoices"]
+
+
+class TestReadWorkspaceBundleFilePolicies:
+    def test_read_workspace_bundle_uses_canonical_file_policy_projection(self, tmp_path) -> None:
+        from bifrost.solution_definition import read_solution_definition
+        from src.models.orm.solutions import Solution
+        from src.services.solutions.git_sync import read_workspace_bundle
+
+        (tmp_path / "bifrost.solution.yaml").write_text("slug: fp\nname: FP\nscope: global\n")
+        (tmp_path / ".bifrost").mkdir()
+        (tmp_path / ".bifrost" / "file-policies.yaml").write_text(
+            "file_policies:\n"
+            "  reports-root:\n"
+            "    organization_id: source-org\n"
+            "    location: reports\n"
+            "    path: ''\n"
+            "    policies: [{$ref: admin_bypass}]\n"
+        )
+
+        definition = read_solution_definition(tmp_path)
+        sol = Solution(id=uuid.uuid4(), slug="fp", name="FP", organization_id=None)
+        bundle = read_workspace_bundle(sol, tmp_path)
+
+        assert bundle.file_policies == definition.install_entries("file_policies")
 
 
 @pytest.mark.e2e

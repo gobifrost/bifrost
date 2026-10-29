@@ -2,9 +2,9 @@
  * Knowledge Acceptance (Admin)
  *
  * Primary persisted journey for Knowledge: configure local fixture embeddings,
- * create a global document through the UI, find it through search, read the
- * stored content from the document drawer, delete it through the UI, and restore
- * the previous embedding configuration.
+ * create a document through the UI with Global chosen explicitly, find it
+ * through search, read the stored content from the document drawer, delete it
+ * through the UI, and restore the previous embedding configuration.
  */
 
 import { expect, test } from "./fixtures/api-fixture";
@@ -201,6 +201,15 @@ test.describe("Knowledge acceptance", () => {
 				exact: true,
 			});
 			await expect(drawer).toBeVisible({ timeout: 10000 });
+			// A new document starts in the caller's own organization; a global
+			// document is an explicit choice.
+			await drawer
+				.getByRole("combobox", { name: "Organization scope" })
+				.click();
+			await page.getByRole("option", { name: /^Global/ }).click();
+			await expect(
+				drawer.getByRole("combobox", { name: "Organization scope" }),
+			).toHaveText(/Global/);
 			await drawer.getByLabel("Namespace").fill(NAMESPACE);
 			await drawer.getByLabel("Key (optional)").fill(DOCUMENT_KEY);
 			await fillDocumentContent(page, DOCUMENT_CONTENT);

@@ -1,0 +1,17 @@
+{
+  "key": "pr:1128",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Platform Admins can edit their own role assignments and explicitly grant or remove Secrets Reader.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1128",
+      "https://github.com/gobifrost/bifrost/issues/1120",
+      "https://github.com/gobifrost/bifrost/pull/1121#issuecomment-6486778750",
+      "Maintainer approved Platform Admin self-assignment as a temporary workaround on 2026-10-29 UTC. The intended local-development path keeps secrets inside the engine and removes the local executor.",
+      "Manual authorization review verified that the exception uses current verified Platform Admin authority and retains the existing permission, boundary, audit, cache, and last-admin checks. Explicit grants remain required. Focused verification: 24 backend tests, 30 client tests, the real browser self-grant/reload journey, API quality, and client lint/type checks passed. Customer-facing summary reviewed for clear, concise wording."
+    ]
+  }
+}

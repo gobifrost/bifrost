@@ -587,9 +587,10 @@ export function UserRoleAssignmentsPanel({
 	const providerOrgId = summary?.provider_organization_id;
 	const blockedByProtection =
 		!!data?.is_protected && !authorization.isPlatformAdmin;
+	const selfEditBlocked = isSelf && !authorization.isPlatformAdmin;
 	const canEdit =
 		!!data &&
-		!isSelf &&
+		!selfEditBlocked &&
 		!blockedByProtection &&
 		authorization.canAt("roleassignments.readwrite", target);
 
@@ -852,7 +853,7 @@ export function UserRoleAssignmentsPanel({
 		}
 	};
 
-	const readOnlyReason = isSelf
+	const readOnlyReason = selfEditBlocked
 		? "You can't change your own roles."
 		: blockedByProtection
 			? null

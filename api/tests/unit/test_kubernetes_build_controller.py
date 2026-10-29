@@ -31,6 +31,7 @@ SETTINGS = SimpleNamespace(
     kubernetes_job_cpu_limit="1",
     kubernetes_job_pending_timeout_seconds=300,
     memory_pressure_threshold=0.85,
+    redis_url="redis://localhost:1/0",
 )
 
 
@@ -454,8 +455,9 @@ async def test_each_pass_admits_within_the_settings_limits(monkeypatch):
     client = AsyncMock()
     client.namespace = "bifrost"
 
-    await module.KubernetesBuildController(client, SETTINGS, SPEC).reconcile()  # type: ignore[arg-type]
+    busy = await module.KubernetesBuildController(client, SETTINGS, SPEC).reconcile()  # type: ignore[arg-type]
 
+    assert busy is False  # nothing placed, nothing claimed: wait for a wake-up
     claim.assert_awaited_once_with(
         backend="kubernetes",
         isolated=IsolatedPods(
@@ -478,7 +480,7 @@ async def test_with_isolation_off_a_pass_reconciles_placed_pods_and_admits_nothi
     reconciled = AsyncMock()
     monkeypatch.setattr(controller, "reconcile_job", reconciled)
 
-    await controller.reconcile()
+    assert await controller.reconcile() is True  # a placed pod is followed closely
 
     returned.assert_awaited_once()
     reconciled.assert_awaited_once_with(placed)
@@ -497,3 +499,84 @@ async def test_a_build_an_older_release_claimed_is_still_supervised(fixture):
     f.client.list_pods.return_value = [{"status": {"phase": "Failed"}}]
     await f.reconcile_job(f.row.id)
     assert f.loss.call_args.kwargs["error_code"] == "runner_exited"
+
+
+def _loop_with_controller(monkeypatch, outcomes):  # type: ignore[no-untyped-def]
+    """Run the build loop with a stub controller whose passes return
+    ``outcomes`` in turn (then False); returns (pass times, wake event)."""
+    import asyncio
+    import time
+
+    from src.services.worker_pool import manifest
+
+    client = AsyncMock()
+    monkeypatch.setattr(module, "get_settings", lambda: SETTINGS)
+    monkeypatch.setattr(module, "KubernetesJobClient", lambda settings: client)
+    monkeypatch.setattr(manifest, "resolve_worker_job_spec", AsyncMock(return_value=SPEC))
+    monkeypatch.setattr(module, "BUILD_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(module, "BUILD_SWEEP_SECONDS", 30)
+    woken: list[asyncio.Event] = []
+
+    async def listen(redis_url, *events):  # type: ignore[no-untyped-def]
+        woken.extend(events)
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(module, "listen_for_pool_wake", listen)
+    passes: list[float] = []
+    queued = list(outcomes)
+
+    class Controller:
+        def __init__(self, client, settings, spec):  # type: ignore[no-untyped-def]
+            pass
+
+        async def reconcile(self):  # type: ignore[no-untyped-def]
+            passes.append(time.monotonic())
+            return queued.pop(0) if queued else False
+
+    monkeypatch.setattr(module, "KubernetesBuildController", Controller)
+    return passes, woken
+
+
+async def _until(condition, timeout: float = 2.0) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "condition never held"
+        await asyncio.sleep(0.005)
+
+
+async def test_an_idle_build_loop_waits_for_a_wake_up(monkeypatch):
+    """With no builds in Kubernetes the controller does not poll; an enqueue's
+    wake-up starts the next pass."""
+    import asyncio
+
+    passes, woken = _loop_with_controller(monkeypatch, [])
+    shutdown = asyncio.Event()
+    loop = asyncio.create_task(module.kubernetes_build_loop(shutdown))
+    try:
+        await _until(lambda: len(passes) == 1 and len(woken) == 1)
+        await asyncio.sleep(0.1)  # ten poll intervals
+        assert len(passes) == 1
+
+        woken[0].set()
+        await _until(lambda: len(passes) == 2)
+    finally:
+        shutdown.set()
+        await asyncio.wait_for(loop, timeout=5)
+
+
+async def test_a_build_loop_following_builds_polls(monkeypatch):
+    import asyncio
+
+    passes, _ = _loop_with_controller(monkeypatch, [True, True, True])
+    shutdown = asyncio.Event()
+    loop = asyncio.create_task(module.kubernetes_build_loop(shutdown))
+    try:
+        await _until(lambda: len(passes) == 4)  # three busy passes, then idle
+        await asyncio.sleep(0.1)
+        assert len(passes) == 4
+    finally:
+        shutdown.set()
+        await asyncio.wait_for(loop, timeout=5)

@@ -209,7 +209,7 @@ def test_base_manifests_let_only_the_api_manage_worker_jobs() -> None:
             "resources": ["jobs"],
             "verbs": ["get", "list", "create", "patch", "delete"],
         },
-        {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list"]},
+        {"apiGroups": [""], "resources": ["pods"], "verbs": ["get", "list", "patch"]},
     ]
     binding = docs[("RoleBinding", "bifrost-worker-controller")]
     assert binding["subjects"] == [

@@ -4,8 +4,8 @@ Two forms share this loop. A *job* worker is started by the worker-pool
 controller as one Kubernetes Job lifetime (it carries an incarnation). A
 *static* worker is a long-running container (the ``scheduler`` and ``worker``
 services, through their entry points) that registers itself and never idles
-out. Every executor runs workflows, agent runs, summaries, services and
-local platform jobs.
+out. A remote executor runs workflows, agent runs, services and local platform
+jobs in its launcher's children; the API-resident executor runs summaries.
 
 A job worker admits itself
 to its incarnation (Job UID bound before start, pod UID bound once), then
@@ -27,9 +27,11 @@ import os
 import socket
 import time
 from collections.abc import Callable
+from typing import Protocol
 from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
+from shared.version import get_version
 from src.config import Settings, get_settings
 from src.core.database import close_db, get_db_context, get_engine, init_db
 from src.core.redis_client import PendingExecution
@@ -79,13 +81,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+class AgentConsumer(Protocol):
+    """Runs one claimed ``agent.run`` dispatch and returns when it has ended."""
+
+    async def process_message(self, body: dict) -> None:
+        """Run the dispatch in ``body``."""
+        raise NotImplementedError
+
+
+# While an executor holds work (room can free up at any moment) or admission
+# holds it back (memory pressure, a reconnect still reconciling), it looks for
+# work every POLL_SECONDS. Idle with nothing to claim, it waits for the wake-up
+# that every hand-off publishes, and sweeps every SWEEP_SECONDS in case a
+# wake-up was lost (Redis pub/sub does not guarantee delivery).
 POLL_SECONDS = 1.0
+SWEEP_SECONDS = 15.0
 HEARTBEAT_SECONDS = 5.0
 # How long a job worker uses the Idle time it read from Settings -> Kubernetes.
 POLICY_REFRESH_SECONDS = 10.0
 DRAIN_GRACE_SECONDS = 300.0
-# How long the platform-job loop waits when nothing fits or is queued.
-PLATFORM_JOB_IDLE_SECONDS = 2.0
+# How often the platform-job loop looks while it runs jobs or admission holds
+# it back; idle, it waits for a wake-up and sweeps every SWEEP_SECONDS, which
+# is also how often it recovers jobs whose runner lease expired.
+PLATFORM_JOB_POLL_SECONDS = 2.0
 
 
 def executor_database_settings(settings: Settings) -> Settings:
@@ -137,6 +156,10 @@ class PoolWorker:
         # SIGTERM: the pod is being killed, so a drain's runs get a grace.
         self._terminating = asyncio.Event()
         self._wake = asyncio.Event()
+        self._platform_wake = asyncio.Event()
+        self._service_wake = asyncio.Event()
+        # Whether the last claim attempt was held back by admission.
+        self._admission_blocked = False
         # In-flight consumer calls by handler. A workflow call returns once its
         # run is routed to a child (then the pool counts it); agent runs and
         # summaries return when they end.
@@ -147,7 +170,7 @@ class PoolWorker:
             "agent.summarize_backfill": set(),
         }
         self._workflow_consumer = None
-        self._agent_consumer = None
+        self._agent_consumer: AgentConsumer | None = None
         self._package_consumer = None
         self.package_generation = 0
         self._service_claim_loop = None
@@ -252,7 +275,8 @@ class PoolWorker:
         else:
             assert self.job_uid is not None and self.pod_uid is not None
             if await admit_worker(
-                self.incarnation_id, job_uid=self.job_uid, pod_uid=self.pod_uid
+                self.incarnation_id, job_uid=self.job_uid, pod_uid=self.pod_uid,
+                version=get_version(),
             ) is None:
                 logger.error(
                     "Pool worker was not admitted (not this Job's first pod)",
@@ -282,6 +306,10 @@ class PoolWorker:
     def _under_pressure(self) -> bool:
         return under_pressure(self.settings.memory_pressure_threshold)
 
+    def _claims_open(self) -> bool:
+        """Whether the executor may claim new work at all (memory aside)."""
+        return True
+
     def _make_workflow_consumer(self):  # type: ignore[no-untyped-def]
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
@@ -291,6 +319,11 @@ class PoolWorker:
         from src.jobs.consumers.package_install import PackageInstallConsumer
 
         return PackageInstallConsumer()
+
+    def _make_agent_consumer(self) -> AgentConsumer:
+        from src.jobs.consumers.agent_run import AgentRunConsumer
+
+        return AgentRunConsumer()
 
     async def _execute_platform_job(self, claim: ClaimedPlatformJob) -> bool:
         return await run_claimed_platform_job(claim)
@@ -374,8 +407,6 @@ class PoolWorker:
 
     async def _start_executor(self) -> None:
         """Start the pool, consumers, memory gate and service supervision."""
-        from src.jobs.consumers.agent_run import AgentRunConsumer
-
         if self.hosts_remote_work:
             # Read the package generation before the pool installs requirements:
             # a change committed in between is then applied again (installs are
@@ -386,8 +417,8 @@ class PoolWorker:
             await self._workflow_consumer.start_pool()
             # Applies recorded package changes; it never consumes the broadcast.
             self._package_consumer = self._make_package_consumer()
-        if any(handler.startswith("agent.") for handler, _version in self._handlers):
-            self._agent_consumer = AgentRunConsumer()
+        if any(handler == "agent.run" for handler, _version in self._handlers):
+            self._agent_consumer = self._make_agent_consumer()
         # Measured once the parent and fork template are up, before any
         # service claims: what remains is what work may use. API-resident
         # agents receive the API host's shared gate at construction time.
@@ -399,6 +430,7 @@ class PoolWorker:
                     under_pressure=self._under_pressure,
                     running_workflow_ids=set,
                     workflow_growth=dict,
+                    claims_open=self._claims_open,
                 )
             else:
                 pool = self._workflow_consumer._pool
@@ -407,6 +439,7 @@ class PoolWorker:
                     under_pressure=self._under_pressure,
                     running_workflow_ids=pool.active_execution_ids,
                     workflow_growth=pool.workflow_growth,
+                    claims_open=self._claims_open,
                 )
         if self._workflow_consumer is not None:
             pool = self._workflow_consumer._pool
@@ -464,9 +497,19 @@ class PoolWorker:
                 continue
             stop = asyncio.ensure_future(self._stop.wait())
             wake = asyncio.ensure_future(self._wake.wait())
-            await asyncio.wait({stop, wake}, timeout=POLL_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait(
+                {stop, wake},
+                timeout=POLL_SECONDS if self.busy() or self._admission_blocked else SWEEP_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
             stop.cancel()
             wake.cancel()
+        if self._lost:
+            # Lost or released ownership: the durable row belongs to whoever
+            # holds it next (a reconnecting launcher's new owner, or the
+            # control plane), exactly as in _retire. Draining it here would
+            # stop that successor as soon as it reads the row.
+            return
         try:
             await begin_drain(self.incarnation_id, "stopped")
         except Exception:
@@ -487,6 +530,7 @@ class PoolWorker:
         async with self.admission.claiming() as fits:
             # Nothing while over the memory threshold: work waits for an
             # executor with room, and the controller starts one if none has it.
+            self._admission_blocked = fits is None
             if fits is None:
                 return None
             claim = await claim_next(
@@ -607,12 +651,18 @@ class PoolWorker:
         """
         assert self.hosts_remote_work and self.admission is not None
         running: set[asyncio.Task[None]] = set()
+        recovered_at: float | None = None
         while not self._platform_stop.is_set():
             claimed = False
+            blocked = False
+            self._platform_wake.clear()
             try:
-                await recover_expired_platform_jobs()
+                if recovered_at is None or time.monotonic() - recovered_at >= SWEEP_SECONDS:
+                    await recover_expired_platform_jobs()
+                    recovered_at = time.monotonic()
                 claim = None
                 async with self.admission.claiming() as fits:
+                    blocked = fits is None
                     if fits is not None:
                         claim = await self._claim_platform_job(fits)
                         if claim is not None:
@@ -630,10 +680,15 @@ class PoolWorker:
             except Exception:
                 logger.exception("Platform-job claim failed")
             if not claimed:
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(
-                        self._platform_stop.wait(), timeout=PLATFORM_JOB_IDLE_SECONDS
-                    )
+                stop = asyncio.ensure_future(self._platform_stop.wait())
+                wake = asyncio.ensure_future(self._platform_wake.wait())
+                await asyncio.wait(
+                    {stop, wake},
+                    timeout=PLATFORM_JOB_POLL_SECONDS if blocked or running else SWEEP_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                stop.cancel()
+                wake.cancel()
 
     async def _run_platform_job(self, claim) -> None:  # type: ignore[no-untyped-def]
         try:
@@ -644,29 +699,16 @@ class PoolWorker:
             self._platform_jobs.discard(claim.id)
             assert self.admission is not None
             self.admission.release(str(claim.id))
+            # Its memory, concurrency slot and resource lock are free.
+            self._platform_wake.set()
 
     async def _wake_listener(self) -> None:
         """Turn acceptance hints into an immediate claim attempt."""
-        import redis.asyncio as aioredis
+        from src.services.work_dispatch import listen_for_pool_wake
 
-        from src.services.work_dispatch import POOL_WAKE_CHANNEL
-
-        while True:
-            client = aioredis.from_url(self.settings.redis_url)
-            try:
-                pubsub = client.pubsub()
-                await pubsub.subscribe(POOL_WAKE_CHANNEL)
-                async for message in pubsub.listen():
-                    if message.get("type") == "message":
-                        self._wake.set()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # Hints are an optimization; polling continues meanwhile.
-                logger.warning("Pool wake listener reconnecting", exc_info=True)
-                await asyncio.sleep(HEARTBEAT_SECONDS)
-            finally:
-                await client.aclose()
+        await listen_for_pool_wake(
+            self.settings.redis_url, self._wake, self._platform_wake, self._service_wake
+        )
 
     async def _package_loop(self) -> None:
         """Apply every recorded package change newer than this executor's.
@@ -739,6 +781,7 @@ class PoolWorker:
             token_lifetime_seconds=self.settings.service_token_lifetime_seconds,
             claiming=self.admission.claiming,
             hold_memory=self._hold_service_memory,
+            wake=self._service_wake,
         )
         pool.on_service_result = self._service_claim_loop.handle_service_result
         await self._service_claim_loop.start()

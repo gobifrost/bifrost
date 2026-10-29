@@ -1,0 +1,16 @@
+{
+  "key": "pr:1124",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflow authoring rejects unsupported decorator settings, and Solution imports reject invalid manifests.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1124",
+      "https://github.com/gobifrost/bifrost/issues/1098",
+      "Reviewed common manifest interpretation, explicit Solution extensions, supported aliases and package round trips, AST-only decorator checks, and preservation before rejected imports. General Writing and Humanizer applied to this routine Fixed summary. Focused parser, decorator, CLI, ZIP, Git, and live deployment checks passed.",
+      "Jack directed leaving the signed-upload restriction out on 2026-10-29. The final diff preserves the existing signed-upload service, documents its validation gap as deferred work, and passes 77 file-SDK, Solution-scope, and workspace-authority tests. Final API lint and type checks passed after merging current main."
+    ]
+  }
+}

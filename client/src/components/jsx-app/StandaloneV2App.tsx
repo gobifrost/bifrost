@@ -12,6 +12,7 @@ import { ApplicationUpdateScreen } from "@/components/ApplicationUpdateScreen";
 import { AppLoadingSkeleton } from "./AppLoadingSkeleton";
 import { BundleLoadFailure } from "./BundleFeedback";
 import { getAppLoadErrorMessage } from "./app-load-error";
+import { useAuth } from "@/contexts/AuthContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { authFetch } from "@/lib/api-client";
 import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
@@ -261,6 +262,7 @@ export function StandaloneV2App({
 	entry,
 	css,
 	baseUrl,
+	appOrgId,
 	runtimeContract,
 }: StandaloneV2AppProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -283,6 +285,7 @@ export function StandaloneV2App({
 	const assets = recovery?.sourceKey === sourceKey ? recovery.assets : sourceAssets;
 	const recoveryAttempts = useRef(new Set<string>());
 	const { scope } = useOrgScope();
+	const { isPlatformAdmin } = useAuth();
 
 	const token = getActiveToken();
 	const isAuthenticated = Boolean(token);
@@ -306,9 +309,13 @@ export function StandaloneV2App({
 		const basename = isPreview
 			? `/apps/${appSlug}/preview`
 			: `/apps/${appSlug}`;
-		// Visibility/deployment scope is separate from runtime data scope. All
-		// Apps run against the user's currently selected organization.
-		const orgScope = scope.type === "organization" ? scope.orgId : null;
+		// Visibility/deployment scope is separate from runtime data scope.
+		// Platform admins use an App's owning organization when present;
+		// global Apps and other users use their selected organization.
+		const selectedOrg = scope.type === "organization" ? scope.orgId : null;
+		const orgScope = isPlatformAdmin
+			? (appOrgId ?? selectedOrg)
+			: selectedOrg;
 		const entryUrl = new URL(
 			`${assets.baseUrl}/${assets.entry}`,
 			window.location.origin,
@@ -483,7 +490,7 @@ export function StandaloneV2App({
 			}
 			mountEl.replaceChildren();
 		};
-	}, [appId, solutionId, appSlug, isPreview, assets, sourceKey, scope, isAuthenticated]);
+	}, [appId, solutionId, appSlug, isPreview, assets, sourceKey, scope, appOrgId, isPlatformAdmin, isAuthenticated]);
 
 	if (!isAuthenticated) {
 		return (

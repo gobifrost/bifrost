@@ -902,11 +902,10 @@ async def _chat_tool_call(world, session, person) -> str:
     from pydantic_ai.models.test import TestModel
 
     from src.core.principal import UserPrincipal
-    from src.models.contracts.agents import ChatRequest
     from src.models.contracts.artifacts import ModelCapabilities
-    from src.routers.chat import send_message
     from src.services.llm.base import LLMConfig
     from src.services.llm.pydantic_client import PydanticAIClient
+    from tests.e2e.fixtures.chat_turn import chat_turn_in_process
 
     tool_name = f"wf_{world['workflows']['global_tool']['name']}"
 
@@ -961,17 +960,17 @@ async def _chat_tool_call(world, session, person) -> str:
             return_value=ProbeToolModel(model_name="scenario-probe"),
         ),
     ):
-        await send_message(
-            conversation_id=UUID(conversation["id"]),
-            request=ChatRequest(message="Run the probe."),
-            db=session,
-            user=UserPrincipal(
+        await chat_turn_in_process(
+            session,
+            UserPrincipal(
                 user_id=person.user_id,
                 email=person.email,
                 name=person.name,
                 organization_id=person.organization_id,
                 is_superuser=False,
             ),
+            UUID(conversation["id"]),
+            "Run the probe.",
         )
     messages = _ok(
         client.get(

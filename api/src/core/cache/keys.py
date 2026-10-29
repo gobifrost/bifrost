@@ -257,6 +257,16 @@ def execution_logs_stream_key(execution_id: str) -> str:
     return f"bifrost:logs:{execution_id}"
 
 
+def execution_log_recovery_cursor_key() -> str:
+    """Cursor for bounded scans of retained execution-log streams."""
+    return "bifrost:execution-log-recovery:cursor"
+
+
+def execution_log_retention_cursor_key() -> str:
+    """Cursor for bounded orphaned execution-log stream reclamation."""
+    return "bifrost:execution-log-retention:cursor"
+
+
 def service_logs_stream_key(attempt_id: str) -> str:
     """
     Key for the Redis Stream containing logs for one service attempt.

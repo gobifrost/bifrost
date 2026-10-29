@@ -28,7 +28,6 @@ import asyncio
 import json
 import logging
 import time
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -50,8 +49,10 @@ from src.models.orm.work_dispatches import WorkDispatch
 from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
 from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.services.memory_requests import LAUNCHABLE_KEY
-from src.services.worker_pool.claims import CAPACITY_LOCK
+from src.services.work_dispatch import listen_for_pool_wake, wait_for_next_pass
+from src.services.worker_pool.claims import CAPACITY_LOCK, REMOTE_WORKER_HANDLER_NAMES
 from src.services.worker_pool.manifest import (
+    SAFE_TO_EVICT,
     WorkerJobSpec,
     build_worker_job_manifest,
     resolve_job_spec_when_ready,
@@ -62,14 +63,25 @@ from src.services.worker_pool.liveness import (
     Reachability,
     silent_executor,
 )
-from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
+from src.services.worker_pool.recovery import (
+    LostRuns,
+    announce_lost_runs,
+    end_runs_of_lost_worker,
+)
 from src.services.worker_pool.sizing import LIVE_STATES, JobSizing, job_baseline, launch_limit
 
 logger = logging.getLogger(__name__)
 
 # How long a lost worker's Job is kept under watch for deletion.
 LOST_JOB_CLEANUP = timedelta(hours=1)
+# The controller reconciles on a pool wake-up (new work may need a worker), at
+# most every RECONCILE_SECONDS, and sweeps every SWEEP_SECONDS without one:
+# often enough for worker-loss detection and idle-worker eviction marks.
 RECONCILE_SECONDS = 2.0
+SWEEP_SECONDS = 5.0
+# A ready worker holding no work this long may be evicted by the cluster
+# autoscaler to empty a node; it drains on SIGTERM and is replaced.
+EVICTABLE_AFTER_IDLE_SECONDS = 10.0
 # The reconciler treats a missing value as "no controller"; it outlives a
 # few failed reconciles.
 LAUNCHABLE_TTL_SECONDS = 300
@@ -117,6 +129,12 @@ class WorkerPoolController:
         # Draining workers with active runs, by when this instance first saw them.
         self._draining_since: dict[UUID, float] = {}
         self._warned_long_drains: set[UUID] = set()
+        # Ready workers holding no work, by when this instance first saw them idle.
+        self._idle_since: dict[UUID, float] = {}
+        # The safe-to-evict value this instance last applied to each worker's
+        # pod. Unknown until applied once, so a restarted controller corrects
+        # a mark left by its predecessor.
+        self._evictable: dict[UUID, bool] = {}
 
     async def reconcile(self) -> None:
         # Before anything that can fail on the Kubernetes API, so the
@@ -146,6 +164,9 @@ class WorkerPoolController:
             ).all()
         for worker_id in set(self._draining_since) - set(ids):
             del self._draining_since[worker_id]
+        for worker_id in set(self._evictable) - set(ids):
+            self._evictable.pop(worker_id, None)
+            self._idle_since.pop(worker_id, None)
         for worker_id in ids:
             await self._reconcile_one(worker_id, policy)
         for worker_id in await self.launch_for_demand(policy):
@@ -229,7 +250,9 @@ class WorkerPoolController:
             ):
                 reason = "heartbeat_lost"
             self._watch_drain(worker)
-            ended: list[UUID] = []
+            if reason is None:
+                await self._mark_evictable(worker)
+            ended = LostRuns()
             if reason is not None:
                 # Its runs teach their workflows a larger request only when
                 # Kubernetes stopped the worker for memory.
@@ -241,7 +264,29 @@ class WorkerPoolController:
                 self._lose(worker, "out_of_memory" if out_of_memory else reason, now)
                 ended = await end_runs_of_lost_worker(db, worker.id, out_of_memory=out_of_memory)
             await db.commit()
-        await announce_ended_runs(ended)
+        await announce_lost_runs(ended)
+
+    async def _mark_evictable(self, worker: ExecutionWorker) -> None:
+        """Let the cluster autoscaler move a ready worker only while it is idle.
+
+        Kubernetes decides where pods run and which node to empty; this only
+        says when moving this worker interrupts nothing. The pod is patched
+        only when the answer changes.
+        """
+        now = time.monotonic()
+        if worker.state == "ready" and worker.memory_reserved_bytes == 0:
+            since = self._idle_since.setdefault(worker.id, now)
+            evictable = now - since >= EVICTABLE_AFTER_IDLE_SECONDS
+        else:
+            self._idle_since.pop(worker.id, None)
+            evictable = False
+        if self._evictable.get(worker.id) == evictable or worker.kubernetes_job_uid is None:
+            return
+        for pod in await self.client.list_pods(worker.kubernetes_job_uid):
+            await self.client.annotate_pod(
+                pod["metadata"]["name"], {SAFE_TO_EVICT: "true" if evictable else "false"}
+            )
+        self._evictable[worker.id] = evictable
 
     def _watch_drain(self, worker: ExecutionWorker) -> None:
         """Warn once when a draining worker's runs outlast the maximum
@@ -333,12 +378,13 @@ class WorkerPoolController:
                         WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
                         WorkDispatch.created_at.label("created_at"),
                         literal(True).label("is_dispatch"),
+                        WorkDispatch.handler.label("handler"),
                     )
                     .where(
                         WorkDispatch.assigned_worker_id.is_(None),
-                        # Agents and summaries use the API's memory domain.
-                        # Launching a physical worker cannot add that capacity.
-                        WorkDispatch.handler == "workflow.execute",
+                        # Summaries use the API's memory domain. Launching a
+                        # physical worker cannot add that capacity.
+                        WorkDispatch.handler.in_(REMOTE_WORKER_HANDLER_NAMES),
                     )
                     .union_all(
                         select(
@@ -346,6 +392,8 @@ class WorkerPoolController:
                             PlatformJob.memory_required_bytes,
                             PlatformJob.created_at,
                             literal(False),
+                            # Any physical worker runs local platform jobs.
+                            literal(None),
                         ).where(
                             PlatformJob.status == "queued",
                             PlatformJob.execution_backend == "local",
@@ -364,11 +412,13 @@ class WorkerPoolController:
             sizing = self._sizing(policy, workers)
 
             requests = {row.id: row.memory_request_bytes for row in waiting}
-            free: list[int] = []
+            free: list[FreeBudget] = []
             covered: set[UUID] = set()
             for worker in workers:
+                # Physical workers only; an API's summary executor never is.
                 if "workflow.execute" not in worker.supported_handlers:
                     continue
+                handlers = frozenset(worker.supported_handlers)
                 if worker.state == "draining" or worker.memory_pressured:
                     continue
                 # A worker launched for one dispatch holds it until it claims it.
@@ -383,13 +433,18 @@ class WorkerPoolController:
                     worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
                 ):
                     budget = sizing.budget_bytes(launch_limit(worker, sizing.standard_limit_bytes))
-                    free.append(max(0, budget - held))
+                    free.append(FreeBudget(max(0, budget - held), handlers))
                 elif worker.state == "ready" and worker.memory_budget_bytes is not None:
-                    free.append(
-                        max(0, worker.memory_budget_bytes - worker.memory_reserved_bytes - held)
-                    )
+                    free.append(FreeBudget(
+                        max(0, worker.memory_budget_bytes - worker.memory_reserved_bytes - held),
+                        handlers,
+                    ))
             plan = _plan_launches(
-                [(row.id, row.memory_request_bytes) for row in waiting if row.id not in covered],
+                [
+                    Request(row.id, row.memory_request_bytes, row.handler)
+                    for row in waiting
+                    if row.id not in covered
+                ],
                 free,
                 standard_budget=sizing.standard_budget_bytes,
                 largest_budget=sizing.largest_budget_bytes,
@@ -443,7 +498,7 @@ class WorkerPoolController:
                     "count": len(launched),
                     "waiting": len(waiting),
                     "sized": len(plan.sized),
-                    "free_mib": sum(free) // 2**20,
+                    "free_mib": sum(budget.bytes for budget in free) // 2**20,
                 },
             )
         return launched
@@ -557,7 +612,7 @@ class WorkerPoolController:
                 slots=0,
                 memory_limit_bytes=memory_limit_bytes,
                 reserved_for_dispatch_id=reserved_for,
-                supported_handlers=["workflow.execute"],
+                supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
                 kubernetes_namespace=self.client.namespace,
                 kubernetes_job_name=worker_job_name(worker_id),
             )
@@ -571,27 +626,49 @@ class LaunchPlan:
     sized: list[tuple[UUID, int]]
 
 
+@dataclass(frozen=True)
+class Request:
+    """Waiting work: a dispatch (with its handler) or a local platform job (None)."""
+
+    id: UUID
+    bytes: int
+    handler: str | None = None
+
+
+@dataclass(frozen=True)
+class FreeBudget:
+    """An executor's free memory and the handlers it can claim."""
+
+    bytes: int
+    handlers: frozenset[str]
+
+    def takes(self, request: Request) -> bool:
+        return request.handler is None or request.handler in self.handlers
+
+
 def _plan_launches(
-    waiting: list[tuple[UUID, int]],
-    free: list[int],
+    waiting: list[Request],
+    free: list[FreeBudget],
     *,
     standard_budget: int,
     largest_budget: int,
 ) -> LaunchPlan:
     """Place requests (oldest first) into free budgets, then into new Jobs.
 
-    First fit: each request takes the first budget that holds it. A request
-    no standard Job can hold gets its own sized Job; one larger than the
-    largest launchable budget is left for the reconciler to fail.
+    First fit: each request takes the first budget that holds it, on an
+    executor that can claim its handler. A request no standard Job can hold
+    gets its own sized Job; one larger than the largest launchable budget is
+    left for the reconciler to fail. New Jobs claim every handler.
     """
-    bins = list(free)
+    rooms = [budget.bytes for budget in free]
     new_bins: list[int] = []
     sized: list[tuple[UUID, int]] = []
-    for dispatch_id, request in waiting:
+    for item in waiting:
+        dispatch_id, request = item.id, item.bytes
         placed = False
-        for index, room in enumerate(bins):
-            if room >= request:
-                bins[index] -= request
+        for index, budget in enumerate(free):
+            if rooms[index] >= request and budget.takes(item):
+                rooms[index] -= request
                 placed = True
                 break
         if placed:
@@ -670,8 +747,13 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
         if spec is None:
             return
         controller = WorkerPoolController(client, settings, spec)
+        wake = asyncio.Event()
+        listener = asyncio.create_task(
+            listen_for_pool_wake(settings.redis_url, wake), name="worker-pool-controller-wake"
+        )
         try:
             while not stop_event.is_set():
+                started = time.monotonic()
                 try:
                     if await controller.reachability.check():
                         await controller.reconcile()
@@ -683,9 +765,12 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
                         type(exc).__name__,
                         exc,
                     )
-                with suppress(TimeoutError):
-                    await asyncio.wait_for(stop_event.wait(), timeout=RECONCILE_SECONDS)
+                await wait_for_next_pass(
+                    stop_event, wake, since=started, spacing=RECONCILE_SECONDS, sweep=SWEEP_SECONDS
+                )
         finally:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
             try:
                 await _withdraw_live(controller.id)
             except Exception:
