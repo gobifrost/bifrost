@@ -126,8 +126,11 @@ function compileFile(source, path) {
     preprocessed = preprocessExternalImports(preprocessed); // remaining → $deps["pkg"]
     const result = transform(preprocessed, {
       filename: path || "component.tsx",
-      presets: ["react", "typescript"],
-      plugins: ["proposal-optional-chaining", "proposal-nullish-coalescing-operator"],
+      presets: [
+        ["react", { runtime: "classic" }],
+        ["typescript", { onlyRemoveTypeImports: false }],
+      ],
+      plugins: ["transform-optional-chaining", "transform-nullish-coalescing-operator"],
       sourceType: "module",
     });
 
