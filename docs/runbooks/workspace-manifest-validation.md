@@ -56,7 +56,8 @@ otherwise newer Python syntax can be rejected locally before the server sees it.
 
 This is the workspace-manifest and Python-decorator slice of
 [#1098](https://github.com/gobifrost/bifrost/issues/1098). Solution package and
-descriptor validation remain separate work.
+descriptor validation are documented in
+[Solution Definition Validation](solution-definition-validation.md).
 Solution declarations and transport payloads require their own schemas; a
 workspace schema must not be applied to them unchanged.
 

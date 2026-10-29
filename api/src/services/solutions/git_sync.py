@@ -109,6 +109,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
         claims=definition.entries("claims"),
         config_schemas=definition.config_entries(),
         file_locations=definition.manifest.files.locations,
+        file_policies=definition.install_entries("file_policies"),
         # Declared integrations (connection refs): a git-connected deploy must
         # create the same integration shells + SolutionConnectionSchema rows the
         # zip path does, else a git-installed solution silently drops its

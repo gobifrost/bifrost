@@ -1171,6 +1171,14 @@ def _app_source_dirs(workspace: pathlib.Path, *, definition=None) -> set[str]:
     }
 
 
+def _validate_solution_python_files(python_files: dict[str, str]) -> None:
+    """Validate decorator settings in source that will enter a Solution bundle."""
+    from bifrost.decorator_validation import validate_python_decorators
+
+    for path, source in sorted(python_files.items()):
+        validate_python_decorators(source, path=path)
+
+
 def _collect_python_files(workspace: pathlib.Path, *, definition=None) -> dict[str, str]:
     """Collect installable Python source (relative path → text), layout-agnostic.
 
@@ -1200,7 +1208,12 @@ def _collect_python_files(workspace: pathlib.Path, *, definition=None) -> dict[s
             rel_posix = pathlib.PurePath(rel).as_posix()
             if any(rel_posix == d or rel_posix.startswith(d + "/") for d in app_dirs):
                 continue
-            files[rel_posix] = pathlib.Path(py_real).read_text(encoding="utf-8")
+            source = pathlib.Path(py_real).read_text(encoding="utf-8")
+            # Validate before putting source into the candidate map so every
+            # publisher using this canonical collector refuses it before any
+            # remote write or deploy mutation.
+            _validate_solution_python_files({rel_posix: source})
+            files[rel_posix] = source
     return files
 
 
@@ -2450,6 +2463,11 @@ def deploy_cmd(
                 bundle_python = {**python_files, **vendored}
             else:
                 click.echo("  no shared dependencies to vendor.")
+
+        # Vendored modules do not pass through the workspace collector. Validate
+        # the assembled map before app prebuild or artifact upload so server and
+        # local deployment accept the same Python candidate.
+        _validate_solution_python_files(bundle_python)
 
         source_apps = [
             app for app in apps if (app.get("src_files") or app.get("bin_files"))

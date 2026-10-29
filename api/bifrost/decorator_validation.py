@@ -93,13 +93,47 @@ class _DecoratorValidator:
                 scope[statement.name] = None
                 continue
 
-            if isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Try)):
+            if isinstance(statement, (ast.For, ast.AsyncFor, ast.With, ast.AsyncWith, ast.Try)):
+                self._visit_control_flow(statement, scope)
+                self._shadow_bound_names(statement, scope)
+                continue
+
+            if isinstance(statement, (ast.If, ast.While)):
                 for body in self._nested_bodies(statement):
                     self.visit_body(body, dict(scope))
                 self._shadow_bound_names(statement, scope)
                 continue
 
             self._shadow_bound_names(statement, scope)
+
+    def _visit_control_flow(
+        self, statement: ast.For | ast.AsyncFor | ast.With | ast.AsyncWith | ast.Try,
+        scope: dict[str, str | None],
+    ) -> None:
+        """Visit block bodies with their targets shadowing imported decorators."""
+        if isinstance(statement, (ast.For, ast.AsyncFor)):
+            nested = dict(scope)
+            self._shadow_target(statement.target, nested)
+            self.visit_body(statement.body, nested)
+            self.visit_body(statement.orelse, dict(nested))
+            return
+
+        if isinstance(statement, (ast.With, ast.AsyncWith)):
+            nested = dict(scope)
+            for item in statement.items:
+                if item.optional_vars is not None:
+                    self._shadow_target(item.optional_vars, nested)
+            self.visit_body(statement.body, nested)
+            return
+
+        self.visit_body(statement.body, dict(scope))
+        self.visit_body(statement.orelse, dict(scope))
+        self.visit_body(statement.finalbody, dict(scope))
+        for handler in statement.handlers:
+            nested = dict(scope)
+            if handler.name is not None:
+                nested[handler.name] = None
+            self.visit_body(handler.body, nested)
 
     @staticmethod
     def _nested_bodies(statement: ast.stmt) -> Iterable[list[ast.stmt]]:
@@ -114,7 +148,11 @@ class _DecoratorValidator:
     def _bind_from_import(statement: ast.ImportFrom, scope: dict[str, str | None]) -> None:
         if statement.level:
             for imported in statement.names:
-                scope[imported.asname or imported.name] = None
+                if imported.name == "*":
+                    for decorator in _DECORATORS:
+                        scope[decorator] = None
+                else:
+                    scope[imported.asname or imported.name] = None
             return
         module = statement.module or ""
         for imported in statement.names:
@@ -123,6 +161,11 @@ class _DecoratorValidator:
                     prefix = module
                     for decorator in _DECORATORS:
                         scope[decorator] = f"{prefix}.{decorator}"
+                else:
+                    # An unknown star import may replace an imported decorator
+                    # binding. Do not claim its provenance through the import.
+                    for decorator in _DECORATORS:
+                        scope[decorator] = None
                 continue
             name = imported.asname or imported.name
             if module == "bifrost" and imported.name in _DECORATORS:
@@ -149,6 +192,12 @@ class _DecoratorValidator:
     @staticmethod
     def _shadow_bound_names(statement: ast.stmt, scope: dict[str, str | None]) -> None:
         for node in ast.walk(statement):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+                scope[node.id] = None
+
+    @staticmethod
+    def _shadow_target(target: ast.expr, scope: dict[str, str | None]) -> None:
+        for node in ast.walk(target):
             if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
                 scope[node.id] = None
 

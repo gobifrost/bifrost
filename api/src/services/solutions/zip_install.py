@@ -296,6 +296,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         _collect_file_locations,
         _collect_file_policies,
         _collect_forms,
+        _collect_python_files,
         _collect_tables,
         _collect_workflows,
     )
@@ -310,6 +311,11 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
     version: str | None = None
     logo: str | None = None
     definition = read_solution_definition(workspace)
+    # Use the canonical published-source selection during no-write preview so
+    # helper modules outside the workflow manifest receive the same acceptance
+    # check as a deploy bundle. The returned map is rebuilt later for deploy;
+    # PreviewResult deliberately carries only metadata.
+    _collect_python_files(workspace, definition=definition)
     if definition.descriptor is not None:
         descriptor = definition.descriptor
         slug, name = descriptor.slug, descriptor.name

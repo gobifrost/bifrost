@@ -72,8 +72,29 @@ def test_rejects_dynamic_expansion_without_executing_source():
         "def workflow(**kwargs): pass\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from bifrost import workflow\nworkflow = other\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from other import workflow\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
+        "from bifrost import workflow\nfrom other import *\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from .bifrost import workflow\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from .bifrost import *\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
+        (
+            "from bifrost import workflow\n"
+            "for workflow in decorators:\n"
+            "    @workflow(timeout_seconds=10)\n"
+            "    def run(): pass\n"
+        ),
+        (
+            "from bifrost import workflow\n"
+            "with manager() as workflow:\n"
+            "    @workflow(timeout_seconds=10)\n"
+            "    def run(): pass\n"
+        ),
+        (
+            "from bifrost import workflow\n"
+            "try:\n"
+            "    pass\n"
+            "except Exception as workflow:\n"
+            "    @workflow(timeout_seconds=10)\n"
+            "    def run(): pass\n"
+        ),
     ],
 )
 def test_ignores_unrelated_or_shadowed_same_named_decorators(source):

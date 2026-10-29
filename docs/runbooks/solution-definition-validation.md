@@ -25,10 +25,33 @@ error and rebuild the ZIP. The reader reports the source manifest, field path,
 and YAML line when available. It does not write, reconcile, compile, or publish
 anything. Resource effects stay in the existing Solution deployer.
 
+## Python Decorator Acceptance
+
+Every Python file that a Solution package publishes is parsed before package
+preview, ZIP installation, CLI deployment, connected-Git deployment, or direct
+bundle deployment can write or report progress. This includes helper modules
+that are not listed in a workflow manifest. The check uses the published
+`python_files` selection as the source of truth; a workflow transport `source`
+field does not replace the file on disk.
+
+The parser does not import or execute package source. It accepts Bifrost
+`workflow`, `tool`, `data_provider`, and `service` decorator settings only when
+their keys are supported. Literal dictionary expansions are accepted when their
+keys are statically visible; dynamic expansions are rejected. Correct the
+reported Python path and resubmit the package. The CLI parser uses its own
+Python interpreter grammar, so run the CLI with an interpreter that supports
+the source syntax being deployed.
+
+The broader workspace and Git acceptance rules, including accepted decorator
+keys and presigned-upload boundaries, are documented in
+[Workspace Manifest Validation](workspace-manifest-validation.md).
+
 ## Verification
 
 `api/tests/unit/test_solution_definition.py` covers the shared workspace and
 Solution failure boundary, map-key aliases, typed transports, and declaration
 defaults. `test_solution_export.py`, `test_solution_zip_install.py`, and
 `test_solution_git_sync.py` cover generated package, ZIP preview, and
-connected-Git adapters. These tests enqueue no deploy or build jobs.
+connected-Git adapters. `test_solution_deploy_validation.py` covers the direct
+bundle backstop before reporting or persistence. These tests enqueue no deploy
+or build jobs.
