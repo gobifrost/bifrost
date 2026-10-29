@@ -67,10 +67,10 @@ test("a Platform Admin explicitly assigns themselves Secrets Reader", async ({
 		await page.goto(`/users/${userId}`);
 		const roles = page.getByRole("region", { name: "Additional Roles" });
 		await expect(
-			roles.getByText("Platform Admin", { exact: true }),
+			roles.getByRole("button", { name: "Remove Platform Admin" }),
 		).toBeVisible();
 		await expect(
-			roles.getByText("Secrets Reader", { exact: true }),
+			roles.getByRole("button", { name: "Remove Secrets Reader" }),
 		).toHaveCount(0);
 		await page
 			.getByRole("combobox", { name: "Select additional roles..." })
@@ -85,10 +85,10 @@ test("a Platform Admin explicitly assigns themselves Secrets Reader", async ({
 		await expect(page.getByText("Roles saved")).toBeVisible();
 		await page.reload();
 		await expect(
-			roles.getByText("Secrets Reader", { exact: true }),
+			roles.getByRole("button", { name: "Remove Secrets Reader" }),
 		).toBeVisible();
 		await expect(
-			roles.getByText("Platform Admin", { exact: true }),
+			roles.getByRole("button", { name: "Remove Platform Admin" }),
 		).toBeVisible();
 	} finally {
 		await ownContext.close();
