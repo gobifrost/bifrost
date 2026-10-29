@@ -143,7 +143,7 @@ def _capacity(result: dict) -> list[str]:
         "",
         f"Mix `{result['mix_name']}`: `{result['profile']['capacity']['mixes'][result['mix_name']]}`; "
         f"gate thresholds {result['profile']['capacity']['thresholds_source']}. "
-        f"Bracket (last pass, first fail): {result.get('bracket')}" + (f"; stopped: {result['stopped']}" if result.get("stopped") else ""),
+        f"Exploratory ramp bracket (last pass, first fail; coarser gates than confirmation): {result.get('bracket')}" + (f"; stopped: {result['stopped']}" if result.get("stopped") else ""),
         "",
         "| Offered /s | Window s | Result | Throughput | Drift upper /s | Worst class e2e p95 s | Failures | Invalid / warnings |",
         "|---:|---:|---|---:|---:|---:|---:|---|",

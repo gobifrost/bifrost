@@ -1,7 +1,7 @@
 # Capacity Benchmark: Gap Assessment and Methodology
 
-Status: revision 10, 2026-10-29. Astra review 1 findings are tagged `[A#]`;
-review 2–7 corrections are tagged `[R2]`–`[R7]`; `[R8]`–`[R9]` are implementation-stage corrections. Base: `origin/main` `26102d1cb`. Extends
+Status: revision 11, 2026-10-29. Astra review 1 findings are tagged `[A#]`;
+review 2–7 corrections are tagged `[R2]`–`[R7]`; `[R8]`–`[R10]` are implementation-stage corrections. Base: `origin/main` `26102d1cb`. Extends
 `docs/superpowers/specs/2026-10-27-performance-benchmark-suite-design.md`
 (Phase 1 of that design is built and measured; its "nothing built" header is stale).
 
@@ -258,19 +258,25 @@ current-main baseline, recorded in the profile, identical for every A/B arm)
 | Limit | Definition |
 |---|---|
 | Throughput | Correct completions occurring in the window ÷ arrivals in the window ≥ 99.5 % |
-| Backlog drift | Unfinished work (pending + claimed + running), sampled every 2 s at fixed timestamps (so a 240 s window holds 120 samples, the minimum for 10 blocks of 2b at b = 6) [R8]; slope by OLS. Uncertainty from a residual moving-block bootstrap [R3]: compute centred OLS residuals; block length b = max(6 samples, 2 × the first lag at which the residual autocorrelation falls inside ±2/√n); resample circular residual blocks, add them to the fitted line at the original timestamps, refit; 2,000 seeded resamples; the 95th percentile of resampled slopes is the upper bound. It must be ≤ the drift tolerance; negative slopes pass. Dependence check [R4, R8, R9]: b = max(6 samples, ⌈b_PW⌉, 2k*) capped at n, where b_PW is the Politis & White (2004) circular-bootstrap block length with the Patton, Politis & White (2009) correction (flat-top bandwidth M = 2m̂, m̂ the first lag followed by K_n = max(5, ⌈√log₁₀ n⌉) autocorrelations below 2√(log₁₀ n / n)), and k* is the largest lag ≤ n/4 whose autocorrelation is significant against Bartlett's standard error √((1 + 2Σ_{j<k} r_j²)/n) with a Bonferroni correction across those lags — so strong delayed (e.g. seasonal) dependence behind insignificant short lags still lengthens b, without the familywise false positives of an uncorrected scan. Validated by Monte Carlo slope-bound coverage on AR(0.5) noise and by seasonal-lag cases (scripts/bench/tests/test_capacity.py); and the upper bound is recomputed at b/2 (≥ 6), b and 2b; the gate is conclusive only if all three agree on pass/fail and n/(2b) ≥ 10. Otherwise extend the window (cap 30 min), then inconclusive. Default tolerance 0.1 % of the offered arrival rate per second; capacity is reported as "sustainable within that drift tolerance" |
+| Backlog drift | Unfinished work (pending + claimed + running), sampled every 2 s at fixed timestamps (so a 240 s window holds 120 samples, the minimum for 10 blocks of 2b at b = 6) [R8]; slope by OLS. Uncertainty from a residual moving-block bootstrap [R3]: compute centred OLS residuals; block length b = max(6 samples, 2 × the first lag at which the residual autocorrelation falls inside ±2/√n); resample circular residual blocks, add them to the fitted line at the original timestamps, refit; 2,000 seeded resamples; the 95th percentile of resampled slopes is the upper bound. It must be ≤ the drift tolerance; negative slopes pass. **Tolerance by phase [R10]:** on ramp steps no more than 2 s of offered work may accumulate across the measured window (rate × 2 s ÷ window); confirmation runs use the strict default stated at the end of this row. The strict per-second fraction is not resolvable in a 300 s window: the first M `sdk-heavy` step (2/s, 757/757 correct, all latency gates passing) had slope 0.00084/s with bounds 0.00196/0.00196/0.00208 against 0.002, so every low-rate step would be inconclusive; confirmation windows are 3–12× longer. Dependence check [R4, R8, R9]: b = max(6 samples, ⌈b_PW⌉, 2k*) capped at n, where b_PW is the Politis & White (2004) circular-bootstrap block length with the Patton, Politis & White (2009) correction (flat-top bandwidth M = 2m̂, m̂ the first lag followed by K_n = max(5, ⌈√log₁₀ n⌉) autocorrelations below 2√(log₁₀ n / n)), and k* is the largest lag ≤ n/4 whose autocorrelation is significant against Bartlett's standard error √((1 + 2Σ_{j<k} r_j²)/n) with a Bonferroni correction across those lags — so strong delayed (e.g. seasonal) dependence behind insignificant short lags still lengthens b, without the familywise false positives of an uncorrected scan. Validated by Monte Carlo slope-bound coverage on AR(0.5) noise and by seasonal-lag cases (scripts/bench/tests/test_capacity.py); and the upper bound is recomputed at b/2 (≥ 6), b and 2b; the gate is conclusive only if all three agree on pass/fail and n/(2b) ≥ 10. Otherwise extend the window (cap 30 min), then inconclusive. Default tolerance 0.1 % of the offered arrival rate per second; capacity is reported as "sustainable within that drift tolerance" |
 | Latency | Failure-aware queue-wait p95 and send-to-completion p95 per class ≤ the frozen thresholds; a percentile whose distribution-free 95 % CI half-width exceeds 10 % of its threshold extends the window (cap 30 min), then is inconclusive |
 | Reliability per class | For each class whose *configured* mix weight is ≥ 10 % (never the sampled share) [R9]: Clopper-Pearson 95 % upper bound on its failure rate ≤ 1 % on ramp steps; a gated class with fewer than 400 actual arrivals in the window is inconclusive, never a pass |
 | Tenant faults | 0 OOM kills, restarts, evictions, quota/start stalls (G10) |
 
-**Search.** Ramp to the first failing step, bisect twice inside [last pass,
-first fail], report the bracket. **Confirmation** runs the highest passing rate
+**Search.** An inconclusive step is rerun at the same rate with its window
+doubled, up to 30 min, before it counts as not passing [R10]. Ramp to the
+first failing step, bisect twice inside [last pass, first fail], and report
+the result as an **exploratory ramp bracket** [R10]: its gates are coarser
+than confirmation's, so it locates candidates but need not contain the
+strictly sustainable boundary. **Confirmation** runs the highest passing rate
 continuously from a reset state (§7) for at least 15 min and until every class
 with weight ≥ 10 % has enough observations for a 0.1 % per-class failure bound
 (≈ 3,000 failure-free), capped at 60 min; all gates must pass, the 0.1 % bound
 included. If the cap is reached first, the result is **inconclusive** at that
-rate, not certified; the next lower passing rate is tried. Sustainable capacity
-= the confirmed rate.
+rate, not certified; the next lower passing rate is tried, each from a reset
+state. Sustainable capacity = the highest confirmed rate; if none confirms,
+the report states that no rate was certified (the true limit may lie below
+the ramp's lowest passing rate).
 
 **Repeat uncertainty [R3].** Each build's capacity is reported as the
 confirmed rate from each of ≥ 2 complete, independent searches (each from a
