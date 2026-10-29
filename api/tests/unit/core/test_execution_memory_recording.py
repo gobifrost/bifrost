@@ -158,8 +158,10 @@ async def test_upsert_moves_peaks_for_known_samples() -> None:
 
 @pytest.mark.asyncio
 async def test_process_failure_forwards_reported_metrics() -> None:
+    from bifrost._logging import LogFlushReceipt
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
+    execution_id = str(uuid4())
     durable_session = AsyncMock()
     durable_context = MagicMock()
     durable_context.__aenter__ = AsyncMock(return_value=durable_session)
@@ -183,6 +185,23 @@ async def test_process_failure_forwards_reported_metrics() -> None:
         }
 
         with (
+            # This test owns the durable-result and metrics sessions. Log
+            # persistence/recovery has separate transaction coverage.
+            patch(
+                "bifrost._logging.stage_logs_to_postgres",
+                new_callable=AsyncMock,
+                return_value=LogFlushReceipt(
+                    execution_id, f"bifrost:logs:{execution_id}", (),
+                ),
+            ),
+            patch(
+                "bifrost._logging.acknowledge_staged_logs",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "bifrost._logging.recover_terminal_execution_logs",
+                new_callable=AsyncMock,
+            ),
             patch(
                 "src.core.database.get_session_factory",
                 return_value=session_factory,
@@ -213,7 +232,7 @@ async def test_process_failure_forwards_reported_metrics() -> None:
             ),
         ):
             await consumer._process_failure(
-                str(uuid4()),
+                execution_id,
                 {
                     "success": False,
                     "error": "boom",
