@@ -27,7 +27,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Awaitable, cast
@@ -147,10 +147,9 @@ class ServiceClaimLoop:
             except Exception as e:
                 logger.exception("service claim tick failed: %s", e)
             if self._owned or self.wake is None:
-                try:
+                # The interval elapsing is the normal case; stop ends it early.
+                with suppress(TimeoutError):
                     await asyncio.wait_for(self._stop.wait(), self.claim_interval_seconds)
-                except TimeoutError:
-                    pass
                 continue
             sweep = self.sweep_seconds
             if self._next_restart is not None:
