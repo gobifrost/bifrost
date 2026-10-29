@@ -43,7 +43,7 @@ Python interpreter grammar, so run the CLI with an interpreter that supports
 the source syntax being deployed.
 
 The broader workspace and Git acceptance rules, including accepted decorator
-keys and presigned-upload boundaries, are documented in
+keys and the existing direct-upload validation gap, are documented in
 [Workspace Manifest Validation](workspace-manifest-validation.md).
 
 ## Verification

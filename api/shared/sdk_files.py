@@ -687,13 +687,6 @@ async def sdk_signed_url(
                 s3_path = resolve_s3_key(location, effective_scope, path)
             except ValueError as exc:
                 raise FileServiceError(400, str(exc)) from exc
-            if location == "workspace" and _is_active_definition_source(s3_path):
-                raise FileServiceError(
-                    400,
-                    "Direct signed uploads cannot replace active Python source or "
-                    "workspace definitions. Use /api/files/write so Bifrost can "
-                    "validate the source before it is stored.",
-                )
             await require_file_policy(
                 caller,
                 action="signed_put",
@@ -711,12 +704,6 @@ async def sdk_signed_url(
         return SignedUrlResult(url=url, path=s3_path, expires_in=expires_in)
     except FileServiceError:
         raise
-
-
-def _is_active_definition_source(s3_path: str) -> bool:
-    """Whether a workspace key needs bytes inspected before it can be written."""
-    relative = s3_path.removeprefix("_repo/")
-    return relative.endswith(".py") or relative.startswith(".bifrost/")
 
 
 __all__ = [

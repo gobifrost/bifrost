@@ -1170,24 +1170,27 @@ class TestSdkSignedUrl:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("path", ["workflows/new.py", ".bifrost/workflows.yaml"])
-    async def test_signed_put_rejects_workspace_definition_before_presigning(
+    async def test_signed_put_preserves_authorized_workspace_definition_uploads(
         self, monkeypatch, path: str,
     ) -> None:
         _allow_write_policy(monkeypatch)
         storage = _storage(monkeypatch)
 
-        with pytest.raises(FileServiceError) as exc_info:
-            await sdk_signed_url(
-                _mutation_caller(),
-                path=path,
-                location="workspace",
-                scope=None,
-                method="PUT",
-            )
+        result = await sdk_signed_url(
+            _mutation_caller(),
+            path=path,
+            location="workspace",
+            scope=None,
+            method="PUT",
+        )
 
-        assert exc_info.value.status_code == 400
-        assert "validate" in str(exc_info.value.detail)
-        storage.generate_presigned_upload_url.assert_not_awaited()
+        assert result.path == f"_repo/{path}"
+        storage.generate_presigned_upload_url.assert_awaited_once_with(
+            path=f"_repo/{path}",
+            content_type="application/octet-stream",
+            expires_in=600,
+        )
+        storage.record_file_write_metadata.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_signed_put_denied_is_403_with_audit(self, monkeypatch) -> None:

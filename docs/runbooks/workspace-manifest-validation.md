@@ -45,10 +45,10 @@ not belong in a decorator. `retry_policy` is removed and has no current workflow
 API setting; remove it. Existing deployed Python keeps its runtime compatibility
 behavior until it is next submitted through an acceptance boundary.
 
-Direct presigned PUTs are refused for workspace Python and `.bifrost/`
-definition paths because their bytes bypass server-side validation. Use
-`/api/files/write` instead. Presigned URLs remain available for ordinary runtime
-data uploads and custom data locations.
+Direct presigned PUTs retain their existing authorization and upload behavior.
+Their bytes go directly to storage and do not pass these content-validation
+checks. Validation before activating a direct upload is deferred work; this
+change does not close that existing acceptance gap.
 
 The CLI performs its local AST precheck with the Python interpreter that runs
 the CLI. Use a CLI interpreter that supports the source grammar being pushed;
