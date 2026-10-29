@@ -319,8 +319,8 @@ async def enqueue_platform_job(
         retry_on_runner_loss=definition.policy.retry_on_runner_loss,
     )
     db.add(job)
-    if execution_backend == "local":
-        wake_pool_workers_after_commit(db)
+    # Local executors claim it; the Kubernetes build controller places it.
+    wake_pool_workers_after_commit(db)
     await db.flush()
     return job, False
 

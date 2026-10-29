@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import logging
+import time
 from typing import Any
 from contextlib import suppress
 from uuid import UUID
@@ -43,10 +44,16 @@ from src.services.kubernetes_execution import load_kubernetes_policy
 from src.services.memory_requests import MIB
 from src.services.platform_jobs import publish_platform_job_update
 from src.services.worker_pool.manifest import WorkerJobSpec, resolve_job_spec_when_ready
+from src.services.work_dispatch import listen_for_pool_wake, wait_for_next_pass
 from src.services.worker_pool.sizing import load_job_sizing
 
 logger = logging.getLogger(__name__)
 _ACTIVE = ("running", "cancel_requested")
+# While Kubernetes holds builds (or a pass just placed or returned one) the
+# controller passes every BUILD_POLL_SECONDS. Otherwise it passes on a pool
+# wake-up (every enqueue publishes one) and sweeps every BUILD_SWEEP_SECONDS.
+BUILD_POLL_SECONDS = 2.0
+BUILD_SWEEP_SECONDS = 15.0
 
 
 def _now() -> datetime:
@@ -110,7 +117,8 @@ class KubernetesBuildController:
         self.settings = settings
         self.spec = spec
 
-    async def reconcile(self) -> None:
+    async def reconcile(self) -> bool:
+        """One pass; True while there is build work to follow closely."""
         # Existing ownership is reconciled before admitting more remote work.
         returned: list[PlatformJob] = []
         async with get_db_context() as db:
@@ -128,7 +136,7 @@ class KubernetesBuildController:
         for job_id in ids:
             await self.reconcile_job(job_id)
         if not policy.isolated_jobs_enabled:
-            return
+            return bool(ids or returned)
         async with get_db_context() as db:
             sizing = await load_job_sizing(db, policy, self.settings.memory_pressure_threshold)
         standard_request = int(self.settings.pool_worker_memory_request_mib) * MIB
@@ -148,6 +156,7 @@ class KubernetesBuildController:
         )
         if claim is not None:
             await self.reconcile_job(claim.id)
+        return bool(ids) or claim is not None
 
     async def reconcile_job(self, job_id: UUID) -> None:
         changed: PlatformJob | None = None
@@ -294,16 +303,32 @@ async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
         if spec is None:
             return
         controller = KubernetesBuildController(client, settings, spec)
-        while not shutdown_event.is_set():
-            try:
-                await controller.reconcile()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                # Client exceptions never include tokens or API response bodies.
-                logger.error("Kubernetes build reconciliation failed (%s): %s", type(exc).__name__, exc)
-            with suppress(TimeoutError):
-                await asyncio.wait_for(shutdown_event.wait(), timeout=2)
+        wake = asyncio.Event()
+        listener = asyncio.create_task(
+            listen_for_pool_wake(settings.redis_url, wake), name="kubernetes-build-wake"
+        )
+        try:
+            while not shutdown_event.is_set():
+                started = time.monotonic()
+                busy = True
+                try:
+                    busy = await controller.reconcile()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    # Client exceptions never include tokens or API response bodies.
+                    logger.error("Kubernetes build reconciliation failed (%s): %s", type(exc).__name__, exc)
+                if busy:
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(shutdown_event.wait(), timeout=BUILD_POLL_SECONDS)
+                else:
+                    await wait_for_next_pass(
+                        shutdown_event, wake, since=started,
+                        spacing=BUILD_POLL_SECONDS, sweep=BUILD_SWEEP_SECONDS,
+                    )
+        finally:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
     finally:
         # Scheduler shutdown does not terminate remotely supervised builds.
         await client.close()
