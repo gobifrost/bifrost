@@ -222,28 +222,34 @@ async def remote_launcher(async_session_factory, e2e_api_url):
             await db.commit()
         yield launcher, identity.incarnation_id
     finally:
-        # Let the API-owned executor observe a canonical drain and finish its
-        # task before deleting the fixture row. A plain socket close is only a
-        # transport event and intentionally does not retire a physical worker.
-        async with async_session_factory() as db:
-            await db.execute(
-                update(ExecutionWorker)
-                .where(ExecutionWorker.id == identity.incarnation_id)
-                .values(state="draining")
-            )
-            await db.commit()
-        await launcher.stop()
+        try:
+            # Let the API-owned executor observe a canonical drain and finish
+            # its task before deleting the fixture row. A plain socket close is
+            # only a transport event and intentionally does not retire a
+            # physical worker.
+            async with async_session_factory() as db:
+                await db.execute(
+                    update(ExecutionWorker)
+                    .where(ExecutionWorker.id == identity.incarnation_id)
+                    .values(state="draining")
+                )
+                await db.commit()
+            await launcher.stop()
 
-        await _wait_for(retired, timeout=20, description="test remote launcher retirement")
-        async with async_session_factory() as db:
-            for worker_id, handlers in removed_capabilities.items():
-                worker = await db.get(ExecutionWorker, worker_id)
-                if worker is not None:
-                    worker.supported_handlers = handlers
-            await db.execute(
-                delete(ExecutionWorker).where(ExecutionWorker.id == identity.incarnation_id)
-            )
-            await db.commit()
+            await _wait_for(retired, timeout=20, description="test remote launcher retirement")
+        finally:
+            # Always give the stack's executors their workflow capability
+            # back: a failed retirement must fail this test, not leave every
+            # later workflow test without an executor.
+            async with async_session_factory() as db:
+                for worker_id, handlers in removed_capabilities.items():
+                    worker = await db.get(ExecutionWorker, worker_id)
+                    if worker is not None:
+                        worker.supported_handlers = handlers
+                await db.execute(
+                    delete(ExecutionWorker).where(ExecutionWorker.id == identity.incarnation_id)
+                )
+                await db.commit()
 
 
 async def _register_workflow(
