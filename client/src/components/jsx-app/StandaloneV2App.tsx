@@ -309,10 +309,9 @@ export function StandaloneV2App({
 		const basename = isPreview
 			? `/apps/${appSlug}/preview`
 			: `/apps/${appSlug}`;
-		// Visibility/deployment scope is separate from runtime data scope, so
-		// Apps run against the user's currently selected organization. A
-		// platform admin managing an org's App has no home in that org, so the
-		// App's own organization stands in for the selection.
+		// Visibility/deployment scope is separate from runtime data scope.
+		// Platform admins use an App's owning organization when present;
+		// global Apps and other users use their selected organization.
 		const selectedOrg = scope.type === "organization" ? scope.orgId : null;
 		const orgScope = isPlatformAdmin
 			? (appOrgId ?? selectedOrg)
