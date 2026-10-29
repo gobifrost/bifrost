@@ -472,9 +472,17 @@ async def test_orphan_recovery_after_redis_cleanup_failure_keeps_retained_stream
                 ) == 2
 
             assert await redis.exists(orphan_key) == 1
-            result = await reclaim_orphaned_execution_log_streams(limit=100)
+            # Each pass scans one bounded step from the saved cursor, so a
+            # full cycle (the cursor back at 0) reaches every key, however many
+            # Redis holds. Other tests' leftovers can be orphans too.
+            orphaned = 0
+            while True:
+                result = await reclaim_orphaned_execution_log_streams(limit=100)
+                orphaned += result["orphaned"]
+                if int(await redis.get(execution_log_retention_cursor_key()) or 0) == 0:
+                    break
 
-            assert result["orphaned"] == 1
+            assert orphaned >= 1
             assert await redis.exists(orphan_key) == 0
             # Both existing executions retain their live Redis identity. The
             # recent row models Keep Forever; the running row has a live reader.
