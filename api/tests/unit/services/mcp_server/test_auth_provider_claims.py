@@ -4,10 +4,48 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
-from src.services.mcp_server.auth import BifrostAuthProvider
+from src.services.mcp_server.auth import BifrostAuthProvider, MCPAccessToken
 from src.services.mcp_server.server import MCPContext
 from src.services.mcp_server.tools._http_bridge import _token_from_context
+
+
+def test_mcp_access_token_rejects_missing_claims():
+    with pytest.raises(ValidationError, match="claims"):
+        MCPAccessToken(
+            token="encoded.jwt",
+            client_id="user-1",
+            scopes=["mcp:access"],
+        )
+
+
+def test_mcp_access_token_rejects_null_claims():
+    with pytest.raises(ValidationError, match="claims"):
+        MCPAccessToken(
+            token="encoded.jwt",
+            client_id="user-1",
+            scopes=["mcp:access"],
+            claims=None,
+        )
+
+
+def test_mcp_access_token_preserves_policy_claims():
+    claims = {
+        "user_id": "user-1",
+        "is_superuser": False,
+        "is_provider_org": True,
+        "runtime_credential_kind": "agent",
+    }
+
+    token = MCPAccessToken(
+        token="encoded.jwt",
+        client_id="user-1",
+        scopes=["mcp:access"],
+        claims=claims,
+    )
+
+    assert token.claims == claims
 
 
 @pytest.mark.asyncio
