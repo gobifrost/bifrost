@@ -11,9 +11,8 @@ from src.config import get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
     PlatformJobRequiresAction,
 )
 from src.models.contracts.github import WorkspaceSyncPlan
@@ -210,15 +209,6 @@ async def run_git_operation(
     return result
 
 
-GIT_OPERATION_DEFINITION = PlatformJobDefinition(
-    job_type="workspace.git",
-    payload_version=1,
-    payload_model=GitOperationPayload,
-    handler=run_git_operation,
-    policy=PlatformJobPolicy(
-        timeout_seconds=60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-    ),
+GIT_OPERATION_DEFINITION = define_platform_job(
+    "workspace.git", GitOperationPayload, run_git_operation
 )

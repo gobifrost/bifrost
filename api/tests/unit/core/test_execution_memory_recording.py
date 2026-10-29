@@ -31,10 +31,12 @@ def test_capture_failure_metrics_reports_pss_growth(
         "src.services.execution.simple_worker.resource.getrusage",
         lambda _: SimpleNamespace(ru_maxrss=321, ru_utime=1.0, ru_stime=0.5),
     )
-    metrics = _capture_failure_metrics(100 * 1024)
+    metrics = _capture_failure_metrics(100 * 1024, 121 * 1024)
 
     assert metrics["peak_memory_bytes"] == 100 * 1024
     assert metrics["peak_process_rss_bytes"] == 321 * 1024
+    # Peak RSS since the fork minus RSS at its start: what the run added.
+    assert metrics["peak_memory_growth_bytes"] == 200 * 1024
     assert metrics["cpu_total_seconds"] >= 0.0
 
 
@@ -44,9 +46,10 @@ def test_capture_failure_metrics_uses_none_for_unknown_memory(
     monkeypatch.setattr(
         "src.services.execution.simple_worker._get_pss_bytes", lambda: 0
     )
-    metrics = _capture_failure_metrics(100 * 1024)
+    metrics = _capture_failure_metrics(100 * 1024, 0)
 
     assert metrics["peak_memory_bytes"] is None
+    assert metrics["peak_memory_growth_bytes"] is None
 
 
 def test_parse_org_uuid_accepts_bare_and_prefixed_forms() -> None:
@@ -155,6 +158,7 @@ async def test_upsert_moves_peaks_for_known_samples() -> None:
 
 @pytest.mark.asyncio
 async def test_process_failure_forwards_reported_metrics() -> None:
+    from bifrost._logging import LogFlushReceipt
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
     durable_session = AsyncMock()
@@ -180,6 +184,21 @@ async def test_process_failure_forwards_reported_metrics() -> None:
         }
 
         with (
+            # This test owns the durable-result and metrics sessions. Log
+            # persistence/recovery has separate transaction coverage.
+            patch(
+                "bifrost._logging.stage_logs_to_postgres",
+                new_callable=AsyncMock,
+                return_value=LogFlushReceipt("", "", ()),
+            ),
+            patch(
+                "bifrost._logging.acknowledge_staged_logs",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "bifrost._logging.recover_terminal_execution_logs",
+                new_callable=AsyncMock,
+            ),
             patch(
                 "src.core.database.get_session_factory",
                 return_value=session_factory,
@@ -188,11 +207,6 @@ async def test_process_failure_forwards_reported_metrics() -> None:
                 "src.jobs.consumers.workflow_execution.update_execution",
                 new_callable=AsyncMock,
             ) as update_execution,
-            patch(
-                "bifrost._sync.flush_pending_changes",
-                new_callable=AsyncMock,
-                return_value=0,
-            ),
             patch(
                 "src.core.metrics.update_daily_metrics",
                 new_callable=AsyncMock,

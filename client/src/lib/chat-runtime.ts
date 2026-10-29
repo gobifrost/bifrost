@@ -2,6 +2,7 @@ import type { components } from "@/lib/v1";
 import type { ChatStreamChunk, ChatToolProgress } from "@/services/websocket";
 
 type MessagePublic = components["schemas"]["MessagePublic"];
+type ChatContextUsage = components["schemas"]["ChatContextUsage"];
 
 const CHAT_FAILURE_MESSAGE =
 	"We couldn't complete this response. Please try again.";
@@ -36,6 +37,7 @@ export interface ChatProjectionSnapshot {
 	runs?: Record<string, Partial<ChatRunProjection> | null> | null;
 	active_run_id?: string | null;
 	last_sequence?: number | null;
+	context_usage?: ChatContextUsage | null;
 }
 
 export interface StageOptimisticUserTurnInput {
@@ -113,6 +115,8 @@ export interface ChatProjection {
 	run_order: string[];
 	active_run_id: string | null;
 	last_sequence: number;
+	context_usage: ChatContextUsage | null;
+	context_usage_sequence: number;
 }
 
 const TERMINAL_RUN_STATUSES = new Set([
@@ -167,6 +171,10 @@ function cloneProjection(projection: ChatProjection): ChatProjection {
 		run_order: [...projection.run_order],
 		active_run_id: projection.active_run_id,
 		last_sequence: projection.last_sequence,
+		context_usage: projection.context_usage
+			? { ...projection.context_usage }
+			: null,
+		context_usage_sequence: projection.context_usage_sequence,
 	};
 }
 
@@ -1161,6 +1169,8 @@ export function makeEmptyChatProjection(
 		run_order: [],
 		active_run_id: null,
 		last_sequence: 0,
+		context_usage: null,
+		context_usage_sequence: 0,
 	};
 }
 
@@ -1215,6 +1225,14 @@ export function hydrateChatProjection(
 	const conversationId = getConversationId(next, snapshot.conversation_id);
 	if (conversationId !== next.conversation_id) {
 		next.conversation_id = conversationId;
+	}
+
+	if (
+		snapshot.context_usage !== undefined &&
+		(snapshot.last_sequence ?? 0) >= next.context_usage_sequence
+	) {
+		next.context_usage = snapshot.context_usage;
+		next.context_usage_sequence = snapshot.last_sequence ?? 0;
 	}
 
 	const snapshotMessages = snapshot.messages ?? [];
@@ -1426,6 +1444,15 @@ function applyEnvelopeToProjection(
 				occurredAt,
 				dedupeId,
 			);
+			break;
+		case "context_usage":
+			if (
+				chunk.context_usage &&
+				sequence >= projection.context_usage_sequence
+			) {
+				projection.context_usage = { ...chunk.context_usage };
+				projection.context_usage_sequence = sequence;
+			}
 			break;
 		case "run_status":
 		case "cancelled":

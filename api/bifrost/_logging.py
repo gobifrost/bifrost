@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,10 +26,33 @@ from uuid import UUID
 
 import redis as redis_sync
 
-from src.core.cache.keys import execution_logs_stream_key
+from src.core.cache.keys import execution_log_recovery_cursor_key, execution_logs_stream_key
 from src.core.log_safety import log_safe
 
 logger = logging.getLogger(__name__)
+
+
+def _reject_non_finite_json(value: str) -> None:
+    """Reject JSON constants PostgreSQL JSONB cannot represent."""
+    raise ValueError(f"non-finite JSON value: {value}")
+
+
+@dataclass(frozen=True)
+class LogFlushReceipt:
+    """The exact Redis entries staged for one database transaction.
+
+    A receipt is acknowledged only after the transaction that staged its rows
+    commits. A process loss between those two steps intentionally permits a
+    replay; execution-log delivery is at-least-once.
+    """
+
+    execution_id: str
+    stream_key: str
+    entry_ids: tuple[str, ...]
+
+    @property
+    def count(self) -> int:
+        return len(self.entry_ids)
 
 # Thread-local storage for Redis connections and sequence counters
 _local = threading.local()
@@ -69,8 +93,16 @@ def _serialize_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | Non
     return convert(metadata)
 
 
+def _require_server_process() -> None:
+    from bifrost.client import get_engine_socket_path
+
+    if get_engine_socket_path() is not None:
+        raise RuntimeError("Direct log storage access is unavailable in execution children")
+
+
 def _get_sync_redis() -> redis_sync.Redis:
-    """Get thread-local sync Redis connection."""
+    """Get thread-local sync Redis connection in the trusted server process."""
+    _require_server_process()
     if not hasattr(_local, "redis") or _local.redis is None:
         from src.config import get_settings
 
@@ -312,6 +344,7 @@ async def append_log_to_stream_async(
 
     Use this in async contexts (API routes, background tasks).
     """
+    _require_server_process()
     from src.core.cache import get_redis
 
     exec_id = str(execution_id)
@@ -352,6 +385,7 @@ async def read_logs_from_stream(
     Returns:
         List of ExecutionLog entries
     """
+    _require_server_process()
     from src.core.cache import get_redis
     from .models import ExecutionLog
 
@@ -401,6 +435,7 @@ async def publish_log_to_pubsub_async(
         timestamp: Optional timestamp
         sequence: Monotonic sequence number for client-side ordering
     """
+    _require_server_process()
     from src.core.cache import get_redis
 
     exec_id = str(execution_id)
@@ -495,85 +530,205 @@ def close_thread_redis() -> None:
 # =============================================================================
 
 
-async def flush_logs_to_postgres(
+async def stage_logs_to_postgres(
     execution_id: str | UUID,
-    session: "AsyncSession | None" = None,
-) -> int:
+    session: "AsyncSession",
+) -> LogFlushReceipt:
+    """Stage parseable stream entries in ``session`` and return their receipt.
+
+    This function never acknowledges Redis. Its caller must commit the session
+    and then pass the returned receipt to :func:`acknowledge_staged_logs`.
+    Malformed entries deliberately remain in the stream, while later valid
+    entries continue to be staged in the same pass.
     """
-    Flush all logs from Redis Stream to Postgres.
+    from sqlalchemy import func, select
 
-    Called at the end of execution to persist logs from the stream
-    to the database. Uses batch inserts for efficiency.
+    from src.core.cache import get_redis
+    from src.models.orm import Execution, ExecutionLog
 
-    Args:
-        execution_id: Execution UUID
-        session: Optional database session. If provided, uses it and
-                 caller is responsible for commit. If None, creates own session.
-
-    Returns:
-        Number of logs persisted
-    """
-    from src.models.orm import ExecutionLog
-
+    _require_server_process()
     exec_id = str(execution_id)
     exec_uuid = UUID(exec_id)
     stream_key = execution_logs_stream_key(exec_id)
 
+    async with get_redis() as redis:
+        entries = await redis.xrange(stream_key, min="-", max="+")  # type: ignore[misc]
+    if not entries:
+        return LogFlushReceipt(exec_id, stream_key, ())
+
+    parsed_entries: list[tuple[str, dict[str, Any], datetime]] = []
+    for entry_id, data in entries:
+        try:
+            ts_str = data.get("timestamp", datetime.now(timezone.utc).isoformat())
+            timestamp = datetime.fromisoformat(ts_str)
+            if timestamp.tzinfo is not None:
+                timestamp = timestamp.replace(tzinfo=None)
+            parsed_entries.append((entry_id, data, timestamp))
+        except Exception as exc:
+            logger.warning("Failed to parse log entry %s: %s", entry_id, exc)
+    if not parsed_entries:
+        return LogFlushReceipt(exec_id, stream_key, ())
+
+    # The row lock serializes sequence allocation with every other flusher.
+    # Snapshotting before this lock is intentional: a competing flusher may
+    # replay the same entry after a crash or race, but both rows remain ordered.
+    execution = await session.scalar(
+        select(Execution).where(Execution.id == exec_uuid).with_for_update()
+    )
+    if execution is None:
+        return LogFlushReceipt(exec_id, stream_key, ())
+    max_sequence = await session.scalar(
+        select(func.coalesce(func.max(ExecutionLog.sequence), -1)).where(
+            ExecutionLog.execution_id == exec_uuid
+        )
+    )
+    next_sequence = (max_sequence if max_sequence is not None else -1) + 1
+    logs_to_insert: list[ExecutionLog] = []
+    entry_ids: list[str] = []
+    for offset, (entry_id, data, timestamp) in enumerate(parsed_entries):
+        try:
+            level = data.get("level", "INFO")
+            message = data.get("message", "")
+            if not isinstance(level, str) or len(level) > 20:
+                raise ValueError("level must be a string of at most 20 characters")
+            if not isinstance(message, str):
+                raise ValueError("message must be a string")
+            metadata = json.loads(
+                data.get("metadata", "{}"), parse_constant=_reject_non_finite_json,
+            )
+            if metadata is not None and not isinstance(metadata, dict):
+                raise ValueError("metadata must be a JSON object or null")
+            # Keep this explicit even with strict parsing: it documents the
+            # JSONB boundary and rejects non-finite values nested in a value.
+            json.dumps(metadata, allow_nan=False)
+            logs_to_insert.append(ExecutionLog(
+                execution_id=exec_uuid,
+                level=level,
+                message=message,
+                log_metadata=metadata,
+                timestamp=timestamp,
+                sequence=next_sequence + offset,
+            ))
+            entry_ids.append(entry_id)
+        except Exception as exc:
+            # Metadata decoding is part of parsing. Keep this source entry for
+            # operator repair and allow later entries to make progress.
+            logger.warning("Failed to parse log entry %s: %s", entry_id, exc)
+
+    session.add_all(logs_to_insert)
+    return LogFlushReceipt(exec_id, stream_key, tuple(entry_ids))
+
+
+async def acknowledge_staged_logs(receipt: LogFlushReceipt) -> None:
+    """Acknowledge only source entries that are known to have committed."""
+    _require_server_process()
+    if not receipt.entry_ids:
+        return
     try:
         from src.core.cache import get_redis
 
-        async with get_redis() as r:
-            # Read all entries from stream
-            entries = await r.xrange(stream_key, min="-", max="+")  # type: ignore[misc]
+        async with get_redis() as redis:
+            await redis.xdel(receipt.stream_key, *receipt.entry_ids)
+    except Exception as exc:
+        # A later terminal recovery may replay these rows. Do not turn a
+        # durable execution completion back into a failure because Redis is
+        # briefly unavailable.
+        logger.warning(
+            "Failed to acknowledge %d execution logs for %s: %s",
+            receipt.count,
+            log_safe(receipt.execution_id),
+            exc,
+        )
 
-            if not entries:
+
+async def flush_logs_to_postgres(
+    execution_id: str | UUID,
+) -> int:
+    """Persist stream logs, acknowledging them after an owned commit.
+
+    This owned-session wrapper is for recovery only. Callers participating in
+    another transaction must use the explicit staging API and receipt.
+    """
+    _require_server_process()
+    try:
+        from src.core.database import get_session_factory
+
+        async with get_session_factory()() as db:
+            receipt = await stage_logs_to_postgres(execution_id, db)
+            if not receipt.count:
                 return 0
-
-            # Parse entries - enumerate to preserve insertion order
-            logs_to_insert = []
-            for seq, (entry_id, data) in enumerate(entries):
-                try:
-                    # Parse timestamp and strip timezone (DB uses TIMESTAMP WITHOUT TIME ZONE)
-                    ts_str = data.get("timestamp", datetime.now(timezone.utc).isoformat())
-                    ts = datetime.fromisoformat(ts_str)
-                    if ts.tzinfo is not None:
-                        ts = ts.replace(tzinfo=None)
-
-                    log_entry = ExecutionLog(
-                        execution_id=exec_uuid,
-                        level=data.get("level", "INFO"),
-                        message=data.get("message", ""),
-                        log_metadata=json.loads(data.get("metadata", "{}")),
-                        timestamp=ts,
-                        sequence=seq,
-                    )
-                    logs_to_insert.append(log_entry)
-                except Exception as e:
-                    logger.warning(f"Failed to parse log entry {entry_id}: {e}")
-                    continue
-
-            if not logs_to_insert:
-                return 0
-
-            # Batch insert to Postgres
-            if session is not None:
-                # Use provided session (caller manages commit)
-                session.add_all(logs_to_insert)
-            else:
-                # Create own session
-                from src.core.database import get_session_factory
-
-                session_factory = get_session_factory()
-                async with session_factory() as db:
-                    db.add_all(logs_to_insert)
-                    await db.commit()
-
-            # Clear the stream after successful persistence
-            await r.delete(stream_key)
-
-            logger.debug(f"Flushed {len(logs_to_insert)} logs to Postgres for {log_safe(exec_id)}")
-            return len(logs_to_insert)
-
-    except Exception as e:
-        logger.error(f"Failed to flush logs to Postgres: {e}")
+            await db.commit()
+        await acknowledge_staged_logs(receipt)
+        logger.debug("Flushed %d logs to Postgres for %s", receipt.count, log_safe(str(execution_id)))
+        return receipt.count
+    except Exception as exc:
+        logger.error("Failed to flush logs to Postgres: %s", exc)
         return 0
+
+
+async def recover_terminal_execution_logs(
+    execution_ids: Iterable[str | UUID] | None = None,
+    *,
+    limit: int = 100,
+) -> dict[str, int]:
+    """Boundedly flush streams whose durable executions are terminal.
+
+    Active executions keep their Redis stream for the live reader. A cursor is
+    advanced only after the returned scan page has been handled, so a bounded
+    pass never drops an unvisited page. Redis SCAN can repeat keys; replay is
+    acceptable because acknowledgement is at-least-once.
+    """
+    _require_server_process()
+    from sqlalchemy import select
+
+    from src.core.cache import get_redis
+    from src.models.enums import LIVE_EXECUTION_STATUSES
+    from src.models.orm import Execution
+
+    requested: list[str] = []
+    scanned = 0
+    if execution_ids is None:
+        async with get_redis() as redis:
+            cursor_value = await redis.get(execution_log_recovery_cursor_key())
+            cursor = int(cursor_value or 0)
+            next_cursor, keys = await redis.scan(
+                cursor=cursor,
+                match="bifrost:logs:*",
+                count=limit,
+            )
+        for key in keys:
+            execution_id = key.removeprefix("bifrost:logs:")
+            try:
+                UUID(execution_id)
+            except ValueError:
+                continue
+            requested.append(execution_id)
+        scanned = len(keys)
+    else:
+        requested = [str(execution_id) for execution_id in execution_ids][:limit]
+        next_cursor = None
+
+    terminal: list[str] = []
+    if requested:
+        from src.core.database import get_session_factory
+
+        requested_uuids = [UUID(execution_id) for execution_id in requested]
+        async with get_session_factory()() as session:
+            rows = await session.execute(
+                select(Execution.id, Execution.status).where(Execution.id.in_(requested_uuids))
+            )
+        terminal = [
+            str(execution_id)
+            for execution_id, status in rows
+            if status not in LIVE_EXECUTION_STATUSES
+        ]
+
+    flushed = 0
+    for execution_id in terminal:
+        flushed += await flush_logs_to_postgres(execution_id)
+
+    if next_cursor is not None:
+        # Store this only after every key on the returned page was considered.
+        async with get_redis() as redis:
+            await redis.set(execution_log_recovery_cursor_key(), next_cursor)
+    return {"scanned": scanned, "terminal": len(terminal), "flushed": flushed}

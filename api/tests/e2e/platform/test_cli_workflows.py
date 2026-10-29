@@ -27,13 +27,25 @@ exercised here is identical to what a real user hits.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from click.testing import CliRunner
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from bifrost.commands.workflows import workflows_group
+from bifrost.commands.workflows import (
+    _fetch_final_execution,
+    _stream_execution_logs,
+    workflows_group,
+)
+from src.models.enums import ExecutionStatus
+from src.models.orm.executions import Execution
 
 
 _WORKFLOW_SOURCE = '''"""Test workflow used by bifrost workflows CLI E2E."""
@@ -116,6 +128,34 @@ def _create_role(e2e_client, platform_admin, *, name: str) -> str:
     return str(resp.json()["id"])
 
 
+@pytest_asyncio.fixture
+async def precompleted_execution(
+    db_session: AsyncSession,
+    platform_admin,
+) -> AsyncGenerator[Execution, None]:
+    """Persist one terminal execution without starting a worker job."""
+    now = datetime.now(UTC)
+    execution = Execution(
+        workflow_name=f"cli-stream-snapshot-{uuid4().hex[:8]}",
+        status=ExecutionStatus.SUCCESS,
+        parameters={},
+        result={"source": "direct-db-fixture"},
+        executed_by=platform_admin.user_id,
+        executed_by_name=platform_admin.name,
+        created_at=now,
+        started_at=now,
+        completed_at=now,
+    )
+    db_session.add(execution)
+    await db_session.commit()
+
+    try:
+        yield execution
+    finally:
+        await db_session.execute(delete(Execution).where(Execution.id == execution.id))
+        await db_session.commit()
+
+
 @pytest.mark.e2e
 class TestCliWorkflows:
     """End-to-end coverage for ``bifrost workflows`` commands."""
@@ -131,6 +171,27 @@ class TestCliWorkflows:
         for item in payload:
             assert "id" in item
             assert "name" in item
+
+    @pytest.mark.asyncio
+    async def test_execution_stream_exits_for_precompleted_snapshot(
+        self,
+        cli_client,
+        precompleted_execution: Execution,
+    ) -> None:
+        """A subscribed CLI exits when the post-ack REST snapshot is terminal."""
+        execution_id = str(precompleted_execution.id)
+
+        status = await asyncio.wait_for(
+            _stream_execution_logs(cli_client, execution_id), timeout=2.0
+        )
+        final = await asyncio.wait_for(
+            _fetch_final_execution(cli_client, execution_id), timeout=2.0
+        )
+
+        assert status == "Success"
+        assert final["execution_id"] == execution_id
+        assert final["status"] == "Success"
+        assert final["result"] == {"source": "direct-db-fixture"}
 
     def test_get_by_uuid_returns_workflow(
         self, cli_client, _invoke, e2e_client, platform_admin

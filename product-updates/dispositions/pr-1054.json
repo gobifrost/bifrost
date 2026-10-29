@@ -1,0 +1,15 @@
+{
+  "key": "pr:1054",
+  "classification": "highlight",
+  "entry_ids": [
+    "32ba9da0-028a-4008-8f9f-df1c8eb8354e"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1054",
+      "Claude drafted this summary on 2026-10-24 for issue #1052, which Jack set as the next work; design and implementation each reviewed by Fable; Kind same-tag upgrade and rollback drills pass. No customer action is required.",
+      "Reclassified as a highlight of the runtime release notes; Jack approved on 2026-10-24."
+    ]
+  }
+}

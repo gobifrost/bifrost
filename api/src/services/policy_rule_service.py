@@ -37,7 +37,7 @@ _BUILTINS = [
         "description": "Platform admins bypass all file checks. Built-in, read-only.",
         "body": {
             "actions": ["read", "write", "delete", "list"],
-            "when": {"user": "is_platform_admin"},
+            "when": {"authority": "platform_admin"},
         },
     },
     {
@@ -46,7 +46,7 @@ _BUILTINS = [
         "description": "Platform admins bypass all table checks. Built-in, read-only.",
         "body": {
             "actions": ["read", "create", "update", "delete"],
-            "when": {"user": "is_platform_admin"},
+            "when": {"authority": "platform_admin"},
         },
     },
 ]

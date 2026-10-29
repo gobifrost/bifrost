@@ -5,6 +5,9 @@ const mockListClaims = vi.fn();
 const mockCreateClaim = vi.fn();
 const mockUpdateClaim = vi.fn();
 const mockDeleteClaim = vi.fn();
+const mockUseAuth = vi.fn();
+const mockUseAuthorization = vi.fn();
+const mockUseOrganizations = vi.fn();
 
 vi.mock("@/services/claims", () => ({
 	listClaims: (...args: unknown[]) => mockListClaims(...args),
@@ -14,19 +17,15 @@ vi.mock("@/services/claims", () => ({
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({
-		isPlatformAdmin: true,
-		user: {
-			id: "dev-user",
-			email: "dev@gobifrost.com",
-			organizationId: "22222222-2222-4222-8222-222222222222",
-			isSuperuser: true,
-		},
-	}),
+	useAuth: () => mockUseAuth(),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
-	useOrganizations: () => ({ data: [] }),
+	useOrganizations: (...args: unknown[]) => mockUseOrganizations(...args),
 }));
 
 import { TablesClaimsTab } from "./TablesClaimsTab";
@@ -36,6 +35,20 @@ beforeEach(() => {
 	mockCreateClaim.mockReset();
 	mockUpdateClaim.mockReset();
 	mockDeleteClaim.mockReset();
+	mockUseAuth.mockReturnValue({
+		isPlatformAdmin: true,
+		user: {
+			id: "dev-user",
+			email: "dev@gobifrost.com",
+			organizationId: "22222222-2222-4222-8222-222222222222",
+			isSuperuser: true,
+		},
+	});
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
+	mockUseOrganizations.mockReturnValue({ data: [] });
 });
 
 describe("TablesClaimsTab", () => {
@@ -149,6 +162,92 @@ describe("TablesClaimsTab", () => {
 		).toBeVisible();
 		expect(
 			screen.queryByRole("button", { name: "managed_claim actions" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("uses claim grants for create and row actions, excluding other organizations", async () => {
+		mockUseAuth.mockReturnValue({
+			isPlatformAdmin: false,
+			user: {
+				id: "role-user",
+				email: "role@example.com",
+				organizationId: "org-allowed",
+				isSuperuser: false,
+			},
+		});
+		mockUseAuthorization.mockReturnValue({
+			canAnywhere: (permission: string) =>
+				permission === "claims.read" || permission === "claims.readwrite",
+			canAt: (permission: string, target: { kind: string; id?: string }) =>
+				permission === "claims.readwrite" &&
+				target.kind === "org" &&
+				target.id === "org-allowed",
+		});
+		mockListClaims.mockResolvedValue({
+			claims: [
+				{
+					id: "claim-allowed",
+					organization_id: "org-allowed",
+					name: "allowed_claim",
+					type: "list",
+					query: { table: "records", select: "id" },
+				},
+				{
+					id: "claim-blocked",
+					organization_id: "org-blocked",
+					name: "blocked_claim",
+					type: "list",
+					query: { table: "records", select: "id" },
+				},
+			],
+		});
+
+		renderWithProviders(<TablesClaimsTab />);
+
+		await screen.findByText("allowed_claim");
+		expect(screen.getByRole("button", { name: "Add Claim" })).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "allowed_claim actions" }),
+		).toBeVisible();
+		expect(
+			screen.queryByRole("button", { name: "blocked_claim actions" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("keeps claims read-only without a claim write grant", async () => {
+		mockUseAuth.mockReturnValue({
+			isPlatformAdmin: false,
+			user: {
+				id: "reader-user",
+				email: "reader@example.com",
+				organizationId: "org-reader",
+				isSuperuser: false,
+			},
+		});
+		mockUseAuthorization.mockReturnValue({
+			canAnywhere: (permission: string) => permission === "claims.read",
+			canAt: () => false,
+		});
+		mockListClaims.mockResolvedValue({
+			claims: [
+				{
+					id: "claim-reader",
+					organization_id: "org-reader",
+					name: "read_only_claim",
+					type: "list",
+					query: { table: "records", select: "id" },
+				},
+			],
+		});
+
+		renderWithProviders(<TablesClaimsTab />);
+
+		await screen.findByText("read_only_claim");
+		expect(
+			screen.queryByRole("button", { name: "Add Claim" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "read_only_claim actions" }),
 		).not.toBeInTheDocument();
 	});
 	it("offers retry after an initial failure without showing a false empty state", async () => {

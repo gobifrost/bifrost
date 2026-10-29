@@ -15,6 +15,7 @@ from shared.file_policies import (
     make_seed_admin_bypass,
     select_longest_prefix,
 )
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.models.contracts.policies import FilePolicies
 
 
@@ -106,7 +107,10 @@ def test_seed_admin_bypass_allows_admin_only() -> None:
     policies = FilePolicies.model_validate(make_seed_admin_bypass())
 
     assert evaluate_file_action(
-        "write", policies, _ctx(), _user(is_platform_admin=True)
+        "write", policies, _ctx(), _user(policy_authorities={"platform_admin"})
+    ) is True
+    assert evaluate_file_action(
+        "write", policies, _ctx(), _user(role_ids=[PLATFORM_ADMIN_ROLE_ID])
     ) is True
     assert evaluate_file_action(
         "write", policies, _ctx(), _user(is_platform_admin=False)

@@ -1,200 +1,226 @@
 # Kubernetes Worker Deployment
 
-This runbook describes the worker deployment behavior proven in the current
-Kubernetes spike. It documents the existing general-purpose worker running in
-Kubernetes with optional operator-owned KEDA scale-out. It does not describe a
-completed Elastic Runtime, a Bifrost-managed controller, dynamic high-memory
-build pods, or one-shot execution Jobs.
+A Kubernetes worker Job is a **physical launcher**, not the durable execution
+owner. Its retained `python -m src.worker.main` entrypoint starts the
+lightweight standard-library supervisor and preserves the worker readiness
+probe. The retained `python -m src.scheduler.main` entrypoint does the same
+while preserving the scheduler heartbeat and readiness probes. Both connect to
+the API's remote-control WebSocket through `BIFROST_API_URL`; shipped manifests
+provide the internal default `http://api:8000`, and that internal connectivity
+is required for a launcher to become ready.
 
-For the local proof, see [local-kubernetes-spike.md](./local-kubernetes-spike.md)
-and [local-kubernetes-spike-results.md](./local-kubernetes-spike-results.md).
+The API owns the canonical `PoolWorker` control for each authenticated launcher.
+It claims workflows, services, and local PlatformJobs and sends the physical
+launcher only the process operations it must perform. Durable workflow claims,
+service leases, and PlatformJob leases stay in PostgreSQL. Child SDK code uses
+scoped API HTTP tokens; it never receives the launcher-control socket. The
+launcher authenticates its enrollment hello with an HMAC made from the existing
+platform `BIFROST_SECRET_KEY`. Kubernetes Job and Pod UIDs are supplied
+automatically when the Job starts, so there is no separate enrollment setup for
+operators.
 
 ## Current Implementation
 
-The current worker is a single all-role process:
+- **On-demand worker Jobs.** The API's worker controller keeps **Warm Workers**
+  (default 1) launchers warm and starts more, up to **Max Workers** (default
+  6), when accepted workflow, service, or PlatformJob work exceeds free
+  physical-launcher capacity. Idle Job workers drain back to the warm minimum.
+  The controller does not add agent capacity.
+- **API agents.** One `ApiAgentExecutor` runs per API process. It accepts only
+  agent runs and summaries from that API process's memory budget. Scale API
+  replicas and API memory independently for agent demand; worker Jobs do not
+  provide overflow capacity for agents.
+- **Policy lives in Settings.** Warm Workers, Max Workers, Worker Memory,
+  Largest Worker and Idle Time are set in Settings → Kubernetes → Scaling &
+  Isolation. The controller reads them every pass and launchers read Warm
+  Workers and Idle Time when they decide to drain, so a change applies without
+  a restart; a Worker Memory change sizes new Jobs only. An upgraded install
+  imports them once from the `BIFROST_POOL_*` variables earlier releases read,
+  then lists those variables as no longer used (see
+  [Upgrading From Environment
+  Variables](kubernetes-build-jobs.md#upgrading-from-environment-variables)).
+- **Job identity.** Without the optional `BIFROST_KUBERNETES_JOB_*` variables,
+  a worker Job copies the controller pod's namespace, image, and `envFrom`,
+  runs with the `default` service account and no token, and enrolls its Job/Pod
+  UID automatically with the API.
+- **Legacy controller Role.** The API normally owns Kubernetes control through
+  the base manifests' Role. Existing installations that bound that controller
+  Role only to a scheduler or worker remain supported: if the launcher has an
+  in-cluster service-account token, its token-gated compatibility helper starts
+  the same canonical loops after its authorization check. Tokenless launchers
+  do not start the helper.
+- **Rolling API handoff.** The physical launcher keeps children alive when its
+  API WebSocket closes during an API rollout. A successor API replica
+  authenticates and adopts its inventory; durable leases fence stale owners.
+  A connected launcher follows the normal drain path instead.
 
-- workflow executions from `workflow-executions`;
-- agent runs from `agent-runs`;
-- live summaries from `agent-summarization`;
-- summary backfills from `agent-summarization-backfill`;
-- tuning chat work from `agent-tuning-chat`;
-- package installation broadcast messages from the `package-installations`
-  fanout exchange.
+### Upgrading and rolling back
 
-Every worker pod starts the same `python -m src.worker.main` entry point. There
-is no lane-specific worker image, no `run-one` entry point, no Bifrost controller
-that reconciles Kubernetes resources, and no Bifrost Settings surface for
-runtime policy.
+Upgrading from an earlier release works without a manifest change: the
+existing Deployments keep their commands and probes, and work runs on them.
+Applying the new base manifests is recommended: it lets the API start
+on-demand worker Jobs (`k8s/api/rbac.yaml`) and retires the static executors
+(below). Then remove what earlier releases
+left behind (see [Removing RabbitMQ and KEDA after
+upgrading](#removing-rabbitmq-and-keda-after-upgrading)).
 
-The production-oriented manifest at `k8s/worker/deployment.yaml` uses fixed
-replica ownership:
+Roll back only to a release that includes #1034, otherwise older pods
+crash-loop against the newer schema. A release's init step skips migrations
+when the database is newer than its image, from the release that retired
+RabbitMQ onward. Rolling back further than that across a migration, first
+downgrade the database with the newer image, to the newest revision the
+older image ships, immediately before applying the older release (the newer
+pods expect the newer schema until they are replaced):
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: bifrost-worker
-  namespace: bifrost
-spec:
-  replicas: 2
-  template:
-    spec:
-      automountServiceAccountToken: false
-      terminationGracePeriodSeconds: 360
-      containers:
-        - name: worker
-          image: ghcr.io/gobifrost/bifrost-api:latest
-          command: ["python", "-m", "src.worker.main"]
-          env:
-            - name: PIP_NO_CACHE_DIR
-              value: "1"
-            - name: HOME
-              value: /home/bifrost
-          envFrom:
-            - configMapRef:
-                name: bifrost-config
-            - secretRef:
-                name: bifrost-secrets
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
-              cpu: "2000m"
-              memory: "2Gi"
+```bash
+# Kubernetes: from a pod still running the newer image
+kubectl -n bifrost exec deploy/bifrost-api -- alembic downgrade <older-head>
+# Docker Compose: with the newer image still in API_IMAGE / the compose file
+docker compose run --rm --no-deps --entrypoint alembic init downgrade <older-head>
 ```
 
-In this mode, Kubernetes owns the fixed replica count through the Deployment
-spec. Scale manually with `kubectl scale deployment bifrost-worker -n bifrost
---replicas=<count>`.
+After a rollback to a release without the worker controller, remove the warm
+worker Jobs it leaves (they also drain themselves within
+`BIFROST_POOL_MAX_LIFETIME_SECONDS`):
 
-## Optional KEDA Scale-Out
-
-The local spike also proves an opt-in operator-owned KEDA `ScaledObject` against
-the same all-role worker Deployment. While that `ScaledObject` exists, KEDA/HPA
-owns the worker replica count. The Deployment should omit `spec.replicas` in
-that ownership mode so reapplying the Deployment does not fight the autoscaler.
-
-Current local example:
-
-```yaml
-apiVersion: keda.sh/v1alpha1
-kind: TriggerAuthentication
-metadata:
-  name: bifrost-rabbitmq
-  namespace: bifrost-local
-spec:
-  secretTargetRef:
-    - parameter: host
-      name: bifrost-local-secrets
-      key: BIFROST_RABBITMQ_URL
----
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: bifrost-worker
-  namespace: bifrost-local
-  annotations:
-    autoscaling.keda.sh/paused-scale-in: "true"
-spec:
-  scaleTargetRef:
-    name: bifrost-worker
-  pollingInterval: 5
-  cooldownPeriod: 3600
-  minReplicaCount: 1
-  maxReplicaCount: 4
-  advanced:
-    horizontalPodAutoscalerConfig:
-      behavior:
-        scaleDown:
-          selectPolicy: Disabled
-  triggers:
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: workflow-executions
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-runs
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-summarization
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-summarization-backfill
-        mode: QueueLength
-        value: "5"
-      authenticationRef:
-        name: bifrost-rabbitmq
-    - type: rabbitmq
-      metadata:
-        protocol: amqp
-        queueName: agent-tuning-chat
-        mode: QueueLength
-        value: "1"
-      authenticationRef:
-        name: bifrost-rabbitmq
+```bash
+kubectl -n bifrost delete jobs -l app.kubernetes.io/name=bifrost-pool-worker
 ```
 
-Include every queue the all-role worker serves. Watching only
-`workflow-executions` can strand agent-only traffic when no worker is running.
-The package-install broadcast exchange is not a durable scale-from-zero signal:
-exclusive auto-delete subscriber queues exist only while workers are connected.
+The base manifests retire the static executors: `k8s/worker/deployment.yaml`
+and `k8s/scheduler/deployment.yaml` set `replicas: 0`, so applying them stops
+pods an earlier release left running, and the warm worker Job takes over.
+Delete both Deployments after upgrading:
 
-Use `autoscaling.keda.sh/paused-replicas: "<count>"` for temporary fixed
-capacity while leaving the `ScaledObject` installed. Remove that annotation to
-resume autoscaling. For permanent manual ownership, remove the `ScaledObject`
-and its owned HPA, then restore `spec.replicas` on the Deployment.
+```bash
+kubectl -n bifrost delete deployment bifrost-worker bifrost-scheduler
+```
 
-## Scale-Down Policy
+To keep a fixed executor anyway (for example, an install whose API may not
+manage Jobs), scale one back up; it claims work like any worker Job, but a
+whole-container OOM kill restarts it without teaching the workflow a larger
+request (see [How executors use their memory](#how-executors-use-their-memory)).
 
-Automatic scale-down is disabled in the proven configuration.
+## Removing RabbitMQ and KEDA after upgrading
 
-The workflow consumer currently acknowledges a RabbitMQ message after dispatch
-to the local child execution, before that child completes. RabbitMQ queue length
-therefore does not include acknowledged active workflow children. Scaling down
-only because the broker queue is empty can terminate work that is still running
-inside a worker pod.
+Bifrost no longer uses RabbitMQ or KEDA. The base manifests no longer ship the
+`rabbitmq` Deployment and Service or the RabbitMQ secret keys. Applying the new
+manifests does not delete what an earlier release created; after every Bifrost
+pod runs this release, an operator may remove the leftovers.
 
-The current graceful drain fix handles ordinary pod deletion: the worker stops
-new deliveries, waits for consumer tasks and active workflow children, and
-returns either the real result or a durable `WorkerShutdown` failure when the
-drain deadline is exceeded. That is enough for conservative manual drain and for
-the local deletion tests. It is not enough to enable automatic scale-in from
-queue depth.
+Keep the broker and `BIFROST_RABBITMQ_URL` until the queues are empty. Each
+API pod, when it starts with `BIFROST_RABBITMQ_URL` set, tries the broker a few
+times, moves every run an earlier release left queued into PostgreSQL until the
+queues have stayed empty for two minutes (covering work an older pod queues
+during the rolling upgrade), logs `Drained work queued by an earlier release`,
+and disconnects; it does not poll again.
 
-Keep these values aligned:
+A drain that left nothing queued is recorded in the database
+(`system_configs`, category `runtime`, key `legacy_broker_drained`). From then
+on no API start connects to the broker, and each start lists
+`BIFROST_RABBITMQ_URL` among the environment variables no longer used: once
+the API has logged the drain, the variable can be removed. Check the queues
+once the rollout finishes; if any still hold messages (a rollout that took
+longer), delete the record and restart the API Deployment to drain them:
+
+```bash
+kubectl -n bifrost exec deploy/rabbitmq -- rabbitmqctl list_queues name messages
+# In PostgreSQL:
+#   DELETE FROM system_configs WHERE category = 'runtime' AND key = 'legacy_broker_drained';
+kubectl -n bifrost rollout restart deployment bifrost-api
+```
+
+A rollback to a release that queues to RabbitMQ needs that record deleted as
+well, so the next upgrade drains what the rolled-back release queued.
+
+A recovered run runs for the user the earlier release recorded, as that
+release would have run it. A run whose context expired in Redis (after an
+hour) is marked failed.
+
+Remove any KEDA `ScaledObject` and `TriggerAuthentication` that target
+`bifrost-worker`. Left in place, a `ScaledObject` keeps owning the worker
+Deployment's replica count through its HPA and scales it on queues that no
+longer receive messages:
+
+```bash
+kubectl -n bifrost delete scaledobject bifrost-worker --ignore-not-found
+kubectl -n bifrost delete triggerauthentication bifrost-rabbitmq --ignore-not-found
+```
+
+Deleting the `ScaledObject` also deletes the HPA it owns. The `bifrost-worker`
+Deployment itself is retired: the base sets it to zero replicas, and once its
+pods are gone you delete it with `bifrost-scheduler` (see the Kubernetes
+README's upgrade step). If KEDA served nothing else in the cluster, uninstall
+it the way it was installed.
+
+After that drain nothing reads RabbitMQ's queues: `workflow-executions`,
+`agent-runs`, `agent-summarization`, `agent-summarization-backfill`,
+`agent-tuning-chat`, the `package-installations` exchange, and the `-poison`
+dead-letter queues (with their `-dlx` exchanges). Before deleting the broker, an operator who
+cares about dead-lettered messages can inspect them with `rabbitmqadmin` or the
+management UI. There is nothing to replay automatically: a dead-lettered run
+was already recorded as failed, or it was never accepted durably. Earlier
+releases still connect to the broker, so delete it only once you no longer
+plan to roll back to one.
+
+Then delete the broker and its secret keys:
+
+```bash
+kubectl -n bifrost delete deployment,service -l app.kubernetes.io/name=rabbitmq
+kubectl -n bifrost delete pvc rabbitmq-data --ignore-not-found
+kubectl -n bifrost patch secret bifrost-secrets --type=json -p='[
+  {"op": "remove", "path": "/data/BIFROST_RABBITMQ_URL"},
+  {"op": "remove", "path": "/data/BIFROST_RABBITMQ_PASSWORD"}
+]'
+```
+
+The shipped broker used `emptyDir` storage; the PVC exists only if it was
+switched to the `rabbitmq-data` claim its manifest suggested. The JSON patch
+fails if either key is already absent; remove only the keys present. Restart
+the Bifrost Deployments if their pods should stop carrying the removed
+variables.
+
+## Scale-Down And Drain
+
+On-demand worker Jobs drain themselves after **Idle Time** (Settings →
+Kubernetes) without work or `BIFROST_POOL_MAX_LIFETIME_SECONDS` of life, and
+the controller keeps at least **Warm Workers** warm. Lowering Warm Workers lets
+running idle launchers drain too. A static launcher an install kept retains its
+configured replica count.
+
+After an upgrade, the controller replaces worker Jobs running a build that no
+live controller runs, once every controller of that build has stopped: it
+launches current Jobs for the warm minimum, and when they can accept work, the
+outdated Jobs drain (`end_reason = rotated`). They are never deleted. If a full
+pool cannot launch a replacement, outdated ready standard Jobs above Warm
+Workers can drain first to free a slot. Workers count toward the warm minimum
+only after reporting their memory budget. The controller waits when a current
+replacement is already starting, and never drains below Warm Workers or exceeds
+Max Workers. A full pool exactly at its warm minimum still waits for ordinary
+retirement. Draining Jobs continue to count toward Max Workers until their
+children finish.
+
+A drain the platform asks for (idle, rotated, maximum lifetime) stops new
+workflow, service, and PlatformJob dispatch to that launcher and lets its
+physical children finish under their own timeout and lease rules. A run without
+a timeout keeps its drained Job (and its place under Max Workers) until it ends,
+and the API logs a warning once such a drain passes the maximum lifetime.
+
+API rollout drain is distinct. An API process drains its `ApiAgentExecutor` for
+up to 300 seconds and its supported deployment gives it a 310-second shutdown
+budget. A launcher whose WebSocket is closed during that lifecycle remains
+alive for a successor API replica to adopt; it is not treated as a request to
+kill its children. Keep any launcher pod grace period above the time its own
+running children require:
 
 ```yaml
-env:
-  - name: BIFROST_DRAIN_DEADLINE_SECONDS
-    value: "300"
 terminationGracePeriodSeconds: 360
 ```
 
-The Kubernetes grace period should exceed the Bifrost drain deadline by enough
-time for connection cleanup.
-
 ## Security And RBAC
 
-The current worker does not need Kubernetes API access.
-
-Use the current pod hardening pattern:
+A physical launcher does not need Kubernetes API access for ordinary workflow,
+service, or PlatformJob execution. Use the current pod hardening pattern:
 
 ```yaml
 spec:
@@ -225,44 +251,73 @@ spec:
       emptyDir: {}
 ```
 
-KEDA has its own controller permissions from the KEDA installation. Bifrost pods
-do not receive those permissions. If Bifrost later manages Deployments, Jobs or
-KEDA resources itself, that requires a new namespace-scoped ServiceAccount,
-Role and RoleBinding for the controller role. That controller does not exist in
-the current implementation.
+The API normally manages Kubernetes resources: `k8s/api/rbac.yaml` binds the
+namespace-scoped `bifrost-worker-controller` Role to the API ServiceAccount so
+it can create, start, and remove worker Jobs and isolated build Jobs and read
+their pods. Those Jobs run with the `default` ServiceAccount (or
+`BIFROST_KUBERNETES_JOB_SERVICE_ACCOUNT`, which the
+`deploy/kubernetes/builds` overlay sets to the tokenless, RBAC-free
+`bifrost-build-runner`) and normally never mount a token.
+
+An existing scheduler-Role-only deployment remains supported without a manual
+RBAC migration. Its scheduler launcher sees the mounted token and starts the
+compatibility Kubernetes-control helper only when the Role passes the canonical
+authorization check. This preserves its controller behavior while keeping
+ordinary launcher templates tokenless and least-privileged.
 
 ## Resource Sizing
 
-Do not set production limits from idle measurements.
+Recommended defaults:
 
-The latest local memory pass measured the complete worker container at
-approximately 155.0 MiB settled idle after simple and SDK workloads. That value
-includes the worker supervisor and warm execution template after the import and
-launcher cleanup. It is an idle observation, not a recommended request or
-limit.
+- **Kubernetes:** physical worker Jobs with a 512Mi request and a 2Gi limit
+  (Worker Memory 2048), one warm (Warm Workers 1) and up to six (Max Workers
+  6); two API replicas (256Mi request, 1Gi limit) and two client replicas.
+  Size the API limit for its own HTTP/control workload plus its separate agent
+  capacity.
+- **Docker Compose:** the `worker` service with two replicas and a 2 GB limit
+  each, one API and one client; give the host 8 GB. The worker and scheduler
+  commands remain their established entrypoints but run launchers.
 
-The final local load check completed 96 concurrent four-second executions across
-four worker pods. Per-container historical peaks ranged from 233.9 MiB to
-276.8 MiB during that run. Earlier local load samples peaked higher. Customer
-workflow code, installed Python packages, provider SDKs, larger payloads and
-concurrent child executions add memory beyond these fixtures.
+The 2026-10-24 layout measurement of roughly 430 MiB per API pod, 5–7 MiB per
+client pod, and 620 MiB for a warm worker Job is a historical baseline, not a
+capacity guarantee for this runtime. Customer workflow code, installed
+packages, provider SDKs, large payloads, concurrent runs, and agent load add
+to the relevant physical-worker or API budget. Raise Worker Memory (or Compose
+limits) for workflows that need more, and size API memory separately for agent
+work. A workflow that no standard worker can hold gets a worker Job sized for
+it, up to Largest Worker. Isolated build Jobs follow the same sizing rule
+(`docs/runbooks/kubernetes-build-jobs.md`).
 
-The existing production-oriented worker manifest keeps:
+### How physical launchers use their memory
 
-```yaml
-resources:
-  requests:
-    cpu: "100m"
-    memory: "256Mi"
-  limits:
-    cpu: "2000m"
-    memory: "2Gi"
-```
+The API-side `PoolWorker` admits workflow, service, and PlatformJob work using
+the physical launcher's cgroup telemetry
+(`docs/plans/2026-10-23-769-stage6-resource-requests.md`): its budget is 85%
+of the launcher's container limit (`memory_pressure_threshold`) minus what that
+launcher reports as in use, and work claims from it by its memory request. At
+95% of the physical container's real memory, the control plane stops the run or
+service that grew most; the stopped run teaches its workflow a larger request.
+The API agent executor uses the API process's measured memory and does not draw
+from this worker budget.
 
-Treat those as conservative placeholders until production workload measurements
-exist. A high-memory build path should use a separate fixed-template pod or Job
-with its own request and limit. That path is not implemented by this worker
-deployment.
+**Whole-container OOM on Kubernetes.** On cgroup v2, Kubernetes sets
+`memory.oom.group` on containers, so when the kernel's OOM killer acts it kills
+every process in the launcher container, not only the run that grew (Docker
+kills only that run). Its API-owned claims then expire or reconcile as lost.
+When it was a Job worker, the controller sees the pod OOMKilled and those runs'
+workflows learn the launcher's budget, so their next run fits a launcher alone.
+Clusters on Kubernetes 1.32 or later can set the kubelet's
+`singleProcessOOMKill: true` to kill one process instead; Bifrost does not rely
+on it. Size the worker limit with headroom for the largest workflow you run.
+
+**Docker.** The Compose template runs two `worker` replicas limited to 2 GB
+each, which gives them separate physical budgets. A container without a limit
+takes 85% of the host's memory as its budget, so two of them on one host each
+believe they have it; only the real-memory check, measured against the host,
+keeps them within it. Compose files from earlier releases also have a
+`scheduler` service (limited to 1 GB) and an unlimited `worker`. Their commands
+remain compatible launcher entrypoints; set real limits on both, or switch to
+the current file and run `docker compose up -d --remove-orphans`.
 
 ## Dependency Hydration
 
@@ -273,8 +328,6 @@ stay resident in the supervisor.
 
 This is still not a complete elastic dependency model:
 
-- package-install notifications are broadcasts to live workers, not durable
-  commands for future zero-replica pods;
 - ephemeral pods cannot rely on filesystem mutations made inside earlier pods;
 - requirements text is not a versioned, immutable artifact contract;
 - a pod can only safely accept work after dependency hydration succeeds.
@@ -285,7 +338,7 @@ artifact fingerprint that fully describes the dependency set it can run.
 ## External Services
 
 The local `k8s/local/` directory is a disposable Kind fixture. It includes
-PostgreSQL, PgBouncer, RabbitMQ, Redis and SeaweedFS with fixture credentials,
+PostgreSQL, PgBouncer, Redis and SeaweedFS with fixture credentials,
 `emptyDir` storage and local images. It is not production-ready.
 
 Production deployments need operator-managed services or production-grade
@@ -293,64 +346,45 @@ in-cluster equivalents:
 
 - PostgreSQL with backups, HA, maintenance, connection-pool sizing and upgrade
   procedures;
-- RabbitMQ with durable storage, HA policy, TLS/authentication and monitored
-  queue depth;
 - Redis with the selected persistence/HA posture for Bifrost's cache and result
   paths;
 - S3-compatible object storage with durable buckets, credentials rotation and
   lifecycle policy;
 - ingress, TLS, WebSocket support and public URL/WebAuthn configuration.
 
-The local KEDA example uses the AMQP URL from `BIFROST_RABBITMQ_URL`. In a real
-cluster, keep that URL fully qualified and use the deployment's normal TLS and
-network-policy posture.
-
 ## Draining Operations
 
-For manual drain:
+For a manual drain:
 
-1. Pause KEDA at the desired capacity or remove the `ScaledObject` if KEDA owns
-   the Deployment.
-2. Reduce replicas gradually.
-3. Watch worker logs for graceful drain completion.
-4. Verify durable workflow or agent terminal state rather than only pod exit.
+1. Lower Warm Workers (and, to stop growth, Max Workers) in Settings →
+   Kubernetes; workers above them drain once idle.
+2. Watch worker logs for graceful drain completion.
+3. Verify durable workflow, service, or PlatformJob state rather than only pod
+   exit.
 
 Useful checks:
 
 ```bash
-kubectl get pods -n bifrost -l app.kubernetes.io/name=bifrost-worker
-kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-worker --tail=200
-kubectl get hpa -n bifrost
-kubectl get scaledobject -n bifrost
+kubectl get jobs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker
+kubectl get pods -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker
+kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker --tail=200
 ```
 
-Graceful SIGTERM and deadline behavior were proven in local Kind. Abrupt node
-loss, SIGKILL after a missed deadline, database outage during result
-persistence, and OOM termination still need durable attempt reconciliation.
+The current launcher handoff and drain behavior should be validated in the
+target cluster. Abrupt node loss, SIGKILL after a missed deadline, database
+outage during result persistence, and OOM termination need durable attempt
+reconciliation.
 
-## Missing Production Blockers
+## Remaining Gaps
 
-The current implementation is not the user's complete dynamic high-memory build
-solution. The concrete blockers are:
+Physical worker Jobs are the production capacity for workflows, services, and
+PlatformJobs. API replicas separately carry agent capacity. Large work is
+covered: a workflow no standard worker can hold gets a sized worker Job, and
+build-class PlatformJobs can run in isolated pods sized the same way, both
+learning from OOM kills. What remains operator-owned or unbuilt:
 
-- dynamic high-memory build pods are not implemented;
-- PlatformJob execution still runs under scheduler ownership rather than a
-  remote Kubernetes Job attempt protocol;
-- there is no Bifrost controller/settings surface for runtime policy,
-  generation transitions or KEDA/Job reconciliation;
-- there is no one-shot `run-one` worker path with a fixed high-memory queue and
-  pod template;
-- OOM/pending-capacity attribution is not wired into durable job results;
-- scale-down remains disabled because RabbitMQ queue length does not account
-  for acknowledged active workflow children;
 - dependency hydration is not yet immutable or artifact-fingerprinted for
   zero-replica pools;
-- package-install fanout cannot wake future pods from zero replicas;
-- local fixture services are not production storage, broker, cache or ingress
-  designs;
-- node autoscaling, node selectors, tolerations and priority classes remain
+- local fixture services are not production storage, cache, or ingress designs;
+- node autoscaling, node selectors, tolerations, and priority classes remain
   operator-owned and unproven for this runtime.
-
-Until those are built, use fixed warm scheduler/worker capacity for production
-work and treat KEDA worker scale-out as an operator-controlled capacity
-experiment for the existing all-role worker.

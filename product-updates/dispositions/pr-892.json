@@ -1,0 +1,14 @@
+{
+  "key": "pr:892",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/892",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "summary": "Audit failed sign-ins.",
+  "category": "hardening"
+}

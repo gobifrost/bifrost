@@ -32,7 +32,9 @@ export interface ServiceListSurfaceProps {
 	services: ServiceListItem[];
 	viewMode: "grid" | "table";
 	isLoading?: boolean;
-	isPlatformAdmin: boolean;
+	showOrganization: boolean;
+	canManageAnyServices: boolean;
+	canManageService: (service: ServiceListItem) => boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
 	onSelect?: (service: ServiceListItem) => void;
 	/** Deep link to the service detail route (enables row/card links). */
@@ -134,7 +136,9 @@ export function ServiceListSurface({
 	services,
 	viewMode,
 	isLoading = false,
-	isPlatformAdmin,
+	showOrganization,
+	canManageAnyServices,
+	canManageService,
 	getOrgName,
 	onSelect,
 	getDetailHref,
@@ -188,7 +192,9 @@ export function ServiceListSurface({
 		);
 	}
 
-	const renderActions = (service: ServiceListItem) => (
+	const renderActions = (service: ServiceListItem) => {
+		if (!canManageService(service)) return null;
+		return (
 		<RecordActionsMenu label={`${service.workflow_name} actions`}>
 			<DropdownMenuItem
 				className="min-h-11"
@@ -231,7 +237,8 @@ export function ServiceListSurface({
 				Disable
 			</DropdownMenuItem>
 		</RecordActionsMenu>
-	);
+		);
+	};
 
 	const renderStateCell = (service: ServiceListItem) => (
 		<ObservedStateBadge state={service.observed_state} />
@@ -243,7 +250,7 @@ export function ServiceListSurface({
 				<DataTable className="max-h-full">
 					<DataTableHeader>
 						<DataTableRow>
-							{isPlatformAdmin && (
+							{showOrganization && (
 								<DataTableHead className="w-0 whitespace-nowrap">
 									Organization
 								</DataTableHead>
@@ -258,9 +265,11 @@ export function ServiceListSurface({
 							<DataTableHead className="w-0 whitespace-nowrap">
 								Memory
 							</DataTableHead>
-							<DataTableHead className="w-0 whitespace-nowrap text-right">
-								<span className="sr-only">Actions</span>
-							</DataTableHead>
+								{canManageAnyServices && (
+									<DataTableHead className="w-0 whitespace-nowrap text-right">
+										<span className="sr-only">Actions</span>
+									</DataTableHead>
+								)}
 						</DataTableRow>
 					</DataTableHeader>
 					<DataTableBody>
@@ -278,7 +287,7 @@ export function ServiceListSurface({
 											: undefined
 									}
 								>
-								{isPlatformAdmin && (
+									{showOrganization && (
 										<DataTableCell className="w-0 whitespace-nowrap align-middle text-sm text-muted-foreground">
 											{getOrgName(
 												service.organization_id,
@@ -310,14 +319,16 @@ export function ServiceListSurface({
 									<DataTableCell className="w-0 whitespace-nowrap align-middle text-sm tabular-nums">
 										{formatServiceMemory(service.memory_mb)}
 									</DataTableCell>
-									<DataTableCell
-										className="w-0 whitespace-nowrap text-right"
-										onClick={(event) =>
-											event.stopPropagation()
-										}
-									>
-										{renderActions(service)}
-									</DataTableCell>
+									{canManageAnyServices && (
+										<DataTableCell
+											className="w-0 whitespace-nowrap text-right"
+											onClick={(event) =>
+												event.stopPropagation()
+											}
+										>
+											{renderActions(service)}
+										</DataTableCell>
+									)}
 								</DataTableRow>
 							);
 						})}
@@ -349,7 +360,7 @@ export function ServiceListSurface({
 						action={renderActions(service)}
 						footer={
 							<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-								{isPlatformAdmin && (
+								{showOrganization && (
 									<span className="truncate">
 										{getOrgName(service.organization_id)}
 									</span>

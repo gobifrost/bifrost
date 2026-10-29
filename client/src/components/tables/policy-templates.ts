@@ -14,9 +14,10 @@ export type Policy = components["schemas"]["Policy"];
 export const POLICY_TEMPLATES: Record<string, Policy> = {
 	admin_bypass: {
 		name: "admin_bypass",
-		description: "Platform admins can do anything",
+		description:
+			"Allows Platform Admin role holders and Full workflow executions within their existing reach.",
 		actions: ["read", "create", "update", "delete"],
-		when: { user: "is_platform_admin" },
+		when: { authority: "platform_admin" },
 	},
 	own_row: {
 		name: "own_row",

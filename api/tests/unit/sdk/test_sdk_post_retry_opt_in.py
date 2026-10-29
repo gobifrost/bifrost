@@ -68,7 +68,7 @@ async def test_table_batch_retries_only_keyed_upserts(monkeypatch, method, docum
     ("method", "path", "body"),
     [
         ("get", "/api/sdk/integrations/get", {"name": "HaloPSA", "scope": "global"}),
-        ("list_mappings", "/api/sdk/integrations/list_mappings", {"name": "HaloPSA", "scope": "global"}),
+        ("list_mappings", "/api/sdk/integrations/list_mappings", {"name": "HaloPSA"}),
         ("get_mapping", "/api/sdk/integrations/get_mapping", {"name": "HaloPSA", "scope": "global", "entity_id": None}),
     ],
 )

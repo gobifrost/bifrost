@@ -44,16 +44,16 @@ import {
 } from "@/hooks/useApplications";
 import { useApplicationSdkUpdateJobs } from "@/hooks/useApplicationSdkUpdateJobs";
 import { canUpdateApplicationSdk } from "@/components/applications/ApplicationSdkStatusBadge";
-import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { term, useTerminology } from "@/lib/terminology";
 import type { components } from "@/lib/v1";
 import { toast } from "sonner";
-
-type Organization = components["schemas"]["OrganizationPublic"];
+import { orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 export function Applications() {
 	const updateAllSdkDescriptionId = useId();
@@ -63,7 +63,7 @@ export function Applications() {
 	const [deleteError, setDeleteError] = useState(false);
 	const navigate = useNavigate();
 	const terminology = useTerminology();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
@@ -89,11 +89,7 @@ export function Applications() {
 		isFetching,
 		refetch,
 	} = useApplications(
-		isPlatformAdmin
-			? filterOrgId === undefined
-				? undefined
-				: (filterOrgId ?? "global")
-			: undefined,
+		filterOrgId === undefined ? undefined : (filterOrgId ?? "global"),
 	);
 	const applications = applicationsData?.applications ?? [];
 	const deleteApplication = useDeleteApplication({ errorToast: false });
@@ -102,18 +98,14 @@ export function Applications() {
 
 	// Fetch organizations for name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
-	// Only platform admins can manage applications
-	const canManageApps = isPlatformAdmin;
+	const canManageApps = authorization.canAnywhere("apps.readwrite");
+	const canManageApp = (app: ApplicationListItem) =>
+		authorization.canAt("apps.readwrite", orgTarget(app.organization_id));
 
 	const handleOpenCode = (app: ApplicationListItem) => {
 		navigate(`/apps/${app.slug}/edit`);
@@ -159,10 +151,16 @@ export function Applications() {
 	]);
 
 	const actionableApps = (applications as ApplicationListItem[]).filter(
-		(app) => canUpdateApplicationSdk(app, sdkUpdateJobs.getUpdateState(app.id)),
+		(app) =>
+			canManageApp(app) &&
+			canUpdateApplicationSdk(app, sdkUpdateJobs.getUpdateState(app.id)),
 	);
-	const visibleActionableApps = (filteredApps as ApplicationListItem[]).filter(
-		(app) => canUpdateApplicationSdk(app, sdkUpdateJobs.getUpdateState(app.id)),
+	const visibleActionableApps = (
+		filteredApps as ApplicationListItem[]
+	).filter(
+		(app) =>
+			canManageApp(app) &&
+			canUpdateApplicationSdk(app, sdkUpdateJobs.getUpdateState(app.id)),
 	);
 	const selectedActionableApps = actionableApps.filter((app) =>
 		selectedSdkUpdateIds.has(app.id),
@@ -180,7 +178,10 @@ export function Applications() {
 			: undefined;
 
 	const toggleSdkUpdateSelection = (app: ApplicationListItem) => {
-		if (!canUpdateApplicationSdk(app, sdkUpdateJobs.getUpdateState(app.id))) {
+		if (
+			!canManageApp(app) ||
+			!canUpdateApplicationSdk(app, sdkUpdateJobs.getUpdateState(app.id))
+		) {
 			return;
 		}
 		setSelectedSdkUpdateIds((current) => {
@@ -217,9 +218,7 @@ export function Applications() {
 		sdkUpdateJobs.trackAccepted(accepted);
 		const appWord = accepted.length === 1 ? "App" : "Apps";
 		const skippedSuffix =
-			skipped.length > 0
-				? ` ${skipped.length} skipped.`
-				: "";
+			skipped.length > 0 ? ` ${skipped.length} skipped.` : "";
 		if (accepted.length === 0 && skipped.length > 0) {
 			toast.warning(
 				`No SDK updates were queued. ${skipped.length} skipped.`,
@@ -334,7 +333,7 @@ export function Applications() {
 					placeholder={`Search ${term(terminology, "app", "formalPluralLower")}…`}
 					className="flex-1"
 				/>
-				{isPlatformAdmin && (
+				{authorization.canAnywhere("organizations.read") && (
 					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
@@ -492,8 +491,11 @@ export function Applications() {
 						apps={filteredApps as ApplicationListItem[]}
 						viewMode={isDesktop ? viewMode : "grid"}
 						isLoading={isLoading}
-						isPlatformAdmin={isPlatformAdmin}
+						isPlatformAdmin={authorization.canAnywhere(
+							"organizations.read",
+						)}
 						canManageApps={canManageApps}
+						canManageApp={canManageApp}
 						getOrgName={getOrgName}
 						onLaunch={handleLaunch}
 						onPreview={handlePreview}

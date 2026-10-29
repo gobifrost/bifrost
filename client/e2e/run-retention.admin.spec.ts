@@ -21,12 +21,13 @@ test("changes the run history window and previews a run from Maintenance", async
 	await expect(days).toHaveValue("45");
 
 	await card.getByRole("button", { name: "Preview" }).click();
+	// Preview is a PlatformJob: claim plus child-process start puts its floor at 4-6s.
 	await expect(
 		card.getByRole("status").filter({
 			hasText:
 				/^(Would delete \d[\d,]* workflow runs?|Nothing to delete\.)/,
 		}),
-	).toBeVisible();
+	).toBeVisible({ timeout: 30_000 });
 
 	// Shortening it back asks first, because deletion is permanent.
 	await days.fill("30");

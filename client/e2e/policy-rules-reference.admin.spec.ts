@@ -24,9 +24,8 @@
  */
 
 import { test, expect } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
 import type { AuthedApi } from "./fixtures/api-fixture";
-import { routeMonacoAssets } from "./fixtures/monaco-assets";
+import { editorForPath, readEditorContent } from "./fixtures/monaco-editor";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const FILE_RULE_NAME = `e2e-file-ref-rule-${UNIQUE}`;
@@ -61,36 +60,7 @@ async function expectCleanupStatus(
 	).toContain(response.status());
 }
 
-async function policyEditorText(page: Page, modelPath: string) {
-	return page.evaluate((targetPath) => {
-		const monaco = (
-			window as typeof window & {
-				monaco?: {
-					editor?: {
-						getModels?: () => Array<{
-							uri: { path: string };
-							getValue: () => string;
-						}>;
-					};
-				};
-			}
-		).monaco;
-		const model = monaco?.editor
-			?.getModels?.()
-			.find((item) => item.uri.path.endsWith(targetPath));
-		// Return "" rather than throwing when the model hasn't mounted yet
-		// (e.g. right after switching into the "Advanced" code view) so
-		// callers can `expect.poll(...).toContain(...)` this and have it
-		// retry instead of failing on the first, too-early read.
-		return model ? model.getValue() : "";
-	}, modelPath);
-}
-
 test.describe("Policy rule reference mode", () => {
-	test.beforeEach(async ({ page }) => {
-		await routeMonacoAssets(page.context());
-	});
-
 	test.beforeAll(async ({ api }) => {
 		// Create a named file policy rule.
 		const fileRuleRes = await api.post("/api/policy-rules", {
@@ -179,7 +149,10 @@ test.describe("Policy rule reference mode", () => {
 			exact: true,
 		});
 		await expect(
-			inspector.getByRole("heading", { name: "Manage Policy", exact: true }),
+			inspector.getByRole("heading", {
+				name: "Manage Policy",
+				exact: true,
+			}),
 		).toBeVisible({ timeout: 10000 });
 
 		// The "Add Shared Rule…" dropdown should appear with the file rule.
@@ -201,7 +174,9 @@ test.describe("Policy rule reference mode", () => {
 			timeout: 5000,
 		});
 		await expect
-			.poll(() => policyEditorText(page, "file-policies.yaml"))
+			.poll(() =>
+				readEditorContent(editorForPath(page, "file-policies.yaml")),
+			)
 			.toContain(FILE_RULE_NAME);
 	});
 
@@ -247,7 +222,7 @@ test.describe("Policy rule reference mode", () => {
 		).toBeVisible({ timeout: 5000 });
 		await page.getByRole("option", { name: TABLE_RULE_NAME }).click();
 		await expect
-			.poll(() => policyEditorText(page, "policies.json"))
+			.poll(() => readEditorContent(editorForPath(page, "policies.json")))
 			.toContain(TABLE_RULE_NAME);
 
 		// Cleanup.

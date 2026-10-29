@@ -37,7 +37,7 @@ dependencies = [
     # =========================================================================
     # Message Queue (RabbitMQ)
     # =========================================================================
-    "aio-pika",  # Async RabbitMQ client
+    "aio-pika>=9.6,<10",  # Recovers work an earlier release left in RabbitMQ (src/services/legacy_broker_drain.py)
 
     # =========================================================================
     # Cache & Sessions (Redis)
@@ -124,28 +124,28 @@ dependencies = [
     # =========================================================================
     # Object Storage (S3-compatible)
     # =========================================================================
-    "aiobotocore",  # Async S3 client
-    "types-aiobotocore[s3]",  # Type stubs for S3
+    "awscrt==0.38.0",  # Official SigV4 signer/checksums for the narrow HTTPX S3 transport
 
     # =========================================================================
     # LLM Providers (AI Agent System)
     # =========================================================================
     # Exact pins are intentional: the Harness API is still pre-1.0 and is the
     # execution boundary for every Bifrost agent surface.
-    "pydantic-ai-slim[openai,anthropic,google,retries]==2.53.0",
-    "pydantic-ai-harness==0.53.0",
+    "pydantic-ai-slim[openai,anthropic,google,retries]==2.55.0",
+    "pydantic-ai-harness==0.59.0",
+    "pydantic-monty==1.3.0",  # Local language sandbox for Automatic CodeMode
 
     # =========================================================================
     # MCP (Model Context Protocol)
     # =========================================================================
-    "mcp>=1.27.0",  # Model Context Protocol SDK - structuredContent support requires 1.26+
-    "fastmcp>=3.2.4,<4",  # FastMCP for MCP server (internal + external access)
+    # Dynamic workflow schemas and HTTP transport binding use SDK registry
+    # hooks covered by protocol/refresh tests. Review those on SDK upgrades.
+    "mcp==1.27.0",
     "jsonschema>=4.26.0,<5",  # Validate live gateway tool arguments
 
     # =========================================================================
     # Vector Store (Knowledge/RAG)
     # =========================================================================
-    "pgvector",  # PostgreSQL vector extension for semantic search
 
     # =========================================================================
     # CLI / TUI

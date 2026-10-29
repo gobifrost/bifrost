@@ -101,7 +101,7 @@ TABLE_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/tables/{table_id}/documents/batch-delete": frozenset({"POST"}),
 }
 
-# The existing files facade routes. All eight live in
+# The existing files facade routes. All ten live in
 # ``src.routers.files`` (path-selected exactly, like the config and
 # integrations routes). They carry the ordinary ``CurrentActiveUser``
 # auth, the shared ``shared.sdk_files`` service, and the worker's
@@ -112,6 +112,8 @@ FILES_ROUTE_PATHS: frozenset[str] = frozenset(
         "/api/files/write",
         "/api/files/list",
         "/api/files/delete",
+        "/api/files/move",
+        "/api/files/move-many",
         "/api/files/stat",
         "/api/files/exists",
         "/api/files/signed-url",
@@ -183,10 +185,9 @@ EXECUTION_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/executions/{execution_id}": frozenset({"GET"}),
 }
 
-# The SDK agent-run facade routes, selected from
-# ``src.routers.agent_runs`` by path AND method. ``/api/agent-runs/{run_id}``
-# owns only the detail GET here; the rerun/cancel/verdict/flag siblings are
-# separate paths and stay on the API.
+# The SDK agent-run facade routes, selected from the narrow
+# ``src.routers.agent_run_sdk`` routers by path AND method. The CRUD, tuning,
+# and summarization graph stays out of the worker SDK import closure.
 AGENT_RUN_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/agent-runs/enqueue": frozenset({"POST"}),
     "/api/agent-runs/{run_id}": frozenset({"GET"}),
@@ -293,6 +294,15 @@ SDK_ROUTE_PATHS: frozenset[str] = (
 )
 
 
+SDK_RUNTIME_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/sdk/runtime/logs": frozenset({"POST"}),
+    "/api/sdk/runtime/service-control": frozenset({"POST"}),
+    "/api/sdk/runtime/logs/{execution_id}": frozenset({"GET"}),
+    "/api/sdk/runtime/data-provider-cache/read": frozenset({"POST"}),
+    "/api/sdk/runtime/data-provider-cache/write": frozenset({"POST"}),
+}
+
+
 def build_worker_sdk_app() -> Any:
     """Build a minimal ASGI app mounting only the existing SDK routes.
 
@@ -312,7 +322,7 @@ def build_worker_sdk_app() -> Any:
         install_request_context_middleware,
         register_exception_handlers,
     )
-    from src.routers.agent_runs import router as agent_runs_router
+    from src.routers.agent_run_sdk import detail_router, enqueue_router
     from src.routers.cli import router as sdk_router
     from src.routers.events import router as events_router
     from src.routers.executions import router as executions_router
@@ -322,6 +332,7 @@ def build_worker_sdk_app() -> Any:
     from src.routers.platform_jobs import router as platform_jobs_router
     from src.routers.roles import router as roles_router
     from src.routers.sdk_modules import router as sdk_modules_router
+    from src.routers.sdk_runtime import router as sdk_runtime_router
     from src.routers.tables import router as tables_router
     from src.routers.users import router as users_router
     from src.routers.workflows import router as workflows_router
@@ -445,18 +456,17 @@ def build_worker_sdk_app() -> Any:
         len(methods) for methods in EXECUTION_ROUTE_METHODS.values()
     )
 
-    # The SDK agent-run routes are selected by (path, method) from their real
-    # router. ``/api/agent-runs/{run_id}`` is the detail GET; the rerun,
-    # cancel, verdict, and flag-conversation siblings live on child paths and
-    # stay on the API.
-    for route in agent_runs_router.routes:
-        wanted = AGENT_RUN_ROUTE_METHODS.get(
-            getattr(route, "path", None), frozenset()
-        )
-        methods = getattr(route, "methods", None) or frozenset()
-        if wanted and methods & wanted:
-            app.router.routes.append(route)
-            selected += 1
+    # The narrow agent-run routers expose only the SDK enqueue and detail
+    # routes, so importing them avoids the main agent-run CRUD/tuning graph.
+    for agent_run_router in (detail_router, enqueue_router):
+        for route in agent_run_router.routes:
+            wanted = AGENT_RUN_ROUTE_METHODS.get(
+                getattr(route, "path", None), frozenset()
+            )
+            methods = getattr(route, "methods", None) or frozenset()
+            if wanted and methods & wanted:
+                app.router.routes.append(route)
+                selected += 1
     expected += sum(
         len(methods) for methods in AGENT_RUN_ROUTE_METHODS.values()
     )
@@ -551,6 +561,14 @@ def build_worker_sdk_app() -> Any:
     expected += sum(
         len(methods) for methods in SDK_MODULES_ROUTE_METHODS.values()
     )
+    for route in sdk_runtime_router.routes:
+        wanted = SDK_RUNTIME_ROUTE_METHODS.get(getattr(route, "path", None), frozenset())
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(len(methods) for methods in SDK_RUNTIME_ROUTE_METHODS.values())
+
 
     if selected != expected:
         raise RuntimeError(
@@ -602,7 +620,10 @@ class WorkerSdkHttpServer:
 
         import uvicorn
 
-        app = build_worker_sdk_app()
+        # Off the event loop: building the app imports the SDK routers, which
+        # took ~30 s on a cold, CPU-limited pod, and the executor's heartbeat
+        # must keep running meanwhile.
+        app = await asyncio.to_thread(build_worker_sdk_app)
 
         socket_dir = self._socket_dir or tempfile.mkdtemp(
             prefix="bifrost-engine-sdk-"

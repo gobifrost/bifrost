@@ -14,6 +14,8 @@ from typing import Awaitable, Callable, Optional
 
 import aiohttp
 
+from shared.subprocess_env import package_tool_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,7 +90,8 @@ class WorkspacePackageManager:
             sys.executable, "-m", "pip", "list",
             "--format", "json",
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            env=package_tool_env(),
         )
 
         stdout, stderr = await process.communicate()
@@ -183,7 +186,8 @@ class WorkspacePackageManager:
             package_spec,
             "--upgrade",
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
+            stderr=asyncio.subprocess.STDOUT,
+            env=package_tool_env(),
         )
 
         # Stream output
@@ -250,7 +254,8 @@ class WorkspacePackageManager:
             "-r", str(requirements_file),
             "--upgrade",
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
+            stderr=asyncio.subprocess.STDOUT,
+            env=package_tool_env(),
         )
 
         # Stream output line by line

@@ -11,7 +11,7 @@ workflows, unlike forms/agents/apps):
   workflow's assigned roles (``WorkflowRole``).
 
 This predicate is the one place the rule is written down. It backs both
-save-time validation (``api/src/routers/agents.py::_validate_user_tool_access``,
+save-time validation (``api/src/services/agent_write_policy.py::validate_user_tool_access``,
 which rejects an agent referencing a tool the caller can't use) and the tool
 list a non-admin sees (``WorkflowRepository.list_tools_for_filter``), so the
 two can never drift.

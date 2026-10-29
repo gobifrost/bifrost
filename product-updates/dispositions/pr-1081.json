@@ -1,0 +1,13 @@
+{
+  "key": "pr:1081",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal benchmark correction and production diagnostic incident accounting; no runtime or product behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1081",
+      "Cross-checked worker heartbeat-loss timestamps, twelve executor-lost workflow failures, and saved prior-night warmed memory observations. Corrects a misleading natural-completion interpretation and records the accepted ~350 MiB baseline."
+    ]
+  }
+}

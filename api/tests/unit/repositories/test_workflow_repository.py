@@ -9,7 +9,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from src.core.org_filter import OrgFilterType
 from src.repositories.workflows import WorkflowRepository
+from tests.helpers.authorization import admin_caller
 
 
 class TestWorkflowRepository:
@@ -47,6 +49,39 @@ class TestWorkflowRepository:
         workflow.api_key_enabled = True
         workflow.api_key_expires_at = None
         return workflow
+
+    async def test_caller_tool_list_uses_canonical_access_check(self, mock_session, mock_workflow):
+        """Caller-mode listing keeps a manageable role-based tool and masks a foreign one."""
+        selected_org = uuid4()
+        manageable = mock_workflow
+        foreign = MagicMock()
+        foreign.id = uuid4()
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = [manageable, foreign]
+        mock_session.execute.return_value = result
+        repository = WorkflowRepository(
+            mock_session,
+            org_id=selected_org,
+            caller=admin_caller(),
+        )
+
+        with (
+            patch.object(
+                repository,
+                "_can_access_entity",
+                new=AsyncMock(side_effect=[True, False]),
+            ) as can_access,
+            patch.object(repository, "_filter_tools_by_access", new=AsyncMock()) as legacy_filter,
+        ):
+            tools = await repository.list_tools_for_filter(
+                OrgFilterType.ORG_ONLY,
+                selected_org,
+            )
+
+        assert tools == [manageable]
+        assert can_access.await_args_list[0].args == (manageable,)
+        assert can_access.await_args_list[1].args == (foreign,)
+        legacy_filter.assert_not_awaited()
 
     # ==========================================================================
     # resolve() tests

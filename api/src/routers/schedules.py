@@ -11,13 +11,16 @@ from typing import Literal
 from fastapi import APIRouter
 
 from src.models import CronValidationRequest, CronValidationResponse
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
+from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.services.cron_parser import (
     cron_to_human_readable,
     get_schedule_zone,
     is_cron_expression_valid,
 )
+from src.services.authorization.enforce import load_caller, require_permission
+from shared.scope_resolver import UNSET, resolve_effective_scope
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +73,13 @@ def _validate_cron(
 async def validate_cron_expression(
     body: CronValidationRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
+    db: DbSession,
 ) -> CronValidationResponse:
     """Validate a CRON expression and return schedule preview."""
+    caller = await load_caller(db, user)
+    target_org_id = resolve_effective_scope(caller=caller, requested_scope=UNSET)
+    require_permission(caller, "workflows.read", target_org_id)
     expression = body.expression.strip()
 
     if not expression:

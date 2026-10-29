@@ -22,6 +22,7 @@ from src.models import (
 from src.models.enums import ConfigType as ConfigTypeEnum
 from src.models.orm.integrations import Integration
 from src.repositories.org_scoped import OrgScopedRepository
+from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,32 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
             )
         return schemas
 
+    async def list_configs_in_reach(
+        self,
+        reach: OrgReach,
+        *,
+        include_global_fallback: bool,
+    ) -> list[ConfigResponse]:
+        """List rows authorized before query execution and response shaping.
+
+        Global configuration is a shared fallback for an authorized
+        organization read.  It is included here only because the caller has
+        at least one authorized organization; explicit Global targeting is
+        decided by the router before it calls this method.
+        """
+        query = select(self.model, Integration.name.label("integration_name")).outerjoin(
+            Integration,
+            and_(self.model.integration_id == Integration.id, Integration.is_deleted.is_(False)),
+        )
+        predicate = reach.where(self.model.organization_id)
+        if predicate is not None:
+            if include_global_fallback and not reach.covers(None):
+                predicate = or_(predicate, self.model.organization_id.is_(None))
+            query = query.where(predicate)
+        query = query.order_by(self.model.key)
+        rows = (await self.session.execute(query)).all()
+        return [self._to_response(row[0], integration_name=row[1]) for row in rows]
+
     async def get_config(self, key: str) -> ConfigModel | None:
         """Get config by key with cascade scoping: org-specific > global."""
         return await self.get(key=key)
@@ -182,10 +209,9 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
 
         No org cascade: IDs are globally unique, so an ID lookup resolves
         directly. This deliberately matches :meth:`update_config_by_id` and
-        :meth:`delete_config`, which also filter on ``id`` alone; a superuser
-        able to update or delete a row by ID must also be able to read it.
-        Config routes are superuser-only, so no per-caller scope check
-        applies here. Secret values are masked by :meth:`_to_response`.
+        :meth:`delete_config`, which also filter on ``id`` alone. The router
+        authorizes the persisted organization before returning or mutating the
+        row. Secret values are masked by :meth:`_to_response`.
         """
         query = (
             select(self.model, Integration.name.label("integration_name"))
@@ -225,12 +251,9 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         (organization_id IS NULL) tier so they can't read (nor the endpoint
         decrypt) a global secret. Defaults to ``self.is_external``.
 
-        This is the USER-facing restriction ONLY. The ENGINE/sentinel path
-        (workflow execution, embed-app sessions — ``is_superuser`` sentinel,
-        ``is_external`` False) keeps the full org+global merge UNCHANGED: a
-        workflow legitimately reads global config, and an external user's whole
-        portal runs on those workflows. The CLI/SDK endpoints distinguish by
-        passing ``external=current_user.is_external`` (False for the sentinel).
+        SDK services derive this restriction from the current Caller.
+        Workflow powers retain the shared cascade; named config and Secrets
+        permissions still decide whether values may be read or decrypted.
 
         External reads BYPASS the cache entirely — they're a rare,
         portal-admin-only path, and a separate cache namespace would add

@@ -30,7 +30,6 @@ unrun/missing work. A supplied missing results file is an error. Report checks:
 
 ```sh
 node --test client/e2e/support/acceptance-report.test.mjs
-node --test client/e2e/support/monaco-assets.test.mjs
 ```
 
 The result join uses exact file, title and project. A desktop pass cannot cover
@@ -46,11 +45,9 @@ retained failure traces are in `client/playwright-results/artifacts`. Both are
 mounted out of the disposable runner container.
 
 The editor journey uses the real Monaco editor and browser keyboard input.
-Its third-party CDN requests are served from the exact pinned Monaco package
-cached in `Dockerfile.playwright`; Bifrost API requests are not intercepted.
-This isolates editor behavior from CDN availability, so it does not verify
-that the public CDN is reachable. Update the image and
-`fixtures/monaco-assets.ts` together when the product's Monaco pin changes.
+Monaco and its language workers are compiled into the production client and
+served by nginx. Editor tests exercise those same assets without a CDN cache
+or request rewriting. Bifrost API requests are not intercepted.
 
 When adding a journey, use a stable ID in its test title, add the exact bindings
 to the ledger, then validate the report. Leave an unimplemented required
@@ -60,7 +57,7 @@ the inventory complete until every route, settings tab and user action has
 been reconciled against the action inventory.
 
 The browser runner executes these fast harness checks before Playwright, so
-the existing browser CI gates also validate reporting and local asset delivery.
+the existing browser CI gates also validate reporting.
 
 The required `@smoke` gate includes FORM-01 desktop, EXEC-01, EXEC-02,
 APP-01 desktop, V1-01 and AGENT-01. Other new cases automatically join their

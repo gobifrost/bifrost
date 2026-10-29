@@ -1,5 +1,7 @@
 """Unit tests for app code files router."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -227,17 +229,16 @@ class TestGetV2DistAsset:
 
     @staticmethod
     def _setup(monkeypatch, read_dist_exc: Exception):
-        from types import SimpleNamespace
         from uuid import uuid4
 
         app_id = uuid4()
-        fake_app = SimpleNamespace(id=app_id, active_deployment_id=None)
+        fake_app = SimpleNamespace(id=app_id, active_deployment_id=None, organization_id=None)
 
         async def _fake_get_app(ctx, _app_id):
             return fake_app
 
         monkeypatch.setattr(
-            "src.routers.app_code_files.get_application_or_404", _fake_get_app
+            "src.routers.app_code_files._get_application_by_id_or_404", _fake_get_app
         )
 
         class _FakeBuilder:
@@ -250,20 +251,16 @@ class TestGetV2DistAsset:
         return app_id
 
     async def test_missing_key_returns_404(self, monkeypatch):
-        """The not-found type read_dist actually raises (botocore ClientError
-        with Code=NoSuchKey, from get_object) still maps to 404."""
-        from botocore.exceptions import ClientError
+        """The transport's missing-key error maps to 404."""
+        from src.core.s3_transport import S3NoSuchKey
 
         from src.routers.app_code_files import get_v2_dist_asset
 
-        not_found = ClientError(
-            {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}},
-            "GetObject",
-        )
+        not_found = S3NoSuchKey("NoSuchKey", 404, "The specified key does not exist.")
         app_id = self._setup(monkeypatch, not_found)
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=None, _user=None)
+            await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=SimpleNamespace(org_id=None), _user=None)
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "dist asset not found: index.html"
 
@@ -276,22 +273,67 @@ class TestGetV2DistAsset:
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
             with pytest.raises(RuntimeError, match="s3 exploded"):
-                await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=None, _user=None)
+                await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=SimpleNamespace(org_id=None), _user=None)
         assert any("dist asset read failed" in r.message for r in caplog.records)
 
     async def test_non_notfound_client_error_is_logged_and_reraised(self, monkeypatch, caplog):
-        """A ClientError that is NOT NoSuchKey (e.g. AccessDenied) is a real
+        """A transport error that is NOT NoSuchKey (e.g. AccessDenied) is a real
         storage error, not a missing asset."""
-        from botocore.exceptions import ClientError
+        from src.core.s3_transport import S3Error
 
         from src.routers.app_code_files import get_v2_dist_asset
 
-        denied = ClientError(
-            {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "GetObject"
-        )
+        denied = S3Error("AccessDenied", 403, "denied")
         app_id = self._setup(monkeypatch, denied)
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
-            with pytest.raises(ClientError):
-                await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=None, _user=None)
+            with pytest.raises(S3Error):
+                await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=SimpleNamespace(org_id=None), _user=None)
         assert any("dist asset read failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["live", "draft"])
+async def test_manifest_viewer_can_read_stale_bundle_without_rebuilding(monkeypatch, mode):
+    """App viewers can bootstrap a legacy bundle without acquiring write power."""
+    import json
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from src.routers import app_code_files
+    from shared.builtin_roles import USER_ROLE_ID
+    from src.core.principal import UserPrincipal
+    from src.services.authorization.context import AuthorizationContext
+    from src.services.authorization.enforce import Caller
+
+    app_id = uuid4()
+    app = SimpleNamespace(
+        id=app_id, organization_id=uuid4(), app_model="inline_v1", dependencies={},
+    )
+    ctx = SimpleNamespace(db=object(), user=object())
+    loader = AsyncMock(return_value=app)
+    monkeypatch.setattr(app_code_files, "_get_application_by_id_or_404", loader)
+    storage = SimpleNamespace(read_file=AsyncMock(return_value=json.dumps({
+        "entry": "bundle.js", "css": None, "schema_version": 0,
+    }).encode()))
+    monkeypatch.setattr(app_code_files, "AppStorageService", lambda: storage)
+    principal = UserPrincipal(
+        user_id=uuid4(), email="viewer@example.test", organization_id=app.organization_id,
+    )
+    caller = Caller(principal, AuthorizationContext(
+        user_id=principal.user_id, home_organization_id=app.organization_id,
+        base_role_id=USER_ROLE_ID, is_external=False,
+        base_permissions=frozenset({"apps.readbasic"}), role_grants=(),
+    ))
+    monkeypatch.setattr(app_code_files, "load_caller", AsyncMock(return_value=caller))
+    build = AsyncMock()
+    monkeypatch.setattr("src.services.app_bundler.build_with_migrate", build)
+
+    manifest = await app_code_files.get_bundle_manifest(
+        app_id=app_id, mode=app_code_files.FileMode(mode), ctx=ctx, _user=ctx.user,
+    )
+
+    assert manifest["entry"] == "bundle.js"
+    assert manifest["mode"] == ("live" if mode == "live" else "preview")
+    loader.assert_awaited_once_with(ctx, app_id)
+    build.assert_not_awaited()

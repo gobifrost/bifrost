@@ -16,7 +16,7 @@ from src.models.orm.applications import Application
 from src.models.orm.forms import Form as FormORM
 from src.models.orm.form_publications import FormPublication
 from src.models.orm.solutions import Solution
-from src.services.embed_auth import verify_embed_hmac
+from src.services.embed_auth import verified_embed_context
 from shared.form_runtime import form_capability_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -131,16 +131,21 @@ async def embed_app(
     # is per-install). The embed secret is bound to ONE Application row, so the
     # HMAC itself disambiguates: the row whose active secret verifies wins.
     app = None
+    verified_context: dict[str, str] | None = None
     for candidate in candidates:
         for secret_record in (s for s in candidate.embed_secrets if s.is_active):
             raw_secret = decrypt_secret(secret_record.secret_encrypted)
-            if verify_embed_hmac(query_params, raw_secret, secret_record.hmac_scheme):
+            context = verified_embed_context(
+                query_params, raw_secret, secret_record.hmac_scheme
+            )
+            if context is not None:
                 app = candidate
+                verified_context = context
                 break
         if app is not None:
             break
 
-    if app is None:
+    if app is None or verified_context is None:
         # "No embed secrets configured" only when NO candidate has one: with
         # multiple installs we can't know which install the caller meant, and
         # reporting per-install secret state on a public endpoint would leak
@@ -150,9 +155,6 @@ async def embed_app(
             raise HTTPException(status_code=403, detail="No embed secrets configured")
         raise HTTPException(status_code=403, detail="Invalid HMAC signature")
 
-    # Extract verified params (everything except hmac)
-    verified_params = {k: v for k, v in query_params.items() if k != "hmac"}
-
     # Issue a scoped embed access token — NOT a superuser.
     # The token is org-scoped and carries app_id + embed flag so the
     # auth middleware can restrict it to app-rendering endpoints only.
@@ -161,7 +163,7 @@ async def embed_app(
         grant="hmac",
         resource_id=str(app.id),
         org_id=str(app.organization_id) if app.organization_id else None,
-        verified_context=verified_params,
+        verified_context=verified_context,
         expires_delta=timedelta(hours=8),
     )
 
@@ -284,22 +286,25 @@ async def embed_form(
     if not active_secrets:
         raise HTTPException(status_code=403, detail="No embed secrets configured")
 
-    # Try each active secret using its configured scheme
-    verified = False
+    # Try each active secret using its configured scheme.
+    verified_context: dict[str, str] | None = None
     for secret_record in active_secrets:
         raw_secret = decrypt_secret(secret_record.secret_encrypted)
-        if verify_embed_hmac(query_params, raw_secret, secret_record.hmac_scheme):
-            verified = True
+        context = verified_embed_context(
+            query_params, raw_secret, secret_record.hmac_scheme
+        )
+        if context is not None:
+            verified_context = context
             break
 
-    if not verified:
+    if verified_context is None:
         raise HTTPException(status_code=403, detail="Invalid HMAC signature")
 
-    # Extract verified params (everything except hmac)
+    # Presentation values affect the iframe document only, not workflow context.
     verified_params = {
         k: v
-        for k, v in query_params.items()
-        if k != "hmac" and k not in _FORM_PRESENTATION_VALUES
+        for k, v in verified_context.items()
+        if k not in _FORM_PRESENTATION_VALUES
     }
 
     # Issue a scoped embed access token

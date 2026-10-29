@@ -154,32 +154,12 @@ def get_caller_solution() -> str | None:
 
 
 def resolve_scope(scope: str | None) -> str | None:
-    """Resolve scope for SDK calls with the C2 bypass gate.
+    """Send the requested or selected scope to the API for authorization.
 
-    The same rule the API enforces: a caller asking for a scope other
-    than their own org must be either a platform admin (engine carries
-    this on ``ExecutionContext.is_platform_admin``) OR a member of a
-    provider org. Either gate alone is sufficient.
-
-    CLI mode (no ExecutionContext) returns the requested scope unchanged
-    — the API will apply its own resolver against the user's JWT.
+    The child holds no role snapshot. Every operation validates current
+    original-user reach and its own permission at the server boundary.
     """
-    default = get_default_scope()
-    if scope is None:
-        return default
-    if scope == default:
-        return scope
-    ctx = _execution_context.get()
-    if ctx is None:
-        return scope  # CLI mode — user authenticates with their own JWT
-    is_platform_admin = bool(getattr(ctx, "is_platform_admin", False))
-    is_provider_org = bool(ctx.organization and ctx.organization.is_provider)
-    if is_platform_admin or is_provider_org:
-        return scope
-    raise PermissionError(
-        f"Scope override to '{scope}' denied. "
-        "Platform admins or provider-org members only."
-    )
+    return get_default_scope() if scope is None else scope
 
 
 def register_secret(value: "str | None") -> None:

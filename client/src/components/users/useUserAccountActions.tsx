@@ -184,7 +184,7 @@ export function useUserAccountActions({
 			isActive: user.is_active,
 			isSelf: !!currentUser && user.id === currentUser.id,
 			canSupport: authorization.canAt("users.readwrite", target),
-			canDelete: authorization.canAt("users.lifecycle.readwrite", target),
+			canDelete: authorization.canAt("userlifecycle.readwrite", target),
 			isProtected: user.is_protected && !authorization.isPlatformAdmin,
 			onResend: () =>
 				resendMutation.mutate(user.id, {

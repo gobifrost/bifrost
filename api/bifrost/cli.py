@@ -27,6 +27,7 @@ import time
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
 from uuid import uuid4
 
 import httpx
+
+from bifrost._device_auth import device_login_prompt
 from packaging.version import InvalidVersion, Version
 
 # Import credentials module directly (it's standalone)
@@ -57,6 +60,25 @@ logger = logging.getLogger(__name__)
 # Solution capture/export so both surfaces skip the same files. The matcher is
 # built from this list at _build_file_filter.
 _DEFAULT_IGNORE_PATTERNS = _CANONICAL_IGNORE_PATTERNS
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Return a non-negative Retry-After delay in seconds, when supplied."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after is None:
+        return None
+
+    try:
+        return max(0.0, float(retry_after))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(retry_after)
+        except (TypeError, ValueError):
+            return None
+
+        if retry_at.tzinfo is None:
+            return None
+        return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
 
 
 def _ensure_utf8_stdio() -> None:
@@ -348,11 +370,10 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             user_code = data["user_code"]
             verification_url = data["verification_url"]
             interval = data.get("interval", 5)
+            deadline = time.monotonic() + data["expires_in"]
 
             # Step 2: Display instructions
-            full_url = f"{api_url}{verification_url}"
-            print(f"\nOpening browser to {full_url}")
-            print(f"Enter this code: {user_code}\n")
+            full_url = device_login_prompt(api_url, verification_url, user_code)
 
             # Step 3: Open browser
             if auto_open:
@@ -363,20 +384,25 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
             # Step 4: Poll for authorization
             print("Waiting for authorization", end="", flush=True)
-            max_attempts = 60  # 5 minutes max (60 * 5 seconds)
-            attempts = 0
-
-            while attempts < max_attempts:
-                await asyncio.sleep(interval)
+            while time.monotonic() < deadline:
+                await asyncio.sleep(min(interval, deadline - time.monotonic()))
+                if time.monotonic() >= deadline:
+                    break
                 print(".", end="", flush=True)
-                attempts += 1
 
                 poll_response = await client.post(
                     "/auth/device/token",
                     json={"device_code": device_code}
                 )
 
-                if poll_response.status_code != 200:
+                if poll_response.status_code == 429:
+                    interval += 5
+                    retry_after = _retry_after_seconds(poll_response)
+                    if retry_after is not None:
+                        interval = max(interval, retry_after)
+                    continue
+
+                if poll_response.status_code not in {200, 400}:
                     print(f"\nError polling for token: {poll_response.status_code}", file=sys.stderr)
                     return False
 
@@ -387,6 +413,9 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                     error = poll_data["error"]
                     if error == "authorization_pending":
                         continue  # Keep polling
+                    elif error == "slow_down":
+                        interval += 5
+                        continue
                     elif error == "expired_token":
                         print("\nDevice code expired. Please try again.", file=sys.stderr)
                         return False
@@ -426,7 +455,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
                     return True
 
-            print("\nTimeout waiting for authorization.", file=sys.stderr)
+            print("\nDevice code expired. Please try again.", file=sys.stderr)
             return False
 
     except Exception as e:
@@ -2446,10 +2475,6 @@ async def _process_watch_batch(
     watch_app: "WatchApp | None" = None,
 ) -> None:
     """Process a batch of file changes and deletions."""
-    deleted_count, deleted_rels = await _process_watch_deletes(
-        client, deletes, base_path, repo_prefix, state,
-    )
-
     # Build files dict from changed paths. Observer events fire for our own
     # pull writes, too — gate each file on the known-server-hash cache so we
     # don't round-trip content the server already has.
@@ -2476,6 +2501,18 @@ async def _process_watch_batch(
                 push_hashes[repo_path] = file_hash
             except OSError:
                 continue
+
+    validation_error = _validate_python_push_files(push_files)
+    if validation_error:
+        if watch_app:
+            watch_app.log_error(validation_error)
+        else:
+            print(f"Error: {validation_error}", file=sys.stderr, flush=True)
+        return
+
+    deleted_count, deleted_rels = await _process_watch_deletes(
+        client, deletes, base_path, repo_prefix, state,
+    )
 
     ts = datetime.now().strftime('%H:%M:%S')
     if not watch_app:
@@ -3142,6 +3179,24 @@ def _collect_push_files(
     return files, skipped
 
 
+def _validate_python_push_files(files: dict[str, str]) -> str | None:
+    """Validate every selected Python source before this client writes any file."""
+    from bifrost.decorator_validation import validate_python_decorators
+    from bifrost.definition_validation import DefinitionValidationError
+
+    for path, encoded in sorted(files.items()):
+        if not path.endswith(".py"):
+            continue
+        try:
+            source = base64.b64decode(encoded).decode("utf-8")
+            validate_python_decorators(source, path=path)
+        except UnicodeDecodeError:
+            return f"{path}: Python source must be valid UTF-8."
+        except DefinitionValidationError as error:
+            return str(error)
+    return None
+
+
 async def _sync_files(
     local_path: str,
     repo_prefix: str = "",
@@ -3424,6 +3479,16 @@ async def _sync_files(
     if not (result.push or result.pull or result.delete):
         print("Nothing selected.")
         return 0
+
+    selected_sources = {
+        item["repo_path"]: item["_content"]
+        for item in result.push
+        if item["repo_path"].endswith(".py")
+    }
+    validation_error = _validate_python_push_files(selected_sources)
+    if validation_error:
+        print(f"Error: {validation_error}", file=sys.stderr)
+        return 1
 
     progress_items: list[tuple[str, dict[str, Any]]] = []
     for item in result.push:

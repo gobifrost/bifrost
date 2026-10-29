@@ -1,0 +1,14 @@
+{
+  "key": "pr:1026",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflow tools keep a single category prefix. Automatic agents favor tools in the current conversation and expose one optional subagent interface.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1026",
+      "Jack requested consistent halopsa_* tool names and removal of routine delegation references on 2026-10-21. This routine-fix summary describes matching-prefix normalization and Automatic discovery; no customer upgrade action is required."
+    ]
+  }
+}

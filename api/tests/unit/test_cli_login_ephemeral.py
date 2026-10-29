@@ -9,6 +9,11 @@ Two login modes:
     Refuses MFA-enabled instances.
 """
 
+import asyncio
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
+from types import SimpleNamespace
+
 import pytest
 
 from bifrost import cli
@@ -483,3 +488,202 @@ class TestAuthList:
         assert current_urls == ["http://localhost:38421"], (
             f"expected only the env-var URL flagged, got {current_urls}"
         )
+
+
+class _SimulatedResponse:
+    def __init__(self, status_code: int, payload: dict, headers: dict[str, str] | None = None):
+        self.status_code = status_code
+        self._payload = payload
+        self.headers = headers or {}
+
+    def json(self):
+        return self._payload
+
+
+class _SimulatedClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def _device_code_response(*, expires_in: int = 300) -> _SimulatedResponse:
+    return _SimulatedResponse(
+        200,
+        {
+            "device_code": "device-code",
+            "user_code": "ABCD-EFGH",
+            "verification_url": "/device",
+            "expires_in": expires_in,
+            "interval": 5,
+        },
+    )
+
+
+def _install_simulated_device_client(
+    monkeypatch,
+    token_responses: list[_SimulatedResponse],
+    *,
+    expires_in: int = 300,
+):
+    class SimulatedClient:
+        posts: list[tuple[str, dict | None]] = []
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, url, json=None, **_kwargs):
+            self.posts.append((url, json))
+            if url == "/auth/device/code":
+                return _device_code_response(expires_in=expires_in)
+            assert url == "/auth/device/token"
+            return token_responses.pop(0)
+
+        async def get(self, *_args, **_kwargs):
+            return _SimulatedResponse(200, {"email": "user@example.com"})
+
+    monkeypatch.setattr(cli.httpx, "AsyncClient", SimulatedClient)
+    return SimulatedClient
+
+
+class TestDeviceLoginPolling:
+    @pytest.mark.parametrize("pending_status", [200, 400])
+    def test_polls_pending_response_until_authorized(self, monkeypatch, pending_status):
+        clock = _SimulatedClock()
+        simulated_client = _install_simulated_device_client(
+            monkeypatch,
+            ([_SimulatedResponse(pending_status, {"error": "authorization_pending"})] * 11) + [
+                _SimulatedResponse(
+                    200,
+                    {"access_token": "access", "refresh_token": "refresh", "expires_in": 1800},
+                ),
+            ],
+        )
+        saved_credentials = {}
+        monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=clock.monotonic))
+        monkeypatch.setattr(cli.asyncio, "sleep", clock.sleep)
+        monkeypatch.setattr(cli.credentials, "save_credentials", lambda **kwargs: saved_credentials.update(kwargs))
+
+        assert asyncio.run(cli.login_flow("https://example.test", auto_open=False)) is True
+        assert clock.sleeps == [5] * 12
+        assert saved_credentials["access_token"] == "access"
+        assert saved_credentials["refresh_token"] == "refresh"
+        assert [url for url, _json in simulated_client.posts] == [
+            "/auth/device/code",
+            *("/auth/device/token" for _ in range(12)),
+        ]
+
+    def test_respects_retry_after_before_next_poll(self, monkeypatch):
+        clock = _SimulatedClock()
+        _install_simulated_device_client(
+            monkeypatch,
+            [
+                _SimulatedResponse(429, {}, {"Retry-After": "12"}),
+                _SimulatedResponse(
+                    200,
+                    {"access_token": "access", "refresh_token": "refresh", "expires_in": 1800},
+                ),
+            ],
+        )
+        monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=clock.monotonic))
+        monkeypatch.setattr(cli.asyncio, "sleep", clock.sleep)
+        monkeypatch.setattr(cli.credentials, "save_credentials", lambda **_kwargs: None)
+
+        assert asyncio.run(cli.login_flow("https://example.test", auto_open=False)) is True
+        assert clock.sleeps == [5, 12]
+
+    def test_respects_http_date_retry_after_before_next_poll(self, monkeypatch):
+        clock = _SimulatedClock()
+        wall_now = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
+        retry_at = wall_now + timedelta(seconds=12)
+        _install_simulated_device_client(
+            monkeypatch,
+            [
+                _SimulatedResponse(
+                    429,
+                    {},
+                    {"Retry-After": format_datetime(retry_at, usegmt=True)},
+                ),
+                _SimulatedResponse(
+                    200,
+                    {"access_token": "access", "refresh_token": "refresh", "expires_in": 1800},
+                ),
+            ],
+        )
+        monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=clock.monotonic))
+        monkeypatch.setattr(cli.asyncio, "sleep", clock.sleep)
+        monkeypatch.setattr(cli.credentials, "save_credentials", lambda **_kwargs: None)
+        monkeypatch.setattr(
+            cli,
+            "datetime",
+            type("FrozenDateTime", (), {"now": classmethod(lambda cls, tz=None: wall_now)}),
+        )
+
+        assert asyncio.run(cli.login_flow("https://example.test", auto_open=False)) is True
+        assert clock.sleeps == [5, 12]
+
+    @pytest.mark.parametrize("slow_down_status", [200, 400])
+    def test_slow_down_increases_polling_interval(self, monkeypatch, slow_down_status):
+        clock = _SimulatedClock()
+        _install_simulated_device_client(
+            monkeypatch,
+            [
+                _SimulatedResponse(slow_down_status, {"error": "slow_down"}),
+                _SimulatedResponse(slow_down_status, {"error": "authorization_pending"}),
+                _SimulatedResponse(
+                    200,
+                    {"access_token": "access", "refresh_token": "refresh", "expires_in": 1800},
+                ),
+            ],
+        )
+        monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=clock.monotonic))
+        monkeypatch.setattr(cli.asyncio, "sleep", clock.sleep)
+        monkeypatch.setattr(cli.credentials, "save_credentials", lambda **_kwargs: None)
+
+        assert asyncio.run(cli.login_flow("https://example.test", auto_open=False)) is True
+        assert clock.sleeps == [5, 10, 10]
+
+    def test_rate_limit_without_retry_after_increases_polling_interval(self, monkeypatch):
+        clock = _SimulatedClock()
+        _install_simulated_device_client(
+            monkeypatch,
+            [
+                _SimulatedResponse(429, {}),
+                _SimulatedResponse(
+                    200,
+                    {"access_token": "access", "refresh_token": "refresh", "expires_in": 1800},
+                ),
+            ],
+        )
+        monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=clock.monotonic))
+        monkeypatch.setattr(cli.asyncio, "sleep", clock.sleep)
+        monkeypatch.setattr(cli.credentials, "save_credentials", lambda **_kwargs: None)
+
+        assert asyncio.run(cli.login_flow("https://example.test", auto_open=False)) is True
+        assert clock.sleeps == [5, 10]
+
+    def test_does_not_poll_after_advertised_expiry(self, monkeypatch):
+        clock = _SimulatedClock()
+        simulated_client = _install_simulated_device_client(
+            monkeypatch,
+            [_SimulatedResponse(429, {}, {"Retry-After": "20"})],
+            expires_in=10,
+        )
+        monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=clock.monotonic))
+        monkeypatch.setattr(cli.asyncio, "sleep", clock.sleep)
+
+        assert asyncio.run(cli.login_flow("https://example.test", auto_open=False)) is False
+        assert clock.sleeps == [5, 5]
+        assert [url for url, _json in simulated_client.posts].count("/auth/device/token") == 1

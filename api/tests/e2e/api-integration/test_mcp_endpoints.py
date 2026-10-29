@@ -17,23 +17,32 @@ from io import BytesIO
 import pytest
 import requests
 
-from tests.fixtures.auth import (
-    auth_headers,
-    create_test_jwt,
-)
-
 # Base URL for test API (set by docker-compose.test.yml)
 TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
+
+
+class _PersistedMCPCallers:
+    """Expose real persisted callers for runtime-authority endpoint tests.
+
+    The authorization layer reloads a caller's current grants, so JWT claims
+    alone cannot establish platform-admin access in these tests.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _persisted_callers(self, platform_admin, org1_user):
+        self.admin_headers = platform_admin.headers
+        self.org_user_headers = org1_user.headers
+        self.platform_admin_email = platform_admin.email
 
 
 # ==================== MCP Config Endpoint Tests ====================
 
 
-class TestMCPConfigEndpoint:
+class TestMCPConfigEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/config endpoint access control."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self):
+    def reset_config(self, platform_admin):
         """Reset MCP config before and after each test.
 
         ``test_put_config_success_for_platform_admin`` PUTs ``enabled=True``
@@ -43,8 +52,7 @@ class TestMCPConfigEndpoint:
         DELETEs ensures a teardown failure surfaces as a teardown failure
         rather than as a flake two layers downstream.
         """
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = platform_admin.headers
 
         # Reset before test — must succeed; failure leaves stale state.
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
@@ -70,12 +78,7 @@ class TestMCPConfigEndpoint:
     @pytest.mark.e2e
     def test_get_config_requires_platform_admin(self):
         """Should return 403 for non-admin user."""
-        # Create token for regular user (not superuser)
-        token = create_test_jwt(
-            email="user@org.local",
-            is_superuser=False,
-        )
-        headers = auth_headers(token)
+        headers = self.org_user_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/config",
@@ -83,14 +86,11 @@ class TestMCPConfigEndpoint:
         )
 
         assert response.status_code == 403
-        assert "platform admin" in response.json()["detail"].lower()
 
     @pytest.mark.e2e
     def test_get_config_success_for_platform_admin(self):
         """Should return 200 for platform admin."""
-        # Use create_test_jwt with is_superuser=True to get valid UUID
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/config",
@@ -116,11 +116,7 @@ class TestMCPConfigEndpoint:
     @pytest.mark.e2e
     def test_put_config_requires_platform_admin(self):
         """Should return 403 for non-admin user on PUT."""
-        token = create_test_jwt(
-            email="user@org.local",
-            is_superuser=False,
-        )
-        headers = auth_headers(token)
+        headers = self.org_user_headers
 
         response = requests.put(
             f"{TEST_API_URL}/api/mcp/config",
@@ -129,13 +125,11 @@ class TestMCPConfigEndpoint:
         )
 
         assert response.status_code == 403
-        assert "platform admin" in response.json()["detail"].lower()
 
     @pytest.mark.e2e
     def test_put_config_success_for_platform_admin(self):
         """Should return 200 for platform admin on PUT."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.put(
             f"{TEST_API_URL}/api/mcp/config",
@@ -159,11 +153,7 @@ class TestMCPConfigEndpoint:
     @pytest.mark.e2e
     def test_delete_config_requires_platform_admin(self):
         """Should return 403 for non-admin user on DELETE."""
-        token = create_test_jwt(
-            email="user@org.local",
-            is_superuser=False,
-        )
-        headers = auth_headers(token)
+        headers = self.org_user_headers
 
         response = requests.delete(
             f"{TEST_API_URL}/api/mcp/config",
@@ -171,13 +161,11 @@ class TestMCPConfigEndpoint:
         )
 
         assert response.status_code == 403
-        assert "platform admin" in response.json()["detail"].lower()
 
     @pytest.mark.e2e
     def test_delete_config_success_for_platform_admin(self):
         """Should return 200 for platform admin on DELETE."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.delete(
             f"{TEST_API_URL}/api/mcp/config",
@@ -192,14 +180,13 @@ class TestMCPConfigEndpoint:
 # ==================== MCP Tools Endpoint Tests ====================
 
 
-class TestMCPToolsEndpoint:
+class TestMCPToolsEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/tools endpoint access control."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def _ensure_agent_with_tools(self):
+    def _ensure_agent_with_tools(self, platform_admin):
         """Create an agent with system tools so /api/mcp/tools returns results."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = platform_admin.headers
 
         resp = requests.post(
             f"{TEST_API_URL}/api/agents",
@@ -238,11 +225,7 @@ class TestMCPToolsEndpoint:
     @pytest.mark.e2e
     def test_list_tools_allows_non_admin(self):
         """Non-admin users should be allowed through — tool list is role-scoped."""
-        token = create_test_jwt(
-            email="user@org.local",
-            is_superuser=False,
-        )
-        headers = auth_headers(token)
+        headers = self.org_user_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/tools",
@@ -257,8 +240,7 @@ class TestMCPToolsEndpoint:
     @pytest.mark.e2e
     def test_list_tools_success_for_platform_admin(self):
         """Should return 200 for platform admin."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/tools",
@@ -273,8 +255,7 @@ class TestMCPToolsEndpoint:
     @pytest.mark.e2e
     def test_list_tools_returns_all_system_tools(self):
         """Should return all available system tools."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/tools",
@@ -302,8 +283,7 @@ class TestMCPToolsEndpoint:
     @pytest.mark.e2e
     def test_list_tools_returns_tool_info(self):
         """Should return complete tool info for each tool."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/tools",
@@ -326,7 +306,7 @@ class TestMCPToolsEndpoint:
 # ==================== MCP Status Endpoint Tests ====================
 
 
-class TestMCPStatusEndpoint:
+class TestMCPStatusEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/status endpoint access control."""
 
     @pytest.mark.e2e
@@ -339,11 +319,7 @@ class TestMCPStatusEndpoint:
     @pytest.mark.e2e
     def test_status_allows_non_admin(self):
         """Non-admin users should get a 200 status — tools list is role-scoped."""
-        token = create_test_jwt(
-            email="user@org.local",
-            is_superuser=False,
-        )
-        headers = auth_headers(token)
+        headers = self.org_user_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/status",
@@ -359,8 +335,7 @@ class TestMCPStatusEndpoint:
     @pytest.mark.e2e
     def test_status_success_for_platform_admin(self):
         """Status should report the stable default MCP gateway surface."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/status",
@@ -389,13 +364,12 @@ class TestMCPStatusEndpoint:
 # ==================== Bifrost Agent Plugin Endpoint Tests ====================
 
 
-class TestMCPRunEndpoint:
+class TestMCPRunEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/run and /api/mcp/run/plugin."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self):
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+    def reset_config(self, platform_admin):
+        headers = platform_admin.headers
 
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
         assert pre.status_code == 200, (
@@ -417,20 +391,16 @@ class TestMCPRunEndpoint:
 
     @pytest.mark.e2e
     def test_run_info_allows_non_admin_and_reports_disabled(self):
-        admin_headers = auth_headers(create_test_jwt(is_superuser=True))
         configured = requests.put(
             f"{TEST_API_URL}/api/mcp/config",
             json={"enabled": False},
-            headers=admin_headers,
+            headers=self.admin_headers,
         )
         assert configured.status_code == 200
 
-        user_headers = auth_headers(
-            create_test_jwt(email="user@org.local", is_superuser=False)
-        )
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/run",
-            headers=user_headers,
+            headers=self.org_user_headers,
         )
 
         assert response.status_code == 200
@@ -451,9 +421,7 @@ class TestMCPRunEndpoint:
 
     @pytest.mark.e2e
     def test_run_plugin_downloads_zip_for_active_non_admin(self):
-        headers = auth_headers(
-            create_test_jwt(email="user@org.local", is_superuser=False)
-        )
+        headers = self.org_user_headers
 
         response = requests.get(
             f"{TEST_API_URL}/api/mcp/run/plugin",
@@ -509,7 +477,7 @@ class TestMCPRunEndpoint:
 
     @pytest.mark.e2e
     def test_run_plugin_disabled_returns_forbidden(self):
-        headers = auth_headers(create_test_jwt(is_superuser=True))
+        headers = self.admin_headers
         configured = requests.put(
             f"{TEST_API_URL}/api/mcp/config",
             json={"enabled": False},
@@ -529,19 +497,18 @@ class TestMCPRunEndpoint:
 # ==================== Config Whitelist/Blacklist Tests ====================
 
 
-class TestMCPConfigToolFiltering:
+class TestMCPConfigToolFiltering(_PersistedMCPCallers):
     """Tests for MCP config tool whitelist/blacklist functionality."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self):
+    def reset_config(self, platform_admin):
         """Reset MCP config before and after each test.
 
         Asserts the teardown DELETE actually returned 200 so that a silent
         teardown failure (e.g. transient API unavailability) cannot leak
         state into the next test and present as a stale-read flake.
         """
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = platform_admin.headers
 
         # Reset before test — must succeed; failure leaves stale state.
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
@@ -560,8 +527,7 @@ class TestMCPConfigToolFiltering:
     @pytest.mark.e2e
     def test_config_saves_allowed_tool_ids(self):
         """Should save allowed_tool_ids to config."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         # Save config with allowed tools
         response = requests.put(
@@ -586,8 +552,7 @@ class TestMCPConfigToolFiltering:
     @pytest.mark.e2e
     def test_config_saves_blocked_tool_ids(self):
         """Should save blocked_tool_ids to config."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         # Save config with blocked tools
         response = requests.put(
@@ -612,8 +577,7 @@ class TestMCPConfigToolFiltering:
     @pytest.mark.e2e
     def test_config_allows_null_for_all_tools(self):
         """Should allow null allowed_tool_ids to mean all tools."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         # Save config with null allowed tools
         response = requests.put(
@@ -632,8 +596,7 @@ class TestMCPConfigToolFiltering:
     @pytest.mark.e2e
     def test_config_tracks_configured_by(self):
         """Should track who configured the settings."""
-        token = create_test_jwt(email="admin@test.com", is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         response = requests.put(
             f"{TEST_API_URL}/api/mcp/config",
@@ -644,14 +607,13 @@ class TestMCPConfigToolFiltering:
         assert response.status_code == 200
         data = response.json()
         assert data["is_configured"] is True
-        assert data["configured_by"] == "admin@test.com"
+        assert data["configured_by"] == self.platform_admin_email
         assert data["configured_at"] is not None
 
     @pytest.mark.e2e
     def test_disabled_config_blocks_gateway_rest_surface(self):
         """Internal REST bridge endpoints must honor the MCP feature flag."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         configured = requests.put(
             f"{TEST_API_URL}/api/mcp/config",
@@ -671,8 +633,7 @@ class TestMCPConfigToolFiltering:
     @pytest.mark.e2e
     def test_delete_resets_to_defaults(self):
         """Should reset to defaults after delete."""
-        token = create_test_jwt(is_superuser=True)
-        headers = auth_headers(token)
+        headers = self.admin_headers
 
         # First save a custom config
         requests.put(

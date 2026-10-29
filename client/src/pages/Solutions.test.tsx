@@ -39,6 +39,10 @@ vi.mock("@/hooks/useOrganizations", () => ({
 		data: [{ id: "org-1", name: "Acme Corp" }],
 	}),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 const mockCreateRepoMutate = vi.fn();
 vi.mock("@/hooks/useGitHub", () => ({
@@ -110,6 +114,7 @@ function makeSolution(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+	mockUseAuthorization.mockReturnValue({ authorization: undefined });
 	vi.clearAllMocks();
 	mockListSolutions.mockResolvedValue({ solutions: [] });
 	mockUpdateSelectedSolutionAppSdks.mockResolvedValue({
@@ -355,6 +360,31 @@ describe("Solutions — list", () => {
 		const rows = await screen.findAllByTestId("install-row");
 		expect(rows).toHaveLength(2);
 		expect(within(rows[0]).getByText("Alpha")).toBeInTheDocument();
+	});
+
+	it("shows Organization as the first table column", async () => {
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({
+					id: "a",
+					name: "Alpha",
+					slug: "alpha",
+					organization_id: "org-1",
+				}),
+			],
+		});
+		const { user } = await renderPage();
+		await screen.findAllByTestId("install-card");
+
+		await user.click(screen.getByRole("radio", { name: /table view/i }));
+
+		const [row] = await screen.findAllByTestId("install-row");
+		expect(screen.getAllByRole("columnheader")[0]).toHaveTextContent(
+			"Organization",
+		);
+		expect(within(row).getAllByRole("cell")[0]).toHaveTextContent(
+			"Acme Corp",
+		);
 	});
 
 	it("filters by search term", async () => {

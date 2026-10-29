@@ -41,10 +41,12 @@ from shared.table_documents import (
     DocumentRepository,
     check_table_action_or_403,
 )
-from src.core.constants import SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
 from src.models.orm.tables import Document, Table
-from src.services.access_check_policies import check_table_write
+from src.services.access_check_policies import (
+    enforced_policy_principal,
+    record_table_policy,
+)
 from src.services.audit import emit_table_policy_deny
 from src.services.table_policy_loader import load_resolved_table_policies
 from src.core.pubsub import (
@@ -79,16 +81,18 @@ class TableWriteConflict(TableWriteError):
     status_code = 409
 
 
-def resolve_attribution(
+async def resolve_attribution(
     user: UserPrincipal,
     body_created_by: str | None,
     body_updated_by: str | None,
+    *,
+    db: AsyncSession,
+    organization_id: UUID | None,
 ) -> tuple[str, str]:
     """Decide attribution (created_by, updated_by) for a document write.
 
-    If the body carries either field, the caller must be the engine
-    (SYSTEM_USER_UUID) or a platform admin (is_superuser); otherwise raise
-    :class:`TableWriteForbidden` so a regular user can't forge attribution.
+    Supplied attribution requires tableattribution.readwrite in the table's
+    organization, decided from original-user roles and workflow powers.
 
     Defaulting:
     - both omitted → both default to the caller's id.
@@ -98,11 +102,13 @@ def resolve_attribution(
     """
     has_override = body_created_by is not None or body_updated_by is not None
     if has_override:
-        is_engine = user.user_id == SYSTEM_USER_UUID
-        if not (is_engine or user.is_superuser):
-            raise TableWriteForbidden(
-                "created_by/updated_by override requires engine or platform-admin caller"
-            )
+        from src.services.authorization.enforce import PermissionDenied, load_caller, require_named_permission
+
+        authority = await load_caller(db, user)
+        try:
+            require_named_permission(authority, "tableattribution.readwrite", organization_id)
+        except PermissionDenied as exc:
+            raise TableWriteForbidden("You don't have permission to change table row attribution") from exc
     caller = str(user.user_id)
     created_by = body_created_by or caller
     updated_by = body_updated_by or body_created_by or caller
@@ -123,18 +129,21 @@ async def require_update_policy(
     single ``policy.deny`` audit row on either failure, generic 403 detail,
     and no uncommitted caller mutations allowed at call time.
     """
+    policy_user = await enforced_policy_principal(db, user)
     policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
-        user,
+        policy_user,
         policies,
         db,
         table.organization_id,
         table.solution_id,
     )
-    allowed = evaluate_action("update", policies, old_row, user) and evaluate_action(
-        "update", policies, new_row, user
+    allowed = evaluate_action("update", policies, old_row, policy_user) and evaluate_action(
+        "update", policies, new_row, policy_user
     )
-    await check_table_write(db, "update", table, [old_row, new_row], policies, allowed_today=allowed)
+    await record_table_policy(
+        db, table, policies, policy_user, action="update", allowed=allowed
+    )
     if allowed:
         return
 
@@ -197,12 +206,12 @@ async def insert_table_document(
     inserted. Commits before publishing one ``insert``/``update`` event.
     """
     repo = DocumentRepository(db, table)
-    resolved_created_by, resolved_updated_by = resolve_attribution(
-        user, created_by, updated_by
+    resolved_created_by, resolved_updated_by = await resolve_attribution(
+        user, created_by, updated_by, db=db, organization_id=table.organization_id,
     )
 
     if upsert and doc_id:
-        existing = await repo.get(doc_id)
+        existing = await repo.get_for_update(doc_id)
         if existing is not None:
             old_row = _row_from_doc(existing)
             new_row = _update_post_image_row(
@@ -266,8 +275,8 @@ async def upsert_table_document(
     replaced post-image. Commits before publishing one event.
     """
     repo = DocumentRepository(db, table)
-    resolved_created_by, resolved_updated_by = resolve_attribution(
-        user, created_by, updated_by
+    resolved_created_by, resolved_updated_by = await resolve_attribution(
+        user, created_by, updated_by, db=db, organization_id=table.organization_id,
     )
 
     existing = await repo.get(doc_id)
@@ -315,12 +324,12 @@ async def update_table_document(
     """Partial-merge update of a document.
 
     The ``update`` policy must pass on both pre-image and merged post-image.
-    Missing rows raise :class:`TableWriteNotFound`, including a lost race
-    with a concurrent delete after fetch + access check.
+    Lock the current pre-image through policy evaluation, merge, and commit.
+    Missing rows raise :class:`TableWriteNotFound`.
     """
     repo = DocumentRepository(db, table)
-    _, resolved_updated_by = resolve_attribution(user, None, updated_by)
-    existing = await repo.get(doc_id)
+    _, resolved_updated_by = await resolve_attribution(user, None, updated_by, db=db, organization_id=table.organization_id)
+    existing = await repo.get_for_update(doc_id)
     if existing is None:
         raise TableWriteNotFound("Document not found")
     old_row = _row_from_doc(existing)
@@ -412,9 +421,10 @@ async def batch_write_table_documents(
     commit, and single ``table_invalidated`` publication when state changed.
     Successful documents preserve submission order.
     """
+    policy_user = await enforced_policy_principal(db, user)
     policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
-        user,
+        policy_user,
         policies,
         db,
         table.organization_id,
@@ -423,8 +433,8 @@ async def batch_write_table_documents(
 
     rows: list[BatchWriteRow] = []
     for index, item in enumerate(items):
-        created_by, updated_by = resolve_attribution(
-            user, item.created_by, item.updated_by
+        created_by, updated_by = await resolve_attribution(
+            user, item.created_by, item.updated_by, db=db, organization_id=table.organization_id,
         )
         rows.append(
             BatchWriteRow(
@@ -443,7 +453,7 @@ async def batch_write_table_documents(
             rows,
             mode=mode,
             policies=policies,
-            user=user,
+            user=policy_user,
         )
     except DuplicateBatchIds as exc:
         raise TableWriteUnprocessable({"duplicate_ids": exc.ids}) from exc
@@ -486,9 +496,10 @@ async def batch_delete_table_documents(
     least one row was removed. Deleted IDs return in input order.
     """
     repo = DocumentRepository(db, table)
+    policy_user = await enforced_policy_principal(db, user)
     policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
-        user,
+        policy_user,
         policies,
         db,
         table.organization_id,
@@ -502,11 +513,12 @@ async def batch_delete_table_documents(
         if existing is None:
             continue
         existing_by_index[i] = existing
-        if not evaluate_action("delete", policies, _row_from_doc(existing), user):
+        if not evaluate_action("delete", policies, _row_from_doc(existing), policy_user):
             denied.append(i)
 
-    rows = [_row_from_doc(doc) for doc in existing_by_index.values()]
-    await check_table_write(db, "delete", table, rows, policies, allowed_today=not denied)
+    await record_table_policy(
+        db, table, policies, policy_user, action="delete", allowed=not denied
+    )
     if denied:
         raise TableWriteForbidden({"denied_row_indices": denied})
 

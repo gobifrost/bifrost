@@ -117,13 +117,29 @@ class TestApplicationCRUD:
 
         _delete_app(e2e_client, platform_admin.headers, app["id"])
 
-    def test_non_admin_cannot_deploy_an_application(self, e2e_client, org1_user):
-        response = e2e_client.post(
-            f"/api/applications/{uuid.uuid4()}/deploy",
-            headers=org1_user.headers,
-            files={"source": ("source.zip", b"not-a-zip", "application/zip")},
+    def test_non_admin_cannot_deploy_an_application(
+        self, e2e_client, platform_admin, org1_user, org1
+    ):
+        app = _create_app(
+            e2e_client,
+            platform_admin.headers,
+            f"deploy-denied-{uuid.uuid4().hex[:8]}",
+            organization_id=org1["id"],
         )
-        assert response.status_code == 403
+        try:
+            # Multipart requests supply their own Content-Type boundary.
+            headers = {
+                key: value for key, value in org1_user.headers.items()
+                if key.lower() != "content-type"
+            }
+            response = e2e_client.post(
+                f"/api/applications/{app['id']}/deploy",
+                headers=headers,
+                files={"source": ("source.zip", b"not-a-zip", "application/zip")},
+            )
+            assert response.status_code == 403, response.text
+        finally:
+            _delete_app(e2e_client, platform_admin.headers, app["id"])
 
     def test_get_application_by_slug(self, e2e_client, platform_admin):
         """Get application by slug."""
@@ -458,12 +474,10 @@ class TestApplicationAccess:
 
 @pytest.mark.e2e
 class TestApplicationWriteScope:
-    """A non-bypass org member can read a global app but not write it."""
+    """App reads and writes require their respective named permissions."""
 
     def test_org_user_cannot_update_global_app(self, e2e_client, platform_admin, org1_user):
-        """A regular org member gets the same not-found response writing a
-        global app that they'd get for a genuinely missing app — reads stay
-        allowed, writes are bypass-only for global entities."""
+        """A reader without apps.readwrite cannot change a shared Global app."""
         create_response = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
@@ -477,7 +491,7 @@ class TestApplicationWriteScope:
         assert create_response.status_code == 201, create_response.text
         app = create_response.json()
 
-        # Confirm the read path still works for the non-bypass org member.
+        # Read access does not grant management permission.
         read_response = e2e_client.get(
             f"/api/applications/{app['slug']}",
             headers=org1_user.headers,
@@ -489,11 +503,12 @@ class TestApplicationWriteScope:
             headers=org1_user.headers,
             json={"description": "should be denied"},
         )
-        assert write_response.status_code == 404, write_response.text
-        # Same detail template a genuinely missing app would get, with the
-        # same id substituted — a caller can't distinguish "no write access"
-        # from "doesn't exist".
-        assert write_response.json()["detail"] == f"Application '{app['id']}' not found"
+        assert write_response.status_code == 403, write_response.text
+        unchanged = e2e_client.get(
+            f"/api/applications/{app['slug']}", headers=org1_user.headers
+        )
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json()["description"] == app["description"]
 
         # Cleanup
         _delete_app(e2e_client, platform_admin.headers, app["id"], params={"scope": "global"})
@@ -501,8 +516,7 @@ class TestApplicationWriteScope:
     def test_org_user_cannot_update_own_org_app(
         self, e2e_client, platform_admin, org1_user, org1
     ):
-        """A regular org member cannot write an app in their OWN org either —
-        write access is bypass-only, full stop. Reads stay allowed."""
+        """Home-organization reach still requires apps.readwrite to update."""
         app = _create_app(
             e2e_client,
             platform_admin.headers,
@@ -521,14 +535,17 @@ class TestApplicationWriteScope:
             headers=org1_user.headers,
             json={"description": "should be denied"},
         )
-        assert write_response.status_code == 404, write_response.text
-        assert write_response.json()["detail"] == f"Application '{app['id']}' not found"
+        assert write_response.status_code == 403, write_response.text
+        unchanged = e2e_client.get(
+            f"/api/applications/{app['slug']}", headers=org1_user.headers
+        )
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json()["description"] == app["description"]
 
         _delete_app(e2e_client, platform_admin.headers, app["id"])
 
     def test_org_user_cannot_create_application(self, e2e_client, org1_user):
-        """Creating an application is bypass-only; a regular org member is
-        denied even when creating into their own org."""
+        """Creation requires apps.readwrite even within the caller's home org."""
         response = e2e_client.post(
             "/api/applications",
             headers=org1_user.headers,

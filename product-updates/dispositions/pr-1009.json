@@ -1,0 +1,14 @@
+{
+  "key": "pr:1009",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflows that use a Global table by name from an organization read and write that table again instead of creating a private copy.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1009",
+      "Claude drafted this routine-fix summary on 2026-10-19 under Jack's instruction to find and ship the permanent fix. Access is still decided by reach and table policies. No customer upgrade action is required; existing organization copies are left to each instance."
+    ]
+  }
+}

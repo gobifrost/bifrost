@@ -42,12 +42,13 @@ AFTER = (
     "reset MFA, deactivate ordinary users, and assign roles that carry no permissions. "
     "Additional role only."
 )
-# Set by the later 20261003_r3_operator_secrets revision, which also
-# gives the role workflows.execute.
+# Set by the later 20261009_graph_permission_names revision, which also
+# gives the role agents.execute (20261003_r3_operator_secrets gave it
+# workflows.execute).
 AT_HEAD = (
     "Support for customer organizations: view organizations and users, invite users, "
     "reset MFA, deactivate ordinary users, assign roles that carry no permissions, "
-    "and run workflows in customer organizations. Additional role only."
+    "and run workflows and agents in customer organizations. Additional role only."
 )
 
 
@@ -73,6 +74,15 @@ async def _operator(database_url: str) -> tuple[str, set[str]]:
     return await _run_in_database(database_url, read)
 
 
+# The later 20261009_graph_permission_names revision renames the basic
+# resources' everyday read to readbasic and gives the role Run Agents.
+_READBASIC = {f"{resource}.read": f"{resource}.readbasic" for resource in ("agents", "apps", "executions", "forms")}
+
+
+def _readbasic(permissions: set[str]) -> set[str]:
+    return {_READBASIC.get(permission, permission) for permission in permissions}
+
+
 def test_operator_description_says_what_the_role_does() -> None:
     database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     _assert_safe_database_name(database_name)
@@ -85,12 +95,15 @@ def test_operator_description_says_what_the_role_does() -> None:
         assert description == BEFORE
 
         _upgrade(database_url, REVISION)
-        assert asyncio.run(_operator(database_url)) == (AFTER, permissions)
+        after = asyncio.run(_operator(database_url))
+        assert after == (AFTER, permissions)
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_operator(database_url)) == (AT_HEAD, permissions | {"workflows.execute"})
+        at_head = asyncio.run(_operator(database_url))
+        assert at_head == (AT_HEAD, _readbasic(permissions | {"workflows.execute", "agents.execute"}))
 
         _downgrade(database_url, PREVIOUS_REVISION)
-        assert asyncio.run(_operator(database_url)) == (BEFORE, permissions)
+        downgraded = asyncio.run(_operator(database_url))
+        assert downgraded == (BEFORE, permissions)
     finally:
         asyncio.run(_drop_database(database_name))

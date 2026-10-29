@@ -5,17 +5,13 @@ Single implementation used by the HTTP handlers serving SDK callers
 both by external SDK/CLI callers and by workflow children over the
 worker-local engine socket (``api/src/services/execution/worker_sdk_http.py``).
 
-All inputs are already-authoritative scalars: the HTTP edge denies direct
-external principals (``_deny_external_knowledge``) and resolves scope
-through ``_resolve_sdk_org_id`` before calling in. Worker-local calls arrive
-under the same engine-token / service-token authority as HTTP: workflows
-keep the engine-token snapshot, services re-check provider membership live.
-Child ``scope`` strings remain untrusted inputs validated by the shared
-scope rules. ``created_by`` is the engine sentinel UUID
-(``SYSTEM_USER_UUID`` — the ``mint_engine_token``/``mint_service_token``
-``sub`` HTTP workflow/service calls authenticate as), never a child
-claim. The child holds no DB connection; it reaches the parent over the
-engine socket, with no fallback to the network API on local failure.
+The HTTP edge resolves direct callers from current authorization facts,
+rejects direct external credentials, and validates child scopes against the
+original run user's reach. Explicitly powered runtime calls are evaluated as
+runtime authority. ``created_by`` remains the authenticated acting user,
+never a child-provided claim. The child holds no DB connection; it reaches
+the parent over the engine socket, with no fallback to the network API on
+local failure.
 
 Transaction note (explicit): the single-session calls below
 (``store_*``/``search_*``) acquire an embedder and repository on the
@@ -38,7 +34,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.scope_resolver import RequestedScope, ScopeNotAllowed, UNSET, resolve_effective_scope
 from src.core.log_safety import log_safe
+from src.services.authorization.enforce import (
+    Caller,
+    external_credential_restrictions,
+)
 
 import src.repositories.knowledge as knowledge_repo_module
 import src.services.embeddings.factory as embeddings_factory_module
@@ -57,6 +58,44 @@ class SDKKnowledgeError(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+class KnowledgeAuthorizationError(Exception):
+    """Authorization or scope failure shared by knowledge HTTP adapters."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def require_direct_knowledge_access(caller: Caller) -> None:
+    """Reject direct external callers while admitting explicitly powered runs."""
+    if external_credential_restrictions(caller):
+        raise KnowledgeAuthorizationError(
+            403,
+            "External users cannot access the knowledge store directly",
+        )
+
+
+def resolve_knowledge_scope(scope: str | None, *, caller: Caller) -> UUID | None:
+    """Parse a knowledge scope and constrain it to the original user's reach."""
+    if scope is None or scope == "":
+        requested: RequestedScope = UNSET
+    elif scope == "global":
+        requested = None
+    else:
+        try:
+            requested = UUID(scope)
+        except ValueError:
+            raise KnowledgeAuthorizationError(
+                422,
+                f"scope must be 'global', a UUID, or null; got {scope!r}",
+            ) from None
+    try:
+        return resolve_effective_scope(caller=caller, requested_scope=requested)
+    except ScopeNotAllowed as exc:
+        raise KnowledgeAuthorizationError(403, str(exc)) from None
 
 
 def _search_result_dict(doc: Any) -> dict[str, Any]:
@@ -431,11 +470,14 @@ async def get_knowledge_document(
 
 
 __all__ = [
+    "KnowledgeAuthorizationError",
     "SDKKnowledgeError",
     "delete_knowledge_document",
     "delete_knowledge_namespace",
     "get_knowledge_document",
     "list_knowledge_namespaces",
+    "require_direct_knowledge_access",
+    "resolve_knowledge_scope",
     "search_knowledge_documents",
     "store_knowledge_document",
     "store_many_knowledge_documents",

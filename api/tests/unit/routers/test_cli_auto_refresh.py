@@ -152,7 +152,7 @@ class TestBuildOAuthDataAutoRefresh:
             mock_client_class.return_value = mock_instance
 
             result = await build_oauth_data(
-                provider, token, entity_id, resolve_url_template, decrypt_secret
+                provider, token, entity_id, resolve_url_template, decrypt_secret, can_read_secrets=True
             )
 
             # Verify OAuthProviderClient was called
@@ -167,6 +167,21 @@ class TestBuildOAuthDataAutoRefresh:
             # Verify the result contains the fresh token
             assert result["access_token"] == "fresh-access-token"
             assert result["expires_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_oauth_scope_without_secret_permission_never_fetches_a_token(self):
+        provider = MagicMock(
+            provider_name="Contoso", client_id="client-id", token_url="https://login.example/token",
+            token_url_defaults={}, oauth_flow_type="client_credentials", authorization_url=None,
+            scopes=[], encrypted_client_secret="encrypted", audience=None,
+        )
+        with patch("src.services.oauth_provider.OAuthProviderClient") as client_class:
+            with pytest.raises(Exception, match="permission"):
+                await build_oauth_data(
+                    provider, None, None, lambda **_: "", lambda value: value,
+                    oauth_scope="https://resource/.default", can_read_secrets=False,
+                )
+            client_class.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_build_oauth_data_uses_stored_token_when_not_templated(self):
@@ -200,7 +215,7 @@ class TestBuildOAuthDataAutoRefresh:
 
         with patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class:
             result = await build_oauth_data(
-                provider, token, entity_id, resolve_url_template, decrypt_secret
+                provider, token, entity_id, resolve_url_template, decrypt_secret, can_read_secrets=True
             )
 
             # Verify OAuthProviderClient was NOT called
@@ -246,7 +261,7 @@ class TestBuildOAuthDataAutoRefresh:
             mock_client_class.return_value = mock_instance
 
             result = await build_oauth_data(
-                provider, token, entity_id, resolve_url_template, decrypt_secret
+                provider, token, entity_id, resolve_url_template, decrypt_secret, can_read_secrets=True
             )
 
             # Verify the result has no access token (failure case)
@@ -294,7 +309,7 @@ class TestBuildOAuthDataAutoRefresh:
             # Call with oauth_scope override for Exchange
             result = await build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret,
-                oauth_scope="https://outlook.office365.com/.default"
+                oauth_scope="https://outlook.office365.com/.default", can_read_secrets=True
             )
 
             # Verify OAuthProviderClient was called with the OVERRIDE scope
@@ -347,7 +362,7 @@ class TestBuildOAuthDataAutoRefresh:
             # Call with both entity_id and oauth_scope override
             result = await build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret,
-                oauth_scope="https://outlook.office365.com/.default"
+                oauth_scope="https://outlook.office365.com/.default", can_read_secrets=True
             )
 
             # Verify token URL was resolved with entity_id AND scope was overridden

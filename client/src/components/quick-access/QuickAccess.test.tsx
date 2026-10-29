@@ -37,8 +37,9 @@ vi.mock("@/stores/editorStore", () => ({
 		selector(editorStore),
 }));
 
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: true }),
+const authorization = { canAt: vi.fn(), canAnywhere: vi.fn() };
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => authorization,
 }));
 
 vi.mock("framer-motion", () => ({
@@ -75,6 +76,8 @@ import { QuickAccess } from "./QuickAccess";
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	authorization.canAt.mockReturnValue(true);
+	authorization.canAnywhere.mockReturnValue(true);
 	formsRef.data = [
 		{ id: "f-1", name: "Onboard User", description: "HR onboarding" },
 	];
@@ -267,5 +270,16 @@ describe("QuickAccess — selection and close", () => {
 		await waitFor(() => {
 			expect(onClose).toHaveBeenCalled();
 		});
+	});
+});
+
+it("does not search repository files when the caller cannot use the editor", async () => {
+	authorization.canAt.mockReturnValue(false);
+	renderWithProviders(<QuickAccess isOpen onClose={vi.fn()} />);
+	await typeQuery("onboard");
+	await screen.findByText("Onboard User");
+	expect(searchFilesMock).not.toHaveBeenCalled();
+	expect(authorization.canAt).toHaveBeenCalledWith("repository.readwrite", {
+		kind: "global",
 	});
 });

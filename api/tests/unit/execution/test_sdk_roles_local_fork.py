@@ -171,16 +171,19 @@ class TestForkedRolesSocket:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
-        from tests.helpers.live_execution import create_live_execution
+        from tests.helpers.live_execution import (
+            create_live_execution,
+            delete_live_execution,
+        )
 
         engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
             execution_id=engine_execution_id,
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=120,
         )
-        await create_live_execution(async_session_factory, engine_execution_id)
+        live_execution = await create_live_execution(
+            async_session_factory, engine_execution_id
+        )
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             engine_token,
@@ -198,9 +201,6 @@ class TestForkedRolesSocket:
             envelope = await _run_socket_fork(server, context)
         finally:
             await server.stop()
-            from tests.helpers.live_execution import delete_live_execution
-
-            await delete_live_execution(async_session_factory, engine_execution_id)
 
         try:
             assert envelope["success"] is True, envelope
@@ -239,7 +239,9 @@ class TestForkedRolesSocket:
                     )
                 ).scalars().all()
                 assert [str(r.user_id) for r in user_rows] == [user_id]
-                assert user_rows[0].assigned_by == "engine@bifrost.internal"
+                actor = await fresh.get(UserModel, live_execution.actor_id)
+                assert actor is not None
+                assert user_rows[0].assigned_by == actor.email
                 form_rows = (
                     await fresh.execute(
                         select(FormRoleORM).where(
@@ -257,6 +259,7 @@ class TestForkedRolesSocket:
             from src.models.orm.forms import Form as FormModel
             from src.models.orm.users import User as UserModel
 
+            await delete_live_execution(async_session_factory, engine_execution_id)
             async with async_session_factory() as cleanup:
                 await cleanup.execute(
                     sa_delete(RoleORM).where(RoleORM.name == role_name)
@@ -294,8 +297,6 @@ class TestForkedRolesSocket:
         engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
             execution_id=engine_execution_id,
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=120,
         )
         await create_live_execution(async_session_factory, engine_execution_id)

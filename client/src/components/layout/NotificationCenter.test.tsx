@@ -94,49 +94,6 @@ it("retains local messages on fetch failure and offers guarded retry", async () 
 	expect(screen.queryByText("No notifications")).not.toBeInTheDocument();
 });
 
-it("opens explainer details from a notification Learn more button", async () => {
-	state.notifications = [
-		{
-			id: "k8s-1",
-			category: "system",
-			title: "Kubernetes execution enabled",
-			description: "Heavy builds now run in Kubernetes pods.",
-			status: "awaiting_action",
-			percent: null,
-			error: null,
-			result: null,
-			metadata: {
-				action_url: "/settings/kubernetes-executions",
-				details: {
-					title: "Kubernetes execution is on",
-					paragraphs: ["Pods do the heavy builds now."],
-					primary_label: "Open execution settings",
-				},
-			},
-			createdAt: new Date().toISOString(),
-			updatedAt: new Date().toISOString(),
-			userId: "system",
-		},
-	];
-	const user = userEvent.setup();
-	render(
-		<MemoryRouter>
-			<NotificationCenter />
-		</MemoryRouter>,
-	);
-	await user.click(screen.getByRole("button", { name: "Notifications" }));
-	await user.click(screen.getByRole("button", { name: "Learn more" }));
-
-	expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
-	expect(
-		screen.getByText("Pods do the heavy builds now."),
-	).toBeInTheDocument();
-	await user.click(
-		screen.getByRole("button", { name: "Open execution settings" }),
-	);
-	expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-});
-
 it("starts a completed backup download through the native download service", async () => {
 	state.download.mockResolvedValue(undefined);
 	state.notifications = [

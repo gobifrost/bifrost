@@ -167,6 +167,32 @@ class TestAuditLogEmission:
                 for entry in response.json()["entries"]
             )
 
+    @pytest.mark.asyncio
+    async def test_list_returns_impersonation_provenance(self, e2e_client, platform_admin, db_session):
+        resource_id, session_id = uuid4(), uuid4()
+        db_session.add(
+            AuditLog(
+                user_id=platform_admin.user_id,
+                impersonated_by_user_id=platform_admin.user_id,
+                impersonation_session_id=session_id,
+                action="test.impersonation.audit",
+                resource_type="test",
+                resource_id=resource_id,
+                outcome="success",
+                source="http",
+            )
+        )
+        await db_session.commit()
+
+        response = e2e_client.get("/api/audit?action=test.impersonation.", headers=platform_admin.headers)
+
+        assert response.status_code == 200, response.text
+        [entry] = [row for row in response.json()["entries"] if row["resource_id"] == str(resource_id)]
+        assert entry["impersonation_session_id"] == str(session_id)
+        assert entry["actor"]["impersonated_by_user_id"] == str(platform_admin.user_id)
+        assert entry["actor"]["impersonated_by_email"] == platform_admin.email
+        assert entry["actor"]["impersonated_by_name"] == platform_admin.name
+
 
 @pytest.mark.e2e
 class TestAuditLogPagination:
@@ -187,6 +213,6 @@ class TestAuditLogRetentionWindow:
         resp = e2e_client.get("/api/audit?limit=1", headers=platform_admin.headers)
         assert resp.status_code == 200
         retention = resp.json()["retention"]
-        assert retention["hot_days"] == 90
+        assert retention["hot_days"] == 30
         assert retention["archive_days"] == 365
         datetime.fromisoformat(retention["oldest_in_database"])

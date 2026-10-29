@@ -18,94 +18,27 @@ Endpoints:
 
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
 from shared.sdk_modules import (
     ModuleSourceError,
-    ModuleSourceScope,
     fetch_module_source,
     resolve_module_name,
-    validate_solution_id,
+    module_scope_for_principal,
 )
-from src.core.auth import get_current_active_user, get_current_superuser
-from src.core.constants import SYSTEM_USER_UUID
-from src.core.principal import UserPrincipal
+from src.core.auth import CurrentActiveUser
+from src.core.db_deps import DbSession
 from src.core.requirements_cache import get_requirements
-from src.core.security import decode_token
 
 router = APIRouter(prefix="/api/sdk", tags=["SDK Internals"])
-
-
-async def _module_source_caller(
-    user: Annotated[UserPrincipal, Depends(get_current_active_user)],
-) -> UserPrincipal:
-    """Admit platform admins and system execution identities.
-
-    Human platform admins keep the query-parameter diagnostics path. Engine
-    and service tokens authenticate as the system-user sentinel but are not
-    superusers — the renewable service credential deliberately clears the
-    superuser bit — so a service child cold-loading its own module over the
-    worker socket must pass this gate too. ``_engine_module_scope`` then
-    validates the signed ``engine_execution_id`` claims and derives the
-    authoritative source scope; ordinary users are rejected outright.
-    """
-    if user.is_superuser or user.user_id == SYSTEM_USER_UUID:
-        return user
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Superuser privileges required",
-    )
-
-
-def _engine_module_scope(
-    request: Request,
-    user: UserPrincipal,
-) -> ModuleSourceScope | None:
-    """Read authoritative source scope from a system execution token.
-
-    Human platform admins retain explicit query scope for diagnostics. The
-    system execution identity must carry signed per-execution scope claims;
-    query parameters are never authoritative for it.
-    """
-    if user.user_id != SYSTEM_USER_UUID:
-        return None
-
-    authorization = request.headers.get("authorization", "")
-    if not authorization.lower().startswith("bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Execution-scoped engine token required",
-        )
-    payload = decode_token(authorization[7:], expected_type="access")
-    if payload is None or not payload.get("engine_execution_id"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Execution-scoped engine token required",
-        )
-
-    solution_id = payload.get("engine_solution_id")
-    if solution_id is not None:
-        try:
-            validate_solution_id(solution_id)
-        except ModuleSourceError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail=exc.detail,
-            ) from exc
-    return ModuleSourceScope(
-        solution_id=solution_id,
-        global_repo_access=bool(payload.get("engine_global_repo_access", False)),
-    )
 
 
 @router.get("/modules/{path:path}")
 async def fetch_module(
     path: str,
-    request: Request,
-    user: Annotated[UserPrincipal, Depends(_module_source_caller)],
+    user: CurrentActiveUser,
+    db: DbSession,
 ) -> JSONResponse:
     """
     Fetch a workspace module by path.
@@ -122,9 +55,12 @@ async def fetch_module(
     """
     # Validate path — reject any attempt to escape the workspace prefix
     # (Redis key is always "bifrost:module:<path>"; the S3 key is "_repo/<path>")
-    engine_scope = _engine_module_scope(request, user)
     try:
-        module = await fetch_module_source(path, scope=engine_scope)
+        from src.services.solutions.storage import SOLUTIONS_ROOT
+
+        solution_id = path.split("/", 2)[1] if path.startswith(f"{SOLUTIONS_ROOT}/") else None
+        scope = await module_scope_for_principal(db, user, solution_id=solution_id)
+        module = await fetch_module_source(path, scope=scope)
     except ModuleSourceError as exc:
         raise HTTPException(
             status_code=exc.status_code,
@@ -136,8 +72,8 @@ async def fetch_module(
 
 @router.get("/modules-resolve")
 async def resolve_module(
-    request: Request,
-    user: Annotated[UserPrincipal, Depends(_module_source_caller)],
+    user: CurrentActiveUser,
+    db: DbSession,
     name: str,
     solution_id: str | None = None,
     global_repo_access: bool = False,
@@ -156,23 +92,10 @@ async def resolve_module(
     uses a bounded prefix existence check instead of listing the whole module
     index.
     """
-    engine_scope = _engine_module_scope(request, user)
-    if engine_scope is not None:
-        scope = engine_scope
-    else:
-        try:
-            validate_solution_id(solution_id)
-        except ModuleSourceError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail=exc.detail,
-            ) from exc
-        scope = ModuleSourceScope(
-            solution_id=solution_id,
-            global_repo_access=global_repo_access,
-        )
-
     try:
+        scope = await module_scope_for_principal(
+            db, user, solution_id=solution_id, global_repo_access=global_repo_access,
+        )
         result = await resolve_module_name(name, scope=scope)
     except ModuleSourceError as exc:
         raise HTTPException(
@@ -185,9 +108,14 @@ async def resolve_module(
 
 @router.get("/requirements")
 async def fetch_requirements(
-    _user: Annotated[object, Depends(get_current_superuser)],
+    user: CurrentActiveUser,
+    db: DbSession,
 ) -> JSONResponse:
     """Return the existing requirements.txt HTTP contract for external callers."""
+    from src.services.authorization.enforce import authorize_operation
+    from src.services.authorization.evaluator import GLOBAL
+
+    await authorize_operation(db, user, "GET /api/sdk/requirements", GLOBAL)
     cached = await get_requirements()
     if cached is None:
         raise HTTPException(

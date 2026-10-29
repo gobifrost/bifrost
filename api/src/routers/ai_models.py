@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response, status
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.ai_models import (
     AIConnectionTestResponse,
@@ -31,21 +31,55 @@ from src.models.contracts.llm import LLMModelInfo
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.ai_models import AIModelAssignment, AIModelProfile, AIProviderConnection
 from src.services.ai_model_service import AIModelService, ProviderConnectionTestConfig
-from src.services.ai_behavior_service import AIBehaviorService
+from src.services.ai_behavior_service import AIBehaviorService, UNSET
 from src.services.model_catalog import catalog_summary, get_model_catalog
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
+
+AI_BEHAVIOR_GET_OPERATION = "GET /api/admin/ai/behavior"
+AI_BEHAVIOR_UPDATE_OPERATION = "PUT /api/admin/ai/behavior"
+AI_CONNECTIONS_LIST_OPERATION = "GET /api/admin/ai/connections"
+AI_CONNECTIONS_CREATE_OPERATION = "POST /api/admin/ai/connections"
+AI_CONNECTIONS_VERIFY_OPERATION = "POST /api/admin/ai/connections/verify"
+AI_CONNECTION_UPDATE_OPERATION = "PATCH /api/admin/ai/connections/{connection_id}"
+AI_CONNECTION_DELETE_OPERATION = "DELETE /api/admin/ai/connections/{connection_id}"
+AI_CONNECTION_TEST_OPERATION = "POST /api/admin/ai/connections/{connection_id}/test"
+AI_CONNECTION_MODELS_OPERATION = "GET /api/admin/ai/connections/{connection_id}/models"
+AI_CATALOG_GET_OPERATION = "GET /api/admin/ai/catalog"
+AI_CATALOG_REFRESH_OPERATION = "POST /api/admin/ai/catalog/refresh"
+AI_PROFILES_LIST_OPERATION = "GET /api/admin/ai/profiles"
+AI_PROFILES_CREATE_OPERATION = "POST /api/admin/ai/profiles"
+AI_PROFILES_MERGE_OPERATION = "POST /api/admin/ai/profiles/merge"
+AI_PROFILE_UPDATE_OPERATION = "PATCH /api/admin/ai/profiles/{profile_id}"
+AI_PROFILE_VERIFY_OPERATION = "POST /api/admin/ai/profiles/{profile_id}/verify"
+AI_PROFILE_DELETE_OPERATION = "DELETE /api/admin/ai/profiles/{profile_id}"
+AI_ASSIGNMENTS_LIST_OPERATION = "GET /api/admin/ai/assignments"
+AI_ASSIGNMENT_SET_OPERATION = "PUT /api/admin/ai/assignments/{assignment_key}"
+AI_ASSIGNMENT_DELETE_OPERATION = "DELETE /api/admin/ai/assignments/{assignment_key}"
+
+
+async def _authorize_platform_setting(
+    db: DbSession,
+    user: CurrentActiveUser,
+    operation: str,
+) -> None:
+    await authorize_operation(db, user, operation, GLOBAL)
+
 
 router = APIRouter(
     prefix="/api/admin/ai",
     tags=["AI Model Settings"],
-    dependencies=[RequirePlatformAdmin],
 )
 
 
 @router.get("/behavior")
 async def get_ai_behavior(db: DbSession, user: CurrentActiveUser) -> AIBehaviorResponse:
+    await _authorize_platform_setting(db, user, AI_BEHAVIOR_GET_OPERATION)
     del user
+    behavior = AIBehaviorService(db)
     return AIBehaviorResponse(
-        default_system_prompt=await AIBehaviorService(db).get_default_system_prompt()
+        default_system_prompt=await behavior.get_default_system_prompt(),
+        agent_execution_mode=await behavior.get_agent_execution_mode(),
     )
 
 
@@ -55,12 +89,22 @@ async def update_ai_behavior(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIBehaviorResponse:
-    prompt = await AIBehaviorService(db).set_default_system_prompt(
-        request.default_system_prompt,
+    await _authorize_platform_setting(db, user, AI_BEHAVIOR_UPDATE_OPERATION)
+    updated = await AIBehaviorService(db).update_behavior(
+        default_system_prompt=(
+            request.default_system_prompt
+            if "default_system_prompt" in request.model_fields_set
+            else UNSET
+        ),
+        agent_execution_mode=(
+            request.agent_execution_mode
+            if "agent_execution_mode" in request.model_fields_set
+            else UNSET
+        ),
         updated_by=user.email,
     )
     await db.commit()
-    return AIBehaviorResponse(default_system_prompt=prompt)
+    return AIBehaviorResponse(**updated)
 
 
 def _raise_service_error(error: Exception) -> NoReturn:
@@ -70,6 +114,7 @@ def _raise_service_error(error: Exception) -> NoReturn:
 
 
 def _connection_response(connection: AIProviderConnection) -> AIProviderConnectionResponse:
+    assert connection.profile_count is not None, "Connection management queries must load profile counts"
     return AIProviderConnectionResponse(
         id=connection.id,
         name=connection.name,
@@ -77,7 +122,7 @@ def _connection_response(connection: AIProviderConnection) -> AIProviderConnecti
         endpoint=connection.endpoint,
         catalog_provider_id=connection.catalog_provider_id,
         api_key_set=bool(connection.encrypted_api_key),
-        profile_count=len(connection.profiles),
+        profile_count=connection.profile_count,
         anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
         created_at=connection.created_at,
         updated_at=connection.updated_at,
@@ -96,6 +141,7 @@ def _connection_summary(connection: AIProviderConnection) -> AIProviderConnectio
 
 
 def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
+    assert profile.referenced_agent_count is not None, "Profile management queries must load agent counts"
     capabilities = ModelCapabilities.model_validate(profile.capabilities) if profile.capabilities else None
     return AIModelProfileResponse(
         id=profile.id,
@@ -112,7 +158,7 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         ),
         connection=_connection_summary(profile.connection),
         assignment_keys=[assignment.assignment_key for assignment in profile.assignments],
-        referenced_agent_count=len(profile.agents),
+        referenced_agent_count=profile.referenced_agent_count,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
@@ -130,6 +176,7 @@ def _assignment_response(assignment: AIModelAssignment) -> AIModelAssignmentResp
 
 @router.get("/connections")
 async def list_provider_connections(db: DbSession, user: CurrentActiveUser) -> list[AIProviderConnectionResponse]:
+    await _authorize_platform_setting(db, user, AI_CONNECTIONS_LIST_OPERATION)
     del user
     return [_connection_response(connection) for connection in await AIModelService(db).list_connections()]
 
@@ -140,6 +187,7 @@ async def create_provider_connection(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIProviderConnectionResponse:
+    await _authorize_platform_setting(db, user, AI_CONNECTIONS_CREATE_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -163,6 +211,7 @@ async def verify_provider_connection(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIConnectionTestResponse:
+    await _authorize_platform_setting(db, user, AI_CONNECTIONS_VERIFY_OPERATION)
     del user
     try:
         result = await AIModelService(db).test_connection_config(
@@ -197,6 +246,7 @@ async def update_provider_connection(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIProviderConnectionResponse:
+    await _authorize_platform_setting(db, user, AI_CONNECTION_UPDATE_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -219,6 +269,7 @@ async def update_provider_connection(
 
 @router.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_provider_connection(connection_id: UUID, db: DbSession, user: CurrentActiveUser) -> None:
+    await _authorize_platform_setting(db, user, AI_CONNECTION_DELETE_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -231,6 +282,7 @@ async def delete_provider_connection(connection_id: UUID, db: DbSession, user: C
 
 @router.post("/connections/{connection_id}/test")
 async def test_provider_connection(connection_id: UUID, db: DbSession, user: CurrentActiveUser) -> AIConnectionTestResponse:
+    await _authorize_platform_setting(db, user, AI_CONNECTION_TEST_OPERATION)
     del user
     try:
         result = await AIModelService(db).test_connection(connection_id)
@@ -246,6 +298,7 @@ async def test_provider_connection(connection_id: UUID, db: DbSession, user: Cur
 
 @router.get("/connections/{connection_id}/models")
 async def list_provider_models(connection_id: UUID, db: DbSession, user: CurrentActiveUser) -> AIModelsResponse:
+    await _authorize_platform_setting(db, user, AI_CONNECTION_MODELS_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -265,6 +318,7 @@ async def list_provider_models(connection_id: UUID, db: DbSession, user: Current
 @router.get("/catalog")
 async def get_catalog(db: DbSession, user: CurrentActiveUser) -> ModelCatalogResponse:
     """Providers Bifrost can connect to, from the cached models.dev catalog."""
+    await _authorize_platform_setting(db, user, AI_CATALOG_GET_OPERATION)
     del user
     return catalog_summary(await get_model_catalog(db))
 
@@ -278,6 +332,7 @@ async def refresh_catalog(
     response: Response, db: DbSession, user: CurrentActiveUser
 ) -> PlatformJobAccepted:
     """Refresh the model catalog now instead of waiting for the schedule."""
+    await _authorize_platform_setting(db, user, AI_CATALOG_REFRESH_OPERATION)
     from src.jobs.platform.system_maintenance import enqueue_manual_model_catalog_refresh
 
     job, reused = await enqueue_manual_model_catalog_refresh(db, user)
@@ -292,6 +347,7 @@ async def refresh_catalog(
 
 @router.get("/profiles")
 async def list_model_profiles(db: DbSession, user: CurrentActiveUser) -> list[AIModelProfileResponse]:
+    await _authorize_platform_setting(db, user, AI_PROFILES_LIST_OPERATION)
     del user
     return [_profile_response(profile) for profile in await AIModelService(db).list_profiles()]
 
@@ -302,6 +358,7 @@ async def create_model_profile(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIModelProfileResponse:
+    await _authorize_platform_setting(db, user, AI_PROFILES_CREATE_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -328,6 +385,7 @@ async def merge_model_profiles(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIModelProfileMergeResponse:
+    await _authorize_platform_setting(db, user, AI_PROFILES_MERGE_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -355,6 +413,7 @@ async def update_model_profile(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIModelProfileResponse:
+    await _authorize_platform_setting(db, user, AI_PROFILE_UPDATE_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -384,6 +443,7 @@ async def update_model_profile(
 async def verify_model_profile(
     profile_id: UUID, db: DbSession, user: CurrentActiveUser
 ) -> AIModelProfileVerifyResponse:
+    await _authorize_platform_setting(db, user, AI_PROFILE_VERIFY_OPERATION)
     del user
     try:
         result = await AIModelService(db).verify_profile(profile_id)
@@ -394,6 +454,7 @@ async def verify_model_profile(
 
 @router.delete("/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_model_profile(profile_id: UUID, db: DbSession, user: CurrentActiveUser) -> None:
+    await _authorize_platform_setting(db, user, AI_PROFILE_DELETE_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -406,6 +467,7 @@ async def delete_model_profile(profile_id: UUID, db: DbSession, user: CurrentAct
 
 @router.get("/assignments")
 async def list_model_assignments(db: DbSession, user: CurrentActiveUser) -> list[AIModelAssignmentResponse]:
+    await _authorize_platform_setting(db, user, AI_ASSIGNMENTS_LIST_OPERATION)
     del user
     return [_assignment_response(assignment) for assignment in await AIModelService(db).list_assignments()]
 
@@ -417,6 +479,7 @@ async def set_model_assignment(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> AIModelAssignmentResponse:
+    await _authorize_platform_setting(db, user, AI_ASSIGNMENT_SET_OPERATION)
     del user
     service = AIModelService(db)
     try:
@@ -433,6 +496,7 @@ async def set_model_assignment(
 
 @router.delete("/assignments/{assignment_key}", status_code=status.HTTP_204_NO_CONTENT)
 async def clear_model_assignment(assignment_key: AIModelAssignmentKey, db: DbSession, user: CurrentActiveUser) -> None:
+    await _authorize_platform_setting(db, user, AI_ASSIGNMENT_DELETE_OPERATION)
     del user
     try:
         deleted = await AIModelService(db).clear_assignment(assignment_key)

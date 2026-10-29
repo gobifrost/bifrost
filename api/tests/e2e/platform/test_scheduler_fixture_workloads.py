@@ -11,12 +11,14 @@ import pytest
 def test_scheduler_fixture_suite_executes_real_work_through_central_runner():
     completed = subprocess.run(
         [sys.executable, "-m", "src.dev.scheduler_fixtures"],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         timeout=90,
     )
+    assert completed.returncode == 0, completed.stderr
     result = json.loads(completed.stdout)
+    print("SCHEDULER_FIXTURE_LIVE_EVIDENCE " + json.dumps(result, sort_keys=True))
 
     assert result["checks"] == {
         "oauth_refreshed": True,

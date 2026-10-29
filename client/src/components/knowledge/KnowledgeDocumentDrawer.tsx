@@ -52,6 +52,8 @@ import {
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { toast } from "sonner";
 import { authFetch } from "@/lib/api-client";
 
@@ -217,13 +219,14 @@ function KnowledgeDocumentSession({
 }: KnowledgeDocumentDrawerProps) {
 	const returnFocus = useDialogReturnFocus(returnFocusRef, true);
 	const editorId = useId();
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 	const [document, setDocument] = useState<DocumentFull | null>(null);
 	const [content, setContent] = useState("");
 	const [key, setKey] = useState("");
 	const [createNamespace, setCreateNamespace] = useState("");
 	const [scopeOrgId, setScopeOrgId] = useState<string | null | undefined>(
-		isPlatformAdmin ? null : (user?.organizationId ?? null),
+		user?.organizationId ?? null,
 	);
 	const saveBusy = useRef(false);
 	const saveErrorRef = useRef<HTMLDivElement>(null);
@@ -234,6 +237,32 @@ function KnowledgeDocumentSession({
 	const [loadError, setLoadError] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const loadController = useRef<AbortController | null>(null);
+	const currentOrganizationId = document?.organization_id ?? scopeOrgId;
+	const canManageCurrentScope = authorization.canAt(
+		"knowledge.readwrite",
+		orgTarget(currentOrganizationId),
+	);
+	const canManageSelectedScope = authorization.canAt(
+		"knowledge.readwrite",
+		orgTarget(scopeOrgId),
+	);
+	const canChooseScope = authorization.canAnywhere("knowledge.readwrite");
+	const canSave = isCreating
+		? canManageSelectedScope
+		: canManageCurrentScope && canManageSelectedScope;
+	const knownOrganizations = [
+		...(user?.organizationId
+			? [{ id: user.organizationId, name: "Your organization" }]
+			: []),
+		...(document?.organization_id
+			? [
+					{
+						id: document.organization_id,
+						name: "Document organization",
+					},
+				]
+			: []),
+	];
 
 	useEffect(() => {
 		if (saveError) {
@@ -279,7 +308,7 @@ function KnowledgeDocumentSession({
 	}, [loadDocument]);
 
 	const handleSave = async (forceReplace = false) => {
-		if (saveBusy.current || isLoading || loadError) return;
+		if (saveBusy.current || isLoading || loadError || !canSave) return;
 		setSaveError(null);
 		if (!content.trim()) {
 			setSaveError("Content is required");
@@ -431,11 +460,10 @@ function KnowledgeDocumentSession({
 					className={`flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6 ${embedded ? "lg:flex lg:flex-col" : ""}`}
 				>
 					<fieldset
-						disabled={isSaving}
+						disabled={isSaving || !canSave}
 						className={`flex min-w-0 flex-col gap-4 ${embedded ? "lg:min-h-0 lg:flex-1" : ""}`}
 					>
-						{/* Scope selector - shown at top for platform admins */}
-						{isPlatformAdmin && (
+						{canChooseScope && (
 							<div className="space-y-2">
 								<Label htmlFor="knowledge-scope">
 									Organization
@@ -446,6 +474,10 @@ function KnowledgeDocumentSession({
 									value={scopeOrgId}
 									onChange={setScopeOrgId}
 									showGlobal={true}
+									knownOrganizations={knownOrganizations}
+									loadOrganizations={authorization.canAnywhere(
+										"organizations.read",
+									)}
 								/>
 							</div>
 						)}
@@ -488,7 +520,7 @@ function KnowledgeDocumentSession({
 						>
 							<TiptapEditor
 								ariaLabel="Document content"
-								readOnly={isSaving}
+								readOnly={isSaving || !canSave}
 								content={content}
 								onChange={setContent}
 								className="h-full border-0 rounded-none"
@@ -528,7 +560,7 @@ function KnowledgeDocumentSession({
 				<Button
 					className="min-h-11"
 					onClick={() => void handleSave(false)}
-					disabled={isSaving || isLoading || loadError}
+					disabled={isSaving || isLoading || loadError || !canSave}
 				>
 					{isSaving ? (
 						<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
@@ -614,7 +646,7 @@ function KnowledgeDocumentSession({
 					)}
 					<AlertDialogFooter>
 						<AlertDialogCancel
-							disabled={isSaving}
+							disabled={isSaving || !canSave}
 							className="min-h-11"
 						>
 							Cancel

@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.policies.compile import compile_to_sql
 from shared.policies.evaluate import evaluate
 from src.models.contracts.policies import Expr
@@ -21,7 +22,7 @@ CASES = [
     ({"eq": [{"row": "x"}, "v"]}, {"x": "v"}, {}, True),
     ({"eq": [{"row": "x"}, "v"]}, {"x": "z"}, {}, False),
     # User references
-    ({"user": "is_platform_admin"}, {}, {"is_platform_admin": True}, True),
+    ({"user": "is_platform_admin"}, {}, {"role_ids": [PLATFORM_ADMIN_ROLE_ID]}, True),
     ({"user": "is_platform_admin"}, {}, {"is_platform_admin": False}, False),
     # Logic
     ({"and": [{"eq": [1, 1]}, {"eq": [2, 2]}]}, {}, {}, True),

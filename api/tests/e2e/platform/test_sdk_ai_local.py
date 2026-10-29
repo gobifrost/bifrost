@@ -4,10 +4,8 @@ Exercises the full path — workflow code in a forked worker child calling
 the fixed ``bifrost.ai`` operations — proving parity with the external
 HTTP API without reaching a real provider (no paid external API):
 
-- the workflow records that the engine injected the worker's private
-  socket, so the migrated operations rode the shared client transport
-  rather than the network API (the zero-HTTP proof lives in the unit and
-  forked-child socket tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated operations use scoped shared API HTTP;
 - ``ai.complete`` with file inputs but no user message fails before any
   provider call on both transports (503 ``SdkAIError`` detail), and the
   local ``RuntimeError`` text matches the external HTTP detail exactly;
@@ -110,10 +108,8 @@ class TestSdkAILocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
 
         # The file-inputs/user-message rule fails before any provider
         # call: the local RuntimeError text must match the HTTP detail.

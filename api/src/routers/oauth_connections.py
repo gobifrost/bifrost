@@ -26,7 +26,7 @@ from src.models import (
     OAuthCallbackResponse,
     OAuthStatus,
 )
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.log_safety import log_safe
 from src.models import OAuthProvider, OAuthToken
 from src.models.orm.integrations import IntegrationMapping
@@ -47,6 +47,8 @@ from src.services.oauth_provider import (
 )
 from src.repositories.oauth import OAuthProviderRepository
 from src.services.oauth_state import consume_nonce, decode_state, OAuthStateError
+from src.services.authorization.enforce import Caller, load_caller, require_permission, user_reach
+from shared.scope_resolver import UNSET, resolve_effective_scope
 
 # Import cache invalidation
 try:
@@ -60,6 +62,54 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/oauth", tags=["OAuth Connections"])
+
+
+def _not_found(connection_name: str) -> HTTPException:
+    """Keep unreachable OAuth connections indistinguishable from missing ones."""
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"OAuth connection '{connection_name}' not found",
+    )
+
+
+async def _connection_for_caller(
+    ctx: Context,
+    user: CurrentActiveUser,
+    connection_name: str,
+    permission: str,
+) -> tuple[Caller, OAuthProvider, OAuthProviderRepository]:
+    """Resolve a connection through normal cascade, then authorize its row target.
+
+    ``OAuthProviderRepository`` deliberately supports UUID connection names.  That
+    lookup is globally unique, so authorization must use the resolved provider's
+    persisted organization instead of the selected lookup scope.
+    """
+    caller = await load_caller(ctx.db, user)
+    selected_org = resolve_effective_scope(caller=caller, requested_scope=UNSET)
+    lookup_repo = OAuthProviderRepository(ctx.db, org_id=selected_org, is_superuser=False)
+    provider = await lookup_repo.get_by_connection_name(connection_name)
+    if provider is None or not user_reach(caller).covers(provider.organization_id):
+        raise _not_found(connection_name)
+    require_permission(caller, permission, provider.organization_id)
+    return (
+        caller,
+        provider,
+        OAuthProviderRepository(
+            ctx.db, org_id=provider.organization_id, is_superuser=False
+        ),
+    )
+
+
+async def _set_provider_status(
+    db: AsyncSession,
+    provider: OAuthProvider,
+    status_value: str,
+    status_message: str | None = None,
+) -> None:
+    provider.status = status_value
+    provider.status_message = status_message
+    provider.updated_at = datetime.now(timezone.utc)
+    await db.flush()
 
 
 # =============================================================================
@@ -121,19 +171,12 @@ class RefreshJobStatusResponse(BaseModel):
 async def get_connection(
     connection_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> OAuthConnectionDetail:
     """Get a specific OAuth connection."""
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
-    provider = await repo.get_by_connection_name(connection_name)
-
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
-
+    _, provider, repo = await _connection_for_caller(
+        ctx, user, connection_name, "integrations.read"
+    )
     return await repo.to_detail(provider)
 
 
@@ -147,14 +190,18 @@ async def get_connection(
 async def create_connection(
     request: CreateOAuthConnectionRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> OAuthConnectionDetail:
     """Create a new OAuth connection."""
     from uuid import UUID
     from src.models.orm.integrations import Integration
 
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
+    caller = await load_caller(ctx.db, user)
+    # OAuth connections are deliberately Global.  The request carries no
+    # organization selector, so creation is decided at that persisted target.
+    require_permission(caller, "integrations.readwrite", None)
+    org_id = None
+    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=False)
 
     # Look up integration by ID to verify it exists
     integration_id = UUID(request.integration_id)
@@ -226,25 +273,38 @@ async def update_connection(
     connection_name: str,
     request: UpdateOAuthConnectionRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> OAuthConnectionDetail:
     """Update an OAuth connection."""
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
-
-    provider = await repo.update_connection(connection_name, name=request.name, oauth_flow_type=request.oauth_flow_type, client_id=request.client_id, client_secret=request.client_secret, authorization_url=request.authorization_url, token_url=request.token_url, scopes=request.scopes, audience=request.audience)
-
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
+    _, provider, repo = await _connection_for_caller(
+        ctx, user, connection_name, "integrations.readwrite"
+    )
+    if request.name is not None:
+        provider.display_name = request.name
+    if request.oauth_flow_type is not None:
+        provider.oauth_flow_type = request.oauth_flow_type
+    if request.client_id is not None:
+        provider.client_id = request.client_id
+    if request.client_secret is not None:
+        from src.core.security import encrypt_secret
+        provider.encrypted_client_secret = encrypt_secret(request.client_secret).encode()
+    if request.authorization_url is not None:
+        provider.authorization_url = request.authorization_url
+    if request.token_url is not None:
+        provider.token_url = request.token_url
+    if request.scopes is not None:
+        provider.scopes = request.scopes
+    if request.audience is not None:
+        provider.audience = request.audience
+    provider.updated_at = datetime.now(timezone.utc)
+    await ctx.db.flush()
+    await ctx.db.refresh(provider)
 
     logger.info(f"Updated OAuth connection: {log_safe(connection_name)}")
 
     # Invalidate cache
     if CACHE_INVALIDATION_AVAILABLE and invalidate_oauth:
-        org_id_str = str(org_id) if org_id else None
+        org_id_str = str(provider.organization_id) if provider.organization_id else None
         await invalidate_oauth(org_id_str, connection_name)
 
     return await repo.to_detail(provider)
@@ -259,25 +319,25 @@ async def update_connection(
 async def delete_connection(
     connection_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> None:
     """Delete an OAuth connection."""
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
-
-    deleted = await repo.delete_connection(connection_name)
-
-    if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
+    _, provider, _ = await _connection_for_caller(
+        ctx, user, connection_name, "integrations.readwrite"
+    )
+    token_result = await ctx.db.execute(
+        select(OAuthToken).where(OAuthToken.provider_id == provider.id)
+    )
+    for token in token_result.scalars():
+        await ctx.db.delete(token)
+    await ctx.db.delete(provider)
+    await ctx.db.flush()
 
     logger.info(f"Deleted OAuth connection: {log_safe(connection_name)}")
 
     # Invalidate cache
     if CACHE_INVALIDATION_AVAILABLE and invalidate_oauth:
-        org_id_str = str(org_id) if org_id else None
+        org_id_str = str(provider.organization_id) if provider.organization_id else None
         await invalidate_oauth(org_id_str, connection_name)
 
 
@@ -290,20 +350,13 @@ async def delete_connection(
 async def authorize_connection(
     connection_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     redirect_uri: str = Query(..., description="Frontend callback URL for OAuth redirect"),
 ) -> AuthorizeResponse:
     """Initiate OAuth authorization flow."""
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
-
-    provider = await repo.get_by_connection_name(connection_name)
-
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
+    _, provider, _ = await _connection_for_caller(
+        ctx, user, connection_name, "integrations.readwrite"
+    )
 
     if not provider.authorization_url:
         raise HTTPException(
@@ -335,10 +388,11 @@ async def authorize_connection(
     authorization_url = append_query_params(resolved_authorization_url, params)
 
     # Update status to waiting
-    await repo.update_status(
-        connection_name=connection_name,
-        status="waiting_callback",
-        status_message="Waiting for user to complete authorization",
+    await _set_provider_status(
+        ctx.db,
+        provider,
+        "waiting_callback",
+        "Waiting for user to complete authorization",
     )
 
     return AuthorizeResponse(
@@ -357,24 +411,17 @@ async def authorize_connection(
 async def cancel_authorization(
     connection_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> OAuthConnectionDetail:
     """Cancel OAuth authorization and reset status."""
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
-
-    provider = await repo.get_by_connection_name(connection_name)
-
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
-
-    await repo.update_status(
-        connection_name=connection_name,
-        status="not_connected",
-        status_message="Authorization cancelled",
+    _, provider, repo = await _connection_for_caller(
+        ctx, user, connection_name, "integrations.readwrite"
+    )
+    await _set_provider_status(
+        ctx.db,
+        provider,
+        "not_connected",
+        "Authorization cancelled",
     )
 
     # Refresh provider to get updated data
@@ -391,7 +438,7 @@ async def cancel_authorization(
 async def refresh_token(
     connection_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> RefreshTokenResponse:
     """Refresh OAuth token.
 
@@ -403,16 +450,12 @@ async def refresh_token(
     only owns the provider lookup, context build, persistence, and cache
     invalidation.
     """
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
-
-    provider = await repo.get_by_connection_name(connection_name)
-
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
+    caller, provider, _ = await _connection_for_caller(
+        ctx, user, connection_name, "integrations.readwrite"
+    )
+    # Token refresh decrypts a client or refresh secret.  This comes before
+    # token lookup, template expansion, and provider I/O.
+    require_permission(caller, "secrets.read", provider.organization_id)
 
     if not provider.token_url:
         raise HTTPException(
@@ -428,7 +471,7 @@ async def refresh_token(
     # path in cli.py. See api/src/repositories/README.md and the
     # project_oauth_global_token_restamp note.
     token_repo = OAuthProviderRepository(
-        ctx.db, org_id=provider.organization_id, is_superuser=True
+        ctx.db, org_id=provider.organization_id, is_superuser=False
     )
 
     # For authorization_code flows we need the stored token up front.
@@ -592,14 +635,11 @@ async def oauth_callback(
     connection_name: str,
     request: OAuthCallbackRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> OAuthCallbackResponse:
     """Handle OAuth callback and exchange authorization code for tokens."""
     from src.core.security import decrypt_secret
     from src.services.oauth_provider import OAuthProviderClient
-
-    # Use org_id from request body for org-specific token storage (None for global)
-    org_id = UUID(request.organization_id) if request.organization_id else None
 
     # Per-mapping flows carry mapping_id in a signed state token. If present,
     # the resulting OAuthToken must be scoped to the MAPPING'S org — otherwise
@@ -608,6 +648,7 @@ async def oauth_callback(
     # pointing at the same shared token row.
     mapping_id_from_state: UUID | None = None
     nonce_from_state: str | None = None
+    mapping_row: IntegrationMapping | None = None
     if request.state:
         try:
             payload = decode_state(request.state)
@@ -615,24 +656,47 @@ async def oauth_callback(
             mid = payload.get("mapping_id")
             if mid:
                 mapping_id_from_state = UUID(mid)
-                # Look up the mapping now so we can use its org for token storage.
-                from src.models.orm import IntegrationMapping as _IM
-                mapping_row = await ctx.db.get(_IM, mapping_id_from_state)
-                if mapping_row and mapping_row.organization_id:
-                    org_id = mapping_row.organization_id
+                mapping_row = await ctx.db.get(IntegrationMapping, mapping_id_from_state)
+                if mapping_row is None:
+                    raise _not_found(connection_name)
         except (OAuthStateError, ValueError) as e:
             # Legacy integration-level flows use secrets.token_urlsafe() as state —
             # decoding is expected to fail. Fall through to global-token storage.
             logger.warning(f"OAuth state decode failed (treating as legacy flow): {e}")
 
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
+    caller = await load_caller(ctx.db, user)
+    if mapping_row is not None:
+        # A signed state binds a token to this exact mapping.  It never gains
+        # authority from the request body or the acting identity.
+        if not user_reach(caller).covers(mapping_row.organization_id):
+            raise _not_found(connection_name)
+        require_permission(caller, "integrations.readwrite", mapping_row.organization_id)
+        require_permission(caller, "secrets.read", mapping_row.organization_id)
+        token_org_id = mapping_row.organization_id
+        lookup_org_id = mapping_row.organization_id
+    else:
+        lookup_org_id = resolve_effective_scope(caller=caller, requested_scope=UNSET)
+        token_org_id = None
+
+    repo = OAuthProviderRepository(ctx.db, org_id=lookup_org_id, is_superuser=False)
     provider = await repo.get_by_connection_name(connection_name)
 
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
+    if provider is None or not user_reach(caller).covers(provider.organization_id):
+        raise _not_found(connection_name)
+    require_permission(caller, "integrations.readwrite", provider.organization_id)
+    require_permission(caller, "secrets.read", provider.organization_id)
+    if mapping_row is not None and mapping_row.integration_id != provider.integration_id:
+        raise _not_found(connection_name)
+    if token_org_id is None:
+        # Legacy state has no mapping binding.  Persist only at the provider's
+        # stored target; request.organization_id is not an authority or token
+        # scope selector.
+        token_org_id = provider.organization_id
+    if not user_reach(caller).covers(token_org_id):
+        raise _not_found(connection_name)
+    require_permission(caller, "integrations.readwrite", token_org_id)
+    require_permission(caller, "secrets.read", token_org_id)
+    token_repo = OAuthProviderRepository(ctx.db, org_id=token_org_id, is_superuser=False)
 
     if not provider.token_url:
         raise HTTPException(
@@ -677,11 +741,7 @@ async def oauth_callback(
 
     if not success:
         error_msg = result.get("error_description", result.get("error", "Token exchange failed"))
-        await repo.update_status(
-            connection_name=connection_name,
-            status="failed",
-            status_message=error_msg,
-        )
+        await _set_provider_status(ctx.db, provider, "failed", error_msg)
         return OAuthCallbackResponse(
             success=False,
             message="Token exchange failed",
@@ -699,11 +759,7 @@ async def oauth_callback(
     scopes = scope.split() if scope else list(provider.scopes or [])
 
     if not access_token:
-        await repo.update_status(
-            connection_name=connection_name,
-            status="failed",
-            status_message="No access token in response",
-        )
+        await _set_provider_status(ctx.db, provider, "failed", "No access token in response")
         return OAuthCallbackResponse(
             success=False,
             message="Token exchange failed - no access token received",
@@ -718,7 +774,7 @@ async def oauth_callback(
         expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
     # Store tokens
-    await repo.store_token(
+    await token_repo.store_token(
         connection_name=connection_name,
         access_token=access_token,
         refresh_token=refresh_token,
@@ -735,7 +791,7 @@ async def oauth_callback(
             await emit_integration_connected(
                 integration_id=provider.integration_id,
                 integration_name=provider.display_name or provider.provider_name,
-                organization_id=org_id,
+                organization_id=token_org_id,
                 connection_id=provider.id,
                 external_account_id=None,
                 external_account_name=provider.display_name,
@@ -757,7 +813,7 @@ async def oauth_callback(
                 "OAuth state nonce already consumed — possible replay, skipping mapping link"
             )
         else:
-            stored = await repo.get_token(connection_name)
+            stored = await token_repo.get_token(connection_name)
             if stored:
                 captured_value = await _apply_callback_to_mapping(
                     db=ctx.db,
@@ -770,7 +826,9 @@ async def oauth_callback(
 
     # Invalidate cache (token was stored)
     if CACHE_INVALIDATION_AVAILABLE and invalidate_oauth_token:
-        await invalidate_oauth_token(None, connection_name)  # org_id is None in callback
+        await invalidate_oauth_token(
+            str(token_org_id) if token_org_id else None, connection_name
+        )
 
     # Surface the picker when the admin needs to make (or correct) a choice:
     #   (a) entity_id_source is unset — first-time setup, any connect path
@@ -836,7 +894,7 @@ async def oauth_callback(
 async def get_credentials(
     connection_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> OAuthCredentialsResponse:
     """Get OAuth credential metadata; token values are masked.
 
@@ -845,16 +903,9 @@ async def get_credentials(
     from src.core.security import SECRET_PLACEHOLDER
     from src.models import OAuthCredentialsModel
 
-    org_id = ctx.org_id
-    repo = OAuthProviderRepository(ctx.db, org_id=org_id, is_superuser=True)
-
-    provider = await repo.get_by_connection_name(connection_name)
-
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"OAuth connection '{connection_name}' not found",
-        )
+    _, provider, repo = await _connection_for_caller(
+        ctx, user, connection_name, "integrations.read"
+    )
 
     token = await repo.get_token(connection_name)
 
@@ -900,9 +951,11 @@ async def get_credentials(
 )
 async def get_refresh_job_status(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> RefreshJobStatusResponse:
     """Get the latest durable OAuth refresh job."""
+    caller = await load_caller(ctx.db, user)
+    require_permission(caller, "platform.read", None)
     job = (
         await ctx.db.execute(
             select(PlatformJob)
@@ -946,9 +999,11 @@ async def get_refresh_job_status(
 )
 async def trigger_refresh_all(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> PlatformJobAccepted:
     """Queue a manual refresh of all OAuth tokens."""
+    caller = await load_caller(ctx.db, user)
+    require_permission(caller, "platform.readwrite", None)
 
     logger.info(f"User {ctx.user.email} manually triggering OAuth refresh job")
 

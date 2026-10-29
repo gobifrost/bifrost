@@ -5,11 +5,23 @@
  * "All Customer Organizations" placement preset, saves, and sees the
  * assignment listed; after a reload the assignment is still there. Platform
  * Admin is an additional role too: it is added with its one placement, Global
- * (no preset to choose), and removed again from the same screen. Secrets
+ * (no preset to choose), and removed again from the same screen. Roles are
+ * picked in the Additional Roles multi-select. Secrets
  * Reader is added the same way, at places the server fixes.
  */
 
+import type { Page } from "@playwright/test";
+
 import { test, expect } from "./fixtures/api-fixture";
+
+/** Picks a role in the Additional Roles multi-select, then closes it. */
+async function chooseRole(page: Page, name: RegExp) {
+	await page
+		.getByRole("combobox", { name: "Select additional roles..." })
+		.click();
+	await page.getByRole("listbox").getByRole("option", { name }).click();
+	await page.keyboard.press("Escape");
+}
 
 const SUFFIX = Math.random().toString(36).slice(2, 8);
 const USER_EMAIL = `role-assign-${SUFFIX}@e2e.gobifrost.dev`;
@@ -58,8 +70,7 @@ test.describe("Role Assignments", () => {
 		await expect(
 			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible();
-		await page.getByRole("button", { name: "Add Role" }).click();
-		await page.getByRole("option", { name: /Platform Operator/ }).click();
+		await chooseRole(page, /Platform Operator/);
 		await page
 			.getByRole("radiogroup", {
 				name: "Placement for Platform Operator",
@@ -96,8 +107,7 @@ test.describe("Role Assignments", () => {
 			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible({ timeout: 10000 });
 
-		await page.getByRole("button", { name: "Add Role" }).click();
-		await page.getByRole("option", { name: /^Platform Admin/ }).click();
+		await chooseRole(page, /^Platform Admin/);
 		await expect(adminPlaces().getByText("Global")).toBeVisible();
 		await expect(
 			page.getByRole("radiogroup", {
@@ -127,12 +137,11 @@ test.describe("Role Assignments", () => {
 			page.getByRole("heading", { name: "Additional Roles" }),
 		).toBeVisible({ timeout: 10000 });
 
-		await page.getByRole("button", { name: "Add Role" }).click();
-		await page.getByRole("option", { name: /Secrets Reader/ }).click();
+		await chooseRole(page, /Secrets Reader/);
 		await expect(page.getByText("Applies everywhere.")).toBeVisible();
 		await expect(
-			page.getByRole("button", {
-				name: "Add where Secrets Reader applies",
+			page.getByRole("combobox", {
+				name: "Select organizations for Secrets Reader...",
 			}),
 		).toHaveCount(0);
 		await expect(

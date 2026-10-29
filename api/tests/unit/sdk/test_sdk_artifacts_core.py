@@ -31,6 +31,8 @@ from shared.sdk_artifacts import (
     sdk_store_artifact,
 )
 from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.models.orm import Artifact
 from src.services.artifacts import ArtifactAccessError
 
@@ -51,7 +53,21 @@ def _user(**kwargs) -> UserPrincipal:
 
 def _caller(**kwargs) -> ArtifactCaller:
     db = MagicMock()
-    return ArtifactCaller(user=kwargs.get("user", _user()), db=db)
+    user = kwargs.get("user", _user())
+    original_user_id = kwargs.get("original_user_id", user.user_id)
+    return ArtifactCaller(
+        caller=Caller(
+            user,
+            AuthorizationContext(
+                user_id=original_user_id,
+                home_organization_id=user.organization_id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+            ),
+        ),
+        db=db,
+    )
 
 
 def _orm_artifact(**kwargs) -> Artifact:
@@ -72,7 +88,7 @@ def _orm_artifact(**kwargs) -> Artifact:
 async def test_store_rejects_unsupported_content_before_persisting() -> None:
     caller = _caller()
     service = MagicMock()
-    service.store = AsyncMock()
+    service.store_for_caller = AsyncMock()
     with (
         patch("src.services.artifacts.ArtifactService", return_value=service),
         pytest.raises(ValueError, match="unsupported artifact type"),
@@ -83,7 +99,7 @@ async def test_store_rejects_unsupported_content_before_persisting() -> None:
             content_type="application/octet-stream",
             content=b"data",
         )
-    service.store.assert_not_awaited()
+    service.store_for_caller.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -99,7 +115,7 @@ async def test_store_uses_actor_ownership_and_org_scope() -> None:
         logical_path="Workflow Notes.md",
     )
     service = MagicMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     with patch("src.services.artifacts.ArtifactService", return_value=service) as cls:
         ref = await sdk_store_artifact(
             caller,
@@ -109,15 +125,13 @@ async def test_store_uses_actor_ownership_and_org_scope() -> None:
             workspace_id=workspace_id,
         )
     cls.assert_called_once_with(caller.db)
-    service.store.assert_awaited_once_with(
+    service.store_for_caller.assert_awaited_once_with(
+        caller.caller,
         filename="Workflow Notes.md",
         content_type="text/markdown",
         content=b"# Ready",
-        created_by_user_id=user.user_id,
-        organization_id=user.organization_id,
         workspace_id=workspace_id,
         logical_path="Workflow Notes.md",
-        bypass=False,
     )
     assert ref.id == str(stored.id)
     assert ref.filename == "Workflow Notes.md"
@@ -125,13 +139,12 @@ async def test_store_uses_actor_ownership_and_org_scope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_store_engine_superuser_carries_no_org() -> None:
-    """The HTTP engine token is a global superuser; org stays None."""
+async def test_store_delegates_effects_actor_attribution_to_service() -> None:
     user = _user(is_superuser=True, organization_id=None)
     caller = _caller(user=user)
     stored = _orm_artifact(organization_id=None)
     service = MagicMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     with patch("src.services.artifacts.ArtifactService", return_value=service):
         await sdk_store_artifact(
             caller,
@@ -139,8 +152,7 @@ async def test_store_engine_superuser_carries_no_org() -> None:
             content_type="text/markdown",
             content=b"# Ready",
         )
-    assert service.store.await_args.kwargs["organization_id"] is None
-    assert service.store.await_args.kwargs["created_by_user_id"] == user.user_id
+    assert service.store_for_caller.await_args.args[0] is caller.caller
 
 
 @pytest.mark.asyncio
@@ -151,13 +163,12 @@ async def test_list_maps_latest_versions_with_caller_scope() -> None:
     first = _orm_artifact(filename="Notes.md", content_type="text/markdown")
     second = _orm_artifact(filename="Portrait.png", content_type="image/png")
     service = MagicMock()
-    service.list_workspace = AsyncMock(return_value=[first, second])
+    service.list_workspace_for_caller = AsyncMock(return_value=[first, second])
     with patch("src.services.artifacts.ArtifactService", return_value=service):
         refs = await sdk_list_artifacts(caller, workspace_id=workspace_id)
-    service.list_workspace.assert_awaited_once_with(
+    service.list_workspace_for_caller.assert_awaited_once_with(
         workspace_id,
-        user_id=user.user_id,
-        bypass=False,
+        caller=caller.caller,
     )
     assert [ref.filename for ref in refs] == ["Notes.md", "Portrait.png"]
     assert all(ref.type == "bifrost_artifact" for ref in refs)
@@ -171,7 +182,7 @@ async def test_read_returns_bytes_with_attachment_for_browser_active() -> None:
         content_type="text/html; charset=utf-8",
     )
     service = MagicMock()
-    service.get_authorized = AsyncMock(return_value=artifact)
+    service.get_for_caller = AsyncMock(return_value=artifact)
     service.read = AsyncMock(return_value=b"<h1>hi</h1>")
     with patch("src.services.artifacts.ArtifactService", return_value=service):
         result = await sdk_read_artifact(caller, artifact_id=artifact.id)
@@ -186,7 +197,7 @@ async def test_read_inert_bytes_have_no_disposition() -> None:
     caller = _caller()
     artifact = _orm_artifact(filename="Portrait.png", content_type="image/png")
     service = MagicMock()
-    service.get_authorized = AsyncMock(return_value=artifact)
+    service.get_for_caller = AsyncMock(return_value=artifact)
     service.read = AsyncMock(return_value=b"png-data")
     with patch("src.services.artifacts.ArtifactService", return_value=service):
         result = await sdk_read_artifact(caller, artifact_id=artifact.id)
@@ -198,7 +209,7 @@ async def test_read_inert_bytes_have_no_disposition() -> None:
 async def test_read_out_of_scope_is_404() -> None:
     caller = _caller()
     service = MagicMock()
-    service.get_authorized = AsyncMock(side_effect=ArtifactAccessError("Artifact not found."))
+    service.get_for_caller = AsyncMock(side_effect=ArtifactAccessError("Artifact not found."))
     with (
         patch("src.services.artifacts.ArtifactService", return_value=service),
         pytest.raises(SdkArtifactError) as exc,
@@ -227,7 +238,7 @@ async def test_read_preview_office_returns_html_not_bytes() -> None:
         content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
     service = MagicMock()
-    service.get_authorized = AsyncMock(return_value=artifact)
+    service.get_for_caller = AsyncMock(return_value=artifact)
     service.read = AsyncMock(return_value=docx_bytes)
     with patch("src.services.artifacts.ArtifactService", return_value=service):
         result = await sdk_read_artifact(
@@ -243,7 +254,7 @@ async def test_read_preview_non_office_returns_raw_bytes() -> None:
     caller = _caller()
     artifact = _orm_artifact(filename="Portrait.png", content_type="image/png")
     service = MagicMock()
-    service.get_authorized = AsyncMock(return_value=artifact)
+    service.get_for_caller = AsyncMock(return_value=artifact)
     service.read = AsyncMock(return_value=b"png-data")
     with patch("src.services.artifacts.ArtifactService", return_value=service):
         result = await sdk_read_artifact(
@@ -259,16 +270,15 @@ async def test_download_url_delegates_to_signed_url_path() -> None:
     caller = _caller(user=user)
     artifact = _orm_artifact(filename="Unsafe.html", content_type="text/html")
     service = MagicMock()
-    service.get_authorized = AsyncMock(return_value=artifact)
+    service.get_for_caller = AsyncMock(return_value=artifact)
     service.generate_download_url = AsyncMock(
         return_value="https://cdn.example/artifact?sig=1"
     )
     with patch("src.services.artifacts.ArtifactService", return_value=service):
         response = await sdk_artifact_download_url(caller, artifact_id=artifact.id)
-    service.get_authorized.assert_awaited_once_with(
+    service.get_for_caller.assert_awaited_once_with(
         artifact.id,
-        user_id=user.user_id,
-        bypass=False,
+        caller=caller.caller,
     )
     service.generate_download_url.assert_awaited_once_with(artifact)
     assert response.url == "https://cdn.example/artifact?sig=1"
@@ -278,7 +288,7 @@ async def test_download_url_delegates_to_signed_url_path() -> None:
 async def test_download_url_out_of_scope_is_404() -> None:
     caller = _caller()
     service = MagicMock()
-    service.get_authorized = AsyncMock(side_effect=ArtifactAccessError("Artifact not found."))
+    service.get_for_caller = AsyncMock(side_effect=ArtifactAccessError("Artifact not found."))
     with (
         patch("src.services.artifacts.ArtifactService", return_value=service),
         pytest.raises(SdkArtifactError) as exc,
@@ -289,13 +299,10 @@ async def test_download_url_out_of_scope_is_404() -> None:
 
 
 @pytest.mark.asyncio
-async def test_from_context_carries_trusted_principal() -> None:
-    ctx = MagicMock()
-    ctx.user = _user()
-    ctx.db = MagicMock()
-    caller = ArtifactCaller.from_context(ctx)
-    assert caller.user is ctx.user
-    assert caller.db is ctx.db
+async def test_artifact_caller_carries_authority_context() -> None:
+    caller = _caller()
+    assert caller.caller.ctx is not None
+    assert caller.caller.ctx.user_id == caller.caller.principal.user_id
 
 
 def test_service_takes_explicit_actor_never_a_request() -> None:

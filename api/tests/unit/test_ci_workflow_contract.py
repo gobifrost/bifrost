@@ -119,7 +119,6 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
     )
     assert "verify_merge_candidate.py" in verification["run"]
     assert '--sha "$GITHUB_SHA"' in verification["run"]
-    assert jobs["deploy-dev"]["needs"] == ["build-dev"]
 
 
 def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> None:
@@ -244,22 +243,18 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     assert "fallback" not in promotion_source.lower()
     assert promotion["outputs"]["version"] == "${{ steps.version.outputs.version }}"
 
-    deploy = jobs["deploy-dev"]
-    assert deploy["needs"] == ["build-dev"]
-    deploy_source = "\n".join(step.get("run", "") for step in deploy["steps"])
-    assert "rollout restart" not in deploy_source
-    assert "Wait for image automation" in {
-        step.get("name") for step in deploy["steps"]
-    }
-    assert "needs.build-dev.outputs.version" in str(deploy["steps"])
-    assert 'expected_api="ghcr.io/${{ env.API_IMAGE }}:${EXPECTED_VERSION}"' in deploy_source
-    assert 'expected_client="ghcr.io/${{ env.CLIENT_IMAGE }}:${EXPECTED_VERSION}"' in deploy_source
-    assert "app.kubernetes.io/component!=message-broker" in deploy_source
-    assert "Timed out waiting for image automation" in deploy_source
-    assert "port-forward service/api" in deploy_source
-    assert "port-forward service/client" in deploy_source
-    assert "http://127.0.0.1:18000/health/ready" in deploy_source
-    assert "http://127.0.0.1:18080/" in deploy_source
+
+def test_ci_publication_does_not_depend_on_an_operator_cluster() -> None:
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    assert "deploy-dev" not in jobs
+    assert "deploy-dry-run" not in jobs
+    source = CI_WORKFLOW.read_text()
+    assert "DIGITALOCEAN_ACCESS_TOKEN" not in source
+    assert "DO_CLUSTER_NAME" not in source
+    assert "kubectl" not in source
+    for job in jobs.values():
+        assert "deploy-dev" not in job.get("needs", [])
+        assert "deploy-dry-run" not in job.get("needs", [])
 
 
 def test_pull_request_reports_required_e2e_context_without_running_full_suite() -> None:

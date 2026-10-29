@@ -37,6 +37,8 @@ import {
 } from "@/hooks/useApplications";
 import { useAuth } from "@/contexts/AuthContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 
 export function AppCodeEditorPage() {
 	const navigate = useNavigate();
@@ -45,12 +47,11 @@ export function AppCodeEditorPage() {
 	const fromSolution = parseSolutionFrom(search);
 	const backTo = fromSolution ? `/solutions/${fromSolution}` : "/apps";
 	const isEditing = !!slugParam;
-	const { user, isPlatformAdmin } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 
 	// Default organization_id
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId = user?.organizationId ?? null;
 
 	// Fetch existing application metadata
 	const {
@@ -80,6 +81,31 @@ export function AppCodeEditorPage() {
 	const [organizationId, setOrganizationId] = useState<string | null>(
 		defaultOrgId,
 	);
+	const targetOrganizationId = existingApp
+		? existingApp.organization_id
+		: organizationId;
+	const canWriteApp = authorization.canAt(
+		"apps.readwrite",
+		orgTarget(targetOrganizationId),
+	);
+	const canPublishApp = authorization.canAt(
+		"apps.publish",
+		orgTarget(existingApp?.organization_id),
+	);
+	const canChooseScope = authorization.canAnywhere("apps.readwrite");
+	const knownOrganizations = [
+		...(defaultOrgId
+			? [{ id: defaultOrgId, name: "Your organization" }]
+			: []),
+		...(existingApp?.organization_id
+			? [
+					{
+						id: existingApp.organization_id,
+						name: "Application organization",
+					},
+				]
+			: []),
+	];
 
 	// Dialog state
 	const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
@@ -112,7 +138,7 @@ export function AppCodeEditorPage() {
 
 	// Create a new code-based application
 	const handleCreate = async () => {
-		if (isEditing || createApplication.isPending) return;
+		if (isEditing || createApplication.isPending || !canWriteApp) return;
 		setCreateError(null);
 		if (!name.trim()) {
 			toast.error("Please enter an application name");
@@ -141,7 +167,8 @@ export function AppCodeEditorPage() {
 	};
 
 	const handlePublish = async () => {
-		if (!existingApp?.id || publishApplication.isPending) return;
+		if (!existingApp?.id || publishApplication.isPending || !canPublishApp)
+			return;
 		setPublishError(null);
 
 		try {
@@ -269,7 +296,7 @@ export function AppCodeEditorPage() {
 						</p>
 					</div>
 
-					{isPlatformAdmin && (
+					{canChooseScope && (
 						<div className="space-y-2">
 							<Label>Organization Scope</Label>
 							<OrganizationSelect
@@ -278,6 +305,10 @@ export function AppCodeEditorPage() {
 									setOrganizationId(val ?? null)
 								}
 								showGlobal={true}
+								loadOrganizations={authorization.canAnywhere(
+									"organizations.read",
+								)}
+								knownOrganizations={knownOrganizations}
 							/>
 						</div>
 					)}
@@ -303,7 +334,9 @@ export function AppCodeEditorPage() {
 						<Button
 							onClick={handleCreate}
 							disabled={
-								createApplication.isPending || !name.trim()
+								createApplication.isPending ||
+								!name.trim() ||
+								!canWriteApp
 							}
 							size="lg"
 						>
@@ -353,7 +386,7 @@ export function AppCodeEditorPage() {
 
 				<div className="ml-auto flex items-center gap-2">
 					{/* Embed — hidden for managed apps (embed secrets are mutations) */}
-					{isEditing && existingApp && !isManaged && (
+					{isEditing && existingApp && !isManaged && canWriteApp && (
 						<>
 							<Button
 								variant="ghost"
@@ -375,7 +408,7 @@ export function AppCodeEditorPage() {
 
 					{/* Settings — hidden for solution-managed apps: the dialog
 					    exposes Save/Delete/Replace/logo mutations the API rejects. */}
-					{!isManaged && (
+					{!isManaged && canWriteApp && (
 						<>
 							<Button
 								variant="ghost"
@@ -396,7 +429,7 @@ export function AppCodeEditorPage() {
 
 					{/* Publish — hidden for solution-managed apps (deploy is the
 					    only writer; the API rejects publish regardless). */}
-					{hasDraft && !isManaged && (
+					{hasDraft && !isManaged && canPublishApp && (
 						<Button
 							size="lg"
 							onClick={() => setIsPublishDialogOpen(true)}
@@ -425,7 +458,7 @@ export function AppCodeEditorPage() {
 						solutionId={existingApp.solution_id}
 						appName={existingApp.name}
 						appSlug={existingApp.slug}
-						readOnly={isManaged}
+						readOnly={isManaged || !canWriteApp}
 					/>
 				)}
 			</div>

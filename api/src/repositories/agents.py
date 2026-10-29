@@ -4,7 +4,10 @@ Agent Repository
 Repository for Agent CRUD operations with organization scoping and role-based access.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -14,6 +17,9 @@ from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.external_mcp import AgentMCPConnection, MCPConnection
 from src.repositories.org_scoped import OrgScopedRepository
+
+if TYPE_CHECKING:
+    from src.services.authorization.enforce import Caller
 
 
 class AgentRepository(OrgScopedRepository[Agent]):
@@ -224,6 +230,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
         agent_id: UUID,
         connection_ids: Iterable[UUID],
         *,
+        caller: Caller,
         granted_by: UUID | None,
     ) -> list[UUID]:
         """Replace the agent's full set of MCP connection grants.
@@ -233,67 +240,125 @@ class AgentRepository(OrgScopedRepository[Agent]):
         ``connection_ids`` are re-inserted within the same transaction.
         Caller is responsible for committing.
 
-        Connections must already belong to the agent's organization. IDs
-        whose connection row is missing or whose org doesn't match the
-        agent's org are silently skipped — the API layer should validate
-        before calling so admins get a 4xx, not a no-op grant.
+        The caller must be allowed to write the parent Agent and must reach
+        each connection's actual organization. Connections must belong to the
+        Agent's organization; invalid IDs are refused before existing grants
+        are changed.
 
         Args:
             agent_id: Agent whose grants are being replaced.
             connection_ids: New set of connection UUIDs to grant.
-            granted_by: User UUID recorded on each new row (audit trail);
+            caller: Original user authority for the Agent and connection.
+            granted_by: Acting User UUID recorded on each new row (audit trail);
                 ``None`` is allowed for system-driven syncs (manifest
                 import, backfill jobs).
 
         Returns:
-            The list of connection IDs that were actually granted (i.e.
-            the input filtered to existing, org-matching connections).
+            The requested connection IDs after exact organization validation.
         """
-        # Fetch agent for org validation.
+        # Fetch the parent before changing any grants.
         agent_result = await self.session.execute(
             select(Agent).where(Agent.id == agent_id)
         )
         agent = agent_result.scalar_one_or_none()
         if agent is None:
-            return []
+            raise ValueError(f"Agent {agent_id} not found")
 
-        # Drop existing grants up front so an empty input list revokes
-        # everything atomically.
-        await self.session.execute(
-            delete(AgentMCPConnection).where(
-                AgentMCPConnection.agent_id == agent_id
+        from fastapi import HTTPException, status
+        from src.services.agent_write_policy import can_configure_agent
+        from src.services.authorization.enforce import user_reach
+
+        if not can_configure_agent(caller, agent):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to manage agents",
             )
-        )
 
         connection_id_list = list(dict.fromkeys(connection_ids))  # dedup, preserve order
-        if not connection_id_list:
-            return []
-
-        # Validate that each connection exists and belongs to the agent's
-        # org. A platform-level agent (organization_id IS NULL) cannot
-        # carry MCP grants — connections are strictly per-org.
-        if agent.organization_id is None:
-            return []
-
-        valid_result = await self.session.execute(
-            select(MCPConnection.id).where(
-                MCPConnection.id.in_(connection_id_list),
-                MCPConnection.organization_id == agent.organization_id,
-            )
+        connections = await self._validated_mcp_connections(agent, connection_id_list)
+        for connection in connections:
+            if not user_reach(caller).covers(connection.organization_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to manage agents",
+                )
+        return await self._replace_mcp_connection_grants(
+            agent_id, connection_id_list, granted_by=granted_by
         )
-        valid_ids = {row[0] for row in valid_result.all()}
-        granted: list[UUID] = []
-        for cid in connection_id_list:
-            if cid not in valid_ids:
-                continue
+
+    async def set_trusted_manifest_mcp_connection_grants(
+        self,
+        agent_id: UUID,
+        connection_ids: Iterable[UUID],
+        *,
+        granted_by: UUID | None,
+    ) -> list[UUID]:
+        """Persist a deploy/import-authorized Agent connection association.
+
+        Manifest and Solution deployment authorization happens at their parent
+        operation. This narrow internal entry point intentionally accepts no
+        request caller, but it retains the exact Agent/connection organization
+        invariant shared with the public setter.
+        """
+        agent = (
+            await self.session.execute(select(Agent).where(Agent.id == agent_id))
+        ).scalar_one_or_none()
+        if agent is None:
+            raise ValueError(f"Agent {agent_id} not found")
+        connection_id_list = list(dict.fromkeys(connection_ids))
+        await self._validated_mcp_connections(agent, connection_id_list)
+        return await self._replace_mcp_connection_grants(
+            agent_id, connection_id_list, granted_by=granted_by
+        )
+
+    async def _validated_mcp_connections(
+        self, agent: Agent, connection_ids: list[UUID]
+    ) -> list[MCPConnection]:
+        """Return exact-org connection rows or refuse before grant mutation."""
+        from fastapi import HTTPException, status
+
+        if not connection_ids:
+            return []
+        if agent.organization_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Global Agents cannot be granted organization MCP connections",
+            )
+        connections = (
+            await self.session.execute(
+                select(MCPConnection).where(MCPConnection.id.in_(connection_ids))
+            )
+        ).scalars().all()
+        by_id = {connection.id: connection for connection in connections}
+        if any(
+            (connection := by_id.get(connection_id)) is None
+            or connection.organization_id != agent.organization_id
+            for connection_id in connection_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="MCP connection does not belong to the Agent organization",
+            )
+        return [by_id[connection_id] for connection_id in connection_ids]
+
+    async def _replace_mcp_connection_grants(
+        self,
+        agent_id: UUID,
+        connection_ids: list[UUID],
+        *,
+        granted_by: UUID | None,
+    ) -> list[UUID]:
+        """Replace validated association rows without changing their policy."""
+        await self.session.execute(
+            delete(AgentMCPConnection).where(AgentMCPConnection.agent_id == agent_id)
+        )
+        for connection_id in connection_ids:
             self.session.add(
                 AgentMCPConnection(
                     agent_id=agent_id,
-                    connection_id=cid,
+                    connection_id=connection_id,
                     granted_by=granted_by,
                 )
             )
-            granted.append(cid)
-
         await self.session.flush()
-        return granted
+        return connection_ids

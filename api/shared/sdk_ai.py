@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.log_safety import log_safe
 from src.core.principal import UserPrincipal
+from src.services.authorization.enforce import load_caller, require_permission
 from src.services.llm.base import LLMInputFile, LLMMessage
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,19 @@ async def complete_sdk_ai(
     except ValueError as e:
         raise SdkAIError(503, str(e)) from None
 
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+
+    try:
+        caller = await load_caller(session, principal)
+        resolved_org_id = await resolve_sdk_scope(scope, caller=caller)
+        require_permission(caller, "ai.execute", resolved_org_id)
+    except ScopeResolutionError as e:
+        raise SdkAIError(e.status_code, e.detail) from None
+    except Exception as e:
+        if getattr(e, "status_code", None) == 403:
+            raise SdkAIError(403, str(e.detail)) from None
+        raise
+
     try:
         from src.services.llm import get_llm_client
 
@@ -233,39 +247,22 @@ async def complete_sdk_ai(
     try:
         from src.core.cache import get_shared_redis
         from src.services.ai_usage_service import record_ai_usage
-        from shared.sdk_config import (
-            ScopeResolutionError,
-            resolve_sdk_scope,
-        )
-
         redis_client = await get_shared_redis()
-        try:
-            org_uuid = await resolve_sdk_scope(
-                scope,
-                caller_org_id=principal.organization_id,
-                is_platform_admin=principal.is_superuser,
-                session=session,
-            )
-        except ScopeResolutionError as e:
-            # Scope grammar/authorization failures are best-effort here:
-            # usage attribution is skipped, the completion still succeeds.
-            logger.warning(f"Failed to record AI usage: {log_safe(e)}")
-        else:
-            await record_ai_usage(
-                session=session,
-                redis_client=redis_client,
-                provider=client.provider_name,
-                model=response.model or client.model_name,
-                input_tokens=response.input_tokens or 0,
-                output_tokens=response.output_tokens or 0,
-                cache_read_tokens=response.cache_read_tokens,
-                cache_write_tokens=response.cache_write_tokens,
-                reasoning_tokens=response.reasoning_tokens,
-                provider_cost=response.provider_cost,
-                execution_id=UUID(execution_id) if execution_id else None,
-                organization_id=org_uuid,
-                user_id=principal.user_id,
-            )
+        await record_ai_usage(
+            session=session,
+            redis_client=redis_client,
+            provider=client.provider_name,
+            model=response.model or client.model_name,
+            input_tokens=response.input_tokens or 0,
+            output_tokens=response.output_tokens or 0,
+            cache_read_tokens=response.cache_read_tokens,
+            cache_write_tokens=response.cache_write_tokens,
+            reasoning_tokens=response.reasoning_tokens,
+            provider_cost=response.provider_cost,
+            execution_id=UUID(execution_id) if execution_id else None,
+            organization_id=resolved_org_id,
+            user_id=principal.user_id,
+        )
     except Exception as e:
         logger.warning(f"Failed to record AI usage: {log_safe(e)}")
         # A failed DB flush leaves the session in pending-rollback state.
@@ -481,7 +478,19 @@ async def get_sdk_model_info(
     Raises:
         SdkAIError: 404 when no model configuration is present.
     """
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
     from src.services.llm.factory import get_llm_config
+
+    try:
+        caller = await load_caller(session, principal)
+        org_id = await resolve_sdk_scope(None, caller=caller)
+        require_permission(caller, "ai.read", org_id)
+    except ScopeResolutionError as e:
+        raise SdkAIError(e.status_code, e.detail) from None
+    except Exception as e:
+        if getattr(e, "status_code", None) == 403:
+            raise SdkAIError(403, str(e.detail)) from None
+        raise
 
     try:
         config = await get_llm_config(session)

@@ -40,7 +40,7 @@ const queuedJob = {
 	requested_by_name: "Ada Lovelace",
 	status: "queued",
 	progress: {
-		phase: "Waiting for scheduler memory",
+		phase: "Waiting for executor memory",
 		current: 0,
 		total: null,
 		percent: 0,
@@ -133,7 +133,7 @@ describe("PlatformJobsPanel", () => {
 		expect(screen.getAllByText("749 MiB available")[0]).toBeInTheDocument();
 		expect(screen.getAllByText("768 MiB required")[0]).toBeInTheDocument();
 		expect(
-			screen.getAllByText("Waiting for scheduler memory")[0],
+			screen.getAllByText("Waiting for executor memory")[0],
 		).toBeInTheDocument();
 		expect(
 			screen

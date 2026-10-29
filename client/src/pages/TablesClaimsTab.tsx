@@ -2,7 +2,7 @@ import { WorkspacePrimaryAction } from "@/components/layout/WorkspacePrimaryActi
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
 	Building2,
@@ -33,9 +33,13 @@ import { SearchBox } from "@/components/search/SearchBox";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { ListToolbar } from "@/components/layout/ListToolbar";
 import { useSearch } from "@/hooks/useSearch";
+import { Label } from "@/components/ui/label";
+import { orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import {
 	createClaim,
 	deleteClaim,
@@ -63,9 +67,12 @@ const EMPTY_CLAIM: CustomClaim = {
 export function TablesClaimsTab() {
 	const addClaimRef = useRef<HTMLButtonElement>(null);
 	const compactLayout = useMediaQuery("(max-width: 1023px)");
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
+	const canReadAnyClaims = authorization.canAnywhere("claims.read");
+	const canManageAnyClaims = authorization.canAnywhere("claims.readwrite");
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
 	const [searchTerm, setSearchTerm] = useState("");
@@ -77,17 +84,7 @@ export function TablesClaimsTab() {
 		null,
 	);
 
-	const orgNameById = useMemo(() => {
-		const m = new Map<string, string>();
-		for (const o of organizations ?? []) m.set(o.id, o.name);
-		return m;
-	}, [organizations]);
-
-	const getOrgName = (orgId?: string | null): string =>
-		orgId ? (orgNameById.get(orgId) ?? orgId) : "Global";
-
-	const getClaimScope = (claim: CustomClaim): string | undefined =>
-		claim.organization_id ?? undefined;
+	const getOrgName = useOrganizationName(organizations);
 
 	const apiScope =
 		filterOrgId === undefined || filterOrgId === null
@@ -107,6 +104,40 @@ export function TablesClaimsTab() {
 	const claims = data?.claims ?? [];
 	const hasLoaded = data !== undefined;
 	const loadError = Boolean(error);
+	const knownOrganizations = (() => {
+		const known = new Map<string, { id: string; name: string }>();
+		for (const claim of claims) {
+			if (claim.organization_id) {
+				known.set(claim.organization_id, {
+					id: claim.organization_id,
+					name: getOrgName(claim.organization_id),
+				});
+			}
+		}
+		if (user?.organizationId) {
+			known.set(user.organizationId, {
+				id: user.organizationId,
+				name: getOrgName(user.organizationId),
+			});
+		}
+		for (const grant of authorization.authorization?.grants ?? []) {
+			if (
+				grant.boundary.kind === "organization" &&
+				grant.boundary.organization_id
+			) {
+				known.set(grant.boundary.organization_id, {
+					id: grant.boundary.organization_id,
+					name: getOrgName(grant.boundary.organization_id),
+				});
+			}
+		}
+		return [...known.values()];
+	})();
+	const getClaimScope = (claim: CustomClaim): string | undefined =>
+		claim.organization_id ?? undefined;
+	const canManageClaim = (claim: CustomClaim) =>
+		!claim.is_solution_managed &&
+		authorization.canAt("claims.readwrite", orgTarget(claim.organization_id));
 
 	const filteredClaims = useSearch(claims, searchTerm, [
 		"name",
@@ -114,6 +145,10 @@ export function TablesClaimsTab() {
 	]);
 
 	async function handleSave(claim: CustomClaim) {
+		const scope = editing?.scope;
+		if (!scope || !authorization.canAt("claims.readwrite", orgTarget(scope))) {
+			return;
+		}
 		if (editing?.originalName) {
 			await updateClaim(
 				editing.originalName,
@@ -122,7 +157,7 @@ export function TablesClaimsTab() {
 					type: claim.type,
 					query: claim.query,
 				},
-				{ scope: editing.scope },
+				{ scope },
 			);
 			toast.success("Claim updated");
 		} else {
@@ -133,7 +168,7 @@ export function TablesClaimsTab() {
 					type: claim.type,
 					query: claim.query,
 				},
-				{ scope: editing?.scope },
+				{ scope },
 			);
 			toast.success("Claim created");
 		}
@@ -143,6 +178,7 @@ export function TablesClaimsTab() {
 
 	async function handleDeleteConfirmed() {
 		if (!claimToDelete) return;
+		if (!canManageClaim(claimToDelete)) return;
 		await deleteClaim(claimToDelete.name, {
 			scope: getClaimScope(claimToDelete),
 		});
@@ -152,9 +188,13 @@ export function TablesClaimsTab() {
 	}
 
 	function handleAdd() {
-		const defaultOrg = user?.organizationId ?? "";
+		const defaultOrg =
+			user?.organizationId &&
+			authorization.canAt("claims.readwrite", orgTarget(user.organizationId))
+				? user.organizationId
+				: undefined;
 		setEditing({
-			claim: { ...EMPTY_CLAIM, organization_id: defaultOrg },
+			claim: { ...EMPTY_CLAIM, organization_id: defaultOrg ?? "" },
 			originalName: null,
 			scope: defaultOrg,
 		});
@@ -189,6 +229,44 @@ export function TablesClaimsTab() {
 	if (editing) {
 		return (
 			<div className="py-4">
+				{editing.originalName === null && (
+					<div className="mb-6 grid gap-2">
+						<Label htmlFor="claim-organization">Organization</Label>
+						<OrganizationSelect
+							id="claim-organization"
+							value={editing.scope}
+							onChange={(scope) => {
+								if (
+									typeof scope !== "string" ||
+									!authorization.canAt(
+										"claims.readwrite",
+										orgTarget(scope),
+									)
+								)
+									return;
+								setEditing({
+									...editing,
+									scope,
+									claim: {
+										...editing.claim,
+										organization_id: scope,
+									},
+								});
+							}}
+							showGlobal={false}
+							knownOrganizations={knownOrganizations}
+							loadOrganizations={authorization.canAnywhere(
+								"organizations.read",
+							)}
+							filterOrganizations={(organization) =>
+								authorization.canAt(
+									"claims.readwrite",
+									orgTarget(organization.id),
+								)
+							}
+						/>
+					</div>
+				)}
 				<CustomClaimEditor
 					value={editing.claim}
 					onChange={(claim) => setEditing({ ...editing, claim })}
@@ -203,13 +281,23 @@ export function TablesClaimsTab() {
 	return (
 		<div className="flex min-h-0 max-h-full flex-col gap-0">
 			<ListToolbar className="shrink-0 gap-0 border-b border-border/70 bg-muted/20 p-0">
-				{isPlatformAdmin && (
+				{canReadAnyClaims && (
 					<div className="w-full shrink-0 border-b sm:w-56 sm:self-stretch sm:border-b-0 sm:border-r">
 						<OrganizationSelect
 							value={filterOrgId}
 							onChange={setFilterOrgId}
 							showAll={true}
 							showGlobal={false}
+							knownOrganizations={knownOrganizations}
+							loadOrganizations={authorization.canAnywhere(
+								"organizations.read",
+							)}
+							filterOrganizations={(organization) =>
+								authorization.canAt(
+									"claims.read",
+									orgTarget(organization.id),
+								)
+							}
 							placeholder="All Organizations"
 							triggerClassName="h-full min-h-12 rounded-none border-0 bg-transparent px-4 py-2 shadow-none hover:bg-muted/50 focus-visible:ring-inset"
 						/>
@@ -237,15 +325,17 @@ export function TablesClaimsTab() {
 							className={`h-4 w-4 ${loading ? "animate-spin motion-reduce:animate-none" : ""}`}
 						/>
 					</Button>
-					<WorkspacePrimaryAction
-						onClick={handleAdd}
-						ref={addClaimRef}
-						title="Add Claim"
-						aria-label="Add Claim"
-					>
-						<Plus className="h-4 w-4" />
-						New Claim
-					</WorkspacePrimaryAction>
+					{canManageAnyClaims && (
+						<WorkspacePrimaryAction
+							onClick={handleAdd}
+							ref={addClaimRef}
+							title="Add Claim"
+							aria-label="Add Claim"
+						>
+							<Plus className="h-4 w-4" />
+							New Claim
+						</WorkspacePrimaryAction>
+					)}
 				</div>
 			</ListToolbar>
 
@@ -303,7 +393,7 @@ export function TablesClaimsTab() {
 										/>
 									</p>
 									<dl className="grid gap-3 text-sm">
-										{isPlatformAdmin && (
+					{canReadAnyClaims && (
 											<div>
 												<dt className="text-xs text-muted-foreground">
 													Organization
@@ -350,11 +440,11 @@ export function TablesClaimsTab() {
 												deployment.
 											</span>
 										</div>
-									) : (
+									) : canManageClaim(claim) ? (
 										<div className="border-t pt-3">
 											{renderClaimActions(claim)}
 										</div>
-									)}
+									) : null}
 								</li>
 							))}
 						</ul>
@@ -362,7 +452,7 @@ export function TablesClaimsTab() {
 						<DataTable className="max-h-full rounded-none border-0">
 							<DataTableHeader>
 								<DataTableRow>
-									{isPlatformAdmin && (
+									{canReadAnyClaims && (
 										<DataTableHead className="w-0 whitespace-nowrap">
 											Organization
 										</DataTableHead>
@@ -378,7 +468,9 @@ export function TablesClaimsTab() {
 									<DataTableHead className="w-0 whitespace-nowrap">
 										Select
 									</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap text-right" />
+									{canManageAnyClaims && (
+										<DataTableHead className="w-0 whitespace-nowrap text-right" />
+									)}
 								</DataTableRow>
 							</DataTableHeader>
 							<DataTableBody>
@@ -386,12 +478,12 @@ export function TablesClaimsTab() {
 									<DataTableRow
 										key={claim.id}
 										className={
-											claim.is_solution_managed
+											claim.is_solution_managed || !canManageClaim(claim)
 												? "hover:bg-muted/50"
 												: "cursor-pointer hover:bg-muted/50"
 										}
 										onClick={() => {
-											if (claim.is_solution_managed)
+											if (!canManageClaim(claim))
 												return;
 											setEditing({
 												claim,
@@ -400,7 +492,7 @@ export function TablesClaimsTab() {
 											});
 										}}
 									>
-										{isPlatformAdmin && (
+										{canReadAnyClaims && (
 											<DataTableCell className="w-0 whitespace-nowrap">
 												<Badge
 													variant="outline"
@@ -435,13 +527,15 @@ export function TablesClaimsTab() {
 										<DataTableCell className="w-0 whitespace-nowrap font-mono text-sm">
 											{claim.query.select}
 										</DataTableCell>
-										<DataTableCell
-											className="w-0 whitespace-nowrap text-right"
-											onClick={(e) => e.stopPropagation()}
-										>
-											{!claim.is_solution_managed &&
-												renderClaimActions(claim)}
-										</DataTableCell>
+										{canManageAnyClaims && (
+											<DataTableCell
+												className="w-0 whitespace-nowrap text-right"
+												onClick={(e) => e.stopPropagation()}
+											>
+												{canManageClaim(claim) &&
+													renderClaimActions(claim)}
+											</DataTableCell>
+										)}
 									</DataTableRow>
 								))}
 							</DataTableBody>
@@ -461,7 +555,7 @@ export function TablesClaimsTab() {
 							? "Try adjusting your search term or clear the filter"
 							: "Custom claims are reusable query-resolved facts you can reference from table policies."}
 					</p>
-					{!searchTerm && (
+					{!searchTerm && canManageAnyClaims && (
 						<Button
 							variant="outline"
 							onClick={handleAdd}

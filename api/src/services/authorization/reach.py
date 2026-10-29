@@ -19,8 +19,8 @@ class OrgReach:
     """The organizations an operation reaches for a caller, for filtering
     lists (and the counts that go with them) before paging.
 
-    ``everything``: every organization and Global (Platform Admin, or a
-    superuser execution credential). Otherwise the union of explicit
+    ``everything``: every organization and Global through the Platform Admin
+    role's wildcard. Otherwise the union of explicit
     ``organization_ids`` (``organization`` boundaries, and the home org when
     the base role holds the permission), ``managed`` (every org except the
     provider org; never Global), and ``include_global`` (a ``platform``

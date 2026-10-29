@@ -1,0 +1,14 @@
+{
+  "key": "pr:1079",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Local previews stop retrying rejected logins and can reconnect after a new login; refused worker connections no longer produce duplicate-close errors.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1079",
+      "Requested investigation and bounded fixes for production auth errors and API memory. Independent review verified HTTP and both API WebSocket recovery paths, unchanged server authorization, and single-close worker rejection handling. Verified 82 focused unit tests, real API refresh rotation, both remote-runner lifecycle tests, and API type/lint checks. Allocator tuning was rolled back after production latency could not be validated; no allocator setting ships in this PR."
+    ]
+  }
+}

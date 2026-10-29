@@ -75,6 +75,49 @@ async def test_write_python_indexes_and_unindexes_solution_source():
 
 
 @pytest.mark.asyncio
+async def test_write_python_emits_aggregate_storage_timing_categories():
+    """Per-file publishing reports one safe aggregate per storage category."""
+    from src.services.solutions.deploy import (
+        SolutionDeployInstrumentation,
+        SolutionDeployer,
+        solution_deploy_instrumentation,
+    )
+
+    sid = uuid4()
+    timings: list[tuple[str, int]] = []
+
+    async def record_timing(category: str, elapsed_ms: int) -> None:
+        timings.append((category, elapsed_ms))
+
+    async with get_db_context() as db:
+        db.add(Solution(id=sid, slug=f"timing-{sid.hex[:8]}", name="timing"))
+        await db.commit()
+    try:
+        async with get_db_context() as db:
+            instrumentation = SolutionDeployInstrumentation(
+                timing_callback=record_timing
+            )
+            with solution_deploy_instrumentation(instrumentation):
+                deployer = SolutionDeployer(db)
+            await deployer._write_python(
+                sid,
+                {"functions/a.py": "A = 1\n", "functions/b.py": "B = 1\n"},
+            )
+            await db.commit()
+
+        assert [category for category, _ in timings] == [
+            "runtime_source_s3",
+            "file_index",
+            "redis_module_cache",
+        ]
+        assert all(elapsed_ms >= 0 for _, elapsed_ms in timings)
+    finally:
+        async with get_db_context() as db:
+            await db.execute(delete(Solution).where(Solution.id == sid))
+            await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_object_uploaded_outside_the_service_is_indexed_on_completion(db_session):
     """Presigned PUTs land in S3 directly; completion indexes the real bytes."""
     from src.services.repo_storage import RepoStorage

@@ -8,13 +8,11 @@
 import { useState, useEffect, useRef } from "react";
 import { PanelLeftClose, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConversationUsage } from "./ConversationUsage";
 import { ChatSidebar } from "./ChatSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { ArtifactsLibrary } from "./ArtifactsLibrary";
 import { useChatStore } from "@/stores/chatStore";
-import { useConversation, useConversationStats } from "@/hooks/useChat";
-import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { useConversation } from "@/hooks/useChat";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
@@ -54,12 +52,6 @@ export function ChatLayout({
 	const { data: conversation } = useConversation(
 		activeConversationId ?? undefined,
 	);
-
-	// Get conversation stats for platform admins
-	const conversationStats = useConversationStats(
-		activeConversationId ?? undefined,
-	);
-	const { isPlatformAdmin } = useUserPermissions();
 
 	return (
 		<div className="flex h-full min-h-0 overflow-hidden bg-background">
@@ -174,14 +166,6 @@ export function ChatLayout({
 												</p>
 											)}
 									</div>
-
-									{isPlatformAdmin &&
-										conversationStats &&
-										conversationStats.totalTokens > 0 && (
-											<ConversationUsage
-												stats={conversationStats}
-											/>
-										)}
 								</>
 							)}
 						</header>

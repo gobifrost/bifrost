@@ -16,7 +16,7 @@ from typing import Any
 from src.core.database import get_db_context
 from src.config import get_settings
 from src.services.webhooks.auth import (
-    build_webhook_integration_credentials,
+    build_trusted_renewal_webhook_credentials,
     resolve_webhook_integration_auth,
 )
 from src.services.webhooks.registry import get_adapter
@@ -122,7 +122,7 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                 credentials = None
                 if adapter.requires_integration and webhook.integration_id:
                     try:
-                        credentials = await build_webhook_integration_credentials(
+                        credentials = await build_trusted_renewal_webhook_credentials(
                             db,
                             webhook.integration_id,
                             webhook.event_source.organization_id,

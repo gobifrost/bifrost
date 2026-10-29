@@ -98,7 +98,9 @@ class TestToolsEndpointOrgFields:
             e2e_client, platform_admin.headers, organization_id=str(org1["id"])
         )
         try:
-            resp = e2e_client.get("/api/tools", headers=platform_admin.headers)
+            resp = e2e_client.get(
+                "/api/tools", headers=platform_admin.headers, params={"scope": str(org1["id"])}
+            )
             assert resp.status_code == 200, resp.text
             tools = resp.json()["tools"]
 
@@ -160,12 +162,15 @@ class TestToolsEndpointOrgScope:
         assert resp.status_code == 200, resp.text
         return {tool["id"] for tool in resp.json()["tools"]}
 
-    def test_platform_admin_no_scope_sees_all_workflow_tools(
+    def test_platform_admin_no_scope_sees_home_and_global_workflow_tools(
         self, e2e_client, platform_admin, scoped_workflow_tools
     ):
         ids = self._workflow_tool_ids(e2e_client, platform_admin.headers)
 
-        assert {tool["id"] for tool in scoped_workflow_tools}.issubset(ids)
+        global_tool, org1_tool, org2_tool = scoped_workflow_tools
+        assert global_tool["id"] in ids
+        assert org1_tool["id"] not in ids
+        assert org2_tool["id"] not in ids
 
     def test_platform_admin_global_scope_sees_only_global_workflow_tools(
         self, e2e_client, platform_admin, scoped_workflow_tools
@@ -180,7 +185,7 @@ class TestToolsEndpointOrgScope:
         assert org1_tool["id"] not in ids
         assert org2_tool["id"] not in ids
 
-    def test_platform_admin_org_scope_sees_only_that_org_workflow_tools(
+    def test_platform_admin_org_scope_includes_shared_global_workflow_tools(
         self, e2e_client, platform_admin, org1, scoped_workflow_tools
     ):
         global_tool, org1_tool, org2_tool = scoped_workflow_tools
@@ -189,7 +194,7 @@ class TestToolsEndpointOrgScope:
             e2e_client, platform_admin.headers, scope=str(org1["id"])
         )
 
-        assert global_tool["id"] not in ids
+        assert global_tool["id"] in ids
         assert org1_tool["id"] in ids
         assert org2_tool["id"] not in ids
 

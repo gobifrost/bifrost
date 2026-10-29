@@ -23,9 +23,8 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAgents } from "@/hooks/useAgents";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import type { components } from "@/lib/v1";
-
-type Organization = components["schemas"]["OrganizationPublic"];
 
 type AgentSummary = components["schemas"]["AgentSummary"];
 
@@ -70,15 +69,13 @@ function AgentSelectorContent({
 	const { data: agents, isLoading, error, refetch, isFetching } = useAgents();
 	const { data: organizations } = useOrganizations({});
 
+	const resolveOrganizationName = useOrganizationName(organizations);
 	const getOrgName = useCallback(
 		(orgId: string | null | undefined): string | null => {
 			if (!orgId) return null;
-			const org = organizations?.find(
-				(o: Organization) => o.id === orgId,
-			);
-			return org?.name || orgId;
+			return resolveOrganizationName(orgId);
 		},
-		[organizations],
+		[resolveOrganizationName],
 	);
 
 	// Filter and sort

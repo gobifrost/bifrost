@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from src.models import WorkflowMetadata as WorkflowMetadataModel
+from src.services.workflow_permissions import DEFAULT_WORKFLOW_PERMISSION_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ def _convert_workflow_metadata_to_model(
         ),
         retry_policy=None,
         schedule=None,
+        # A pending workflow has no mode of its own yet; the platform default
+        # is stored data this conversion doesn't read.
+        permission_mode=DEFAULT_WORKFLOW_PERMISSION_MODE,
         endpoint_enabled=False,
         disable_global_key=False,
         public_endpoint=False,
@@ -151,6 +155,20 @@ async def validate_workflow_file(path: str, content: str | None = None):
             return WorkflowValidationResponse(valid=False, issues=issues, metadata=None)
 
     # Create a temporary file with the content for validation
+    # The source acceptance gate must run before this validator imports a
+    # temporary module.  Inspection is AST-only, so malformed decorator
+    # settings cannot execute merely because a user requested validation.
+    from bifrost.decorator_validation import validate_python_decorators
+    from bifrost.definition_validation import DefinitionValidationError
+    try:
+        validate_python_decorators(content, path=path)
+    except DefinitionValidationError as error:
+        issues.extend(
+            ValidationIssue(line=issue.line, message=issue.message, severity="error")
+            for issue in error.issues
+        )
+        return WorkflowValidationResponse(valid=False, issues=issues, metadata=None)
+
     temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
     try:
         temp_file.write(content)

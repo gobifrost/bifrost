@@ -1,0 +1,13 @@
+{
+  "key": "pr:708",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/708",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "reason": "Routine dependency or internal maintenance change; no customer-facing announcement value. Original summary: Refresh the Python container image."
+}

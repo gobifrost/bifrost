@@ -73,7 +73,7 @@ describe("SubscriptionsTable — empty", () => {
 			isLoading: false,
 			refetch: vi.fn(),
 		});
-		renderWithProviders(<SubscriptionsTable sourceId="src-1" />);
+		renderWithProviders(<SubscriptionsTable sourceId="src-1" canManage />);
 		expect(screen.getByText(/no subscriptions/i)).toBeInTheDocument();
 		expect(
 			screen.getAllByRole("button", { name: /add subscription/i }).length,
@@ -88,7 +88,7 @@ describe("SubscriptionsTable — populated", () => {
 			isLoading: false,
 			refetch: vi.fn(),
 		});
-		renderWithProviders(<SubscriptionsTable sourceId="src-1" />);
+		renderWithProviders(<SubscriptionsTable sourceId="src-1" canManage />);
 
 		expect(screen.getAllByText("Onboard")[0]).toBeInTheDocument();
 		expect(screen.getAllByText("90%")[0]).toBeInTheDocument();
@@ -107,7 +107,7 @@ describe("SubscriptionsTable — populated", () => {
 			refetch: vi.fn(),
 		});
 		const { user } = renderWithProviders(
-			<SubscriptionsTable sourceId="src-1" />,
+			<SubscriptionsTable sourceId="src-1" canManage />,
 		);
 
 		await user.click(screen.getAllByRole("switch")[0]!);
@@ -123,7 +123,7 @@ describe("SubscriptionsTable — populated", () => {
 			refetch: vi.fn(),
 		});
 		const { user } = renderWithProviders(
-			<SubscriptionsTable sourceId="src-1" />,
+			<SubscriptionsTable sourceId="src-1" canManage />,
 		);
 
 		await user.click(
@@ -142,7 +142,7 @@ describe("SubscriptionsTable — populated", () => {
 			refetch: vi.fn(),
 		});
 		const { user } = renderWithProviders(
-			<SubscriptionsTable sourceId="src-1" />,
+			<SubscriptionsTable sourceId="src-1" canManage />,
 		);
 
 		await user.click(
@@ -169,7 +169,7 @@ describe("SubscriptionsTable — populated", () => {
 			refetch: vi.fn(),
 		});
 		const { user } = renderWithProviders(
-			<SubscriptionsTable sourceId="src-1" />,
+			<SubscriptionsTable sourceId="src-1" canManage />,
 		);
 
 		await user.click(
@@ -200,7 +200,7 @@ describe("SubscriptionsTable — populated", () => {
 			refetch: vi.fn(),
 		});
 		const { user } = renderWithProviders(
-			<SubscriptionsTable sourceId="src-1" />,
+			<SubscriptionsTable sourceId="src-1" canManage />,
 		);
 
 		await user.click(
@@ -241,7 +241,7 @@ describe("SubscriptionsTable — read error", () => {
 		});
 
 		const { user } = renderWithProviders(
-			<SubscriptionsTable sourceId="src-1" />,
+			<SubscriptionsTable sourceId="src-1" canManage />,
 		);
 
 		expect(
@@ -262,7 +262,7 @@ describe("SubscriptionsTable — read error", () => {
 			refetch: vi.fn(),
 		});
 
-		renderWithProviders(<SubscriptionsTable sourceId="src-1" />);
+		renderWithProviders(<SubscriptionsTable sourceId="src-1" canManage />);
 
 		expect(screen.getAllByText("Onboard")[0]).toBeInTheDocument();
 		expect(

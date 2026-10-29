@@ -54,9 +54,11 @@ import { Sparkline } from "@/components/agents/Sparkline";
 import { FleetMetrics } from "./FleetMetrics";
 import { SummaryBackfillButton } from "@/components/agents/SummaryBackfillButton";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { term, useTerminology } from "@/lib/terminology";
 import { useOrganizations } from "@/hooks/useOrganizations";
-import type { components } from "@/lib/v1";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import {
 	CARD_SURFACE,
 	CHIP_OUTLINE,
@@ -81,8 +83,6 @@ import {
 import { prefetchAgentDetail } from "@/lib/detail-route-loaders";
 
 type ViewMode = "grid" | "table";
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function FleetPage() {
 	const [reviewOpen, setReviewOpen] = useState(false);
 	const [view, setView] = useState<ViewMode>("grid");
@@ -92,7 +92,14 @@ export function FleetPage() {
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
-	const { isPlatformAdmin } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
+	const canStartBackfill = authorization.canAnywhere(
+		"agentruns.readwrite.all",
+	);
+	const canFilterOrganizations = authorization.canAnywhere("agents.read");
+	const canReadOrganizations =
+		authorization.canAnywhere("organizations.read");
 	const terminology = useTerminology();
 
 	const {
@@ -101,7 +108,7 @@ export function FleetPage() {
 		isError: agentsError,
 		isFetching: agentsFetching,
 		refetch: refetchAgents,
-	} = useAgents(isPlatformAdmin ? filterOrgId : undefined, {
+	} = useAgents(canFilterOrganizations ? filterOrgId : undefined, {
 		includeInactive: showInactive,
 		includeStats: true,
 	});
@@ -115,13 +122,12 @@ export function FleetPage() {
 
 	// Resolve organization names for badges (platform admins only).
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: canReadOrganizations,
 	});
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
+	const knownOrganizations = user?.organizationId
+		? [{ id: user.organizationId, name: getOrgName(user.organizationId) }]
+		: [];
 
 	const filtered = useMemo(() => {
 		const q = query.trim().toLowerCase();
@@ -147,7 +153,9 @@ export function FleetPage() {
 					agentLabel={term(terminology, "agent", "singularLower")}
 					total={totalAgents}
 					active={activeCount}
-					actions={isPlatformAdmin ? <SummaryBackfillButton /> : null}
+					actions={
+						canStartBackfill ? <SummaryBackfillButton /> : null
+					}
 				/>
 
 				{reviewOpen && (
@@ -177,7 +185,7 @@ export function FleetPage() {
 						stats={fleetStats}
 						loading={fleetLoading}
 						scopeLabel={
-							isPlatformAdmin
+							canFilterOrganizations
 								? "All organizations"
 								: "Your organization"
 						}
@@ -191,7 +199,9 @@ export function FleetPage() {
 					filterOrgId={filterOrgId}
 					showInactive={showInactive}
 					view={view}
-					isPlatformAdmin={isPlatformAdmin}
+					canFilterOrganizations={canFilterOrganizations}
+					loadOrganizations={canReadOrganizations}
+					knownOrganizations={knownOrganizations}
 					onQueryChange={setQuery}
 					onOrganizationChange={setFilterOrgId}
 					onInactiveChange={setShowInactive}
@@ -236,7 +246,7 @@ export function FleetPage() {
 								<AgentGridCard
 									key={agent.id}
 									agent={agent}
-									showOrg={isPlatformAdmin}
+									showOrg={canReadOrganizations}
 									orgName={getOrgName(agent.organization_id)}
 								/>
 							))}
@@ -244,7 +254,7 @@ export function FleetPage() {
 					) : (
 						<AgentTable
 							agents={filtered}
-							showOrg={isPlatformAdmin}
+							showOrg={canReadOrganizations}
 							getOrgName={getOrgName}
 						/>
 					)}
@@ -604,14 +614,32 @@ function AgentTableRow({
 }
 
 function AgentActions({ agent }: { agent: AgentSummary }) {
-	const { isPlatformAdmin } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
+	const isOtherUsersPrivateAgent =
+		agent.access_level === "private" &&
+		!!agent.owner_user_id &&
+		agent.owner_user_id !== user?.id;
+	const canManage =
+		authorization.canAt(
+			"agents.readwrite",
+			orgTarget(agent.organization_id),
+		) &&
+		(!isOtherUsersPrivateAgent ||
+			authorization.canAt(
+				"agents.readwrite.all",
+				orgTarget(agent.organization_id),
+			));
+	const canEdit =
+		canManage ||
+		(agent.access_level === "private" && agent.owner_user_id === user?.id);
 	return (
 		<div className="flex items-center justify-end gap-1">
 			{agent.is_solution_managed && (
 				<SolutionManagedBadge solutionId={agent.solution_id} />
 			)}
 			<RecordActionsMenu label={`${agent.name} actions`}>
-				{isPlatformAdmin && !agent.is_solution_managed && (
+				{canEdit && !agent.is_solution_managed && (
 					<DropdownMenuItem asChild>
 						<Link to={`/agents/${agent.id}?tab=settings`}>
 							<Pencil aria-hidden="true" className="size-4" />

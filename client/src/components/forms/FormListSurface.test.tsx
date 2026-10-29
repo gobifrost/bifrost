@@ -72,6 +72,27 @@ describe("FormListSurface", () => {
 		expect(onLaunch).not.toHaveBeenCalled();
 	});
 
+	it("does not expose a matching page-level grant on a form outside its org", async () => {
+		const { user } = renderWithProviders(
+			<FormListSurface
+				forms={[form]}
+				viewMode="grid"
+				isPlatformAdmin={false}
+				canManageForms
+				canManageForm={() => false}
+				getOrgName={() => "Contoso"}
+				formValidation={validation()}
+				onLaunch={vi.fn()}
+				onEdit={vi.fn()}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("button", { name: "Dispatch Intake actions" }),
+		).not.toBeInTheDocument();
+		await user.keyboard("{Tab}");
+	});
+
 	it("opens the form runner from the table row without editing", async () => {
 		const onLaunch = vi.fn();
 		const onEdit = vi.fn();

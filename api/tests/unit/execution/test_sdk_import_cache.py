@@ -1,11 +1,12 @@
 """Engine-local module cache: ``module_cache_sync`` wiring.
 
-- Redis hits never touch the engine socket.
-- After Redis misses, an installed engine socket serves resolve/fetch through
-  ``engine_request_sync`` with no HTTP/S3 fallback: a 404 advances to the
-  next candidate, any other local failure raises.
-- Without an installed engine socket the existing HTTP/S3 fallbacks apply
-  unchanged, and successful fetches re-cache to Redis.
+- A child marked by an injected engine socket always resolves and fetches
+  through that socket. It never reads or writes Redis, even when Redis has a
+  warm entry.
+- The scoped socket has no HTTP/S3 fallback: a 404 advances to the next
+  candidate, any other local failure raises.
+- Without the child marker the existing parent HTTP/S3 and Redis behavior
+  applies unchanged.
 
 The legacy pipe/channel transports have been removed; the engine socket is
 the only engine-local transport.
@@ -113,39 +114,43 @@ def _json_response(payload: object, status_code: int = 200) -> httpx.Response:
     return httpx.Response(status_code, json=payload)
 
 
-class TestEngineSocketWarmHit:
-    """Warm child Redis reads stay direct; the socket is never consulted."""
+class TestEngineSocketMarkedChild:
+    """A marked child uses only the worker-scoped module routes."""
 
-    def test_resolve_redis_hit_never_touches_engine_socket(self):
-        client = _EngineSocketClient([])
+    def test_resolve_warm_redis_entry_uses_engine_socket(self):
+        client = _EngineSocketClient([_json_response(_resolution())])
         with (
             patch.object(mcs, "_get_engine_client", return_value=client),
             patch.object(
                 mcs,
                 "_get_cached_module_resolution",
-                return_value=mcs.ModuleResolution(
-                    kind="module",
-                    path="cold/dep.py",
-                    content="VALUE = 1\n",
-                    hash="abc",
-                    storage_path="cold/dep.py",
-                ),
+                side_effect=AssertionError("child must not read Redis resolution cache"),
+            ),
+            patch.object(
+                mcs,
+                "_get_exact_scoped_module",
+                side_effect=AssertionError("child must not probe Redis module cache"),
             ),
         ):
             resolution = mcs.resolve_module_sync("cold.dep")
         assert resolution.kind == "module"
-        assert client.calls == []
+        assert client.calls == [
+            ("GET", "/api/sdk/modules-resolve", {"params": {"name": "cold.dep"}})
+        ]
 
-    def test_fetch_redis_hit_never_touches_engine_socket(self):
+    def test_fetch_warm_redis_entry_uses_engine_socket_without_recaching(self):
         module = {"content": "VALUE = 1\n", "path": "cold/dep.py", "hash": "abc"}
-        redis = _redis_mock({"bifrost:module:cold/dep.py": module})
-        client = _EngineSocketClient([])
+        client = _EngineSocketClient([_json_response(module)])
         with (
-            patch.object(mcs, "_get_sync_redis", return_value=redis),
+            patch.object(
+                mcs,
+                "_get_sync_redis",
+                side_effect=AssertionError("child must not read or write Redis module cache"),
+            ),
             patch.object(mcs, "_get_engine_client", return_value=client),
         ):
             assert mcs.get_module_sync("cold/dep.py")["content"] == "VALUE = 1\n"
-        assert client.calls == []
+        assert client.calls == [("GET", "/api/sdk/modules/cold/dep.py", {})]
 
 
 class TestEngineSocketColdPath:
@@ -226,12 +231,15 @@ class TestEngineSocketColdPath:
             ):
                 mcs.resolve_module_sync("cold.dep")
 
-    def test_cold_fetch_uses_engine_socket_and_recaches(self):
+    def test_cold_fetch_uses_engine_socket_without_redis_cache(self):
         module = {"content": "VALUE = 1\n", "path": "cold/dep.py", "hash": "h"}
         client = _EngineSocketClient([_json_response(dict(module))])
-        redis = _redis_mock()
         with (
-            patch.object(mcs, "_get_sync_redis", return_value=redis),
+            patch.object(
+                mcs,
+                "_get_sync_redis",
+                side_effect=AssertionError("child must not read or write Redis module cache"),
+            ),
             patch.object(mcs, "_get_engine_client", return_value=client),
             patch.object(
                 mcs,
@@ -249,9 +257,6 @@ class TestEngineSocketColdPath:
         assert fetched["content"] == "VALUE = 1\n"
         assert fetched.get("storage_path") == "cold/dep.py"
         assert client.calls == [("GET", "/api/sdk/modules/cold/dep.py", {})]
-        redis.setex.assert_called_once()
-        assert redis.setex.call_args[0][0] == "bifrost:module:cold/dep.py"
-        redis.sadd.assert_called_once()
 
     def test_fetch_404_advances_to_next_candidate(self):
         solution_id = uuid4().hex
@@ -261,10 +266,13 @@ class TestEngineSocketColdPath:
         client = _EngineSocketClient(
             [_json_response({"detail": "miss"}, 404), _json_response(dict(module))]
         )
-        redis = _redis_mock()
         try:
             with (
-                patch.object(mcs, "_get_sync_redis", return_value=redis),
+                patch.object(
+                    mcs,
+                    "_get_sync_redis",
+                    side_effect=AssertionError("child must not read or write Redis module cache"),
+                ),
                 patch.object(mcs, "_get_engine_client", return_value=client),
                 patch.object(
                     mcs,
@@ -286,17 +294,19 @@ class TestEngineSocketColdPath:
             f"/api/sdk/modules/{rooted}",
             "/api/sdk/modules/cold/dep.py",
         ]
-        assert redis.setex.call_args[0][0] == "bifrost:module:cold/dep.py"
 
     def test_all_candidates_404_returns_none(self):
         mcs.set_solution_context(uuid4().hex, global_repo_access=True)
         client = _EngineSocketClient(
             [_json_response({"detail": "miss"}, 404), _json_response({"detail": "miss"}, 404)]
         )
-        redis = _redis_mock()
         try:
             with (
-                patch.object(mcs, "_get_sync_redis", return_value=redis),
+                patch.object(
+                    mcs,
+                    "_get_sync_redis",
+                    side_effect=AssertionError("child must not read or write Redis module cache"),
+                ),
                 patch.object(mcs, "_get_engine_client", return_value=client),
             ):
                 assert mcs.get_module_sync("cold/dep.py") is None
@@ -306,9 +316,12 @@ class TestEngineSocketColdPath:
 
     def test_non_404_fetch_error_raises_without_fallbacks(self):
         client = _EngineSocketClient([_json_response({"detail": "boom"}, 500)])
-        redis = _redis_mock()
         with (
-            patch.object(mcs, "_get_sync_redis", return_value=redis),
+            patch.object(
+                mcs,
+                "_get_sync_redis",
+                side_effect=AssertionError("child must not read or write Redis module cache"),
+            ),
             patch.object(mcs, "_get_engine_client", return_value=client),
             patch.object(
                 mcs,
@@ -326,9 +339,12 @@ class TestEngineSocketColdPath:
 
     def test_fetch_socket_failure_raises_without_api_or_s3(self):
         client = _EngineSocketClient([httpx.ConnectError("dead socket")])
-        redis = _redis_mock()
         with (
-            patch.object(mcs, "_get_sync_redis", return_value=redis),
+            patch.object(
+                mcs,
+                "_get_sync_redis",
+                side_effect=AssertionError("child must not read or write Redis module cache"),
+            ),
             patch.object(mcs, "_get_engine_client", return_value=client),
             patch.object(
                 mcs,
@@ -351,9 +367,12 @@ class TestEngineSocketColdPath:
         client = _EngineSocketClient(
             [_json_response({"content": content, "path": "big.py", "hash": "h"})]
         )
-        redis = _redis_mock()
         with (
-            patch.object(mcs, "_get_sync_redis", return_value=redis),
+            patch.object(
+                mcs,
+                "_get_sync_redis",
+                side_effect=AssertionError("child must not read or write Redis module cache"),
+            ),
             patch.object(mcs, "_get_engine_client", return_value=client),
         ):
             fetched = mcs.get_module_sync("big.py")

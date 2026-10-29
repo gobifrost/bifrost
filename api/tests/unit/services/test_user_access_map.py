@@ -235,12 +235,12 @@ def test_scope_is_copied_from_the_catalog() -> None:
 
 
 def test_domain_and_action_come_from_the_permission() -> None:
-    access_map = _build(_ctx(CONTOSO, {"workflows.read.all", "users.lifecycle.readwrite"}))
+    access_map = _build(_ctx(CONTOSO, {"executions.read.all", "userlifecycle.readwrite"}))
 
     parts = {g.permission: (g.domain, g.action) for g in access_map.rows[0].grants}
     assert parts == {
-        "workflows.read.all": ("workflows", "read.all"),
-        "users.lifecycle.readwrite": ("users.lifecycle", "readwrite"),
+        "executions.read.all": ("executions", "read.all"),
+        "userlifecycle.readwrite": ("userlifecycle", "readwrite"),
     }
 
 

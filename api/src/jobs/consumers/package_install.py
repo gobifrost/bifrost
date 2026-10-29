@@ -1,18 +1,18 @@
 """
 Package Installation Consumer
 
-Processes package installation requests from RabbitMQ fanout exchange.
-Uses broadcast delivery so all worker instances install the package.
+Applies package changes on an executor. Every executor applies the recorded
+package changes (``src.services.package_generation``) in order.
 
 Flow:
 1. API handler updates requirements.txt in S3 + Redis cache (persistence)
-2. API broadcasts message to this consumer on all workers (with a shared run_id)
-3. Consumer runs pip install (makes package available on worker filesystem)
-4. Consumer recycles processes (clears Python import cache)
-5. Consumer updates package list in Redis (so /api/packages reflects changes)
+2. API records the change (with a shared run_id)
+3. Each executor runs pip install (makes package available on its filesystem)
+4. It recycles processes (clears Python import cache)
+5. It updates the package list in Redis (so /api/packages reflects changes)
 
 Progress is aggregated via Redis per run_id (see install_progress.py) so that
-each phase is reported once across all workers, not once per worker.
+each phase is reported once across all executors, not once per executor.
 """
 
 import asyncio
@@ -21,35 +21,23 @@ import os
 import sys
 from typing import Any
 
-from src.jobs.rabbitmq import BroadcastConsumer
+from shared.subprocess_env import package_tool_env
 from src.services.execution.install_progress import report_phase
 
 logger = logging.getLogger(__name__)
 
-# Exchange name for broadcast
-EXCHANGE_NAME = "package-installations"
-
-
-class PackageInstallConsumer(BroadcastConsumer):
+class PackageInstallConsumer:
     """
-    Broadcast consumer for package installation.
+    Applies one recorded package change and recycles the process pool.
 
-    Uses fanout exchange so ALL worker instances receive the message,
-    pip install the package, and recycle their process pools.
-
-    Message format:
+    Message format (``package_generation.change_message``):
     {
-        "type": "recycle_workers",
         "action": "install" | "uninstall" (optional, default "install"),
         "package": "package-name" (optional),
         "version": "1.0.0" (optional),
-        "is_update": true | false (optional),
-        "run_id": "<uuid>" (shared across workers for phase aggregation),
+        "run_id": "<uuid>" (shared across executors for phase aggregation),
     }
     """
-
-    def __init__(self):
-        super().__init__(exchange_name=EXCHANGE_NAME)
 
     @property
     def _worker_id(self) -> str:
@@ -65,6 +53,7 @@ class PackageInstallConsumer(BroadcastConsumer):
                 sys.executable, "-m", "pip", "uninstall", "-y", package, "--quiet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=package_tool_env(),
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             if proc.returncode == 0:
@@ -101,6 +90,7 @@ class PackageInstallConsumer(BroadcastConsumer):
                 sys.executable, "-m", "pip", "install", package_spec, "--quiet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=package_tool_env(),
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
@@ -147,6 +137,7 @@ class PackageInstallConsumer(BroadcastConsumer):
                 sys.executable, "-m", "pip", "install", "-r", temp_path, "--quiet",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=package_tool_env(),
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 

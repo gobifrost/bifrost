@@ -22,6 +22,11 @@ function NavigationStateProbe() {
 const mockAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => mockAuth() }));
 
+const mockAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
+}));
+
 const mockUseAgentStats = vi.fn();
 vi.mock("@/services/agents", () => ({
 	useAgentStats: (id: string | undefined) => mockUseAgentStats(id),
@@ -80,6 +85,10 @@ function makeRun(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
 	mockListModelProfiles.mockClear();
 	mockAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockAuthorization.mockReturnValue({
+		canAt: () => true,
+		canAnywhere: () => true,
+	});
 	mockUseAgentStats.mockReturnValue({ data: baseStats, isLoading: false });
 	mockUseAgentRuns.mockReturnValue({
 		data: { items: [makeRun()], total: 1, next_cursor: null },
@@ -122,7 +131,6 @@ beforeEach(() => {
 });
 
 async function renderTab(agentId = "agent-1") {
-
 	return renderWithProviders(<AgentOverviewTab agentId={agentId} />);
 }
 
@@ -154,8 +162,11 @@ describe("AgentOverviewTab", () => {
 		expect(screen.getByText("Model profile")).toBeInTheDocument();
 	});
 
-	it("does not request admin model profiles for organization users", async () => {
-		mockAuth.mockReturnValue({ isPlatformAdmin: false });
+	it("does not request model profiles without global settings read", async () => {
+		mockAuthorization.mockReturnValue({
+			canAt: () => false,
+			canAnywhere: () => false,
+		});
 		await renderTab();
 		expect(screen.getByText("Primary profile assignment")).toBeVisible();
 		expect(mockListModelProfiles).not.toHaveBeenCalled();
@@ -170,7 +181,6 @@ describe("AgentOverviewTab", () => {
 	});
 
 	it("keeps the overview as the origin when a recent run is opened", async () => {
-
 		const { user } = renderWithProviders(
 			<Routes>
 				<Route

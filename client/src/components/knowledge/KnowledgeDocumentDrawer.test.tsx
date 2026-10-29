@@ -11,6 +11,12 @@ vi.mock("@/contexts/AuthContext", () => ({
 		user: { organizationId: "org-1" },
 	}),
 }));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAnywhere: () => true,
+		canAt: () => true,
+	}),
+}));
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: ({
 		id,
@@ -152,7 +158,7 @@ describe("KnowledgeDocumentDrawer", () => {
 		await user.click(screen.getByRole("button", { name: "Save" }));
 		await waitFor(() => expect(props.onClose).toHaveBeenCalledOnce());
 		expect(fetchMock).toHaveBeenCalledWith(
-			"/api/knowledge-sources/company%20docs/documents?scope=global",
+			"/api/knowledge-sources/company%20docs/documents?scope=org-1",
 			expect.objectContaining({
 				method: "POST",
 				body: JSON.stringify({

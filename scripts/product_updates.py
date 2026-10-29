@@ -30,7 +30,16 @@ TYPES = {"New", "Improved", "Fixed", "Security"}
 SHA = re.compile(r"^[0-9a-f]{40}$")
 RAW_HTML = re.compile(r"<[A-Za-z][^>]*>")
 REMOTE_IMAGE = re.compile(r"!\[[^]]*\]\(https?://", re.I)
+PROMPT_URL = re.compile(r"(?:https?://|www\.)[^\s)]+", re.I)
+BIFROST_DOCS_HOSTS = {"gobifrost.com", "www.gobifrost.com", "docs.gobifrost.com"}
+AGENT_PROMPT_WORD_LIMIT = 400
+AGENT_PROMPT_CONFIRMATION = "wait for my confirmation"
+AGENT_PROMPT_DESCRIPTION = (
+    "Copy this prompt to have your coding agent help you with this change."
+)
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+DISPOSITION_KEY = re.compile(r"^[A-Za-z0-9]+(?::[A-Za-z0-9]+)*$")
+DISPOSITION_FILE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\.json$")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -41,6 +50,50 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path}: expected an object")
     return value
+
+
+def disposition_file_name(key: str) -> str:
+    """Map a disposition key to its own file; the key charset keeps this one-to-one."""
+    if not DISPOSITION_KEY.fullmatch(key):
+        raise ValueError(f"disposition key {key!r} cannot be stored as a file name")
+    return f"{key.replace(':', '-')}.json"
+
+
+def _disposition_files(directory: Path) -> dict[str, Any]:
+    """Read one disposition per ``<key>.json`` file; any other entry is an error."""
+    if not directory.exists() and not directory.is_symlink():
+        return {}
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(f"{directory}: must be a directory of disposition files")
+    items: dict[str, Any] = {}
+    for item_path in sorted(directory.iterdir()):
+        if (
+            item_path.is_symlink()
+            or not item_path.is_file()
+            or not DISPOSITION_FILE.fullmatch(item_path.name)
+        ):
+            raise ValueError(
+                f"{item_path}: only <key>.json disposition files belong in {directory}"
+            )
+        item = read_json(item_path)
+        key = item.pop("key", None)
+        if not isinstance(key, str) or disposition_file_name(key) != item_path.name:
+            raise ValueError(f"{item_path}: key must match the file name")
+        items[key] = item
+    return items
+
+
+def load_dispositions(path: Path) -> dict[str, Any]:
+    """Assemble the ledger header with one file per item from ``dispositions/``.
+
+    Separate item files keep concurrent pull requests from editing one shared map.
+    """
+    dispositions = read_json(path)
+    directory = path.parent / "dispositions"
+    if "items" in dispositions:
+        raise ValueError(f"{path}: items belong in {directory}/, one file per key")
+    items = _disposition_files(directory)
+    return {**dispositions, "items": dict(sorted(items.items()))}
 
 
 def read_entry(path: Path) -> tuple[dict[str, Any], str]:
@@ -104,6 +157,34 @@ def _url(value: Any) -> bool:
 def unsafe_markdown(markdown: str) -> bool:
     prose = re.sub(r"`[^`]*`", "", markdown)
     return bool(RAW_HTML.search(prose) or REMOTE_IMAGE.search(prose))
+
+
+def agent_prompt_errors(entry: dict[str, Any], label: str) -> list[str]:
+    """Check the copy-into-an-agent prompt; the schema already checks its type."""
+    prompt = entry.get("agent_prompt")
+    if not isinstance(prompt, str):
+        return []
+    errors: list[str] = []
+    if len(prompt.split()) > AGENT_PROMPT_WORD_LIMIT:
+        errors.append(f"{label}: agent_prompt exceeds {AGENT_PROMPT_WORD_LIMIT} words")
+    if RAW_HTML.search(prompt):
+        errors.append(f"{label}: agent_prompt must not contain raw HTML")
+    if "`" in prompt:
+        errors.append(f"{label}: agent_prompt must not contain backticks")
+    for url in PROMPT_URL.findall(prompt):
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        if parsed.netloc.lower() not in BIFROST_DOCS_HOSTS and not (
+            parsed.netloc.lower() == "github.com"
+            and parsed.path.lower().startswith("/gobifrost/")
+        ):
+            errors.append(
+                f"{label}: agent_prompt links only to the Bifrost docs or github.com/gobifrost, not {url}"
+            )
+    if AGENT_PROMPT_CONFIRMATION not in " ".join(prompt.lower().split()):
+        errors.append(
+            f"{label}: agent_prompt must tell the agent to {AGENT_PROMPT_CONFIRMATION!r} before changing anything"
+        )
+    return errors
 
 
 def markdown_asset_errors(entry: dict[str, Any], label: str) -> list[str]:
@@ -380,6 +461,7 @@ def validate_entry(
         errors.append(f"{label}: update title exceeds 10 words")
     if unsafe_markdown(entry["markdown"]):
         errors.append(f"{label}: raw HTML or executable embeds are not allowed")
+    errors.extend(agent_prompt_errors(entry, label))
     assets = entry["assets"]
     if not isinstance(assets, list):
         errors.append(f"{label}: assets must be a list")
@@ -473,7 +555,7 @@ def validate_content(
     errors: list[str] = []
     try:
         inventory = read_json(inventory_path)
-        dispositions = read_json(dispositions_path)
+        dispositions = load_dispositions(dispositions_path)
     except ValueError as exc:
         return [str(exc)]
     schema_path = schema_path or content_dir / "schema.json"
@@ -663,7 +745,7 @@ def build_bundle(
         raise ValueError("content_ref must be a 40-character commit SHA")
     inventory = read_json(inventory_path)
     base = base or str(inventory["base_ref"])
-    dispositions = read_json(dispositions_path)
+    dispositions = load_dispositions(dispositions_path)
     prs, _ = _metadata_indexes(inventory)
     entries: list[dict[str, Any]] = []
     for entry in load_entries(content_dir, draft_dir):
@@ -848,6 +930,25 @@ def render_release(bundle: dict[str, Any], asset_base_url: str) -> str:
                 lines.extend([f"![{asset['alt']}]({url})", ""])
                 if asset.get("caption"):
                     lines.extend([asset["caption"], ""])
+            if entry.get("agent_prompt"):
+                # Collapsed like the app's box; GitHub gives the fence a copy button.
+                lines.extend(
+                    [
+                        "#### Agent Prompt",
+                        "",
+                        AGENT_PROMPT_DESCRIPTION,
+                        "",
+                        "<details>",
+                        "<summary>Show Prompt</summary>",
+                        "",
+                        "```text",
+                        entry["agent_prompt"].strip("\n"),
+                        "```",
+                        "",
+                        "</details>",
+                        "",
+                    ]
+                )
             source_links = [
                 f"[#{source['pr']}](https://github.com/gobifrost/bifrost/pull/{source['pr']})"
                 if "pr" in source
@@ -1285,7 +1386,7 @@ def main() -> int:
                     json.dumps(
                         coverage_report(
                             read_json(args.inventory),
-                            read_json(args.dispositions),
+                            load_dispositions(args.dispositions),
                             entries,
                         ),
                         indent=2,
@@ -1319,7 +1420,7 @@ def main() -> int:
             )
             return 0
         if args.command == "validate-event":
-            dispositions = read_json(args.dispositions)
+            dispositions = load_dispositions(args.dispositions)
             schema_path = args.schema or args.content_dir / "schema.json"
             errors = schema_errors(
                 schema_path, "dispositions", dispositions, str(args.dispositions)
@@ -1347,6 +1448,7 @@ def main() -> int:
                         f"{entry['_path']}: raw HTML or executable embeds are not allowed"
                     )
                 errors.extend(markdown_asset_errors(entry, str(entry["_path"])))
+                errors.extend(agent_prompt_errors(entry, str(entry["_path"])))
                 for asset in entry.get("assets", []):
                     error = (
                         _asset_error(args.content_dir, asset)

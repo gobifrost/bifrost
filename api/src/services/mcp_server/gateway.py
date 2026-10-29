@@ -6,29 +6,22 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import UUID, uuid5
+from uuid import UUID
 
 import pydantic_core
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from shared.run_lineage import RunLineage
-from shared.scope_resolver import has_scope_bypass
-from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.external_mcp import MCPConnection, MCPServer
-from src.repositories.agents import AgentRepository
 from src.services.execution.agent_helpers import (
-    find_delegated_agent,
-    parse_mcp_tool_name,
     resolve_agent_tools,
 )
 from src.services.execution.agent_workflow_tools import (
-    AgentWorkflowCaller,
     execute_agent_workflow_tool,
 )
 from src.services.llm import ToolDefinition
@@ -40,25 +33,24 @@ from src.services.mcp_client.errors import (
 )
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
 from src.services.run_retention.settings import run_not_found_suffix
-from src.services.tool_schema import validate_arguments_against_schema
+from src.services.capabilities.catalog import (
+    CapabilityArgumentError,
+    CapabilityTool as ResolvedGatewayTool,
+    find_capability_by_ref,
+    require_valid_capability_arguments,
+    resolve_capability_tools,
+)
+from src.services.capabilities.search import CapabilitySearchItem, rank_capabilities
 
 if TYPE_CHECKING:
     from src.services.mcp_server.server import MCPContext
 
 logger = logging.getLogger(__name__)
 
-GATEWAY_TOOL_NAMESPACE = UUID("bcf3f4d7-b95e-53cc-9b7f-35e7081d0d84")
 MAX_CAPABILITY_RESULTS = 20
 MAX_CAPABILITY_RESPONSE_BYTES = 24_000
 MAX_EXECUTION_RESULT_BYTES = 24_000
 
-GatewayToolSource = Literal[
-    "system",
-    "knowledge",
-    "workflow",
-    "delegation",
-    "external_mcp",
-]
 DiscoveryScope = Literal["accessible", "all"]
 
 
@@ -85,28 +77,6 @@ class GatewayError(Exception):
             "message": self.message,
             "retryable": self.retryable,
             **self.details,
-        }
-
-
-@dataclass(frozen=True)
-class ResolvedGatewayTool:
-    """One live tool resolved within an agent capability boundary."""
-
-    tool_ref: str
-    definition: ToolDefinition
-    source: GatewayToolSource
-    source_identity: str
-    source_id: UUID | None = None
-    remote_tool_name: str | None = None
-
-    def compact(self) -> dict[str, Any]:
-        return {
-            "tool_ref": self.tool_ref,
-            "name": self.definition.name,
-            "description": self.definition.description,
-            "source": self.source,
-            "supports_async": self.source in {"workflow", "delegation"},
-            "default_async": self.source == "delegation",
         }
 
 
@@ -162,42 +132,18 @@ def _agent_search_score(agent: Agent, query: str) -> int:
     return score
 
 
-def _tool_search_score(tool: ResolvedGatewayTool, query: str) -> int:
-    normalized_query = " ".join(_search_tokens(query))
-    if not normalized_query:
-        return 1
-
-    name = " ".join(_search_tokens(tool.definition.name))
-    description = " ".join(_search_tokens(tool.definition.description or ""))
-    schema = " ".join(
-        _search_tokens(
-            str(
-                pydantic_core.to_jsonable_python(
-                    tool.definition.parameters,
-                    fallback=str,
-                )
-            )
-        )
+def _tool_search_score(tool: ResolvedGatewayTool, query: str, agent_id: UUID) -> int:
+    connector = f"bifrost_agent_{agent_id.hex}"
+    ranked = rank_capabilities(
+        query,
+        [CapabilitySearchItem(
+            path=f"{connector}.{tool.definition.name}",
+            connector=connector,
+            method=tool.definition.name,
+            description=tool.definition.description,
+        )],
     )
-    score = 0
-    if normalized_query == name:
-        score += 240
-    elif normalized_query in name:
-        score += 120
-    if normalized_query in description:
-        score += 50
-    if normalized_query in schema:
-        score += 15
-    for token in set(normalized_query.split()):
-        if token in name.split():
-            score += 25
-        elif token in name:
-            score += 15
-        if token in description:
-            score += 6
-        if token in schema:
-            score += 2
-    return score
+    return ranked[0]["score"] if ranked else 0
 
 
 def _compact_description(value: str | None, limit: int = 800) -> str | None:
@@ -241,56 +187,43 @@ class MCPAgentGatewayService:
     def __init__(self, context: MCPContext):
         self.context = context
 
-    @property
-    def _has_scope_bypass(self) -> bool:
-        return has_scope_bypass(
-            is_platform_admin=self.context.is_platform_admin,
-            is_provider_org=self.context.is_provider_org,
-        )
+    async def _caller(self, db):
+        from src.services.mcp_server.authorization import MCPAuthorizationError, load_mcp_caller
 
-    def _agent_repo(self, session: Any) -> AgentRepository:
-        return AgentRepository(
-            session,
-            org_id=self.context.org_id,
-            user_id=self.context.user_id,
-            is_superuser=self._has_scope_bypass,
-            is_external=self.context.is_external,
-        )
+        try:
+            return await load_mcp_caller(db, self.context)
+        except MCPAuthorizationError as exc:
+            raise GatewayError("AUTHENTICATION_REQUIRED", "Authentication required") from exc
 
-    def _authorize_discovery_scope(self, discovery_scope: DiscoveryScope) -> None:
-        if discovery_scope == "all" and not self._has_scope_bypass:
-            raise GatewayError(
-                "IMPERSONATION_FORBIDDEN",
-                "Cross-organization discovery requires platform/provider impersonation authority.",
-            )
-
-    async def _list_accessible_agents(self) -> list[Agent]:
+    async def _list_agents(self, *, all_scopes: bool) -> list[Agent]:
+        from sqlalchemy import or_
+        from shared.scope_resolver import resolve_effective_scope
         from src.core.database import get_db_context
+        from src.services.agent_write_policy import agent_query_in_reach, can_read_agent, caller_user_id
 
         async with get_db_context() as db:
-            repo = AgentRepository(
-                db,
-                org_id=self.context.org_id,
-                user_id=self.context.user_id,
-                is_superuser=False,
-                is_external=self.context.is_external,
-            )
-            return await repo.list_agents(active_only=True)
+            caller = await self._caller(db)
+            query = agent_query_in_reach(caller).options(
+                selectinload(Agent.roles), selectinload(Agent.tools),
+                selectinload(Agent.delegated_agents),
+            ).where(Agent.is_active.is_(True))
+            if not all_scopes:
+                selected_org = resolve_effective_scope(caller=caller)
+                query = query.where(or_(
+                    Agent.organization_id == selected_org,
+                    Agent.organization_id.is_(None),
+                    Agent.owner_user_id == caller_user_id(caller),
+                ))
+            candidates = (await db.execute(query)).scalars().unique().all()
+            return [agent for agent in candidates if await can_read_agent(db, caller, agent)]
+
+    async def _list_accessible_agents(self) -> list[Agent]:
+        return await self._list_agents(all_scopes=False)
 
     async def _list_discovery_agents(
         self, discovery_scope: DiscoveryScope
     ) -> list[Agent]:
-        self._authorize_discovery_scope(discovery_scope)
-        if discovery_scope == "accessible":
-            return await self._list_accessible_agents()
-
-        from src.core.database import get_db_context
-
-        async with get_db_context() as db:
-            return await self._agent_repo(db).list_all_in_scope(
-                OrgFilterType.ALL,
-                active_only=True,
-            )
+        return await self._list_agents(all_scopes=discovery_scope == "all")
 
     async def accessible_agent_count(self) -> int:
         """Return the caller's live accessible-agent count."""
@@ -306,7 +239,6 @@ class MCPAgentGatewayService:
         limit: int = 10,
     ) -> dict[str, Any]:
         """Search agents and tools, then progressively hydrate one selection."""
-        self._authorize_discovery_scope(discovery_scope)
         bounded_limit = min(max(limit, 1), MAX_CAPABILITY_RESULTS)
         if agent_id is not None:
             snapshot = await self.get_agent_snapshot(agent_id)
@@ -339,7 +271,7 @@ class MCPAgentGatewayService:
 
             matching_tools = 0
             for tool in snapshot.tools:
-                score = _tool_search_score(tool, normalized_query)
+                score = _tool_search_score(tool, normalized_query, snapshot.agent.id)
                 if score > 0:
                     matching_tools += 1
                     candidates.append((score, "tool", snapshot, tool))
@@ -433,13 +365,15 @@ class MCPAgentGatewayService:
                     "schema_included": True,
                 }
             )
+            if tool.definition.structured_output_schema is not None:
+                tool_result["output_schema"] = tool.definition.structured_output_schema
             tools = [tool_result]
             total_matches = 1
             returned_matches = 1
             total_matching_tools = 1
         elif query and query.strip():
             scored = [
-                (_tool_search_score(tool, query), tool)
+                (_tool_search_score(tool, query, snapshot.agent.id), tool)
                 for tool in snapshot.tools
             ]
             scored = [item for item in scored if item[0] > 0]
@@ -577,9 +511,18 @@ class MCPAgentGatewayService:
             ) from exc
 
         async with get_db_context() as db:
-            repo = self._agent_repo(db)
-            agent = await repo.get_agent_with_access_check(parsed_agent_id)
-            if agent is None or not agent.is_active:
+            from src.services.agent_write_policy import agent_query_in_reach, can_read_agent
+
+            caller = await self._caller(db)
+            result = await db.execute(
+                agent_query_in_reach(caller).options(
+                    selectinload(Agent.roles), selectinload(Agent.tools),
+                    selectinload(Agent.delegated_agents),
+                    selectinload(Agent.mcp_connections),
+                ).where(Agent.id == parsed_agent_id)
+            )
+            agent = result.scalars().unique().first()
+            if agent is None or not agent.is_active or not await can_read_agent(db, caller, agent):
                 raise GatewayError(
                     "AGENT_NOT_FOUND_OR_FORBIDDEN",
                     "Agent not found or you do not have access.",
@@ -611,6 +554,21 @@ class MCPAgentGatewayService:
         """
         snapshot = await self.get_agent_snapshot(agent_id)
         tool = self.find_tool(snapshot, tool_ref)
+        from shared.scope_resolver import shared_read_organization
+        from src.core.database import get_db_context
+        from src.services.authorization.enforce import require_named_permission
+
+        async with get_db_context() as db:
+            caller = await self._caller(db)
+            from src.services.authorization.enforce import PermissionDenied
+
+            try:
+                require_named_permission(
+                    caller, "agents.execute",
+                    shared_read_organization(caller, snapshot.agent.organization_id),
+                )
+            except PermissionDenied as exc:
+                raise GatewayError("AUTHORIZATION_FORBIDDEN", exc.detail) from exc
         return await self.execute_tool(
             snapshot,
             tool,
@@ -629,7 +587,8 @@ class MCPAgentGatewayService:
     ) -> dict[str, Any]:
         """Return compact status for an execution owned by the caller."""
         from src.core.database import get_db_context
-        from src.core.redis_client import get_redis_client
+        from src.services.authorization.execution_access import execution_read_access
+        from src.services.execution.agent_run_access import agent_run_visibility_conditions
 
         try:
             parsed_execution_id = UUID(execution_id)
@@ -640,6 +599,7 @@ class MCPAgentGatewayService:
             ) from exc
 
         async with get_db_context() as db:
+            caller = await self._caller(db)
             result = await db.execute(
                 select(Execution).where(Execution.id == parsed_execution_id)
             )
@@ -647,15 +607,15 @@ class MCPAgentGatewayService:
             agent_run = None
             if execution is None:
                 agent_result = await db.execute(
-                    select(AgentRun).where(AgentRun.id == parsed_execution_id)
+                    select(AgentRun).options(selectinload(AgentRun.agent)).where(
+                        AgentRun.id == parsed_execution_id,
+                        *agent_run_visibility_conditions(caller),
+                    )
                 )
                 agent_run = agent_result.scalar_one_or_none()
 
         if execution is not None:
-            if (
-                not self.context.is_platform_admin
-                and execution.executed_by != UUID(str(self.context.user_id))
-            ):
+            if not execution_read_access(caller, execution).visible:
                 raise GatewayError(
                     "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
                     "Execution not found or you do not have access.",
@@ -691,14 +651,6 @@ class MCPAgentGatewayService:
             }
 
         if agent_run is not None:
-            if (
-                not self.context.is_platform_admin
-                and agent_run.caller_user_id != str(self.context.user_id)
-            ):
-                raise GatewayError(
-                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                    "Execution not found or you do not have access.",
-                )
             result_available = agent_run.output is not None
             result_value = None
             result_page = None
@@ -725,37 +677,6 @@ class MCPAgentGatewayService:
                 "result_available": result_available,
                 "result": result_value,
                 "result_page": result_page,
-            }
-
-        pending = await get_redis_client().get_pending_execution(execution_id)
-        if pending is not None:
-            if (
-                not self.context.is_platform_admin
-                and pending.get("user_id") != str(self.context.user_id)
-            ):
-                raise GatewayError(
-                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                    "Execution not found or you do not have access.",
-                )
-            created_at = pending.get("created_at")
-            return {
-                "execution_id": execution_id,
-                "execution_type": "workflow",
-                "workflow_id": pending.get("workflow_id"),
-                "workflow_name": pending.get("script_name"),
-                "agent_id": None,
-                "agent_name": None,
-                "status": "Pending",
-                "created_at": (
-                    datetime.fromisoformat(created_at) if created_at else None
-                ),
-                "started_at": None,
-                "completed_at": None,
-                "duration_ms": None,
-                "error": None,
-                "result_available": False,
-                "result": None,
-                "result_page": None,
             }
 
         async with get_db_context() as db:
@@ -929,71 +850,15 @@ class MCPAgentGatewayService:
         config: MCPConfig,
     ) -> list[ResolvedGatewayTool]:
         resolved: list[ResolvedGatewayTool] = []
-
-        for definition in definitions:
-            source: GatewayToolSource
-            source_id: UUID | None = None
-            remote_tool_name: str | None = None
-
-            mcp_route = parse_mcp_tool_name(definition.name)
-            if mcp_route is not None:
-                source = "external_mcp"
-                source_id, remote_tool_name = mcp_route
-                source_identity = f"external_mcp:{source_id}:{remote_tool_name}"
-            elif definition.name == "search_knowledge":
-                source = "knowledge"
-                source_identity = f"knowledge:{definition.name}"
-            elif definition.name in (agent.system_tools or []):
-                source = "system"
-                source_identity = f"system:{definition.name}"
-            else:
-                delegated = find_delegated_agent(agent, definition.name)
-                if delegated is not None:
-                    source = "delegation"
-                    source_id = delegated.id
-                    source_identity = f"delegation:{delegated.id}"
-                else:
-                    workflow_id = id_map.get(definition.name)
-                    if workflow_id is None:
-                        logger.warning(
-                            "Gateway could not classify resolved tool %s for agent %s",
-                            definition.name,
-                            agent.id,
-                        )
-                        continue
-                    source = "workflow"
-                    source_id = workflow_id
-                    source_identity = f"workflow:{workflow_id}"
-
-            filter_ids = {definition.name}
-            if source_id is not None:
-                filter_ids.add(str(source_id))
-            if config.allowed_tool_ids and not (
-                filter_ids & set(config.allowed_tool_ids)
-            ):
+        for tool in resolve_capability_tools(agent, definitions, id_map):
+            filter_ids = {tool.definition.name}
+            if tool.source_id is not None:
+                filter_ids.add(str(tool.source_id))
+            if config.allowed_tool_ids and not (filter_ids & set(config.allowed_tool_ids)):
                 continue
-            if config.blocked_tool_ids and (
-                filter_ids & set(config.blocked_tool_ids)
-            ):
+            if config.blocked_tool_ids and (filter_ids & set(config.blocked_tool_ids)):
                 continue
-
-            tool_ref = str(
-                uuid5(
-                    GATEWAY_TOOL_NAMESPACE,
-                    f"{agent.id}:{source_identity}",
-                )
-            )
-            resolved.append(
-                ResolvedGatewayTool(
-                    tool_ref=tool_ref,
-                    definition=definition,
-                    source=source,
-                    source_identity=source_identity,
-                    source_id=source_id,
-                    remote_tool_name=remote_tool_name,
-                )
-            )
-
+            resolved.append(tool)
         return resolved
 
     @staticmethod
@@ -1001,9 +866,9 @@ class MCPAgentGatewayService:
         snapshot: AgentToolSnapshot,
         tool_ref: str,
     ) -> ResolvedGatewayTool:
-        for tool in snapshot.tools:
-            if tool.tool_ref == tool_ref:
-                return tool
+        tool = find_capability_by_ref(snapshot.tools, tool_ref)
+        if tool is not None:
+            return tool
         raise GatewayError(
             "TOOL_NOT_FOUND_OR_FORBIDDEN",
             "Tool not found, no longer granted, or you do not have access.",
@@ -1020,31 +885,30 @@ class MCPAgentGatewayService:
             "type": "object",
             "properties": {},
         }
-        issues, schema_error = validate_arguments_against_schema(schema, arguments)
-        if schema_error:
+        try:
+            require_valid_capability_arguments(schema, arguments)
+        except CapabilityArgumentError as exc:
+            if exc.schema_error:
+                raise GatewayError(
+                    "TOOL_SCHEMA_INVALID",
+                    "The live tool schema is invalid and cannot be executed.",
+                    details={
+                        "tool_ref": tool.tool_ref,
+                        "tool_name": tool.definition.name,
+                        "schema_error": exc.schema_error,
+                    },
+                ) from exc
             raise GatewayError(
-                "TOOL_SCHEMA_INVALID",
-                "The live tool schema is invalid and cannot be executed.",
+                "INVALID_ARGUMENTS",
+                "Arguments do not match the live tool schema.",
+                retryable=True,
                 details={
                     "tool_ref": tool.tool_ref,
                     "tool_name": tool.definition.name,
-                    "schema_error": schema_error,
+                    "issues": exc.issues,
+                    "input_schema": schema,
                 },
-            )
-
-        if not issues:
-            return
-        raise GatewayError(
-            "INVALID_ARGUMENTS",
-            "Arguments do not match the live tool schema.",
-            retryable=True,
-            details={
-                "tool_ref": tool.tool_ref,
-                "tool_name": tool.definition.name,
-                "issues": issues,
-                "input_schema": schema,
-            },
-        )
+            ) from exc
 
     async def execute_tool(
         self,
@@ -1155,10 +1019,10 @@ class MCPAgentGatewayService:
             return await self._dispatch_system_tool(agent, tool, arguments)
         if tool.source == "workflow":
             return await self._dispatch_workflow(
+                agent,
                 tool,
                 arguments,
                 async_execution=async_execution,
-                lineage=lineage,
             )
         if tool.source == "delegation":
             return await self._dispatch_delegation(
@@ -1182,9 +1046,10 @@ class MCPAgentGatewayService:
         arguments: dict[str, Any],
     ) -> Any:
         from src.services.mcp_server.server import (
-            MCPContext,
+            context_from_principal,
             get_system_tool_function,
         )
+        from src.core.database import get_db_context
 
         func = get_system_tool_function(tool.definition.name)
         if func is None:
@@ -1194,16 +1059,10 @@ class MCPAgentGatewayService:
                 retryable=True,
             )
 
-        context = MCPContext(
-            user_id=self.context.user_id,
-            org_id=self.context.org_id,
-            is_platform_admin=self.context.is_platform_admin,
-            is_provider_org=self.context.is_provider_org,
-            is_external=self.context.is_external,
-            user_email=self.context.user_email,
-            user_name=self.context.user_name,
-            accessible_namespaces=list(agent.knowledge_sources or []),
-        )
+        async with get_db_context() as db:
+            caller = await self._caller(db)
+        context = context_from_principal(caller.principal)
+        context.accessible_namespaces = list(agent.knowledge_sources or [])
         result = await func(context, **arguments)
         structured = getattr(result, "structured_content", None)
         if isinstance(structured, dict) and structured.get("error"):
@@ -1222,31 +1081,39 @@ class MCPAgentGatewayService:
 
     async def _dispatch_workflow(
         self,
+        agent: Agent,
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
         *,
         async_execution: bool = False,
-        lineage: RunLineage | None,
     ) -> Any:
         if tool.source_id is None:
             raise GatewayError(
                 "TOOL_EXECUTION_FAILED",
                 "Workflow identity is missing.",
             )
-        response = await execute_agent_workflow_tool(
-            workflow_id=tool.source_id,
-            workflow_name=tool.definition.name,
-            parameters=arguments,
-            caller=AgentWorkflowCaller(
-                user_id=str(self.context.user_id),
-                email=self.context.user_email,
-                name=self.context.user_name or "MCP User",
-                organization_id=self.context.org_id,
-                is_platform_admin=self.context.is_platform_admin,
-            ),
-            sync=not async_execution,
-            lineage=lineage,
-        )
+        from src.core.database import get_db_context
+
+        async with get_db_context() as db:
+            caller = await self._caller(db)
+        from fastapi import HTTPException
+        from src.services.execution.agent_workflow_tools import AgentWorkflowAuthorizationError
+        from src.services.authorization.callers import CallerUnavailable
+
+        try:
+            response = await execute_agent_workflow_tool(
+                agent_id=agent.id,
+                workflow_id=tool.source_id,
+                parameters=arguments,
+                caller=caller,
+                sync=not async_execution,
+            )
+        except HTTPException as exc:
+            raise GatewayError("AUTHORIZATION_FORBIDDEN", str(exc.detail)) from exc
+        except AgentWorkflowAuthorizationError as exc:
+            raise GatewayError("TOOL_NOT_FOUND_OR_FORBIDDEN", str(exc)) from exc
+        except CallerUnavailable as exc:
+            raise GatewayError("AUTHENTICATION_REQUIRED", str(exc)) from exc
         data = {
             "execution_id": response.execution_id,
             "status": response.status.value,
@@ -1298,13 +1165,23 @@ class MCPAgentGatewayService:
             )
 
         async with get_db_context() as db:
-            delegated = await AgentRepository(
-                db,
-                org_id=agent.organization_id,
-                user_id=self.context.user_id,
-                is_superuser=True,
-                is_external=False,
-            ).get_agent(tool.source_id)
+            from shared.scope_resolver import shared_read_organization
+            from src.services.agent_write_policy import agent_query_in_reach
+            from src.services.authorization.enforce import PermissionDenied, require_named_permission
+
+            caller = await self._caller(db)
+            result = await db.execute(
+                agent_query_in_reach(caller).where(Agent.id == tool.source_id)
+            )
+            delegated = result.scalar_one_or_none()
+            if delegated is not None:
+                try:
+                    require_named_permission(
+                        caller, "agents.execute",
+                        shared_read_organization(caller, delegated.organization_id),
+                    )
+                except PermissionDenied as exc:
+                    raise GatewayError("AUTHORIZATION_FORBIDDEN", exc.detail) from exc
         if delegated is None or not delegated.is_active:
             raise GatewayError(
                 "TOOL_NOT_FOUND_OR_FORBIDDEN",
@@ -1325,6 +1202,9 @@ class MCPAgentGatewayService:
             caller_user_id=str(self.context.user_id),
             caller_email=self.context.user_email,
             caller_name=self.context.user_name,
+            caller_is_superuser=self.context.is_platform_admin,
+            caller_is_external=self.context.is_external,
+            caller_is_provider_org=self.context.is_provider_org,
             sync=not async_execution,
             lineage=lineage,
         )
@@ -1367,8 +1247,15 @@ class MCPAgentGatewayService:
             )
         try:
             async with get_db_context() as db:
+                from src.services.authorization.enforce import user_reach
+
+                caller = await self._caller(db)
+                query = select(MCPConnection)
+                reach = user_reach(caller).where(MCPConnection.organization_id)
+                if reach is not None:
+                    query = query.where(reach)
                 result = await db.execute(
-                    select(MCPConnection)
+                    query
                     .where(MCPConnection.id == tool.source_id)
                     .options(
                         selectinload(MCPConnection.server).selectinload(
@@ -1388,7 +1275,7 @@ class MCPAgentGatewayService:
                     connection=connection,
                     tool_name=tool.remote_tool_name,
                     arguments=arguments,
-                    caller_user_id=UUID(str(self.context.user_id)),
+                    caller_user_id=caller.principal.user_id,
                     db=db,
                 )
                 return self.unwrap_external_result(result)

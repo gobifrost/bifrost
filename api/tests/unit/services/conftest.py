@@ -214,6 +214,8 @@ def sample_oauth_response_metadata():
 def unknown_catalog_context_window():
     """Executor unit tests run on mock sessions that cannot serve the model
     catalog; treat every chain's window as unknown to the catalog."""
+    from src.services.model_catalog import parse_catalog
+
     with (
         patch(
             "src.services.agent_executor.chain_context_window",
@@ -222,6 +224,10 @@ def unknown_catalog_context_window():
         patch(
             "src.services.execution.autonomous_agent_executor.chain_context_window",
             new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.services.agent_executor.get_model_catalog",
+            new=AsyncMock(return_value=parse_catalog({}, fetched_at=None, source="bundled")),
         ),
     ):
         yield

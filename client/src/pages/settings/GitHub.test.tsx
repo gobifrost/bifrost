@@ -3,6 +3,9 @@ import { screen, waitFor, within } from "@testing-library/react";
 
 import { renderWithProviders } from "@/test-utils";
 import { GitHub } from "./GitHub";
+import { toast } from "sonner";
+
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const {
 	mockUseGitHubConfig,
@@ -106,6 +109,31 @@ beforeEach(() => {
 });
 
 describe("GitHub settings", () => {
+	it("shows GitHub's status and reason instead of calling a rate-limited token invalid", async () => {
+		const detail =
+			"GitHub token validation failed (HTTP 403): GitHub rate limit exceeded. Resets at: 1793126584";
+		mockValidateGitHubToken.mockRejectedValueOnce(new Error(detail));
+		const { user } = renderWithProviders(<GitHub />);
+		await user.type(
+			screen.getByLabelText("GitHub Personal Access Token"),
+			"synthetic-token",
+		);
+		await user.click(screen.getByRole("button", { name: "Validate" }));
+		await waitFor(() =>
+			expect(toast.error).toHaveBeenCalledWith(
+				"Token Validation Failed",
+				{ description: detail },
+			),
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent(detail);
+		expect(screen.queryByText("Token validated.")).not.toBeInTheDocument();
+		await user.type(
+			screen.getByLabelText("GitHub Personal Access Token"),
+			"-edited",
+		);
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
 	it("previews a selected repository and queues an explicit reconcile decision", async () => {
 		const { user } = renderWithProviders(<GitHub />);
 

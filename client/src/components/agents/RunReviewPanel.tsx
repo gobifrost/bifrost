@@ -36,7 +36,8 @@ import {
 	createAgentRunNavigationState,
 	type AgentRunNavigationOrigin,
 } from "@/lib/agent-run-navigation";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { SummaryRegenerationControl } from "./SummaryRegenerationControl";
 import type { components } from "@/lib/v1";
 
@@ -178,9 +179,13 @@ export function RunReviewPanel({
 	const maxActions = compact ? 3 : 4;
 	const visibleActions = fallbackActions.slice(0, maxActions);
 	const overflow = fallbackActions.length - visibleActions.length;
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const summaryStatus = run.summary_status;
 	const needsRegen = summaryStatus && summaryStatus !== "completed";
+	const canRegenerateSummary = authorization.canAt(
+		"agentruns.readwrite.all",
+		orgTarget(run.org_id),
+	);
 
 	return (
 		<div data-slot="run-review-panel" className="min-w-0">
@@ -220,7 +225,7 @@ export function RunReviewPanel({
 						{summaryStatus !== "generating" ? (
 							<SummaryRegenerationControl
 								runId={run.id}
-								allowed={isPlatformAdmin}
+								allowed={canRegenerateSummary}
 								testId="regen-summary-panel-button"
 							/>
 						) : null}

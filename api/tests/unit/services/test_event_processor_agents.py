@@ -3,10 +3,11 @@ Unit tests for EventProcessor agent target routing.
 
 Verifies that queue_event_deliveries correctly routes deliveries
 to either _queue_agent_run or _queue_workflow_execution based on
-the subscription's target_type, and that _queue_agent_run calls
-enqueue_agent_run with the expected parameters.
+the subscription's target_type, and that _queue_agent_run stages the
+agent run in the processor's own session with the expected parameters.
 """
 
+import base64
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -15,7 +16,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from shared.builtin_roles import USER_ROLE_ID
+from src.core.principal import UserPrincipal
 from src.models.enums import EventDeliveryStatus
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 if TYPE_CHECKING:
     from src.services.events.processor import EventProcessor
@@ -34,6 +39,7 @@ def _make_event(
     event.headers = {"content-type": "application/json"}
     event.received_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     event.source_ip = "10.0.0.1"
+    event.raw_body = None
     event.status = "processing"
     return event
 
@@ -71,6 +77,14 @@ def _make_delivery(
     return delivery
 
 
+class _Savepoint:
+    async def __aenter__(self) -> "_Savepoint":
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
 def _create_processor() -> "EventProcessor":
     """Create an EventProcessor with all repos mocked out."""
     with (
@@ -82,6 +96,8 @@ def _create_processor() -> "EventProcessor":
         from src.services.events.processor import EventProcessor
 
         session = AsyncMock()
+        # Each delivery is queued in its own savepoint of the caller's session.
+        session.begin_nested = MagicMock(side_effect=_Savepoint)
         processor = EventProcessor(session)
         processor._delivery_repo = MagicMock()
         processor._delivery_repo.update_event_status = AsyncMock()
@@ -89,6 +105,24 @@ def _create_processor() -> "EventProcessor":
         processor._subscription_repo = MagicMock()
         processor._webhook_repo = MagicMock()
         return processor
+
+
+def _identity_caller(user_id: uuid.UUID, organization_id: uuid.UUID) -> Caller:
+    """The current human caller reloaded before an event may run an Agent."""
+    return Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email="identity@contoso.example",
+            organization_id=organization_id,
+        ),
+        AuthorizationContext(
+            user_id=user_id,
+            home_organization_id=organization_id,
+            base_role_id=USER_ROLE_ID,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -106,7 +140,7 @@ async def test_queue_deliveries_routes_agent_subscription():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 1
     assert delivery.status == EventDeliveryStatus.QUEUED
@@ -129,7 +163,7 @@ async def test_queue_deliveries_routes_workflow_subscription():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 1
     assert delivery.status == EventDeliveryStatus.QUEUED
@@ -152,7 +186,7 @@ async def test_queue_deliveries_skips_non_pending():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 0
     processor._queue_agent_run.assert_not_awaited()
@@ -177,7 +211,7 @@ async def test_queue_deliveries_rechecks_filter_before_dispatch():
     processor._queue_workflow_execution = AsyncMock()
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 0
     assert delivery.status == EventDeliveryStatus.SKIPPED
@@ -190,7 +224,7 @@ async def test_queue_deliveries_rechecks_filter_before_dispatch():
 
 @pytest.mark.asyncio
 async def test_queue_agent_run_calls_enqueue():
-    """_queue_agent_run should call enqueue_agent_run with correct parameters."""
+    """_queue_agent_run stages the run in its own session with the right parameters."""
     processor = _create_processor()
 
     agent = MagicMock()
@@ -200,12 +234,19 @@ async def test_queue_agent_run_calls_enqueue():
     delivery = _make_delivery(target_type="agent", agent=agent)
     event = _make_event(data={"ticket_id": "456", "priority": "high"})
     run_id = uuid.uuid4()
+    identity = uuid.uuid4()
+    caller = _identity_caller(identity, agent.organization_id)
 
-    with patch(
-        "src.services.execution.agent_run_service.enqueue_agent_run",
-        new_callable=AsyncMock,
-        return_value=str(run_id),
-    ) as mock_enqueue:
+    with (
+        patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=MagicMock(run_user_id=identity))),
+        patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)) as load,
+        patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()) as authorize,
+        patch(
+            "src.services.execution.agent_run_service.stage_agent_run_request",
+            new_callable=AsyncMock,
+            return_value=MagicMock(run_id=str(run_id)),
+        ) as mock_enqueue,
+    ):
         await processor._queue_agent_run(delivery, event)
 
         mock_enqueue.assert_awaited_once()
@@ -228,6 +269,39 @@ async def test_queue_agent_run_calls_enqueue():
         assert input_data["_event"]["body"] == event.data
         assert input_data["_event"]["headers"] == event.headers
         assert input_data["_event"]["source_ip"] == event.source_ip
+        load.assert_awaited_once_with(processor.session, identity)
+        authorize.assert_awaited_once_with(processor.session, caller, agent.id)
+
+
+@pytest.mark.asyncio
+async def test_queue_agent_run_receives_trusted_byte_exact_raw_webhook_body():
+    """Agent dispatch receives raw bytes under reserved event context only."""
+    processor = _create_processor()
+    agent = MagicMock()
+    agent.id = uuid.uuid4()
+    agent.organization_id = uuid.uuid4()
+    delivery = _make_delivery(target_type="agent", agent=agent)
+    raw_body = b'{"a":1, "_event":{"raw_body_base64":"caller-spoofed"}}'
+    event = _make_event(data={"a": 1, "_event": {"raw_body_base64": "caller-spoofed"}})
+    event.raw_body = raw_body
+    identity = uuid.uuid4()
+    caller = _identity_caller(identity, agent.organization_id)
+
+    with (
+        patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=MagicMock(run_user_id=identity))),
+        patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)),
+        patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()),
+        patch(
+            "src.services.execution.agent_run_service.stage_agent_run_request",
+            new_callable=AsyncMock,
+            return_value=MagicMock(run_id=str(uuid.uuid4())),
+        ) as mock_enqueue,
+    ):
+        await processor._queue_agent_run(delivery, event)
+
+    input_data = mock_enqueue.await_args.kwargs["input_data"]
+    assert input_data["_event"]["body"] == event.data
+    assert input_data["_event"]["raw_body_base64"] == base64.b64encode(raw_body).decode("ascii")
 
 
 @pytest.mark.asyncio
@@ -250,7 +324,7 @@ async def test_queue_deliveries_uses_fallback_message_for_empty_exception():
     )
     processor._broadcast_event_update = AsyncMock()
 
-    count = await processor.queue_event_deliveries(event_id)
+    count = (await processor.queue_event_deliveries(event_id)).count
 
     assert count == 0
     assert delivery.status == EventDeliveryStatus.FAILED
@@ -269,16 +343,21 @@ async def test_event_agent_run_is_for_the_agent_organization_identity():
     delivery = _make_delivery(target_type="agent", agent=agent)
     identity = uuid.uuid4()
     lineage = RunLineage(identity, identity, None)
+    caller = _identity_caller(identity, agent.organization_id)
 
     with (
         patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=lineage)) as resolve,
+        patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)) as load,
+        patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()) as authorize,
         patch(
-            "src.services.execution.agent_run_service.enqueue_agent_run",
+            "src.services.execution.agent_run_service.stage_agent_run_request",
             new_callable=AsyncMock,
-            return_value=str(uuid.uuid4()),
+            return_value=MagicMock(run_id=str(uuid.uuid4())),
         ) as mock_enqueue,
     ):
         await processor._queue_agent_run(delivery, _make_event())
 
     resolve.assert_awaited_once_with(processor.session, agent.organization_id)
+    load.assert_awaited_once_with(processor.session, identity)
+    authorize.assert_awaited_once_with(processor.session, caller, agent.id)
     assert mock_enqueue.call_args.kwargs["lineage"] == lineage

@@ -152,7 +152,6 @@ export interface paths {
          *     Checks:
          *     - Database connectivity
          *     - Redis connectivity
-         *     - RabbitMQ connectivity
          *     - S3 bucket availability when S3 is configured
          *
          *     Returns:
@@ -323,6 +322,46 @@ export interface paths {
          *         HTTPException: If MFA token is invalid or code verification fails
          */
         post: operations["verify_mfa_login_auth_mfa_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/impersonate/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Browser Impersonation
+         * @description Mint a browser-wide, original-session-bound impersonation marker.
+         */
+        post: operations["start_browser_impersonation_auth_impersonate__user_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/impersonation/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Browser Impersonation
+         * @description Exit using the original operator, even after marker expiry or revocation.
+         */
+        post: operations["end_browser_impersonation_auth_impersonation_end_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -732,25 +771,29 @@ export interface paths {
         put?: never;
         /**
          * Authorize Device
-         * @description Authorize a device code (user approves CLI access).
-         *
-         *     This endpoint is called by the web UI when a logged-in user enters the
-         *     user_code and approves CLI access. The CLI will then receive tokens on
-         *     its next poll to /device/token.
-         *
-         *     Requires authentication - user must be logged in to authorize a device.
-         *
-         *     Args:
-         *         authorize_request: Device authorization request with user_code
-         *         current_user: Current authenticated user (from JWT)
-         *
-         *     Returns:
-         *         Success response
-         *
-         *     Raises:
-         *         HTTPException: If user_code is invalid or expired
+         * @description Approve a CLI login after explicit confirmation. The first decision is final.
          */
         post: operations["authorize_device_auth_device_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/device/deny": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deny Device
+         * @description Deny a CLI login without ever calling the approval endpoint.
+         */
+        post: operations["deny_device_auth_device_deny_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1929,7 +1972,7 @@ export interface paths {
         get: operations["get_role_permissions_api_roles__role_id__permissions_get"];
         /**
          * Set a role's identity permissions
-         * @description Replace the role's identity permissions (users, users.lifecycle, organizations, roleassignments, roles); its other permissions are kept. Builtin roles can't be changed.
+         * @description Replace the role's identity permissions (users, userlifecycle, organizations, roleassignments, roles); its other permissions are kept. Builtin roles can't be changed.
          */
         put: operations["set_role_permissions_api_roles__role_id__permissions_put"];
         post?: never;
@@ -1987,8 +2030,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List execution logs (admin only)
-         * @description List logs across all executions with filtering and pagination. Admin only.
+         * List execution logs
+         * @description List reachable execution logs with filtering and pagination.
          */
         get: operations["list_logs_api_executions_logs_get"];
         put?: never;
@@ -2068,7 +2111,7 @@ export interface paths {
         };
         /**
          * Get execution variables only
-         * @description Get only the variables of a specific execution (platform admin only)
+         * @description Get only the variables of a specific execution (requires Read Executions)
          */
         get: operations["get_execution_variables_api_executions__execution_id__variables_get"];
         put?: never;
@@ -2108,7 +2151,7 @@ export interface paths {
         };
         /**
          * Get stuck executions
-         * @description Get executions that have been running, pending, or cancelling too long (Platform admin only)
+         * @description Get reachable executions that have been pending, running, or cancelling too long
          */
         get: operations["get_stuck_executions_api_executions_cleanup_stuck_get"];
         put?: never;
@@ -2130,7 +2173,7 @@ export interface paths {
         put?: never;
         /**
          * Trigger execution cleanup
-         * @description Clean up stuck executions by marking them as timed out or cancelled (Platform admin only)
+         * @description Clean up stuck executions by marking them as timed out or cancelled
          */
         post: operations["trigger_cleanup_api_executions_cleanup_trigger_post"];
         delete?: never;
@@ -2150,7 +2193,7 @@ export interface paths {
         put?: never;
         /**
          * Cleanup orphaned Redis pending executions
-         * @description Clean up Redis pending executions that are too old (Platform admin only)
+         * @description Clean up Redis pending executions that are too old
          */
         post: operations["cleanup_redis_orphans_api_executions_cleanup_redis_orphans_post"];
         delete?: never;
@@ -2466,6 +2509,46 @@ export interface paths {
          * @description Remove a role from a workflow (Platform admin only)
          */
         delete: operations["workflows.roles.revoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/{workflow_id}/run-identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the identities a workflow may run as
+         * @description The identities this workflow may run as when no person starts it: its organization's identities (a global or provider-organization workflow: the global and provider-organization ones), including the default (Platform admin only)
+         */
+        get: operations["list_workflow_run_identities_api_workflows__workflow_id__run_identities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/{workflow_id}/recommended-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recommended Access for a workflow's identity
+         * @description What the identity the workflow runs as would also need, based on the access checks its runs recorded in the audit log's hot window: reach into other organizations, roles its policies look for, and the workflow's own roles. Computed for identity_id, else the identity it runs as now. Empty until runs are observed (Platform admin only)
+         */
+        get: operations["get_workflow_recommended_access_api_workflows__workflow_id__recommended_access_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3010,6 +3093,46 @@ export interface paths {
          * @description Delete a file from a managed or custom location.
          */
         post: operations["workspace.files.delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move File
+         * @description Move one file within a location as a durable platform job.
+         */
+        post: operations["workspace.files.move"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/move-many": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Files
+         * @description Move up to 500 files within a location as one durable platform job.
+         */
+        post: operations["workspace.files.move_many"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4433,10 +4556,9 @@ export interface paths {
          * Get developer context
          * @description Get development context for CLI initialization.
          *
-         *     Returns the authenticated user and their ``organization_id``-resolved
-         *     org. The optional ``org_id`` query parameter lets platform admins and
-         *     provider-org members target another org for the session — gated by
-         *     the same C2 rule the scope resolver applies elsewhere.
+         *     Returns actor facts and a selected organization within the original
+         *     caller's current role reach. Every later SDK request authorizes its
+         *     operation independently.
          *
          *     Context behavior lives in the shared service (``shared.sdk_context``),
          *     which a worker-local engine child can call with the same inputs.
@@ -4573,9 +4695,10 @@ export interface paths {
          * List all mappings for an integration
          * @description List all mappings for an integration via SDK.
          *
-         *     Scope resolution and response construction live in the shared
+         *     Reach filtering and response construction live in the shared
          *     integrations service (``shared.sdk_integrations``), which the
-         *     worker-local engine child calls for the same inputs.
+         *     worker-local engine child calls for the same inputs. ``request.scope``
+         *     is ignored: the list returns every mapping the caller may read.
          */
         post: operations["sdk_integrations_list_mappings_api_sdk_integrations_list_mappings_post"];
         delete?: never;
@@ -5122,11 +5245,9 @@ export interface paths {
          * List tables
          * @description List tables via SDK.
          *
-         *     Engine sentinel: the SDK has already resolved scope, so non-external
-         *     principals get is_superuser=True and we trust the org_uuid. The base
-         *     class handles the cascade (org + global) for us. EXTERNAL principals
-         *     do not inherit sentinel trust (OPEN-B) — they get the normal user
-         *     cascade (org + global table names/schemas; row data is policy-gated).
+         *     Current authority decides the requested scope and metadata permission.
+         *     Organization metadata includes the shared Global fallback; table row
+         *     access remains governed by its policies.
          */
         post: operations["cli_list_tables_api_sdk_tables_list_post"];
         delete?: never;
@@ -5247,7 +5368,8 @@ export interface paths {
          * Dismiss Notification
          * @description Dismiss (delete) a notification.
          *
-         *     Only the owner can dismiss their notification.
+         *     Only the owner can dismiss their notification. Platform admins can also
+         *     dismiss admin-scoped notifications, which they can read.
          *
          *     For embedding-reindex notifications that are still running, this also sets
          *     the Redis cancellation flag the scheduler polls between batches — so the
@@ -5488,6 +5610,23 @@ export interface paths {
         get: operations["get_kubernetes_execution_api_admin_kubernetes_execution_get"];
         /** Update Kubernetes Execution */
         put: operations["update_kubernetes_execution_api_admin_kubernetes_execution_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/kubernetes/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Kubernetes Policy */
+        put: operations["update_kubernetes_policy_api_admin_kubernetes_policy_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -6161,17 +6300,15 @@ export interface paths {
          * Cancel Backfill Job
          * @description Mark a backfill job as cancelled so the UI unblocks.
          *
-         *     This does NOT drain messages already on the ``agent-summarization``
-         *     queue — RabbitMQ will keep delivering them and the worker will keep
-         *     summarising individual runs. What it does do:
+         *     This does NOT withdraw summaries already dispatched — executors keep
+         *     summarising those runs. What it does do:
          *
          *     - flips ``status`` from ``running`` to ``cancelled``
          *     - sets ``completed_at`` so the row stops appearing in "active" queries
          *     - broadcasts final state so the progress card dismisses itself
          *
-         *     Use this when progress has stalled (e.g. the worker was restarted
-         *     mid-job and prefetched messages went back on the queue but the counter
-         *     never advanced) — admins need a way out.
+         *     Use this when progress has stalled and the counter never advanced —
+         *     admins need a way out.
          */
         post: operations["cancel_backfill_job_api_agent_runs_backfill_jobs__job_id__cancel_post"];
         delete?: never;
@@ -7553,6 +7690,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List identities
+         * @description The identities in the organizations the caller may read users in, with their roles and the number of workflows that run as each. The global identity comes first.
+         */
+        get: operations["list_identities_api_identities_get"];
+        put?: never;
+        /**
+         * Create a custom identity
+         * @description A custom identity with the User base role, in an organization or (organization_id null) Global.
+         */
+        post: operations["create_identity_api_identities_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identities/{identity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a custom identity
+         * @description Only a custom identity no workflow runs as can be deleted; the 409 names the workflows.
+         */
+        delete: operations["delete_identity_api_identities__identity_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a custom identity
+         * @description Rename a custom identity; default identities are all named Default Identity and can't be renamed.
+         */
+        patch: operations["rename_identity_api_identities__identity_id__patch"];
+        trace?: never;
+    };
     "/api/admin/roi/settings": {
         parameters: {
             query?: never;
@@ -7565,7 +7750,7 @@ export interface paths {
          * @description Get current ROI settings.
          *
          *     Returns current settings or defaults if not configured.
-         *     Requires platform admin access.
+         *     Requires Reports Read at Global.
          */
         get: operations["get_roi_settings_api_admin_roi_settings_get"];
         put?: never;
@@ -7573,7 +7758,7 @@ export interface paths {
          * Update Roi Settings
          * @description Update ROI settings.
          *
-         *     Requires platform admin access.
+         *     Requires Reports Read and Write at Global.
          */
         post: operations["update_roi_settings_api_admin_roi_settings_post"];
         delete?: never;
@@ -7591,7 +7776,7 @@ export interface paths {
         };
         /**
          * Get ROI summary
-         * @description Get overall ROI summary for a date range. Platform admin only.
+         * @description Get overall ROI summary for a date range.
          */
         get: operations["get_roi_summary_api_reports_roi_summary_get"];
         put?: never;
@@ -7611,7 +7796,7 @@ export interface paths {
         };
         /**
          * Get ROI by workflow
-         * @description Get workflow breakdown of ROI for a date range. Platform admin only.
+         * @description Get workflow breakdown of ROI for a date range.
          */
         get: operations["get_roi_by_workflow_api_reports_roi_by_workflow_get"];
         put?: never;
@@ -7631,7 +7816,7 @@ export interface paths {
         };
         /**
          * Get ROI by organization
-         * @description Get organization breakdown of ROI for a date range. Platform admin only.
+         * @description Get organization breakdown of ROI for a date range.
          */
         get: operations["get_roi_by_organization_api_reports_roi_by_organization_get"];
         put?: never;
@@ -7651,7 +7836,7 @@ export interface paths {
         };
         /**
          * Get ROI trends
-         * @description Get ROI trends over time. Platform admin only.
+         * @description Get ROI trends over time.
          */
         get: operations["get_roi_trends_api_reports_roi_trends_get"];
         put?: never;
@@ -7671,7 +7856,7 @@ export interface paths {
         };
         /**
          * Get usage report
-         * @description Get AI usage report for a date range. Platform admin only.
+         * @description Get AI usage report for a date range.
          */
         get: operations["get_usage_report_api_reports_usage_get"];
         put?: never;
@@ -7691,7 +7876,7 @@ export interface paths {
         };
         /**
          * Get workflow resource report
-         * @description Get per-execution workflow resource usage for a time window. Platform admin only.
+         * @description Get per-execution workflow resource usage for a time window.
          */
         get: operations["get_workflow_resource_report_api_reports_workflow_resources_get"];
         put?: never;
@@ -8466,7 +8651,7 @@ export interface paths {
         };
         /**
          * Get service
-         * @description Get a service definition with observed state (platform admin only).
+         * @description Get a service definition with observed state.
          */
         get: operations["get_service_api_services__service_id__get"];
         put?: never;
@@ -8654,7 +8839,7 @@ export interface paths {
         };
         /**
          * List tables
-         * @description List all tables in the current scope (platform admin only).
+         * @description List table metadata only where the caller holds ``tables.read``.
          */
         get: operations["tables.list"];
         put?: never;
@@ -8698,7 +8883,7 @@ export interface paths {
         };
         /**
          * Get table metadata
-         * @description Get table metadata by UUID (platform admin only).
+         * @description Get table metadata at its actual organization target.
          */
         get: operations["tables.get"];
         put?: never;
@@ -8909,7 +9094,7 @@ export interface paths {
          *
          *     Platform admins see claims across every org by default — the
          *     organization column lets them filter in the UI. Non-superusers don't
-         *     reach this endpoint (gated by ``CurrentSuperuser``).
+         *     reach this endpoint (gated by ``CurrentActiveUser``).
          */
         get: operations["claims.list"];
         put?: never;
@@ -8938,6 +9123,29 @@ export interface paths {
         head?: never;
         /** Update a custom claim (admin only) */
         patch: operations["claims.update"];
+        trace?: never;
+    };
+    "/api/solutions/{solution_id}/dev-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a local Solution development context
+         * @description Issue a ten-minute, app-bound context for ``bifrost solution start``.
+         *
+         *     The shared service deliberately checks current canonical Platform Admin
+         *     authority rather than the access-token's legacy ``is_superuser`` claim.
+         */
+        post: operations["create_solution_dev_context_api_solutions__solution_id__dev_context_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/solutions/import-workspace/preview": {
@@ -9686,10 +9894,8 @@ export interface paths {
          * List All Documents
          * @description List all documents across namespaces with optional filters.
          *
-         *     Scope parameter (consistent with workflows, forms, agents):
-         *     - Omitted: show all (superusers only)
-         *     - "global": show only global documents (organization_id IS NULL)
-         *     - UUID string: show only that org's documents (no global fallback)
+         *     Scope is validated against the original caller's current reach. An
+         *     organization selection includes Global shared defaults.
          */
         get: operations["knowledge.documents.list"];
         put?: never;
@@ -9715,7 +9921,7 @@ export interface paths {
         head?: never;
         /**
          * Bulk Update Document Scope
-         * @description Bulk update scope for multiple documents. Superuser only.
+         * @description Bulk update scope for multiple documents.
          *
          *     When replace=true in the request body, conflicting documents in the
          *     target scope are deleted before moving.
@@ -10533,10 +10739,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Knowledge
-         * @description Export selected knowledge documents as JSON.
-         */
+        /** Export Knowledge */
         post: operations["export_knowledge_api_export_import_export_knowledge_post"];
         delete?: never;
         options?: never;
@@ -10553,10 +10756,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Configs
-         * @description Export selected configs as JSON. Secret values exported encrypted.
-         */
+        /** Export Configs */
         post: operations["export_configs_api_export_import_export_configs_post"];
         delete?: never;
         options?: never;
@@ -10573,10 +10773,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Tables
-         * @description Export selected tables with all documents as JSON.
-         */
+        /** Export Tables */
         post: operations["export_tables_api_export_import_export_tables_post"];
         delete?: never;
         options?: never;
@@ -10593,10 +10790,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export Integrations
-         * @description Export selected integrations with config schema, mappings, OAuth, and default config.
-         */
+        /** Export Integrations */
         post: operations["export_integrations_api_export_import_export_integrations_post"];
         delete?: never;
         options?: never;
@@ -10613,10 +10807,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Export All
-         * @description Export all selected entities as a ZIP file containing individual JSON files.
-         */
+        /** Export All */
         post: operations["export_all_api_export_import_export_all_post"];
         delete?: never;
         options?: never;
@@ -10633,10 +10824,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Knowledge
-         * @description Import knowledge documents from JSON file.
-         */
+        /** Import Knowledge */
         post: operations["import_knowledge_api_export_import_import_knowledge_post"];
         delete?: never;
         options?: never;
@@ -10653,10 +10841,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Tables
-         * @description Import tables with documents from JSON file.
-         */
+        /** Import Tables */
         post: operations["import_tables_api_export_import_import_tables_post"];
         delete?: never;
         options?: never;
@@ -10673,10 +10858,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Configs
-         * @description Import configs from JSON file with optional secret re-encryption.
-         */
+        /** Import Configs */
         post: operations["import_configs_api_export_import_import_configs_post"];
         delete?: never;
         options?: never;
@@ -10693,10 +10875,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import Integrations
-         * @description Import integrations from JSON file with optional secret re-encryption.
-         */
+        /** Import Integrations */
         post: operations["import_integrations_api_export_import_import_integrations_post"];
         delete?: never;
         options?: never;
@@ -10713,10 +10892,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Import All
-         * @description Import all entities from a ZIP file.
-         */
+        /** Import All */
         post: operations["import_all_api_export_import_import_all_post"];
         delete?: never;
         options?: never;
@@ -10918,8 +11094,8 @@ export interface paths {
         get: operations["list_mcp_servers_api_mcp_servers_get"];
         put?: never;
         /**
-         * Create MCP server template (platform admin)
-         * @description Create a new server template. Platform admin only.
+         * Create MCP server template
+         * @description Create a new server template.
          *
          *     If ``oauth_provider`` is set on the request, this also creates an
          *     ``OAuthProvider`` row and links it on the new server. The provider
@@ -10950,15 +11126,15 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete MCP server template (platform admin)
+         * Delete MCP server template
          * @description Soft delete (set ``is_active=False``) by default. Pass ``?hard=true`` to cascade-delete the row, its connections, tools, and any per-user credentials. Soft delete is preferred — the same treatment as ``integrations.is_deleted`` — so existing agent tool bindings don't silently break.
          */
         delete: operations["delete_mcp_server_api_mcp_servers__server_id__delete"];
         options?: never;
         head?: never;
         /**
-         * Update MCP server template (platform admin)
-         * @description Update a server template. Platform admin only.
+         * Update MCP server template
+         * @description Update a server template.
          */
         patch: operations["update_mcp_server_api_mcp_servers__server_id__patch"];
         trace?: never;
@@ -10973,7 +11149,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Discover OAuth metadata (platform admin)
+         * Discover OAuth metadata
          * @description Fetch ``/.well-known/oauth-authorization-server`` and ``/.well-known/oauth-protected-resource`` from the server's host and return a merged metadata dict. Used by the new-server form to auto-fill OAuth fields. Returns ``{metadata: null}`` when neither endpoint is reachable; the frontend falls back to manual entry.
          */
         post: operations["discover_mcp_server_api_mcp_servers_discover_post"];
@@ -11252,6 +11428,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/runtime/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append Runtime Log */
+        post: operations["append_runtime_log_api_sdk_runtime_logs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/service-control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get Service Control */
+        post: operations["get_service_control_api_sdk_runtime_service_control_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/data-provider-cache/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Runtime Data Provider Cache */
+        post: operations["read_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/data-provider-cache/write": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Write Runtime Data Provider Cache */
+        post: operations["write_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_write_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/runtime/logs/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Runtime Logs */
+        get: operations["get_runtime_logs_api_sdk_runtime_logs__execution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/policy-rules": {
         parameters: {
             query?: never;
@@ -11391,11 +11652,22 @@ export interface components {
         AIBehaviorResponse: {
             /** Default System Prompt */
             default_system_prompt?: string | null;
+            /**
+             * Agent Execution Mode
+             * @enum {string}
+             */
+            agent_execution_mode: "delegated" | "automatic";
         };
         /** AIBehaviorUpdate */
         AIBehaviorUpdate: {
             /** Default System Prompt */
             default_system_prompt?: string | null;
+            /**
+             * Agent Execution Mode
+             * @description Omit to retain the current platform execution mode.
+             * @enum {string}
+             */
+            agent_execution_mode?: "delegated" | "automatic";
         };
         /** AIConnectionTestResponse */
         AIConnectionTestResponse: {
@@ -11976,10 +12248,10 @@ export interface components {
          */
         AccessExplanation: {
             event: components["schemas"]["AuditLogEntry"];
-            then: components["schemas"]["AccessTrace"];
+            then: components["schemas"]["AccessTrace"] | null;
             now: components["schemas"]["AccessTrace"] | null;
             /** Now Unavailable */
-            now_unavailable: ("rows_not_stored" | "run_user_missing" | "workflow_missing" | "solution_not_recorded") | null;
+            now_unavailable: ("rows_not_stored" | "run_user_missing" | "run_as_user_missing" | "workflow_missing" | "solution_not_recorded" | "inputs_not_stored") | null;
             /** Changed */
             changed: boolean | null;
         };
@@ -12354,6 +12626,11 @@ export interface components {
              * @default 1800
              */
             timeout: number;
+            /**
+             * Run As
+             * @description Run the agent as this user. Requires Impersonate Users in that user's organization.
+             */
+            run_as?: string | null;
         };
         /** AgentRunDetailResponse */
         AgentRunDetailResponse: {
@@ -12394,6 +12671,12 @@ export interface components {
             caller_email?: string | null;
             /** Caller Name */
             caller_name?: string | null;
+            /** Run As User Id */
+            run_as_user_id?: string | null;
+            /** Run As User Name */
+            run_as_user_name?: string | null;
+            /** Run As User Email */
+            run_as_user_email?: string | null;
             /** Iterations Used */
             iterations_used: number;
             /** Tokens Used */
@@ -12471,6 +12754,11 @@ export interface components {
             output_schema?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Run As
+             * @description Run the agent as this user. Requires Impersonate Users in that user's organization.
+             */
+            run_as?: string | null;
         };
         /** AgentRunEnqueueResponse */
         AgentRunEnqueueResponse: {
@@ -12485,6 +12773,8 @@ export interface components {
              * @constant
              */
             status: "queued";
+            /** Run As User Id */
+            run_as_user_id?: string | null;
         };
         /** AgentRunListResponse */
         AgentRunListResponse: {
@@ -12542,6 +12832,12 @@ export interface components {
             caller_email?: string | null;
             /** Caller Name */
             caller_name?: string | null;
+            /** Run As User Id */
+            run_as_user_id?: string | null;
+            /** Run As User Name */
+            run_as_user_name?: string | null;
+            /** Run As User Email */
+            run_as_user_email?: string | null;
             /** Iterations Used */
             iterations_used: number;
             /** Tokens Used */
@@ -13661,15 +13957,40 @@ export interface components {
              */
             user_name?: string | null;
             /**
+             * Impersonated By User Id
+             * @description Operator who impersonated the acting user
+             */
+            impersonated_by_user_id?: string | null;
+            /**
+             * Impersonated By Email
+             * @description Impersonating operator's email
+             */
+            impersonated_by_email?: string | null;
+            /**
+             * Impersonated By Name
+             * @description Impersonating operator's display name
+             */
+            impersonated_by_name?: string | null;
+            /**
              * Organization Id
-             * @description Acting user's organization
+             * @description Organization the event happened in (an access check's target organization)
              */
             organization_id?: string | null;
             /**
              * Organization Name
-             * @description Acting user's organization name
+             * @description Name of the organization the event happened in
              */
             organization_name?: string | null;
+            /**
+             * Home Organization Id
+             * @description The organization the acting user belongs to (null for Global or a deleted user)
+             */
+            home_organization_id?: string | null;
+            /**
+             * Home Organization Name
+             * @description Name of the acting user's own organization
+             */
+            home_organization_name?: string | null;
         };
         /**
          * AuditLogEntry
@@ -13718,7 +14039,7 @@ export interface components {
             operation_id?: string | null;
             /**
              * Surface
-             * @description Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'service'
+             * @description Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'agent', 'service'
              */
             surface?: string | null;
             /**
@@ -13726,6 +14047,11 @@ export interface components {
              * @description Workflow execution that produced the event, when supported
              */
             execution_id?: string | null;
+            /**
+             * Impersonation Session Id
+             * @description Browser impersonation session that produced the event
+             */
+            impersonation_session_id?: string | null;
             /** @description Who performed the action */
             actor: components["schemas"]["AuditLogActor"];
             /** Ip Address */
@@ -13739,10 +14065,15 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Workflow Name
+             * @description Name of the workflow the event names (details.workflow_id), when it still exists
+             */
+            workflow_name?: string | null;
         };
         /**
          * AuditLogGroup
-         * @description Entries sharing one value of the requested ``group_by``.
+         * @description Entries sharing a requested group key or access-check aggregate dimensions.
          */
         AuditLogGroup: {
             /**
@@ -13760,12 +14091,27 @@ export interface components {
              * @description Newest entry's time
              */
             last_seen: string;
+            /**
+             * First Seen
+             * @description Oldest entry's time (access-check aggregates only)
+             */
+            first_seen?: string;
+            /**
+             * Window Start
+             * @description Inclusive UTC aggregate window start
+             */
+            window_start?: string;
+            /**
+             * Window End
+             * @description Exclusive UTC aggregate window end
+             */
+            window_end?: string;
             /** @description Newest entry in the group */
             sample: components["schemas"]["AuditLogEntry"];
         };
         /**
          * AuditLogListResponse
-         * @description Paginated audit log list response, or groups when ``group_by`` is set.
+         * @description Paginated audit log list response, or groups for grouping and aggregation.
          */
         AuditLogListResponse: {
             /**
@@ -13775,7 +14121,7 @@ export interface components {
             entries: components["schemas"]["AuditLogEntry"][];
             /**
              * Groups
-             * @description Groups, largest first (only with group_by; entries is then empty)
+             * @description Groups or aggregates (entries is then empty)
              */
             groups?: components["schemas"]["AuditLogGroup"][] | null;
             /**
@@ -13806,7 +14152,7 @@ export interface components {
             /**
              * Hot Days
              * @description Days events stay in the database before they are archived.
-             * @default 90
+             * @default 30
              */
             hot_days: number;
             /**
@@ -13892,6 +14238,8 @@ export interface components {
             is_platform_admin: boolean;
             /** Home Organization Id */
             home_organization_id: string | null;
+            /** Home Organization Name */
+            home_organization_name?: string | null;
             /**
              * Provider Organization Id
              * Format: uuid
@@ -14272,6 +14620,26 @@ export interface components {
             primary_color?: string | null;
             /** @description Fixed product terminology overrides for the platform UI */
             terminology?: components["schemas"]["BrandingTerminology"] | null;
+        };
+        /**
+         * BrowserImpersonationTokenResponse
+         * @description A short-lived bearer credential for one browser impersonation tab.
+         */
+        BrowserImpersonationTokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             * @constant
+             */
+            token_type: "bearer";
+            /**
+             * Expires In
+             * @default 1800
+             * @constant
+             */
+            expires_in: 1800;
         };
         /** BulkExportRequest */
         BulkExportRequest: {
@@ -14754,6 +15122,20 @@ export interface components {
             filename: string;
         };
         /**
+         * ChatContextUsage
+         * @description Context and cached input for the latest request in the Chat conversation.
+         */
+        ChatContextUsage: {
+            /** Input Tokens */
+            input_tokens: number;
+            /** Context Window */
+            context_window?: number | null;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Model Profile Id */
+            model_profile_id: string;
+        };
+        /**
          * ChatModelProfilePublic
          * @description One administrator-governed reusable model profile exposed in Chat.
          */
@@ -14954,6 +15336,7 @@ export interface components {
              * @default 0
              */
             latest_sequence: number;
+            context_usage?: components["schemas"]["ChatContextUsage"] | null;
         };
         /**
          * ChatStreamChunk
@@ -14966,7 +15349,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "message_start" | "delta" | "assistant_message_end" | "tool_call" | "tool_progress" | "tool_result" | "artifact_started" | "artifact_ready" | "artifact_failed" | "agent_switch" | "context_warning" | "run_status" | "title_update" | "done" | "cancelled" | "error";
+            type: "message_start" | "delta" | "assistant_message_end" | "tool_call" | "tool_progress" | "tool_result" | "artifact_started" | "artifact_ready" | "artifact_failed" | "agent_switch" | "context_warning" | "context_usage" | "run_status" | "title_update" | "done" | "cancelled" | "error";
             /** Content */
             content?: string | null;
             tool_call?: components["schemas"]["ToolCall"] | null;
@@ -14980,6 +15363,7 @@ export interface components {
             execution_id?: string | null;
             agent_switch?: components["schemas"]["AgentSwitch"] | null;
             context_warning?: components["schemas"]["ContextWarning"] | null;
+            context_usage?: components["schemas"]["ChatContextUsage"] | null;
             /** Message Id */
             message_id?: string | null;
             /**
@@ -16063,7 +16447,7 @@ export interface components {
         };
         /**
          * DeviceAuthorizeRequest
-         * @description Request to authorize a device using user code.
+         * @description The code for a CLI device login being approved or denied.
          */
         DeviceAuthorizeRequest: {
             /** User Code */
@@ -17695,6 +18079,26 @@ export interface components {
          */
         ExecutableType: "workflow" | "tool" | "data_provider" | "service";
         /**
+         * ExecutionLog
+         * @description Single log entry from workflow execution.
+         */
+        ExecutionLog: {
+            /** Id */
+            id: string;
+            /** Execution Id */
+            execution_id: string;
+            /** Level */
+            level: string;
+            /** Message */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Timestamp */
+            timestamp: string;
+        };
+        /**
          * ExecutionLogPublic
          * @description Single log entry from workflow execution (API response model)
          */
@@ -18283,6 +18687,80 @@ export interface components {
          * @enum {string}
          */
         FileMode: "draft" | "live";
+        /**
+         * FileMoveBatchRequest
+         * @description Move up to 500 files within one non-workspace location (one platform job).
+         */
+        FileMoveBatchRequest: {
+            /** Items */
+            items: components["schemas"]["FileMoveItem"][];
+            /**
+             * Location
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
+             */
+            location: string;
+            /**
+             * Scope
+             * @description Org scope; Solution context wins.
+             */
+            scope?: string | null;
+            /**
+             * On Conflict
+             * @description error: fail an item whose destination exists. rename: use the first free 'name (n).ext' instead.
+             * @default error
+             * @enum {string}
+             */
+            on_conflict: "error" | "rename";
+        };
+        /**
+         * FileMoveItem
+         * @description One file to move within the request's location.
+         */
+        FileMoveItem: {
+            /**
+             * Source
+             * @description Current path relative to the location root
+             */
+            source: string;
+            /**
+             * Destination
+             * @description New path relative to the location root
+             */
+            destination: string;
+        };
+        /**
+         * FileMoveRequest
+         * @description Move one file within a non-workspace location (a durable platform job).
+         */
+        FileMoveRequest: {
+            /**
+             * Source
+             * @description Current path relative to the location root
+             */
+            source: string;
+            /**
+             * Destination
+             * @description New path relative to the location root
+             */
+            destination: string;
+            /**
+             * Location
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
+             */
+            location: string;
+            /**
+             * Scope
+             * @description Org scope; Solution context wins.
+             */
+            scope?: string | null;
+            /**
+             * On Conflict
+             * @description error: fail an item whose destination exists. rename: use the first free 'name (n).ext' instead.
+             * @default error
+             * @enum {string}
+             */
+            on_conflict: "error" | "rename";
+        };
         /** FilePolicies */
         FilePolicies: {
             /** Policies */
@@ -19816,6 +20294,79 @@ export interface components {
             /** Collections */
             collections: components["schemas"]["HomeCollectionPublic"][];
         };
+        /** IdentityBaseRole */
+        IdentityBaseRole: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * IdentityCreate
+         * @description A new custom identity (base role User, no additional roles).
+         */
+        IdentityCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Organization Id
+             * @description The identity's organization; null for a Global identity.
+             */
+            organization_id: string | null;
+        };
+        /** IdentityPublic */
+        IdentityPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Identity Kind
+             * @enum {string}
+             */
+            identity_kind: "org_default" | "global_default" | "custom";
+            /**
+             * Organization Id
+             * @description Null for Global identities.
+             */
+            organization_id: string | null;
+            /** Organization Name */
+            organization_name: string | null;
+            base_role: components["schemas"]["IdentityBaseRole"];
+            /** Additional Roles */
+            additional_roles: components["schemas"]["IdentityRole"][];
+            /**
+             * Workflows Using
+             * @description Workflows that run unattended as this identity. A default identity also runs the workflows of its organization (Global: of no organization) that name no identity.
+             */
+            workflows_using: number;
+        };
+        /**
+         * IdentityRole
+         * @description An additional role the identity holds, and where it applies.
+         */
+        IdentityRole: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Name */
+            name: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryPublic"][];
+        };
+        /** IdentityUpdate */
+        IdentityUpdate: {
+            /** Name */
+            name: string;
+        };
         /**
          * ImageArtifactSpec
          * @description Prompt for a provider-generated image saved as a Chat artifact.
@@ -20808,7 +21359,7 @@ export interface components {
         };
         /**
          * KubernetesExecutionJobType
-         * @description One remotely-eligible job type with its product opt-in state.
+         * @description One isolatable job type with its per-type state.
          */
         KubernetesExecutionJobType: {
             /** Job Type */
@@ -20821,8 +21372,6 @@ export interface components {
             enabled: boolean;
             /** Default Enabled */
             default_enabled: boolean;
-            /** Allowed By Deployment */
-            allowed_by_deployment: boolean;
             /** Max Concurrency */
             max_concurrency?: number | null;
             /** Default Max Concurrency */
@@ -20830,15 +21379,22 @@ export interface components {
         };
         /**
          * KubernetesExecutionSettings
-         * @description Product opt-in state for remote execution, per job type.
+         * @description Everything Settings -> Kubernetes shows.
          */
         KubernetesExecutionSettings: {
+            policy: components["schemas"]["KubernetesPolicyValues"];
+            /** Imported From Env */
+            imported_from_env: {
+                [key: string]: components["schemas"]["KubernetesPolicyProvenance"];
+            };
             /** Job Types */
             job_types: components["schemas"]["KubernetesExecutionJobType"][];
+            /** Unread Variables */
+            unread_variables: string[];
         };
         /**
          * KubernetesExecutionUpdate
-         * @description Toggle remote execution and/or concurrency for one job type.
+         * @description Toggle isolation and/or concurrency for one job type.
          *
          *     max_concurrency is tri-state: omitted leaves the override unchanged,
          *     null clears it back to the code default, 1-32 sets it.
@@ -20852,14 +21408,65 @@ export interface components {
             max_concurrency?: number | null;
         };
         /**
+         * KubernetesPolicyProvenance
+         * @description A setting whose value was imported from a deployment variable.
+         */
+        KubernetesPolicyProvenance: {
+            /** Variable */
+            variable: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+        };
+        /**
+         * KubernetesPolicyUpdate
+         * @description Change any of the scaling and isolation settings; omitted ones stay.
+         */
+        KubernetesPolicyUpdate: {
+            /** Warm Workers */
+            warm_workers?: number | null;
+            /** Max Workers */
+            max_workers?: number | null;
+            /** Worker Memory Mib */
+            worker_memory_mib?: number | null;
+            /** Largest Worker Mib */
+            largest_worker_mib?: number | null;
+            /** Idle Seconds */
+            idle_seconds?: number | null;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled?: boolean | null;
+            /** Max Isolated Pods */
+            max_isolated_pods?: number | null;
+        };
+        /**
+         * KubernetesPolicyValues
+         * @description Worker scaling and isolated-job settings in effect.
+         */
+        KubernetesPolicyValues: {
+            /** Warm Workers */
+            warm_workers: number;
+            /** Max Workers */
+            max_workers: number;
+            /** Worker Memory Mib */
+            worker_memory_mib: number;
+            /** Largest Worker Mib */
+            largest_worker_mib: number;
+            /** Idle Seconds */
+            idle_seconds: number;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled: boolean;
+            /** Max Isolated Pods */
+            max_isolated_pods: number;
+        };
+        /**
          * KubernetesStatus
-         * @description Whether this deployment configured remote build execution.
+         * @description Whether this API may manage Kubernetes Jobs (the page gate).
          */
         KubernetesStatus: {
             /** Configured */
             configured: boolean;
-            /** Backend */
-            backend: string;
         };
         /**
          * LLMModelInfo
@@ -21532,12 +22139,7 @@ export interface components {
              * @description MCP server URL (Streamable HTTP endpoint)
              */
             server_url: string;
-            /**
-             * Oauth Provider Id
-             * @description OAuth provider configuration FK; absent for servers without auth
-             */
-            oauth_provider_id?: string | null;
-            /** @description Inline OAuth provider creation. When set, the router creates an OAuthProvider row and links it via ``oauth_provider_id``. Mutually exclusive with ``oauth_provider_id``. */
+            /** @description Inline OAuth provider creation. When set, the router creates an OAuthProvider row and links it via ``oauth_provider_id``. */
             oauth_provider?: components["schemas"]["MCPServerOAuthProviderCreate"] | null;
             /**
              * Redirect Url
@@ -21697,8 +22299,6 @@ export interface components {
             name?: string | null;
             /** Server Url */
             server_url?: string | null;
-            /** Oauth Provider Id */
-            oauth_provider_id?: string | null;
             /** Redirect Url */
             redirect_url?: string | null;
             /** Discovery Metadata */
@@ -24073,6 +24673,8 @@ export interface components {
             contributors: components["schemas"]["ProductUpdateContributor"][];
             /** Assets */
             assets: components["schemas"]["ProductUpdateAsset"][];
+            /** Agent Prompt */
+            agent_prompt?: string | null;
             /** Additional Areas */
             additional_areas?: string[] | null;
             /** Release */
@@ -24188,6 +24790,42 @@ export interface components {
              * Format: date-time
              */
             at?: string;
+        };
+        /**
+         * ProviderCacheReadRequest
+         * @description Parameters for the authenticated runtime's own data-provider cache read.
+         */
+        ProviderCacheReadRequest: {
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+        };
+        /** ProviderCacheReadResponse */
+        ProviderCacheReadResponse: {
+            /** Hit */
+            hit: boolean;
+            /** Result */
+            result?: unknown | null;
+            /** Expires At */
+            expires_at?: string | null;
+        };
+        /**
+         * ProviderCacheWriteRequest
+         * @description Result for the authenticated runtime's own data-provider cache entry.
+         */
+        ProviderCacheWriteRequest: {
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+            /** Result */
+            result: unknown;
+        };
+        /** ProviderCacheWriteResponse */
+        ProviderCacheWriteResponse: {
+            /** Expires At */
+            expires_at?: string | null;
         };
         /**
          * PullAckEntity
@@ -24390,6 +25028,63 @@ export interface components {
             error_message: string | null;
             /** Started At */
             started_at: string | null;
+        };
+        /**
+         * RecommendedAccess
+         * @description What the identity a workflow runs as would also need, based on its recorded runs.
+         */
+        RecommendedAccess: {
+            /**
+             * Identity Id
+             * Format: uuid
+             * @description The identity the recommendations are computed for.
+             */
+            identity_id: string;
+            /**
+             * Observed Runs
+             * @description Runs in the window that recorded access checks for this workflow.
+             */
+            observed_runs: number;
+            /**
+             * Window Days
+             * @description How far back the recorded checks reach: the audit log's hot window.
+             */
+            window_days: number;
+            /** Items */
+            items: components["schemas"]["RecommendedAccessItem"][];
+        };
+        /** RecommendedAccessItem */
+        RecommendedAccessItem: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "reach" | "policy_role" | "workflow_role";
+            /** Label */
+            label: string;
+            /** Detail */
+            detail: string;
+            /**
+             * Organization Id
+             * @description The organization a reach recommendation targets, or where a policy role's grant would be placed; null for everything, for Global, and for a workflow role.
+             */
+            organization_id: string | null;
+            /** @description Null when no single role assignment meets it (a role to choose, or information only). */
+            grant: components["schemas"]["RecommendedGrant"] | null;
+        };
+        /**
+         * RecommendedGrant
+         * @description The role assignment a recommendation asks for: ``role_id`` applied at
+         *     ``boundaries``, merged into the identity's existing assignment of that role.
+         */
+        RecommendedGrant: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryInput"][];
         };
         /**
          * RecoveryCodesCountResponse
@@ -25047,7 +25742,7 @@ export interface components {
         };
         /**
          * RolePermissionsUpdate
-         * @description The role's identity permissions (users, users.lifecycle, organizations,
+         * @description The role's identity permissions (users, userlifecycle, organizations,
          *     roleassignments, roles). Other permissions the role holds are kept.
          */
         RolePermissionsUpdate: {
@@ -25170,6 +25865,11 @@ export interface components {
              */
             organization_is_provider: boolean;
             /**
+             * Identity Kind
+             * @description org_default, global_default or custom for an identity; null for a person.
+             */
+            identity_kind?: string | null;
+            /**
              * Boundaries
              * @description Where the role applies for this user.
              */
@@ -25267,6 +25967,27 @@ export interface components {
             settings: components["schemas"]["RunRetentionSettings"];
             info: components["schemas"]["RunRetentionInfo"];
             last_run: components["schemas"]["PlatformJobPublic"] | null;
+        };
+        /**
+         * RuntimeLogRequest
+         * @description A line for the authenticated runtime's own log stream.
+         */
+        RuntimeLogRequest: {
+            /** Level */
+            level: string;
+            /** Message */
+            message: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Timestamp */
+            timestamp?: string | null;
+        };
+        /** RuntimeLogResponse */
+        RuntimeLogResponse: {
+            /** Entry Id */
+            entry_id: string | null;
         };
         /**
          * SDKIntegrationsDeleteMappingRequest
@@ -25378,7 +26099,7 @@ export interface components {
             name: string;
             /**
              * Scope
-             * @description Optional org scope. Omit / pass null to list only the caller's own org mapping, unless the resolved org is a provider org, which lists all mappings. Platform admins and provider-org members may pass 'global' (no filter, all orgs) or a specific org UUID.
+             * @description Accepted from older SDK callers and ignored: the list always returns every mapping the caller may read with Integrations Read.
              */
             scope?: string | null;
         };
@@ -25708,10 +26429,8 @@ export interface components {
         SchedulerCapacityStatus: {
             /** Replicas Online */
             replicas_online: number;
-            /** Slots Total */
-            slots_total: number;
-            /** Slots Running */
-            slots_running: number;
+            /** Platform Jobs Running */
+            platform_jobs_running: number;
             /** Jobs Queued */
             jobs_queued: number;
             /** Jobs Waiting For Memory */
@@ -25720,6 +26439,13 @@ export interface components {
             oldest_queued_seconds?: number | null;
             /** Max Memory Utilization Percent */
             max_memory_utilization_percent?: number | null;
+            /**
+             * Runs Waiting
+             * @default 0
+             */
+            runs_waiting: number;
+            /** Oldest Waiting Run Seconds */
+            oldest_waiting_run_seconds?: number | null;
         };
         /** SchedulerDiagnosticsResponse */
         SchedulerDiagnosticsResponse: {
@@ -25755,8 +26481,8 @@ export interface components {
             hostname: string;
             /** Pid */
             pid: number;
-            /** Job Slots */
-            job_slots: number;
+            /** Runs Platform Jobs */
+            runs_platform_jobs: boolean;
             /** Is Leader */
             is_leader: boolean;
             /** Online */
@@ -26147,6 +26873,28 @@ export interface components {
              */
             created_at: string;
         };
+        /** ServiceControlRequest */
+        ServiceControlRequest: {
+            /**
+             * Ready
+             * @default false
+             */
+            ready: boolean;
+            /**
+             * Token Expires At
+             * Format: date-time
+             */
+            token_expires_at: string;
+        };
+        /** ServiceControlResponse */
+        ServiceControlResponse: {
+            /** Stop Requested */
+            stop_requested: boolean;
+            /** Access Token */
+            access_token?: string | null;
+            /** Token Expires At */
+            token_expires_at?: string | null;
+        };
         /**
          * ServiceListResponse
          * @description Paginated service definitions.
@@ -26333,7 +27081,7 @@ export interface components {
              * Blocked Reason
              * @description Launch suppression, if any
              */
-            blocked_reason?: ("policy" | "crash_loop" | "disabled") | null;
+            blocked_reason?: ("policy" | "crash_loop" | "disabled" | "too_large") | null;
             /**
              * Restart Eligible At
              * @description Earliest next attempt
@@ -27235,6 +27983,39 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * SolutionDevContextRequest
+         * @description The selected portable app identity for a local Solution preview.
+         */
+        SolutionDevContextRequest: {
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
+        };
+        /**
+         * SolutionDevContextResponse
+         * @description Short-lived, app-bound context accepted only as a supplemental header.
+         */
+        SolutionDevContextResponse: {
+            /** Token */
+            token: string;
+            /** Expires At */
+            expires_at: number;
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /** Organization Id */
+            organization_id: string | null;
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
         };
         /**
          * SolutionEntities
@@ -28829,6 +29610,11 @@ export interface components {
             /** Updated At */
             updated_at: string | null;
             /**
+             * Identity Kind
+             * @description org_default, global_default or custom for an identity; null for a person.
+             */
+            identity_kind?: string | null;
+            /**
              * Invite Status
              * @default active
              */
@@ -29430,7 +30216,7 @@ export interface components {
             sync?: boolean | null;
             /**
              * Code
-             * @description Optional: Python code to execute as script (base64 encoded). If provided, executes code instead of looking up workflow by ID.
+             * @description Optional: Python code to execute as a script, as plain text. If provided, executes code instead of looking up workflow by ID.
              */
             code?: string | null;
             /**
@@ -29440,12 +30226,12 @@ export interface components {
             script_name?: string | null;
             /**
              * Org Id
-             * @description Override execution org context. Requires platform admin.
+             * @description Override execution org context within the caller's reach. Requires workflows.execute in the target organization.
              */
             org_id?: string | null;
             /**
              * Run As
-             * @description Execute as this user UUID (impersonation). Requires platform admin.
+             * @description Execute as this user UUID. Requires Impersonate Users in that user's organization.
              */
             run_as?: string | null;
             /**
@@ -29707,6 +30493,8 @@ export interface components {
              * @description Identity this workflow runs as when no person starts it. Null = its organization's default identity.
              */
             run_identity_id?: string | null;
+            /** @description Effective workflow permission mode: 'full' or 'restricted' */
+            permission_mode: components["schemas"]["WorkflowPermissionMode"];
             /**
              * Access Level
              * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)
@@ -29747,6 +30535,16 @@ export interface components {
              * @default 1800
              */
             timeout_seconds: number;
+            /**
+             * Memory Request Mib
+             * @description Declared memory a run of this workflow requests from an executor; when unset, the learned value is used
+             */
+            memory_request_mib?: number | null;
+            /**
+             * Learned Memory Bytes
+             * @description Peak memory its recent runs added (learned per code version); None before a measured run
+             */
+            learned_memory_bytes?: number | null;
             /** @description Retry configuration */
             retry_policy?: components["schemas"]["RetryPolicy"] | null;
             /**
@@ -29896,6 +30694,11 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * WorkflowPermissionMode
+         * @enum {string}
+         */
+        WorkflowPermissionMode: "full" | "restricted";
         /**
          * WorkflowROIEntry
          * @description ROI data for a single workflow.
@@ -30170,6 +30973,11 @@ export interface components {
              * @description Cache TTL in seconds for data providers (0-86400, default 300)
              */
             cache_ttl_seconds?: number | null;
+            /**
+             * Memory Request Mib
+             * @description Declared memory (MiB) a run requests from an executor; null uses the learned value
+             */
+            memory_request_mib?: number | null;
             /**
              * Tags
              * @description Tags for categorization and search
@@ -31011,6 +31819,55 @@ export interface operations {
             };
         };
     };
+    start_browser_impersonation_auth_impersonate__user_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserImpersonationTokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    end_browser_impersonation_auth_impersonation_end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     refresh_token_auth_refresh_post: {
         parameters: {
             query?: never;
@@ -31323,6 +32180,39 @@ export interface operations {
         };
     };
     authorize_device_auth_device_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deny_device_auth_device_deny_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -33592,7 +34482,7 @@ export interface operations {
     "executions.list": {
         parameters: {
             query?: {
-                /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org + global. */
+                /** @description Filter scope: omit for all reachable executions, 'global' for global only, or an organization UUID for that organization only. */
                 scope?: string | null;
                 /** @description Filter by workflow name */
                 workflowName?: string | null;
@@ -33828,9 +34718,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkflowExecution"] | {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowExecution"];
                 };
             };
             /** @description Validation Error */
@@ -34526,6 +35414,71 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workflow_run_identities_api_workflows__workflow_id__run_identities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_recommended_access_api_workflows__workflow_id__recommended_access_get: {
+        parameters: {
+            query?: {
+                /** @description Compute for this identity instead of the current one */
+                identity_id?: string | null;
+            };
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendedAccess"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -35853,6 +36806,72 @@ export interface operations {
             };
         };
     };
+    "workspace.files.move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileMoveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspace.files.move_many": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileMoveBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "workspace.files.list": {
         parameters: {
             query?: never;
@@ -36537,6 +37556,10 @@ export interface operations {
                 user_id?: string | null;
                 /** @description Filter by workflow execution ID */
                 execution_id?: string | null;
+                /** @description Filter by the workflow an entry names, or 'none' for entries naming no workflow */
+                workflow_id?: string | "none" | null;
+                /** @description Filter by organization ID, or 'none' for Global entries */
+                organization_id?: string | "none" | null;
                 /** @description Start of time range (inclusive) */
                 start_date?: string | null;
                 /** @description End of time range (inclusive) */
@@ -36545,6 +37568,10 @@ export interface operations {
                 search?: string | null;
                 /** @description Group matching entries by this field (counts and newest entry per group) */
                 group_by?: ("workflow" | "action" | "resource_type" | "outcome" | "user" | "organization") | null;
+                /** @description Aggregate exact access checks into fixed UTC windows */
+                aggregate?: ("1h" | "6h" | "24h") | null;
+                /** @description Opaque access-check aggregate selector for raw drill-in */
+                aggregate_key?: string | null;
                 limit?: number;
                 /** @description Pagination cursor */
                 continuation_token?: string | null;
@@ -36717,7 +37744,7 @@ export interface operations {
                 window?: "24h" | "7d" | "30d";
                 /** @description IANA timezone used for hour and day boundaries */
                 timezone?: string;
-                /** @description Filter scope: omit for all (superusers), 'global' for global only, or an organization UUID. */
+                /** @description Filter scope: omit for reachable execution history, 'global' for global only, or an organization UUID. */
                 scope?: string | null;
             };
             header?: never;
@@ -39936,6 +40963,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["KubernetesExecutionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KubernetesExecutionSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_kubernetes_policy_api_admin_kubernetes_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesPolicyUpdate"];
             };
         };
         responses: {
@@ -43919,6 +44979,135 @@ export interface operations {
             };
         };
     };
+    list_identities_api_identities_get: {
+        parameters: {
+            query?: {
+                /** @description Only this organization's identities */
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_identity_api_identities_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_identity_api_identities__identity_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_identity_api_identities__identity_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_roi_settings_api_admin_roi_settings_get: {
         parameters: {
             query?: never;
@@ -44173,7 +45362,7 @@ export interface operations {
                 page?: number;
                 /** @description Items per page (max 100) */
                 page_size?: number;
-                /** @description Filter by organization ID */
+                /** @description Filter by organization UUID or global */
                 org_id?: string | null;
                 /** @description Filter by workflow ID */
                 workflow_id?: string | null;
@@ -46620,6 +47809,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CustomClaim"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_solution_dev_context_api_solutions__solution_id__dev_context_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionDevContextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDevContextResponse"];
                 };
             };
             /** @description Validation Error */
@@ -50778,6 +52002,172 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    append_runtime_log_api_sdk_runtime_logs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeLogRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeLogResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_service_control_api_sdk_runtime_service_control_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServiceControlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceControlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCacheReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCacheReadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    write_runtime_data_provider_cache_api_sdk_runtime_data_provider_cache_write_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCacheWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderCacheWriteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_runtime_logs_api_sdk_runtime_logs__execution_id__get: {
+        parameters: {
+            query?: {
+                start?: string;
+                count?: number;
+            };
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionLog"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

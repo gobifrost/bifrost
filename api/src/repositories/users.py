@@ -63,18 +63,6 @@ class UserRepository(BaseRepository[User]):  # type: ignore[type-var]
         )
         return list(result.scalars().all())
 
-    async def get_superusers(self) -> list[User]:
-        """
-        Get all superusers (platform admins).
-
-        Returns:
-            List of superuser accounts
-        """
-        result = await self.session.execute(
-            select(User).where(User.is_superuser == True)  # noqa: E712
-        )
-        return list(result.scalars().all())
-
     async def has_any_users(self) -> bool:
         """
         Check if any real users exist in the system.

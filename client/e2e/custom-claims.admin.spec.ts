@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { authenticateInBrowser } from "./setup/auth-helpers";
 import { generateTOTP } from "./setup/totp";
 import { getCredentialsPath, type UserCredentials } from "./fixtures/users";
+import type { components } from "../src/lib/v1";
 
 const API_URL = process.env.TEST_API_URL || "http://api:8000";
 
@@ -91,6 +92,31 @@ async function createOrgSuperuser(): Promise<UserCredentials> {
 	});
 	await assertOk(mfaVerifyRes, "verify org superuser MFA");
 	const tokens = await mfaVerifyRes.json();
+	// This fixture starts after onboarding; announcements must not cover the claim editor.
+	const headers = { Authorization: `Bearer ${tokens.access_token}` };
+	const updatesResponse = await fetch(`${API_URL}/api/product-updates`, {
+		headers,
+	});
+	await assertOk(updatesResponse, "load fixture admin announcements");
+	const updates =
+		(await updatesResponse.json()) as components["schemas"]["ProductUpdatesFeedResponse"];
+	const entryIds = updates.bundle.entries
+		.filter((entry) => entry.in_app !== false)
+		.map((entry) => entry.id);
+	if (entryIds.length > 0) {
+		const receiptResponse = await fetch(
+			`${API_URL}/api/product-updates/receipts`,
+			{
+				method: "POST",
+				headers: { ...headers, "Content-Type": "application/json" },
+				body: JSON.stringify({ entry_ids: entryIds }),
+			},
+		);
+		await assertOk(
+			receiptResponse,
+			"acknowledge fixture admin announcements",
+		);
+	}
 
 	return {
 		email: user.email,
@@ -146,26 +172,17 @@ test("admin creates a Custom Claim from the Tables page", async ({ page }) => {
 	await page.getByLabel("Name").fill(claimName);
 
 	const editor = page.getByTestId("json-yaml-editor-json");
-	await editor.locator("textarea").first().waitFor({ timeout: 20_000 });
-	await page.evaluate((nextQuery) => {
-		const monaco = (
-			window as typeof window & {
-				monaco?: {
-					editor?: {
-						getModels?: () => Array<{
-							uri: { path: string };
-							setValue: (value: string) => void;
-						}>;
-					};
-				};
-			}
-		).monaco;
-		const model = monaco?.editor
-			?.getModels?.()
-			.find((item) => item.uri.path.endsWith("claim-query.json"));
-		if (!model) throw new Error("claim-query.json Monaco model not found");
-		model.setValue(nextQuery);
-	}, query);
+	const editorInput = editor.getByRole("textbox", {
+		name: "claim-query.json",
+		exact: true,
+	});
+	await page
+		.context()
+		.grantPermissions(["clipboard-read", "clipboard-write"]);
+	await page.evaluate((text) => navigator.clipboard.writeText(text), query);
+	await editorInput.focus();
+	await page.keyboard.press("ControlOrMeta+A");
+	await page.keyboard.press("ControlOrMeta+V");
 
 	const save = page.getByRole("button", { name: /save/i });
 	await expect(save).toBeEnabled();

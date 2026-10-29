@@ -245,6 +245,40 @@ class TestSolutionAppDeploy:
         assert app.sdk_contract_version is None
         assert app.sdk_built_at is None
 
+    async def test_cli_prebuilt_dist_activates_its_sdk_provenance(
+        self, db_session, _stub_app_build
+    ):
+        """Only a CLI prebuild's installed-SDK stamp makes a prebuilt App known."""
+        db = db_session
+        sol = await self._install(db)
+        manifest_id = uuid.uuid4()
+        app_id = solution_entity_id(sol.id, manifest_id)
+
+        result = await SolutionDeployer(db).deploy(
+            SolutionBundle(
+                solution=sol,
+                apps=[
+                    {
+                        **_app_entry(str(manifest_id), "cli-prebuilt"),
+                        "prebuilt_sdk_metadata": {
+                            "package_version": "9.9.9",
+                            "fingerprint": "sdk-built-by-cli",
+                            "contract_version": 42,
+                        },
+                    }
+                ],
+            )
+        )
+        await db.flush()
+        await result.finalize_s3()
+
+        app = await db.get(Application, app_id)
+        assert app.active_deployment_id == _stub_app_build[str(app_id)]["deployment_id"]
+        assert app.sdk_package_version == "9.9.9"
+        assert app.sdk_fingerprint == "sdk-built-by-cli"
+        assert app.sdk_contract_version == 42
+        assert app.sdk_built_at is not None
+
     async def test_prebuilt_only_batch_does_not_load_current_sdk_metadata(
         self, db_session, _stub_app_build, monkeypatch
     ):

@@ -121,6 +121,7 @@ async def test_app_status_source_export_and_single_update_enqueue(
     assert job.job_type == "application.sdk_update"
     assert job.resource_lock_key == f"application:{app.id}"
     assert job.notification_id is not None
+    assert job.memory_profile_key == f"application.sdk_update.memory.v1:{app.id}"
 
 
 async def test_source_export_unavailable_fails_safely(

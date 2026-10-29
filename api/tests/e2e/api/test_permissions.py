@@ -4,6 +4,8 @@ E2E tests for permission enforcement.
 Tests that org users are properly restricted and org isolation is maintained.
 """
 
+from uuid import uuid4
+
 import pytest
 
 
@@ -67,6 +69,7 @@ class TestOrgUserRestrictions:
         """Org user should not be able to access workspace files."""
         response = e2e_client.get(
             "/api/files/editor",
+            params={"path": "."},
             headers=org1_user.headers,
         )
         assert response.status_code == 403
@@ -125,14 +128,31 @@ class TestOrgUserRestrictions:
         assert response.status_code == 403, \
             f"Org user should not delete users: {response.status_code}"
 
-    def test_org_user_cannot_delete_config(self, e2e_client, org1_user):
+    def test_org_user_cannot_delete_config(self, e2e_client, org1_user, platform_admin, org1):
         """Org user cannot delete config (403)."""
-        response = e2e_client.delete(
-            "/api/config/test_key",
-            headers=org1_user.headers,
+        config = e2e_client.post(
+            "/api/config",
+            headers=platform_admin.headers,
+            json={
+                "key": f"contoso_permission_delete_{uuid4().hex[:8]}",
+                "value": "test",
+                "type": "string",
+                "organization_id": org1["id"],
+            },
         )
-        assert response.status_code in [403, 404], \
-            f"Org user should not delete config: {response.status_code}"
+        assert config.status_code == 201, config.text
+
+        try:
+            response = e2e_client.delete(
+                f"/api/config/{config.json()['id']}",
+                headers=org1_user.headers,
+            )
+            assert response.status_code == 403, response.text
+        finally:
+            e2e_client.delete(
+                f"/api/config/{config.json()['id']}",
+                headers=platform_admin.headers,
+            )
 
     def test_org_user_cannot_uninstall_packages(self, e2e_client, org1_user):
         """Org user cannot uninstall packages (403)."""
@@ -143,20 +163,33 @@ class TestOrgUserRestrictions:
         assert response.status_code == 403, \
             f"Org user should not uninstall packages: {response.status_code}"
 
-    def test_org_user_cannot_access_oauth_admin(self, e2e_client, org1_user):
+    def test_org_user_cannot_access_oauth_admin(self, e2e_client, org1_user, platform_admin):
         """Org user cannot create OAuth connections (403)."""
+        integration = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": f"contoso_permission_oauth_{uuid4().hex[:8]}"},
+        )
+        assert integration.status_code == 201, integration.text
+
         response = e2e_client.post(
             "/api/oauth/connections",
             headers=org1_user.headers,
             json={
-                "connection_name": "hacked_oauth",
+                "integration_id": integration.json()["id"],
                 "oauth_flow_type": "authorization_code",
-                "authorization_url": "https://evil.com/auth",
-                "token_url": "https://evil.com/token",
+                "client_id": "contoso-client-id",
+                "authorization_url": "https://contoso.example/authorize",
+                "token_url": "https://contoso.example/token",
             },
         )
-        assert response.status_code == 403, \
-            f"Org user should not access OAuth admin: {response.status_code}"
+        try:
+            assert response.status_code == 403, response.text
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration.json()['id']}",
+                headers=platform_admin.headers,
+            )
 
     def test_org_user_cannot_modify_roles(self, e2e_client, org1_user):
         """Org user cannot modify roles (403)."""
@@ -353,24 +386,23 @@ class TestOrgIsolation:
     # =========================================================================
 
     def test_org1_user_only_sees_own_forms(self, e2e_client, org1_user, org2):
-        """Org1 user only sees their own org's forms regardless of filter param."""
-        # With query param filtering, org users always get their own org's data
-        # The scope param is ignored for non-superusers
-        response = e2e_client.get(
+        """Org1 user cannot select Org2 and still receives an isolated home list."""
+        refused = e2e_client.get(
             "/api/forms",
-            params={"scope": org2["id"]},  # Try to filter by org2
+            params={"scope": org2["id"]},
             headers=org1_user.headers,
         )
-        # Request succeeds but returns only org1's resources
+        assert refused.status_code == 403, refused.text
+
+        response = e2e_client.get("/api/forms", headers=org1_user.headers)
         assert response.status_code == 200
         forms = response.json()
         for form in forms:
             assert form.get("organization_id") in [None, str(org1_user.organization_id)], \
                 "Org user should only see their own org's forms"
 
-    def test_scope_param_ignored_for_forms_list(self, e2e_client, org1_user, org2):
-        """Scope parameter is ignored for non-superusers on forms list."""
-        # Request with scope param pointing to other org
+    def test_foreign_scope_is_refused_for_forms_list(self, e2e_client, org1_user, org2):
+        """A foreign forms scope is refused without changing the home list."""
         response_with_scope = e2e_client.get(
             "/api/forms",
             params={"scope": org2["id"]},
@@ -381,24 +413,26 @@ class TestOrgIsolation:
             "/api/forms",
             headers=org1_user.headers,
         )
-        # Both should return same data
-        assert response_with_scope.status_code == 200
+        assert response_with_scope.status_code == 403, response_with_scope.text
         assert response_without_scope.status_code == 200
-        # Lists should be equivalent (scope param had no effect)
-        forms_with = response_with_scope.json()
-        forms_without = response_without_scope.json()
-        assert len(forms_with) == len(forms_without), \
-            "Scope param should be ignored for non-superusers"
+        for form in response_without_scope.json():
+            assert form.get("organization_id") in [None, str(org1_user.organization_id)]
 
     # =========================================================================
     # Applications Isolation
     # =========================================================================
 
     def test_org1_user_only_sees_own_apps(self, e2e_client, org1_user, org2):
-        """Org1 user only sees their own org's applications."""
+        """Org1 user cannot select Org2 and still receives an isolated home list."""
+        refused = e2e_client.get(
+            "/api/applications",
+            params={"scope": org2["id"]},
+            headers=org1_user.headers,
+        )
+        assert refused.status_code == 403, refused.text
+
         response = e2e_client.get(
-            "/api/applications",  # Correct endpoint path
-            params={"scope": org2["id"]},  # Try to filter by org2
+            "/api/applications",
             headers=org1_user.headers,
         )
         assert response.status_code == 200
@@ -408,23 +442,21 @@ class TestOrgIsolation:
             assert app.get("organization_id") in [None, str(org1_user.organization_id)], \
                 "Org user should only see their own org's apps"
 
-    def test_scope_param_ignored_for_apps_list(self, e2e_client, org1_user, org2):
-        """Scope parameter is ignored for non-superusers on apps list."""
+    def test_foreign_scope_is_refused_for_apps_list(self, e2e_client, org1_user, org2):
+        """A foreign applications scope is refused without changing the home list."""
         response_with_scope = e2e_client.get(
-            "/api/applications",  # Correct endpoint path
+            "/api/applications",
             params={"scope": org2["id"]},
             headers=org1_user.headers,
         )
         response_without_scope = e2e_client.get(
-            "/api/applications",  # Correct endpoint path
+            "/api/applications",
             headers=org1_user.headers,
         )
-        assert response_with_scope.status_code == 200
+        assert response_with_scope.status_code == 403, response_with_scope.text
         assert response_without_scope.status_code == 200
-        data_with = response_with_scope.json()
-        data_without = response_without_scope.json()
-        assert len(data_with.get("applications", [])) == len(data_without.get("applications", [])), \
-            "Scope param should be ignored for non-superusers"
+        for app in response_without_scope.json().get("applications", []):
+            assert app.get("organization_id") in [None, str(org1_user.organization_id)]
 
     # =========================================================================
     # Executions Isolation
@@ -446,23 +478,15 @@ class TestOrgIsolation:
                    execution.get("organization_id") in [None, str(org1_user.organization_id)], \
                 "Org user should only see their own executions"
 
-    def test_scope_param_ignored_for_executions_list(self, e2e_client, org1_user, org2):
-        """Scope parameter is ignored for non-superusers on executions list."""
-        response_with_scope = e2e_client.get(
+    def test_scope_outside_reach_lists_no_executions(self, e2e_client, org1_user, org2):
+        """An explicit scope only narrows the caller's reach, never widens it."""
+        response = e2e_client.get(
             "/api/executions",
             params={"scope": org2["id"]},
             headers=org1_user.headers,
         )
-        response_without_scope = e2e_client.get(
-            "/api/executions",
-            headers=org1_user.headers,
-        )
-        assert response_with_scope.status_code == 200
-        assert response_without_scope.status_code == 200
-        data_with = response_with_scope.json()
-        data_without = response_without_scope.json()
-        assert len(data_with.get("executions", [])) == len(data_without.get("executions", [])), \
-            "Scope param should be ignored for non-superusers"
+        assert response.status_code == 200, response.text
+        assert response.json()["executions"] == []
 
     # =========================================================================
     # Cross-Org Access Attempts (Direct ID Access)

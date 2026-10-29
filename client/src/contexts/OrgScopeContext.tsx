@@ -15,6 +15,10 @@ import {
 	TerminologyContext,
 	type Terminology,
 } from "@/lib/terminology";
+import {
+	getImpersonationTokenClaims,
+	isImpersonating,
+} from "@/lib/auth-token";
 
 export interface OrgScope {
 	type: "global" | "organization";
@@ -42,7 +46,19 @@ const OrgScopeContext = createContext<OrgScopeContextType | undefined>(
 const SCOPE_STORAGE_KEY = "msp-automation-org-scope";
 
 export function OrgScopeProvider({ children }: { children: ReactNode }) {
+	const impersonationScope = useMemo<OrgScope | null>(() => {
+		const impersonationClaims = getImpersonationTokenClaims();
+		if (!isImpersonating()) return null;
+		return impersonationClaims?.org_id
+			? {
+					type: "organization",
+					orgId: impersonationClaims.org_id,
+					orgName: null,
+				}
+			: { type: "global", orgId: null, orgName: null };
+	}, []);
 	const [scope, setScope] = useState<OrgScope>(() => {
+		if (impersonationScope) return impersonationScope;
 		// Load from localStorage on init
 		const stored = localStorage.getItem(SCOPE_STORAGE_KEY);
 		if (stored) {
@@ -71,10 +87,20 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 		setRefreshTrigger((prev) => prev + 1);
 	}, []);
 
-	// Persist to localStorage when scope changes
+	// A support session must use the target's home organization while leaving
+	// the operator's shared, cross-tab choice untouched.
 	useEffect(() => {
-		localStorage.setItem(SCOPE_STORAGE_KEY, JSON.stringify(scope));
-	}, [scope]);
+		if (!impersonationScope) {
+			localStorage.setItem(SCOPE_STORAGE_KEY, JSON.stringify(scope));
+		}
+	}, [impersonationScope, scope]);
+
+	const setScopedScope = useCallback(
+		(next: OrgScope) => {
+			if (!impersonationScope) setScope(next);
+		},
+		[impersonationScope],
+	);
 
 	// Track current loading request to avoid race conditions
 	const loadingRequestRef = useRef(0);
@@ -173,7 +199,7 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 	const value = useMemo(
 		() => ({
 			scope,
-			setScope,
+			setScope: setScopedScope,
 			isGlobalScope,
 			brandingLoaded,
 			logoLoaded,
@@ -183,7 +209,7 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 			terminology,
 			refreshBranding,
 		}),
-		[scope, setScope, isGlobalScope, brandingLoaded, logoLoaded, squareLogoUrl, rectangleLogoUrl, applicationName, terminology, refreshBranding],
+		[scope, setScopedScope, isGlobalScope, brandingLoaded, logoLoaded, squareLogoUrl, rectangleLogoUrl, applicationName, terminology, refreshBranding],
 	);
 
 	return (

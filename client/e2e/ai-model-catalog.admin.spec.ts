@@ -2,15 +2,26 @@ import { expect, test } from "@playwright/test";
 
 /**
  * Catalog happy path against the real API: the provider list and model list
- * come from the models.dev catalog the platform serves. Only the live
- * credential check is mocked, because it would call the real provider.
+ * come from the models.dev catalog the platform serves. Every check that would
+ * call the provider (credential verify, profile verify, connection test) is
+ * faked, so the test never leaves the stack; the backend unit tests in
+ * test_ai_model_service.py cover how a rejected key becomes these messages.
  */
 test("adds a catalog provider and a profile with a reasoning choice", async ({
 	page,
 }) => {
 	const suffix = Date.now().toString(36);
+	const rejected = "The provider rejected the API key.";
 	await page.route("**/api/admin/ai/connections/verify", async (route) => {
 		await route.fulfill({ json: { success: true, message: "Connected", models: [] } });
+	});
+	await page.route("**/api/admin/ai/profiles/*/verify", async (route) => {
+		await route.fulfill({ json: { success: false, message: rejected } });
+	});
+	await page.route("**/api/admin/ai/connections/*/test", async (route) => {
+		await route.fulfill({
+			json: { success: false, message: `Haiku ${suffix}: ${rejected}`, models: null },
+		});
 	});
 
 	await page.goto("/settings/ai");
@@ -43,10 +54,10 @@ test("adds a catalog provider and a profile with a reasoning choice", async ({
 
 	const profileCard = page.locator('[data-slot="card"]', { hasText: `Haiku ${suffix}` });
 	await expect(profileCard.getByText("Reasoning: On (provider default)")).toBeVisible();
-	// The saved profile is tested with a real request; the fake key fails it.
+	// The saved profile is tested once; the faked provider rejects the key.
 	await expect(page.getByText(`Haiku ${suffix} could not answer a test request`)).toBeVisible();
 
-	// The connection's Test runs the same real request for each of its profiles.
+	// The connection's Test reports the same check for each of its profiles.
 	await page.getByRole("button", { name: `Test Anthropic ${suffix}` }).click();
 	await expect(page.getByText("Provider test failed")).toBeVisible();
 	await expect(page.getByText(`Haiku ${suffix}: The provider rejected the API key.`, { exact: false })).toBeVisible();

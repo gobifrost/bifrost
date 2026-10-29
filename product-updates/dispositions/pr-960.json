@@ -1,0 +1,14 @@
+{
+  "key": "pr:960",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/960",
+      "Product review: awaiting Jack's approval of the summary."
+    ]
+  },
+  "summary": "Package installs and app builds run without platform credentials, and MCP sign-in codes are bound to the server secret.",
+  "category": "hardening"
+}

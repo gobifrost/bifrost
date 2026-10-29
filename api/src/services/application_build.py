@@ -13,6 +13,11 @@ from uuid import UUID
 
 from sqlalchemy import update
 
+from shared.app_build_errors import (
+    AppBuildMemoryError,
+    app_build_memory_message,
+    subprocess_memory_error,
+)
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobFailure
 from src.models.orm.applications import Application
@@ -65,11 +70,22 @@ async def rebuild_application_from_source(
             )
         except PlatformJobFailure:
             raise
+        except AppBuildMemoryError as exc:
+            raise PlatformJobFailure("memory_pressure", str(exc)) from exc
         except subprocess.CalledProcessError as exc:
+            memory_error = subprocess_memory_error(
+                exc.returncode, exc.stderr, exc.stdout
+            )
+            if memory_error is not None:
+                raise PlatformJobFailure("memory_pressure", str(memory_error)) from exc
             detail = (exc.stderr or exc.stdout or b"").decode(errors="replace")[-4000:]
             raise PlatformJobFailure(
                 "app_build_failed",
                 f"Vite build failed.\n{detail}" if detail else "Vite build failed.",
+            ) from exc
+        except MemoryError as exc:
+            raise PlatformJobFailure(
+                "memory_pressure", app_build_memory_message()
             ) from exc
         except Exception as exc:
             raise PlatformJobFailure("app_build_failed", str(exc)) from exc

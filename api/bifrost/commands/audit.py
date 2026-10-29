@@ -21,12 +21,15 @@ from .base import entity_group, output_result, pass_resolver, run_async
 audit_group = entity_group("audit", "Read the audit log and explain access decisions.")
 
 _GROUP_BY = ["workflow", "action", "resource_type", "outcome", "user", "organization"]
+_AGGREGATES = ["1h", "6h", "24h"]
 
 _NOW_UNAVAILABLE = {
     "rows_not_stored": "table row decisions can't be re-run: the rows aren't stored",
     "run_user_missing": "the run's user no longer exists",
+    "run_as_user_missing": "the user it acted as no longer exists",
     "workflow_missing": "the workflow no longer exists",
     "solution_not_recorded": "this file check was recorded before Solutions were stored with it",
+    "inputs_not_stored": "this check was recorded before its inputs were stored with it",
 }
 
 
@@ -39,9 +42,30 @@ def _columns(rows: list[list[str]], separator: str) -> list[str]:
     ]
 
 
-def _print_list(response: dict[str, Any]) -> None:
-    if response["groups"] is not None:
-        rows = [[str(g["count"]), g["key"] or "-", g["last_seen"]] for g in response["groups"]]
+def _group_label(group_by: str, group: dict[str, Any]) -> str:
+    """A workflow or organization group by name; anything else by its key."""
+    if group_by == "workflow":
+        # A workflow deleted since keeps its id.
+        return "No Workflow" if group["key"] is None else group["sample"]["workflow_name"] or group["key"]
+    if group_by == "organization":
+        return "Global" if group["key"] is None else group["sample"]["actor"]["organization_name"]
+    return group["key"] or "-"
+
+
+def _print_list(response: dict[str, Any], group_by: str | None, aggregate: str | None) -> None:
+    if aggregate is not None:
+        rows = [
+            [
+                str(g["count"]),
+                f"{g['first_seen']} – {g['last_seen']}",
+                g["sample"]["actor"]["user_email"] or "-",
+                g["sample"]["actor"]["organization_name"] or "-",
+                g["sample"]["operation_id"] or "-",
+            ]
+            for g in response["groups"]
+        ]
+    elif group_by is not None:
+        rows = [[str(g["count"]), _group_label(group_by, g), g["last_seen"]] for g in response["groups"]]
     else:
         rows = [
             [
@@ -57,15 +81,17 @@ def _print_list(response: dict[str, Any]) -> None:
     if rows:
         click.echo("\n".join(_columns(rows, "  ")))
     else:
-        click.echo("No groups." if response["groups"] is not None else "No entries.")
+        click.echo("No groups." if group_by is not None or aggregate is not None else "No entries.")
 
 
 @audit_group.command("list")
 @click.option("--action", help="Action prefix, e.g. 'user.' or 'access.check'.")
 @click.option("--outcome", type=click.Choice(["success", "failure"]), help="Only successes or failures.")
 @click.option("--resource-type", help="Only events on this resource type.")
-@click.option("--user", "user_ref", help="Acting user: UUID or email.")
+@click.option("--user", "user_ref", help="Acting user: UUID, email, or identity name.")
 @click.option("--execution", help="Workflow execution ID.")
+@click.option("--workflow", "workflow_ref", help="Only events naming this workflow: UUID, name, or path::function.")
+@click.option("--org", "org_ref", help="Only events in this organization: UUID or name, or 'global'.")
 @click.option("--since", help="Start of the time range (ISO 8601, inclusive).")
 @click.option("--until", help="End of the time range (ISO 8601, inclusive).")
 @click.option("--search", help="Free-text search on actor, organization, action, resource type, IP, and details.")
@@ -74,6 +100,7 @@ def _print_list(response: dict[str, Any]) -> None:
     type=click.Choice(_GROUP_BY),
     help="Count matching events per value instead of listing them.",
 )
+@click.option("--aggregate", type=click.Choice(_AGGREGATES), help="Group exact access checks into fixed UTC windows.")
 @click.option("--limit", type=click.IntRange(1, 500), help="Maximum entries to return (server default 50).")
 @click.pass_context
 @pass_resolver
@@ -85,16 +112,21 @@ async def list_audit(
     resource_type: str | None,
     user_ref: str | None,
     execution: str | None,
+    workflow_ref: str | None,
+    org_ref: str | None,
     since: str | None,
     until: str | None,
     search: str | None,
     group_by: str | None,
+    aggregate: str | None,
     limit: int | None,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """List audit log entries, or count them with --group-by."""
+    """List audit log entries, group them, or aggregate access checks by time."""
+    if group_by is not None and aggregate is not None:
+        raise click.UsageError("--group-by and --aggregate cannot be used together.", ctx)
     params: dict[str, Any] = {}
     if action is not None:
         params["action"] = action
@@ -106,6 +138,10 @@ async def list_audit(
         params["user_id"] = await resolver.resolve("user", user_ref)
     if execution is not None:
         params["execution_id"] = execution
+    if workflow_ref is not None:
+        params["workflow_id"] = await resolver.resolve("workflow", workflow_ref)
+    if org_ref is not None:
+        params["organization_id"] = "none" if org_ref == "global" else await resolver.resolve("org", org_ref)
     if since is not None:
         params["start_date"] = since
     if until is not None:
@@ -114,16 +150,32 @@ async def list_audit(
         params["search"] = search
     if group_by is not None:
         params["group_by"] = group_by
+    if aggregate is not None:
+        params["aggregate"] = aggregate
     if limit is not None:
         params["limit"] = limit
 
     response = await client.get("/api/audit", params=params)
     response.raise_for_status()
-    output_result(response.json(), ctx=ctx, human=_print_list)
+    output_result(response.json(), ctx=ctx, human=lambda r: _print_list(r, group_by, aggregate))
 
 
 def _cell(step: dict[str, Any]) -> str:
     return f"{step['status']} ({step['reason']})" if step["reason"] else step["status"]
+
+
+def _checked_permission(explanation: dict[str, Any]) -> str | None:
+    """A named permission check's permission, as "Read Agents (agents.read)".
+
+    The server names it on the trace's permission step, even where an
+    earlier step stopped the trace.
+    """
+    for trace in (explanation["then"], explanation["now"]):
+        for step in [] if trace is None else trace["steps"]:
+            facts = step["facts"]
+            if step["key"] == "permission" and "permission_display_name" in facts:
+                return f"{facts['permission_display_name']} ({facts['permission']})"
+    return None
 
 
 def _print_explanation(explanation: dict[str, Any]) -> None:
@@ -135,23 +187,28 @@ def _print_explanation(explanation: dict[str, Any]) -> None:
         ("Run user", event["actor"]["user_email"] or "-"),
         ("Organization", event["actor"]["organization_name"] or "-"),
     ]
+    permission = _checked_permission(explanation) if event["resource_type"] == "permission" else None
+    if permission is not None:
+        header.append(("Permission", permission))
     for label, value in header:
         click.echo(f"{label + ':':<14}{value}")
     click.echo()
 
-    then_steps = explanation["then"]["steps"]
-    rows = [["STEP", "THEN"]] + [[step["label"], _cell(step)] for step in then_steps]
-    now = explanation["now"]
-    if now is not None:
-        now_by_key = {step["key"]: step for step in now["steps"]}
-        rows[0].append("NOW")
-        for row, step in zip(rows[1:], then_steps):
-            row.append(_cell(now_by_key[step["key"]]))
-    click.echo("\n".join(_columns(rows, " | ")))
+    then, now = explanation["then"], explanation["now"]
+    traces = [(title, trace) for title, trace in (("THEN", then), ("NOW", now)) if trace is not None]
+    if traces:
+        steps_by_key = [{step["key"]: step for step in trace["steps"]} for _, trace in traces]
+        rows = [["STEP", *(title for title, _ in traces)]] + [
+            [step["label"], *(_cell(steps[step["key"]]) for steps in steps_by_key)]
+            for step in traces[0][1]["steps"]
+        ]
+        click.echo("\n".join(_columns(rows, " | ")))
 
+    if then is None:
+        click.echo("THEN: not stored — this check was recorded before its decision was stored with it")
     if now is None:
         click.echo(f"NOW: not available — {_NOW_UNAVAILABLE[explanation['now_unavailable']]}")
-    else:
+    elif then is not None:
         click.echo(f"Changed: {'yes' if explanation['changed'] else 'no'}")
 
 

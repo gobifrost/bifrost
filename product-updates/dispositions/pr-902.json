@@ -1,0 +1,14 @@
+{
+  "key": "pr:902",
+  "classification": "highlight",
+  "entry_ids": [
+    "c2ac76ce-8a68-540b-8c56-a2c8b00ed3da"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/902",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  }
+}

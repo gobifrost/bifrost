@@ -7,11 +7,8 @@ Single implementation for both entry points:
 - the same handler reached by workflow children over the worker-local
   engine socket.
 
-Both paths can share authenticated org input (an explicit trusted principal
-plus an optional org override) and the C2 gate — platform admins and
-provider-org members may target another org; everyone else resolves to
-their own auth-verified org — so HTTP and worker-local results are identical by
-construction.
+Both paths resolve selected scope through the original caller's current
+role reach. Actor flags never authorize a scope override.
 
 Parent-side only: imports SQLAlchemy models. A workflow child never
 imports this module (it stays DB-free and reaches it over the engine
@@ -55,10 +52,8 @@ async def get_sdk_context(
 ) -> dict[str, Any]:
     """Build the developer context payload for an SDK bootstrap.
 
-    Returns the authenticated user and their ``organization_id``-resolved
-    org. The optional ``org_id`` override lets platform admins and
-    provider-org members target another org for the session — gated by
-    the same C2 rule the scope resolver applies elsewhere.
+    Returns actor facts and the selected original-user scope. An explicit
+    organization must be in current role reach, including for runtime calls.
 
     Args:
         session: Database session.
@@ -73,28 +68,16 @@ async def get_sdk_context(
         ``DeveloperContextResponse``.
 
     Raises:
-        SdkContextError: 403 when a non-bypass caller targets another
-            org; 404 when the resolved org is missing or inactive.
+        SdkContextError: 403 outside original reach; 404 for an inactive or missing organization.
     """
-    if org_id is not None and org_id != principal.organization_id:
-        is_provider_org = False
-        if not principal.is_superuser and principal.organization_id is not None:
-            row = await session.execute(
-                select(Organization.is_provider).where(
-                    Organization.id == principal.organization_id
-                )
-            )
-            is_provider_org = bool(row.scalar_one_or_none())
-        if not (principal.is_superuser or is_provider_org):
-            raise SdkContextError(
-                403,
-                "Only platform admins or provider-org members can target another organization",
-            )
-        target_org_id = org_id
-    elif org_id is not None:
-        target_org_id = org_id
-    else:
-        target_org_id = principal.organization_id
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(session, principal)
+    try:
+        target_org_id = await resolve_sdk_scope(str(org_id) if org_id is not None else None, caller=caller)
+    except ScopeResolutionError as exc:
+        raise SdkContextError(exc.status_code, exc.detail) from exc
 
     org_data = None
     if target_org_id is not None:

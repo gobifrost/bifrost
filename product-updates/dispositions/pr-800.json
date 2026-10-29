@@ -1,0 +1,13 @@
+{
+  "key": "pr:800",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/800",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "reason": "Repair to dev image promotion; operational pipeline-only change."
+}

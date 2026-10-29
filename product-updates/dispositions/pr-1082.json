@@ -1,0 +1,14 @@
+{
+  "key": "pr:1082",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Redis listeners release their connections even when unsubscribe cleanup fails.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1082",
+      "Authorized production reliability investigation. Independent review of d809cebb6 with test clarification f5531e654 found no actionable issues. Four focused tests passed, including three real Redis failure cycles for each listener; API type and lint checks passed. This fixes a demonstrated cleanup defect without claiming measured production memory savings."
+    ]
+  }
+}

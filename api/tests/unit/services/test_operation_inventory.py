@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from src.main import app
 from src.services.operation_inventory import build_operation_inventory
 
@@ -18,10 +20,10 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     # MCP thin-wrapper rewrite and tool-name migration, closing that parity
     # domain by domain.
     assert inventory["counts"] == {
-        "cli": 167,
+        "cli": 172,
         "manifest": 16,
         "mcp": 94,
-        "rest": 671,
+        "rest": 689,
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -29,6 +31,56 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         for row in rows:
             assert row["status"]
             assert row["reason"]
+
+
+def test_solution_dev_context_is_authentication_transport() -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(
+        row for row in inventory["uncataloged"]["rest"]
+        if row["path"] == "/api/solutions/{solution_id}/dev-context"
+    )
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Issues user-bound context for local Solution development; owns no entity state."
+    )
+
+
+@pytest.mark.parametrize("path", ["/auth/device/authorize", "/auth/device/deny"])
+def test_device_decisions_are_authentication_transport(path: str) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(row for row in inventory["uncataloged"]["rest"] if row["path"] == path)
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Records the user's decision for CLI authentication; owns no entity state."
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        (
+            "/auth/impersonate/{user_id}",
+            "Starts a browser authentication impersonation session; owns no entity state.",
+        ),
+        (
+            "/auth/impersonation/end",
+            "Ends a browser authentication impersonation session; owns no entity state.",
+        ),
+    ],
+)
+def test_browser_impersonation_routes_are_authentication_transport(
+    path: str, reason: str
+) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(row for row in inventory["uncataloged"]["rest"] if row["path"] == path)
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == reason
 
 
 def test_organization_listing_is_available_to_application_sdks() -> None:
@@ -97,3 +149,28 @@ def test_generated_operation_files_are_fresh() -> None:
     assert (
         module.OPERATIONS_PATH.read_text(encoding="utf-8") == module.render_operations()
     )
+
+
+def test_operation_reference_marks_scopes_that_only_widen() -> None:
+    import importlib.util
+
+    generator_path = API_ROOT / "scripts" / "operation_catalog" / "generate.py"
+    spec = importlib.util.spec_from_file_location(
+        "operation_catalog_generate", generator_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    rows = {
+        line.split(" | ")[0].strip("| `"): line
+        for line in module.render_operations().splitlines()
+        if line.startswith("| `")
+    }
+    assert rows["platform.jobs.get"].endswith(
+        "| `platformjobs.read.all` (only for other people's items) |"
+    )
+    assert rows["agents.create"].endswith(
+        "| `agents.readwrite` (not for your own private agents) |"
+    )
+    assert rows["tables.list"].endswith("| `tables.read` |")

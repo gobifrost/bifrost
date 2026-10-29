@@ -1,10 +1,4 @@
-"""Report-only access checks for the decisions the identity matrix leaves out.
-
-Table policies and secrets are judged against the run's user (their own
-roles, plus what a Full workflow adds); an agent run nobody started opens its
-agent as its organization's identity. Each check lands in the audit log as
-``access.check`` with ``enforced: false``; nothing about the run changes.
-"""
+"""Enforced access-check contracts outside the identity-matrix scenarios."""
 
 from __future__ import annotations
 
@@ -118,7 +112,13 @@ def world(e2e_client, platform_admin, org1, async_session_factory):
                 "name": f"ac_admin_{tag}",
                 "organization_id": None,
                 "policies": {
-                    "policies": [{"name": "admins", "actions": ["create", "read"], "when": {"user": "is_platform_admin"}}]
+                    "policies": [
+                        {
+                            "name": "full_workflow_authority",
+                            "actions": ["create"],
+                            "when": {"authority": "platform_admin"},
+                        }
+                    ]
                 },
             },
         ),
@@ -170,34 +170,44 @@ def _policy(checks: list[dict], table_id: str) -> list[dict]:
 
 
 def test_a_role_policy_follows_the_run_users_own_roles(world) -> None:
-    """Today the run is judged as the execution credential (no roles), so both
-    inserts are refused. The model judges the person: the HR member's insert
-    would pass (recorded); the customer's is refused either way (nothing to
-    record)."""
+    """The policy sees the run user's own roles and enforces its decision."""
     hr = _policy(_run_checks(world, "hr"), world["hr_table"])
     customer = _policy(_run_checks(world, "customer"), world["hr_table"])
 
-    assert [(c["outcome"], c["details"]["today"], c["user_id"]) for c in hr] == [("success", "denied", world["hr_id"])]
-    assert customer == []
+    assert [(c["outcome"], c["details"]["inputs"]["today"], c["user_id"]) for c in hr] == [
+        ("success", True, world["hr_id"])
+    ]
+    assert hr[0]["details"]["enforced"] is True
+    assert [(c["outcome"], c["details"]["inputs"]["today"], c["user_id"]) for c in customer] == [
+        ("failure", False, world["customer_id"])
+    ]
+    assert customer[0]["details"]["enforced"] is True
+    assert world["runs"]["hr"]["result"]["first"] == "inserted"
+    assert world["runs"]["customer"]["result"]["first"] != "inserted"
 
 
-def test_a_full_run_passes_an_admin_only_global_table(world) -> None:
+def test_a_full_run_keeps_the_default_admin_policy_authority(world) -> None:
+    assert world["runs"]["customer"]["result"]["admin_table"] == "inserted"
+    # The by-name insert reached the Global table itself, where Full Access
+    # satisfies its platform_admin authority policy.
     [check] = _policy(_run_checks(world, "customer"), world["admin_table"])
 
-    assert (check["outcome"], check["details"]["enforced"]) == ("success", False)
+    assert (check["outcome"], check["details"]["enforced"]) == ("success", True)
 
 
 def test_a_secret_read_is_recorded_without_its_value(world) -> None:
     secrets = [c for c in _run_checks(world, "customer") if c["resource_type"] == "secret"]
 
     assert [(c["outcome"], c["details"]["inputs"]["name"]) for c in secrets] == [("success", world["secret_key"])]
+    assert secrets[0]["details"]["enforced"] is True
+    assert world["runs"]["customer"]["result"]["secret"] is True
     assert "s-" not in str(secrets[0]["details"])
 
 
-def test_an_agent_nobody_started_opens_its_agent_as_its_identity(
-    e2e_client, platform_admin, org1, async_session_factory
+def test_an_autonomous_identity_cannot_enter_an_unassigned_role_based_agent(
+    e2e_client, platform_admin, org1
 ) -> None:
-    """A role-based agent its org's identity holds no role for: the model would not start it."""
+    """A denied autonomous entry fails before it can create an agent run."""
     tag = uuid.uuid4().hex[:8]
     admin = platform_admin.headers
     agent = _ok(
@@ -222,23 +232,96 @@ def test_an_agent_nobody_started_opens_its_agent_as_its_identity(
         ),
     )
     try:
-        _ok(
+        subscription = _ok(
             e2e_client.post(
                 f"/api/events/sources/{source['id']}/subscriptions",
                 headers=admin,
                 json={"target_type": "agent", "agent_id": agent["id"], "event_type": topic},
             ),
         )
-        _ok(e2e_client.post("/api/events/emit", headers=admin, json={"topic": topic, "data": {}}))
+        event = _ok(
+            e2e_client.post("/api/events/emit", headers=admin, json={"topic": topic, "data": {}})
+        )
 
-        def entry_checks():
-            rows = asyncio.run(_checks(async_session_factory, resource_type="entry"))
-            found = [r for r in rows if r["details"]["inputs"].get("subject") == f"agent:{agent['id']}"]
-            return found or None
+        def denied_delivery():
+            deliveries = _ok(
+                e2e_client.get(f"/api/events/{event['event_id']}/deliveries", headers=admin)
+            )["items"]
+            denied = [
+                delivery
+                for delivery in deliveries
+                if delivery["event_subscription_id"] == subscription["id"]
+                and delivery["status"] == "failed"
+            ]
+            return denied[0] if denied else None
 
-        found = poll_until(entry_checks, max_wait=30, interval=0.5)
-        assert found is not None, "no entry check recorded for the event-started agent run"
-        assert [(r["outcome"], r["details"]["enforced"]) for r in found] == [("failure", False)]
+        delivery = poll_until(denied_delivery, max_wait=30, interval=0.5)
+        assert delivery is not None, "role-based agent entry was not denied"
+        assert delivery["agent_run_id"] is None
+        assert "Agent is no longer available" in delivery["error_message"]
     finally:
         e2e_client.delete(f"/api/events/sources/{source['id']}", headers=admin)
         e2e_client.delete(f"/api/agents/{agent['id']}", headers=admin)
+
+
+LEGACY_ADMIN_PROBE = '''"""Legacy admin-rule probe."""
+from bifrost import tables, workflow
+
+
+@workflow(name="{name}", description="Legacy admin-rule probe")
+async def {name}(table: str):
+    result = await tables.query(table)
+    return {{"rows": len(result.documents)}}
+'''
+
+
+def test_a_full_access_run_satisfies_a_legacy_admin_rule_that_its_person_does_not(
+    e2e_client, platform_admin, org1
+) -> None:
+    """``user.is_platform_admin`` rules admitted every workflow before Zero
+    Trust Automation; a non-admin's Full Access run still reads the table
+    while the same person calling directly is refused."""
+    tag = uuid.uuid4().hex[:8]
+    admin = platform_admin.headers
+    person, person_user = _person(e2e_client, admin, org1["id"], tag=tag, key="legacy")
+    table = _ok(
+        e2e_client.post(
+            "/api/tables",
+            headers=admin,
+            json={
+                "name": f"ac_legacy_{tag}",
+                "organization_id": None,
+                "policies": {
+                    "policies": [
+                        {
+                            "name": "admin_bypass",
+                            "actions": ["read", "create", "update", "delete"],
+                            "when": {"user": "is_platform_admin"},
+                        }
+                    ]
+                },
+            },
+        )
+    )
+    _ok(e2e_client.post(f"/api/tables/{table['id']}/documents", headers=admin, json={"data": {"k": 1}}))
+    name = f"ac_legacy_probe_{tag}"
+    path = f"workflows/{name}.py"
+    probe = write_and_register(
+        e2e_client, admin, path, LEGACY_ADMIN_PROBE.format(name=name), name, organization_id=org1["id"]
+    )
+    try:
+        _ok(e2e_client.patch(f"/api/workflows/{probe['id']}", headers=admin, json={"access_level": "authenticated"}))
+        run = execute_workflow_sync(
+            e2e_client, person_user.headers, probe["id"], {"table": table["name"]}, max_wait=60
+        )
+        assert run["status"] == "Success", run
+        assert run["result"] == {"rows": 1}
+
+        direct = e2e_client.post(
+            f"/api/tables/{table['id']}/documents/query", headers=person_user.headers, json={}
+        )
+        assert direct.status_code == 403 or direct.json()["documents"] == [], direct.text
+    finally:
+        e2e_client.delete(f"/api/files/editor?path={path}", headers=admin)
+        e2e_client.delete(f"/api/tables/{table['id']}", headers=admin)
+        e2e_client.delete(f"/api/users/{person['id']}", headers=admin)

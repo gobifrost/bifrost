@@ -1,5 +1,6 @@
 """E2E tests for HMAC-authenticated embed entry point."""
 
+import base64
 import hashlib
 import hmac as hmac_module
 from uuid import UUID, uuid4
@@ -25,10 +26,19 @@ def _compute_hmac(params: dict[str, str], secret: str) -> str:
     return hmac_module.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
+def _compute_halopsa_hmac(agent_id: str, secret: str) -> str:
+    digest = hmac_module.new(
+        secret.encode(), agent_id.encode(), hashlib.sha256
+    ).digest()
+    return base64.b64encode(digest).decode()
+
+
 @pytest.mark.e2e
 class TestEmbedEntryPoint:
     @pytest.fixture
-    def test_app_with_secret(self, e2e_client, platform_admin):
+    def test_app_with_secret(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         app = _create_app(e2e_client, platform_admin.headers, "embed-entry-test")
         r = e2e_client.post(
             f"/api/applications/{app['id']}/embed-secrets",
@@ -71,6 +81,42 @@ class TestEmbedEntryPoint:
             params={"agent_id": "42"},
         )
         assert r.status_code == 403, r.text
+
+    def test_halopsa_bootstrap_promotes_only_agent_id(
+        self,
+        e2e_client,
+        platform_admin,
+        secrets_reader_platform_admin,
+        test_app_with_secret,
+    ):
+        app = test_app_with_secret["app"]
+        secret = "contoso-app-halopsa-secret"
+        created = e2e_client.post(
+            f"/api/applications/{app['id']}/embed-secrets",
+            headers=platform_admin.headers,
+            json={
+                "name": "Contoso HaloPSA",
+                "secret": secret,
+                "hmac_scheme": "halopsa",
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        agent_id = "42"
+        r = e2e_client.get(
+            f"/embed/apps/{app['slug']}",
+            params={
+                "agent_id": agent_id,
+                "customer": "Fabrikam",
+                "hmac": _compute_halopsa_hmac(agent_id, secret),
+            },
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
+        token = r.headers["location"].split("#embed_token=", 1)[1]
+        payload = jwt.decode(token, options={"verify_signature": False})
+        assert payload["verified_context"] == {"agent_id": agent_id}
+        assert payload["verified_params"] == {"agent_id": agent_id}
 
     def test_no_embed_secrets_configured(self, e2e_client, platform_admin):
         """App with no embed secrets should reject all embed requests."""

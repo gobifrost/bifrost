@@ -1,0 +1,18 @@
+{
+  "key": "pr:921",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine client lockfile security patch, paired with the app-compiler update in PR #920; no individual in-app announcement. Retain canonical security notice review for formal publication.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/921",
+      "https://github.com/gobifrost/bifrost/commit/d87b117b0d5e6ea492c42268413caea3cb6e1108",
+      "Reviewed the landed diff on 2026-10-17: only the client source-map-js lockfile version, registry URL and integrity changed from 1.2.1 to 1.2.2. This follows the existing dependency-maintenance disposition policy and preserves required security review."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/921"
+  }
+}

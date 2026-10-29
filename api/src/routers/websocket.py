@@ -5,6 +5,7 @@ Provides real-time updates via WebSocket connections.
 Replaces Azure Web PubSub with native FastAPI WebSockets.
 """
 
+import asyncio
 import copy
 import logging
 from dataclasses import dataclass
@@ -14,31 +15,52 @@ from uuid import UUID
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
+from shared import access_checks
+from shared.browser_impersonation import (
+    BrowserImpersonationError,
+    is_browser_impersonation,
+    validate_browser_impersonation,
+)
 from shared.claims.preresolve import preresolve_for_policies
 from shared.policies.probe import is_subscribe_authorized
 from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
-from shared.scope_resolver import has_scope_bypass
 from src.repositories.policy_rule import PolicyRuleRepository
 from shared.policies.subscription import decide_visibility_change
-from shared.role_cache import get_user_roles
 from src.core.auth import get_current_user_ws
 from src.core.exceptions import AccessDeniedError
 from src.core.principal import UserPrincipal
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_target_org
 from src.core.pubsub import manager
 from src.models import Conversation, Execution
 from src.models.contracts.policies import Expr, TablePolicies
 from src.models.contracts.policies import FileAction
-from src.models.orm import Agent
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.services import ServiceDefinition
+from src.models.orm.events import EventSource
 from src.models.orm.tables import Table as TableOrm
+from src.models.orm.users import Role, UserRole
 from src.repositories.applications import ApplicationRepository
+from src.services.access_check_writer import flush_detached
 from src.services.audit import emit_file_policy_deny, emit_table_policy_deny
 from src.services.audit_context import ActorContext
+from src.services.authorization.callers import CallerUnavailable, refresh_caller
+from src.services.authorization.enforce import allows_permission, load_caller, user_reach
+from src.services.authorization.execution_access import (
+    current_execution_read_access,
+    execution_read_access,
+)
+from src.services.execution.agent_run_access import agent_run_visibility_conditions
+from src.services.notification_access import can_access_notification, can_read_admin_notifications
+from src.services.notification_service import get_notification_service
+from src.services.platform_job_access import (
+    PlatformJobAccessDenied,
+    require_platform_job_access,
+)
+from src.services.service_access import can_access_service as service_access_allowed
+
 
 logger = logging.getLogger(__name__)
 
@@ -89,52 +111,24 @@ def _parse_channels(channels_raw: list) -> list[ChannelSpec]:
 
 
 async def _resolve_table_id(name_or_id: str, user: UserPrincipal) -> str | None:
-    """Resolve a table reference (UUID string or name) to its canonical UUID,
-    enforcing the same org gate as the REST `get_table_or_404` helper:
-    a non-superuser may only resolve to tables in their own org or global.
-
-    Returns None if no table matches OR the resolved table is outside the
-    user's org reach (404-style — callers translate to the user-visible
-    "Table not found" error).
-    """
+    """Resolve a table in the current original caller's selected scope."""
     async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        if caller is None or caller.ctx is None:
+            return None
         try:
             table_uuid = UUID(name_or_id)
-            stmt = select(TableOrm.id, TableOrm.organization_id).where(
-                TableOrm.id == table_uuid,
-            )
+            row = await db.execute(select(TableOrm.id, TableOrm.organization_id).where(TableOrm.id == table_uuid))
         except ValueError:
-            stmt = select(TableOrm.id, TableOrm.organization_id).where(
-                TableOrm.name == name_or_id,
-                # By-name resolution is the live _repo/ namespace — mirror
-                # OrgScopedRepository.get(): solution-managed rows resolve by
-                # id (or ?solution=).
-                TableOrm.solution_id.is_(None),
+            row = await db.execute(
+                select(TableOrm.id, TableOrm.organization_id)
+                .where(TableOrm.name == name_or_id, TableOrm.solution_id.is_(None))
+                .where((TableOrm.organization_id == caller.ctx.home_organization_id) | TableOrm.organization_id.is_(None))
             )
-            # Non-superusers' name lookups are restricted to their own org
-            # (cascade with global) — superusers see all orgs.
-            if not user.is_superuser:
-                # Cascade (org + global).
-                stmt = stmt.where(
-                    (TableOrm.organization_id == user.organization_id)
-                    | TableOrm.organization_id.is_(None)
-                )
-        result = await db.execute(stmt)
-        row = result.one_or_none()
-
-    if row is None:
-        return None
-
-    table_id, table_org = row[0], row[1]
-
-    # Org gate for UUID lookups (name lookups already constrained above):
-    # the same target-org rule the REST table routes apply to ``?scope=``,
-    # so a caller who can read a table over REST can also subscribe to it.
-    if table_org is not None and table_org != user.organization_id:
-        if resolve_target_org(user, str(table_org), user.organization_id) != table_org:
+        resolved = row.one_or_none()
+        if resolved is None or not user_reach(caller).covers(resolved[1]):
             return None
-
-    return str(table_id)
+        return str(resolved[0])
 
 
 # In-process policy cache for the document_change fanout hot path.
@@ -278,24 +272,6 @@ async def _load_policies_for_table(
     return policies
 
 
-async def _populate_user_roles(user: UserPrincipal) -> None:
-    """Hydrate `role_ids` / `role_names` on the principal if not already loaded.
-
-    `get_current_user_ws` does not hit the DB for roles (the JWT carries only
-    the `roles` claim, not the `user_roles` rows the policy evaluator's
-    `has_role` reads). Call this once per connection before the first
-    table-subscription policy check. Reads go through the per-user role cache
-    (Redis); DB is fallback on miss.
-    """
-    if user.role_ids or user.role_names:
-        return
-
-    async with get_db_context() as db:
-        role_ids, role_names = await get_user_roles(user.user_id, db)
-        user.role_ids = role_ids
-        user.role_names = role_names
-
-
 def _fresh_table_policy_user(user: UserPrincipal) -> UserPrincipal:
     """Copy a websocket principal without reusing custom-claim values.
 
@@ -308,28 +284,48 @@ def _fresh_table_policy_user(user: UserPrincipal) -> UserPrincipal:
     return policy_user
 
 
-def _make_table_dispatcher(websocket: WebSocket, user: UserPrincipal) -> Any:
-    """Return an async dispatcher that filters table-channel messages for this WS.
+async def _revoke_live_subscription(
+    websocket: WebSocket,
+    channel: str,
+    *,
+    notice_channel: str | None = None,
+    remove_connection: bool = True,
+) -> None:
+    """Tell the client that a subscription was revoked and optionally detach it."""
+    if remove_connection:
+        sockets = manager.connections.get(channel)
+        if sockets is not None:
+            sockets.discard(websocket)
+            if not sockets:
+                manager.connections.pop(channel, None)
+    await websocket.send_json({
+        "type": "subscription_revoked",
+        "channel": notice_channel or channel,
+    })
 
-    Attached to the WebSocket as `_table_dispatcher` and invoked by the pubsub
-    manager's `_send_local` for every `table:` message destined for this
-    connection. The dispatcher consults the per-connection
-    `table_subscriptions` state to decide what (if anything) to forward.
-    """
 
-    async def dispatcher(channel_name: str, payload: dict[str, Any]) -> None:
-        await _handle_table_message(websocket, user, channel_name, payload)
-
-    return dispatcher
-
-
-def _make_file_dispatcher(websocket: WebSocket, user: UserPrincipal) -> Any:
-    """Return an async dispatcher that filters file-channel messages."""
-
-    async def dispatcher(channel_name: str, payload: dict[str, Any]) -> None:
-        await _handle_file_message(websocket, user, channel_name, payload)
-
-    return dispatcher
+async def _current_table_policy_user(user: UserPrincipal, table_id: str) -> UserPrincipal | None:
+    try:
+        table_uuid = UUID(table_id)
+    except ValueError:
+        return None
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        table = await db.get(TableOrm, table_uuid)
+        if caller is None or table is None or not user_reach(caller).covers(table.organization_id):
+            return None
+        role_rows = (
+            await db.execute(
+                select(Role.id, Role.name)
+                .join(UserRole, UserRole.role_id == Role.id)
+                .where(UserRole.user_id == caller.ctx.user_id)
+            )
+        ).all()
+        policy_user = _fresh_table_policy_user(caller.principal)
+        policy_user.role_ids = [row.id for row in role_rows]
+        policy_user.role_names = [row.name for row in role_rows]
+        policy_user.roles = list(policy_user.role_names)
+        return policy_user
 
 
 async def _handle_table_message(
@@ -337,43 +333,44 @@ async def _handle_table_message(
     user: UserPrincipal,
     channel_name: str,
     payload: dict[str, Any],
-) -> None:
-    """Apply the four-way visibility decision and emit the right action.
+) -> bool:
+    """Apply table visibility and report whether its subscription remains active.
 
     `policy_changed` triggers a re-evaluation; if the user no longer satisfies
     `is_subscribe_authorized`, a `subscription_revoked` notice is sent and the
-    subscription state is cleared.
+    subscription state is cleared. A row omitted by a policy or user filter
+    keeps the subscription active for later visible rows.
     """
     table_id = channel_name.split(":", 1)[1]
     table_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "table_subscriptions", {})
     sub = table_subs.get(table_id)
     if sub is None:
-        return  # no longer subscribed
+        return False  # no longer subscribed
 
     msg_type = payload.get("type")
 
     if msg_type == "policy_changed":
-        # Drop the in-process policy cache for this table so the
-        # re-evaluation (and every subsequent document_change for this
-        # table on this process) sees the fresh policies.
         _invalidate_table_policy_cache(table_id)
-        await _re_evaluate_subscription(websocket, user, table_id)
-        return
+
+    policy_user = await _current_table_policy_user(user, table_id)
+    policies = None if policy_user is None else await _load_policies_for_table(table_id, policy_user)
+    if policies is None or policy_user is None or not is_subscribe_authorized(policies, policy_user):
+        table_subs.pop(table_id, None)
+        await _revoke_live_subscription(websocket, channel_name)
+        return False
+
+    if msg_type == "policy_changed":
+        return True
 
     if msg_type == "table_invalidated":
         await websocket.send_json({
             "type": "table_invalidated",
             "table_id": table_id,
         })
-        return
+        return True
 
     if msg_type != "document_change":
-        return
-
-    policy_user = _fresh_table_policy_user(user)
-    policies = await _load_policies_for_table(table_id, policy_user)
-    if policies is None:
-        return
+        return True
 
     decision = decide_visibility_change(
         old_row=payload.get("old_row"),
@@ -383,7 +380,7 @@ async def _handle_table_message(
         user_filter=sub.get("filter"),
     )
     if decision is None:
-        return
+        return True
 
     action, body = decision
     if action == "delete":
@@ -400,6 +397,7 @@ async def _handle_table_message(
             "table_id": table_id,
             "row": body,
         })
+    return True
 
 
 async def _re_evaluate_subscription(
@@ -408,19 +406,12 @@ async def _re_evaluate_subscription(
     table_id: str,
 ) -> None:
     """Re-run subscribe-time authorization after a policy edit; revoke if no."""
-    policy_user = _fresh_table_policy_user(user)
-    policies = await _load_policies_for_table(table_id, policy_user)
-    if policies is None or not is_subscribe_authorized(policies, policy_user):
-        await websocket.send_json({
-            "type": "subscription_revoked",
-            "channel": f"table:{table_id}",
-        })
+    policy_user = await _current_table_policy_user(user, table_id)
+    policies = None if policy_user is None else await _load_policies_for_table(table_id, policy_user)
+    if policies is None or policy_user is None or not is_subscribe_authorized(policies, policy_user):
         table_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "table_subscriptions", {})
         table_subs.pop(table_id, None)
-        # The pubsub manager unsubscribes on disconnect; for a partial revoke,
-        # we just stop processing future messages on this table by clearing
-        # the per-connection subscription state. The dispatcher early-exits
-        # for unknown table_ids.
+        await _revoke_live_subscription(websocket, f"table:{table_id}")
 
 
 async def _authorize_table_subscribe(
@@ -452,8 +443,9 @@ async def _authorize_table_subscribe(
     # would NOT have reached us (no subscriber to fan out to). Force a
     # fresh load on subscribe to close that staleness window.
     _invalidate_table_policy_cache(canonical_id)
-    await _populate_user_roles(user)
-    policy_user = _fresh_table_policy_user(user)
+    policy_user = await _current_table_policy_user(user, canonical_id)
+    if policy_user is None:
+        return None
     policies = await _load_policies_for_table(canonical_id, policy_user)
     if policies is None:
         await websocket.send_json({
@@ -481,8 +473,6 @@ async def _authorize_table_subscribe(
     table_subs[canonical_id] = {"filter": spec.filter, "channel_name": canonical_channel}
     websocket.state.table_subscriptions = table_subs
 
-    if not hasattr(websocket, "_table_dispatcher"):
-        websocket._table_dispatcher = _make_table_dispatcher(websocket, user)  # type: ignore[attr-defined]
     return canonical_channel
 
 
@@ -504,33 +494,26 @@ def _path_matches(prefix: str, path: str) -> bool:
     )
 
 
-def _file_org_and_scope(
-    *,
-    user: UserPrincipal,
-    location: str,
-    requested_scope: str | None,
+async def _file_org_and_scope(
+    *, user: UserPrincipal, location: str, requested_scope: str | None
 ) -> tuple[UUID | None, str | None] | None:
+    """Resolve a file scope from fresh original-user reach, never flags."""
     if location == "workspace":
         return None, None
-
-    # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
-    # provider-org members (portal-hopping platform staff) can subscribe to any
-    # org's / the global file channel, same as platform admins.
-    bypass = user.is_platform_admin or user.is_provider_org
-    scope = requested_scope or (str(user.organization_id) if user.organization_id else None)
-    if scope is None:
-        return None
-    if scope == "global":
-        if not bypass:
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        if caller is None or caller.ctx is None:
             return None
-        return None, scope
-    if not bypass and str(user.organization_id) != scope:
-        return None
-    try:
-        org_id = UUID(scope)
-    except ValueError:
-        return None
-    return org_id, scope
+        scope = requested_scope or (str(caller.ctx.home_organization_id) if caller.ctx.home_organization_id else None)
+        if scope is None:
+            return None
+        if scope == "global":
+            return (None, scope) if user_reach(caller).covers(None) else None
+        try:
+            org_id = UUID(scope)
+        except ValueError:
+            return None
+        return (org_id, scope) if user_reach(caller).covers(org_id) else None
 
 
 def _file_channel(location: str, scope: str | None) -> str:
@@ -548,13 +531,16 @@ async def _file_allowed(
     from src.services.file_policy_service import FilePolicyService
 
     async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        if caller is None or not user_reach(caller).covers(organization_id):
+            return False
         service = FilePolicyService(db)
         return await service.is_allowed(
             cast(FileAction, action),
             organization_id=organization_id,
             location=location,
             path=path,
-            user=user,
+            user=caller.principal,
         )
 
 
@@ -592,7 +578,7 @@ async def _authorize_file_subscribe(
         return None
 
     location, prefix = parsed
-    scope_result = _file_org_and_scope(
+    scope_result = await _file_org_and_scope(
         user=user,
         location=location,
         requested_scope=spec.scope,
@@ -613,7 +599,6 @@ async def _authorize_file_subscribe(
         return None
     organization_id, scope = scope_result
 
-    await _populate_user_roles(user)
     if not await _file_has_applicable_policy(
         organization_id=organization_id,
         location=location,
@@ -646,8 +631,6 @@ async def _authorize_file_subscribe(
     }
     websocket.state.file_subscriptions = file_subs
 
-    if not hasattr(websocket, "_file_dispatcher"):
-        websocket._file_dispatcher = _make_file_dispatcher(websocket, user)  # type: ignore[attr-defined]
     return canonical_channel
 
 
@@ -688,7 +671,17 @@ def _websocket_actor(websocket: WebSocket, user: UserPrincipal) -> ActorContext:
         name=user.name,
         ip_address=ip_address,
         user_agent=websocket.headers.get("user-agent"),
+        impersonated_by_user_id=user.impersonated_by_user_id,
+        impersonation_session_id=user.impersonation_session_id,
     )
+
+
+def _collect_websocket_checks(user: UserPrincipal):
+    return access_checks.start_collecting({
+        "sub": str(user.user_id),
+        "impersonated_by_user_id": user.impersonated_by_user_id,
+        "impersonation_session_id": user.impersonation_session_id,
+    }, surface="web", principal=user)
 
 
 async def _emit_table_subscribe_denial(
@@ -718,7 +711,7 @@ async def _handle_file_message(
     user: UserPrincipal,
     channel_name: str,
     payload: dict[str, Any],
-) -> None:
+) -> bool:
     file_subs: dict[str, dict[str, Any]] = getattr(websocket.state, "file_subscriptions", {})
     matching = [
         (sub_key, sub)
@@ -726,7 +719,12 @@ async def _handle_file_message(
         if sub.get("channel_name") == channel_name
     ]
     if not matching:
-        return
+        return False
+
+    def subscription_active() -> bool:
+        return any(
+            sub.get("channel_name") == channel_name for sub in file_subs.values()
+        )
 
     msg_type = payload.get("type")
     if msg_type == "file_policy_changed":
@@ -736,23 +734,32 @@ async def _handle_file_message(
                 location=sub["location"],
                 path=sub["prefix"],
             )
-            if not has_policy:
-                await websocket.send_json({
-                    "type": "subscription_revoked",
-                    "channel": sub["requested_channel"],
-                })
+            allowed = has_policy and await _file_allowed(
+                user=user,
+                action="read",
+                organization_id=sub["organization_id"],
+                location=sub["location"],
+                path=sub["prefix"],
+            )
+            if not allowed:
                 file_subs.pop(sub_key, None)
-        return
+                await _revoke_live_subscription(
+                    websocket,
+                    sub["channel_name"],
+                    notice_channel=sub["requested_channel"],
+                    remove_connection=False,
+                )
+        return subscription_active()
 
     if msg_type != "file_change":
-        return
+        return subscription_active()
 
     changed_path = str(payload.get("path") or "").strip("/")
     if not changed_path:
-        return
+        return subscription_active()
 
     delivered_prefixes: set[str] = set()
-    for _, sub in matching:
+    for sub_key, sub in matching:
         prefix = sub["prefix"]
         if prefix in delivered_prefixes:
             continue
@@ -765,6 +772,13 @@ async def _handle_file_message(
             location=sub["location"],
             path=changed_path,
         ):
+            file_subs.pop(sub_key, None)
+            await _revoke_live_subscription(
+                websocket,
+                sub["channel_name"],
+                notice_channel=sub["requested_channel"],
+                remove_connection=False,
+            )
             continue
         delivered_prefixes.add(prefix)
         await websocket.send_json({
@@ -775,177 +789,298 @@ async def _handle_file_message(
             "path": changed_path,
             "action": payload.get("action"),
         })
+    return subscription_active()
 
 
-async def can_access_conversation(user: UserPrincipal, conversation_id: str) -> tuple[bool, Conversation | None]:
-    """
-    Check if user can access a conversation.
-
-    Args:
-        user: The authenticated user
-        conversation_id: The conversation ID to check access for
-
-    Returns:
-        Tuple of (has_access, conversation_object)
-    """
+async def _current_ws_caller(db, user: UserPrincipal):
+    """Reload the original caller and current role state before a live read."""
     try:
-        conv_uuid = UUID(conversation_id)
-    except ValueError:
-        return False, None
-
-    async with get_db_context() as db:
-        result = await db.execute(
-            select(Conversation)
-            .options(
-                selectinload(Conversation.agent).selectinload(Agent.tools),
-                selectinload(Conversation.agent).selectinload(Agent.delegated_agents),
-                selectinload(Conversation.user),
-            )
-            .where(Conversation.id == conv_uuid)
-            .where(Conversation.user_id == user.user_id)
-            .where(Conversation.is_active.is_(True))
-        )
-        conversation = result.scalar_one_or_none()
-
-        if conversation is None:
-            return False, None
-
-        return True, conversation
+        return await refresh_caller(db, await load_caller(db, user))
+    except CallerUnavailable:
+        return None
 
 
 async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
-    """
-    Check if user can access an execution (owner or superuser).
+    """Authorize one execution with the same current Caller policy as REST."""
+    if user.embed:
+        if not (
+            user.is_verified
+            and user.jti
+            and (
+                user.embed_kind == "app"
+                or (user.embed_kind == "form" and user.grant == "hmac")
+            )
+        ):
+            return False
+        from src.core.embed_middleware import embed_session_owns_execution
 
-    Args:
-        user: The authenticated user
-        execution_id: The execution ID to check access for
-
-    Returns:
-        True if user can access, False otherwise
-    """
-    # Superusers can access any execution
-    if user.is_superuser:
-        return True
-
-    # App embeds and trusted HMAC form sessions retain exact-execution scoping
-    # through their session JTI. Anonymous public form sessions never receive
-    # execution channels or status data.
-    if (
-        user.embed
-        and user.jti
-        and (
-            user.embed_kind == "app"
-            or (user.embed_kind == "form" and user.grant == "hmac")
-        )
-    ):
-        from src.core.cache.keys import embed_execution_key
-        from src.core.cache.redis_client import get_redis
-
-        async with get_redis() as r:
-            return bool(await r.exists(embed_execution_key(user.jti, execution_id)))
-
-    if user.embed and user.embed_kind == "form":
-        return False
-
+        if not await embed_session_owns_execution(user.jti, execution_id):
+            return False
+        try:
+            execution_uuid = UUID(execution_id)
+        except ValueError:
+            return False
+        async with get_db_context() as db:
+            execution = await db.get(Execution, execution_uuid)
+            # A mapped execution may still be Redis-pending. Once persisted,
+            # bind the read to the row's exact organization.
+            return execution is None or execution.organization_id == user.organization_id
     try:
         execution_uuid = UUID(execution_id)
     except ValueError:
         return False
-
     async with get_db_context() as db:
-        result = await db.execute(
-            select(Execution.executed_by).where(Execution.id == execution_uuid)
-        )
-        row = result.scalar_one_or_none()
+        caller = await _current_ws_caller(db, user)
+        execution = await db.get(Execution, execution_uuid)
+        return caller is not None and execution is not None and execution_read_access(caller, execution).visible
 
-        if row is None:
-            # Execution doesn't exist - allow subscription anyway
-            # (they won't receive anything, and this avoids timing attacks)
-            return True
 
-        return row == user.user_id
+async def can_read_execution_diagnostics(user: UserPrincipal, execution_id: str) -> bool:
+    """Return current diagnostic access for a visible execution subscription."""
+    if user.embed:
+        return False
+    try:
+        execution_uuid = UUID(execution_id)
+    except ValueError:
+        return False
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        execution = await db.get(Execution, execution_uuid)
+        if caller is None or execution is None:
+            return False
+        return (await current_execution_read_access(caller, execution)).diagnostics
+
+
+def _is_diagnostic_execution_log(channel: str, payload: dict[str, Any]) -> bool:
+    return (
+        channel.startswith("execution:")
+        and payload.get("type") == "execution_log"
+        and str(payload.get("level") or "").upper() in {"DEBUG", "TRACEBACK"}
+    )
 
 
 async def can_access_service(user: UserPrincipal, service_id: str) -> bool:
-    """Check if a user may subscribe to a service log channel.
-
-    The services surface (REST + UI) is platform-admin-only, and the
-    channel carries raw log output — so subscription is superusers only.
-    Unknown IDs are allowed through (they receive nothing, same as the
-    execution-channel convention); malformed IDs are rejected.
-    """
-    if not user.is_superuser:
-        return False
+    """Authorize service logs at their durable service organization."""
     try:
-        UUID(service_id)
+        service_uuid = UUID(service_id)
     except ValueError:
         return False
-    return True
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        definition = await db.get(ServiceDefinition, service_uuid)
+        return caller is not None and definition is not None and service_access_allowed(caller, definition)
 
 
-async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
-    """
-    Check if user can access an application's *live* channel.
-
-    Mirrors the REST app-read access check (``get_application_by_id_or_404``):
-    cascade scoping plus the app's own access-level/role check, not bare org
-    membership. Draft channels are handled separately (bypass-only — see
-    the "app:draft:" branches in the connect/subscribe handlers).
-
-    Args:
-        user: The authenticated user
-        app_id: The application ID to check access for
-
-    Returns:
-        True if user can access, False otherwise
-    """
+async def can_access_app(user: UserPrincipal, app_id: str, *, write: bool = False) -> bool:
+    """Recheck App ACL and named authority from the current original caller."""
     try:
         app_uuid = UUID(app_id)
     except ValueError:
         return False
-
     async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        if caller is None:
+            return False
         repo = ApplicationRepository(
             session=db,
-            org_id=user.organization_id,
-            user_id=user.user_id,
-            is_superuser=user.is_superuser,
-            is_external=user.is_external,
+            org_id=caller.ctx.home_organization_id if caller.ctx is not None else None,
+            caller=caller,
+            access_mode="write" if write else "read",
         )
         try:
-            await repo.can_access(id=app_uuid)
-            return True
+            app = await repo.can_access(id=app_uuid)
         except AccessDeniedError:
             return False
+        return app is not None
+
+
+async def can_access_conversation_current(user: UserPrincipal, conversation_id: str) -> bool:
+    try:
+        conversation_uuid = UUID(conversation_id)
+    except ValueError:
+        return False
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        conversation = await db.get(Conversation, conversation_uuid)
+        return bool(
+            caller is not None and caller.ctx is not None and conversation is not None
+            and conversation.is_active and conversation.user_id == caller.ctx.user_id
+        )
+
+
+async def can_access_event_source(user: UserPrincipal, source_id: str) -> bool:
+    try:
+        source_uuid = UUID(source_id)
+    except ValueError:
+        return False
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        source = await db.get(EventSource, source_uuid)
+        return bool(
+            caller is not None and source is not None
+            and user_reach(caller).covers(source.organization_id)
+            and allows_permission(caller, "events.read", source.organization_id)
+        )
+
+
+async def can_access_global_platform(user: UserPrincipal) -> bool:
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        return caller is not None and allows_permission(caller, "platform.read", None)
 
 
 async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
-    """Check if a user may subscribe to a specific agent run's channel.
-
-    Bypass principals (platform admin or provider-org) see any run;
-    everyone else may only see a run they started (``caller_user_id``).
-    """
-    if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
-        return True
-
+    """Authorize an agent-run live update from current original authority."""
     try:
         run_uuid = UUID(run_id)
     except ValueError:
         return False
-
     async with get_db_context() as db:
-        result = await db.execute(
-            select(AgentRun.caller_user_id).where(AgentRun.id == run_uuid)
-        )
-        row = result.scalar_one_or_none()
+        caller = await _current_ws_caller(db, user)
+        if caller is None:
+            return False
+        return bool(await db.scalar(
+            select(AgentRun.id).where(AgentRun.id == run_uuid, *agent_run_visibility_conditions(caller))
+        ))
 
-        if row is None:
-            # Run doesn't exist - allow subscription anyway (they won't
-            # receive anything; avoids leaking existence via timing).
-            return True
 
-        return row == str(user.user_id)
+async def can_access_platform_job(user: UserPrincipal, job_id: str) -> bool:
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
+        return False
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        job = await db.get(PlatformJob, job_uuid)
+        if caller is None or job is None:
+            return False
+        try:
+            require_platform_job_access(caller, job)
+        except PlatformJobAccessDenied:
+            return False
+        return True
+
+
+async def can_access_admin_notifications(user: UserPrincipal) -> bool:
+    async with get_db_context() as db:
+        caller = await _current_ws_caller(db, user)
+        return caller is not None and can_read_admin_notifications(caller)
+
+
+async def _delivery_allowed(user: UserPrincipal, channel: str, payload: dict[str, Any]) -> bool:
+    """Return whether a raw live delivery is currently authorized."""
+    if channel.startswith("user:"):
+        async with get_db_context() as db:
+            caller = await _current_ws_caller(db, user)
+            return caller is not None and caller.ctx is not None and channel == f"user:{caller.ctx.user_id}"
+    if channel.startswith("execution:"):
+        return await can_access_execution(user, channel.split(":", 1)[1])
+    if channel.startswith("history:"):
+        execution_id = payload.get("execution_id")
+        return isinstance(execution_id, str) and await can_access_execution(user, execution_id)
+    if channel.startswith("app:live:"):
+        return await can_access_app(user, channel.split(":", 2)[2])
+    if channel.startswith("app:draft:"):
+        return await can_access_app(user, channel.split(":", 2)[2], write=True)
+    if channel.startswith("chat:"):
+        return await can_access_conversation_current(user, channel.split(":", 1)[1])
+    if channel.startswith("event-source:"):
+        return await can_access_event_source(user, channel.split(":", 1)[1])
+    if channel in {"package:install", "file-activity", "platform_workers"} or channel.startswith(("git:", "reindex:", "summary-backfill:")):
+        return await can_access_global_platform(user)
+    if channel.startswith("agent-run:"):
+        return await can_access_agent_run(user, channel.split(":", 1)[1])
+    if channel == "agent-runs":
+        run_id = payload.get("agent_run_id") or payload.get("run_id") or payload.get("id")
+        return isinstance(run_id, str) and await can_access_agent_run(user, run_id)
+    if channel.startswith("service:"):
+        return await can_access_service(user, channel.split(":", 1)[1])
+    if channel.startswith("platform-job:"):
+        return await can_access_platform_job(user, channel.split(":", 1)[1])
+    if channel.startswith("notification:"):
+        if payload.get("type") == "platform_job_updated":
+            job = payload.get("job")
+            job_id = job.get("id") if isinstance(job, dict) else None
+            return isinstance(job_id, str) and await can_access_platform_job(user, job_id)
+        if channel != "notification:admins":
+            async with get_db_context() as db:
+                caller = await _current_ws_caller(db, user)
+                return caller is not None and caller.ctx is not None and channel == f"notification:{caller.ctx.user_id}"
+        notification = payload.get("notification")
+        if not isinstance(notification, dict):
+            return False
+        async with get_db_context() as db:
+            caller = await _current_ws_caller(db, user)
+            return caller is not None and await can_access_notification(
+                get_notification_service(), caller, str(notification.get("id", "")), notification
+            )
+    return True
+
+
+async def _require_live_impersonation(websocket: WebSocket, user: UserPrincipal) -> None:
+    """Recheck support-session authority before receiving or delivering data."""
+    if not is_browser_impersonation(user):
+        return
+    try:
+        async with get_db_context() as db:
+            await validate_browser_impersonation(db, user)
+    except BrowserImpersonationError:
+        await websocket.close(code=4001, reason="Impersonation session ended")
+        raise WebSocketDisconnect(code=4001)
+
+
+def _make_delivery_dispatcher(websocket: WebSocket, user: UserPrincipal):
+    def remove_connection(channel: str) -> None:
+        if channel in manager.connections:
+            manager.connections[channel].discard(websocket)
+            if not manager.connections[channel]:
+                manager.connections.pop(channel, None)
+
+    async def dispatch(channel: str, payload: dict[str, Any]) -> None:
+        await _require_live_impersonation(websocket, user)
+        # Table and file handlers own their visibility filtering and delivery.
+        # A filtered message is not an authorization revocation, so it must not
+        # remove the socket from the channel before a later visible message.
+        if channel.startswith("table:"):
+            if not await _handle_table_message(websocket, user, channel, payload):
+                remove_connection(channel)
+            return
+        if channel.startswith("files:"):
+            if not await _handle_file_message(websocket, user, channel, payload):
+                remove_connection(channel)
+            return
+
+        if await _delivery_allowed(user, channel, payload):
+            if _is_diagnostic_execution_log(channel, payload):
+                execution_id = channel.split(":", 1)[1]
+                if not await can_read_execution_diagnostics(user, execution_id):
+                    return
+            await websocket.send_json(payload)
+        else:
+            remove_connection(channel)
+    return dispatch
+
+
+# Background judgements in flight, held so they are not collected mid-run.
+_judging: set[asyncio.Task[None]] = set()
+
+
+def _judged(task: asyncio.Task[None]) -> None:
+    _judging.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning("access checks not judged: %s", type(task.exception()).__name__)
+
+
+def _judge_access_checks(path: str) -> None:
+    """Judge what the last subscriptions on WebSocket ``path`` noted, in the
+    background (report-only; never raises into the connection), and collect
+    afresh for the next message."""
+    collector = access_checks.renew()
+    if collector is None or not collector.notes:
+        return
+    task = asyncio.create_task(flush_detached(collector, operation=f"WS {path}", route=("WS", path)))
+    _judging.add(task)
+    task.add_done_callback(_judged)
 
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
@@ -973,7 +1108,7 @@ async def websocket_connect(
 
     Messages are JSON with structure:
         {
-            "type": "execution_update" | "execution_log" | "service_log" | "notification" | "system_event",
+            "type": "execution_update" | "execution_log" | "service_log" | "notification",
             ...payload
         }
     """
@@ -990,6 +1125,8 @@ async def websocket_connect(
         await websocket.accept()
         await websocket.close(code=4003, reason="Form sessions cannot use WebSockets")
         return
+
+    checks = _collect_websocket_checks(user)
 
     # Filter channels - users can only subscribe to their own user channel
     # and execution channels (we'll validate execution access separately)
@@ -1013,25 +1150,24 @@ async def websocket_connect(
                 allowed_channels.append(channel)
         elif channel == "package:install":
             # Package installation channel - shared, superusers only
-            if user.is_superuser:
+            if await can_access_global_platform(user):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("git:"):
             # Git job channels have no owning-user record to check against;
             # gate to platform admins until they carry real job ownership.
-            if user.is_superuser:
+            if await can_access_global_platform(user):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("notification:"):
             # Notification channels - users can subscribe to their own
             if channel == f"notification:{user.user_id}":
                 allowed_channels.append(channel)
             # Platform admins can subscribe to admin notifications
-            elif channel == "notification:admins" and user.is_superuser:
+            elif channel == "notification:admins" and await can_access_admin_notifications(user):
                 allowed_channels.append(channel)
         elif channel.startswith("chat:"):
-            # Chat conversation channels - validate user owns the conversation
-            conversation_id = channel.split(":", 1)[1]
-            has_access, _ = await can_access_conversation(user, conversation_id)
-            if has_access:
+            if await can_access_conversation_current(user, channel.split(":", 1)[1]):
                 allowed_channels.append(channel)
         elif channel.startswith("history:"):
             # History channels for real-time updates
@@ -1039,20 +1175,19 @@ async def websocket_connect(
             # history:GLOBAL - Allow only for platform admins
             if channel == f"history:user:{user.user_id}":
                 allowed_channels.append(channel)
-            elif channel == "history:GLOBAL" and user.is_superuser:
+            elif channel == "history:GLOBAL" and await can_access_global_platform(user):
                 allowed_channels.append(channel)
         elif channel.startswith("event-source:"):
-            # Event source channels for real-time event updates - bypass-only,
-            # matching the REST events router (list/get sources are admin-only).
-            if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+            if await can_access_event_source(user, channel.split(":", 1)[1]):
                 allowed_channels.append(channel)
         elif channel.startswith("reindex:"):
             # Reindex job progress channels - platform admins only
-            if user.is_superuser:
+            if await can_access_global_platform(user):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("app:draft:"):
-            # App Builder draft channels are an authoring surface - bypass-only.
-            if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+            app_id = channel.split(":", 2)[2]
+            if await can_access_app(user, app_id, write=True):
                 allowed_channels.append(channel)
         elif channel.startswith("app:live:"):
             # App Builder live channels - same access check as the REST app read.
@@ -1061,7 +1196,8 @@ async def websocket_connect(
                 allowed_channels.append(channel)
         elif channel == "file-activity":
             # File activity channel - platform admins only
-            if user.is_superuser:
+            if await can_access_global_platform(user):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel.startswith("files:"):
             # File channels need runtime subscribe metadata (scope) and
@@ -1073,25 +1209,25 @@ async def websocket_connect(
             # expressed in a query string. Require runtime `subscribe` messages
             # for table channels — query-string subscription is rejected.
             continue
-        elif channel == "system":
-            allowed_channels.append(channel)
         elif channel.startswith("agent-run:"):
             # Agent run detail channels - only the run's own caller, or bypass
             run_id = channel.split(":", 1)[1]
             if await can_access_agent_run(user, run_id):
                 allowed_channels.append(channel)
         elif channel == "agent-runs":
-            # Shared agent-run list channel - bypass-only. Non-bypass UIs get
-            # live updates through their own agent-run:{id} channels instead.
-            if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
-                allowed_channels.append(channel)
+            # Per-message visibility is enforced by the shared delivery guard.
+            async with get_db_context() as db:
+                if await _current_ws_caller(db, user) is not None:
+                    allowed_channels.append(channel)
         elif channel.startswith("summary-backfill:"):
             # Summary backfill job progress — platform admins only
-            if user.is_superuser:
+            if await can_access_global_platform(user):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
         elif channel == "platform_workers":
             # Platform workers channel - diagnostics, platform admins only
-            if user.is_superuser:
+            if await can_access_global_platform(user):
+                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                 allowed_channels.append(channel)
 
     # Always subscribe to user's own channel
@@ -1103,6 +1239,7 @@ async def websocket_connect(
     # Populated by `_authorize_table_subscribe`; consulted by the dispatcher.
     websocket.state.table_subscriptions = {}
     websocket.state.file_subscriptions = {}
+    websocket._delivery_dispatcher = _make_delivery_dispatcher(websocket, user)  # type: ignore[attr-defined]
 
     try:
         await manager.connect(websocket, allowed_channels)
@@ -1114,10 +1251,12 @@ async def websocket_connect(
             "channels": allowed_channels,
             "userId": str(user.user_id)
         })
+        _judge_access_checks("/ws/connect")
 
         # Keep connection alive and handle incoming messages
         while True:
             data = await websocket.receive_json()
+            await _require_live_impersonation(websocket, user)
 
             # Handle subscription changes
             if data.get("type") == "subscribe":
@@ -1170,7 +1309,8 @@ async def websocket_connect(
                     elif channel.startswith("event-source:"):
                         # Event source channels - bypass-only, matching the
                         # REST events router.
-                        if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                        if await can_access_event_source(user, channel.split(":", 1)[1]):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1188,7 +1328,9 @@ async def websocket_connect(
                         # History channels for real-time execution updates
                         # history:user:{user_id} - Allow only for the user's own channel
                         # history:GLOBAL - Allow only for platform admins
-                        if channel == f"history:user:{user.user_id}" or (channel == "history:GLOBAL" and user.is_superuser):
+                        if channel == f"history:user:{user.user_id}" or (channel == "history:GLOBAL" and await can_access_global_platform(user)):
+                            if channel == "history:GLOBAL":
+                                access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1204,7 +1346,8 @@ async def websocket_connect(
                             })
                     elif channel.startswith("app:draft:"):
                         # App Builder draft channels are an authoring surface - bypass-only.
-                        if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
+                        if await can_access_app(user, channel.split(":", 2)[2], write=True):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1237,7 +1380,8 @@ async def websocket_connect(
                             })
                     elif channel == "package:install":
                         # Package installation channel - shared, superusers only
-                        if user.is_superuser:
+                        if await can_access_global_platform(user):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1255,7 +1399,8 @@ async def websocket_connect(
                         # Git job channels have no owning-user record to check
                         # against; gate to platform admins until they carry
                         # real job ownership.
-                        if user.is_superuser:
+                        if await can_access_global_platform(user):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1287,25 +1432,25 @@ async def websocket_connect(
                                 "message": "Access denied"
                             })
                     elif channel == "agent-runs":
-                        # Shared agent-run list channel - bypass-only.
-                        if has_scope_bypass(is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org):
-                            if channel not in manager.connections:
-                                manager.connections[channel] = set()
-                            manager.connections[channel].add(websocket)
-                            await websocket.send_json({
-                                "type": "subscribed",
-                                "channel": channel
-                            })
+                        async with get_db_context() as db:
+                            allowed = await _current_ws_caller(db, user) is not None
+                        if allowed:
+                            manager.connections.setdefault(channel, set()).add(websocket)
+                            await websocket.send_json({"type": "subscribed", "channel": channel})
                         else:
-                            await websocket.send_json({
-                                "type": "error",
-                                "channel": channel,
-                                "message": "Access denied"
-                            })
+                            await websocket.send_json({"type": "error", "channel": channel, "message": "Access denied"})
+                    elif channel.startswith("notification:"):
+                        allowed = channel == f"notification:{user.user_id}" or (
+                            channel == "notification:admins" and await can_access_admin_notifications(user)
+                        )
+                        if allowed:
+                            manager.connections.setdefault(channel, set()).add(websocket)
+                            await websocket.send_json({"type": "subscribed", "channel": channel})
+                        else:
+                            await websocket.send_json({"type": "error", "channel": channel, "message": "Access denied"})
                     elif channel.startswith("chat:"):
                         conversation_id = channel.split(":", 1)[1]
-                        has_access, _ = await can_access_conversation(user, conversation_id)
-                        if has_access:
+                        if await can_access_conversation_current(user, conversation_id):
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1325,7 +1470,8 @@ async def websocket_connect(
                         # branch, late subscriptions from SummaryBackfillProgress
                         # silently no-op and no broadcast ever reaches the client
                         # (that's why cancel didn't dismiss and counters didn't tick).
-                        if user.is_superuser:
+                        if await can_access_global_platform(user):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1341,7 +1487,8 @@ async def websocket_connect(
                             })
                     elif channel == "platform_workers":
                         # Platform workers channel - diagnostics, platform admins only
-                        if user.is_superuser:
+                        if await can_access_global_platform(user):
+                            access_checks.note_power("platform.read", None, subject=f"channel:{channel}")
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1389,6 +1536,7 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": spec.name
                         })
+                _judge_access_checks("/ws/connect")
 
             elif data.get("type") == "unsubscribe":
                 channel = data.get("channel")
@@ -1451,6 +1599,8 @@ async def websocket_connect(
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+    finally:
+        access_checks.stop_collecting(checks)
 
 
 @router.websocket("/execution/{execution_id}")
@@ -1473,12 +1623,19 @@ async def websocket_execution(
         return
 
     # Validate user has access to this execution
-    if not await can_access_execution(user, execution_id):
+    checks = _collect_websocket_checks(user)
+    try:
+        allowed = await can_access_execution(user, execution_id)
+        _judge_access_checks("/ws/execution/{execution_id}")
+    finally:
+        access_checks.stop_collecting(checks)
+    if not allowed:
         await websocket.close(code=4003, reason="Access denied")
         return
 
     channel = f"execution:{execution_id}"
 
+    websocket._delivery_dispatcher = _make_delivery_dispatcher(websocket, user)  # type: ignore[attr-defined]
     try:
         await manager.connect(websocket, [channel])
         logger.info(f"WebSocket connected to execution {log_safe(execution_id)}")
@@ -1490,6 +1647,7 @@ async def websocket_execution(
 
         while True:
             data = await websocket.receive_json()
+            await _require_live_impersonation(websocket, user)
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
 

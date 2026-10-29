@@ -15,21 +15,48 @@ from src.jobs.platform.kubernetes_client import (
     build_job_manifest,
 )
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
+from src.services.worker_pool.manifest import WorkerJobSpec, resolve_worker_job_spec
 
 
 @dataclass
 class KubernetesSettings:
-    kubernetes_build_namespace: str = "builds"
-    kubernetes_build_image: str = "registry.example.com/bifrost/api:sha-abc123"
-    kubernetes_build_configmap: str = "bifrost-build-config"
-    kubernetes_build_secret: str = "bifrost-build-secret"
-    kubernetes_build_service_account: str = "bifrost-build-runner"
-    kubernetes_build_memory_request_mib: int = 512
-    kubernetes_build_memory_limit_mib: int = 2048
-    kubernetes_build_cpu_request: str = "250m"
-    kubernetes_build_cpu_limit: str = "1"
-    kubernetes_build_max_jobs: int = 2
-    kubernetes_build_pending_timeout_seconds: int = 300
+    kubernetes_job_namespace: str = "builds"
+    kubernetes_job_image: str = "registry.example.com/bifrost/api:sha-abc123"
+    kubernetes_job_configmap: str = "bifrost-build-config"
+    kubernetes_job_secret: str = "bifrost-build-secret"
+    kubernetes_job_service_account: str = "bifrost-build-runner"
+    kubernetes_job_cpu_request: str = "250m"
+    kubernetes_job_cpu_limit: str = "1"
+    kubernetes_job_pending_timeout_seconds: int = 300
+
+
+LIMIT = 2048 * 2**20
+
+SPEC = WorkerJobSpec(
+    namespace="builds",
+    image="registry.example.com/bifrost/api:sha-abc123",
+    env_from=(
+        {"configMapRef": {"name": "bifrost-build-config"}},
+        {"secretRef": {"name": "bifrost-build-secret"}},
+    ),
+    service_account="bifrost-build-runner",
+)
+
+
+def _manifest(
+    settings: KubernetesSettings | None = None,
+    *,
+    spec: WorkerJobSpec = SPEC,
+    memory_request_bytes: int = 512 * 2**20,
+    memory_limit_bytes: int = LIMIT,
+) -> dict:
+    return build_job_manifest(
+        _claim(),
+        settings or KubernetesSettings(),
+        spec,
+        memory_request_bytes=memory_request_bytes,
+        memory_limit_bytes=memory_limit_bytes,
+    )
 
 
 def _claim() -> ClaimedPlatformJob:
@@ -38,12 +65,13 @@ def _claim() -> ClaimedPlatformJob:
         lease_token=UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
         timeout_seconds=900,
         hard_memory_ratio=1.0,
+        memory_required_bytes=256 * 2**20,
     )
 
 
 def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
     claim = _claim()
-    manifest = build_job_manifest(claim, KubernetesSettings())
+    manifest = _manifest()
 
     assert manifest["metadata"]["name"] == (
         f"bifrost-job-11111111222233334444555555555555-"
@@ -78,6 +106,7 @@ def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
 
     container = pod_spec["containers"][0]
     assert container["image"] == "registry.example.com/bifrost/api:sha-abc123"
+    assert container["imagePullPolicy"] == "IfNotPresent"
     assert container["command"] == [
         "python",
         "-m",
@@ -115,21 +144,57 @@ def test_build_job_manifest_renders_suspended_locked_down_job() -> None:
     }
 
 
-def test_build_job_manifest_requires_explicit_image() -> None:
-    settings = KubernetesSettings(kubernetes_build_image="")
+def test_a_sized_isolated_pod_requests_its_whole_limit() -> None:
+    """Like a sized worker Job: scheduled only where its memory exists."""
+    sized = 3328 * 2**20
+    container = _manifest(memory_request_bytes=sized, memory_limit_bytes=sized)["spec"]["template"]["spec"][
+        "containers"
+    ][0]
 
-    with pytest.raises(KubernetesConfigurationError, match="kubernetes_build_image"):
-        build_job_manifest(_claim(), settings)
+    assert container["resources"]["requests"]["memory"] == "3328Mi"
+    assert container["resources"]["limits"]["memory"] == "3328Mi"
 
 
-def test_build_job_manifest_rejects_request_above_limit() -> None:
+class _ApiPod:
+    """The controller's own pod, as the Kubernetes API returns it."""
+
+    namespace = "bifrost"
+
+    async def own_container(self) -> dict:
+        return {
+            "image": "ghcr.io/gobifrost/bifrost-api:latest",
+            "imagePullPolicy": "Always",
+            "envFrom": [
+                {"configMapRef": {"name": "bifrost-config"}},
+                {"secretRef": {"name": "bifrost-secrets"}},
+            ],
+        }
+
+
+@pytest.mark.asyncio
+async def test_an_isolated_job_without_identity_settings_copies_the_api_pod() -> None:
     settings = KubernetesSettings(
-        kubernetes_build_memory_request_mib=4096,
-        kubernetes_build_memory_limit_mib=2048,
+        kubernetes_job_namespace=None,  # type: ignore[arg-type]
+        kubernetes_job_image=None,  # type: ignore[arg-type]
+        kubernetes_job_configmap=None,  # type: ignore[arg-type]
+        kubernetes_job_secret=None,  # type: ignore[arg-type]
+        kubernetes_job_service_account=None,  # type: ignore[arg-type]
     )
+    spec = await resolve_worker_job_spec(_ApiPod(), settings)  # type: ignore[arg-type]
 
-    with pytest.raises(KubernetesConfigurationError, match="request_mib"):
-        build_job_manifest(_claim(), settings)
+    manifest = _manifest(settings, spec=spec)
+    pod = manifest["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+
+    assert manifest["metadata"]["namespace"] == "bifrost"
+    assert pod["serviceAccountName"] == "default"
+    assert pod["automountServiceAccountToken"] is False
+    assert container["image"] == "ghcr.io/gobifrost/bifrost-api:latest"
+    assert container["imagePullPolicy"] == "Always"
+    assert container["envFrom"] == [
+        {"configMapRef": {"name": "bifrost-config"}},
+        {"secretRef": {"name": "bifrost-secrets"}},
+    ]
 
 
 @pytest.mark.asyncio
@@ -176,7 +241,7 @@ async def test_create_job_adopts_existing_job_on_conflict(
 ) -> None:
     token_path = tmp_path / "token"
     token_path.write_text("token")
-    manifest = build_job_manifest(_claim(), KubernetesSettings())
+    manifest = _manifest()
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -226,7 +291,7 @@ async def test_create_job_rejects_conflicting_existing_job_labels(
 ) -> None:
     token_path = tmp_path / "token"
     token_path.write_text("token")
-    manifest = build_job_manifest(_claim(), KubernetesSettings())
+    manifest = _manifest()
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
@@ -408,31 +473,89 @@ def test_client_creation_requires_in_cluster_endpoint(
         KubernetesJobClient(settings=KubernetesSettings())
 
 
-@pytest.mark.parametrize(
-    "field_name",
-    [
-        "kubernetes_build_image",
-        "kubernetes_build_configmap",
-        "kubernetes_build_secret",
-        "kubernetes_build_service_account",
-    ],
-)
-def test_client_creation_requires_build_settings_before_http_client(
-    monkeypatch: pytest.MonkeyPatch,
-    field_name: str,
-) -> None:
-    def fail_http_client(**_kwargs: object) -> object:
-        raise AssertionError("HTTP client must not be created")
+def _cluster(handler, *, settings=None):  # type: ignore[no-untyped-def]
+    return KubernetesJobClient(
+        settings=settings or KubernetesSettings(),
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="https://kubernetes.default.svc",
+        ),
+    )
 
+
+def test_client_namespace_defaults_to_this_pods_service_account(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    namespace_file = tmp_path / "namespace"
+    namespace_file.write_text("bifrost\n")
     monkeypatch.setattr(
-        "src.jobs.platform.kubernetes_client.httpx.AsyncClient",
-        fail_http_client,
+        "src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_NAMESPACE_PATH", namespace_file
     )
     settings = KubernetesSettings()
-    setattr(settings, field_name, "")
+    settings.kubernetes_job_namespace = None  # type: ignore[assignment]
 
-    with pytest.raises(KubernetesConfigurationError, match=field_name):
+    client = _cluster(lambda request: httpx.Response(200), settings=settings)
+
+    assert client.namespace == "bifrost"
+
+
+def test_client_needs_a_namespace(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_NAMESPACE_PATH", tmp_path / "absent"
+    )
+    settings = KubernetesSettings()
+    settings.kubernetes_job_namespace = None  # type: ignore[assignment]
+
+    with pytest.raises(KubernetesConfigurationError, match="namespace"):
         KubernetesJobClient(settings=settings)
+
+
+async def test_allows_asks_the_cluster_with_a_self_subject_access_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("token")
+    monkeypatch.setattr("src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_TOKEN_PATH", token)
+    reviews: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        review = json.loads(request.content)
+        reviews.append(review["spec"]["resourceAttributes"])
+        allowed = review["spec"]["resourceAttributes"]["verb"] == "create"
+        return httpx.Response(201, json={"status": {"allowed": allowed}})
+
+    client = _cluster(handler)
+
+    assert await client.allows("create", "jobs", "batch") is True
+    assert await client.allows("delete", "jobs", "batch") is False
+    assert reviews[0] == {
+        "namespace": "builds",
+        "verb": "create",
+        "group": "batch",
+        "resource": "jobs",
+    }
+
+
+async def test_own_container_is_this_pods_first_container(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("token")
+    monkeypatch.setattr("src.jobs.platform.kubernetes_client.SERVICE_ACCOUNT_TOKEN_PATH", token)
+    monkeypatch.setenv("HOSTNAME", "bifrost-api-abc")
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(
+            200, json={"spec": {"containers": [{"image": "ghcr.io/gobifrost/bifrost-api:1.5.0"}]}}
+        )
+
+    container = await _cluster(handler).own_container()
+    assert container == {"image": "ghcr.io/gobifrost/bifrost-api:1.5.0"}
+    assert paths == ["/api/v1/namespaces/builds/pods/bifrost-api-abc"]
 
 
 def test_client_creation_brackets_ipv6_service_host_and_uses_ca_context(

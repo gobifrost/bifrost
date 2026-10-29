@@ -14,7 +14,7 @@ from src.models.orm import AuditArchiveSegment, AuditLog
 SETTINGS = "/api/maintenance/audit-retention/settings"
 RUN = "/api/maintenance/audit-retention/run"
 PREVIEW = "/api/maintenance/audit-retention/preview"
-DEFAULTS = {"hot_days": 90, "archive_days": 365}
+DEFAULTS = {"hot_days": 30, "archive_days": 365}
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ class TestAuditRetentionApi:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["settings"] == DEFAULTS
-        assert body["info"]["hot_days"] == 90
+        assert body["info"]["hot_days"] == 30
         assert body["info"]["archived_segments"] >= 0
         assert "last_run" in body
 
@@ -80,7 +80,7 @@ class TestAuditRetentionApi:
         assert newest["action"] == "settings.audit_retention.update"
         assert newest["resource_type"] == "system_config"
         assert newest["details"]["after"] == {"hot_days": 90, "archive_days": None}
-        assert newest["details"]["before"]["hot_days"] == 90
+        assert newest["details"]["before"] == DEFAULTS
 
     def test_dry_run_job_reports_plan(self, e2e_client, platform_admin):
         accepted = e2e_client.post(RUN, json={"dry_run": True}, headers=platform_admin.headers)

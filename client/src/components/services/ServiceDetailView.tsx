@@ -50,7 +50,8 @@ export interface ServiceDetailViewProps {
 	hasOlderLogs: boolean;
 	isLoadingOlderLogs: boolean;
 	onLoadOlderLogs: () => void;
-	isPlatformAdmin?: boolean;
+	canManageService?: boolean;
+	canReadService?: boolean;
 	onAction?: (service: ServiceListItem, action: ServiceAction) => void;
 	onOpenInEditor?: (service: ServiceListItem) => void;
 	onBack?: () => void;
@@ -272,7 +273,8 @@ export function ServiceDetailView({
 	hasOlderLogs,
 	isLoadingOlderLogs,
 	onLoadOlderLogs,
-	isPlatformAdmin = false,
+	canManageService = false,
+	canReadService = false,
 	onAction,
 	onOpenInEditor,
 	onBack,
@@ -432,8 +434,8 @@ export function ServiceDetailView({
 					)}
 			</p>
 
-			<div className="flex shrink-0 flex-wrap gap-2">
-				{ACTIONS.map(({ action, icon: Icon, label }) => (
+				<div className="flex shrink-0 flex-wrap gap-2">
+					{canManageService && ACTIONS.map(({ action, icon: Icon, label }) => (
 					<Button
 						key={action}
 						variant="outline"
@@ -470,7 +472,7 @@ export function ServiceDetailView({
 
 			<ExecutionLogsPanel
 				logs={panelEntries}
-				isPlatformAdmin={isPlatformAdmin}
+				canReadDiagnostics={canReadService}
 				isConnected={isStreamConnected}
 				variant="primary"
 				maxHeight="min(60vh, 42rem)"

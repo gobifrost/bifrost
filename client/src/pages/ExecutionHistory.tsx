@@ -2,7 +2,14 @@ import { PageScrollArea } from "@/components/layout/PageWorkspace";
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
 import { ExecutionCancelAction } from "./ExecutionHistory/components/ExecutionCancelAction";
 import { ExecutionCleanupDialog } from "./ExecutionHistory/components/ExecutionCleanupDialog";
-import { useState, useMemo, useEffect, useRef, Fragment } from "react";
+import {
+	useState,
+	useMemo,
+	useEffect,
+	useRef,
+	useCallback,
+	Fragment,
+} from "react";
 import {
 	Link,
 	useLocation,
@@ -60,6 +67,9 @@ import { useScopeStore } from "@/stores/scopeStore";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET } from "@/lib/authorization";
 import { formatDate } from "@/lib/utils";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
@@ -76,7 +86,6 @@ import {
 	readExecutionHistoryRestore,
 } from "./ExecutionHistory/navigation";
 
-type Organization = components["schemas"]["OrganizationPublic"];
 type ExecutionStatus =
 	components["schemas"]["ExecutionStatus"] | "Cancelling" | "Cancelled";
 
@@ -161,9 +170,25 @@ export function ExecutionHistory() {
 			{ replace: true },
 		);
 	};
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
+	const canReadOtherExecutions = authorization.canAnywhere(
+		"executions.read.all",
+	);
+	const canDiscoverWorkflows = authorization.canAnywhere("workflows.read");
+	const canDiscoverOrganizations =
+		authorization.canAnywhere("organizations.read");
+	const canManageExecutionCleanup = authorization.canAt(
+		"executions.readwrite",
+		GLOBAL_TARGET,
+	);
+	const canViewAgentHistory = authorization.canAnywhere("agentruns.read");
 	const orgParam = searchParams.get("org");
-	const filterOrgId = orgParam === "global" ? null : orgParam || undefined;
+	const requestedFilterOrgId =
+		orgParam === "global" ? null : orgParam || undefined;
+	const filterOrgId = canDiscoverOrganizations
+		? requestedFilterOrgId
+		: undefined;
 	const setFilterOrgId = (value: string | null | undefined) => {
 		updateSearchParams((next) => {
 			if (value === undefined) next.delete("org");
@@ -191,9 +216,12 @@ export function ExecutionHistory() {
 			else next.delete("q");
 		});
 	};
-	const from = parseDateParam(searchParams.get("from"));
-	const to = parseDateParam(searchParams.get("to"));
-	const dateRange = from ? { from, to } : undefined;
+	const fromParam = searchParams.get("from");
+	const toParam = searchParams.get("to");
+	const dateRange = useMemo(() => {
+		const from = parseDateParam(fromParam);
+		return from ? { from, to: parseDateParam(toParam) } : undefined;
+	}, [fromParam, toParam]);
 	const setDateRange = (value: DateRange | undefined) => {
 		updateSearchParams((next) => {
 			if (value?.from) next.set("from", formatDateParam(value.from));
@@ -203,7 +231,9 @@ export function ExecutionHistory() {
 		});
 	};
 	const viewMode =
-		searchParams.get("view") === "logs" ? "logs" : "executions";
+		canReadOtherExecutions && searchParams.get("view") === "logs"
+			? "logs"
+			: "executions";
 	const setViewMode = (value: "executions" | "logs") => {
 		updateSearchParams((next) => {
 			if (value === "logs") next.set("view", "logs");
@@ -211,7 +241,9 @@ export function ExecutionHistory() {
 		});
 	};
 	const historyType = (
-		searchParams.get("type") === "agents" ? "agents" : "workflows"
+		canViewAgentHistory && searchParams.get("type") === "agents"
+			? "agents"
+			: "workflows"
 	) as "workflows" | "agents";
 	const logLevelParam = searchParams.get("level");
 	const logLevelFilter =
@@ -236,13 +268,13 @@ export function ExecutionHistory() {
 	const isGlobalScope = useScopeStore((state) => state.isGlobalScope);
 	const orgId = useScopeStore((state) => state.scope.orgId);
 
-	// Enable real-time updates for history page
-	// Platform admins subscribe to GLOBAL channel, regular users to their own channel
+	// Read All Executions receives the shared history stream. The server still
+	// filters every delivery against the caller's current reach.
 	const scope = isGlobalScope ? "GLOBAL" : orgId || "GLOBAL";
 	useExecutionHistory({
 		scope,
 		enabled: true,
-		isPlatformAdmin,
+		includeOthers: canReadOtherExecutions,
 		userId: user?.id,
 	});
 	// Pagination state - stack of continuation tokens for "back" navigation
@@ -253,17 +285,12 @@ export function ExecutionHistory() {
 		() => (restoreOrigin ?? savedHistoryOrigin)?.currentToken,
 	);
 
-	// Fetch organizations for the org name lookup (platform admins only)
+	// Fetch organization names only when the caller may discover organizations.
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: canDiscoverOrganizations,
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	// Build filters including date range.
 	// The Failed tab means the whole failure group (Failed, Timeout, Stuck,
@@ -278,8 +305,8 @@ export function ExecutionHistory() {
 			baseFilters.status = statusFilter;
 		}
 
-		// Workflow IDs are implementation details; only admins get this filter.
-		if (isPlatformAdmin && workflowIdFilter) {
+		// Workflow IDs are only useful when workflow discovery is authorized.
+		if (canDiscoverWorkflows && workflowIdFilter) {
 			baseFilters.workflow_id = workflowIdFilter;
 		}
 
@@ -301,21 +328,18 @@ export function ExecutionHistory() {
 		}
 
 		return baseFilters;
-	}, [statusFilter, dateRange, isPlatformAdmin, workflowIdFilter]);
+	}, [statusFilter, dateRange, canDiscoverWorkflows, workflowIdFilter]);
 
-	// Pass filterOrgId to backend for filtering (undefined = all, null = global only)
-	// For platform admins, undefined means show all. For non-admins, backend handles filtering.
+	// Pass a discovered organization filter to the backend. The server always
+	// intersects it with current execution visibility.
 	const {
 		data: response,
 		isFetching,
 		isError,
 		refetch,
-	} = useExecutions(
-		isPlatformAdmin ? filterOrgId : undefined,
-		filters as ExecutionFilters,
-		currentToken,
-		{ preservePageData: true },
-	);
+	} = useExecutions(filterOrgId, filters as ExecutionFilters, currentToken, {
+		preservePageData: true,
+	});
 
 	// Memoize executions to prevent dependency issues
 	const executions = useMemo(
@@ -409,8 +433,8 @@ export function ExecutionHistory() {
 		searchTerm !== "" ||
 		statusFilter !== "all" ||
 		dateRange !== undefined ||
-		(isPlatformAdmin &&
-			(workflowIdFilter !== "" || filterOrgId !== undefined));
+		(canDiscoverWorkflows && workflowIdFilter !== "") ||
+		(canDiscoverOrganizations && filterOrgId !== undefined);
 
 	const handleClearFilters = () => {
 		updateSearchParams((next) => {
@@ -440,17 +464,26 @@ export function ExecutionHistory() {
 
 	// One source of truth for the column count (admins get the Org column).
 	const previewOpen = isDesktop && selectedExecutionId !== null;
-	const createHistoryOrigin = () => ({
-		href: `${location.pathname}${location.search}`,
-		scrollTop: isDesktop
-			? (historyScrollRef.current?.scrollTop ??
-				document.querySelector<HTMLElement>("[data-page-scroll]")
-					?.scrollTop ??
-				0)
-			: window.scrollY,
-		currentToken,
-		pageStack,
-	});
+	const createHistoryOrigin = useCallback(
+		() => ({
+			href: `${location.pathname}${location.search}`,
+			scrollTop: isDesktop
+				? (historyScrollRef.current?.scrollTop ??
+					document.querySelector<HTMLElement>("[data-page-scroll]")
+						?.scrollTop ??
+					0)
+				: window.scrollY,
+			currentToken,
+			pageStack,
+		}),
+		[
+			location.pathname,
+			location.search,
+			isDesktop,
+			currentToken,
+			pageStack,
+		],
+	);
 	useEffect(() => {
 		if (!savedHistoryOrigin) return;
 		navigate(savedHistoryOrigin.href, {
@@ -481,7 +514,13 @@ export function ExecutionHistory() {
 		if (!scrollArea) return;
 		scrollArea.addEventListener("scroll", save, { passive: true });
 		return () => scrollArea.removeEventListener("scroll", save);
-	}, [isDesktop, location.search, restoreOrigin, savedHistoryOrigin]);
+	}, [
+		isDesktop,
+		location.search,
+		restoreOrigin,
+		savedHistoryOrigin,
+		createHistoryOrigin,
+	]);
 	useEffect(() => {
 		if (
 			!restoreOrigin ||
@@ -517,7 +556,7 @@ export function ExecutionHistory() {
 		restoreOrigin,
 		restoredScrollOrigin,
 	]);
-	const columnCount = previewOpen ? 4 : isPlatformAdmin ? 7 : 6;
+	const columnCount = previewOpen ? 4 : canReadOtherExecutions ? 7 : 6;
 
 	const showPaginationFooter = hasMore || pageStack.length > 0;
 	const executionPageSummary = `${filteredExecutions.length} run${filteredExecutions.length !== 1 ? "s" : ""} on this page · Page ${pageStack.length + 1}`;
@@ -534,7 +573,7 @@ export function ExecutionHistory() {
 		/>
 	);
 
-	const historyTypeToggle = isPlatformAdmin ? (
+	const historyTypeToggle = canViewAgentHistory ? (
 		<ToggleGroup
 			type="single"
 			value={historyType}
@@ -614,7 +653,7 @@ export function ExecutionHistory() {
 				}
 				actions={
 					<>
-						{isPlatformAdmin && (
+						{canManageExecutionCleanup && (
 							<ExecutionCleanupDialog
 								onCleaned={() => void refetch()}
 							/>
@@ -696,7 +735,8 @@ export function ExecutionHistory() {
 										}
 									>
 										Filters
-										{(workflowIdFilter ||
+										{((canDiscoverWorkflows &&
+											workflowIdFilter) ||
 											filterOrgId !== undefined ||
 											dateRange?.from) && (
 											<span className="text-xs text-muted-foreground">
@@ -720,7 +760,7 @@ export function ExecutionHistory() {
 												: "hidden"
 									}
 								>
-									{isPlatformAdmin && (
+									{canDiscoverWorkflows && (
 										<WorkflowSelector
 											value={
 												workflowIdFilter || undefined
@@ -743,7 +783,7 @@ export function ExecutionHistory() {
 											className="w-full min-w-0 lg:w-44"
 										/>
 									)}
-									{isPlatformAdmin && (
+									{canDiscoverOrganizations && (
 										<div className="w-full min-w-0 lg:w-44">
 											<OrganizationSelect
 												value={filterOrgId}
@@ -764,7 +804,7 @@ export function ExecutionHistory() {
 									data-testid="history-controls"
 									className="flex flex-wrap items-center gap-3 lg:ml-auto"
 								>
-									{isPlatformAdmin && (
+									{canReadOtherExecutions && (
 										<>
 											<div className="flex items-center gap-2">
 												<Switch
@@ -881,7 +921,11 @@ export function ExecutionHistory() {
 
 							{/* Logs View */}
 							<LogsView
-								workflowId={workflowIdFilter || undefined}
+								workflowId={
+									canDiscoverWorkflows
+										? workflowIdFilter || undefined
+										: undefined
+								}
 								filterOrgId={filterOrgId}
 								dateRange={dateRange}
 								searchTerm={searchTerm}
@@ -1060,7 +1104,7 @@ export function ExecutionHistory() {
 																			: execution.status
 																	}
 																	organizationName={
-																		isPlatformAdmin
+																		canReadOtherExecutions
 																			? execution.org_id
 																				? getOrgName(
 																						execution.org_id,
@@ -1134,7 +1178,7 @@ export function ExecutionHistory() {
 												>
 													<DataTableHeader>
 														<DataTableRow>
-															{isPlatformAdmin &&
+															{canReadOtherExecutions &&
 																!previewOpen && (
 																	<DataTableHead className="hidden w-px xl:table-cell">
 																		Organization
@@ -1259,7 +1303,7 @@ export function ExecutionHistory() {
 																						)
 																					}
 																				>
-																					{isPlatformAdmin &&
+																					{canReadOtherExecutions &&
 																						!previewOpen && (
 																							<DataTableCell className="hidden w-px whitespace-nowrap text-sm text-muted-foreground xl:table-cell">
 																								{isGlobalExecution ? (
@@ -1326,7 +1370,7 @@ export function ExecutionHistory() {
 																									: "mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground xl:hidden"
 																							}
 																						>
-																							{isPlatformAdmin && (
+																							{canReadOtherExecutions && (
 																								<span>
 																									{isGlobalExecution
 																										? "Global"

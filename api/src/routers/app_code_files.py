@@ -26,7 +26,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Path, status
 
 from src.core.auth import Context, CurrentUser
-from src.core.exceptions import AccessDeniedError
 from src.core.log_safety import log_safe
 from src.services.audit import emit_audit
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
@@ -38,11 +37,15 @@ from src.models.contracts.applications import (
     SimpleFileResponse,
 )
 from src.models.orm.applications import Application
-from src.routers.applications import ApplicationRepository
+from src.routers.applications import (
+    get_application_by_id_or_404 as _get_application_by_id_or_404,
+    get_application_for_write_or_404 as _get_application_for_write_or_404,
+)
 from src.services.app_storage import AppStorageService
 from src.services.repo_storage import RepoStorage
 from src.services.file_storage.service import get_file_storage_service
 from src.services.operation_catalog import operation_route
+from src.services.authorization.enforce import allows_permission, load_caller
 
 logger = logging.getLogger(__name__)
 
@@ -224,66 +227,13 @@ def validate_file_path(path: str) -> None:
 
 
 async def get_application_or_404(ctx: Context, app_id: UUID) -> Application:
-    """Get application by UUID with access control.
-
-    Uses ApplicationRepository for cascade scoping and role-based access.
-    Returns 404 for both not found and access denied to avoid leaking
-    existence information.
-
-    Returns:
-        Application if found and accessible
-
-    Raises:
-        HTTPException 404 if not found or access denied
-    """
-    if ctx.user.embed is True:
-        # Embed pre-auth (OPEN-D): the token is HMAC-bound to exactly ONE
-        # app (its app_id claim). Tier/role checks don't apply; identity
-        # binding does — only the bound app's files resolve.
-        if ctx.user.app_id == str(app_id):
-            app = await ctx.db.get(Application, app_id)
-            if app is not None:
-                return app
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application '{app_id}' not found",
-        )
-
-    repo = ApplicationRepository(
-        session=ctx.db,
-        org_id=ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
-    )
-    try:
-        return await repo.can_access(id=app_id)
-    except AccessDeniedError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application '{app_id}' not found",
-        )
+    """Load source-bearing App data with full App read authority."""
+    return await _get_application_by_id_or_404(ctx, app_id, permission="apps.read")
 
 
 async def get_application_for_write_or_404(ctx: Context, app_id: UUID) -> Application:
-    """Get application by UUID, enforcing write scope.
-
-    Read access (including the embed-token binding above) resolves exactly
-    as ``get_application_or_404``. Writing to an application's files
-    requires a platform admin, for every application — own-org included.
-    An embed principal is never a platform admin, so embed tokens only ever
-    get read access to app files.
-
-    Raises the identical 404 the read helper uses, so a caller cannot tell
-    "exists but no write access" apart from "does not exist".
-    """
-    app = await get_application_or_404(ctx, app_id)
-    if ctx.user.is_platform_admin:
-        return app
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Application '{app_id}' not found",
-    )
+    """Load an App for source mutation at its actual organization boundary."""
+    return await _get_application_for_write_or_404(ctx, app_id)
 
 
 class FileMode(str, Enum):
@@ -523,7 +473,7 @@ async def render_app(
 
     Unlike /files, this returns only `path` + `code` (no source).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await _get_application_by_id_or_404(ctx, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)
@@ -619,7 +569,9 @@ async def get_bundle_manifest(
 
     If no manifest exists yet, triggers a build and returns that one.
     """
-    app = await get_application_or_404(ctx, app_id)
+    # The manifest bootstraps the running app, just like its dist/assets.
+    # Source reads remain behind get_application_or_404 (apps.read).
+    app = await _get_application_by_id_or_404(ctx, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)
@@ -699,7 +651,8 @@ async def get_bundle_manifest(
                 needs_rebuild = True
 
     if needs_rebuild:
-        if not ctx.user.is_platform_admin:
+        caller = await load_caller(ctx.db, ctx.user)
+        if not allows_permission(caller, "apps.readwrite", app.organization_id):
             # A GET must never trigger a _repo build/write for anyone who
             # can't write the app (platform admins only). Serve the existing (possibly stale-schema) manifest
             # as-is, or 404 if there is none yet — never build here.
@@ -827,7 +780,7 @@ async def get_bundle_asset(
     """
     from fastapi.responses import Response
 
-    app = await get_application_or_404(ctx, app_id)
+    app = await _get_application_by_id_or_404(ctx, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
 
@@ -871,21 +824,20 @@ async def get_v2_dist_asset(
     hashed entry/css from the bundle-manifest and loads them from this dist/
     prefix; the app's own bundle pulls any further chunks from here too.
     """
-    from botocore.exceptions import ClientError
+    from src.core.s3_transport import S3Error
     from fastapi import HTTPException
     from fastapi.responses import Response
 
     from src.services.solutions.app_build import SolutionAppBuilder
 
-    app = await get_application_or_404(ctx, app_id)
+    app = await _get_application_by_id_or_404(ctx, app_id)
     rel = path or "index.html"
     try:
         data = await SolutionAppBuilder().read_dist(
             str(app.id), rel, deployment_id=app.active_deployment_id
         )
-    except ClientError as exc:
-        # read_dist surfaces a missing key as the raw botocore ClientError from
-        # get_object (Code=NoSuchKey). Only THAT is a 404 — anything else is a
+    except S3Error as exc:
+        # A missing object (Code=NoSuchKey) is a 404; anything else is a
         # real storage failure and must surface, not masquerade as not-found.
         if exc.response.get("Error", {}).get("Code") == "NoSuchKey":
             raise HTTPException(

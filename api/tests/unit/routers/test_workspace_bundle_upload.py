@@ -5,7 +5,10 @@ import pytest
 from fastapi import HTTPException
 from starlette.responses import Response
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
+
+from tests.helpers.authorization import admin_caller
 
 
 @pytest.mark.asyncio
@@ -70,6 +73,9 @@ async def test_workspace_bundle_rejects_different_decisions_for_an_active_previe
     db = Db()
     monkeypatch.setattr(solutions, "_load_workspace_preview_metadata", load_preview)
     monkeypatch.setattr(solutions, "enqueue_platform_job", enqueue)
+    caller = admin_caller(email="admin@example.test")
+    monkeypatch.setattr(solutions, "load_caller", AsyncMock(return_value=caller))
+    monkeypatch.setattr(solutions, "authorize_scope", AsyncMock(return_value=caller))
     body = WorkspaceBundleImportRequest(
         preview_token=str(preview_id),
         decisions=[{"item_id": "entity:workflow:one", "action": "replace"}],
@@ -78,7 +84,7 @@ async def test_workspace_bundle_rejects_different_decisions_for_an_active_previe
     with pytest.raises(HTTPException, match="different decisions") as error:
         await solutions.enqueue_workspace_import(
             body, Response(), SimpleNamespace(db=db),
-            SimpleNamespace(user_id=uuid4(), email="admin@example.com", name="Admin"),
+            caller.principal,
         )
 
     assert error.value.status_code == 409

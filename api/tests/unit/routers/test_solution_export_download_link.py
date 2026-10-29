@@ -9,6 +9,15 @@ import pytest
 from fastapi import HTTPException, Response
 
 from src.routers import solutions
+from tests.helpers.authorization import admin_caller
+
+
+@pytest.fixture(autouse=True)
+def authorized_artifact_request(monkeypatch):
+    # These tests prove streaming/signing and expiry behavior; the real DB
+    # admission contract is exercised in test_solution_authority.py.
+    monkeypatch.setattr(solutions, "authorize_scope", AsyncMock(return_value=admin_caller()))
+    monkeypatch.setattr(solutions, "_authorize_export_job", AsyncMock())
 
 
 def completed_job():
@@ -18,6 +27,7 @@ def completed_job():
         solution_id=uuid4(),
         organization_id=None,
         requested_by_id=None,
+        contains_secrets=False,
         status="completed",
         progress_percent=100,
         message=None,

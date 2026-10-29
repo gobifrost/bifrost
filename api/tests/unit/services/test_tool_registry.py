@@ -76,6 +76,18 @@ class TestNormalizeToolName:
     def test_explicit_category_becomes_prefix(self):
         assert _normalize_tool_name("Add Comment", category="HaloPSA") == "halopsa_add_comment"
 
+    def test_already_prefixed_name_is_idempotent_for_its_normalized_category(self):
+        assert (
+            _normalize_tool_name("halopsa_submit_triage", category="HaloPSA")
+            == "halopsa_submit_triage"
+        )
+
+    def test_existing_different_category_prefix_does_not_bypass_category_namespace(self):
+        assert (
+            _normalize_tool_name("halopsa_submit_triage", category="AI Ticketing")
+            == "ai_ticketing_halopsa_submit_triage"
+        )
+
     def test_parentheses_stripped_from_name(self):
         assert _normalize_tool_name("Add Comment (Demo)", category="HaloPSA") == "halopsa_add_comment_demo"
 

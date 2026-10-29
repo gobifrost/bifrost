@@ -5,6 +5,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.services.solutions.export_jobs import decrypt_export_options
 
@@ -38,9 +39,9 @@ def _job_payload(password: str = "correct horse battery staple") -> dict:
     }
 
 
-def test_download_link_requires_platform_admin(e2e_client, platform_admin, org1_user):
+def test_download_link_hides_unknown_jobs_from_non_owners(e2e_client, platform_admin, org1_user):
     path = f"/api/solutions/export-jobs/{uuid.uuid4()}/download-link"
-    assert e2e_client.post(path, headers=org1_user.headers).status_code == 403
+    assert e2e_client.post(path, headers=org1_user.headers).status_code == 404
     assert e2e_client.post(path, headers=platform_admin.headers).status_code == 404
 
 
@@ -79,6 +80,14 @@ async def test_create_list_get_and_pending_download(
     assert decrypt_export_options(row.encrypted_options).password == (
         "correct horse battery staple"
     )
+    platform_job = await db_session.scalar(
+        select(PlatformJob).where(
+            PlatformJob.job_type == "solution.export", PlatformJob.resource_id == job_id
+        )
+    )
+    # An export learns its memory per Solution.
+    assert platform_job is not None
+    assert platform_job.memory_profile_key == f"solution.export.memory.v1:{solution_id}"
 
     download_response = e2e_client.get(
         f"/api/solutions/export-jobs/{job_id}/download",

@@ -1,3 +1,4 @@
+import { getErrorMessage } from "@/lib/api-error";
 import { GitHubTokenField } from "./GitHubTokenField";
 import { GitHubResourceSelect } from "./GitHubResourceSelect";
 import { GitHubCreateRepositoryDialog } from "./GitHubCreateRepositoryDialog";
@@ -58,6 +59,7 @@ export function GitHub() {
 	// Form state
 	const [token, setToken] = useState("");
 	const [tokenValid, setTokenValid] = useState<boolean | null>(null);
+	const [tokenError, setTokenError] = useState<string | null>(null);
 	const [repositories, setRepositories] = useState<GitHubRepoInfo[]>([]);
 	const [branches, setBranches] = useState<GitHubBranchInfo[]>([]);
 	const [selectedRepo, setSelectedRepo] = useState<string>("");
@@ -150,6 +152,7 @@ export function GitHub() {
 
 		setTestingToken(true);
 		setTokenValid(null);
+		setTokenError(null);
 		setRepositories([]);
 		setBranches([]);
 
@@ -174,12 +177,11 @@ export function GitHub() {
 					description: `Found ${response.repositories.length} accessible repositories`,
 				});
 			}
-		} catch {
+		} catch (error) {
+			const message = getErrorMessage(error, "Failed to validate token");
 			setTokenValid(false);
-			toast.error("Invalid token", {
-				description:
-					"Please check your GitHub Personal Access Token and try again",
-			});
+			setTokenError(message);
+			toast.error("Token Validation Failed", { description: message });
 		} finally {
 			setTestingToken(false);
 		}
@@ -463,11 +465,13 @@ export function GitHub() {
 								value={token}
 								saved={!!config?.token_saved}
 								valid={tokenValid}
+								error={tokenError}
 								pending={testingToken}
 								disabled={saving}
 								onChange={(value) => {
 									setToken(value);
 									setTokenValid(null);
+									setTokenError(null);
 								}}
 								onValidate={() => {
 									void handleTokenValidation();

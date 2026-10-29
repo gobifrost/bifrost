@@ -75,7 +75,7 @@ def _load_file_policy_model() -> Any:
 # =============================================================================
 # Per-entity serialization functions (ORM → Manifest Pydantic model)
 #
-# These are used by generate_manifest() and by the entity_change_hook to
+# These are used by generate_manifest() and compact manifest codec tests to
 # serialize individual entities for real-time change broadcasts.
 # =============================================================================
 

@@ -45,12 +45,74 @@ body, bypass security review, or weaken the release gate. Necessary customer
 upgrade steps stay visible in the appropriate note. Do not describe strengthened
 access controls as an incident unless the evidence establishes an incident.
 
+## Agent Prompts
+
+An entry can carry an `agent_prompt`: a reviewed, plain-text prompt an admin
+copies into a coding agent that can reach their setup, so the agent does the work
+the note describes. Add one for breaking changes, recommended upgrade steps, and
+first-time setup of a new capability. Don't add one for ordinary features.
+
+```json
+"agent_prompt": "You are helping me with this Bifrost change: ..."
+```
+
+The prompt does not count toward the entry's word budget; it has its own limit of
+400 words and is reviewed with the entry. Validation rejects raw HTML, backticks,
+and links other than the Bifrost docs and `github.com/gobifrost`, and it requires
+the phrase "wait for my confirmation" so the agent shows its plan before changing
+anything. Never include secrets, installation-specific URLs, or instructions to
+disable safety checks. State what the agent must be able to reach in the prompt
+itself. Start from this template:
+
+```text
+You are helping me with this Bifrost change: <one sentence>.
+You can reach: <what the agent needs, such as my docker-compose.yml and a shell>.
+1. Inspect my current setup and report what applies to it.
+2. Propose the exact changes, and wait for my confirmation.
+3. Apply them, then verify with: <checks>.
+Do not change anything unrelated, and stop if something does not match
+what you expect.
+```
+
+What's New shows an Agent Prompt callout under the entry: "Copy this prompt to
+have your coding agent help you with this change.", a copy button, and a chevron
+that expands the prompt. Compact Fixed and Security entries and
+`in_app: false` entries don't show it. The GitHub release renders the same heading
+and sentence with the prompt in a collapsed `text` fence, which GitHub gives its
+own copy button. Posting a prompt to Discord is a manual step.
+
 ## Before and during a pull request
 
-Classify every landed change in `product-updates/dispositions.json` under its
-`pr:<number>` key. The disposition is the durable decision read by CI and the
+Classify every landed change under its `pr:<number>` key (or `commit:<sha>` for
+a direct commit). The disposition is the durable decision read by CI and the
 merge queue; the PR template records the author’s proposal, but is never the
 canonical classification.
+
+Each disposition is its own file, so concurrent pull requests never edit the same
+file. `product-updates/dispositions/pr-1234.json` holds the decision for `pr:1234`:
+the file name is the key with `:` replaced by `-`, and the file repeats the exact
+key first.
+
+```json
+{
+  "key": "pr:1234",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal CI work; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1234"]
+  }
+}
+```
+
+`product-updates/dispositions.json` holds only the ledger header
+(`schema_version` and the `inventory` range) and has no `items` field. The tools
+assemble the header and every file in `dispositions/` into one ledger before
+schema validation, so `--dispositions product-updates/dispositions.json` still
+names the whole ledger. A key that cannot round-trip through its file name, a file
+whose key does not match its name, any other entry in `dispositions/`, or an
+`items` field in the header fails validation.
 
 - `highlight` points to one or more entry UUIDs in `entries/`. Use a highlight
   for a capability, important correction, upgrade warning, or security notice
@@ -86,8 +148,9 @@ and must not contain executable HTML or embeds.
 
 ## Dependabot Maintenance
 
-The trusted Dependabot workflow writes an `omit` disposition onto same-repository
-Dependabot branches when their diff contains only dependency maintenance files.
+The trusted Dependabot workflow writes an `omit` disposition file onto
+same-repository Dependabot branches when their diff contains only dependency
+maintenance files.
 This applies the existing customer-facing selection policy; it does not execute
 PR code, replace a maintainer's disposition, or bypass CI. Major and Docker updates
 retain their existing review policy.

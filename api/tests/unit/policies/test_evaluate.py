@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.policies.evaluate import evaluate
 from src.models.contracts.policies import Expr
 
@@ -18,6 +19,7 @@ class FakeUser:
     is_platform_admin: bool = False
     role_ids: list[UUID] = field(default_factory=list)
     role_names: list[str] = field(default_factory=list)
+    policy_authorities: frozenset[str] = field(default_factory=frozenset)
 
 
 def _e(d: dict) -> Expr:
@@ -47,10 +49,35 @@ def test_eq_user_reference():
     assert evaluate(expr, row={"owner": str(uuid4())}, user=user) is False
 
 
-def test_user_is_platform_admin():
+def test_user_is_platform_admin_is_false_without_the_built_in_role():
     expr = _e({"user": "is_platform_admin"})
-    assert evaluate(expr, row={}, user=FakeUser(is_platform_admin=True)) is True
     assert evaluate(expr, row={}, user=FakeUser(is_platform_admin=False)) is False
+
+
+def test_user_is_platform_admin_uses_role_id_instead_of_a_flag():
+    expr = _e({"user": "is_platform_admin"})
+
+    assert evaluate(
+        expr,
+        row={},
+        user=FakeUser(is_platform_admin=False, role_ids=[PLATFORM_ADMIN_ROLE_ID]),
+    ) is True
+    assert evaluate(expr, row={}, user=FakeUser(is_platform_admin=True)) is False
+
+
+def test_full_access_satisfies_the_legacy_admin_term_and_the_authority():
+    """Policies written with ``user.is_platform_admin`` admitted every workflow
+    before Zero Trust Automation; a Full Access run keeps that, while a direct
+    caller or a run without the authority does not."""
+    user_fact = _e({"user": "is_platform_admin"})
+    authority = _e({"authority": "platform_admin"})
+    full_execution = FakeUser(policy_authorities=frozenset({"platform_admin"}))
+    direct_person = FakeUser()
+
+    assert evaluate(user_fact, row={}, user=full_execution) is True
+    assert evaluate(authority, row={}, user=full_execution) is True
+    assert evaluate(user_fact, row={}, user=direct_person) is False
+    assert evaluate(authority, row={}, user=direct_person) is False
 
 
 # --- Logic ---
@@ -179,7 +206,7 @@ def test_manager_reads_reports_policy():
 def test_admin_bypass_policy():
     """Platform admin shortcut."""
     policy = _e({"user": "is_platform_admin"})
-    assert evaluate(policy, row={"any": "row"}, user=FakeUser(is_platform_admin=True)) is True
+    assert evaluate(policy, row={"any": "row"}, user=FakeUser(role_ids=[PLATFORM_ADMIN_ROLE_ID])) is True
     assert evaluate(policy, row={"any": "row"}, user=FakeUser(is_platform_admin=False)) is False
 
 
@@ -241,7 +268,7 @@ def test_row_none_resolves_refs_to_none():
     assert evaluate(expr, row=None, user=user) is False
     # User-only refs still work
     expr_user = _e({"user": "is_platform_admin"})
-    assert evaluate(expr_user, row=None, user=FakeUser(is_platform_admin=True)) is True
+    assert evaluate(expr_user, row=None, user=FakeUser(role_ids=[PLATFORM_ADMIN_ROLE_ID])) is True
 
 
 # --- is_null on nested paths ---

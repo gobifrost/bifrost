@@ -31,6 +31,13 @@ release, aggregate the eligible approved entries since the previous final and
 freeze the complete body. Publishing consumes that prepared body without a new
 writing pass. Draft or staged entries never activate production announcements.
 
+For every action-required or recommended-upgrade entry, ask whether it should
+carry an `agent_prompt` (a copy-into-an-agent prompt that applies the change) and
+list each one without a prompt in the review summary. Breaking changes,
+recommended upgrade steps, and first-time setup of a new capability normally get
+one; ordinary features don't. Follow the authoring guide's Agent Prompts section
+and its template; the prompt is reviewed with the entry.
+
 After a source PR lands, refresh the cumulative verified inventory and commit the
 metadata in a content follow-up PR before considering its announcement delivered.
 Keep its reviewed UUID and prose; cite the actual landed PR/commit. Validate the
@@ -103,13 +110,16 @@ python3 scripts/product_updates.py validate \
 python3 -m scripts.prepare_product_updates_image --target "$CONTENT_REF"
 ```
 
+`--dispositions` names the ledger header; each PR's disposition lives in its own
+`product-updates/dispositions/pr-<number>.json`, and the tools assemble them.
+
 Only approved entries enter the bundle. Draft previews use an explicit
 `--allow-draft` command from the authoring guide and never run in a dev image
 or release build.
 
 ### 3. Documentation freshness check
 
-Run the helper script — it compares last-commit timestamps on `bifrost` vs `gobifrost` and lists any user-facing files changed since docs were last updated:
+Run the helper script — it compares last-commit timestamps on `bifrost` vs `public-docs` and lists any user-facing files changed since docs were last updated:
 
 ```bash
 ./scripts/release/check-docs-freshness.sh

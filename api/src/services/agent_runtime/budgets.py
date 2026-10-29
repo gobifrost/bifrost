@@ -223,7 +223,14 @@ class BudgetWindDown(AbstractCapability[object]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        if not self.budget.should_wind_down(ctx.usage):
+        # Pydantic AI invokes this hook before it commits the response to
+        # ``ctx.usage``. Account for the request that produced ``response`` so
+        # its tool calls become the final handoff at the configured limit.
+        final_allowed_request = (
+            self.budget.max_requests is not None
+            and ctx.usage.requests + 1 >= self.budget.max_requests
+        )
+        if not final_allowed_request and not self.budget.should_wind_down(ctx.usage):
             return response
 
         pending_calls = [

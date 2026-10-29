@@ -9,12 +9,14 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Request, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
 from src.core.database import get_db
 from src.jobs.platform.audit_archive import enqueue_manual_audit_archive
 from src.jobs.platform.run_retention import enqueue_manual_run_retention
@@ -87,7 +89,14 @@ from src.services.platform_jobs import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"])
+async def _authorize_global_route(
+    request: Request, user: CurrentActiveUser, db: AsyncSession = Depends(get_db, scope="function")
+) -> None:
+    await authorize_operation(
+        db, user, f"{request.method} {request.scope['route'].path}", GLOBAL
+    )
+
+router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"], dependencies=[Depends(_authorize_global_route)])
 
 
 @router.get(
@@ -96,7 +105,7 @@ router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"])
     summary="Get artifact retention settings",
 )
 async def get_artifact_retention_settings(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRetentionSettings:
     return await ArtifactRetentionSettingsService(db).get_settings()
@@ -109,7 +118,7 @@ async def get_artifact_retention_settings(
 )
 async def update_artifact_retention_settings(
     request: ArtifactRetentionSettingsUpdate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRetentionSettings:
     service = ArtifactRetentionSettingsService(db)
@@ -129,7 +138,7 @@ async def update_artifact_retention_settings(
 )
 async def cleanup_artifact_retention(
     response: Response,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PlatformJobAccepted:
     job, reused = await enqueue_platform_job(
@@ -186,7 +195,7 @@ async def _audit_retention_status(
     summary="Get audit retention settings and archive status",
 )
 async def get_audit_retention_settings(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AuditRetentionStatus:
     settings = await AuditRetentionSettingsService(db).get_settings()
@@ -200,7 +209,7 @@ async def get_audit_retention_settings(
 )
 async def update_audit_retention_settings(
     body: AuditRetentionSettingsUpdate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AuditRetentionStatus:
     service = AuditRetentionSettingsService(db)
@@ -227,7 +236,7 @@ async def update_audit_retention_settings(
 async def start_audit_archive(
     body: AuditArchiveRunRequest,
     response: Response,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PlatformJobAccepted:
     job, reused = await enqueue_manual_audit_archive(db, user, dry_run=body.dry_run)
@@ -246,7 +255,7 @@ async def start_audit_archive(
     summary="Preview which archived audit events an archive window would delete",
 )
 async def preview_audit_expiry(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     archive_days: int | None = Query(
         None, ge=1, description="Archive window in days; omit to keep archives forever."
     ),
@@ -277,7 +286,7 @@ async def _run_retention_status(
     summary="Get run retention settings and status",
 )
 async def get_run_retention_settings(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RunRetentionStatus:
     settings = await RunRetentionSettingsService(db).get_settings()
@@ -291,7 +300,7 @@ async def get_run_retention_settings(
 )
 async def update_run_retention_settings(
     body: RunRetentionSettingsUpdate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> RunRetentionStatus:
     service = RunRetentionSettingsService(db)
@@ -318,7 +327,7 @@ async def update_run_retention_settings(
 async def start_run_retention(
     body: RunRetentionRunRequest,
     response: Response,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PlatformJobAccepted:
     job, reused = await enqueue_manual_run_retention(db, user, dry_run=body.dry_run)
@@ -337,7 +346,7 @@ async def start_run_retention(
     summary="Preview how many runs and events a retention window would delete",
 )
 async def preview_run_retention(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     days: int | None = Query(
         None, ge=30, le=3650, description="Retention window in days; omit to keep forever."
     ),
@@ -363,7 +372,7 @@ async def preview_run_retention(
 )
 async def get_maintenance_status(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> MaintenanceStatus:
     """
@@ -403,7 +412,7 @@ async def get_maintenance_status(
 )
 async def index_documentation(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DocsIndexResponse:
     """
@@ -483,7 +492,7 @@ async def index_documentation(
 )
 async def reimport_from_repo(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> ReimportJobResponse:
     """
     Queue a reimport of all entities from the S3 repo.
@@ -525,7 +534,7 @@ async def reimport_from_repo(
     description="Deactivate workflows, forms, and agents whose files no longer exist in the workspace",
 )
 async def cleanup_orphaned(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> CleanupOrphanedResponse:
     """
@@ -621,7 +630,7 @@ class AppDependencyScanResponse(BaseModel):
 )
 async def scan_app_dependencies(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AppDependencyScanResponse:
     """
@@ -775,7 +784,7 @@ async def scan_app_dependencies(
     description="Run validation checks including unregistered function detection (Platform admin only)",
 )
 async def run_preflight(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PreflightResponse:
     """Run preflight validation on the current workspace state."""

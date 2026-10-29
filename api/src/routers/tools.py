@@ -7,14 +7,17 @@ System tools are auto-discovered from the tool registry.
 
 import logging
 from typing import Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
 
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.org_filter import resolve_org_filter
+from src.core.org_filter import OrgFilterType
 from src.models.contracts.agents import ToolInfo, ToolsResponse
 from src.repositories.workflows import WorkflowRepository
+from shared.scope_resolver import ScopeNotAllowed, UNSET, resolve_effective_scope
+from src.services.authorization.enforce import load_caller
 
 from src.services.mcp_server.server import get_system_tools as get_system_tools_from_server
 
@@ -88,19 +91,31 @@ async def list_tools(
 
     # Add workflow tools (unless filtering to system only)
     if type is None or type == "workflow":
-        # Apply organization filter
+        caller = await load_caller(db, user)
+        requested_scope = UNSET
+        filter_type = OrgFilterType.ORG_PLUS_GLOBAL
+        if scope == "global":
+            requested_scope = None
+            filter_type = OrgFilterType.GLOBAL_ONLY
+        elif scope:
+            try:
+                requested_scope = UUID(scope)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="scope must be 'global' or an organization UUID",
+                ) from exc
         try:
-            filter_type, filter_org_id = resolve_org_filter(user, scope)
-        except ValueError:
-            # Invalid scope - just return system tools
-            return ToolsResponse(tools=tools)
+            filter_org_id = resolve_effective_scope(
+                caller=caller, requested_scope=requested_scope
+            )
+        except ScopeNotAllowed as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
         workflow_repo = WorkflowRepository(
             db,
-            org_id=user.organization_id,
-            user_id=user.user_id,
-            is_superuser=user.is_superuser,
-            is_external=user.is_external,
+            org_id=filter_org_id,
+            caller=caller,
         )
         workflows = await workflow_repo.list_tools_for_filter(
             filter_type,

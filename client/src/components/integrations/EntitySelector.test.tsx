@@ -85,4 +85,22 @@ describe("EntitySelector — populated", () => {
 		);
 		expect(screen.getByText("Beta")).toBeInTheDocument();
 	});
+
+	it("clears the entity when the selected one is chosen again", async () => {
+		const onChange = vi.fn();
+		const { user } = renderWithProviders(
+			<EntitySelector
+				entities={[
+					{ value: "ent-1", label: "Acme" },
+					{ value: "ent-2", label: "Beta" },
+				]}
+				value="ent-2"
+				onChange={onChange}
+			/>,
+		);
+		await user.click(screen.getByRole("combobox"));
+		await user.click(screen.getByRole("option", { name: "Beta" }));
+
+		expect(onChange).toHaveBeenCalledWith("", "");
+	});
 });

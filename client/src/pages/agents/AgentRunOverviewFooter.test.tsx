@@ -67,8 +67,7 @@ describe("AgentRunOverviewFooter", () => {
 			<AgentRunOverviewFooter
 				run={makeRun()}
 				agentName="Tier-1 Triage"
-				showRegen={false}
-				isPlatformAdmin={false}
+				canRegenerateSummary={false}
 			/>,
 		);
 
@@ -87,8 +86,7 @@ describe("AgentRunOverviewFooter", () => {
 			<AgentRunOverviewFooter
 				run={makeRun()}
 				agentName="Tier-1 Triage"
-				showRegen
-				isPlatformAdmin
+				canRegenerateSummary
 			/>,
 		);
 

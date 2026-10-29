@@ -5,17 +5,14 @@ the table definitions and reads — against the same tables the external
 HTTP endpoints serve, proving parity (filters, pagination, create/list/
 delete, missing-entity results) end to end:
 
-- the workflow records that the engine injected the worker's private
-  socket, so the migrated calls rode the shared client transport rather
-  than the network API (the zero-HTTP proof lives in the unit and
-  forked-child socket tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - the same values served over external HTTP match.
 
-A second, service-identity path registers a live ``@service`` doing the
-same reads: its token identity differs (system-user non-superuser,
-org-confined), so the default admin-bypass table reads as empty/denied —
-proving the parent dispatches service table calls under the service
-token, not the initiating user's admin flag.
+A second, service-context path registers a live ``@service`` doing the same
+reads. It runs with its persisted run user and the service definition's
+default organization, which is distinct from the org-scoped test table, so
+the SDK maps that table to its documented empty/missing results.
 """
 
 from __future__ import annotations
@@ -48,14 +45,14 @@ def live_table_keys():
 
 
 @pytest.fixture(scope="module")
-def live_table(e2e_client, platform_admin, live_table_keys):
-    """Seed one GLOBAL table with three rows (deterministic for any caller org)."""
+def live_table(e2e_client, platform_admin, org1, live_table_keys):
+    """Seed one org-scoped table for the worker workflow's default scope."""
     name = live_table_keys["table"]
     create = e2e_client.post(
         "/api/tables",
         headers=platform_admin.headers,
         json={"name": name, "description": "stage 3a local tables E2E",
-              "organization_id": None},
+              "organization_id": org1["id"]},
     )
     assert create.status_code == 201, create.text
     table_id = create.json()["id"]
@@ -195,8 +192,7 @@ async def {name}():
     )
     deleted_batch = await tables.delete_batch("{table}", ["w-bulk-a", "ghost"])
     total = await tables.count("{table}")
-    # ~24 MiB in one batch: the socket carries realistic large payloads with
-    # no base64 channel wrapper and no frame-size ceiling.
+    # ~24 MiB in one batch exercises realistic scoped shared API HTTP payloads.
     _blob = "y" * (1024 * 1024)
     large = await tables.bulk_upsert(
         "{table}",
@@ -255,10 +251,8 @@ class TestSdkTablesLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["doc_id"] == "row-a"
         assert out["doc_n"] == 1
         assert out["filtered_ids"] == ["row-c"]
@@ -336,7 +330,7 @@ class TestSdkTablesWritesLocalLiveE2E:
         assert out["deleted_batch_ids"] == ["w-bulk-a"]
         assert out["deleted_batch_count"] == 1
         assert out["total"] == 3
-        # ~24 MiB batch over the real worker socket.
+        # ~24 MiB batch through scoped shared API HTTP.
         assert out["large_count"] == 24
         assert out["total_with_large"] == 27
 
@@ -398,17 +392,13 @@ from bifrost import service, tables
 
 @service
 async def {function_name}() -> None:
-    """Read the seeded table with HTTP disabled, log the outcome, park."""
+    """Read the seeded table through scoped shared API HTTP, log the outcome, park."""
     await service.ready()
     from bifrost.client import get_engine_socket_path
     used_socket = get_engine_socket_path() is not None
 
     queried = await tables.query("{table}")
-    try:
-        await tables.get("{table}", "row-a")
-        get_result = "LEAKED"
-    except Exception as e:
-        get_result = type(e).__name__
+    doc = await tables.get("{table}", "row-a")
     counted = await tables.count("{table}")
     logging.getLogger(__name__).info(
         "TABLES_LOCAL %s",
@@ -416,7 +406,7 @@ async def {function_name}() -> None:
             "used_socket": used_socket,
             "query_total": queried.total,
             "query_docs": len(queried.documents),
-            "get_result": get_result,
+            "doc_id": doc.id if doc is not None else None,
             "count": counted,
         }}),
     )
@@ -448,7 +438,9 @@ async def _wait_for_state(e2e_client, headers, definition_id: str, state: str,
 
 
 @pytest.fixture(scope="module")
-def live_tables_service(e2e_client, platform_admin, live_table_keys, live_table):
+def live_tables_service(
+    e2e_client, platform_admin, org1, live_table_keys, live_table
+):
     suffix = live_table_keys["tag"]
     function_name = f"e2e_svc_tables_{suffix}"
     path = f"workflows/e2e_svc_tables_{suffix}.py"
@@ -457,7 +449,8 @@ def live_tables_service(e2e_client, platform_admin, live_table_keys, live_table)
         platform_admin.headers,
         path,
         _SERVICE_SOURCE.format(
-            function_name=function_name, table=live_table_keys["table"]
+            function_name=function_name,
+            table=live_table_keys["table"],
         ),
         function_name,
     )
@@ -465,6 +458,7 @@ def live_tables_service(e2e_client, platform_admin, live_table_keys, live_table)
     definition = _service_definition(
         e2e_client, platform_admin.headers, registered["id"]
     )
+    assert definition["organization_id"] != org1["id"]
     yield definition
     e2e_client.post(
         f"/api/services/{definition['id']}/stop", headers=platform_admin.headers
@@ -481,12 +475,12 @@ class TestSdkTablesLocalLiveService:
     async def test_service_reads_use_service_token_identity(
         self, e2e_client, platform_admin, live_tables_service
     ):
-        """The service child rides the local transport under its own token.
+        """The service child rides local transport under its persisted run context.
 
-        The seeded table carries the default admin-bypass policy, which the
-        service token (system-user non-superuser) does not satisfy — so a
-        local query reads empty, a local get denies, and a local count is
-        zero, even though the platform-admin initiator could read everything.
+        The service definition's current default organization differs from
+        org1, where the test table lives. The local table helpers therefore
+        return their documented hidden-table results: an empty query, no
+        document, and zero count.
         """
         definition_id = live_tables_service["id"]
         await _wait_for_state(
@@ -510,8 +504,8 @@ class TestSdkTablesLocalLiveService:
                 break
             await asyncio.sleep(2.0)
         assert payload is not None, "service never logged its table outcome"
-        assert payload["used_socket"] is True
+        assert payload["used_socket"] is False
         assert payload["query_total"] == 0
         assert payload["query_docs"] == 0
-        assert payload["get_result"] == "BifrostAuthorizationError"
+        assert payload["doc_id"] is None
         assert payload["count"] == 0

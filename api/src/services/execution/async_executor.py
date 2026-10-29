@@ -1,16 +1,16 @@
 """
 Async Workflow Execution
-Handles queueing of workflows via Redis + RabbitMQ
+Handles durable acceptance and queueing of workflow and inline-code runs.
 
-Flow:
-1. API stores pending execution in Redis
-2. API publishes message to RabbitMQ
-3. API returns execution_id immediately (<100ms)
-4. Worker reads from Redis, writes to PostgreSQL, executes
+Flow (see ``workflow_dispatch``):
+1. API commits a PENDING Execution and a WorkDispatch holding its context
+2. API wakes the executors (a hint; they also poll)
+3. API returns execution_id immediately
+4. An executor claims PENDING -> RUNNING, taking the context from the dispatch
 
 For sync execution (sync=True):
-- Caller provides execution_id (already stored in Redis)
-- Worker pushes result to Redis
+- Caller provides execution_id
+- The executor pushes the result to Redis
 - Caller waits on Redis BLPOP
 """
 
@@ -20,22 +20,33 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
+from src.core.database import get_dispatch_db_context
 from src.core.log_safety import log_safe
-from src.core.redis_client import get_redis_client
-from src.jobs.rabbitmq import publish_message
+from src.core.redis_client import PendingExecution, pending_execution_record
 from src.sdk.context import EventContext, ExecutionContext
-from src.services.execution.queue_tracker import add_to_queue
+from src.services.durable_impersonation import current_durable_impersonation
+from src.services.execution.workflow_dispatch import (
+    AcceptedRun,
+    hand_off_workflow_run,
+    stage_workflow_run,
+)
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from shared.run_lineage import RunLineage
 
 logger = logging.getLogger(__name__)
 
-QUEUE_NAME = "workflow-executions"
+async def _accept(pending: PendingExecution, message: dict[str, Any]) -> None:
+    """Commit the run durably, then hand it to the broker."""
+    async with get_dispatch_db_context() as db:
+        accepted = await stage_workflow_run(db, pending, message, record_exists=False)
+        await db.commit()
+    await hand_off_workflow_run(accepted)
 
 
-async def _publish_pending(
+def _pending_run(
     execution_id: str,
     workflow_id: str | None,
     parameters: dict[str, Any],
@@ -52,24 +63,14 @@ async def _publish_pending(
     is_platform_admin: bool,
     file_path: str | None,
     event: dict[str, Any] | None = None,
-    execution_record_exists: bool = False,
     dispatch_metadata: dict[str, Any] | None = None,
     artifact_workspace_id: str | None = None,
     *,
     lineage: dict[str, str] | None,
-) -> None:
-    """
-    Write a pending-execution blob to Redis, register with the queue tracker,
-    and publish the minimal dispatch message to RabbitMQ.
-
-    Shared by the run-now path (enqueue_workflow_execution) and the deferred
-    execution promoter. Callers are responsible for generating execution_id
-    before calling this helper.
-    """
-    redis_client = get_redis_client()
-
-    # Store pending execution in Redis (worker needs this for execution context)
-    await redis_client.set_pending_execution(
+    impersonation_provenance: dict[str, str] | None = None,
+) -> tuple[PendingExecution, dict[str, Any]]:
+    """The run's durable context and its dispatch message."""
+    pending = pending_execution_record(
         execution_id=execution_id,
         workflow_id=workflow_id,
         parameters=parameters,
@@ -87,30 +88,51 @@ async def _publish_pending(
         event=event,
         artifact_workspace_id=artifact_workspace_id,
         lineage=lineage,
+        impersonation_provenance=(
+            current_durable_impersonation().pending_value()
+            if impersonation_provenance is None
+            else impersonation_provenance
+        ),
     )
-
-    # Sync callers wait on their private result list and cannot consume queue
-    # position events. RabbitMQ and the worker pool still provide admission and
-    # resource protection; avoid the extra sorted-set write and N broadcasts.
-    if not sync:
-        await add_to_queue(execution_id)
-
-    # Prepare queue message (the consumer reads full context from Redis)
     message: dict[str, Any] = {
         "execution_id": execution_id,
         "workflow_id": workflow_id,
         "sync": sync,
-        "execution_record_exists": execution_record_exists,
     }
     if dispatch_metadata is not None:
         message["dispatch_metadata"] = dispatch_metadata
-
     # Include file_path for fast direct loading (avoids filesystem scan)
     if file_path:
         message["file_path"] = file_path
+    return pending, message
 
-    # Enqueue message via RabbitMQ
-    await publish_message(QUEUE_NAME, message)
+
+async def _publish_pending(**run: Any) -> None:
+    """Durably accept a workflow run and dispatch it to a worker."""
+    await _accept(*_pending_run(**run))
+
+
+def _context_fields(context: ExecutionContext) -> dict[str, Any]:
+    """The run-context fields a pending run carries for its worker."""
+    # EventContext is a dataclass with primitive fields, so dict
+    # serialization is lossless and JSON-safe for transit.
+    event_payload: dict[str, Any] | None = None
+    if context.event is not None:
+        import dataclasses
+
+        event_payload = dataclasses.asdict(context.event)
+    return {
+        "org_id": context.org_id,
+        "user_id": context.user_id,
+        "user_name": context.name,
+        "user_email": context.email,
+        "startup": context.startup,
+        "form_inputs": context.form_inputs,
+        "embed": context.embed,
+        "is_platform_admin": context.is_platform_admin,
+        "event": event_payload,
+        "artifact_workspace_id": context.artifact_workspace_id,
+    }
 
 
 async def enqueue_workflow_execution(
@@ -129,8 +151,8 @@ async def enqueue_workflow_execution(
     """
     Enqueue a workflow for async execution.
 
-    Stores pending execution in Redis, publishes to RabbitMQ,
-    and returns execution ID immediately (<100ms target).
+    Commits the run and its dispatch, wakes the executors, and returns the
+    execution ID immediately (<100ms target).
 
     Args:
         context: Request context with org scope and user info
@@ -150,34 +172,17 @@ async def enqueue_workflow_execution(
     if execution_id is None:
         execution_id = str(uuid.uuid4())
 
-    # Serialize event context for cross-process transit. EventContext is a
-    # dataclass with primitive fields, so dict serialization is lossless and
-    # JSON-safe for Redis storage.
-    event_payload: dict[str, Any] | None = None
-    if context.event is not None:
-        import dataclasses
-        event_payload = dataclasses.asdict(context.event)
-
     await _publish_pending(
         execution_id=execution_id,
         workflow_id=workflow_id,
         parameters=parameters,
-        org_id=context.org_id,
-        user_id=context.user_id,
-        user_name=context.name,
-        user_email=context.email,
         form_id=form_id,
-        startup=context.startup,
-        form_inputs=context.form_inputs,
-        embed=context.embed,
         api_key_id=api_key_id,
         sync=sync,
-        is_platform_admin=context.is_platform_admin,
         file_path=file_path,
-        event=event_payload,
         dispatch_metadata=dispatch_metadata,
-        artifact_workspace_id=context.artifact_workspace_id,
         lineage=lineage.bound(execution_id) if lineage else None,
+        **_context_fields(context),
     )
 
     logger.info(
@@ -205,8 +210,8 @@ async def enqueue_code_execution(
     """
     Enqueue inline code for async execution.
 
-    Stores pending execution in Redis, publishes to RabbitMQ,
-    and returns execution ID immediately (<100ms target).
+    Commits the run and its dispatch, wakes the executors, and returns the
+    execution ID immediately (<100ms target).
 
     Args:
         context: Request context with org scope and user info
@@ -219,14 +224,11 @@ async def enqueue_code_execution(
     Returns:
         execution_id: UUID of the queued execution
     """
-    redis_client = get_redis_client()
-
     # Generate or use provided execution ID
     if execution_id is None:
         execution_id = str(uuid.uuid4())
 
-    # Store pending execution in Redis (worker needs this for execution context)
-    await redis_client.set_pending_execution(
+    pending = pending_execution_record(
         execution_id=execution_id,
         workflow_id=None,  # No workflow ID for inline code
         script_name=script_name,
@@ -243,23 +245,17 @@ async def enqueue_code_execution(
         is_platform_admin=context.is_platform_admin,
         artifact_workspace_id=context.artifact_workspace_id,
         lineage=lineage.bound(execution_id) if lineage else None,
+        impersonation_provenance=current_durable_impersonation().pending_value(),
     )
-
-    # Sync callers wait on their private result list and cannot consume queue
-    # position events. Match workflow execution enqueue behavior.
-    if not sync:
-        await add_to_queue(execution_id)
-
-    # Prepare queue message with code
-    message = {
-        "execution_id": execution_id,
-        "code": code_base64,
-        "script_name": script_name,
-        "sync": sync,
-    }
-
-    # Enqueue message via RabbitMQ
-    await publish_message(QUEUE_NAME, message)
+    await _accept(
+        pending,
+        {
+            "execution_id": execution_id,
+            "code": code_base64,
+            "script_name": script_name,
+            "sync": sync,
+        },
+    )
 
     logger.info(
         f"Enqueued async code execution: {log_safe(script_name)}",
@@ -273,56 +269,45 @@ async def enqueue_code_execution(
     return execution_id
 
 
-async def enqueue_system_workflow_execution(
+async def stage_system_workflow_execution(
+    db: AsyncSession,
     workflow_id: str,
     parameters: dict[str, Any],
-    source: str,
     org_id: str | None = None,
     event: EventContext | None = None,
     *,
     lineage: RunLineage,
-) -> str:
-    """
-    Enqueue a system-triggered workflow execution.
+) -> AcceptedRun:
+    """Stage a system-triggered workflow run in the caller's transaction.
 
-    Handles execution_id generation internally - callers don't need to pre-generate.
-    Uses the system user for executions not triggered by a real user
-    (webhooks, schedules, topic events).
+    Runs as the selected workflow identity for unattended effects (webhooks,
+    schedules, topic events). The run commits with the caller's own record
+    of it (an event delivery); hand it off with ``hand_off_workflow_run``
+    after that commit.
 
     Args:
+        db: The caller's session; nothing is committed here
         workflow_id: UUID of workflow to execute
         parameters: Workflow parameters
-        source: Display name for what triggered this (e.g., "Event System", "Scheduled Execution")
         org_id: Optional organization scope (UUID string, not "ORG:" prefixed)
         event: Optional EventContext populated for event-triggered executions
         lineage: The identity the run is for (shared.run_lineage.unattended_lineage)
-
-    Returns:
-        execution_id: UUID string of the queued execution
     """
-    # Generate execution_id once - used for both context and Redis
+    from shared.unattended_execution import create_unattended_context
+
     execution_id = str(uuid.uuid4())
-
-    from src.config import get_settings
-
-    context = ExecutionContext(
-        user_id=SYSTEM_USER_ID,
-        email=SYSTEM_USER_EMAIL,
-        name=source,
-        scope=f"ORG:{org_id}" if org_id else "GLOBAL",
-        organization=None,
-        is_platform_admin=True,
-        is_function_key=False,
-        execution_id=execution_id,
-        workflow_name="",  # Will be set by worker when loading workflow
-        public_url=get_settings().public_url,
-        event=event,
+    context = await create_unattended_context(
+        db, lineage=lineage, execution_id=execution_id, org_id=org_id, event=event,
     )
-
-    return await enqueue_workflow_execution(
-        context=context,
+    pending, message = _pending_run(
+        execution_id=execution_id,
         workflow_id=workflow_id,
         parameters=parameters,
-        execution_id=execution_id,  # Pass explicitly to avoid double generation
-        lineage=lineage,
+        form_id=None,
+        api_key_id=None,
+        sync=False,
+        file_path=None,
+        lineage=lineage.bound(execution_id),
+        **_context_fields(context),
     )
+    return await stage_workflow_run(db, pending, message, record_exists=False)

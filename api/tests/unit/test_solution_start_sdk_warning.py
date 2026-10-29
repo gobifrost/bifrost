@@ -11,6 +11,7 @@ Rules (see sdk_staleness_warning docstring / task-6 brief):
 
 import json
 
+import pytest
 import yaml
 from click.testing import CliRunner
 from unittest.mock import AsyncMock
@@ -53,6 +54,18 @@ class _SdkResponse:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise RuntimeError(self.text)
+
+
+@pytest.fixture(autouse=True)
+def _stub_dev_app_binding(monkeypatch):
+    """Keep SDK-warning coverage focused on the version check, not session minting."""
+
+    async def _identity_binding(_client, chosen, _solution_id):
+        return chosen
+
+    monkeypatch.setattr(
+        "bifrost.commands.solution._bind_dev_app", _identity_binding
+    )
 
 
 class _SolutionSdkClient:
@@ -247,7 +260,7 @@ def _start_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
 
     class _FakeHost:
-        def __init__(self, workspace):
+        def __init__(self, workspace, *, client):
             pass
 
         def reload(self):

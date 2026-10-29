@@ -638,6 +638,7 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         self,
         organization_id: UUID | None = None,
         include_global: bool = True,
+        visibility_clause=None,
     ) -> list[NamespaceInfo]:
         """
         List all namespaces with document counts per scope.
@@ -645,6 +646,8 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         Args:
             organization_id: If provided, include org-scoped counts. Defaults to self.org_id.
             include_global: If True, include global namespaces
+            visibility_clause: Pre-pagination authorization predicate for all
+                visible organization rows.
 
         Returns:
             List of NamespaceInfo with scope counts
@@ -661,8 +664,12 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             KnowledgeStore.organization_id,
         )
 
-        # Filter by what we want to see
-        if target_org_id and include_global:
+        # A caller-provided visibility predicate already expresses every
+        # permitted organization plus Global defaults. Apply it before the
+        # aggregate count; otherwise retain the historical single-scope API.
+        if visibility_clause is not None:
+            stmt = stmt.where(visibility_clause)
+        elif target_org_id and include_global:
             stmt = stmt.where(
                 (KnowledgeStore.organization_id == target_org_id) |
                 (KnowledgeStore.organization_id.is_(None))

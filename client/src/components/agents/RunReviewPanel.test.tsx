@@ -3,10 +3,12 @@ import { renderWithProviders, screen } from "@/test-utils";
 import type { components } from "@/lib/v1";
 
 const mockRegenSummary = vi.fn();
-const mockAuth = vi.fn(() => ({ isPlatformAdmin: true }));
+const mockAuthorization = vi.fn(() => ({
+	canAt: (): boolean => true,
+}));
 
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => mockAuth(),
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
 }));
 
 vi.mock("@/services/agentRuns", () => ({
@@ -563,8 +565,10 @@ describe("RunReviewPanel", () => {
 		).toBeInTheDocument();
 	});
 
-	it("disables regen for non-admins but still shows it (tooltip)", () => {
-		mockAuth.mockReturnValueOnce({ isPlatformAdmin: false });
+	it("disables regeneration without run-write permission but still shows it", () => {
+		mockAuthorization.mockReturnValueOnce({
+			canAt: (): boolean => false,
+		});
 		renderWithProviders(
 			<RunReviewPanel
 				run={{

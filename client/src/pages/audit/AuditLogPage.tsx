@@ -1,14 +1,13 @@
-import {
-	PageWorkspace,
-	PageScrollArea,
-} from "@/components/layout/PageWorkspace";
+import { RunUserLabel } from "@/components/audit/RunUserLabel";
+import { PageScrollArea } from "@/components/layout/PageWorkspace";
 import { AuditOutcome } from "./AuditOutcome";
 import { AuditEventCards } from "./AuditEventCards";
 import { AuditPagination } from "./AuditPagination";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { PageLoader } from "@/components/PageLoader";
 import { useAuditLog } from "@/hooks/useAuditLog";
 import type { AuditLogEntry, GetAuditLogParams } from "@/hooks/useAuditLog";
 import { getErrorMessage } from "@/lib/api-error";
@@ -25,6 +24,9 @@ import { Button } from "@/components/ui/button";
 import { AuditFilters } from "./AuditFilters";
 import { AuditRetentionBanner } from "./AuditRetentionBanner";
 import { AuditExportDialog } from "./AuditExportDialog";
+import { AuditEventDrawer } from "@/components/audit/AuditEventDrawer";
+
+import { AuditPageLayout } from "./AuditPageLayout";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
@@ -48,7 +50,8 @@ function auditContext(entry: AuditLogEntry): string {
 }
 
 export function AuditLogPage() {
-	const { isPlatformAdmin } = useAuth();
+	const { canAnywhere, isLoading: authorizationLoading } = useAuthorization();
+	const canReadAudit = canAnywhere("roleassignments.read");
 	const navigate = useNavigate();
 	const desktop = useMediaQuery("(min-width: 1024px)");
 
@@ -60,6 +63,16 @@ export function AuditLogPage() {
 	const [continuationTokens, setContinuationTokens] = useState<string[]>([]);
 	const [currentPage, setCurrentPage] = useState(0);
 	const [exportOpen, setExportOpen] = useState(false);
+	const [selected, setSelected] = useState<{
+		entry: AuditLogEntry;
+		opener: HTMLElement | null;
+	}>();
+	const [drawerOpen, setDrawerOpen] = useState(false);
+
+	const openEvent = (entry: AuditLogEntry, opener: HTMLElement | null) => {
+		setSelected({ entry, opener });
+		setDrawerOpen(true);
+	};
 
 	const resetPagination = () => {
 		setContinuationTokens([]);
@@ -96,7 +109,7 @@ export function AuditLogPage() {
 	);
 	const { data, isLoading, isFetching, error, refetch } = useAuditLog(
 		queryParams,
-		!invalidDateRange,
+		canReadAudit && !invalidDateRange,
 		{ preservePageData: true },
 	);
 
@@ -128,14 +141,15 @@ export function AuditLogPage() {
 		if (currentPage > 0) setCurrentPage(currentPage - 1);
 	};
 
-	if (!isPlatformAdmin) {
+	if (authorizationLoading)
+		return <PageLoader message="Loading audit log…" />;
+	if (!canReadAudit) {
 		return (
 			<div className="container mx-auto py-8">
 				<Alert variant="destructive">
 					<AlertCircle className="h-4 w-4" />
 					<AlertDescription>
 						You do not have permission to view the audit log.
-						Platform administrator access is required.
 					</AlertDescription>
 				</Alert>
 				<Button onClick={() => navigate("/")} className="mt-4">
@@ -146,33 +160,24 @@ export function AuditLogPage() {
 	}
 
 	return (
-		<PageWorkspace className="mx-auto flex w-full min-w-0 max-w-[1400px] flex-col gap-5">
-			{/* Header */}
+		<AuditPageLayout
+			view="activity"
+			actions={
+				<Button
+					variant="outline"
+					size="icon"
+					onClick={() => refetch()}
+					disabled={isFetching || invalidDateRange}
+					aria-label="Refresh audit log"
+					className="size-11"
+				>
+					<RefreshCw
+						className={`h-4 w-4 ${isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
+					/>
+				</Button>
+			}
+		>
 			<div className="shrink-0 space-y-6">
-				<div className="flex items-start justify-between gap-4">
-					<div>
-						<h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
-							Audit Log
-						</h1>
-						<p className="mt-2 text-sm text-muted-foreground">
-							Trace security decisions and administrative activity
-							across the platform
-						</p>
-					</div>
-					<Button
-						variant="outline"
-						size="icon"
-						onClick={() => refetch()}
-						disabled={isFetching || invalidDateRange}
-						aria-label="Refresh audit log"
-						className="size-11 shrink-0"
-					>
-						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
-						/>
-					</Button>
-				</div>
-
 				<AuditRetentionBanner
 					retention={data?.retention}
 					onExport={() => setExportOpen(true)}
@@ -202,7 +207,7 @@ export function AuditLogPage() {
 			</div>
 
 			{/* Content */}
-			<PageScrollArea className="lg:overflow-hidden">
+			<PageScrollArea>
 				<div
 					className="flex min-w-0 flex-col lg:h-full lg:min-h-0"
 					hidden={invalidDateRange}
@@ -273,16 +278,38 @@ export function AuditLogPage() {
 									</DataTableHeader>
 									<DataTableBody>
 										{entries.map((entry: AuditLogEntry) => (
-											<DataTableRow key={entry.id}>
+											<DataTableRow
+												key={entry.id}
+												clickable
+												onClick={(event) =>
+													openEvent(
+														entry,
+														event.currentTarget.querySelector(
+															"button",
+														),
+													)
+												}
+											>
 												<DataTableCell className="font-mono text-xs whitespace-nowrap">
 													{new Date(
 														entry.timestamp,
 													).toLocaleString()}
 												</DataTableCell>
 												<DataTableCell>
-													<Badge variant="secondary">
-														{entry.action}
-													</Badge>
+													<button
+														type="button"
+														className="rounded-[var(--bf-radius-control)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+														onClick={(event) =>
+															openEvent(
+																entry,
+																event.currentTarget,
+															)
+														}
+													>
+														<Badge variant="secondary">
+															{entry.action}
+														</Badge>
+													</button>
 												</DataTableCell>
 												<DataTableCell>
 													<AuditOutcome
@@ -290,11 +317,7 @@ export function AuditLogPage() {
 													/>
 												</DataTableCell>
 												<DataTableCell className="text-sm">
-													{entry.actor.user_email ||
-														entry.actor.user_name ||
-														(entry.source !== "http"
-															? `(${entry.source})`
-															: "(unauthenticated)")}
+													<RunUserLabel entry={entry} />
 												</DataTableCell>
 												<DataTableCell className="text-sm text-muted-foreground">
 													<div className="whitespace-normal [overflow-wrap:anywhere]">
@@ -319,6 +342,7 @@ export function AuditLogPage() {
 								<AuditEventCards
 									entries={entries}
 									context={auditContext}
+									onOpen={openEvent}
 								/>
 							)}
 							<AuditPagination
@@ -348,6 +372,12 @@ export function AuditLogPage() {
 					)}
 				</div>
 			</PageScrollArea>
+			<AuditEventDrawer
+				entry={selected?.entry}
+				open={drawerOpen}
+				onOpenChange={setDrawerOpen}
+				returnFocus={selected?.opener}
+			/>
 			{exportOpen && (
 				<AuditExportDialog
 					defaultAction={actionGroup === "All" ? "" : actionGroup}
@@ -356,7 +386,7 @@ export function AuditLogPage() {
 					onClose={() => setExportOpen(false)}
 				/>
 			)}
-		</PageWorkspace>
+		</AuditPageLayout>
 	);
 }
 

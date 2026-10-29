@@ -127,9 +127,8 @@ class TestSpikeSolutionRef:
                 solution_id=None, form_id=None, app_id=None,
             )
 
-    async def test_signed_engine_claim_beats_spoofed_param(self, db_session):
-        """Codex P1: the signed engine_solution_id is the caller even when a
-        request param claims otherwise."""
+    async def test_verified_runtime_solution_beats_spoofed_param(self, db_session):
+        """Only resolved runtime authority may attest the caller install."""
         from src.services.solution_scope import resolve_trustworthy_caller
 
         org = (await _org(db_session)).id
@@ -140,8 +139,7 @@ class TestSpikeSolutionRef:
             app_id=None,
             caller_solution_id=str(spoof),
             user=SimpleNamespace(
-                engine_execution_id="exec-1",
-                engine_solution_id=str(real.id),
+                runtime_authority=SimpleNamespace(solution_id=real.id),
             ),
         )
         assert await resolve_trustworthy_caller(db_session, ctx) == real.id

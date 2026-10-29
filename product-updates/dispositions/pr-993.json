@@ -1,0 +1,15 @@
+{
+  "key": "pr:993",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Local Solution previews use the signed-in user's permissions to access sealed install data. Unresolved table queries report an error instead of appearing empty.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/993",
+      "Classification and copy reviewed by Codex on 2026-10-17: concise routine-fix summary; no security disclosure or customer upgrade action.",
+      "Jack authorized merging this repair after testing in Codex chat 01a14785-b4ea-7912-b616-16dbf2191b59; Codex performed the editorial review under that authorization."
+    ]
+  }
+}

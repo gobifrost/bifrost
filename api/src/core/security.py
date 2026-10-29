@@ -423,50 +423,10 @@ it to the child over Redis (see docs/plans/2026-09-20-services-credential-design
 Short enough to bound a fenced child's residual API access; long enough that
 a missed heartbeat never strands a healthy child."""
 
-ENGINE_SDK_ACTOR_EMAIL = "engine@bifrost.internal"
-"""Effective SDK actor for workflow executions.
-
-HTTP workflow SDK requests authenticate with ``mint_engine_token()`` (this
-address); worker-local engine SDK calls must attribute ``Config.updated_by``
-to the same value — never to the initiating user's ``caller.email``.
-"""
-
-
-def service_sdk_actor_email(service_id: str) -> str:
-    """Effective SDK actor email for one supervised service.
-
-    Single helper shared by security token minting (``mint_service_token``,
-    the ``service_claim`` dispatch context) and the execution-context
-    validator (``shared.execution_context``), so HTTP and worker-local
-    ``Config.updated_by`` attribution agree by construction. ``service_id``
-    must be a UUID; anything else raises ``ValueError`` so the caller fails
-    closed instead of attributing a write to a forged or blank value.
-    """
-    from uuid import UUID as _UUID
-
-    if not isinstance(service_id, str) or not service_id.strip():
-        raise ValueError(
-            f"service identity {service_id!r} is not a valid service id; "
-            "refusing to derive a service actor email"
-        )
-    try:
-        _UUID(service_id)
-    except ValueError:
-        raise ValueError(
-            f"service identity {service_id!r} is not a valid UUID; "
-            "refusing to derive a service actor email"
-        ) from None
-    short_id = service_id.replace("-", "")[:12]
-    return f"service-{short_id}@bifrost.internal"
-
-
 def mint_service_token(
     *,
     service_id: str,
     attempt_id: str,
-    organization_id: str,
-    solution_id: str | None,
-    global_repo_access: bool,
     lifetime_seconds: int = SERVICE_TOKEN_LIFETIME_SECONDS,
 ) -> tuple[str, str]:
     """
@@ -477,36 +437,17 @@ def mint_service_token(
     installs the token as process-scoped SDK credentials — no SECRET_KEY or
     persistent credential write is required there.
 
-    Shape (see docs/plans/2026-09-20-services-credential-design.md D1):
-    an engine token minus superuser plus org scope. ``sub`` stays the engine
-    sentinel so the signed module-fetch scope (``sdk_modules``) and engine
-    attestation paths (``solution_scope``, ``tables`` created_by override)
-    keep working with zero auth-path changes; ``is_superuser=False`` plus the
-    definition's ``org_id`` reduces the token to org-member data-plane power.
-
-    Services are always org-scoped: a non-superuser token without ``org_id``
-    is rejected at authentication, so organization_id is required.
+    The token identifies only the durable attempt and its service definition.
+    Authentication re-loads all identity, organization, workflow, lineage,
+    and permission facts from the database on every request.
 
     Returns:
         (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
     """
-    from src.core.constants import SYSTEM_USER_ID
-
-    if not organization_id:
-        raise ValueError("Service tokens require an organization_id.")
-
-    short_id = service_id.replace("-", "")[:12]
     token_data = {
-        "sub": SYSTEM_USER_ID,
-        "email": service_sdk_actor_email(service_id),
-        "name": f"service-{short_id}",
-        "is_superuser": False,
-        "org_id": organization_id,
-        "engine_execution_id": attempt_id,
-        "engine_solution_id": solution_id,
-        "engine_global_repo_access": bool(global_repo_access),
+        "sub": attempt_id,
+        "credential_kind": "service_attempt",
         "service_id": service_id,
-        "service_attempt_id": attempt_id,
     }
 
     lifetime = timedelta(seconds=lifetime_seconds)
@@ -514,20 +455,10 @@ def mint_service_token(
     token = create_access_token(token_data, expires_delta=lifetime)
 
     return token, expires_at.isoformat()
-
-
 def mint_engine_token(
     *,
     execution_id: str,
-    solution_id: str | None,
-    global_repo_access: bool,
     timeout_seconds: int,
-    caller_user_id: str | None = None,
-    caller_organization_id: str | None = None,
-    caller_email: str | None = None,
-    caller_name: str | None = None,
-    engine_workflow_id: str | None = None,
-    lineage: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """
     Mint a short-lived, execution-scoped engine token parent-side.
@@ -538,56 +469,16 @@ def mint_engine_token(
     the child installs the token as process-scoped SDK credentials — no
     SECRET_KEY or persistent credential write is required there.
 
-    The signed Solution claims are authoritative for internal module-fetch
-    endpoints. A child cannot broaden its source-code scope by changing query
-    parameters. The token lifetime covers the workflow timeout plus five
-    minutes for startup and completion flushing; a workflow with no timeout
-    (timeout_seconds=0) gets a 24h token, matching the engine's wait cap.
-
-    The optional ``caller_*`` arguments are emitted as ``engine_caller_*``
-    claims (omitted when ``None``). They are **audit attribution only**: they
-    never change ``sub``, ``is_superuser``, or any authorization decision,
-    and are read only by the audit actor builder.
-
-    ``engine_workflow_id`` is likewise **attribution only**: it feeds the
-    per-workflow catalog-operation-usage counter
-    (``src.core.app_wiring._record_workflow_operation_usage``) and is never
-    read for authorization.
-
-    ``lineage`` (the execution's bound run lineage) is emitted as
-    ``engine_run_user_id``, ``engine_started_by_user_id`` and
-    ``engine_root_execution_id`` — likewise **attribution only**.
+    The token identifies only the durable execution. Authentication derives
+    all other runtime facts from the execution row on every request.
 
     Returns:
         (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
     """
-    ENGINE_USER_ID = "00000000-0000-0000-0000-000000000001"
-
     token_data = {
-        "sub": ENGINE_USER_ID,
-        "email": ENGINE_SDK_ACTOR_EMAIL,
-        "name": "Bifrost Engine",
-        "is_superuser": True,
-        "engine_execution_id": execution_id,
-        "engine_solution_id": solution_id,
-        "engine_global_repo_access": bool(global_repo_access),
+        "sub": execution_id,
+        "credential_kind": "workflow_execution",
     }
-    if engine_workflow_id is not None:
-        token_data["engine_workflow_id"] = engine_workflow_id
-
-    caller_claims = {
-        "engine_caller_user_id": caller_user_id,
-        "engine_caller_org_id": caller_organization_id,
-        "engine_caller_email": caller_email,
-        "engine_caller_name": caller_name,
-    }
-    token_data.update(
-        {key: value for key, value in caller_claims.items() if value is not None}
-    )
-    if lineage is not None:
-        token_data["engine_run_user_id"] = lineage["run_user_id"]
-        token_data["engine_started_by_user_id"] = lineage["started_by_user_id"]
-        token_data["engine_root_execution_id"] = lineage["root_execution_id"]
 
     # timeout_seconds == 0 means "no timeout" everywhere else in the engine
     # (process_pool, execution_cleanup, and the 24h BLPOP cap in
@@ -600,53 +491,3 @@ def mint_engine_token(
     token = create_access_token(token_data, expires_delta=lifetime)
 
     return token, expires_at.isoformat()
-
-
-def authenticate_engine() -> None:
-    """
-    Create/refresh engine credentials for SDK calls in worker processes.
-
-    LEGACY PATH — called by worker.py only when no pre-minted token is
-    available in context_data (e.g. direct engine.execute() calls from tests
-    that bypass the consumer).  Production executions dispatched through the
-    consumer should always carry context_data["engine_token"] from
-    mint_engine_token() instead.
-
-    The SDK's get_client() will find these credentials automatically, making
-    the worker behave identically to CLI mode but with superuser privileges.
-    """
-    import os
-
-    from bifrost.credentials import save_credentials
-
-    # Use a fixed UUID for the engine service account
-    # This is a well-known UUID that represents the execution engine
-    ENGINE_USER_ID = "00000000-0000-0000-0000-000000000001"
-
-    # Create a long-lived superuser token (30 days)
-    # is_superuser=True with no org_id = system account with global access
-    token_data = {
-        "sub": ENGINE_USER_ID,
-        "email": ENGINE_SDK_ACTOR_EMAIL,
-        "name": "Bifrost Engine",
-        "is_superuser": True,
-    }
-
-    token = create_access_token(
-        token_data,
-        expires_delta=timedelta(days=30)
-    )
-
-    # Get API URL for internal communication
-    api_url = os.getenv("BIFROST_API_URL", "http://api:8000")
-
-    # Calculate expiration timestamp
-    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
-
-    # Save to credentials file - SDK will find this automatically
-    save_credentials(
-        api_url=api_url,
-        access_token=token,
-        refresh_token=token,  # Not used but required by schema
-        expires_at=expires_at.isoformat(),
-    )

@@ -12,9 +12,12 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
+
+if TYPE_CHECKING:
+    from bifrost.client import BifrostClient
 
 # Folders that never hold solution source — skip for speed and to avoid
 # importing build output / deps. (Discovery is intentionally layout-agnostic:
@@ -215,8 +218,9 @@ class FunctionHost:
     ``context.org_id`` / use the data-plane behave as under ``bifrost run``.
     """
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, client: BifrostClient | None = None) -> None:
         self._workspace = workspace
+        self._client = client
         self._fns: dict[str, Callable[..., Any]] = {}
         self._failures: dict[str, str] = {}
         self._index = LocalWorkflowIndex()
@@ -262,8 +266,14 @@ class FunctionHost:
         return self._index.by_ref.get(ref)
 
     async def run(self, ref: str, params: dict[str, Any]) -> Any:
-        fn = self._fns[ref]  # KeyError → caller maps to 404
-        result = fn(**params)
-        if inspect.isawaitable(result):
-            result = await result
-        return result
+        from bifrost.client import _local_dev_client
+
+        token = _local_dev_client.set(self._client)
+        try:
+            fn = self._fns[ref]  # KeyError → caller maps to 404
+            result = fn(**params)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+        finally:
+            _local_dev_client.reset(token)

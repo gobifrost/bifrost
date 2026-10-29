@@ -11,6 +11,8 @@ Verbs:
 * ``bifrost files write <path> (--content S | --from-file F | -) [--create-only | --expected-version VERSION]``
 * ``bifrost files list [directory] [--location LOC] [--solution SLUG|ID]``
 * ``bifrost files delete <path> [--location LOC]`` -> SDK ``files.delete``
+* ``bifrost files move SOURCE DESTINATION --location LOC [--solution SLUG|ID] [--rename]
+  [--timeout SECONDS]`` -> durable ``POST /api/files/move`` job
 * ``bifrost files exists <path> [--location LOC]`` -> SDK ``files.exists``;
   exits 0 if exists, 1 if not
 * ``bifrost files search <query> [--regex] [--case-sensitive] [--include GLOB]
@@ -27,6 +29,7 @@ for the laptop CLI where the user controls cwd directly.
 
 from __future__ import annotations
 
+import json
 import shlex
 import sys
 from pathlib import Path
@@ -39,6 +42,7 @@ import uuid as _uuid_module
 
 from bifrost.client import BifrostClient
 from bifrost.files import files as files_sdk
+from bifrost.platform_jobs import poll_platform_job
 
 from .base import entity_group, output_result, pass_resolver, run_async
 
@@ -378,6 +382,87 @@ async def delete_cmd(
         },
     )
     response.raise_for_status()
+
+
+@files_group.command("move")
+@click.argument("source")
+@click.argument("destination")
+@click.option("--location", required=True, help=_LOCATION_HELP)
+@click.option("--solution", "solution_ref", default=None, help=_SOLUTION_HELP)
+@click.option(
+    "--rename",
+    is_flag=True,
+    default=False,
+    help="If the destination exists, use the next free 'name (n).ext' instead of failing.",
+)
+@click.option(
+    "--timeout",
+    "timeout_seconds",
+    type=float,
+    default=4 * 60 * 60,
+    show_default=True,
+    help="Seconds to follow the move job; the job keeps running after the CLI stops waiting.",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def move_cmd(
+    ctx: click.Context,
+    source: str,
+    destination: str,
+    location: str,
+    solution_ref: str | None,
+    rename: bool,
+    timeout_seconds: float,
+    *,
+    client: BifrostClient,
+    resolver,  # noqa: ARG001
+) -> None:
+    """Move one file within a location as a durable server-side job.
+
+    The file is copied server-side, its metadata follows it, and the original
+    is deleted only after the copy is verified. Workspace files cannot be
+    moved. Prints the final path.
+    """
+    query = ""
+    if solution_ref is not None:
+        install_id = await _resolve_solution_install_id(client, solution_ref)
+        query = f"?solution={install_id}"
+    response = await client.post(
+        f"/api/files/move{query}",
+        json={
+            "source": source,
+            "destination": destination,
+            "location": location,
+            "on_conflict": "rename" if rename else "error",
+        },
+    )
+    response.raise_for_status()
+    job_id = str(response.json()["job_id"])
+    try:
+        job = await poll_platform_job(
+            client,
+            job_id,
+            label="Moving file",
+            timeout_seconds=timeout_seconds,
+            timeout_operation="file move",
+        )
+    except click.ClickException:
+        # poll_platform_job keeps only the message; show what the job recorded.
+        try:
+            detail = await client.get(f"/api/platform-jobs/{job_id}")
+            stored = detail.json().get("result") if detail.status_code == 200 else None
+        except Exception:
+            stored = None
+        if stored is not None:
+            click.echo(json.dumps(stored, indent=2), err=True)
+        raise
+    (result,) = job["result"]["results"]
+    if result["status_code"] != 200:
+        raise click.ClickException(
+            f"Move failed ({result['status_code']}): {result.get('error') or 'unknown error'}"
+        )
+    click.echo(result.get("path") or result["destination"])
 
 
 @files_group.command("exists")

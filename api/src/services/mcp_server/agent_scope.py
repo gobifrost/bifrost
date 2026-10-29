@@ -6,10 +6,13 @@ as scope["mcp_agent_id"], and rewrites the path to /mcp so FastMCP's
 route matcher works. Non-UUID paths (including /mcp/callback) pass through.
 """
 
+import contextvars
 import re
 from uuid import UUID
 
-from fastmcp.server.dependencies import get_http_request
+_REQUEST_SCOPE: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "mcp_request_scope", default=None
+)
 
 # Match /mcp/{uuid} but not /mcp/callback or other non-UUID suffixes
 _AGENT_PATH_RE = re.compile(
@@ -19,9 +22,10 @@ _AGENT_PATH_RE = re.compile(
 
 
 def get_scoped_agent_id() -> UUID | None:
-    """Read the agent UUID written to the current FastMCP request scope."""
+    """Read the agent UUID written to the current MCP HTTP request scope."""
     try:
-        agent_id = get_http_request().scope.get("mcp_agent_id")
+        scope = _REQUEST_SCOPE.get()
+        agent_id = None if scope is None else scope.get("mcp_agent_id")
         return UUID(agent_id) if agent_id else None
     except (RuntimeError, ValueError, AttributeError):
         # No HTTP context, malformed UUID, or an unexpected scope shape.
@@ -35,6 +39,7 @@ class AgentScopeMCPMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        scope_token = None
         if scope["type"] in ("http", "websocket"):
             path = scope.get("path", "")
             match = _AGENT_PATH_RE.match(path)
@@ -42,4 +47,9 @@ class AgentScopeMCPMiddleware:
                 scope["mcp_agent_id"] = match.group(2)
                 # Rewrite path to /mcp (preserving any trailing path like /mcp/sse)
                 scope["path"] = match.group(1) + (match.group(3) or "")
-        await self.app(scope, receive, send)
+            scope_token = _REQUEST_SCOPE.set(scope)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if scope_token is not None:
+                _REQUEST_SCOPE.reset(scope_token)

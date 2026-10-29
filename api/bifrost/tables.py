@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlencode
 
-from .client import get_client, raise_for_status_with_detail
+from .client import BifrostAPIError, get_client, raise_for_status_with_detail
 from .models import (
     TableInfo,
     DocumentData,
@@ -39,6 +39,25 @@ from ._context import resolve_scope, _execution_context, get_effective_solution
 def _current_context():
     """Return the active ExecutionContext, or None if not in a workflow execution."""
     return _execution_context.get()
+
+
+def _raise_unresolved_dev_table(response, client) -> None:
+    """Do not turn an unresolved local data-plane request into an empty table.
+
+    The server deliberately uses the same 404 for missing and inaccessible
+    tables. Keep that distinction private, and retain document-not-found
+    behavior for individual row operations.
+    """
+    from bifrost.solution_dev.session import SolutionDevSession
+
+    if isinstance(getattr(client, "_solution_dev_session", None), SolutionDevSession):
+        raise BifrostAPIError(
+            "404: Local Solution table request could not be resolved or authorized. "
+            "Check the selected install, deployed table definition, and table policies; "
+            "this response is not an empty table.",
+            request=response.request,
+            response=response,
+        )
 
 
 def _scope_query(scope: str | None, solution: str | None = None) -> str:
@@ -69,6 +88,19 @@ def _scope_query(scope: str | None, solution: str | None = None) -> str:
 def _has_solution_context() -> bool:
     ctx = _current_context()
     return bool(getattr(ctx, "solution_id", None)) if ctx is not None else False
+
+
+def _resolve_batch_scope(scope: str | None) -> str | None:
+    """Preserve caller-requested batch scopes, but leave inherited Solution scope implicit.
+
+    Solution-owned global tables have no organization ID. Sending a workflow's
+    inherited caller organization as an explicit scope makes the API correctly
+    require an organization-owned table instead. An explicit caller scope keeps
+    the normal SDK validation and server authorization checks.
+    """
+    if scope is None and _has_solution_context():
+        return None
+    return resolve_scope(scope)
 
 
 def _validate_batch_document_limit(documents: list[dict[str, Any]]) -> None:
@@ -642,7 +674,7 @@ class tables:
             created_by = str(ctx.user_id)
         if updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
             updated_by = str(ctx.user_id)
-        effective_scope = resolve_scope(scope)
+        effective_scope = _resolve_batch_scope(scope)
 
         items: list[dict[str, Any]] = []
         for doc in documents:
@@ -702,7 +734,7 @@ class tables:
             created_by = str(ctx.user_id)
         if upsert and updated_by is None and ctx is not None and getattr(ctx, "user_id", None) is not None:
             updated_by = str(ctx.user_id)
-        effective_scope = resolve_scope(scope)
+        effective_scope = _resolve_batch_scope(scope)
 
         items: list[dict[str, Any]] = []
         for doc in documents:
@@ -762,7 +794,7 @@ class tables:
         Example:
             >>> result = await tables.delete_batch("customers", ["acme-001", "beta-001"])
         """
-        effective_scope = resolve_scope(scope)
+        effective_scope = _resolve_batch_scope(scope)
         # The shared BifrostClient carries this over the worker's private
         # Unix socket when the engine injected one, and over the network
         # otherwise (a missing table maps to an empty result). A local
@@ -830,7 +862,8 @@ class tables:
 
         Returns:
             DocumentList: Query results with documents, total count, and
-            pagination info. Returns an empty list if the table doesn't exist.
+            pagination info. Returns an empty list if the table doesn't exist,
+            except in Solution development where an unresolved table raises.
 
         Example:
             >>> results = await tables.query("customers", where={"status": "active"})
@@ -859,6 +892,7 @@ class tables:
             retry_transient=True,
         )
         if response.status_code == 404:
+            _raise_unresolved_dev_table(response, client)
             return DocumentList(documents=[], total=0, limit=limit, offset=offset)
         raise_for_status_with_detail(response)
         return DocumentList.model_validate(response.json())
@@ -898,6 +932,7 @@ class tables:
                 f"/api/tables/{table}/documents/count{_scope_query(effective_scope)}",
             )
             if response.status_code == 404:
+                _raise_unresolved_dev_table(response, client)
                 return 0
             raise_for_status_with_detail(response)
             return response.json()["count"]

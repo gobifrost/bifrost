@@ -1,0 +1,10 @@
+{
+  "key": "pr:1048",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Hardens #1044 against production-only timing edges (heartbeat connection, claim errors, restart-time capacity) before any release carried it.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1048"]
+  }
+}

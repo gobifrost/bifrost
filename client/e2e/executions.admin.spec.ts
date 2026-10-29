@@ -368,9 +368,10 @@ test.describe("Execution History", () => {
 		api,
 		context,
 	}) => {
-		const executionId = await startExecution(api, workflowId, {
-			message: "exec-04",
-		});
+		// The Logs view lists every run's logs; a per-run message keeps this
+		// row unique when earlier runs of the suite left their logs behind.
+		const message = `exec-04-${workflowUnique}`;
+		const executionId = await startExecution(api, workflowId, { message });
 		await waitForTerminalSuccess(api, executionId);
 
 		await page.setViewportSize({ width: 1440, height: 900 });
@@ -378,12 +379,17 @@ test.describe("Execution History", () => {
 		await expect(
 			page.getByRole("region", { name: "History", exact: true }),
 		).toBeVisible({ timeout: 10_000 });
-		await page
-			.getByRole("switch", { name: "Logs view", exact: true })
-			.check();
+		// The switch reflects `?view=logs`, which the router commits after the
+		// click; wait for that state instead of requiring it synchronously.
+		const logsView = page.getByRole("switch", {
+			name: "Logs view",
+			exact: true,
+		});
+		await logsView.click();
+		await expect(logsView).toBeChecked();
 
 		const logRow = page.getByRole("row").filter({
-			hasText: "execution acceptance output exec-04",
+			hasText: `execution acceptance output ${message}`,
 		});
 		await expect(logRow).toBeVisible({ timeout: 10_000 });
 		await logRow.click();
@@ -405,7 +411,7 @@ test.describe("Execution History", () => {
 		).toHaveAttribute("aria-selected", "true");
 		await expect(
 			drawer.getByRole("tabpanel", { name: "Result", exact: true }),
-		).toContainText("exec-04");
+		).toContainText(message);
 		await expect(
 			drawer.getByRole("tabpanel", { name: "Result", exact: true }),
 		).toContainText(workflowMarker);
@@ -413,12 +419,12 @@ test.describe("Execution History", () => {
 		await drawer.getByRole("tab", { name: "Input", exact: true }).click();
 		await expect(
 			drawer.getByRole("tabpanel", { name: "Input", exact: true }),
-		).toContainText("exec-04");
+		).toContainText(message);
 
 		await drawer.getByRole("tab", { name: "Logs", exact: true }).click();
 		await expect(
 			drawer.getByRole("region", { name: "Execution log messages" }),
-		).toContainText("execution acceptance output exec-04");
+		).toContainText(`execution acceptance output ${message}`);
 
 		const fullPagePromise = context.waitForEvent("page");
 		await drawer
@@ -440,7 +446,7 @@ test.describe("Execution History", () => {
 		).toBeVisible({ timeout: 10_000 });
 		await expect(
 			fullPage.getByRole("tabpanel", { name: "Result", exact: true }),
-		).toContainText("exec-04");
+		).toContainText(message);
 	});
 
 	test(

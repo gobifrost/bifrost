@@ -46,7 +46,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAuth } from "@/contexts/AuthContext";
 import { useAgent } from "@/hooks/useAgents";
 import { useAgentRunUpdates } from "@/hooks/useAgentRunUpdates";
 import { isNotFoundError } from "@/hooks/useExecutions";
@@ -58,6 +57,8 @@ import {
 	type AgentRunNavigationOrigin,
 } from "@/lib/agent-run-navigation";
 import { cn, formatDuration } from "@/lib/utils";
+import { orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import {
 	useAgentRun,
 	useAgentRunStream,
@@ -84,7 +85,7 @@ export function AgentRunDetailPage() {
 		runId: string;
 	}>();
 	const queryClient = useQueryClient();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const location = useLocation();
 	const navigate = useNavigate();
 	const activeTab =
@@ -327,8 +328,12 @@ export function AgentRunDetailPage() {
 	useAgentRunUpdates({ agentId: owningAgentId, runId });
 
 	const verdict = ((run?.verdict as Verdict | undefined) ?? null) as Verdict;
-	const [noteDrafts, setNoteDrafts] = useState<ReadonlyMap<string, string>>(() => new Map());
-	const note = runId ? (noteDrafts.get(runId) ?? run?.verdict_note ?? "") : "";
+	const [noteDrafts, setNoteDrafts] = useState<ReadonlyMap<string, string>>(
+		() => new Map(),
+	);
+	const note = runId
+		? (noteDrafts.get(runId) ?? run?.verdict_note ?? "")
+		: "";
 	const setNote = (value: string) => {
 		if (runId)
 			setNoteDrafts((previous) => new Map(previous).set(runId, value));
@@ -628,8 +633,14 @@ export function AgentRunDetailPage() {
 	// While the summarizer is running, the RunReviewPanel already shows a
 	// status banner with a regenerate button — hide the sidebar card so we
 	// don't render two competing affordances.
-	const showRegen = isPlatformAdmin && !summaryFailed && !summaryInFlight;
+	const canRegenerateSummary =
+		authorization.canAt("agentruns.readwrite.all", orgTarget(run.org_id)) &&
+		!summaryFailed &&
+		!summaryInFlight;
 	const headerSummary = run.agent_name || agent?.name || "Agent run";
+	// The user the run acts as when someone started it as another user; an
+	// empty name falls back to the email.
+	const runAsLabel = run.run_as_user_name?.trim() || run.run_as_user_email;
 	const parentRunHref = parentRun?.agent_id
 		? `/agents/${parentRun.agent_id}/runs/${parentRun.id}`
 		: null;
@@ -697,6 +708,14 @@ export function AgentRunDetailPage() {
 									"System"}{" "}
 								· {run.trigger_type}
 							</span>
+							{run.run_as_user_id ? (
+								<span data-testid="run-as">
+									· Run As{" "}
+									<span className="font-medium text-foreground">
+										{runAsLabel}
+									</span>
+								</span>
+							) : null}
 							{run.started_at ? (
 								<span className="inline-flex items-center gap-1">
 									<Clock className="h-3 w-3" />
@@ -801,8 +820,7 @@ export function AgentRunDetailPage() {
 									agentName={
 										agent?.name ?? run.agent_name ?? null
 									}
-									showRegen={showRegen}
-									isPlatformAdmin={isPlatformAdmin}
+									canRegenerateSummary={canRegenerateSummary}
 								/>
 							</Card>
 							{verdict && note !== (run.verdict_note ?? "") ? (

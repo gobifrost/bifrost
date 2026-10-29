@@ -13,10 +13,8 @@ decryption/redaction, null/default, error mapping) end to end:
 - a cross-org scope override attempted by a non-bypass caller surfaces a
   denial instead of data.
 
-The zero-HTTP proof for the migrated operations lives in the unit and
-forked-child socket tests (``test_worker_sdk_http.py``,
-``test_worker_sdk_http_fork.py``), where the child's network API is
-unreachable yet the config calls succeed over the worker socket.
+The default physical worker has no UDS; these operations use scoped shared API
+HTTP while the test verifies their persisted state over external HTTP.
 """
 
 import uuid
@@ -194,10 +192,9 @@ def live_mutation_keys():
 def live_mutation_workflow(e2e_client, platform_admin, org1, live_mutation_keys):
     """Workflow exercising set/get/list/delete through the live worker.
 
-    The engine child reaches config over the worker's injected socket (the
-    shared client transport); the zero-HTTP proof lives in the unit and
-    forked-child socket tests. This test proves the live worker path commits
-    and that external HTTP serves the same state.
+    The default physical worker reaches config through scoped shared API HTTP
+    without a UDS. This test proves the live worker path commits and that
+    external HTTP serves the same state.
     """
     name = f"e2e_sdk_local_mut_{live_mutation_keys['tag']}"
     path = f"{name}.py"

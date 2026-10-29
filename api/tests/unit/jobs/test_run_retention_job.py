@@ -123,6 +123,29 @@ def _install(monkeypatch: pytest.MonkeyPatch, deleter: Deleter) -> None:
     monkeypatch.setattr(run_retention, "delete_event_batch", deleter.delete_event_batch)
     monkeypatch.setattr(run_retention, "plan_run_retention", deleter.plan_run_retention)
 
+    @asynccontextmanager
+    async def fake_redis_context() -> AsyncGenerator[object, None]:
+        yield object()
+
+    async def fake_stream_inspection(db: object, redis: object) -> dict[str, int]:
+        return {"scanned": 0, "orphaned_streams": 0, "next_cursor": 0}
+
+    monkeypatch.setattr(run_retention, "get_redis", fake_redis_context)
+    monkeypatch.setattr(
+        run_retention,
+        "inspect_orphaned_agent_run_step_streams",
+        fake_stream_inspection,
+    )
+
+    async def fake_execution_log_reclamation() -> dict[str, int]:
+        return {"scanned": 0, "orphaned": 0}
+
+    monkeypatch.setattr(
+        run_retention,
+        "reclaim_orphaned_execution_log_streams",
+        fake_execution_log_reclamation,
+    )
+
 
 def _checkpoint(**counts: int) -> dict[str, Any]:
     return {
@@ -168,8 +191,31 @@ async def test_keep_forever_deletes_nothing(monkeypatch: pytest.MonkeyPatch) -> 
 
     result = await run_run_retention(FakeContext(), RunRetentionPayload())
 
-    assert result == {"dry_run": False, "skipped": "keep_forever"}
+    assert result == {
+        "dry_run": False,
+        "skipped": "keep_forever",
+        "execution_log_orphans": {"scanned": 0, "orphaned": 0},
+    }
     assert deleter.calls == []
+
+
+@pytest.mark.asyncio
+async def test_keep_forever_dry_run_does_not_reclaim_execution_log_streams(monkeypatch: pytest.MonkeyPatch) -> None:
+    deleter = Deleter({})
+    _install(monkeypatch, deleter)
+    monkeypatch.setattr(FakeSettingsService, "days", None)
+    reclaimed = False
+
+    async def should_not_run() -> dict[str, int]:
+        nonlocal reclaimed
+        reclaimed = True
+        return {"scanned": 1, "orphaned": 1}
+
+    monkeypatch.setattr(run_retention, "reclaim_orphaned_execution_log_streams", should_not_run)
+    result = await run_run_retention(FakeContext(), RunRetentionPayload(dry_run=True))
+
+    assert result == {"dry_run": True, "skipped": "keep_forever"}
+    assert not reclaimed
 
 
 @pytest.mark.asyncio
@@ -282,6 +328,11 @@ async def test_dry_run_plans_without_deleting(monkeypatch: pytest.MonkeyPatch) -
     assert result["workflow_runs"] == 4
     assert result["events"] == 9
     assert result["cutoff"] == deleter.planned[0].isoformat()
+    assert result["agent_run_step_streams"] == {
+        "scanned": 0,
+        "orphaned_streams": 0,
+        "next_cursor": 0,
+    }
 
 
 @pytest.mark.asyncio

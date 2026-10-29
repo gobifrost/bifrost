@@ -3,14 +3,12 @@ import {
 	PageScrollArea,
 } from "@/components/layout/PageWorkspace";
 import { useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { WorkspaceTabs } from "@/components/layout/WorkspaceTabs";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useDashboardMetrics } from "@/hooks/useDashboardMetrics";
-import { useAuth } from "@/contexts/AuthContext";
 import { useExecutionTimeSeries } from "@/hooks/useExecutionTimeSeries";
 import {
 	ExecutionsOverTimeCard,
@@ -19,9 +17,10 @@ import {
 import { DashboardStatCards } from "@/components/dashboard/DashboardStatCards";
 import type { ChartWindow, OutcomeSummary } from "@/lib/execution-buckets";
 import { $api } from "@/lib/api-client";
+import { useAuthorization } from "@/services/authorization";
 
 export function Dashboard() {
-	const { isPlatformAdmin, isOrgUser } = useAuth();
+	const { canAnywhere } = useAuthorization();
 	const {
 		data: metrics,
 		isLoading,
@@ -55,14 +54,14 @@ export function Dashboard() {
 		isError: agentsError,
 		isFetching: agentsFetching,
 		refetch: refetchAgents,
-	} = $api.useQuery("get", "/api/agents", {}, { staleTime: 60000 });
+	} = $api.useQuery("get", "/api/agents", {}, { staleTime: 60000, enabled: canAnywhere("agents.readbasic") });
 	const {
 		data: appsData,
 		isLoading: appsLoading,
 		isError: appsError,
 		isFetching: appsFetching,
 		refetch: refetchApps,
-	} = $api.useQuery("get", "/api/applications", {}, { staleTime: 60000 });
+	} = $api.useQuery("get", "/api/applications", {}, { staleTime: 60000, enabled: canAnywhere("apps.readbasic") });
 
 	const refreshing =
 		isFetching || executionsFetching || agentsFetching || appsFetching;
@@ -72,11 +71,6 @@ export function Dashboard() {
 		refetchAgents();
 		refetchApps();
 	};
-
-	// Redirect OrgUsers to /forms (their only accessible page)
-	if (isOrgUser && !isPlatformAdmin) {
-		return <Navigate to="/forms" replace />;
-	}
 
 	return (
 		<PageWorkspace className="mx-auto flex min-w-0 max-w-[1400px] flex-col gap-6">

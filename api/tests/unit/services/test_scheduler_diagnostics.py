@@ -56,7 +56,7 @@ async def test_records_replica_schedule_run_and_curated_logs(
         replica_id=replica_id,
         hostname="scheduler-1",
         pid=42,
-        job_slots=2,
+        runs_platform_jobs=True,
         started_at=now,
     )
     await diagnostics.publish_task_states(
@@ -83,7 +83,7 @@ async def test_records_replica_schedule_run_and_curated_logs(
     assert replica is not None
     assert replica.memory_current_bytes == 600
     assert replica.memory_limit_bytes == 1000
-    assert replica.job_slots == 2
+    assert replica.job_slots == 1
 
     state = await db_session.get(SchedulerTaskState, task_id)
     assert state is not None
@@ -121,7 +121,7 @@ async def test_scheduler_snapshot_explains_capacity_pressure(
         replica_id=replica_id,
         hostname="scheduler-1",
         pid=42,
-        job_slots=2,
+        runs_platform_jobs=True,
         started_at=now,
     )
     response = await get_scheduler_diagnostics(
@@ -131,15 +131,46 @@ async def test_scheduler_snapshot_explains_capacity_pressure(
 
     replica = next(item for item in response.replicas if item.id == replica_id)
     assert response.capacity.replicas_online >= 1
-    assert response.capacity.slots_total >= 2
+    assert response.capacity.replicas_online >= 1
     assert response.capacity.max_memory_utilization_percent is not None
     assert response.capacity.max_memory_utilization_percent >= 60
-    assert replica.job_slots == 2
+    assert replica.runs_platform_jobs is True
     assert replica.active_platform_jobs == 0
     assert {task.task_id for task in response.tasks} >= {
         "oauth_token_refresh",
         "scheduler_diagnostics_cleanup",
     }
+
+
+@pytest.mark.asyncio
+async def test_scheduler_snapshot_reports_how_long_runs_wait_for_an_executor(
+    db_session: AsyncSession,
+    diagnostics_context: None,
+) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.work_dispatches import WorkDispatch
+
+    waiting = WorkDispatch(
+        id=uuid4(), family="workflow_execution", subject_id=uuid4(),
+        handler="workflow.execute", handler_version=1, message={}, payload={},
+        memory_request_bytes=64 * 2**20,
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
+    db_session.add(waiting)
+    await db_session.commit()
+    try:
+        response = await get_scheduler_diagnostics(
+            SimpleNamespace(db=db_session),  # type: ignore[arg-type]
+            SimpleNamespace(is_superuser=True),  # type: ignore[arg-type]
+        )
+    finally:
+        await db_session.execute(delete(WorkDispatch).where(WorkDispatch.id == waiting.id))
+        await db_session.commit()
+
+    assert response.capacity.runs_waiting >= 1
+    assert response.capacity.oldest_waiting_run_seconds is not None
+    assert response.capacity.oldest_waiting_run_seconds >= 110
 
 
 @pytest.mark.asyncio
@@ -185,7 +216,7 @@ async def test_scheduler_snapshot_drops_expired_replicas(
         replica_id=f"scheduler-live-{uuid4().hex}",
         hostname="scheduler-live",
         pid=43,
-        job_slots=1,
+        runs_platform_jobs=True,
         started_at=now,
     )
     assert await db_session.get(SchedulerReplica, expired_id) is None

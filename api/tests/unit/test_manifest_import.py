@@ -9,8 +9,10 @@ import pytest
 from pydantic import ValidationError
 
 from bifrost.manifest import (
+    Manifest,
     ManifestPolicy,
     ManifestTable,
+    ManifestWorkflow,
 )
 from src.models.contracts.policies import TablePolicies
 
@@ -167,3 +169,91 @@ class TestManifestImportPolicyValidationContract:
         assert mtable.policies is not None
         # No exception parsing the manifest. The gate must run at write time.
         assert mtable.policies[0].when == {"has_role": "support"}
+
+
+@pytest.mark.asyncio
+async def test_plan_import_rejects_decorator_settings_before_database_operations(
+    db_session, tmp_path
+) -> None:
+    """Manifest workflow source is checked before the resolver can write any ops."""
+    from uuid import uuid4
+
+    from bifrost.definition_validation import DefinitionValidationError
+    from src.services.manifest_import import ManifestResolver
+
+    workflow_id = uuid4()
+    source_path = "workflows/unsupported_decorator.py"
+    source_file = tmp_path / source_path
+    source_file.parent.mkdir()
+    source_file.write_text(
+        "from bifrost import workflow\n"
+        "@workflow(timeout_seconds=30)\n"
+        "def unsupported_decorator(): pass\n"
+    )
+    manifest = Manifest(workflows={
+        str(workflow_id): ManifestWorkflow(
+            id=str(workflow_id), path=source_path, function_name="unsupported_decorator",
+        )
+    })
+
+    with pytest.raises(DefinitionValidationError, match="timeout_seconds"):
+        await ManifestResolver(db_session).plan_import(manifest, work_dir=tmp_path)
+
+
+class TestWorkflowRunIdentity:
+    """A workflow the manifest moves away from the identity it runs as is refused by name and place."""
+
+    def test_refusal_names_the_identity_and_its_place(self):
+        from uuid import uuid4
+
+        from sqlalchemy.ext.asyncio import AsyncSession
+
+        from bifrost.manifest import ManifestWorkflow
+        from src.models.enums import IdentityKind
+        from src.models.orm.users import User
+        from src.services.manifest_import import ManifestResolver
+
+        contoso, fabrikam, workflow_id = uuid4(), uuid4(), uuid4()
+        identity = User(name="Default Identity", organization_id=contoso, identity_kind=IdentityKind.ORG_DEFAULT)
+        mwf = ManifestWorkflow(
+            id=str(workflow_id), path="workflows/sync.py", function_name="sync", organization_id=str(fabrikam)
+        )
+        cache = {
+            "wf_by_natural": {},
+            "wf_run_identity": {workflow_id: identity},
+            "org_name_by_id": {contoso: "Contoso", fabrikam: "Fabrikam"},
+        }
+
+        with pytest.raises(ValueError) as refused:
+            ManifestResolver(AsyncSession())._resolve_workflow("sync", mwf, cache)
+        assert str(refused.value) == (
+            "Workflow workflows/sync.py::sync runs unattended as Default Identity (Contoso) "
+            f"(run_identity_id), which can't run workflows of organization {fabrikam}; "
+            "change its run_identity_id first"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("integration_owned", [True, False])
+async def test_mcp_manifest_requires_independent_oauth_provider(integration_owned):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from bifrost.manifest import ManifestMCPServer
+    from src.services.manifest_import import ManifestResolver
+
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(integration_id=uuid4() if integration_owned else None)
+    server = ManifestMCPServer(
+        id=str(uuid4()), name="MCP", server_url="https://example.com/mcp",
+        oauth_provider_id=str(uuid4()),
+    )
+    resolver = ManifestResolver(db)
+    if integration_owned:
+        with pytest.raises(ValueError, match="independent MCP OAuth provider"):
+            await resolver._resolve_mcp_server("MCP", server)
+        db.execute.assert_not_awaited()
+    else:
+        await resolver._resolve_mcp_server("MCP", server)
+        db.execute.assert_awaited_once()

@@ -16,10 +16,12 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from src.models.orm.applications import Application
+from src.core.exceptions import AccessDeniedError
 from src.models.orm.tables import Table
 from src.models.orm.config import Config
 from src.models.orm.workflows import Workflow
 from src.models.enums import ConfigType
+from tests.helpers.authorization import admin_caller
 
 
 def make_table(name: str, org_id=None) -> Table:
@@ -1120,8 +1122,8 @@ class TestApplicationCrossOrgSlugLookup:
     ):
         """Superuser in org A cannot access org B's app via cascade get().
 
-        Cross-org access should use get_by_slug_global() instead.
-        Slugs are globally unique so cascade fallback is unnecessary.
+        This is the non-Caller cascade. Caller-mode slug opens resolve
+        cross-org through _get_by_slug_for_caller with a per-row access check.
         """
         from src.routers.applications import ApplicationRepository
 
@@ -1190,15 +1192,12 @@ class TestApplicationCrossOrgSlugLookup:
 
 
 # =============================================================================
-# get_application_or_404 Superuser Cross-Org Slug Lookup
+# get_application_or_404 slug lookup
 # =============================================================================
 
 
 class TestGetApplicationOr404SuperuserSlug:
-    """
-    Tests that get_application_or_404 uses get_by_slug_global for super admins,
-    allowing cross-org slug resolution without ?scope= param.
-    """
+    """Slug lookups load the current Caller before querying its repository."""
 
     @pytest.fixture
     def org_a_id(self):
@@ -1214,50 +1213,51 @@ class TestGetApplicationOr404SuperuserSlug:
 
     @pytest.fixture
     def mock_ctx(self, org_a_id):
-        """Create a mock Context with a platform admin user in org A."""
+        """Create a request context with current Platform Admin authority."""
+        caller = admin_caller()
         ctx = MagicMock()
         ctx.db = AsyncMock()
         ctx.org_id = org_a_id
-        ctx.user.user_id = uuid4()
-        ctx.user.is_platform_admin = True
+        ctx.user = caller.principal
+        ctx.caller = caller
         return ctx
 
     async def test_superuser_resolves_cross_org_slug(self, mock_ctx, org_b_app):
-        """Super admin can resolve an app slug belonging to another org."""
+        """A current Platform Admin resolves an App through its repository."""
         from unittest.mock import patch
 
         from src.routers.applications import get_application_or_404
 
-        with patch(
-            "src.routers.applications.ApplicationRepository"
-        ) as MockRepo:
-            repo_instance = MockRepo.return_value
-            repo_instance.get_by_slug_global = AsyncMock(
-                return_value=org_b_app
-            )
+        repo_instance = MagicMock()
+        repo_instance.can_access = AsyncMock(return_value=org_b_app)
+        with (
+            patch("src.routers.applications.load_caller", new=AsyncMock(return_value=mock_ctx.caller)),
+            patch("src.routers.applications._application_repository", new=AsyncMock(return_value=repo_instance)),
+        ):
 
             result = await get_application_or_404(
                 ctx=mock_ctx, slug="org-b-app"
             )
 
         assert result is org_b_app
-        repo_instance.get_by_slug_global.assert_called_once_with("org-b-app")
-        # can_access should NOT be called for superuser path
-        repo_instance.can_access.assert_not_called()
+        repo_instance.can_access.assert_awaited_once_with(
+            slug="org-b-app", include_solution_managed=True
+        )
 
     async def test_superuser_gets_404_for_nonexistent_slug(self, mock_ctx):
-        """Super admin gets 404 when slug doesn't exist anywhere."""
+        """A repository denial remains a neutral 404."""
         from unittest.mock import patch
 
         from fastapi import HTTPException
 
         from src.routers.applications import get_application_or_404
 
-        with patch(
-            "src.routers.applications.ApplicationRepository"
-        ) as MockRepo:
-            repo_instance = MockRepo.return_value
-            repo_instance.get_by_slug_global = AsyncMock(return_value=None)
+        repo_instance = MagicMock()
+        repo_instance.can_access = AsyncMock(side_effect=AccessDeniedError())
+        with (
+            patch("src.routers.applications.load_caller", new=AsyncMock(return_value=mock_ctx.caller)),
+            patch("src.routers.applications._application_repository", new=AsyncMock(return_value=repo_instance)),
+        ):
 
             with pytest.raises(HTTPException) as exc_info:
                 await get_application_or_404(
@@ -1267,18 +1267,17 @@ class TestGetApplicationOr404SuperuserSlug:
         assert exc_info.value.status_code == 404
 
     async def test_regular_user_uses_can_access(self, mock_ctx, org_b_app):
-        """Non-superuser uses can_access (not get_by_slug_global)."""
+        """The lookup always asks its authorized repository for access."""
         from unittest.mock import patch
 
         from src.routers.applications import get_application_or_404
 
-        mock_ctx.user.is_platform_admin = False
-
-        with patch(
-            "src.routers.applications.ApplicationRepository"
-        ) as MockRepo:
-            repo_instance = MockRepo.return_value
-            repo_instance.can_access = AsyncMock(return_value=org_b_app)
+        repo_instance = MagicMock()
+        repo_instance.can_access = AsyncMock(return_value=org_b_app)
+        with (
+            patch("src.routers.applications.load_caller", new=AsyncMock(return_value=mock_ctx.caller)),
+            patch("src.routers.applications._application_repository", new=AsyncMock(return_value=repo_instance)),
+        ):
 
             result = await get_application_or_404(
                 ctx=mock_ctx, slug="org-b-app"
@@ -1287,7 +1286,6 @@ class TestGetApplicationOr404SuperuserSlug:
         assert result is org_b_app
         # include_solution_managed=True so a deployed (solution-managed) app is
         # openable by slug for regular users (criterion 16).
-        repo_instance.can_access.assert_called_once_with(
+        repo_instance.can_access.assert_awaited_once_with(
             slug="org-b-app", include_solution_managed=True
         )
-        repo_instance.get_by_slug_global.assert_not_called()

@@ -2,6 +2,9 @@
 # Used by all services: API, Discovery, Scheduler, Worker
 # Multi-stage build for efficient image size
 
+# Use the same supported Node runtime for every App build surface.
+FROM node:24.22.0-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS node-toolchain
+
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
@@ -45,13 +48,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     git \
     awscli \
-    nodejs npm \
+    libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Debian's npm 9.2.0 crashes in Arborist peer-set resolution on valid V2 App
-# dependency trees ("Cannot read properties of null (reading 'edgesOut')").
-# Keep the build toolchain pinned so App deploys and SDK rebuilds resolve them.
-RUN npm install --global npm@10.9.3 --no-audit --no-fund
+# npm 10 also crashes in peer-set resolution on valid retained App sources.
+# Vendor a supported Node runtime, then install the verified npm resolver.
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-toolchain /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+COPY api/scripts/install-npm.sh /usr/local/bin/install-npm.sh
+RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages

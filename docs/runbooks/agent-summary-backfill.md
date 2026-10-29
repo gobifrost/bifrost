@@ -46,7 +46,11 @@ Every regenerated summary writes one `AIUsage` row linked to its parent `AgentRu
 
 ## Concurrency / queue flooding
 
-Messages go on the existing `agent-summarization` RabbitMQ queue. The summarize worker already caps concurrency at `settings.max_concurrency` and `summarize_run` is idempotent on `summary_status='completed'`, so a 5,000-run backfill is safe from both a correctness and a provider-rate-limit standpoint. Expect queue depth to spike on `RabbitMQ` metrics during the backfill.
+Each run is staged as a durable dispatch in PostgreSQL (`work_dispatches`, handler `agent.summarize_backfill`). Every executor runs one backfill summary at a time beside one live summary, so a backfill never delays live summaries, and `summarize_run` is idempotent on `summary_status='completed'`, so a 5,000-run backfill is safe from both a correctness and a provider-rate-limit standpoint. To watch the backlog drain:
+
+```sql
+SELECT count(*) FROM work_dispatches WHERE handler = 'agent.summarize_backfill';
+```
 
 ## Kill switch
 
@@ -56,7 +60,7 @@ To stop the UI from showing progress on a still-draining job:
 UPDATE summary_backfill_jobs SET status = 'failed' WHERE id = '<job_id>';
 ```
 
-This does **not** cancel the queued messages — the worker will continue draining them. The per-run summarizer outcome is independent of the job row; flipping the job status only affects progress reporting.
+This does **not** cancel the queued dispatches — executors will continue draining them. The per-run summarizer outcome is independent of the job row; flipping the job status only affects progress reporting.
 
 ## Testing locally
 

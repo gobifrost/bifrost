@@ -84,6 +84,8 @@ DTO_EXCLUDES: dict[str, set[str]] = {
         "allowed_methods",
         "execution_mode",
         "disable_global_key",
+        # Named by ``--run-as <identity>`` (a ref to the identity, not its raw id).
+        "run_identity_id",
     },
     # Integrations: ``oauth_provider`` (out-of-scope) — declared even when
     # absent so adding the field later flags the new surface.

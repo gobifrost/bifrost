@@ -5,6 +5,10 @@ import { expect, it, vi } from "vitest";
 import { EntityAssignmentPanel } from "./EntityAssignmentPanel";
 import type { EntityWithScope, Organization, Role } from "./types";
 
+const { mockUseAuthorization } = vi.hoisted(() => ({
+	mockUseAuthorization: vi.fn(),
+}));
+
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: ({
 		onChange,
@@ -22,6 +26,11 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 		</button>
 	),
 }));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
+
+mockUseAuthorization.mockReturnValue({ authorization: undefined });
 
 it("reviews scope and additive access changes, then applies both to the frozen selection", async () => {
 	const user = userEvent.setup();

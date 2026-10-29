@@ -41,6 +41,9 @@ async def test_policy_update_commits_before_notifying_subscribers(
         "assert_entity_id_not_solution_managed",
         AsyncMock(),
     )
+    monkeypatch.setattr(tables, "load_caller", AsyncMock(return_value=object()))
+    monkeypatch.setattr(tables, "operation_reach", lambda *_args: type("Reach", (), {"where": lambda *_args: None})())
+    monkeypatch.setattr(tables, "require_operation", lambda *_args: None)
 
     ctx = ExecutionContext(user=None, org_id=None, db=db_session)  # type: ignore[arg-type]
     await tables.update_table(

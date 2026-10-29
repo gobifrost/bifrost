@@ -273,7 +273,8 @@ class TestSolutionInactiveLifecycleCapstone:
     # ------------------------------------------------------------------
 
     async def test_inactive_solution_file_lifecycle(
-        self, e2e_client, platform_admin, alice_user, db_session
+        self, e2e_client, platform_admin, alice_user, db_session,
+        secrets_reader_platform_admin,
     ):
         """Verify file ownership and policy through an entire Solution lifecycle.
 

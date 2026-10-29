@@ -1,16 +1,18 @@
-"""Workflow permission mode and Solution permission requests.
+"""Workflow capabilities and versioned Solution permission requests.
 
-Data only: nothing reads the effective mode or the grants at run time until
-delegated execution. See ``src.models.contracts.workflow_permissions``.
+Runtime authority loads the effective mode and permission-only capabilities
+from the exact durable workflow. Solution approvals bind their canonical digest.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from pydantic import ValidationError
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.contracts.workflow_permissions import (
@@ -20,7 +22,9 @@ from src.models.contracts.workflow_permissions import (
     WorkflowPermissionMode,
 )
 from src.models.orm.config import SystemConfig
-from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
+from src.models.orm.solution_workflow_permission_requests import (
+    SolutionWorkflowPermissionRequest,
+)
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflows import Workflow
 
@@ -30,54 +34,171 @@ WORKFLOW_PERMISSIONS_CONFIG_CATEGORY = "workflow_permissions"
 DEFAULT_MODE_CONFIG_KEY = "default_mode"
 
 
-async def get_default_workflow_permission_mode(db: AsyncSession) -> WorkflowPermissionMode:
+async def get_default_workflow_permission_mode(
+    db: AsyncSession,
+) -> WorkflowPermissionMode:
     """The platform's "Default workflow permissions" setting."""
     config = (
-        await db.execute(
-            select(SystemConfig).where(
-                SystemConfig.category == WORKFLOW_PERMISSIONS_CONFIG_CATEGORY,
-                SystemConfig.key == DEFAULT_MODE_CONFIG_KEY,
-                SystemConfig.organization_id.is_(None),
+        (
+            await db.execute(
+                select(SystemConfig).where(
+                    SystemConfig.category == WORKFLOW_PERMISSIONS_CONFIG_CATEGORY,
+                    SystemConfig.key == DEFAULT_MODE_CONFIG_KEY,
+                    SystemConfig.organization_id.is_(None),
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if config is None or not config.value_json:
         return DEFAULT_WORKFLOW_PERMISSION_MODE
     return WorkflowPermissionMode(config.value_json["mode"])
 
 
+def resolve_workflow_permission_mode(
+    workflow: Workflow,
+    default: WorkflowPermissionMode,
+    permission_request: SolutionWorkflowPermissionRequest | None = None,
+) -> WorkflowPermissionMode:
+    """An explicit Solution restriction never inherits the Full default."""
+    if permission_request is not None and (
+        workflow.solution_id is not None
+        and permission_request.workflow_id == workflow.id
+        and permission_request.solution_id == workflow.solution_id
+    ):
+        if permission_request.requested_mode == WorkflowPermissionMode.RESTRICTED.value:
+            return WorkflowPermissionMode.RESTRICTED
+        approved = _approved_permissions(permission_request)
+        if approved is not None:
+            return approved.mode
+    if workflow.permission_mode is not None:
+        return WorkflowPermissionMode(workflow.permission_mode)
+    return default
+
+
+def _approved_permissions(
+    permission_request: SolutionWorkflowPermissionRequest,
+) -> RequestedWorkflowPermissions | None:
+    """Only current, canonically bound consent contributes capabilities."""
+    if (
+        permission_request.status != RequestStatus.APPROVED.value
+        or permission_request.approved_digest != permission_request.request_digest
+    ):
+        return None
+    try:
+        requested = RequestedWorkflowPermissions.model_validate(
+            {
+                "mode": permission_request.requested_mode,
+                "grants": permission_request.requested_grants,
+            }
+        )
+    except ValidationError:
+        return None
+    return (
+        requested
+        if request_digest(requested) == permission_request.approved_digest
+        else None
+    )
+
+
+async def workflow_permission_requests(
+    db: AsyncSession,
+    workflows: Sequence[Workflow],
+) -> dict[UUID, SolutionWorkflowPermissionRequest]:
+    """Load consent for each workflow's exact owning install in one query."""
+    installed = {
+        workflow.id: workflow.solution_id
+        for workflow in workflows
+        if workflow.solution_id is not None
+    }
+    if not installed:
+        return {}
+    rows = (
+        (
+            await db.execute(
+                select(SolutionWorkflowPermissionRequest)
+                .where(
+                    SolutionWorkflowPermissionRequest.solution_id.in_(
+                        set(installed.values())
+                    ),
+                    SolutionWorkflowPermissionRequest.workflow_id.in_(installed),
+                )
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        row.workflow_id: row
+        for row in rows
+        if row.solution_id == installed[row.workflow_id]
+    }
+
+
 async def effective_workflow_permission_mode(
     db: AsyncSession, workflow: Workflow
 ) -> WorkflowPermissionMode:
-    """The workflow's own mode, else the platform default."""
-    if workflow.permission_mode is not None:
-        return WorkflowPermissionMode(workflow.permission_mode)
-    return await get_default_workflow_permission_mode(db)
+    requests = await workflow_permission_requests(db, [workflow])
+    return resolve_workflow_permission_mode(
+        workflow,
+        await get_default_workflow_permission_mode(db),
+        requests.get(workflow.id),
+    )
 
 
-async def list_workflow_grants(db: AsyncSession, workflow_id: UUID) -> list[WorkflowGrant]:
+async def load_workflow_permissions(
+    db: AsyncSession,
+    workflow: Workflow,
+) -> tuple[WorkflowPermissionMode, list[WorkflowGrant]]:
+    """Resolve mode and added powers from current durable consent together."""
+    requests = await workflow_permission_requests(db, [workflow])
+    permission_request = requests.get(workflow.id)
+    mode = resolve_workflow_permission_mode(
+        workflow, await get_default_workflow_permission_mode(db), permission_request
+    )
+    if mode is WorkflowPermissionMode.FULL:
+        return mode, []
+    if workflow.solution_id is not None:
+        approved = (
+            None
+            if permission_request is None
+            else _approved_permissions(permission_request)
+        )
+        grants = (
+            []
+            if approved is None
+            else [
+                WorkflowGrant(permission=grant.permission) for grant in approved.grants
+            ]
+        )
+        return mode, grants
+    return mode, await list_workflow_grants(db, workflow.id)
+
+
+async def list_workflow_grants(
+    db: AsyncSession, workflow_id: UUID
+) -> list[WorkflowGrant]:
     rows = (
-        await db.execute(
-            select(WorkflowPermissionGrant).where(
-                WorkflowPermissionGrant.workflow_id == workflow_id
+        (
+            await db.execute(
+                select(WorkflowPermissionGrant).where(
+                    WorkflowPermissionGrant.workflow_id == workflow_id
+                )
             )
         )
-    ).scalars().all()
-    return [
-        WorkflowGrant(
-            permission=row.permission,
-            boundary=row.boundary_kind,  # type: ignore[arg-type]
-            organization_id=row.organization_id,
-        )
-        for row in rows
-    ]
+        .scalars()
+        .all()
+    )
+    return [WorkflowGrant(permission=row.permission) for row in rows]
 
 
-def _grants_json(requested: RequestedWorkflowPermissions) -> list[dict[str, str | None]]:
+def _grants_json(requested: RequestedWorkflowPermissions) -> list[dict[str, str]]:
     """Grants as stored JSON, sorted so manifest order never matters."""
     return sorted(
-        ({"permission": g.permission, "boundary": g.boundary} for g in requested.grants),
-        key=lambda g: (g["permission"], g["boundary"] or ""),
+        ({"permission": grant.permission} for grant in requested.grants),
+        key=lambda grant: grant["permission"],
     )
 
 
@@ -107,15 +228,26 @@ async def sync_solution_permission_requests(
         row.workflow_id: row
         for row in (
             await db.execute(
-                select(SolutionWorkflowPermissionRequest).where(
-                    SolutionWorkflowPermissionRequest.solution_id == solution_id
-                )
+                select(SolutionWorkflowPermissionRequest)
+                .where(SolutionWorkflowPermissionRequest.solution_id == solution_id)
+                .order_by(SolutionWorkflowPermissionRequest.workflow_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
         ).scalars()
     }
 
     stale = existing.keys() - requests.keys()
     if stale:
+        restricted = [
+            wf_id for wf_id in stale if existing[wf_id].requested_mode == "restricted"
+        ]
+        if restricted:
+            await db.execute(
+                update(Workflow)
+                .where(Workflow.id.in_(restricted), Workflow.solution_id == solution_id)
+                .values(permission_mode="restricted")
+            )
         await db.execute(
             delete(SolutionWorkflowPermissionRequest).where(
                 SolutionWorkflowPermissionRequest.solution_id == solution_id,
@@ -138,6 +270,9 @@ async def sync_solution_permission_requests(
                 )
             )
         elif row.request_digest != digest:
+            if row.status == RequestStatus.DECLINED.value:
+                # A revoked decision cannot approve a later bundle rollback.
+                row.approved_digest = None
             row.requested_mode = requested.mode.value
             row.requested_grants = _grants_json(requested)
             row.request_digest = digest

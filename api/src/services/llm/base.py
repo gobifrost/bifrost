@@ -12,13 +12,41 @@ from typing import Any, Literal
 from uuid import UUID
 
 
+def bifrost_adapter_return_schema() -> dict[str, Any]:
+    """Return the shared, truthful text contract for Bifrost-owned adapters.
+
+    The adapter serializes structured successes as JSON text, while other
+    successes can be plain text. Error representation differs by execution
+    surface: autonomous calls may use an ``Error:`` prefix and chat calls may
+    serialize a JSON envelope with ``error`` or ``is_error``. Individual tool
+    payload fields remain tool-specific.
+    """
+    return {
+        "type": "string",
+        "description": (
+            "Bifrost returns text. Structured successful results are JSON text; "
+            "parse with json.loads before field access. Other successful results "
+            "may be plain text. Failures are tool-specific: text can start with "
+            "`Error:`, or JSON can include `error` or `is_error`. Result fields "
+            "and metadata are specific to this tool; do not assume common object fields."
+        ),
+    }
+
+
 @dataclass
 class ToolDefinition:
-    """Tool definition for LLM function calling."""
+    """Tool definition for LLM function calling.
+
+    ``structured_output_schema`` is optional metadata for the successful
+    ``structuredContent`` payload advertised by an external MCP tool. It does
+    not describe the Bifrost transport envelope or change ``return_schema``.
+    """
 
     name: str
     description: str
     parameters: dict[str, Any]  # JSON Schema format
+    return_schema: dict[str, Any] | None = None
+    structured_output_schema: dict[str, Any] | None = None
 
 
 @dataclass

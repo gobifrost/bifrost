@@ -6,13 +6,13 @@
 
 Agent execution operations.
 
-**`agents.enqueue(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None) -> AgentRunHandle`**
+**`agents.enqueue(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, run_as: str | None = None) -> AgentRunHandle`**
   Queue an agent and return as soon as the run is accepted.
 
 **`agents.get_run(run_id: str) -> AgentRun`**
   Get the current status and result for an agent run.
 
-**`agents.run(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any] | str | AgentRunPending`**
+**`agents.run(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, timeout: float | None = None, run_as: str | None = None) -> dict[str, Any] | str | AgentRunPending`**
   Run an agent and wait for the result.
 
 **`agents.wait(run_id: str, output_schema: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any] | str | AgentRunPending`**
@@ -104,6 +104,10 @@ Event publishing operations (async).
 **`files.get_signed_url(path: str, method: Literal['PUT', 'GET'] = 'PUT', content_type: str = 'application/octet-stream', location: str = 'uploads', scope: str | None = None, expires_in: int = 600) -> dict`**
 
 **`files.list(directory: str = '', location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> list[str]`**
+
+**`files.move(source: str, destination: str, location: str, on_conflict: Literal['error', 'rename'] = 'error', scope: str | None = None, timeout_seconds: float = 14400, poll_interval_seconds: float = 2) -> str`**
+
+**`files.move_many(items: list[dict[str, str]], location: str, on_conflict: Literal['error', 'rename'] = 'error', scope: str | None = None, timeout_seconds: float = 14400, poll_interval_seconds: float = 2) -> list[dict]`**
 
 **`files.read(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None, solution: str | None = None) -> str`**
 

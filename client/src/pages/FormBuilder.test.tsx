@@ -5,6 +5,7 @@ const mockNavigate = vi.fn();
 const mockParams = vi.fn();
 const mockLocation = vi.fn();
 const mockUseAuth = vi.fn();
+const mockCanAt = vi.fn();
 const mockUseOrgScope = vi.fn();
 const mockUseForm = vi.fn();
 const mockUseCreateForm = vi.fn();
@@ -28,6 +29,10 @@ vi.mock("react-router-dom", async () => {
 
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({ canAt: mockCanAt }),
 }));
 
 vi.mock("@/contexts/OrgScopeContext", () => ({
@@ -130,6 +135,7 @@ import { FormBuilder } from "./FormBuilder";
 
 beforeEach(() => {
 	mockNavigate.mockClear();
+	mockCanAt.mockReturnValue(true);
 	mockParams.mockReturnValue({ formId: "form-1" });
 	mockLocation.mockReturnValue({ search: "" });
 	mockUseAuth.mockReturnValue({
@@ -423,4 +429,22 @@ it("returns to the originating solution after saving from a solution route", asy
 	await waitFor(() =>
 		expect(mockNavigate).toHaveBeenCalledWith("/solutions/solution-1"),
 	);
+});
+
+it("disables editing when a named write grant is held only at another organization", async () => {
+	mockCanAt.mockImplementation(
+		(_permission: string, target: { kind: string; id?: string }) =>
+			target.id === "org-2",
+	);
+	renderWithProviders(<FormBuilder />);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Configure test form" }),
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Add test field" }));
+	expect(screen.getByRole("button", { name: /^Save$/ })).toBeDisabled();
+	expect(screen.getByTitle("Edit Info")).toBeDisabled();
+	expect(mockCanAt).toHaveBeenCalledWith("forms.readwrite", {
+		kind: "org",
+		id: "org-1",
+	});
 });

@@ -84,6 +84,19 @@ def test_prebuild_apps_builds_in_temp_with_install_scoped_base(
         dist.mkdir()
         (dist / "index.html").write_text("<html>built</html>")
         (dist / "asset.bin").write_bytes(b"\xff\x00")
+        sdk_dir = workdir / "node_modules" / "bifrost"
+        sdk_dir.mkdir(parents=True)
+        (sdk_dir / "package.json").write_text(
+            json.dumps(
+                {
+                    "version": "9.9.9",
+                    "bifrost": {
+                        "fingerprint": "sdk-built-by-cli",
+                        "contract": 42,
+                    },
+                }
+            )
+        )
 
     monkeypatch.setattr(solution_command, "_run_local_vite_build", fake_build)
 
@@ -103,6 +116,11 @@ def test_prebuild_apps_builds_in_temp_with_install_scoped_base(
             "dist_files": {"index.html": "<html>built</html>"},
             "bin_dist_files": {
                 "asset.bin": base64.b64encode(b"\xff\x00").decode("ascii")
+            },
+            "prebuilt_sdk_metadata": {
+                "package_version": "9.9.9",
+                "fingerprint": "sdk-built-by-cli",
+                "contract_version": 42,
             },
         }
     }

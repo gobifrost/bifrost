@@ -19,6 +19,8 @@ os.environ.setdefault(
 )
 
 from src.main import app  # noqa: E402
+from src.models.contracts.access_list import AccessClass  # noqa: E402
+from src.services.access_list import ACCESS_LIST  # noqa: E402
 from src.services.operation_catalog import OPERATION_CATALOG  # noqa: E402
 from src.services.operation_inventory import build_operation_inventory  # noqa: E402
 
@@ -52,13 +54,41 @@ def render_inventory() -> str:
     ) + "\n"
 
 
+# A permission on a personal or own-agent entry only widens it: the caller's
+# own items need none.
+_WIDENING_NOTES = {
+    AccessClass.PERSONAL: "only for other people's items",
+    AccessClass.OWN_PRIVATE_AGENT: "not for your own private agents",
+}
+
+
+def _widening_notes(operation_id: str) -> dict[str, str]:
+    """The operation's scopes that only widen it, each with its note."""
+    return {
+        entry.permission: _WIDENING_NOTES[entry.access_class]
+        for entry in ACCESS_LIST
+        if entry.operation_id == operation_id
+        and entry.permission is not None
+        and entry.access_class in _WIDENING_NOTES
+    }
+
+
+def _scope_cell(operation_id: str, scopes: tuple[str, ...]) -> str:
+    notes = _widening_notes(operation_id)
+    return ", ".join(
+        f"`{scope}` ({notes[scope]})" if scope in notes else f"`{scope}`"
+        for scope in scopes
+    ) or "—"
+
+
 def render_operations() -> str:
     lines = [
         "# Bifrost operation reference",
         "",
         "Generated from the canonical operation catalog. Use the stable intent",
         "ID when reasoning; select the CLI or MCP binding available in the current",
-        "harness.",
+        "harness. A scope with a note in parentheses is needed only beyond the",
+        "caller's own items.",
         "",
         "| Intent | CLI | MCP | Scope |",
         "|---|---|---|---|",
@@ -70,7 +100,7 @@ def render_operations() -> str:
             else "—"
         )
         mcp = f"`{operation.mcp.name}`" if operation.mcp else "—"
-        scopes = ", ".join(f"`{scope}`" for scope in operation.action_scopes) or "—"
+        scopes = _scope_cell(operation.operation_id, operation.action_scopes)
         lines.append(f"| `{operation.operation_id}` | {cli} | {mcp} | {scopes} |")
     lines.append("")
     return "\n".join(lines)

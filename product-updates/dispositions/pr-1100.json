@@ -1,0 +1,15 @@
+{
+  "key": "pr:1100",
+  "classification": "highlight",
+  "entry_ids": [
+    "cc3b1800-b7cd-4478-b9a0-0178c189453d"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1100",
+      "https://github.com/gobifrost/bifrost/issues/1097",
+      "Product copy reviewed against success-only metadata emission and the verified Events route; General Writing and Humanizer applied. Jack authorized implementation and merge on 2026-10-28."
+    ]
+  }
+}

@@ -24,6 +24,13 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ isPlatformAdmin: mockIsPlatformAdmin }),
 }));
 
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAnywhere: () => mockIsPlatformAdmin,
+		canAt: () => mockIsPlatformAdmin,
+	}),
+}));
+
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: ({
 		value,

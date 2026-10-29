@@ -7,7 +7,7 @@ no PIDs:
 * claim → fork → run → ready() → emits → streaming logs → rolling restart
   → stop → no restart
 * self-crashing service → repeated failure → crash_loop → manual restart clears
-* service token: valid org credential, rejected at platform-admin gates
+* service token: current workflow powers within original reach, plus service confinement
 
 Services are registered per test (unique suffix) and parked (stopped +
 disabled) afterwards so no eligible rows leak into other tests.
@@ -277,7 +277,8 @@ class TestServiceWorkerMode:
         assert resp.status_code == 200, resp.text
         assert resp.json()["items"] == []
 
-        # The token for the actual live attempt has org-scoped access only.
+        # The live attempt has current workflow powers within its original
+        # identity reach; service event emission also stays in its own org.
         from src.core.cache.keys import service_token_key
 
         live = await _wait_for_live_attempt(
@@ -290,7 +291,8 @@ class TestServiceWorkerMode:
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = e2e_client.get("/api/services", headers=headers)
-        assert resp.status_code == 403, resp.text
+        assert resp.status_code == 200, resp.text
+        assert definition_id in {item["id"] for item in resp.json()["items"]}
 
         from uuid import uuid4 as _uuid4
 

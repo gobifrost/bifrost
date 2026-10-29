@@ -21,6 +21,7 @@ interface TestAccessModalProps {
 	onOpenChange: (open: boolean) => void;
 	location: string;
 	scope: string | null;
+	solution?: string;
 	path: string;
 	scopeLabel?: string;
 }
@@ -28,6 +29,7 @@ interface TestAccessModalProps {
 export interface TestAccessPanelProps {
 	location: string;
 	scope: string | null;
+	solution?: string;
 	path: string;
 	scopeLabel?: string;
 	onOpenChange?: (open: boolean) => void;
@@ -44,7 +46,7 @@ function formatPath(path: string) {
 }
 
 function readableRuleName(name: string) {
-	if (name === "admin_bypass") return "Administrator Access";
+	if (name === "admin_bypass") return "Platform Admin Access";
 	return name
 		.split(/[_-]+/)
 		.filter(Boolean)
@@ -70,6 +72,7 @@ function formatAllowedReason(result: {
 function TestAccessSession({
 	location,
 	scope,
+	solution,
 	path,
 	scopeLabel,
 	onOpenChange,
@@ -87,8 +90,13 @@ function TestAccessSession({
 		[usersQuery.data],
 	);
 	const access = useQuery({
-		queryKey: ["file-access-test", location, scope, path, userId],
-		queryFn: () => testAllActions({ location, scope, path, userId }),
+		queryKey: ["file-access-test", location, scope, solution, path, userId],
+		queryFn: () =>
+			testAllActions(
+				solution
+					? { location, scope, solution, path, userId }
+					: { location, scope, path, userId },
+			),
 		enabled: !!userId,
 		retry: false,
 		gcTime: 0,
@@ -246,7 +254,12 @@ function TestAccessSession({
 export function TestAccessPanel(props: TestAccessPanelProps) {
 	return (
 		<TestAccessSession
-			key={JSON.stringify([props.location, props.scope, props.path])}
+			key={JSON.stringify([
+				props.location,
+				props.scope,
+				props.solution,
+				props.path,
+			])}
 			{...props}
 		/>
 	);
@@ -266,6 +279,7 @@ export function TestAccessModal(props: TestAccessModalProps) {
 				<TestAccessPanel
 					location={props.location}
 					scope={props.scope}
+					solution={props.solution}
 					path={props.path}
 					scopeLabel={props.scopeLabel}
 					onOpenChange={props.onOpenChange}

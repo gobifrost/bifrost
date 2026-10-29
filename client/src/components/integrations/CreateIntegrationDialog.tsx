@@ -384,9 +384,7 @@ function CreateIntegrationForm({
 								value={dataProviderId || "none"}
 								onValueChange={(value) =>
 									setDataProviderId(
-										value === "none" || value === ""
-											? null
-											: value,
+										value === "none" ? null : value,
 									)
 								}
 								placeholder={

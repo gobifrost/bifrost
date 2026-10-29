@@ -65,12 +65,7 @@ VARIANTS: list[WorkflowVariant] = [
 ]
 
 
-# Expected visibility matrix.
-# Key: (caller_label, agent_org_label, variant.key) -> should be visible?
-#
-# The caller here is always the platform admin (is_superuser=True). The bug is
-# that SOME rows are flipping to False today. All should be True — the admin
-# has access to the agent AND has bypass on everything.
+# A platform administrator has reach and permission for every attached tool.
 ADMIN_EXPECTED_VISIBLE: dict[tuple[str, str, str], bool] = {
     # Admin + Org A agent: every variant attached must be listed for the admin.
     ("platform_admin", "A", "global_authenticated"): True,
@@ -83,22 +78,11 @@ ADMIN_EXPECTED_VISIBLE: dict[tuple[str, str, str], bool] = {
 }
 
 
-# Non-admin matrix: an Org A user with ``role_x`` granted, calling the same
-# Org A agent. Visibility rules differ from admin in two important ways:
-#
-# * Cross-org workflows (in_org="B") become invisible — no superuser bypass
-#   in the org-scope check, and the user's org_id != workflow.organization_id.
-# * Role-gated-with-no-roles becomes invisible — the
-#   ``ROLE_BASED with no roles == superuser only`` rule kicks in.
-#
-# The org_a_role_gated row is the bug reproducer for jack@musick.gg: visible
-# in the listing path (middleware compares role names from JWT claims) but
-# *not executable* before the UUID coercion fix because the executor's
-# WorkflowRepository.get() compares Workflow.organization_id (UUID) to
-# self.org_id (str from JWT claim) and silently returns None.
+# The Agent's sharing policy authorizes its explicitly bound tools. The
+# original user's organization reach still limits foreign workflows.
 ORG_A_USER_EXPECTED_VISIBLE: dict[tuple[str, str, str], bool] = {
     ("org_a_user_with_role_x", "A", "global_authenticated"): True,
-    ("org_a_user_with_role_x", "A", "global_role_gated_empty"): False,
+    ("org_a_user_with_role_x", "A", "global_role_gated_empty"): True,
     ("org_a_user_with_role_x", "A", "global_role_gated"): True,
     ("org_a_user_with_role_x", "A", "org_a_authenticated"): True,
     ("org_a_user_with_role_x", "A", "org_a_role_gated"): True,
@@ -289,12 +273,7 @@ def customer_org_platform_admin(
     org1_user,
     refresh_user_tokens,
 ) -> Iterator:
-    """Customer-org user with the named Platform Admin role, but no scope bypass.
-
-    Agent-management routes intentionally recognize this role as an admin grant.
-    Organization impersonation does not: only token superusers and provider-org
-    callers receive the canonical scope bypass.
-    """
+    """A custom role's name does not confer the built-in admin authority."""
     role_resp = e2e_client.post(
         "/api/roles",
         headers=platform_admin.headers,
@@ -464,7 +443,7 @@ class TestMcpToolAccessMatrix:
 
         ``tools/list`` and ``tools/call`` go through different code paths
         (middleware filter vs. workflow tool execution -> WorkflowRepository
-        scoping). The reported failure mode for jack@musick.gg was
+        scoping). The reported failure mode for operator@contoso.example was
         "tool listed in Claude, but `tools/call` returns 'Workflow not found'"
         — the listing path passed while the execute path failed because
         ``OrgScopedRepository.get(id=...)`` compared a UUID column to a JWT
@@ -555,7 +534,7 @@ class TestMcpToolAccessMatrix:
         )
         assert "Workflow" not in content_text or "not found" not in content_text, (
             f"tools/call returned 'Workflow not found' for variant={variant_key}, "
-            f"tool={registered_tool_name!r}. This is the jack@musick.gg bug: "
+            f"tool={registered_tool_name!r}. This is the operator@contoso.example bug: "
             f"executor's WorkflowRepository.get() returned None for an "
             f"accessible workflow. Content: {content_text[:300]}"
         )
@@ -568,7 +547,7 @@ class TestMcpToolAccessMatrix:
 
     # =========================================================================
     # Non-admin caller: Org A user with role_x. This is where the
-    # jack@musick.gg bug actually surfaced — admin bypass hides the
+    # operator@contoso.example bug actually surfaced — admin bypass hides the
     # UUID/string compare. A real org user with role_x assigned trips it.
     # =========================================================================
 
@@ -588,7 +567,7 @@ class TestMcpToolAccessMatrix:
     ) -> None:
         """Non-admin Org A user: tools/call must succeed for every visible tool.
 
-        This is the jack@musick.gg reproducer. Without the UUID coercion fix
+        This is the operator@contoso.example reproducer. Without the UUID coercion fix
         in OrgScopedRepository.__init__ + MCPContext.__post_init__, the
         ``org_a_role_gated`` row fails with 'Workflow not found' because:
           - Workflow.organization_id is a UUID (DB column)
@@ -673,7 +652,7 @@ class TestMcpToolAccessMatrix:
         assert not ("Workflow" in content_text and "not found" in content_text), (
             f"BUG REPRODUCED: tools/call returned 'Workflow not found' for "
             f"variant={variant_key}, tool={registered_tool_name!r}. This is "
-            f"the jack@musick.gg failure. Likely cause: "
+            f"the operator@contoso.example failure. Likely cause: "
             f"OrgScopedRepository.get() returned None due to UUID/string "
             f"comparison failure. Content: {content_text[:300]}"
         )
@@ -815,13 +794,14 @@ class TestMcpToolAccessMatrix:
         )
 
     @pytest.mark.parametrize("seeded_agent_with_tools", ["org_b_role_gated"], indirect=True)
-    async def test_provider_org_user_can_list_and_call_cross_org_role_tool(
+    async def test_provider_org_user_cannot_list_or_call_foreign_agent_tool(
         self,
         seeded_agent_with_tools: dict[str, Any],
         e2e_client,
         provider_org_user,
+        platform_admin,
     ) -> None:
-        """A provider-org non-superuser receives the canonical scope bypass."""
+        """Provider membership alone grants no access to a foreign Agent."""
         agent = seeded_agent_with_tools["agent"]
         workflow = seeded_agent_with_tools["workflows_by_key"]["org_b_role_gated"]
         headers = {
@@ -830,6 +810,19 @@ class TestMcpToolAccessMatrix:
             "Accept": "application/json, text/event-stream",
         }
 
+        admin_list = e2e_client.post(
+            f"/mcp/{agent['id']}",
+            headers={**headers, "Authorization": f"Bearer {platform_admin.access_token}"},
+            json={"jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}},
+        )
+        assert admin_list.status_code == 200, admin_list.text
+        candidates = _candidate_tool_names_for_workflow(workflow)
+        registered_name = next(
+            tool["name"]
+            for tool in _parse_mcp_response(admin_list)["result"]["tools"]
+            if tool["name"] in candidates
+        )
+
         list_resp = e2e_client.post(
             f"/mcp/{agent['id']}",
             headers=headers,
@@ -837,19 +830,7 @@ class TestMcpToolAccessMatrix:
         )
         assert list_resp.status_code == 200, list_resp.text
         list_payload = _parse_mcp_response(list_resp)
-        candidate_names = _candidate_tool_names_for_workflow(workflow)
-        registered_name = next(
-            (
-                tool.get("name")
-                for tool in list_payload["result"].get("tools", [])
-                if tool.get("name") in candidate_names
-            ),
-            None,
-        )
-        assert registered_name is not None, (
-            "provider-org caller did not receive cross-org role-gated tool; "
-            f"candidates={candidate_names}"
-        )
+        assert list_payload["result"]["tools"] == [], list_payload
 
         call_resp = e2e_client.post(
             f"/mcp/{agent['id']}",
@@ -863,24 +844,16 @@ class TestMcpToolAccessMatrix:
         )
         assert call_resp.status_code == 200, call_resp.text
         call_payload = _parse_mcp_response(call_resp)
-        assert "error" not in call_payload, call_payload
-        result = call_payload.get("result")
-        assert result is not None and not result.get("isError", False), call_payload
-        content_text = " ".join(
-            block.get("text", "")
-            for block in result.get("content", [])
-            if isinstance(block, dict)
-        )
-        assert "ok" in content_text, content_text
+        assert call_payload["result"].get("isError") is True, call_payload
 
     @pytest.mark.parametrize("seeded_agent_with_tools", [None], indirect=True)
-    async def test_provider_gateway_discovery_requires_explicit_scope_or_target(
+    async def test_provider_gateway_discovery_preserves_organization_reach(
         self,
         seeded_agent_with_tools: dict[str, Any],
         e2e_client,
         provider_org_user,
     ) -> None:
-        """Provider bypass applies to exact targets, not unscoped discovery."""
+        """Neither broader discovery nor an exact ID adds organization reach."""
         agent = seeded_agent_with_tools["agent"]
         headers = {
             "Authorization": f"Bearer {provider_org_user.access_token}",
@@ -953,7 +926,7 @@ class TestMcpToolAccessMatrix:
         all_result = all_payload["result"]
         all_data = all_result.get("structuredContent")
         assert isinstance(all_data, dict), all_payload
-        assert agent["id"] in {item["id"] for item in all_data.get("agents", [])}
+        assert agent["id"] not in {item["id"] for item in all_data.get("agents", [])}
 
         explicit_response = e2e_client.post(
             "/mcp",
@@ -971,11 +944,10 @@ class TestMcpToolAccessMatrix:
         assert explicit_response.status_code == 200, explicit_response.text
         explicit_payload = _parse_mcp_response(explicit_response)
         explicit_result = explicit_payload["result"]
-        assert not explicit_result.get("isError", False), explicit_payload
         explicit_data = explicit_result.get("structuredContent")
         assert isinstance(explicit_data, dict), explicit_payload
-        assert "agents" in explicit_data, explicit_data
-        assert explicit_data["agents"][0]["id"] == agent["id"]
+        assert explicit_data["code"] == "AGENT_NOT_FOUND_OR_FORBIDDEN", explicit_payload
+        assert "agents" not in explicit_data, explicit_payload
 
     @pytest.mark.parametrize("seeded_agent_with_tools", ["org_b_role_gated"], indirect=True)
     async def test_customer_org_platform_admin_cannot_list_or_call_cross_org_tool(
@@ -985,7 +957,7 @@ class TestMcpToolAccessMatrix:
         platform_admin,
         customer_org_platform_admin,
     ) -> None:
-        """A named admin role outside the provider org never grants impersonation."""
+        """A custom role called Platform Admin grants only its actual permissions."""
         agent = seeded_agent_with_tools["agent"]
         workflow = seeded_agent_with_tools["workflows_by_key"]["org_b_role_gated"]
         admin_headers = {
@@ -1035,7 +1007,8 @@ class TestMcpToolAccessMatrix:
         all_search_payload = _parse_mcp_response(all_search)
         all_search_data = all_search_payload["result"].get("structuredContent")
         assert isinstance(all_search_data, dict), all_search_payload
-        assert all_search_data["code"] == "IMPERSONATION_FORBIDDEN"
+        assert not all_search_payload["result"].get("isError", False), all_search_payload
+        assert agent["id"] in {item["id"] for item in all_search_data.get("agents", [])}
 
         customer_list = e2e_client.post(
             f"/mcp/{agent['id']}",

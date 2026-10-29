@@ -12,10 +12,10 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.services import (
@@ -34,6 +34,8 @@ from src.services.service_lifecycle import (
     ServiceValidationError,
 )
 from src.services import service_memory
+from src.services.authorization.enforce import PermissionDenied, load_caller
+from src.services.service_access import require_service_access, service_visibility_filter
 
 logger = logging.getLogger(__name__)
 
@@ -163,18 +165,38 @@ async def _get_definition_or_404(db: DbSession, service_id: UUID) -> ServiceDefi
     return definition
 
 
+async def _get_visible_definition(
+    db: DbSession, user: CurrentUser, service_id: UUID, *, write: bool = False
+) -> ServiceDefinition:
+    definition = await _get_definition_or_404(db, service_id)
+    caller = await load_caller(db, user)
+    try:
+        require_service_access(caller, definition, write=write)
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail) from exc
+    return definition
+
+
 @router.get("", response_model=ServiceListResponse, summary="List services")
 async def list_services(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
     offset: int = Query(0, ge=0, description="Skip results"),
 ) -> ServiceListResponse:
     """List service definitions (platform admin only)."""
-    definitions, total = await service_lifecycle.list_definitions(
-        db, limit=limit, offset=offset
-    )
+    caller = await load_caller(db, user)
+    visibility = service_visibility_filter(caller)
+    total = await db.scalar(select(func.count(ServiceDefinition.id)).where(visibility)) or 0
+    definitions = list((await db.execute(
+        select(ServiceDefinition)
+        .options(joinedload(ServiceDefinition.workflow))
+        .where(visibility)
+        .order_by(ServiceDefinition.created_at.desc(), ServiceDefinition.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )).unique().scalars().all())
     # One pool-hash scan serves every row in the page (no per-row rescan).
     memory_by_attempt = await service_memory.read_service_memory()
     items = await _build_service_response_batch(db, definitions, memory_by_attempt)
@@ -185,11 +207,11 @@ async def list_services(
 async def get_service(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
 ) -> ServiceResponse:
-    """Get a service definition with observed state (platform admin only)."""
-    definition = await _get_definition_or_404(db, service_id)
+    """Get a service definition with observed state."""
+    definition = await _get_visible_definition(db, user, service_id)
     return await _build_service_response(db, definition)
 
 
@@ -198,11 +220,11 @@ async def update_service_policy(
     service_id: UUID,
     request: ServicePolicyUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
 ) -> ServiceResponse:
     """Update lifecycle policy fields (platform admin only)."""
-    definition = await _get_definition_or_404(db, service_id)
+    definition = await _get_visible_definition(db, user, service_id, write=True)
     try:
         updated = await service_lifecycle.update_policy(
             db,
@@ -222,11 +244,11 @@ async def update_service_policy(
 async def start_service(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
 ) -> ServiceResponse:
     """Request running: clears suppression so the claim loop picks it up."""
-    definition = await _get_definition_or_404(db, service_id)
+    definition = await _get_visible_definition(db, user, service_id, write=True)
     try:
         updated = await service_lifecycle.start_service(db, definition)
     except ServiceConflictError as e:
@@ -242,11 +264,11 @@ async def start_service(
 async def stop_service(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
 ) -> ServiceResponse:
     """Request stopped: durable desire is stored before termination."""
-    definition = await _get_definition_or_404(db, service_id)
+    definition = await _get_visible_definition(db, user, service_id, write=True)
     updated = await service_lifecycle.stop_service(db, definition)
     await db.commit()
     logger.info(f"Stopped service {log_safe(service_id)}")
@@ -257,11 +279,11 @@ async def stop_service(
 async def restart_service(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
 ) -> ServiceResponse:
     """Rolling restart: stays desired-running and stops the live attempt, if any."""
-    definition = await _get_definition_or_404(db, service_id)
+    definition = await _get_visible_definition(db, user, service_id, write=True)
     try:
         updated = await service_lifecycle.restart_service(db, definition)
     except ServiceConflictError as e:
@@ -277,11 +299,11 @@ async def restart_service(
 async def enable_service(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
 ) -> ServiceResponse:
     """Enable a service (distinct from start: no desired-state change)."""
-    definition = await _get_definition_or_404(db, service_id)
+    definition = await _get_visible_definition(db, user, service_id, write=True)
     updated = await service_lifecycle.set_enabled(db, definition, True)
     await db.commit()
     logger.info(f"Enabled service {log_safe(service_id)}")
@@ -292,11 +314,11 @@ async def enable_service(
 async def disable_service(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
 ) -> ServiceResponse:
     """Disable a service: stops the live attempt and blocks future claims."""
-    definition = await _get_definition_or_404(db, service_id)
+    definition = await _get_visible_definition(db, user, service_id, write=True)
     updated = await service_lifecycle.set_enabled(db, definition, False)
     await db.commit()
     logger.info(f"Disabled service {log_safe(service_id)}")
@@ -311,13 +333,13 @@ async def disable_service(
 async def list_service_attempts(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
     offset: int = Query(0, ge=0, description="Skip results"),
 ) -> ServiceAttemptListResponse:
     """List attempt history newest-first (platform admin only)."""
-    await _get_definition_or_404(db, service_id)
+    await _get_visible_definition(db, user, service_id)
     attempts, total = await service_lifecycle.list_attempts(
         db, service_id, limit=limit, offset=offset
     )
@@ -335,7 +357,7 @@ async def list_service_attempts(
 async def list_service_logs(
     service_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentUser,
     db: DbSession,
     attempt_id: UUID | None = Query(default=None, description="Scope to one attempt"),
     levels: list[str] | None = Query(default=None, description="Level allowlist (e.g. ?levels=INFO&levels=ERROR)"),
@@ -354,7 +376,7 @@ async def list_service_logs(
     (unlike execution logs, which serve non-admins). Live tail (<10s old,
     pre-flush) arrives over the service WebSocket channel, not here.
     """
-    await _get_definition_or_404(db, service_id)
+    await _get_visible_definition(db, user, service_id)
     start = _parse_log_date(start_date, "start_date")
     end = _parse_log_date(end_date, "end_date")
     if order not in ("chronological", "newest_first"):

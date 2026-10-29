@@ -10,6 +10,7 @@ export function SidebarLink({
 	isCollapsed = false,
 	onClick,
 	isActive,
+	end,
 	children,
 }: {
 	to: LinkProps["to"];
@@ -18,6 +19,8 @@ export function SidebarLink({
 	isCollapsed?: boolean;
 	onClick?: () => void;
 	isActive?: boolean;
+	/** Match only `to` itself, not the routes below it. */
+	end?: boolean;
 	children?: ReactNode;
 }) {
 	const linkClassName = (active: boolean) =>
@@ -60,6 +63,7 @@ export function SidebarLink({
 	return (
 		<NavLink
 			to={to}
+			end={end}
 			aria-label={label}
 			title={isCollapsed ? label : undefined}
 			onClick={onClick}

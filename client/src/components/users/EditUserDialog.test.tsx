@@ -159,6 +159,8 @@ beforeEach(() => {
 	});
 	mockAuth.mockReturnValue({
 		user: { id: "other-user", email: "admin@example.com" },
+		isImpersonating: false,
+		startImpersonation: vi.fn(),
 	});
 	authz.summary = summary(true);
 });
@@ -248,6 +250,26 @@ describe("EditUserDialog", () => {
 
 		expect(screen.queryByRole("tab")).not.toBeInTheDocument();
 		expect(screen.queryByText("Roles & access")).not.toBeInTheDocument();
+	});
+
+	it("offers a permitted operator a tab-scoped impersonation action", async () => {
+		const startImpersonation = vi.fn().mockResolvedValue(undefined);
+		mockAuth.mockReturnValue({
+			user: { id: "other-user", email: "admin@example.com" },
+			isImpersonating: false,
+			startImpersonation,
+		});
+		const { user } = renderWithProviders(
+			<EditUserDialog user={makeUser()} open onOpenChange={vi.fn()} />,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Impersonate" }));
+
+		expect(startImpersonation).toHaveBeenCalledWith({
+			id: "u-1",
+			name: "Alice",
+			email: "alice@example.com",
+		});
 	});
 });
 

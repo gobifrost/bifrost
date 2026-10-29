@@ -13,17 +13,17 @@ Covers the two fixed operations only:
 - SDK video status observation (``GET /api/platform-jobs/{id}`` shape)
   for local polling without recursive HTTP requests.
 
-The caller passes an explicit trusted actor (the auth-verified
-``UserPrincipal``) plus the DB session — never a FastAPI Request and
-never a child-provided actor claim. Requester/org/resource metadata,
-deduplication, notification creation, and the commit/refresh/update
-ordering match the historical handler exactly. The HTTP adapter keeps
-transport-specific concerns only: the 202 status, the ``Location``
-header, and ``HTTPException`` mapping.
+The enqueue caller passes an explicit verified :class:`Caller` plus the DB
+session — never a FastAPI Request or child-provided actor claim. Its workspace
+write authority is refreshed before enqueue; requester and organization
+metadata retain the verified effects actor. Deduplication, notification
+creation, and the commit/refresh/update ordering match the historical handler
+exactly. The HTTP adapter keeps transport-specific concerns only: the 202
+status, the ``Location`` header, and ``HTTPException`` mapping.
 
 Status visibility is shared by construction: HTTP and worker-local
-callers use the same requester-visibility rule (owner requester or
-platform admin reads as present; anything else reads as missing) and the
+callers use the same current-Caller visibility rule (owner requester or a scoped named
+permission reads as present; anything else reads as missing) and the
 same ``PlatformJobPublic`` serialization. The worker-local entry point is
 fixed to SDK video jobs — it rejects other job types as missing — so
 no generic job API is added. Cancellation and the other platform-job
@@ -36,20 +36,17 @@ it over the engine socket).
 
 from __future__ import annotations
 
-import logging
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.principal import UserPrincipal
 from src.models.contracts.artifacts import VideoArtifactSpec
 from src.models.contracts.platform_jobs import (
     PlatformJobAccepted,
     PlatformJobPublic,
 )
 from src.models.orm.platform_jobs import PlatformJob
-
-logger = logging.getLogger(__name__)
+from src.services.authorization.enforce import Caller
 
 
 class SdkVideoJobError(Exception):
@@ -69,7 +66,7 @@ class SdkVideoJobError(Exception):
 
 async def enqueue_sdk_video_job(
     db: AsyncSession,
-    principal: UserPrincipal,
+    caller: Caller,
     *,
     spec: VideoArtifactSpec,
     workspace_id: UUID | None = None,
@@ -91,6 +88,17 @@ async def enqueue_sdk_video_job(
     )
     from src.services.platform_jobs import enqueue_platform_job
 
+    from src.services.artifacts import ArtifactAccessError, ArtifactService
+
+    try:
+        caller, organization_id = (
+            await ArtifactService(db).authorize_workspace_write_for_caller(
+                caller, workspace_id=workspace_id
+            )
+        )
+    except ArtifactAccessError as exc:
+        raise SdkVideoJobError(404, str(exc)) from exc
+    principal = caller.principal
     return await enqueue_platform_job(
         db,
         SDK_VIDEO_GENERATION_DEFINITION,
@@ -101,7 +109,7 @@ async def enqueue_sdk_video_job(
             execution_id=execution_id,
         ),
         dedupe_key=None,
-        organization_id=principal.organization_id,
+        organization_id=organization_id,
         requested_by_user_id=principal.user_id,
         requested_by_email=principal.email,
         requested_by_name=principal.name or principal.email,
@@ -119,22 +127,9 @@ async def finalize_sdk_video_job(db: AsyncSession, job: PlatformJob) -> None:
     notification creation (failures only warn, never fail the enqueue),
     then commit, then refresh, then the WebSocket/notification update.
     """
-    from src.services.platform_jobs import (
-        ensure_platform_job_notification,
-        publish_platform_job_update,
-    )
+    from src.services.platform_jobs import finalize_enqueued_platform_job
 
-    try:
-        await ensure_platform_job_notification(db, job)
-    except Exception:
-        logger.warning(
-            "SDK video generation queued without a progress notification",
-            extra={"platform_job_id": str(job.id)},
-            exc_info=True,
-        )
-    await db.commit()
-    await db.refresh(job)
-    await publish_platform_job_update(job)
+    await finalize_enqueued_platform_job(db, job, log_label="SDK video generation")
 
 
 def sdk_video_job_accepted(
@@ -149,17 +144,12 @@ def sdk_video_job_accepted(
     )
 
 
-def can_read_platform_job(job: PlatformJob, user: UserPrincipal) -> bool:
-    """Requester-visibility rule shared by HTTP and local status reads."""
-    return user.is_platform_admin or job.requested_by_user_id == str(
-        user.user_id
-    )
-
-
 async def get_visible_platform_job(
     db: AsyncSession,
-    user: UserPrincipal,
+    caller: Caller,
     job_id: UUID,
+    *,
+    cancel: bool = False,
 ) -> PlatformJob:
     """Load a platform job visible to ``user`` or raise transport-neutral 404.
 
@@ -167,28 +157,34 @@ async def get_visible_platform_job(
     missing (404), never forbidden — matching the historical status
     handler exactly.
     """
+    from src.services.platform_job_access import PlatformJobAccessDenied, require_platform_job_access
+
     job = await db.get(PlatformJob, job_id)
-    if job is None or not can_read_platform_job(job, user):
+    if job is None:
         raise SdkVideoJobError(404, "Platform job not found")
+    try:
+        require_platform_job_access(caller, job, cancel=cancel)
+    except PlatformJobAccessDenied:
+        raise SdkVideoJobError(404, "Platform job not found") from None
     return job
 
 
 async def get_platform_job_status(
     db: AsyncSession,
-    user: UserPrincipal,
+    caller: Caller,
     job_id: UUID,
 ) -> PlatformJobPublic:
     """Serialize a visible platform job in the shared public shape."""
     from src.services.platform_jobs import platform_job_to_public
 
     return platform_job_to_public(
-        await get_visible_platform_job(db, user, job_id)
+        await get_visible_platform_job(db, caller, job_id)
     )
 
 
 async def get_sdk_video_job_status(
     db: AsyncSession,
-    user: UserPrincipal,
+    caller: Caller,
     job_id: UUID,
 ) -> PlatformJobPublic:
     """Serialize a visible SDK video job for fixed local polling.
@@ -203,7 +199,7 @@ async def get_sdk_video_job_status(
     )
     from src.services.platform_jobs import platform_job_to_public
 
-    job = await get_visible_platform_job(db, user, job_id)
+    job = await get_visible_platform_job(db, caller, job_id)
     if job.job_type != SDK_VIDEO_GENERATION_DEFINITION.job_type:
         raise SdkVideoJobError(404, "Platform job not found")
     return platform_job_to_public(job)
@@ -211,7 +207,6 @@ async def get_sdk_video_job_status(
 
 __all__ = [
     "SdkVideoJobError",
-    "can_read_platform_job",
     "enqueue_sdk_video_job",
     "finalize_sdk_video_job",
     "get_platform_job_status",

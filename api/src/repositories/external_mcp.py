@@ -15,11 +15,11 @@ a global fallback because they carry per-org secrets.
 import logging
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload, with_loader_criteria
 
-from src.core.org_filter import OrgFilterType
+from shared.scope_resolver import UNSET, RequestedScope
 from src.models.orm.external_mcp import (
     MCPConnection,
     MCPConnectionTool,
@@ -27,6 +27,7 @@ from src.models.orm.external_mcp import (
     UserMCPCredential,
 )
 from src.repositories.org_scoped import OrgScopedRepository
+from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -44,61 +45,62 @@ class MCPServerRepository(OrgScopedRepository[MCPServer]):
 
     async def list_servers(
         self,
+        reach: OrgReach,
+        *,
+        selected_organization_id: RequestedScope = UNSET,
         active_only: bool = True,
     ) -> list[MCPServer]:
-        """List MCP servers visible in the current scope.
+        """List templates inside the caller's SQL reach.
 
-        Cascade: org-specific (if org_id set) + global (NULL org_id).
-        Eager-loads ``connections`` so callers can inspect per-org instances
-        without N+1 queries.
+        Global templates are shared defaults when an organization is selected;
+        explicit Global selects Global alone.  Collection reads without a
+        selected scope include Global only when the permission reach includes
+        at least one organization (or Global itself).
         """
-        query = select(MCPServer).options(selectinload(MCPServer.connections))
-        query = self._apply_cascade_scope(query)
-        if active_only:
-            query = query.where(MCPServer.is_active.is_(True))
-        query = query.order_by(MCPServer.name)
-        result = await self.session.execute(query)
-        return list(result.scalars().unique().all())
-
-    async def list_all_in_scope(
-        self,
-        filter_type: OrgFilterType = OrgFilterType.ALL,
-        active_only: bool = False,
-    ) -> list[MCPServer]:
-        """List all MCP servers in scope without role-based filtering.
-
-        Used by platform admins. Mirrors ``AgentRepository.list_all_in_scope``.
-        """
-        query = select(MCPServer).options(selectinload(MCPServer.connections))
-
-        if filter_type == OrgFilterType.ALL:
-            pass
-        elif filter_type == OrgFilterType.GLOBAL_ONLY:
-            query = query.where(MCPServer.organization_id.is_(None))
-        elif filter_type == OrgFilterType.ORG_ONLY:
-            if self.org_id is not None:
-                query = query.where(MCPServer.organization_id == self.org_id)
-            else:
-                query = query.where(MCPServer.id.is_(None))
-        elif filter_type == OrgFilterType.ORG_PLUS_GLOBAL:
-            query = self._apply_cascade_scope(query)
-
-        if active_only:
-            query = query.where(MCPServer.is_active.is_(True))
-
-        query = query.order_by(MCPServer.name)
-        result = await self.session.execute(query)
-        return list(result.scalars().unique().all())
-
-    async def get_server(self, server_id: UUID) -> MCPServer | None:
-        """Direct ID lookup, eager-loading connections + tools."""
-        result = await self.session.execute(
-            select(MCPServer)
-            .where(MCPServer.id == server_id)
-            .options(
-                selectinload(MCPServer.connections).selectinload(MCPConnection.tools),
+        query = select(MCPServer)
+        reach_filter = reach.where(MCPServer.organization_id)
+        if selected_organization_id is UNSET:
+            if (
+                not reach.covers(None)
+                and (reach.everything or reach.managed or reach.organization_ids)
+            ):
+                reach_filter = or_(reach_filter, MCPServer.organization_id.is_(None))
+        elif selected_organization_id is None:
+            reach_filter = MCPServer.organization_id.is_(None)
+        else:
+            if reach_filter is not None:
+                reach_filter = or_(reach_filter, MCPServer.organization_id.is_(None))
+        if reach_filter is not None:
+            query = query.where(reach_filter)
+        if selected_organization_id is not UNSET and selected_organization_id is not None:
+            query = query.where(
+                or_(
+                    MCPServer.organization_id == selected_organization_id,
+                    MCPServer.organization_id.is_(None),
+                )
             )
+        if active_only:
+            query = query.where(MCPServer.is_active.is_(True))
+        query = query.order_by(MCPServer.name)
+        result = await self.session.execute(query)
+        return list(result.scalars().unique().all())
+
+    async def get_server(
+        self, server_id: UUID, *, connection_reach: OrgReach | None = None
+    ) -> MCPServer | None:
+        """Load a template and, when supplied, only reachable connections."""
+        query = select(MCPServer).where(MCPServer.id == server_id).options(
+            selectinload(MCPServer.connections).selectinload(MCPConnection.tools),
         )
+        if connection_reach is not None:
+            connection_filter = connection_reach.where(MCPConnection.organization_id)
+            if connection_filter is not None:
+                query = query.options(
+                    with_loader_criteria(
+                        MCPConnection, connection_filter, include_aliases=True
+                    )
+                )
+        result = await self.session.execute(query)
         return result.unique().scalar_one_or_none()
 
 
@@ -114,15 +116,15 @@ class MCPConnectionRepository(OrgScopedRepository[MCPConnection]):
     role_table = None
 
     async def list_connections(
-        self, server_id: UUID | None = None
+        self,
+        *,
+        reach: OrgReach,
+        server_id: UUID | None = None,
+        organization_id: UUID | None = None,
     ) -> list[MCPConnection]:
-        """List connections in the current org, optionally filtered by server."""
-        if self.org_id is None:
-            return []
-
+        """List connections within SQL reach before ordering or shaping."""
         query = (
             select(MCPConnection)
-            .where(MCPConnection.organization_id == self.org_id)
             .options(
                 joinedload(MCPConnection.server),
                 selectinload(MCPConnection.tools),
@@ -130,8 +132,13 @@ class MCPConnectionRepository(OrgScopedRepository[MCPConnection]):
             )
             .order_by(MCPConnection.created_at)
         )
+        reach_filter = reach.where(MCPConnection.organization_id)
+        if reach_filter is not None:
+            query = query.where(reach_filter)
         if server_id is not None:
             query = query.where(MCPConnection.server_id == server_id)
+        if organization_id is not None:
+            query = query.where(MCPConnection.organization_id == organization_id)
 
         result = await self.session.execute(query)
         return list(result.scalars().unique().all())

@@ -10,8 +10,28 @@ import pytest
 from src.services.webhooks.auth import (
     WebhookIntegrationCredentials,
     build_webhook_integration_credentials,
+    build_trusted_renewal_webhook_credentials,
     resolve_webhook_integration_auth,
 )
+
+
+@pytest.mark.asyncio
+async def test_human_credential_loading_requires_integration_and_secret_permissions(monkeypatch):
+    organization_id = uuid4()
+    caller = MagicMock()
+    require = MagicMock()
+    monkeypatch.setattr(
+        "src.services.webhooks.auth.user_reach",
+        lambda _caller: SimpleNamespace(covers=lambda target: target == organization_id),
+    )
+    monkeypatch.setattr("src.services.webhooks.auth.require_permission", require)
+    loader = AsyncMock()
+    monkeypatch.setattr("src.services.webhooks.auth._load_webhook_integration_credentials", loader)
+
+    await build_webhook_integration_credentials(db=AsyncMock(), caller=caller, integration_id=uuid4(), organization_id=organization_id)
+
+    assert [call.args[1] for call in require.call_args_list] == ["integrations.read", "secrets.read"]
+    loader.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -38,7 +58,7 @@ async def test_credentials_require_and_use_exact_organization_mapping(monkeypatc
         build_context,
     )
 
-    credentials = await build_webhook_integration_credentials(
+    credentials = await build_trusted_renewal_webhook_credentials(
         db,
         integration_id,
         organization_id,
@@ -76,7 +96,7 @@ async def test_credentials_use_integration_default_without_organization_mapping(
     )
 
     organization_id = uuid4()
-    credentials = await build_webhook_integration_credentials(
+    credentials = await build_trusted_renewal_webhook_credentials(
         db, integration_id, organization_id
     )
 
@@ -108,7 +128,7 @@ async def test_credentials_reject_when_no_effective_tenant_is_configured(monkeyp
     )
 
     with pytest.raises(ValueError, match="has no tenant configured"):
-        await build_webhook_integration_credentials(db, integration_id, uuid4())
+        await build_trusted_renewal_webhook_credentials(db, integration_id, uuid4())
 
 
 @pytest.mark.asyncio

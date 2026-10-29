@@ -98,12 +98,10 @@ class OrgScopedRepository(Generic[ModelT]):
             model = Table
             # No role_table - cascade scoping only
 
-    Access control:
-        - Superusers (`is_superuser=True`): trust the scope, no role check.
-          This is the SDK execution path — the engine has already done
-          authorization via `api/shared/scope_resolver.py`.
-        - Regular users: cascade scoping + role check (if entity has roles).
-          This is the direct-user REST path.
+    Callers must enforce current authority before repository access.
+    The historical `is_superuser` argument skips these low-level scope and
+    sharing filters for already-authorized operations; never derive it from
+    an actor flag or a token claim. Other calls use cascade and sharing filters.
     """
 
     model: type[ModelT]
@@ -128,16 +126,15 @@ class OrgScopedRepository(Generic[ModelT]):
                 so an unconverted string here silently fails the in-scope check.
             user_id: User UUID for role checks (None for system/superuser).
                 Same string-coercion contract as org_id.
-            is_superuser: If True, bypasses role checks (trusts scope)
+            is_superuser: Skip repository filters after canonical authorization.
             is_external: True for external (portal/guest) principals. Affects
                 ONLY the access-level check, never the org cascade: an
                 external gets no ``access_level="authenticated"`` entitlement
                 (an ``everyone`` tier, an explicit role grant, or ownership is
                 required). Cascade scoping is identical for everyone —
                 org→global, keyed on the effective org. The flag comes from
-                the principal (``UserPrincipal.is_external``), which is
-                already neutralized for bypass callers (platform admin /
-                provider org) at token mint — see ``shared/external_access.py``.
+                the caller's current identity facts; signing in does not
+                change a user's external status.
         """
         self.session = session
         self.org_id = UUID(org_id) if isinstance(org_id, str) else org_id
@@ -151,8 +148,7 @@ class OrgScopedRepository(Generic[ModelT]):
 
         Feeds ONLY the access-level check (`authenticated` does not grant
         to externals); it never alters the org cascade. ``is_superuser=True``
-        neutralizes it: the engine sentinel and platform admins are never
-        externally restricted.
+        skips this repository filter for an already-authorized operation.
         """
         return self.is_external and not self.is_superuser
 

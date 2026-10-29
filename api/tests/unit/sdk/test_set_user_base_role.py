@@ -98,6 +98,8 @@ async def test_set_platform_admin_adds_the_assignment_at_the_platform_boundary(d
 async def test_set_platform_admin_removes_the_assignment_and_its_boundary(db_session):
     org = await _seed_org(db_session)
     user = await _seed_user(db_session, organization_id=org.id)
+    surviving_admin = await _seed_user(db_session, organization_id=org.id)
+    await set_platform_admin(db_session, surviving_admin, True, assigned_by="test")
     await set_platform_admin(db_session, user, True, assigned_by="test")
 
     await set_platform_admin(db_session, user, False, assigned_by="test")
@@ -110,6 +112,8 @@ async def test_set_platform_admin_removes_the_assignment_and_its_boundary(db_ses
 async def test_set_platform_admin_is_idempotent(db_session):
     org = await _seed_org(db_session)
     user = await _seed_user(db_session, organization_id=org.id)
+    surviving_admin = await _seed_user(db_session, organization_id=org.id)
+    await set_platform_admin(db_session, surviving_admin, True, assigned_by="test")
 
     await set_platform_admin(db_session, user, True, assigned_by="test")
     await set_platform_admin(db_session, user, True, assigned_by="test")
@@ -118,3 +122,22 @@ async def test_set_platform_admin_is_idempotent(db_session):
     await set_platform_admin(db_session, user, False, assigned_by="test")
     await set_platform_admin(db_session, user, False, assigned_by="test")
     assert user.is_superuser is False
+
+
+@pytest.mark.asyncio
+async def test_external_account_cannot_receive_a_privileged_custom_base_role(db_session):
+    from shared.sdk_users import UserServiceError
+    from src.models.orm.users import Role, RolePermission
+
+    org = await _seed_org(db_session)
+    user = await _seed_user(db_session, organization_id=org.id)
+    user.is_external = True
+    role = Role(name=f"Contoso Admin {uuid4().hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(RolePermission(role_id=role.id, permission="configs.readwrite"))
+    await db_session.flush()
+    with pytest.raises(UserServiceError) as refused:
+        await set_user_base_role(db_session, user, role.id)
+    assert refused.value.status_code == 409
+    assert user.base_role_id == USER_ROLE_ID

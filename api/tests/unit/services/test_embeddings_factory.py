@@ -94,6 +94,22 @@ def _httpx_client_yielding(response_or_exception) -> MagicMock:
 class TestListEmbeddingModels:
     """Coverage for the capability-aware vs full-list filter."""
 
+    @pytest.fixture(autouse=True)
+    def _public_dns(self, monkeypatch):
+        """The real providers resolve to a public address, anything else
+        does not resolve, without the network: the endpoint check resolves
+        DNS, and a unit test must not depend on it."""
+        import socket
+
+        from src.services.embeddings import url_safety
+
+        def getaddrinfo(host, port, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if host in ("api.openai.com", "openrouter.ai"):
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("104.18.6.192", 0))]
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+        monkeypatch.setattr(url_safety.socket, "getaddrinfo", getaddrinfo)
+
     @pytest.mark.asyncio
     async def test_openrouter_capability_aware_filters_to_embeddings(self):
         """OpenRouter exposes output_modalities; we filter to entries with 'embeddings'."""

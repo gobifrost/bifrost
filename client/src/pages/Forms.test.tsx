@@ -27,6 +27,10 @@ const mockUseAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
@@ -62,6 +66,10 @@ function makeForm(overrides: Partial<Record<string, unknown>> = {}) {
 beforeEach(() => {
 	mockPreloadRunFormPage.mockClear();
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	mockUseForms.mockReturnValue({
 		data: [],
 		isLoading: false,

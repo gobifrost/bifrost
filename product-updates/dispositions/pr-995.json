@@ -1,0 +1,14 @@
+{
+  "key": "pr:995",
+  "classification": "highlight",
+  "entry_ids": [
+    "fc05e97f-84df-4355-a3c3-81314fee7db5"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/995",
+      "Security and copy review: verified privileged role-edit authority, role locking, organization boundaries, and notification owner/admin visibility against implementation and regression tests. Maintainer authorized merge and rollout on 2026-10-17."
+    ]
+  }
+}

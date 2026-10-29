@@ -1,0 +1,14 @@
+{
+  "key": "pr:1083",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflow tool updates use less memory and rebuild faster.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1083",
+      "Authorized production memory troubleshooting. Independent review of 2367a233f found no actionable issues. Verified 27 focused MCP tests, a live register/list/call check including invalid arguments, and API type/lint checks. A local 701-tool control confirmed identical public definitions and call results while avoiding unused synthetic argument models. Native-tool validation, workflow JSON-schema enforcement, authorization, and refreshed callables are preserved."
+    ]
+  }
+}

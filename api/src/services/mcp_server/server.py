@@ -1,32 +1,37 @@
 """
 Bifrost MCP Server
 
-MCP server for Bifrost platform capabilities using FastMCP for HTTP access.
+MCP server for Bifrost platform capabilities using the bundled MCP SDK.
 
 Architecture:
     - MCPContext: Holds user/org context for permission-scoped tool execution
     - BifrostMCPServer: Creates MCP servers with registered tools
-    - Uses FastMCP for HTTP access (Claude Desktop, etc.)
+    - Uses the MCP SDK FastMCP transport (Claude Desktop, etc.)
 
 Usage:
-    # For external access (FastMCP HTTP)
+    # For external access (MCP SDK HTTP)
     server = BifrostMCPServer(context)
     fastmcp_server = server.get_fastmcp_server()
-    app = fastmcp_server.http_app()
+    app = fastmcp_server.streamable_http_app()
 """
 
 import json
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from fastmcp.tools import ToolResult
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.fastmcp.tools.base import Tool as SDKTool
+from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadata
+from mcp.types import CallToolResult, ContentBlock, Icon
 
-from shared.scope_resolver import has_scope_bypass
 
 if TYPE_CHECKING:
-    from fastmcp import FastMCP
+    from src.core.principal import UserPrincipal
 
 from src.services.mcp_server.agent_scope import (
     get_scoped_agent_id as _get_agent_id_from_scope,
@@ -40,26 +45,10 @@ from src.services.mcp_server.tools.gateway import (
     GATEWAY_INSTRUCTIONS,
     GATEWAY_TOOL_NAMES,
 )
-from src.services.mcp_server.tool_result import error_result, success_result
+from src.services.mcp_server.tool_result import ToolResult, error_result, success_result
 from src.services.tool_schema import parameters_json_schema
 
 logger = logging.getLogger(__name__)
-
-# FastMCP for HTTP access - runtime import check
-HAS_FASTMCP = False
-_FastMCP: type["FastMCP"] | None = None
-_Icon: type | None = None
-
-try:
-    from fastmcp import FastMCP as _FastMCPClass
-    from mcp.types import Icon as _IconClass
-
-    _FastMCP = _FastMCPClass
-    _Icon = _IconClass
-    HAS_FASTMCP = True
-except ImportError as e:
-    # fastmcp / mcp packages are optional; HTTP MCP support stays disabled
-    logger.debug(f"fastmcp not available, MCP HTTP server disabled: {e}")
 
 # Bifrost branding
 BIFROST_ICON_URL = "https://bifrostintegrations.blob.core.windows.net/public/logo.svg"
@@ -76,7 +65,12 @@ BIFROST_WEBSITE_URL = "https://docs.gobifrost.com"
 _WORKFLOW_ID_TO_TOOL_NAME: dict[str, str] = {}
 
 # Stored references for refresh_workflow_tools()
-_fastmcp_instance: "FastMCP | None" = None
+_fastmcp_instance: FastMCP | None = None
+
+# Dynamic workflow schemas are validated by ``SDKWorkflowTool.run``. Every
+# wrapper therefore shares this empty SDK argument model instead of creating a
+# synthetic Pydantic model from its ``**arguments`` signature.
+_WORKFLOW_TOOL_FN_METADATA = FuncMetadata(arg_model=ArgModelBase)
 
 
 def _normalize_tool_name(name: str) -> str:
@@ -137,15 +131,20 @@ class MCPContext:
     org_id: UUID | str | None = None
     is_platform_admin: bool = False
     is_provider_org: bool = False
-    # External (portal/guest) principal — no global tier, no authenticated-
-    # tier entitlement. Mirrors UserPrincipal.is_external (the claim is
-    # already bypass-neutralized at token mint).
+    # External account flag, preserved from User.is_external at token mint.
     is_external: bool = False
     user_email: str = ""
     user_name: str = ""
     # Who an agent run is for (its run lineage). The REST bridge carries it as
     # a token claim so child runs and access checks see the agent run's user.
     run_user_id: UUID | str | None = None
+    # Audit attribution only; never used for authorization.
+    agent_run_id: UUID | str | None = None
+    # A durable runtime credential to forward through the REST bridge. These
+    # are identifiers only; HTTP auth resolves their authority from the DB.
+    runtime_credential_kind: str | None = None
+    runtime_credential_id: UUID | str | None = None
+    runtime_service_id: UUID | str | None = None
 
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
@@ -163,14 +162,13 @@ class MCPContext:
             self.org_id = UUID(self.org_id)
         if isinstance(self.run_user_id, str) and self.run_user_id:
             self.run_user_id = UUID(self.run_user_id)
+        if isinstance(self.agent_run_id, str) and self.agent_run_id:
+            self.agent_run_id = UUID(self.agent_run_id)
+        if isinstance(self.runtime_credential_id, str) and self.runtime_credential_id:
+            self.runtime_credential_id = UUID(self.runtime_credential_id)
+        if isinstance(self.runtime_service_id, str) and self.runtime_service_id:
+            self.runtime_service_id = UUID(self.runtime_service_id)
 
-    @property
-    def has_scope_bypass(self) -> bool:
-        """Whether this caller may cross organization scope boundaries."""
-        return has_scope_bypass(
-            is_platform_admin=self.is_platform_admin,
-            is_provider_org=self.is_provider_org,
-        )
 
 
 # =============================================================================
@@ -178,12 +176,33 @@ class MCPContext:
 # =============================================================================
 
 
+def context_from_principal(principal: "UserPrincipal") -> MCPContext:
+    """Carry verified identity and durable runtime provenance into MCP."""
+    runtime = principal.runtime_authority
+    return MCPContext(
+        user_id=principal.user_id,
+        org_id=principal.organization_id,
+        is_platform_admin=principal.is_superuser,
+        is_provider_org=principal.is_provider_org,
+        is_external=principal.is_external,
+        user_email=principal.email,
+        user_name=principal.name,
+        run_user_id=principal.run_user_id,
+        runtime_credential_kind=None if runtime is None else runtime.kind,
+        runtime_credential_id=None if runtime is None else runtime.credential_id,
+        runtime_service_id=None if runtime is None else runtime.service_id,
+        agent_run_id=(
+            runtime.credential_id if runtime is not None and runtime.kind == "agent_run" else None
+        ),
+    )
+
+
 def _get_context_from_token() -> MCPContext:
     """
-    Get MCPContext from authenticated FastMCP token.
+    Get MCPContext from the authenticated MCP SDK token.
 
     This extracts user information from the validated JWT token set by
-    FastMCP's authentication middleware. Used by tool execution to get
+    the SDK authentication middleware. Used by tool execution to get
     the actual authenticated user instead of the default startup context.
 
     Returns:
@@ -192,9 +211,6 @@ def _get_context_from_token() -> MCPContext:
     Raises:
         ToolError: If no authenticated user (token missing or invalid)
     """
-    from fastmcp.exceptions import ToolError
-    from fastmcp.server.dependencies import get_access_token
-
     token = get_access_token()
     if token is None:
         raise ToolError("Authentication required")
@@ -207,6 +223,9 @@ def _get_context_from_token() -> MCPContext:
         is_external=token.claims.get("is_external", False),
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
+        runtime_credential_kind=token.claims.get("runtime_credential_kind"),
+        runtime_credential_id=token.claims.get("runtime_credential_id"),
+        runtime_service_id=token.claims.get("runtime_service_id"),
     )
 
 
@@ -222,22 +241,17 @@ async def _get_runtime_context() -> MCPContext:
     - ``/mcp`` (unscoped): the gateway resolves the selected agent and
       constructs a tool-specific context at dispatch time.
     """
-    from fastmcp.exceptions import ToolError
-    from fastmcp.server.dependencies import get_access_token
-
     from src.core.database import get_db_context
     from src.services.mcp_server.tool_access import MCPToolAccessService
+    from src.services.mcp_server.authorization import load_mcp_caller
 
     token = get_access_token()
     if token is None:
         raise ToolError("Authentication required")
 
-    user_roles = token.claims.get("roles", [])
     is_superuser = token.claims.get("is_superuser", False)
     is_provider_org = token.claims.get("is_provider_org", False)
     is_external = token.claims.get("is_external", False)
-    user_id = token.claims.get("user_id")
-    org_id = token.claims.get("org_id")
     agent_id = _get_agent_id_from_scope()
 
     accessible_namespaces: list[str] = []
@@ -247,12 +261,8 @@ async def _get_runtime_context() -> MCPContext:
                 service = MCPToolAccessService(db)
                 agent_result = await service.get_tools_for_agent(
                     agent_id=agent_id,
-                    user_roles=user_roles,
-                    is_superuser=is_superuser,
-                    is_provider_org=is_provider_org,
-                    user_id=user_id,
-                    org_id=org_id,
-                    is_external=is_external,
+                    caller=await load_mcp_caller(db, _get_context_from_token()),
+                    for_execution=True,
                 )
                 if agent_result is not None:
                     accessible_namespaces = list(agent_result.accessible_namespaces)
@@ -267,6 +277,9 @@ async def _get_runtime_context() -> MCPContext:
         is_external=is_external,
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
+        runtime_credential_kind=token.claims.get("runtime_credential_kind"),
+        runtime_credential_id=token.claims.get("runtime_credential_id"),
+        runtime_service_id=token.claims.get("runtime_service_id"),
         accessible_namespaces=accessible_namespaces,
     )
 
@@ -276,19 +289,36 @@ async def _get_runtime_context() -> MCPContext:
 # =============================================================================
 
 
+class BifrostSDKServer(FastMCP):
+    """MCP SDK server with Bifrost's existing fail-closed tool policy."""
+
+    async def list_tools(self) -> list:
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+        return await ToolFilterMiddleware().filter_tools(await super().list_tools())
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+        await ToolFilterMiddleware().authorize_tool_call(name)
+        return await super().call_tool(name, arguments)
+
+
 class BifrostMCPServer:
     """
-    Bifrost MCP Server using FastMCP.
+    Bifrost MCP Server using the bundled MCP SDK.
 
     Creates MCP servers with tools registered based on user context and
-    permissions. Uses FastMCP for HTTP access (Claude Desktop, etc.).
+    permissions. Uses the MCP SDK for HTTP access (Claude Desktop, etc.).
 
     Usage:
         # Create server with context
         context = MCPContext(user_id=user.id, org_id=user.org_id)
         server = BifrostMCPServer(context)
 
-        # For FastMCP HTTP use
+        # For MCP SDK HTTP use
         fastmcp_server = server.get_fastmcp_server()
     """
 
@@ -308,12 +338,12 @@ class BifrostMCPServer:
         self.context = context
         self._name = name
 
-        # FastMCP server (lazy initialized)
+        # MCP SDK server (lazy initialized)
         self._fastmcp: Any = None
 
-    def get_fastmcp_server(self, auth: Any = None) -> "FastMCP":
+    def get_fastmcp_server(self, auth: Any = None) -> FastMCP:
         """
-        Get FastMCP server for HTTP access.
+        Get the MCP SDK server for HTTP access.
 
         The server is cached for reuse. If auth is provided, a new server
         is created with authentication enabled.
@@ -323,36 +353,26 @@ class BifrostMCPServer:
                   If provided, creates a new server with auth.
 
         Returns:
-            FastMCP server instance
+            MCP SDK server instance
         """
-        if not HAS_FASTMCP:
-            raise ImportError(
-                "fastmcp is required for MCP access. "
-                "Install it with: pip install 'fastmcp>=3.2.0,<4'"
-            )
-
         # Build icon list for branding
-        icons = []
-        if _Icon is not None:
-            icons = [
-                _Icon(
-                    src=BIFROST_ICON_URL,
-                    mimeType="image/svg+xml",
-                    sizes=["any"],
-                )
-            ]
+        icons = [
+            Icon(
+                src=BIFROST_ICON_URL,
+                mimeType="image/svg+xml",
+                sizes=["any"],
+            )
+        ]
 
         # Per-request context: pull user from the JWT and scope namespaces for
         # the agent-specific mount. Falls back to the server's
-        # default_context only when there is no FastMCP request context at all
+        # default_context only when there is no MCP request context at all
         # (e.g. tool introspection at startup); other failures (auth required,
         # DB error) are real errors and must not silently degrade to the
         # default admin context.
         default_context = self.context
 
         async def get_context_fn() -> MCPContext:
-            from fastmcp.exceptions import ToolError
-
             try:
                 return await _get_runtime_context()
             except ToolError:
@@ -362,12 +382,11 @@ class BifrostMCPServer:
                 # there is no HTTP context, so fall back to default.
                 return default_context
 
-        # If auth is provided, always create a new server with auth
+        # The ASGI adapter owns authentication; use a fresh server for its
+        # isolated application lifecycle when an adapter is requested.
         if auth is not None:
-            assert _FastMCP is not None
-            mcp = _FastMCP(
+            mcp = BifrostSDKServer(
                 self._name,
-                auth=auth,
                 instructions=GATEWAY_INSTRUCTIONS,
                 website_url=BIFROST_WEBSITE_URL,
                 icons=icons,
@@ -378,13 +397,12 @@ class BifrostMCPServer:
                 len(GATEWAY_TOOL_NAMES)
                 + sum(len(m.TOOLS) for m in TOOL_MODULES)
             )
-            logger.info(f"Created FastMCP server with {tool_count} tools and auth")
+            logger.info(f"Created MCP SDK server with {tool_count} tools and auth")
             return mcp
 
         # Otherwise use cached server
         if self._fastmcp is None:
-            assert _FastMCP is not None
-            self._fastmcp = _FastMCP(
+            self._fastmcp = BifrostSDKServer(
                 self._name,
                 instructions=GATEWAY_INSTRUCTIONS,
                 website_url=BIFROST_WEBSITE_URL,
@@ -396,7 +414,7 @@ class BifrostMCPServer:
                 len(GATEWAY_TOOL_NAMES)
                 + sum(len(m.TOOLS) for m in TOOL_MODULES)
             )
-            logger.info(f"Created FastMCP server with {tool_count} tools")
+            logger.info(f"Created MCP SDK server with {tool_count} tools")
         return self._fastmcp
 
 def get_system_tools() -> list[dict[str, Any]]:
@@ -531,22 +549,14 @@ def get_system_tool_function(tool_id: str) -> Any | None:
 # Workflow Tools (Dynamic from Database)
 # =============================================================================
 
-# WorkflowTool class for FastMCP - wraps workflow execution
-_WorkflowTool: type | None = None
-
-if HAS_FASTMCP:
-    from fastmcp.tools import Tool as _FastMCPTool
-
-    class WorkflowTool(_FastMCPTool):
+# Workflow tool adapter for dynamically registered workflows.
+class WorkflowTool:
         """
-        MCP Tool that executes a Bifrost workflow.
+        Adapter that executes a Bifrost workflow.
 
-        Subclasses FastMCP's Tool to:
-        1. Accept JSON Schema directly via `parameters` field
-        2. Override `run()` to delegate to workflow execution
-
-        This bypasses FastMCP's function signature inspection, allowing
-        dynamic parameter schemas from workflow `parameters_schema`.
+        Its schema is installed on the bundled SDK registry after wrapping
+        ``run`` in a callable, because workflows define their argument shape
+        dynamically in the database.
 
         The execution context is retrieved dynamically from the authenticated
         token at runtime via _get_context_from_token().
@@ -561,7 +571,20 @@ if HAS_FASTMCP:
         workflow_id: str
         workflow_name: str
 
-        model_config = {"arbitrary_types_allowed": True}
+        def __init__(
+            self,
+            *,
+            name: str,
+            description: str,
+            workflow_id: str,
+            workflow_name: str,
+            parameters: dict[str, Any],
+        ) -> None:
+            self.name = name
+            self.description = description
+            self.workflow_id = workflow_id
+            self.workflow_name = workflow_name
+            self.parameters = parameters
 
         async def run(self, arguments: dict[str, Any]) -> ToolResult:
             """Execute the workflow and wrap result in ToolResult."""
@@ -608,11 +631,7 @@ if HAS_FASTMCP:
 
                         from mcp.types import ImageContent, ResourceLink, TextContent
 
-                        from src.core.database import get_db_context
-                        from src.services.artifacts import (
-                            ArtifactAccessError,
-                            ArtifactService,
-                        )
+                        from src.services.mcp_server.tools._http_bridge import rest_client
 
                         content_blocks: list[Any] = [
                             TextContent(
@@ -620,38 +639,29 @@ if HAS_FASTMCP:
                                 text=f"Created {len(artifact_refs)} artifact(s).",
                             )
                         ]
-                        async with get_db_context() as db:
-                            artifact_service = ArtifactService(db)
+                        async with rest_client(context) as client:
                             for ref in artifact_refs:
-                                try:
-                                    artifact = await artifact_service.get_authorized(
-                                        UUID(ref.id),
-                                        user_id=UUID(str(context.user_id)),
-                                        bypass=context.has_scope_bypass,
-                                    )
-                                except (ArtifactAccessError, ValueError):
+                                endpoint = "content" if ref.content_type.startswith("image/") else "download-url"
+                                response = await client.get(f"/api/sdk/artifacts/{ref.id}/{endpoint}")
+                                if response.status_code != 200:
                                     return error_result(
                                         "ArtifactRef output was not found or is outside this MCP scope.",
                                         result,
                                     )
                                 if ref.content_type.startswith("image/"):
-                                    data = await artifact_service.read(artifact)
                                     content_blocks.append(
                                         ImageContent(
                                             type="image",
-                                            data=base64.b64encode(data).decode("ascii"),
+                                            data=base64.b64encode(response.content).decode("ascii"),
                                             mimeType=ref.content_type,
                                         )
                                     )
                                 else:
-                                    url = await artifact_service.generate_download_url(
-                                        artifact
-                                    )
                                     content_blocks.append(
                                         ResourceLink(
                                             type="resource_link",
                                             name=ref.filename,
-                                            uri=url,
+                                            uri=response.json()["url"],
                                             mimeType=ref.content_type,
                                             size=ref.size_bytes,
                                         )
@@ -672,8 +682,25 @@ if HAS_FASTMCP:
                 logger.exception(f"Error executing workflow tool {self.workflow_name}: {e}")
                 return error_result(str(e))
 
-    _WorkflowTool = WorkflowTool
 
+class SDKWorkflowTool(SDKTool):
+    """SDK tool that validates and dispatches a database-defined workflow."""
+
+    async def run(
+        self,
+        arguments: dict[str, Any],
+        context: Any = None,
+        convert_result: bool = False,
+    ) -> CallToolResult:
+        """Validate the registered schema instead of synthetic ``**kwargs`` metadata."""
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import ValidationError
+
+        try:
+            Draft202012Validator(self.parameters).validate(arguments)
+        except ValidationError as exc:
+            raise ToolError(f"Invalid arguments for {self.name}: {exc.message}") from exc
+        return await self.fn(**arguments)
 
 def _map_type_to_json_schema(param_type: str) -> str:
     """Map workflow parameter type to JSON Schema type."""
@@ -701,52 +728,32 @@ async def _execute_workflow_tool_impl(
     workflow_name: str,
     **inputs: Any,
 ) -> Any:
-    """Execute a specific workflow tool by ID."""
-    from shared.run_lineage import person_lineage
+    """Launch a currently bound tool through its parent Agent's shared gate."""
+    from fastapi import HTTPException
     from src.core.database import get_db_context
-    from src.repositories.workflows import WorkflowRepository
-    from src.services.execution.service import execute_tool
+    from src.services.execution.agent_workflow_tools import (
+        execute_agent_workflow_tool,
+    )
+    from src.services.authorization.callers import CallerUnavailable
+    from src.services.mcp_server.authorization import load_mcp_caller
 
+    agent_id = _get_agent_id_from_scope()
+    if agent_id is None:
+        return {"error": "Workflow tools require an Agent-scoped MCP session"}
     try:
         async with get_db_context() as db:
-            # Use context for proper org scoping and role-based access
-            repo = WorkflowRepository(
-                db,
-                org_id=context.org_id,
-                user_id=context.user_id,
-                is_superuser=context.has_scope_bypass,
-                is_external=context.is_external,
-            )
-            workflow = await repo.get(id=workflow_id)
-
-            if not workflow:
-                return f"Error: Workflow '{workflow_name}' not found"
-
-            if not workflow.is_active:
-                return f"Error: Workflow '{workflow_name}' is not active"
-
-            # Execute the workflow
-            result = await execute_tool(
-                workflow_id=str(workflow.id),
-                workflow_name=workflow.name,
-                parameters=inputs,
-                user_id=str(context.user_id),
-                user_email=context.user_email,
-                user_name=context.user_name or "MCP User",
-                org_id=str(context.org_id) if context.org_id else None,
-                is_platform_admin=context.is_platform_admin,
-                lineage=person_lineage(context.user_id),
-            )
-
-            success = result.status.value == "Success"
-            if success:
-                return result.result
-            else:
-                return f"Error: {result.error}"
-
-    except Exception as e:
-        logger.exception(f"Error executing workflow tool {workflow_name}: {e}")
-        return f"Error executing workflow: {e}"
+            caller = await load_mcp_caller(db, context)
+        response = await execute_agent_workflow_tool(
+            agent_id=agent_id, workflow_id=workflow_id, parameters=inputs,
+            caller=caller, sync=True,
+        )
+    except HTTPException as exc:
+        return {"error": exc.detail}
+    except CallerUnavailable as exc:
+        return {"error": str(exc)}
+    if response.status.value == "Success":
+        return response.result
+    return {"error": response.error or f"Workflow '{workflow_name}' failed"}
 
 
 async def _notify_duplicate_workflow_names(duplicates: dict[str, list]) -> None:
@@ -759,13 +766,11 @@ async def _notify_duplicate_workflow_names(duplicates: dict[str, list]) -> None:
         )
 
 
-async def _register_workflow_tools(mcp: "FastMCP") -> int:
+async def _register_workflow_tools(mcp: FastMCP) -> int:
     """
-    Register workflow tools with FastMCP server using human-readable names.
+    Register workflow tools with the MCP SDK using human-readable names.
 
-    Creates WorkflowTool instances for each workflow with is_tool=True,
-    passing the parameters_schema directly as JSON Schema. This bypasses
-    FastMCP's function signature inspection.
+    Installs each workflow's database-defined JSON schema on its SDK tool.
 
     Tool names are normalized from workflow names (e.g., "Review Tickets" -> "review_tickets").
     Duplicate names get a short random suffix (e.g., "review_tickets_x7k").
@@ -777,10 +782,6 @@ async def _register_workflow_tools(mcp: "FastMCP") -> int:
 
     # Store the live server so refresh_workflow_tools() can re-register tools.
     _fastmcp_instance = mcp
-
-    if not HAS_FASTMCP or _WorkflowTool is None:
-        logger.warning("FastMCP not available, skipping workflow tool registration")
-        return 0
 
     from src.core.database import get_db_context
     from src.services.tool_registry import ToolRegistry
@@ -842,7 +843,7 @@ async def _register_workflow_tools(mcp: "FastMCP") -> int:
 
                     # Create WorkflowTool with human-readable name
                     # Context is retrieved dynamically from authenticated token at runtime
-                    workflow_tool = _WorkflowTool(
+                    workflow_tool = WorkflowTool(
                         name=tool_name,  # Human-readable name instead of UUID
                         description=description,
                         workflow_id=workflow_id,
@@ -853,9 +854,35 @@ async def _register_workflow_tools(mcp: "FastMCP") -> int:
                         ),
                     )
 
-                    # Add to FastMCP server
+                    # Install the dynamic workflow schema used by tools/list
+                    # and SDKWorkflowTool's validator.
                     try:
-                        mcp.add_tool(workflow_tool)
+                        def build_workflow_wrapper(bound_tool: WorkflowTool):
+                            async def workflow_wrapper(
+                                **arguments: Any,
+                            ) -> CallToolResult:
+                                return (
+                                    await bound_tool.run(arguments)
+                                ).to_call_tool_result()
+
+                            return workflow_wrapper
+
+                        workflow_wrapper = build_workflow_wrapper(workflow_tool)
+
+                        workflow_wrapper.__name__ = tool_name
+                        workflow_wrapper.__qualname__ = tool_name
+                        workflow_wrapper.__doc__ = description
+                        registered = SDKWorkflowTool(
+                            fn=workflow_wrapper,
+                            name=tool_name,
+                            description=description,
+                            parameters=workflow_tool.parameters,
+                            fn_metadata=_WORKFLOW_TOOL_FN_METADATA,
+                            is_async=True,
+                        )
+                        # SDK add_tool preserves an existing name. Refresh must
+                        # replace its callable as well as its dynamic schema.
+                        mcp._tool_manager._tools[tool_name] = registered
                         count += 1
                         logger.debug(
                             f"Registered workflow tool: {tool_name} "
@@ -864,7 +891,7 @@ async def _register_workflow_tools(mcp: "FastMCP") -> int:
                     except Exception as e:
                         logger.warning(f"Failed to register workflow tool {workflow_name}: {e}")
 
-            logger.info(f"Registered {count} workflow tools with FastMCP")
+            logger.info(f"Registered {count} workflow tools with MCP SDK")
             return count
 
     except Exception as e:

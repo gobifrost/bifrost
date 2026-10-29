@@ -11,12 +11,17 @@ code path).
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 
+from src.core.principal import UserPrincipal
 from src.core.security import mint_engine_token
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.explain import Powers, RunUser
+from src.services.authorization.runtime import RuntimeAuthority
 from src.services.execution.worker_sdk_http import build_worker_sdk_app
 
 
@@ -30,9 +35,65 @@ def _fake_redis_pipe():
     return fake_redis_client, fake_pipe
 
 
+class _Session:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+def _session_factory():
+    return _Session
+
+
+def _install_runtime_principal(
+    monkeypatch: pytest.MonkeyPatch, execution_id: UUID, workflow_id: UUID
+) -> None:
+    """Install the durable workflow fact resolved for an engine token."""
+    actor_id, run_user_id = uuid4(), uuid4()
+    context = AuthorizationContext(
+        user_id=run_user_id,
+        home_organization_id=None,
+        base_role_id=uuid4(),
+        is_external=False,
+        base_permissions=frozenset(),
+    )
+    authority = RuntimeAuthority(
+        kind="workflow_execution",
+        credential_id=execution_id,
+        run_user=RunUser(run_user_id, context, None, is_active=True),
+        powers=Powers(WorkflowPermissionMode.FULL, ()),
+        acting_user_id=actor_id,
+        organization_id=None,
+        workflow_id=workflow_id,
+        started_by_user_id=run_user_id,
+        root_execution_id=execution_id,
+    )
+    principal = UserPrincipal(
+        user_id=actor_id,
+        email="workflow-engine@example.test",
+        organization_id=None,
+        is_verified=True,
+        engine_execution_id=str(execution_id),
+        run_user_id=run_user_id,
+        started_by_user_id=run_user_id,
+        root_execution_id=execution_id,
+        workflow_id=workflow_id,
+        runtime_authority=authority,
+    )
+    resolver = AsyncMock(return_value=principal)
+    monkeypatch.setattr("src.core.database.get_session_factory", _session_factory)
+    monkeypatch.setattr(
+        "src.services.authorization.runtime_auth.load_runtime_principal", resolver
+    )
+
+
 class TestWorkflowOperationUsageMiddleware:
     @pytest.mark.asyncio
-    async def test_catalogued_route_uses_operation_id_as_key(self):
+    async def test_catalogued_route_uses_operation_id_as_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         app = build_worker_sdk_app()
 
         @app.get(
@@ -42,13 +103,10 @@ class TestWorkflowOperationUsageMiddleware:
         async def _catalogued():
             return {"ok": True}
 
-        token, _ = mint_engine_token(
-            execution_id=str(uuid4()),
-            solution_id=None,
-            global_repo_access=True,
-            timeout_seconds=300,
-            engine_workflow_id="wf-mw-1",
-        )
+        workflow_id = uuid4()
+        execution_id = uuid4()
+        token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=300)
+        _install_runtime_principal(monkeypatch, execution_id, workflow_id)
 
         fake_redis_client, fake_pipe = _fake_redis_pipe()
         transport = httpx.ASGITransport(app=app)
@@ -67,26 +125,25 @@ class TestWorkflowOperationUsageMiddleware:
         fake_pipe.hincrby.assert_called_once()
         (key, field, amount), _ = fake_pipe.hincrby.call_args
         assert key.startswith("bifrost:wf_usage:")
-        assert field == "wf-mw-1|__test__.wf_usage_catalogued"
+        assert field == f"{workflow_id}|__test__.wf_usage_catalogued"
         assert amount == 1
         fake_pipe.expire.assert_called_once()
         fake_pipe.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_uncatalogued_route_uses_method_and_path_template(self):
+    async def test_uncatalogued_route_uses_method_and_path_template(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         app = build_worker_sdk_app()
 
         @app.get("/__test__/wf-usage-uncatalogued/{item_id}")
         async def _uncatalogued(item_id: str):
             return {"ok": True, "item_id": item_id}
 
-        token, _ = mint_engine_token(
-            execution_id=str(uuid4()),
-            solution_id=None,
-            global_repo_access=True,
-            timeout_seconds=300,
-            engine_workflow_id="wf-mw-2",
-        )
+        workflow_id = uuid4()
+        execution_id = uuid4()
+        token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=300)
+        _install_runtime_principal(monkeypatch, execution_id, workflow_id)
 
         fake_redis_client, fake_pipe = _fake_redis_pipe()
         transport = httpx.ASGITransport(app=app)
@@ -103,7 +160,7 @@ class TestWorkflowOperationUsageMiddleware:
         assert response.status_code == 200, response.text
 
         (_key, field, _amount), _ = fake_pipe.hincrby.call_args
-        assert field == "wf-mw-2|GET /__test__/wf-usage-uncatalogued/{item_id}"
+        assert field == f"{workflow_id}|GET /__test__/wf-usage-uncatalogued/{{item_id}}"
 
     @pytest.mark.asyncio
     async def test_no_engine_workflow_id_skips_increment_entirely(self):
@@ -123,7 +180,9 @@ class TestWorkflowOperationUsageMiddleware:
         get_redis.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_redis_failure_does_not_fail_the_request(self):
+    async def test_redis_failure_does_not_fail_the_request(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """A Redis outage must never fail (or slow) the request it tags."""
         app = build_worker_sdk_app()
 
@@ -131,13 +190,9 @@ class TestWorkflowOperationUsageMiddleware:
         async def _redis_down():
             return {"ok": True}
 
-        token, _ = mint_engine_token(
-            execution_id=str(uuid4()),
-            solution_id=None,
-            global_repo_access=True,
-            timeout_seconds=300,
-            engine_workflow_id="wf-mw-3",
-        )
+        execution_id = uuid4()
+        token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=300)
+        _install_runtime_principal(monkeypatch, execution_id, uuid4())
 
         transport = httpx.ASGITransport(app=app)
         with patch(

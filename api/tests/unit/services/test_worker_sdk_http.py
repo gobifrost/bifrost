@@ -11,7 +11,6 @@ The real forked-child round trip lives in
 
 import asyncio
 import os
-from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -28,6 +27,7 @@ from bifrost.client import (
     _set_client,
     get_engine_socket_path,
 )
+from src.models.orm.audit import AuditLog
 from src.services.execution.worker_sdk_http import (
     AGENT_RUN_ROUTE_METHODS,
     AI_ROUTE_METHODS,
@@ -46,6 +46,7 @@ from src.services.execution.worker_sdk_http import (
     ROLES_ROUTE_METHODS,
     SDK_CONTEXT_ROUTE_METHODS,
     SDK_MODULES_ROUTE_METHODS,
+    SDK_RUNTIME_ROUTE_METHODS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
     TABLE_SDK_ROUTE_PATHS,
@@ -124,16 +125,6 @@ async def committed_config(async_session_factory):
         await session.commit()
 
 
-@dataclass
-class _EngineUser:
-    """Minimal superuser principal matching an engine token's claims."""
-
-    organization_id: None = None
-    is_superuser: bool = True
-    is_external: bool = False
-    email: str = "engine@bifrost.internal"
-
-
 def _no_cache():
     """Force the config repository past its Redis cache to the DB query.
 
@@ -155,11 +146,31 @@ def _engine_token() -> str:
 
     token, _ = mint_engine_token(
         execution_id=_ENGINE_TOKEN_EXECUTION_ID,
-        solution_id=None,
-        global_repo_access=True,
         timeout_seconds=300,
     )
     return token
+
+
+async def _delete_owned_test_orgs(session, organization_ids):
+    """Delete only these test-owned organizations and their retained audit rows."""
+    from sqlalchemy import delete
+    from src.models.orm.audit import AuditLog
+    from src.models.orm.organizations import Organization
+
+    await session.execute(delete(AuditLog).where(AuditLog.organization_id.in_(organization_ids)))
+    await session.execute(delete(Organization).where(Organization.id.in_(organization_ids)))
+
+
+async def _scoped_engine_token(session_factory, organization_id):
+    from tests.helpers.live_execution import create_live_execution
+    from src.core.security import mint_engine_token
+
+    execution_id = str(uuid4())
+    await create_live_execution(
+        session_factory, execution_id, organization_id=organization_id, platform_admin=False,
+    )
+    token, _ = mint_engine_token(execution_id=execution_id, timeout_seconds=300)
+    return token, execution_id
 
 
 def _socket_client(server: WorkerSdkHttpServer) -> httpx.AsyncClient:
@@ -176,7 +187,8 @@ class TestRouteReuse:
     def test_build_app_mounts_real_sdk_routes_by_identity(self):
         from fastapi.routing import APIRoute
 
-        from src.routers.agent_runs import router as agent_runs_router
+        from src.routers.agent_run_sdk import detail_router, enqueue_router
+        from src.routers.agent_runs import router as api_agent_runs_router
         from src.routers.cli import router as sdk_router
         from src.routers.events import router as events_router
         from src.routers.executions import router as executions_router
@@ -186,6 +198,7 @@ class TestRouteReuse:
         from src.routers.platform_jobs import router as platform_jobs_router
         from src.routers.roles import router as roles_router
         from src.routers.sdk_modules import router as sdk_modules_router
+        from src.routers.sdk_runtime import router as sdk_runtime_router
         from src.routers.tables import router as tables_router
         from src.routers.users import router as users_router
         from src.routers.workflows import router as workflows_router
@@ -264,7 +277,14 @@ class TestRouteReuse:
         }
         agent_run_originals = {
             (route.path, method): route
-            for route in agent_runs_router.routes
+            for agent_run_router in (detail_router, enqueue_router)
+            for route in agent_run_router.routes
+            if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+        api_agent_run_routes = {
+            (route.path, method): route
+            for route in api_agent_runs_router.routes
             if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
@@ -303,6 +323,12 @@ class TestRouteReuse:
             (route.path, method): route
             for route in sdk_modules_router.routes
             if (wanted := SDK_MODULES_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+        runtime_originals = {
+            (route.path, method): route
+            for route in sdk_runtime_router.routes
+            if (wanted := SDK_RUNTIME_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
 
@@ -392,6 +418,12 @@ class TestRouteReuse:
             if route.path in SDK_MODULES_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_runtime = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in SDK_RUNTIME_ROUTE_METHODS
+            for method in route.methods
+        }
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
@@ -439,6 +471,10 @@ class TestRouteReuse:
         for key, route in mounted_agent_runs.items():
             assert route is agent_run_originals[key]
             assert route.endpoint is agent_run_originals[key].endpoint
+        assert set(api_agent_run_routes) == set(agent_run_originals)
+        for key, route in api_agent_run_routes.items():
+            assert route is agent_run_originals[key]
+            assert route.endpoint is agent_run_originals[key].endpoint
 
         assert set(mounted_events) == set(event_originals)
         for key, route in mounted_events.items():
@@ -469,6 +505,11 @@ class TestRouteReuse:
         for key, route in mounted_sdk_modules.items():
             assert route is sdk_modules_originals[key]
             assert route.endpoint is sdk_modules_originals[key].endpoint
+
+        assert set(mounted_runtime) == set(runtime_originals)
+        for key, route in mounted_runtime.items():
+            assert route is runtime_originals[key]
+            assert route.endpoint is runtime_originals[key].endpoint
 
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
@@ -544,13 +585,15 @@ class TestRouteReuse:
         )
 
     def test_files_route_selection_is_exact(self):
-        """Gate C4a mounts the eight files facade routes as real objects."""
+        """Gate C4a mounts the ten files facade routes as real objects."""
         assert FILES_ROUTE_PATHS == frozenset(
             {
                 "/api/files/read",
                 "/api/files/write",
                 "/api/files/list",
                 "/api/files/delete",
+                "/api/files/move",
+                "/api/files/move-many",
                 "/api/files/stat",
                 "/api/files/exists",
                 "/api/files/signed-url",
@@ -730,6 +773,38 @@ class TestRouteReuse:
 
 class TestSocketServerLifecycle:
     @pytest.mark.asyncio
+    async def test_building_the_app_does_not_block_the_event_loop(self, monkeypatch):
+        """Building the app imports every SDK router (~30 s on a cold,
+        CPU-limited pod); the executor's heartbeat must keep running."""
+        import time
+
+        from src.services.execution import worker_sdk_http
+
+        real_build = worker_sdk_http.build_worker_sdk_app
+
+        def slow_build():  # type: ignore[no-untyped-def]
+            time.sleep(0.3)
+            return real_build()
+
+        monkeypatch.setattr(worker_sdk_http, "build_worker_sdk_app", slow_build)
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        ticker = asyncio.create_task(tick())
+        server = WorkerSdkHttpServer()
+        try:
+            await server.start()
+        finally:
+            ticker.cancel()
+            await server.stop()
+        assert ticks >= 10, "the event loop kept running while the app was built"
+
+    @pytest.mark.asyncio
     async def test_start_binds_private_socket_and_stop_removes_it(self):
         server = WorkerSdkHttpServer()
         await server.start()
@@ -752,8 +827,10 @@ class TestSocketServerLifecycle:
 class TestSocketServesConfigRoute:
     @pytest.mark.asyncio
     async def test_config_get_matches_the_real_route(self, committed_config, async_session_factory):
+        from src.core.security import decode_token
         from src.models.contracts.cli import CLIConfigGetRequest
         from src.routers.cli import cli_get_config
+        from src.services.authorization.runtime_auth import load_runtime_principal
 
         key = f"wsdk-{uuid4().hex[:8]}"
         await committed_config(key, "socket-value")
@@ -774,9 +851,13 @@ class TestSocketServesConfigRoute:
                 assert payload["config_type"] == "string"
 
                 async with async_session_factory() as session:
+                    principal = await load_runtime_principal(
+                        session, decode_token(_engine_token())
+                    )
+                    assert principal is not None
                     direct = await cli_get_config(
                         CLIConfigGetRequest(key=key, scope="global"),
-                        _EngineUser(),
+                        principal,
                         session,
                     )
                 assert direct is not None
@@ -805,42 +886,34 @@ class TestSocketServesConfigRoute:
             await server.stop()
 
     @pytest.mark.asyncio
-    async def test_scope_rules_match_the_api(self):
-        """A non-superuser caller may read its own org but not another."""
-        from src.core.security import create_access_token
+    async def test_scope_rules_match_the_api(self, async_session_factory):
+        from src.models.orm.organizations import Organization
+        from tests.helpers.live_execution import delete_live_execution
 
-        org_a = uuid4()
-        org_b = uuid4()
-        token = create_access_token(
-            {
-                "sub": str(uuid4()),
-                "email": "user@example.com",
-                "name": "User",
-                "org_id": str(org_a),
-                "engine_execution_id": str(uuid4()),
-                "service_id": str(uuid4()),
-            }
-        )
+        async with async_session_factory() as session:
+            organization = Organization(name=f"scope-{uuid4().hex[:8]}", created_by="test")
+            session.add(organization)
+            await session.commit()
+            org_a = organization.id
+        token, execution_id = await _scoped_engine_token(async_session_factory, org_a)
         headers = {"Authorization": f"Bearer {token}"}
         server = WorkerSdkHttpServer()
         await server.start()
         try:
             with _no_cache():
                 async with _socket_client(server) as client:
-                    own = await client.post(
-                        "/api/sdk/config/get",
-                        json={"key": "k", "scope": None},
-                        headers=headers,
-                    )
+                    own = await client.post("/api/sdk/config/get", json={"key": "k"}, headers=headers)
                     denied = await client.post(
-                        "/api/sdk/config/get",
-                        json={"key": "k", "scope": str(org_b)},
-                        headers=headers,
+                        "/api/sdk/config/get", json={"key": "k", "scope": str(uuid4())}, headers=headers,
                     )
             assert own.status_code == 200, own.text
             assert denied.status_code == 403, denied.text
         finally:
             await server.stop()
+            await delete_live_execution(async_session_factory, execution_id)
+            async with async_session_factory() as session:
+                await _delete_owned_test_orgs(session, [org_a])
+                await session.commit()
 
     @pytest.mark.asyncio
     async def test_auth_is_required(self):
@@ -922,7 +995,7 @@ class TestSocketConfigContracts:
         """A non-superuser may mutate its own org but not another."""
         from sqlalchemy import delete
 
-        from src.core.security import create_access_token
+        from tests.helpers.live_execution import delete_live_execution
         from src.models.orm.config import Config as ConfigModel
         from src.models.orm.organizations import Organization as OrganizationModel
 
@@ -943,16 +1016,7 @@ class TestSocketConfigContracts:
             await session.commit()
             org_a, org_b = org_a_row.id, org_b_row.id
 
-        token = create_access_token(
-            {
-                "sub": str(uuid4()),
-                "email": "user@example.com",
-                "name": "User",
-                "org_id": str(org_a),
-                "engine_execution_id": str(uuid4()),
-                "service_id": str(uuid4()),
-            }
-        )
+        token, execution_id = await _scoped_engine_token(async_session_factory, org_a)
         headers = {"Authorization": f"Bearer {token}"}
         key = f"wsdk-scope-{uuid4().hex[:8]}"
         server = WorkerSdkHttpServer()
@@ -1003,15 +1067,12 @@ class TestSocketConfigContracts:
             assert cleanup.json() is True
         finally:
             await server.stop()
+            await delete_live_execution(async_session_factory, execution_id)
             async with async_session_factory() as session:
                 await session.execute(
                     delete(ConfigModel).where(ConfigModel.key == key)
                 )
-                await session.execute(
-                    delete(OrganizationModel).where(
-                        OrganizationModel.id.in_([org_a, org_b])
-                    )
-                )
+                await _delete_owned_test_orgs(session, [org_a, org_b])
                 await session.commit()
 
     @pytest.mark.asyncio
@@ -1143,9 +1204,7 @@ class TestSocketTableWrites:
                 await cleanup.execute(
                     delete(TableModel).where(TableModel.id == table_uuid)
                 )
-                await cleanup.execute(
-                    delete(OrganizationModel).where(OrganizationModel.id == org_uuid)
-                )
+                await _delete_owned_test_orgs(cleanup, [org_uuid])
                 await cleanup.commit()
 
 
@@ -1811,9 +1870,8 @@ class TestSocketKnowledge:
 
     @pytest.mark.asyncio
     async def test_cross_org_scope_denied_over_socket(self, async_session_factory):
-        from sqlalchemy import delete
 
-        from src.core.security import create_access_token
+        from tests.helpers.live_execution import delete_live_execution
         from src.models.orm.organizations import Organization as OrganizationModel
 
         async with async_session_factory() as session:
@@ -1833,16 +1891,7 @@ class TestSocketKnowledge:
             await session.commit()
             org_a_id, org_b_id = org_a.id, org_b.id
 
-        token = create_access_token(
-            {
-                "sub": str(uuid4()),
-                "email": "user@example.com",
-                "name": "User",
-                "org_id": str(org_a_id),
-                "engine_execution_id": str(uuid4()),
-                "service_id": str(uuid4()),
-            }
-        )
+        token, execution_id = await _scoped_engine_token(async_session_factory, org_a_id)
         headers = {"Authorization": f"Bearer {token}"}
         server = WorkerSdkHttpServer()
         await server.start()
@@ -1870,12 +1919,9 @@ class TestSocketKnowledge:
             assert malformed.status_code == 422, malformed.text
         finally:
             await server.stop()
+            await delete_live_execution(async_session_factory, execution_id)
             async with async_session_factory() as session:
-                await session.execute(
-                    delete(OrganizationModel).where(
-                        OrganizationModel.id.in_([org_a_id, org_b_id])
-                    )
-                )
+                await _delete_owned_test_orgs(session, [org_a_id, org_b_id])
                 await session.commit()
 
 
@@ -2012,11 +2058,7 @@ class TestSocketWorkflowsAndExecutions:
                 await session.execute(
                     delete(UserModel).where(UserModel.id == owner_id)
                 )
-                await session.execute(
-                    delete(OrganizationModel).where(
-                        OrganizationModel.id == owner_org
-                    )
-                )
+                await _delete_owned_test_orgs(session, [owner_org])
                 await session.commit()
 
     @pytest.mark.asyncio
@@ -2166,19 +2208,93 @@ class TestSocketAgentRuns:
                         headers=headers,
                     )
             assert response.status_code == 202, response.text
-            assert response.json() == {"run_id": run_id, "status": "queued"}
+            receipt = response.json()
+            assert receipt == {
+                "run_id": run_id,
+                "status": "queued",
+                "run_as_user_id": None,
+            }
             assert mock_enqueue.await_count == 1
             kwargs = mock_enqueue.call_args.kwargs
             assert kwargs["agent_id"] == str(agent_id)
             assert kwargs["trigger_type"] == "api"
             assert kwargs["input_data"] == {"ticket_id": 1}
             assert kwargs["sync"] is False
+            assert kwargs["run_as_user_id"] is None
         finally:
             await server.stop()
             async with async_session_factory() as session:
                 await session.execute(
                     delete(AgentModel).where(AgentModel.id == agent_id)
                 )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_enqueue_over_socket_forwards_run_as(self, async_session_factory):
+        from sqlalchemy import delete
+
+        from src.models.orm.agents import Agent as AgentModel
+        from src.models.orm.organizations import Organization as OrganizationModel
+        from src.models.orm.users import User as UserModel
+
+        stem = uuid4().hex[:8]
+        contoso_id = uuid4()
+        async with async_session_factory() as session:
+            contoso = OrganizationModel(
+                id=contoso_id,
+                name=f"Contoso {stem}",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            target = UserModel(
+                email=f"wsdk-run-as-{stem}@contoso.example.com",
+                name="Contoso Technician",
+                organization_id=contoso_id,
+            )
+            agent = AgentModel(
+                name=f"wsdk-run-as-agent-{stem}",
+                system_prompt="Socket Run As agent.",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            session.add_all([contoso, target, agent])
+            await session.commit()
+            target_id, agent_id, agent_name = target.id, agent.id, agent.name
+
+        run_id = str(uuid4())
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            # Only the broker-publishing leaf is stubbed: the route, auth,
+            # Run As decision and the shared service run for real.
+            with patch(
+                "src.services.execution.agent_run_service.enqueue_agent_run",
+                new=AsyncMock(return_value=run_id),
+            ) as mock_enqueue:
+                async with _socket_client(server) as client:
+                    response = await client.post(
+                        "/api/agent-runs/enqueue",
+                        json={"agent_name": agent_name, "run_as": str(target_id)},
+                        headers={"Authorization": f"Bearer {_engine_token()}"},
+                    )
+            assert response.status_code == 202, response.text
+            receipt = response.json()
+            assert receipt == {
+                "run_id": run_id,
+                "status": "queued",
+                "run_as_user_id": str(target_id),
+            }
+            assert mock_enqueue.await_count == 1
+            kwargs = mock_enqueue.call_args.kwargs
+            assert kwargs["agent_id"] == str(agent_id)
+            assert kwargs["run_as_user_id"] == target_id
+            assert kwargs["org_id"] == str(contoso_id)
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(delete(AgentModel).where(AgentModel.id == agent_id))
+                await session.execute(delete(UserModel).where(UserModel.id == target_id))
+                await _delete_owned_test_orgs(session, [contoso_id])
                 await session.commit()
 
     @pytest.mark.asyncio
@@ -2354,11 +2470,7 @@ class TestSocketAgentRuns:
                 await session.execute(
                     delete(AgentModel).where(AgentModel.id == agent_id)
                 )
-                await session.execute(
-                    delete(OrganizationModel).where(
-                        OrganizationModel.id == org_id
-                    )
-                )
+                await _delete_owned_test_orgs(session, [org_id])
                 await session.commit()
 
 
@@ -2499,14 +2611,9 @@ class TestSocketEventsForms:
             assert durable.await_count == 1
         finally:
             await server.stop()
-            from sqlalchemy import delete
 
             async with async_session_factory() as session:
-                await session.execute(
-                    delete(OrganizationModel).where(
-                        OrganizationModel.id == org_id
-                    )
-                )
+                await _delete_owned_test_orgs(session, [org_id])
                 await session.commit()
 
     @pytest.mark.asyncio
@@ -2566,11 +2673,7 @@ class TestSocketEventsForms:
                 await session.execute(
                     delete(FormModel).where(FormModel.id == form_id)
                 )
-                await session.execute(
-                    delete(OrganizationModel).where(
-                        OrganizationModel.id == org_id
-                    )
-                )
+                await _delete_owned_test_orgs(session, [org_id])
                 await session.commit()
 
     @pytest.mark.asyncio
@@ -2655,11 +2758,7 @@ class TestSocketEventsForms:
                 await session.execute(
                     delete(FormModel).where(FormModel.id == form_id)
                 )
-                await session.execute(
-                    delete(OrganizationModel).where(
-                        OrganizationModel.id == org_id
-                    )
-                )
+                await _delete_owned_test_orgs(session, [org_id])
                 await session.commit()
 
 
@@ -2700,7 +2799,6 @@ class TestSocketOrganizationsUsers:
 
     @pytest.mark.asyncio
     async def test_organization_facade_over_socket(self, async_session_factory):
-        from src.models.orm.organizations import Organization as OrganizationModel
 
         stem = f"wsdk-org-{uuid4().hex[:8]}"
         headers = {"Authorization": f"Bearer {_engine_token()}"}
@@ -2770,18 +2868,13 @@ class TestSocketOrganizationsUsers:
                             UserModel.organization_id == UUID(created_id)
                         )
                     )
-                    await session.execute(
-                        delete(OrganizationModel).where(
-                            OrganizationModel.id == UUID(created_id)
-                        )
-                    )
+                    await _delete_owned_test_orgs(session, [UUID(created_id)])
                     await session.commit()
 
     @pytest.mark.asyncio
     async def test_user_facade_over_socket(self, async_session_factory):
         from sqlalchemy import delete
 
-        from src.models.orm.organizations import Organization as OrganizationModel
         from src.models.orm.users import User as UserModel
 
         stem = f"wsdk-user-{uuid4().hex[:8]}"
@@ -2863,11 +2956,7 @@ class TestSocketOrganizationsUsers:
                             UserModel.organization_id == UUID(org_id)
                         )
                     )
-                    await session.execute(
-                        delete(OrganizationModel).where(
-                            OrganizationModel.id == UUID(org_id)
-                        )
-                    )
+                    await _delete_owned_test_orgs(session, [UUID(org_id)])
                 await session.commit()
 
     @pytest.mark.asyncio
@@ -3346,24 +3435,24 @@ class TestSocketErrorParityAndActorContext:
     @pytest.mark.asyncio
     async def test_request_context_attributes_engine_caller(self, async_session_factory):
         from src.core.security import mint_engine_token
+        from src.models.orm.executions import Execution
+        from src.models.orm.users import User
         from src.services.audit_context import current_actor
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
-        caller_id = uuid4()
-        org_id = uuid4()
         execution_id = uuid4()
         token, _ = mint_engine_token(
             execution_id=str(execution_id),
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=300,
-            caller_user_id=str(caller_id),
-            caller_organization_id=str(org_id),
-            caller_email="caller@example.com",
-            caller_name="Caller Name",
         )
         await create_live_execution(async_session_factory, str(execution_id))
         try:
+            async with async_session_factory() as session:
+                execution = await session.get(Execution, execution_id)
+                assert execution is not None
+                actor = await session.get(User, execution.executed_by)
+                assert actor is not None
+
             app = build_worker_sdk_app()
 
             @app.get("/__test__/actor")
@@ -3396,10 +3485,10 @@ class TestSocketErrorParityAndActorContext:
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["source"] == "workflow"
-            assert body["user_id"] == str(caller_id)
-            assert body["organization_id"] == str(org_id)
-            assert body["email"] == "caller@example.com"
-            assert body["name"] == "Caller Name"
+            assert body["user_id"] == str(actor.id)
+            assert body["organization_id"] is None
+            assert body["email"] == actor.email
+            assert body["name"] == actor.name
             assert body["execution_id"] == str(execution_id)
             # No client on an ASGI transport unless the test sets one; either way
             # the actor must never carry the sentinel "unknown".
@@ -3423,7 +3512,6 @@ class TestOperationIdCapture:
         from sqlalchemy import delete, select
 
         from src.core.database import get_db_context
-        from src.models.orm.audit import AuditLog
         from src.services.audit import emit_audit
 
         app = build_worker_sdk_app()
@@ -3460,7 +3548,6 @@ class TestOperationIdCapture:
         from sqlalchemy import delete, select
 
         from src.core.database import get_db_context
-        from src.models.orm.audit import AuditLog
         from src.services.audit import emit_audit
 
         app = build_worker_sdk_app()

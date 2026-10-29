@@ -1,0 +1,14 @@
+{
+  "key": "pr:985",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Remove internal DigitalOcean rollout-observer jobs so operator deployment repositories control cadence; no customer-facing platform change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/985",
+      "docs/runbooks/ci-deployment-cadence.md",
+      "docs/product-updates-authoring.md"
+    ]
+  }
+}

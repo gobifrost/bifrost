@@ -69,6 +69,8 @@ import {
 } from "@/components/agents/design-tokens";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { useQuery } from "@tanstack/react-query";
 import { listModelProfiles, type AIModelProfile } from "@/services/aiModels";
 import {
@@ -207,7 +209,8 @@ export function AgentSettingsTab({
 	agent,
 	onCreated,
 }: AgentSettingsTabProps) {
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 	const createAgent = useCreateAgent();
 	const updateAgent = useUpdateAgent();
 
@@ -239,10 +242,12 @@ export function AgentSettingsTab({
 	const [rolesOpen, setRolesOpen] = useState(false);
 	const rolesTriggerRef = useRef<HTMLButtonElement>(null);
 
-	// Default: admin → null (global), org user → their own org.
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId = user?.organizationId ?? null;
+	const initialOrganizationId = agent?.organization_id ?? defaultOrgId;
+	const canManageInitialScope = authorization.canAt(
+		"agents.readwrite",
+		orgTarget(initialOrganizationId),
+	);
 
 	const formDefaults = useMemo<FormValues>(() => {
 		if (agent) {
@@ -283,7 +288,7 @@ export function AgentSettingsTab({
 			description: "",
 			system_prompt: "",
 			channels: ["chat"],
-			access_level: isPlatformAdmin ? "role_based" : "private",
+			access_level: canManageInitialScope ? "role_based" : "private",
 			organization_id: defaultOrgId,
 			tool_ids: [],
 			system_tools: [],
@@ -297,7 +302,7 @@ export function AgentSettingsTab({
 			max_token_budget: null,
 			is_active: true,
 		};
-	}, [agent, defaultOrgId, isPlatformAdmin]);
+	}, [agent, canManageInitialScope, defaultOrgId]);
 
 	const form = useForm<FormValues>({
 		resolver: zodResolver(formSchema),
@@ -337,7 +342,8 @@ export function AgentSettingsTab({
 	});
 	// Non-admins can never edit role_ids (the field is hidden and the server
 	// 403s if it's sent at all), so there's no reason to load roles for them.
-	const shouldLoadRoles = accessLevel === "role_based" && isPlatformAdmin;
+	const shouldLoadRoles =
+		accessLevel === "role_based" && canManageInitialScope;
 	const {
 		data: roles,
 		isError: rolesError,
@@ -359,6 +365,30 @@ export function AgentSettingsTab({
 		control: form.control,
 		name: "organization_id",
 	});
+	const isOtherUsersPrivateAgent =
+		mode === "edit" &&
+		agent?.access_level === "private" &&
+		!!agent.owner_user_id &&
+		agent.owner_user_id !== user?.id;
+	const isOwnPrivateAgent =
+		mode === "edit" &&
+		agent?.access_level === "private" &&
+		agent.owner_user_id === user?.id;
+	const canManageConfiguration =
+		authorization.canAt("agents.readwrite", orgTarget(watchedOrgId)) &&
+		(!isOtherUsersPrivateAgent ||
+			authorization.canAt(
+				"agents.readwrite.all",
+				orgTarget(watchedOrgId),
+			));
+	const canChooseScope =
+		mode === "create"
+			? authorization.canAnywhere("agents.readwrite")
+			: canManageConfiguration;
+	const canEditAgent =
+		canManageConfiguration ||
+		isOwnPrivateAgent ||
+		(mode === "create" && !canManageInitialScope);
 
 	const {
 		data: knowledgeNamespaces,
@@ -376,7 +406,7 @@ export function AgentSettingsTab({
 	const { data: modelProfiles } = useQuery({
 		queryKey: ["ai", "model-profiles"],
 		queryFn: listModelProfiles,
-		enabled: isPlatformAdmin,
+		enabled: canManageConfiguration,
 	});
 	const selectedModelProfile = useMemo(
 		() =>
@@ -464,7 +494,7 @@ export function AgentSettingsTab({
 			is_active: values.is_active,
 			tool_ids: values.tool_ids,
 			llm_profile_id: values.llm_profile_id,
-			...(isPlatformAdmin
+			...(canManageConfiguration
 				? {
 						organization_id: values.organization_id,
 						system_tools: values.system_tools,
@@ -515,7 +545,7 @@ export function AgentSettingsTab({
 	// count/badges only reflect workflow tools even if an admin previously
 	// assigned system tools to this agent.
 	const totalTools =
-		(isPlatformAdmin ? (systemTools?.length ?? 0) : 0) +
+		(canManageConfiguration ? (systemTools?.length ?? 0) : 0) +
 		(toolIds?.length ?? 0);
 
 	return (
@@ -532,25 +562,25 @@ export function AgentSettingsTab({
 						<SolutionManagedBanner entityLabel="agent" />
 					</div>
 				)}
-				{(isPlatformAdmin && agentsError) ||
+				{(canManageConfiguration && agentsError) ||
 				toolsError ||
 				(shouldLoadRoles && rolesError) ||
-				(isPlatformAdmin && agentsLoading) ||
+				(canManageConfiguration && agentsLoading) ||
 				toolsLoading ||
 				(shouldLoadRoles && rolesLoading) ||
-				(isPlatformAdmin && knowledgeError) ||
-				(isPlatformAdmin && knowledgeLoading) ? (
+				(canManageConfiguration && knowledgeError) ||
+				(canManageConfiguration && knowledgeLoading) ? (
 					<div
 						className={
-							(isPlatformAdmin && agentsError) ||
+							(canManageConfiguration && agentsError) ||
 							toolsError ||
 							(shouldLoadRoles && rolesError) ||
-							(isPlatformAdmin && knowledgeError)
+							(canManageConfiguration && knowledgeError)
 								? "space-y-3 px-5 pt-5"
 								: "sr-only"
 						}
 					>
-						{isPlatformAdmin ? (
+						{canManageConfiguration ? (
 							<SettingsResourceNotice
 								resource="available agents"
 								failed={agentsError}
@@ -578,7 +608,7 @@ export function AgentSettingsTab({
 								onRetry={() => void refetchRoles()}
 							/>
 						) : null}
-						{isPlatformAdmin ? (
+						{canManageConfiguration ? (
 							<SettingsResourceNotice
 								resource="knowledge namespaces"
 								failed={knowledgeError}
@@ -591,7 +621,7 @@ export function AgentSettingsTab({
 					</div>
 				) : null}
 				<fieldset
-					disabled={pending || isSolutionManaged}
+					disabled={pending || isSolutionManaged || !canEditAgent}
 					className="min-w-0"
 				>
 					{/* Identity */}
@@ -611,7 +641,7 @@ export function AgentSettingsTab({
 											}
 											label="Scope"
 											showPersonal
-											disabled={!isPlatformAdmin}
+											disabled={!canChooseScope}
 											onChange={(scope) => {
 												if (scope === PERSONAL_SCOPE) {
 													form.setValue(
@@ -715,7 +745,8 @@ export function AgentSettingsTab({
 								)}
 							/>
 						)}
-						{accessLevel === "role_based" && isPlatformAdmin ? (
+						{accessLevel === "role_based" &&
+						canManageConfiguration ? (
 							<FormField
 								control={form.control}
 								name="role_ids"
@@ -1053,7 +1084,7 @@ export function AgentSettingsTab({
 								</PopoverTrigger>
 								{totalTools > 0 ? (
 									<div className="flex min-w-0 flex-1 flex-wrap gap-1">
-										{isPlatformAdmin
+										{canManageConfiguration
 											? systemTools?.map((toolId) => {
 													const tool =
 														toolsGrouped?.system.find(
@@ -1162,7 +1193,7 @@ export function AgentSettingsTab({
 													? "Tool options could not be loaded."
 													: "No tools found."}
 											</CommandEmpty>
-											{isPlatformAdmin &&
+											{canManageConfiguration &&
 											toolsGrouped?.system?.length ? (
 												<CommandGroup heading="System Tools">
 													{toolsGrouped.system.map(
@@ -1315,7 +1346,7 @@ export function AgentSettingsTab({
 							</FormDescription>
 						</FormItem>
 
-						{isPlatformAdmin ? (
+						{canManageConfiguration ? (
 							<FormField
 								control={form.control}
 								name="delegated_agent_ids"
@@ -1475,7 +1506,7 @@ export function AgentSettingsTab({
 							/>
 						) : null}
 
-						{isPlatformAdmin ? (
+						{canManageConfiguration ? (
 							<FormField
 								control={form.control}
 								name="knowledge_sources"
@@ -1550,7 +1581,7 @@ export function AgentSettingsTab({
 
 					{/* Model + Budgets */}
 				</fieldset>
-				{watchedOrgId && isPlatformAdmin ? (
+				{watchedOrgId && canManageConfiguration ? (
 					<div className="border-b px-5 py-5">
 						<FormField
 							control={form.control}
@@ -1571,7 +1602,7 @@ export function AgentSettingsTab({
 					className="min-w-0"
 				>
 					<FormSection title="Model" testId="model-section">
-						{isPlatformAdmin ? (
+						{canManageConfiguration ? (
 							<FormField
 								control={form.control}
 								name="llm_profile_id"
@@ -1609,7 +1640,7 @@ export function AgentSettingsTab({
 							</div>
 						)}
 
-						{isPlatformAdmin ? (
+						{canManageConfiguration ? (
 							<div
 								className="grid grid-cols-1 gap-3.5 md:grid-cols-3"
 								data-testid="budget-card"
@@ -1747,7 +1778,8 @@ export function AgentSettingsTab({
 							disabled={
 								pending ||
 								hasMismatchedTools ||
-								isSolutionManaged
+								isSolutionManaged ||
+								!canEditAgent
 							}
 							data-testid="save-agent-button"
 						>

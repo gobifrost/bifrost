@@ -21,6 +21,33 @@ describe("Combobox", () => {
 		expect(screen.getByText(label)).toHaveClass("truncate");
 	});
 
+	it("shows the selected option's description beside its label when asked", () => {
+		const options = [
+			{
+				value: "identity-default",
+				label: "Default Identity",
+				description: "Contoso · Default",
+			},
+		];
+		const { rerender } = renderWithProviders(
+			<Combobox options={options} value="identity-default" />,
+		);
+		expect(screen.getByRole("combobox")).toHaveTextContent(
+			/^Default Identity$/,
+		);
+
+		rerender(
+			<Combobox
+				options={options}
+				value="identity-default"
+				showSelectedDescription
+			/>,
+		);
+		expect(screen.getByRole("combobox")).toHaveTextContent(
+			"Default IdentityContoso · Default",
+		);
+	});
+
 	it("keeps the selected value visible when options are unavailable", () => {
 		renderWithProviders(<Combobox options={[]} value="ticket_id" placeholder="Pick key" />);
 		expect(screen.getByRole("combobox")).toHaveTextContent("ticket_id");
@@ -116,26 +143,38 @@ describe("Combobox", () => {
 			screen.queryByRole("option", { name: /Audit mailboxes/ }),
 		).not.toBeInTheDocument();
 	});
-	it("selects and clears a long option by keyboard and restores trigger focus", async () => {
-		const label =
-			"Customer reconciliation administrator with extended support permissions";
-		function Field() {
-			const [value, setValue] = useState("");
-			return (
-				<>
-					<label htmlFor="review-choice">Reviewer</label>
-					<Combobox
-						id="review-choice"
-						options={[{ value: "reviewer-1", label }]}
-						value={value}
-						onValueChange={setValue}
-						placeholder="Choose reviewer"
-						searchPlaceholder="Search reviewers"
-					/>
-				</>
-			);
-		}
-		const { user } = renderWithProviders(<Field />);
+	function ReviewerField({ allowClear }: { allowClear?: boolean }) {
+		const [value, setValue] = useState("");
+		return (
+			<>
+				<label htmlFor="review-choice">Reviewer</label>
+				<Combobox
+					id="review-choice"
+					options={[{ value: "reviewer-1", label: longLabel }]}
+					value={value}
+					onValueChange={setValue}
+					placeholder="Choose reviewer"
+					searchPlaceholder="Search reviewers"
+					allowClear={allowClear}
+				/>
+			</>
+		);
+	}
+	const longLabel =
+		"Customer reconciliation administrator with extended support permissions";
+	it("keeps the selection when the selected option is chosen again", async () => {
+		const { user } = renderWithProviders(<ReviewerField />);
+		await user.click(screen.getByLabelText("Reviewer"));
+		await user.click(screen.getByRole("option", { name: longLabel }));
+		expect(screen.getByLabelText("Reviewer")).toHaveTextContent(longLabel);
+
+		await user.click(screen.getByLabelText("Reviewer"));
+		await user.click(screen.getByRole("option", { name: longLabel }));
+		expect(screen.getByLabelText("Reviewer")).toHaveTextContent(longLabel);
+	});
+	it("selects and clears a long option by keyboard and restores trigger focus when clearing is allowed", async () => {
+		const label = longLabel;
+		const { user } = renderWithProviders(<ReviewerField allowClear />);
 		await user.click(screen.getByLabelText("Reviewer"));
 		expect(
 			await screen.findByPlaceholderText("Search reviewers"),

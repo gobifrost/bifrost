@@ -58,7 +58,9 @@ def make_org(e2e_client, platform_admin):
 
 
 @pytest.fixture
-def make_full_backup_zip(e2e_client, platform_admin, db_session):
+def make_full_backup_zip(
+    e2e_client, platform_admin, db_session, secrets_reader_platform_admin
+):
     """Factory: produce a full-backup zip carrying the given config values.
 
     Steps:

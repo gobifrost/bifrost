@@ -1,6 +1,6 @@
 import { type Page } from "@playwright/test";
+import { readEditorContent } from "./fixtures/monaco-editor";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
-import { routeMonacoAssets } from "./fixtures/monaco-assets";
 
 function uniqueSuffix() {
 	return `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -71,47 +71,11 @@ async function openWorkspaceFile(
 		.click();
 }
 
-async function getEditorModelValue(page: Page, path: string) {
-	return await page.evaluate((filePath) => {
-		const monaco = (
-			window as typeof window & {
-				monaco?: {
-					editor?: {
-						getModels?: () => Array<{
-							uri: { path: string };
-							getValue: () => string;
-						}>;
-					};
-				};
-			}
-		).monaco;
-		const model = monaco?.editor?.getModels?.()[0];
-		if (!model) {
-			throw new Error(`${filePath} Monaco model not found`);
-		}
-		return model.getValue();
-	}, path);
-}
-
-async function waitForEditorModel(page: Page, _path: string) {
-	await page.waitForFunction(() => {
-		const monaco = (
-			window as typeof window & {
-				monaco?: {
-					editor?: {
-						getModels?: () => Array<{ uri: { path: string } }>;
-					};
-				};
-			}
-		).monaco;
-		return monaco?.editor?.getModels?.().length === 1;
-	});
-}
-
-async function replaceEditorContent(page: Page, path: string, content: string) {
-	const editor = page.locator(".monaco-editor").first();
+async function replaceEditorContent(page: Page, content: string) {
+	const editor = page
+		.getByRole("dialog", { name: "Code editor" })
+		.getByRole("code");
 	await expect(editor).toBeVisible();
-	await waitForEditorModel(page, path);
 
 	const editorInput = editor.getByRole("textbox", {
 		name: "Editor content",
@@ -120,12 +84,27 @@ async function replaceEditorContent(page: Page, path: string, content: string) {
 	await editorInput.focus();
 	await page.keyboard.press("Control+A");
 	await page.keyboard.insertText(content);
-	await expect.poll(() => getEditorModelValue(page, path)).toBe(content);
+	await expect
+		.poll(() =>
+			readEditorContent(
+				page
+					.getByRole("dialog", { name: "Code editor" })
+					.getByRole("code"),
+			),
+		)
+		.toBe(content);
 }
 
-async function expectEditorContent(page: Page, path: string, content: string) {
-	await waitForEditorModel(page, path);
-	await expect.poll(() => getEditorModelValue(page, path)).toBe(content);
+async function expectEditorContent(page: Page, content: string) {
+	await expect
+		.poll(() =>
+			readEditorContent(
+				page
+					.getByRole("dialog", { name: "Code editor" })
+					.getByRole("code"),
+			),
+		)
+		.toBe(content);
 }
 
 async function saveCurrentEditorFile(page: Page) {
@@ -144,7 +123,6 @@ test.describe("Workspace editor acceptance (admin)", () => {
 		page,
 		api,
 	}) => {
-		await routeMonacoAssets(page.context());
 		await page.addInitScript(() => {
 			window.localStorage.removeItem("editor-storage");
 		});
@@ -163,12 +141,12 @@ test.describe("Workspace editor acceptance (admin)", () => {
 			await page.goto("/");
 			await openGlobalEditor(page);
 			await openWorkspaceFile(page, folderName, "alpha.txt");
-			await expectEditorContent(page, alphaPath, alphaOriginal);
-			await replaceEditorContent(page, alphaPath, alphaEdited);
+			await expectEditorContent(page, alphaOriginal);
+			await replaceEditorContent(page, alphaEdited);
 			await saveCurrentEditorFile(page);
 
 			await openWorkspaceFile(page, folderName, "beta.txt");
-			await expectEditorContent(page, betaPath, betaOriginal);
+			await expectEditorContent(page, betaOriginal);
 			expect((await readEditorFile(api, alphaPath)).content).toBe(
 				alphaEdited,
 			);
@@ -184,9 +162,9 @@ test.describe("Workspace editor acceptance (admin)", () => {
 			await page.reload();
 			await openGlobalEditor(page);
 			await openWorkspaceFile(page, folderName, "alpha.txt");
-			await expectEditorContent(page, alphaPath, alphaEdited);
+			await expectEditorContent(page, alphaEdited);
 			await openWorkspaceFile(page, folderName, "beta.txt");
-			await expectEditorContent(page, betaPath, betaOriginal);
+			await expectEditorContent(page, betaOriginal);
 			expect((await readEditorFile(api, alphaPath)).content).toBe(
 				alphaEdited,
 			);

@@ -11,8 +11,6 @@ from pathlib import Path
 _EXCLUDED_FILES = {
     "_internal.py",  # Platform-only permission checks
     "_logging.py",  # Platform-only logging
-    "_sync.py",  # Platform-only sync utilities
-    "_write_buffer.py",  # Platform-only, requires Redis
 }
 _RUNTIME_DATA_FILES = {"lucide_icon_names.json"}
 
