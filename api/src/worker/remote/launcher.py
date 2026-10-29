@@ -265,6 +265,16 @@ class Launcher:
 
     async def hello(self, requirements: dict[str, Any]) -> None:
         """Authenticate each new WebSocket; the physical process stays alive."""
+        async with self._send_lock:
+            await self._hello(requirements)
+
+    async def reconnect(self, socket: Any, requirements: dict[str, Any]) -> None:
+        """Fence a replacement transport before another event can use it."""
+        async with self._send_lock:
+            self.socket = socket
+            await self._hello(requirements)
+
+    async def _hello(self, requirements: dict[str, Any]) -> None:
         current, limit = effective_memory_sample()
         self._hello_sequence += 1
         hello = Hello(
@@ -787,8 +797,7 @@ async def run_launcher(
                                 await candidate.stop()
                         launcher = candidate
                     else:
-                        launcher.socket = socket
-                        await launcher.hello(launcher.requirements)
+                        await launcher.reconnect(socket, launcher.requirements)
                     await launcher.send({
                         "event": "inventory", "inventory": launcher.inventory(),
                         "requirements": launcher.requirements,

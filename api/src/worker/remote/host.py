@@ -786,8 +786,19 @@ class RemoteSession:
                         continue
                     await self.lose_ownership("Remote launcher telemetry expired")
                     return
+                lease = self.lease
                 renewing_at = time.monotonic()
-                if not await renew_remote_owner(self.lease):
+                try:
+                    renewed = await renew_remote_owner(lease)
+                except Exception:
+                    if self.lease != lease:
+                        continue
+                    logging.getLogger(__name__).exception("Remote owner renewal failed")
+                    await self.lose_ownership("Remote API owner lease could not be renewed")
+                    return
+                if self.lease != lease:
+                    continue
+                if not renewed:
                     await self.lose_ownership("Remote API owner lease expired")
                     return
                 self.owned_until = renewing_at + DEFAULT_OWNER_LEASE_SECONDS

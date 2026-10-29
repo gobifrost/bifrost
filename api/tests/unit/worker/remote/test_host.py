@@ -50,6 +50,58 @@ async def test_admission_stale_telemetry_still_renews_the_connected_owner() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", [False, True, RuntimeError("stale renewal failed")])
+async def test_stale_renewal_cannot_drain_a_reconnected_session(outcome: bool | Exception) -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    replacement = RemoteOwnerLease(
+        worker_id=LEASE.worker_id,
+        owner_id=LEASE.owner_id,
+        launcher_id=LEASE.launcher_id,
+        session_generation=2,
+    )
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease = bridge, LEASE
+    session.owned_until = 133
+    session.lose_ownership = AsyncMock()
+    renewal_started = asyncio.Event()
+    release_renewal = asyncio.Event()
+    renewals = 0
+
+    async def renew(lease: RemoteOwnerLease) -> bool:
+        nonlocal renewals
+        renewals += 1
+        if renewals == 1:
+            assert lease == LEASE
+            renewal_started.set()
+            await release_renewal.wait()
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        assert lease == replacement
+        raise asyncio.CancelledError()
+
+    async def sleep(_seconds: float) -> None:
+        return None
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch("src.worker.remote.host.renew_remote_owner", new=renew),
+    ):
+        task = asyncio.create_task(session._renew())
+        await renewal_started.wait()
+        session.lease = replacement
+        release_renewal.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    session.lose_ownership.assert_not_awaited()
+    assert session.owned_until == 133
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("connected,age", [(False, 4), (True, 20), (False, 20)])
 async def test_owner_does_not_renew_disconnected_or_expired_telemetry(connected, age) -> None:
     bridge = Bridge(
