@@ -203,7 +203,13 @@ async def test_blank_final_recovery_preserves_completed_tool_receipt(
         AutonomousAgentExecutor, "_execute_tool", operational_executor
     ):
         executor = AutonomousAgentExecutor(mock_session)
-        result = await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None)
+        result = await executor.run(
+            agent=mock_agent,
+            run_id=str(uuid4()),
+            caller=_caller(mock_agent.organization_id),
+            run_user_id=None,
+            run_as=None,
+        )
 
     # The final-output correction requests the model again, not the completed
     # operational action. The second blank completes the existing handoff.
