@@ -1,0 +1,14 @@
+{
+  "key": "pr:1132",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Remote runners preserve active workflow sessions when reconnecting.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1132",
+      "Jack authorized independent completion of Will's reviewed PRs on 2026-10-29. The maintainer repair fixes the shared merge-queue blocker in issue #1131; focused regression and integration tests passed, and the customer-facing summary was reviewed."
+    ]
+  }
+}
