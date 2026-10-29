@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
 from src.models.orm.package_changes import PackageChange
+from src.services.work_dispatch import wake_pool_workers_after_commit
 
 
 # Held until the recording transaction ends, so generations commit in order
@@ -29,12 +30,14 @@ async def record_package_change(
     version: str | None,
     run_id: str,
 ) -> None:
-    """Add a change to the caller's transaction; it is visible on commit."""
+    """Add a change to the caller's transaction; it is visible on commit,
+    when executors are woken to apply it."""
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": _CHANGE_LOCK_KEY}
     )
     db.add(PackageChange(action=action, package=package, version=version, run_id=run_id))
     await db.flush()
+    wake_pool_workers_after_commit(db)
 
 
 async def current_package_generation() -> int:

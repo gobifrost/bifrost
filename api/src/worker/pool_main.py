@@ -158,6 +158,7 @@ class PoolWorker:
         self._wake = asyncio.Event()
         self._platform_wake = asyncio.Event()
         self._service_wake = asyncio.Event()
+        self._package_wake = asyncio.Event()
         # Whether the last claim attempt was held back by admission.
         self._admission_blocked = False
         # In-flight consumer calls by handler. A workflow call returns once its
@@ -707,7 +708,11 @@ class PoolWorker:
         from src.services.work_dispatch import listen_for_pool_wake
 
         await listen_for_pool_wake(
-            self.settings.redis_url, self._wake, self._platform_wake, self._service_wake
+            self.settings.redis_url,
+            self._wake,
+            self._platform_wake,
+            self._service_wake,
+            self._package_wake,
         )
 
     async def _package_loop(self) -> None:
@@ -715,7 +720,9 @@ class PoolWorker:
 
         Separate from the heartbeat, because pip can run for minutes. Each
         change is applied once, like the broadcast it replaces; a failure is
-        reported through the shared install progress.
+        reported through the shared install progress. It runs when a recorded
+        change wakes the pool, and sweeps every SWEEP_SECONDS in case a
+        wake-up was lost.
         """
         assert self.hosts_remote_work and self._package_consumer is not None
         while True:
@@ -727,7 +734,12 @@ class PoolWorker:
                 raise
             except Exception:
                 logger.exception("Pool worker package reconcile failed")
-            await asyncio.sleep(HEARTBEAT_SECONDS)
+            # Timing out is the sweep; a wake-up ends the wait early.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._package_wake.wait(), SWEEP_SECONDS)
+            # Cleared before the next read, so a change committed after this
+            # point wakes another pass instead of being missed.
+            self._package_wake.clear()
 
     async def _heartbeat_loop(self) -> None:
         while True:

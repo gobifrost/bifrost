@@ -71,6 +71,22 @@ async def test_a_change_is_visible_only_once_its_transaction_commits(sessions) -
     assert len(await package_changes_after(start)) == 1
 
 
+async def test_a_change_wakes_executors_once_it_commits(sessions, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from unittest.mock import AsyncMock
+
+    from src.services import work_dispatch
+
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
+    async with sessions() as db:
+        await record_package_change(db, action="install", package=None, version=None, run_id="r")
+        await asyncio.sleep(0)
+        wake.assert_not_awaited()  # executors would find nothing to apply yet
+        await db.commit()
+        await asyncio.sleep(0)
+        wake.assert_awaited_once_with()
+
+
 async def test_concurrent_changes_commit_in_generation_order(sessions) -> None:  # type: ignore[no-untyped-def]
     """A later generation never commits before an earlier one, so an executor
     that has applied generation N can never later find N-1."""
