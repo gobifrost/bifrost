@@ -61,7 +61,7 @@ def _warnings(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts
         if isinstance(part, UserPromptPart)
         and isinstance(part.content, str)
-        and "[WarnNearLimits]" in part.content
+        and "Context window:" in part.content
     ]
 
 
@@ -90,3 +90,4 @@ async def test_context_warning_follows_the_model_window() -> None:
     [warning] = _warnings(messages)
     assert "Context window:" in warning
     assert "/30000 tokens" in warning
+    assert _tool_results(messages) == [TOOL_RESULT]
