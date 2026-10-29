@@ -67,6 +67,30 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
     return cleaned_url, connect_args
 
 
+def create_pool_engine(url: str, *, pool: str, pool_size: int, max_overflow: int, pool_timeout: int, echo: bool = False) -> AsyncEngine:
+    """An engine for one of the process's connection pools.
+
+    There is no pre-ping. A connection broken by a database or pooler restart
+    fails the one statement that uses it, and SQLAlchemy then invalidates the
+    whole pool, so later checkouts reconnect. Pre-ping instead spent a
+    round trip and a rollback on every checkout to hide that failure.
+
+    Connections are tagged ``bifrost:<pool>`` so pg_stat_activity and the
+    pooler can tell the pools apart.
+    """
+    db_url, connect_args = _prepare_asyncpg_url(url)
+    return create_async_engine(
+        db_url,
+        echo=echo,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_pre_ping=False,
+        pool_timeout=pool_timeout,
+        pool_recycle=1800,  # Recycle connections every 30 min
+        connect_args={**connect_args, "server_settings": {"application_name": f"bifrost:{pool}"}},
+    )
+
+
 # Global engine and session factory (initialized on startup)
 _engine: AsyncEngine | None = None
 _async_session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -97,18 +121,13 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
         if settings is None:
             settings = get_settings()
 
-        # Convert sslmode parameter for asyncpg compatibility
-        db_url, connect_args = _prepare_asyncpg_url(settings.database_url)
-
-        _engine = create_async_engine(
-            db_url,
-            echo=settings.debug,
+        _engine = create_pool_engine(
+            settings.database_url,
+            pool="main",
             pool_size=settings.database_pool_size,
             max_overflow=settings.database_max_overflow,
-            pool_pre_ping=True,  # Verify connections before use
             pool_timeout=30,  # Fail fast when pool is exhausted
-            pool_recycle=1800,  # Recycle connections every 30 min
-            connect_args=connect_args,
+            echo=settings.debug,
         )
 
     return _engine
@@ -209,16 +228,13 @@ def _get_dispatch_session_factory() -> async_sessionmaker[AsyncSession]:
 
     if _dispatch_session_factory is None:
         settings = get_settings()
-        db_url, connect_args = _prepare_asyncpg_url(settings.database_url)
-        _dispatch_engine = create_async_engine(
-            db_url,
-            echo=settings.debug,
+        _dispatch_engine = create_pool_engine(
+            settings.database_url,
+            pool="dispatch",
             pool_size=settings.database_dispatch_pool_size,
             max_overflow=settings.database_dispatch_max_overflow,
-            pool_pre_ping=True,
             pool_timeout=30,
-            pool_recycle=1800,
-            connect_args=connect_args,
+            echo=settings.debug,
         )
         _dispatch_session_factory = async_sessionmaker(
             _dispatch_engine,
@@ -246,16 +262,13 @@ def _get_liveness_session_factory() -> async_sessionmaker[AsyncSession]:
 
     if _liveness_session_factory is None:
         settings = get_settings()
-        db_url, connect_args = _prepare_asyncpg_url(settings.database_url)
-        _liveness_engine = create_async_engine(
-            db_url,
-            echo=settings.debug,
+        _liveness_engine = create_pool_engine(
+            settings.database_url,
+            pool="liveness",
             pool_size=1,
             max_overflow=0,
-            pool_pre_ping=True,
             pool_timeout=10,
-            pool_recycle=1800,
-            connect_args=connect_args,
+            echo=settings.debug,
         )
         _liveness_session_factory = async_sessionmaker(
             _liveness_engine,
