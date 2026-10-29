@@ -89,6 +89,7 @@ def db_delta(before: dict, after: dict, seconds: float) -> dict:
     return {
         "seconds": seconds,
         "xact": after["xact"] - before["xact"],
+        "rollbacks": after["rollbacks"] - before["rollbacks"],
         "rows_written": after["rows_written"] - before["rows_written"],
         "wal_bytes": after["wal_bytes"] - before["wal_bytes"],
         "tables": tables,
@@ -99,6 +100,7 @@ def db_rate(delta: dict) -> dict[str, float]:
     seconds = max(delta["seconds"], 1e-9)
     return {
         "xact_per_s": round(delta["xact"] / seconds, 2),
+        "rollbacks_per_s": round(delta["rollbacks"] / seconds, 2),
         "rows_written_per_s": round(delta["rows_written"] / seconds, 2),
         "wal_kib_per_s": round(delta["wal_bytes"] / 1024 / seconds, 2),
     }

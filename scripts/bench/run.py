@@ -30,6 +30,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import ab  # noqa: E402
 import deploy  # noqa: E402
 import guard  # noqa: E402
 import report  # noqa: E402
@@ -206,9 +207,9 @@ class Run:
         return self.cluster.exec_python("bench-driver", DRIVER, [mode, json.dumps(args)], timeout_s=timeout_s)
 
 
-def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None) -> dict:
+def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None, api_image: str | None = None) -> dict:
     """Deploy the profile, seed through the API, reboot the API on the seeded data, check destinations."""
-    current.result["deploy"] = deploy.apply(cluster, profile)
+    current.result["deploy"] = deploy.apply(cluster, profile, api_image)
     current.result["setup"] = current.driver("setup", {
         "seed": profile["seed"], "backend": backend, "policy": profile["worker_policy"], "table_docs": profile["table_docs"],
     }, timeout_s=3600)
@@ -320,6 +321,29 @@ def run_capacity(profile_name: str, mix_name: str, out: Path | None) -> Path:
     return out
 
 
+def run_ab(profile_name: str, mix_name: str, rate: float, image_a: str, image_b: str, order: str, out: Path | None) -> Path:
+    profile = load_profile(profile_name)
+    plan = {**profile["capacity"], "mix": profile["capacity"]["mixes"][mix_name]}
+    cluster = Cluster()
+    cluster.verify()
+    out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-ab-{mix_name}")
+    current = Run(cluster, "ab", profile_name, profile, "fake", out)
+    images = {"a": image_a, "b": image_b}
+    current.result.update({"mix_name": mix_name, "rate": rate, "order": order, "variants": {
+        variant: {"tag": tag, "id": _image_id(tag)} for variant, tag in images.items()}, "arms": []})
+    for index, variant in enumerate(order.lower()):
+        print(f"Arm {index + 1}/{len(order)}: {variant} ({images[variant]}) ...", flush=True)
+        result = ab.arm(cluster, profile, plan, images[variant], rate,
+                        lambda image: _prepare(cluster, current, profile, "fake", image))
+        current.result["arms"].append(result)
+        current.result["comparison"] = ab.compare(current.result["arms"], images)
+        current.save()
+        print(f"  idle {result['idle']['xact_per_s']:.2f} tx/s ({result['idle']['rollbacks_per_s']:.2f} rollbacks/s); "
+              f"{result['xact_per_correct']:.1f} tx and {result['api_cpu_s_per_correct'] * 1000:.0f} API CPU ms per correct run; {result['overall']}", flush=True)
+    print(f"Done: {out}/report.md", flush=True)
+    return out
+
+
 def down() -> None:
     cluster = Cluster()
     cluster.verify()
@@ -342,6 +366,17 @@ def main() -> None:
     capacity_parser.add_argument("--profile", default="m")
     capacity_parser.add_argument("--mix", required=True)
     capacity_parser.add_argument("--out", type=Path)
+    build_parser = sub.add_parser("build")
+    build_parser.add_argument("--source", type=Path, required=True)
+    build_parser.add_argument("--label", required=True)
+    ab_parser = sub.add_parser("ab")
+    ab_parser.add_argument("--profile", default="m-capacity")
+    ab_parser.add_argument("--mix", required=True)
+    ab_parser.add_argument("--rate", type=float, required=True)
+    ab_parser.add_argument("--a", required=True, help="API image tag for variant A")
+    ab_parser.add_argument("--b", required=True, help="API image tag for variant B")
+    ab_parser.add_argument("--order", default="ABBAAB")
+    ab_parser.add_argument("--out", type=Path)
     sub.add_parser("down")
     args = parser.parse_args()
 
@@ -351,6 +386,12 @@ def main() -> None:
         run_classes(args.profile, None if args.backend == "none" else args.backend, args.out)
     elif args.command == "capacity":
         run_capacity(args.profile, args.mix, args.out)
+    elif args.command == "build":
+        cluster = Cluster()
+        cluster.verify()
+        print(json.dumps(deploy.build_variant(cluster.identity, args.source.resolve(), args.label)), flush=True)
+    elif args.command == "ab":
+        run_ab(args.profile, args.mix, args.rate, args.a, args.b, args.order, args.out)
     elif args.command == "down":
         down()
 

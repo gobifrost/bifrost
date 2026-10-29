@@ -165,6 +165,34 @@ def _capacity(result: dict) -> list[str]:
     return [*rows, ""]
 
 
+def _fmt(value: object) -> str:
+    if isinstance(value, dict) and "mean" in value:
+        if value["low"] is None:
+            return f"{value['mean']:.3g} (n={value['n']})"
+        return f"{value['mean']:.3g} [{value['low']:.3g}, {value['high']:.3g}] (n={value['n']})"
+    return "" if value is None else str(value)
+
+
+def _ab(result: dict) -> list[str]:
+    variants = result["variants"]
+    rows = [
+        "## A/B comparison",
+        "",
+        f"Mix `{result['mix_name']}` at {result['rate']}/s, order {result['order']}; each arm from a reset state. "
+        f"A = `{variants['a']['tag']}` ({variants['a']['id'][:19]}), B = `{variants['b']['tag']}` ({variants['b']['id'][:19]}). "
+        "Intervals are Student-t 95 %; a difference is claimed only when they do not overlap.",
+        "",
+        "| Metric | A | B | Differs |",
+        "|---|---|---|---|",
+    ]
+    for row in result.get("comparison", []):
+        if "infinite_in" in row:
+            rows.append(f"| {row['metric']} | infinite in {row['infinite_in']['a']} runs | infinite in {row['infinite_in']['b']} runs | compare failures |")
+            continue
+        rows.append(f"| {row['metric']} | {_fmt(row.get('a'))} | {_fmt(row.get('b'))} | {'yes' if row.get('differs') else 'no'} |")
+    return [*rows, ""]
+
+
 def render(result: dict) -> str:
     profile = result["profile"]
     lines = [
@@ -175,6 +203,8 @@ def render(result: dict) -> str:
     ]
     if result["kind"] == "capacity":
         return "\n".join([*lines, *_capacity(result)])
+    if result["kind"] == "ab":
+        return "\n".join([*lines, *_ab(result)])
     lines += [
         f"Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes.",
         "",

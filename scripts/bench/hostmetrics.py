@@ -170,6 +170,7 @@ def window(before: dict, after: dict) -> dict:
     disk_ios = after["disk"]["ios"] - before["disk"]["ios"]
     io_ms = after["disk"]["io_ms"] - before["disk"]["io_ms"]
     return {
+        "at": after["at"],
         "seconds": seconds,
         "host_cpu_cores": host_busy,
         "external_cpu_cores": host_busy - bench.get("cpu_cores", 0.0),

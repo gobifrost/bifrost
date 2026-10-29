@@ -143,6 +143,7 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         validity["invalid"].append(f"driver lag p99 {sent['driver_lag_p99_s']:.3f} s")
     overall = "invalid" if validity["invalid"] else verdict["overall"]
     return {
+        "started": started,
         "window": window,
         "rate": rate, "seed": seed, "window_s": window_s, "confirm": confirm, "drift_limit_per_s": drift_limit, "overall": overall, "verdict": verdict, "validity": validity,
         "faults": faults, "driver_lag_p99_s": sent["driver_lag_p99_s"], "missing": outcomes["missing"],

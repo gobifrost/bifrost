@@ -60,6 +60,7 @@
         "agent-tools": 15,
         "agent-chat": 10
       }
-    }
+    },
+    "ab_window_s": 300
   }
 }

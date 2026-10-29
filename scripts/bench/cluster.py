@@ -50,6 +50,7 @@ def parse_stats_summary(summary: dict, namespace: str) -> list[dict]:
 DB_COUNTERS_SQL = """
 select json_build_object(
   'xact', (select xact_commit + xact_rollback from pg_stat_database where datname = current_database()),
+  'rollbacks', (select xact_rollback from pg_stat_database where datname = current_database()),
   'rows_written', (select tup_inserted + tup_updated + tup_deleted from pg_stat_database where datname = current_database()),
   'wal_bytes', pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0'),
   'db_bytes', pg_database_size(current_database()),

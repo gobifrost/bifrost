@@ -186,11 +186,12 @@ def images(identity: guard.Identity) -> dict[str, str]:
     return {"api": f"bifrost-api:{tag}", "client": f"bifrost-client:{tag}"}
 
 
-def render_tenant(identity: guard.Identity, profile: dict, node_ip: str) -> str:
+def render_tenant(identity: guard.Identity, profile: dict, node_ip: str, api_image: str | None = None) -> str:
     tag = f"kind-{identity.worktree_hash}"
+    api_name, api_tag = (api_image or images(identity)["api"]).split(":", 1)
     return render(identity, "tenant", {
         "images": [
-            {"name": "ghcr.io/gobifrost/bifrost-api", "newName": "bifrost-api", "newTag": tag},
+            {"name": "ghcr.io/gobifrost/bifrost-api", "newName": api_name, "newTag": api_tag},
             {"name": "ghcr.io/gobifrost/bifrost-client", "newName": "bifrost-client", "newTag": tag},
         ],
         "patches": tenant_patches(profile, node_ip),
@@ -296,12 +297,12 @@ def split_kinds(rendered: str, kinds: frozenset[str]) -> tuple[str, str]:
     return "\n---\n".join(chosen), "\n---\n".join(rest)
 
 
-def apply(cluster: Cluster, profile: dict) -> dict:
+def apply(cluster: Cluster, profile: dict, api_image: str | None = None) -> dict:
     """Namespaces, quota and egress policy first; prove isolation; then workloads; validate the envelope."""
     identity = cluster.identity
     envelope_check = check_profile(profile)
     ip = node_ip(cluster)
-    tenant_first, tenant_rest = split_kinds(render_tenant(identity, profile, ip), FIRST_KINDS)
+    tenant_first, tenant_rest = split_kinds(render_tenant(identity, profile, ip, api_image), FIRST_KINDS)
     infra_first, infra_rest = split_kinds(render_infra(identity, profile), FIRST_KINDS)
     for documents in (infra_first, tenant_first):
         cluster.kubectl("apply", "-f", "-", input=documents, namespaced=False)
@@ -340,6 +341,19 @@ def reconcile_admitted(cluster: Cluster) -> dict:
     if not result["match"]:
         raise envelope.EnvelopeError(f"admitted pods {result['computed'].format()} disagree with quota usage {result['used'].format()}")
     return {"admitted": result["computed"].format(), "pods": len(pods)}
+
+
+def build_variant(identity: guard.Identity, source: Path, label: str) -> dict:
+    """Build the API image from another worktree as ``bifrost-api:kind-<hash>-<label>`` and load it into the cluster.
+
+    Only the tenant runs a variant; infrastructure pods keep this worktree's image.
+    """
+    tag = f"bifrost-api:kind-{identity.worktree_hash}-{label}"
+    subprocess.run(["docker", "build", "--file", str(source / "api" / "Dockerfile"), "--tag", tag, str(source)], check=True)
+    kind = identity.state_dir / "bin" / "kind-v0.30.0"
+    subprocess.run([str(kind), "load", "docker-image", tag, "--name", identity.cluster_name], check=True)
+    sha = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    return {"tag": tag, "source": str(source), "git_sha": sha}
 
 
 def build_images(identity: guard.Identity) -> dict[str, str]:

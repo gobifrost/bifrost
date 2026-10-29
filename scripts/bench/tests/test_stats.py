@@ -59,8 +59,8 @@ class CpuTest(unittest.TestCase):
         self.assertEqual(stats.cpu_ms_per_run(before, after, 4), {"api": 500.0, "worker": 250.0})
 
 
-def _db(xact: int, rows: int, wal: int, tables: dict) -> dict:
-    return {"xact": xact, "rows_written": rows, "wal_bytes": wal, "db_bytes": 0, "tables": tables}
+def _db(xact: int, rows: int, wal: int, tables: dict, rollbacks: int = 0) -> dict:
+    return {"xact": xact, "rollbacks": rollbacks, "rows_written": rows, "wal_bytes": wal, "db_bytes": 0, "tables": tables}
 
 
 class DbTest(unittest.TestCase):
@@ -76,8 +76,8 @@ class DbTest(unittest.TestCase):
         self.assertEqual(delta["tables"], {"executions": [20, 30], "users": [0, 21], "new": [2, 0]})
 
     def test_per_run_subtracts_idle_rate_over_the_window(self) -> None:
-        idle = stats.db_rate(stats.db_delta(_db(0, 0, 0, {}), _db(30, 10, 10240, {}), seconds=10.0))
-        self.assertEqual(idle, {"xact_per_s": 3.0, "rows_written_per_s": 1.0, "wal_kib_per_s": 1.0})
+        idle = stats.db_rate(stats.db_delta(_db(0, 0, 0, {}), _db(30, 10, 10240, {}, rollbacks=15), seconds=10.0))
+        self.assertEqual(idle, {"xact_per_s": 3.0, "rollbacks_per_s": 1.5, "rows_written_per_s": 1.0, "wal_kib_per_s": 1.0})
         window = stats.db_delta(_db(0, 0, 0, {}), _db(230, 110, 112640, {}), seconds=20.0)
         self.assertEqual(
             stats.db_per_run(window, idle, runs=10),
