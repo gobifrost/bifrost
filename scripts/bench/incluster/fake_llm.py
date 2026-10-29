@@ -10,6 +10,10 @@ the model:
 - otherwise: one call to each offered ``bench_tool`` tool.
 
 ``/v1/responses`` answers 404 so Bifrost selects Chat Completions.
+
+Each completion records a span (arrival, service start, finish, tool results
+seen) under the request's ``[bench:<id>]`` tag, read with ``GET /spans?since=``,
+so a run's provider time can be separated from platform overhead.
 """
 
 from __future__ import annotations
@@ -17,13 +21,18 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 MODEL = "bench-fake"
 LATENCY_S = int(os.environ.get("FAKE_LLM_LATENCY_MS", "0")) / 1000
 USAGE = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
 _FUNCTION = re.compile(r"(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(")
+_TAG = re.compile(r"\[bench:([0-9a-f]{32})\]")
+_LOCK = threading.Lock()
+_SPANS: list[dict] = []
 
 
 def _text(content: object) -> str:
@@ -31,6 +40,15 @@ def _text(content: object) -> str:
         return content
     if isinstance(content, list):
         return "\n".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return ""
+
+
+def bench_tag(body: dict) -> str:
+    """The benchmark request id carried in the conversation, or empty."""
+    for message in body.get("messages", []):
+        found = _TAG.search(_text(message.get("content")))
+        if found:
+            return found.group(1)
     return ""
 
 
@@ -108,20 +126,42 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib name
-        if self.path.rstrip("/").endswith("/models"):
+        url = urlparse(self.path)
+        if url.path == "/spans":
+            since = float(parse_qs(url.query).get("since", ["0"])[0])
+            with _LOCK:
+                spans = [span for span in _SPANS if span["arrival"] >= since]
+            self._json(200, {"spans": spans})
+        elif self.path.rstrip("/").endswith("/models"):
             self._json(200, {"object": "list", "data": [{"id": MODEL, "object": "model", "owned_by": "bench"}]})
         else:
             self._json(404, {"error": {"message": "unknown endpoint"}})
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib name
+        arrival = time.time()
+        if self.path == "/spans/reset":
+            with _LOCK:
+                _SPANS.clear()
+            self._json(200, {})
+            return
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length) or b"{}")
         if not self.path.rstrip("/").endswith("/chat/completions"):
             self._json(404, {"error": {"message": "unknown endpoint"}})
             return
+        start = time.time()
         if LATENCY_S:
             time.sleep(LATENCY_S)
         message = decide(body)
+        span = {"tag": bench_tag(body), "arrival": arrival, "start": start,
+                "tool_results": sum(1 for m in body.get("messages", []) if m.get("role") == "tool"),
+                "tool_calls": len(message.get("tool_calls") or [])}
+        self._respond(body, message)
+        span["finish"] = time.time()
+        with _LOCK:
+            _SPANS.append(span)
+
+    def _respond(self, body: dict, message: dict) -> None:
         if not body.get("stream"):
             self._json(200, _completion(message))
             return

@@ -1,0 +1,31 @@
+# Load driver and sampler. Credentials come from the bench-infra Secret the
+# harness creates; it never mounts tenant Secrets.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bench-driver
+  labels:
+    app.kubernetes.io/name: bench-driver
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: driver
+      image: BENCH_IMAGE
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "infinity"]
+      env:
+        - name: BENCH_API_URL
+          value: http://api.bench-tenant:8000
+      envFrom:
+        - secretRef:
+            name: bench-infra
+      volumeMounts:
+        - name: scripts
+          mountPath: /bench
+      resources:
+        requests: {cpu: "1", memory: 512Mi}
+        limits: {cpu: "1", memory: 512Mi}
+  volumes:
+    - name: scripts
+      configMap:
+        name: bench-scripts

@@ -16,7 +16,7 @@
 #
 # Local Kubernetes spike (isolated Kind cluster):
 #   ./test.sh kubernetes up|status|down|collect|kubectl
-#   ./test.sh bench up|run|down       (performance benchmark, scripts/bench/README.md)
+#   ./test.sh bench up|run|capacity|down   (performance and capacity benchmark, scripts/bench/README.md)
 #
 # Quality checks:
 #   ./test.sh quality api               Run API pyright + ruff inside Docker.
@@ -48,7 +48,7 @@ if [ "${1:-}" = "kubernetes" ]; then
     exec "$SCRIPT_DIR/scripts/kubernetes/local-kind.sh" "$@"
 fi
 
-# Performance benchmark on the same Kind cluster (scripts/bench/README.md).
+# Performance and capacity benchmark on the worktree's Kind cluster (scripts/bench/README.md).
 if [ "${1:-}" = "bench" ]; then
     shift
     exec python3 "$SCRIPT_DIR/scripts/bench/run.py" "$@"

@@ -22,7 +22,7 @@ import time
 
 import httpx
 
-BASE = os.environ.get("BENCH_API_URL", "http://api:8000")
+BASE = os.environ["BENCH_API_URL"]
 TERMINAL_WORKFLOW = {"Success", "Failed", "Timeout", "Stuck", "CompletedWithErrors", "Cancelled"}
 ACTIVE_AGENT = {"queued", "pending", "running"}
 AGENT_PROMPT = "Use the available tools to check the bench state, then reply briefly."
@@ -101,8 +101,7 @@ CHAT_CLASSES = {"chat-first", "chat-followup"}
 CHAT_PROMPT = "Reply with one short sentence about the bench."
 CHAT_AGENT = "bench_agent_chat"
 BACKENDS = {
-    "fake": {"endpoint": "http://bench-fake-llm:8080/v1", "model": "bench-fake", "key_env": None},
-    "deepseek": {"endpoint": "https://api.deepseek.com", "model": "deepseek-chat", "key_env": "DEEPSEEK_API_KEY"},
+    "fake": {"endpoint": "http://bench-fake-llm.bench-infra:8080/v1", "model": "bench-fake"},
 }
 
 
@@ -170,7 +169,7 @@ async def {name}(organization_id: str = "", site_id: int = 0, device_filter: str
 
 async def _configure_backend(http: httpx.AsyncClient, backend: str) -> dict:
     spec = BACKENDS[backend]
-    api_key = os.environ[spec["key_env"]] if spec["key_env"] else "bench-fake-key"
+    api_key = "bench-fake-key"
     name = f"bench-{backend}"
     connections = _check(await http.get("/api/admin/ai/connections"), "list connections").json()
     connection = next((c for c in connections if c["name"] == name), None)

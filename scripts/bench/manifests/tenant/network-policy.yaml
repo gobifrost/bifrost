@@ -1,0 +1,25 @@
+# No egress outside the benchmark: DNS, the tenant and bench-infra only. The
+# API server is reachable for the worker controller and the CNPG instance
+# manager. Cluster creation proves the CNI enforces this before any run.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bench-egress
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: bench-tenant
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: bench-infra
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}

@@ -1,0 +1,17 @@
+{
+  "extends": "m",
+  "description": "Quick end-to-end check of the M tenant: every class, two runs each, light seed. Not a baseline.",
+  "sequential": 2,
+  "burst": 2,
+  "burst_rounds": 1,
+  "timeout_s": 180,
+  "settle_s": 5,
+  "idle_s": 40,
+  "idle_db_s": 20,
+  "seed": {
+    "workflow": 50,
+    "tool": 10,
+    "data_provider": 5
+  },
+  "table_docs": 50
+}

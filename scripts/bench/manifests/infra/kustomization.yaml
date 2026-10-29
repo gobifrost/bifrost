@@ -1,0 +1,14 @@
+# Benchmark infrastructure outside the tenant envelope: load driver and
+# sampler, fake model, object-store stand-in. Rendered by the bench harness
+# with --load-restrictor LoadRestrictionsNone (SeaweedFS comes from k8s/local).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bench-infra
+resources:
+  - namespace.yaml
+  - ../../../../k8s/local/seaweedfs.yaml
+  - fakes.yaml
+  - driver.yaml
+  - ../tenant/network-policy.yaml
+patches:
+  - path: seaweedfs.yaml

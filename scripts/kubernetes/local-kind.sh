@@ -17,7 +17,10 @@ KIND_BIN="${BIN_DIR}/kind-${KIND_VERSION}"
 
 usage() {
   cat <<USAGE
-Usage: $0 <up|status|down|collect|build-experiment|control-experiment|pool-experiment|pool-drills|pressure-test|kubectl -- <args>>
+Usage: $0 <up|cluster [image...]|status|down|collect|build-experiment|control-experiment|pool-experiment|pool-drills|pressure-test|kubectl -- <args>>
+
+  cluster [image...]  Create the cluster, build and load the API image and load any extra
+                      local images, without applying k8s/local (used by scripts/bench)
 
 Environment overrides:
   BIFROST_KIND_CLUSTER_NAME  Cluster name (default: bifrost-<worktree-hash>)
@@ -227,6 +230,16 @@ up() {
   status
 }
 
+cluster() {
+  command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
+  ensure_cluster
+  build_and_load_image
+  local image
+  for image in "$@"; do
+    "${KIND_BIN}" load docker-image "${image}" --name "${CLUSTER_NAME}"
+  done
+}
+
 status() {
   download_kind
   if [[ ! -f "${KUBECONFIG_PATH}" ]] && "${KIND_BIN}" get clusters | grep -Fxq "${CLUSTER_NAME}"; then
@@ -276,6 +289,7 @@ case "${1:-}" in
   pool-drills) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pool_drills.py" "$@" ;;
   pressure-test) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pressure_test.py" "$@" ;;
   up) up ;;
+  cluster) shift; cluster "$@" ;;
   status) status ;;
   down) down ;;
   collect) collect ;;

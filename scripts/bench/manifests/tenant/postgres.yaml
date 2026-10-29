@@ -1,0 +1,50 @@
+# CloudNativePG database and its PgBouncer Pooler, inside the tenant envelope.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: bifrost-db
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16-standard-trixie@sha256:1ec419e997a8bde5263b6951f4c5ebc4aa2e1937927001f2561025c0a816e174
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: bifrost-db-superuser
+  bootstrap:
+    initdb:
+      database: bifrost
+      owner: bifrost
+      secret:
+        name: bifrost-db-app
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS vector
+        - CREATE EXTENSION IF NOT EXISTS pg_trgm
+  postgresql:
+    parameters:
+      max_connections: "100"
+  storage:
+    size: 20Gi
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "1", memory: 2Gi}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: bifrost-db-pooler
+spec:
+  cluster:
+    name: bifrost-db
+  instances: 1
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "1000"
+      default_pool_size: "20"
+  template:
+    spec:
+      containers:
+        - name: pgbouncer
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: 100m, memory: 64Mi}

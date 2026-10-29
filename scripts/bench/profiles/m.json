@@ -1,0 +1,71 @@
+{
+  "description": "Envelope M (4 CPU / 8 GiB): API, client, worker Jobs, Redis, CNPG Postgres and Pooler, requests == limits. Provisional allocation; see docs/plans/2026-10-29-capacity-benchmark-methodology.md.",
+  "quota": {
+    "cpu": "4",
+    "memory": "8Gi",
+    "storage": "50Gi",
+    "pods": 20,
+    "pvcs": 4
+  },
+  "components": {
+    "api": {
+      "replicas": 1,
+      "cpu": "1250m",
+      "memory": "1280Mi"
+    },
+    "client": {
+      "replicas": 1,
+      "cpu": "100m",
+      "memory": "128Mi"
+    },
+    "redis": {
+      "cpu": "150m",
+      "memory": "256Mi"
+    },
+    "postgres": {
+      "cpu": "1",
+      "memory": "2Gi",
+      "storage": "20Gi"
+    },
+    "pooler": {
+      "cpu": "100m",
+      "memory": "64Mi"
+    }
+  },
+  "worker_policy": {
+    "warm_workers": 1,
+    "max_workers": 2,
+    "worker_memory_mib": 2048,
+    "largest_worker_mib": 2048
+  },
+  "worker_cpu": "650m",
+  "env": {
+    "MALLOC_ARENA_MAX": "2"
+  },
+  "classes": [
+    "wf-noop",
+    "wf-sdk",
+    "wf-wait",
+    "wf-cpu",
+    "wf-large",
+    "agent-chat",
+    "agent-tools",
+    "agent-codemode",
+    "chat-first",
+    "chat-followup"
+  ],
+  "sequential": 10,
+  "burst": 10,
+  "burst_rounds": 3,
+  "timeout_s": 300,
+  "settle_s": 20,
+  "idle_s": 120,
+  "idle_db_s": 60,
+  "seed": {
+    "workflow": 1100,
+    "tool": 701,
+    "data_provider": 50
+  },
+  "table_docs": 200,
+  "fake_llm_latency_ms": 0
+}

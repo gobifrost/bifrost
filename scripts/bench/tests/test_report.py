@@ -17,11 +17,23 @@ RESULT = {
     "run_id": "run-1",
     "started_at": "2026-10-27T00:00:00Z",
     "git_sha": "abc1234",
-    "image_id": "sha256:feed",
-    "profile_name": "baseline",
+    "kind": "classes",
+    "images": {"api": {"tag": "bifrost-api:kind-x", "id": "sha256:feedfacefeedface0000"}},
+    "kind_version": "v0.30.0",
+    "cnpg_version": "1.30.1",
+    "host": {"cpus": 8, "load_average": [1.0, 1.0, 1.0]},
+    "external_nodes": [],
+    "deploy": {"envelope": {"max_occupancy": "3.900 CPU / 7.69 GiB", "headroom": "0.100 CPU / 0.31 GiB"}, "admitted": {"admitted": "2.600 CPU / 5.69 GiB"}},
+    "profile_name": "m",
     "backend": "fake",
     "api_pod_changes": 0,
-    "profile": {"worker_replicas": 1, "env": {"MALLOC_ARENA_MAX": "2"}, "thp_emulation": False, "sequential": 2, "burst": 2, "burst_rounds": 1},
+    "profile": {
+        "quota": {"cpu": "4", "memory": "8Gi"},
+        "components": {"api": {"replicas": 1, "cpu": "1250m", "memory": "1280Mi"}, "postgres": {"cpu": "1", "memory": "2Gi"}},
+        "worker_policy": {"warm_workers": 1, "max_workers": 2, "worker_memory_mib": 2048},
+        "worker_cpu": "650m", "env": {"MALLOC_ARENA_MAX": "2"}, "fake_llm_latency_ms": 0,
+        "sequential": 2, "burst": 2, "burst_rounds": 1,
+    },
     "classes": [
         {"name": "wf-noop", "pass": 1, "sequential": _OK, "burst": _OK,
          "db_per_run": {"xact": 36.4, "rows_written": 12.0, "wal_kib": 21.5},
@@ -65,6 +77,22 @@ class RenderTest(unittest.TestCase):
         text = report.render(RESULT)
         self.assertIn("## Worker processes", text)
         self.assertIn("| `wf-noop` | 1 | 24.5 | 3 | 168.0 |", text)
+
+
+class CapacityReportTest(unittest.TestCase):
+    def test_steps_render_with_gates_and_validity(self) -> None:
+        gate = {"status": "pass", "value": 1.2, "limit": 3.0}
+        step = {
+            "rate": 2.0, "window_s": 240.0, "overall": "invalid",
+            "verdict": {"throughput": {"value": 0.998}, "drift": {"value": 0.0004},
+                        "latency": {"wf-sdk": {"queue_p95": gate, "e2e_p95": gate}}},
+            "records": [{"outcome": "correct"}, {"outcome": "failed"}],
+            "validity": {"invalid": ["external CPU above 1.5 cores in 5/48 intervals"], "warnings": []},
+        }
+        profile = {**RESULT["profile"], "capacity": {"mixes": {"sdk-heavy": {"wf-sdk": 100}}, "thresholds_source": "provisional"}}
+        text = report.render({**RESULT, "kind": "capacity", "profile": profile, "mix_name": "sdk-heavy", "bracket": [None, None], "steps": [step]})
+        self.assertIn("| 2.000 | 240 | invalid | 0.9980 | 0.0004 | 1.20 | 1 | external CPU above 1.5 cores in 5/48 intervals |", text)
+        self.assertNotIn("## Execution times", text)
 
 
 if __name__ == "__main__":

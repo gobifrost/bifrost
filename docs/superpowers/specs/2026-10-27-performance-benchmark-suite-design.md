@@ -1,6 +1,6 @@
 # Performance Benchmark Suite — Design
 
-Status: **Draft for Jack's review.** Nothing in this document has been built.
+Status: Phase 1 built and measured (`scripts/bench/`, `docs/benchmarks/2026-10-27-baseline.md`). Phases 2–3 are superseded in detail by the reviewed methodology `docs/plans/2026-10-29-capacity-benchmark-methodology.md`, which this document still motivates.
 
 ## 1. Why this exists
 

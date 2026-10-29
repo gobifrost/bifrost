@@ -1,0 +1,7 @@
+# The tenant topology has no scheduler (hosted design).
+$patch: delete
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-scheduler
+  namespace: bifrost

@@ -1,0 +1,28 @@
+# Guaranteed QoS (requests == limits, init container included) and no surge,
+# so a rollout never needs room outside the envelope. Values are replaced per
+# profile by the harness.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-api
+  namespace: bifrost
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  template:
+    spec:
+      initContainers:
+        - name: init
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {cpu: 1250m, memory: 1280Mi}
+            limits: {cpu: 1250m, memory: 1280Mi}
+      containers:
+        - name: api
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {cpu: 1250m, memory: 1280Mi}
+            limits: {cpu: 1250m, memory: 1280Mi}

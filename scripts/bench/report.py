@@ -40,7 +40,7 @@ def _classes_table(classes: list[dict]) -> list[str]:
 
 def _memory_table(snapshots: list[dict]) -> list[str]:
     rows = [
-        "| After | API total MiB | API heap MiB | API arenas/large MiB | API THP MiB | Worker working set MiB |",
+        "| After | API total MiB | API brk heap MiB | API anonymous (allocator arenas) MiB | API THP MiB | Worker working set MiB |",
         "|---|---:|---:|---:|---:|---:|",
     ]
     for snap in snapshots:
@@ -110,17 +110,69 @@ def _failures(classes: list[dict]) -> list[str]:
     return lines
 
 
+def _header(result: dict) -> list[str]:
+    profile = result["profile"]
+    components = profile["components"]
+    images = ", ".join(f"{name} `{image['tag']}` ({image['id'][:19]})" for name, image in result["images"].items())
+    deployed = result.get("deploy") or {}
+    envelope = deployed.get("envelope", {})
+    quota = profile["quota"]
+    return [
+        f"- Run: `{result['run_id']}`, started {result['started_at']}",
+        f"- Build: git `{result['git_sha']}`; images {images}",
+        f"- Cluster: Kind {result['kind_version']}, CloudNativePG {result['cnpg_version']}; host {result['host']['cpus']} CPUs, "
+        f"load average at start {', '.join(f'{v:.2f}' for v in result['host']['load_average'])}; other Kind nodes on the host: "
+        f"{', '.join(result['external_nodes']) or 'none'}",
+        f"- Envelope: quota {quota['cpu']} CPU / {quota['memory']}; maximum occupancy {envelope.get('max_occupancy', '?')}, "
+        f"headroom {envelope.get('headroom', '?')}; admitted at deploy {deployed.get('admitted', {}).get('admitted', '?')}",
+        f"- Tenant: API {components['api']['replicas']} × ({components['api']['cpu']}, {components['api']['memory']}); "
+        f"workers warm {profile['worker_policy']['warm_workers']} / max {profile['worker_policy']['max_workers']} × "
+        f"({profile['worker_cpu']}, {profile['worker_policy']['worker_memory_mib']} MiB); Postgres {components['postgres']['cpu']}, "
+        f"{components['postgres']['memory']}; requests == limits",
+        f"- Allocator env: `{profile['env']}`; fake model latency {profile['fake_llm_latency_ms']} ms per call",
+        f"- API pod replacements during run: {result['api_pod_changes']}",
+    ]
+
+
+def _capacity(result: dict) -> list[str]:
+    rows = [
+        "## Capacity search",
+        "",
+        f"Mix `{result['mix_name']}`: `{result['profile']['capacity']['mixes'][result['mix_name']]}`; "
+        f"gate thresholds {result['profile']['capacity']['thresholds_source']}. "
+        f"Bracket (last pass, first fail): {result.get('bracket')}" + (f"; stopped: {result['stopped']}" if result.get("stopped") else ""),
+        "",
+        "| Offered /s | Window s | Result | Throughput | Drift upper /s | Worst class e2e p95 s | Failures | Invalid / warnings |",
+        "|---:|---:|---|---:|---:|---:|---:|---|",
+    ]
+    for step in result.get("steps", []):
+        verdict = step["verdict"]
+        worst = max((gates["e2e_p95"]["value"] for gates in verdict["latency"].values()
+                     if isinstance(gates["e2e_p95"]["value"], (int, float))), default=None)
+        failures = sum(1 for record in step["records"] if record["outcome"] != "correct")
+        notes = "; ".join(step["validity"]["invalid"] + step["validity"]["warnings"]) or ""
+        throughput = verdict["throughput"]["value"]
+        drift = verdict["drift"]["value"]
+        rows.append(
+            f"| {step['rate']:.3f} | {step['window_s']:.0f} | {step['overall']} | "
+            f"{'' if throughput is None else f'{throughput:.4f}'} | {'' if drift is None else f'{drift:.4f}'} | "
+            f"{'' if worst is None else f'{worst:.2f}'} | {failures} | {notes} |"
+        )
+    return [*rows, ""]
+
+
 def render(result: dict) -> str:
     profile = result["profile"]
     lines = [
-        f"# Benchmark: {result['profile_name']} ({result['backend'] or 'no model'})",
+        f"# Benchmark: {result['profile_name']} {result['kind']} ({result['backend'] or 'no model'})",
         "",
-        f"- Run: `{result['run_id']}`, started {result['started_at']}",
-        f"- Build: git `{result['git_sha']}`, image `{result['image_id']}`",
-        f"- Topology: 1 API replica, {profile['worker_replicas']} worker replica(s), no scheduler",
-        f"- Allocator env: `{profile['env']}`; THP emulation: {profile['thp_emulation']}",
-        f"- Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes",
-        f"- API pod restarts during run: {result['api_pod_changes']}",
+        *_header(result),
+        "",
+    ]
+    if result["kind"] == "capacity":
+        return "\n".join([*lines, *_capacity(result)])
+    lines += [
+        f"Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes.",
         "",
         "## Execution times",
         "",

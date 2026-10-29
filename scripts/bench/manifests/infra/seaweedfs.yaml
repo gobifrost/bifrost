@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs
+  namespace: bifrost-local
+spec:
+  template:
+    spec:
+      containers:
+        - name: seaweedfs
+          env:
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bench-infra
+                  key: SEAWEEDFS_SECRET_KEY
+            - name: S3_BUCKET
+              value: bifrost-bench
+          resources:
+            requests: {cpu: 500m, memory: 512Mi}
+            limits: {cpu: 500m, memory: 512Mi}

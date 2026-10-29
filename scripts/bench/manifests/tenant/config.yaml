@@ -1,0 +1,19 @@
+# Bench destinations are in-cluster Services only (guard-checked before a run).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bifrost-config
+  namespace: bifrost
+data:
+  BIFROST_ENVIRONMENT: "production"
+  BIFROST_API_URL: "http://api:8000"
+  BIFROST_PUBLIC_URL: "http://client"
+  BIFROST_CORS_ORIGINS: "http://client"
+  BIFROST_REDIS_URL: "redis://redis:6379/0"
+  BIFROST_S3_BUCKET: "bifrost-bench"
+  BIFROST_S3_ENDPOINT_URL: "http://seaweedfs.bench-infra:8333"
+  BIFROST_S3_PUBLIC_ENDPOINT_URL: "http://seaweedfs.bench-infra:8333"
+  BIFROST_S3_ACCESS_KEY: "bifrost"
+  BIFROST_MFA_ENABLED: "false"
+  BIFROST_WEBAUTHN_RP_ID: "client"
+  BIFROST_WEBAUTHN_ORIGIN: "http://client"

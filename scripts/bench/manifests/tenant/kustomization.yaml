@@ -1,0 +1,19 @@
+# Benchmark tenant: the k8s/ deployment base in an enforced resource envelope.
+# Rendered by the bench harness with --load-restrictor LoadRestrictionsNone (Redis
+# comes from k8s/local) plus generated per-profile patches; see
+# docs/plans/2026-10-29-capacity-benchmark-methodology.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bench-tenant
+resources:
+  - ../../../../k8s
+  - ../../../../k8s/local/redis.yaml
+  - postgres.yaml
+  - envelope.yaml
+  - network-policy.yaml
+patches:
+  - path: no-scheduler.yaml
+  - path: namespace.yaml
+  - path: config.yaml
+  - path: api.yaml
+  - path: client.yaml
