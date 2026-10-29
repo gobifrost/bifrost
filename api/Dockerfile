@@ -3,13 +3,13 @@
 # Multi-stage build for efficient image size
 
 # Use the same supported Node runtime for every App build surface.
-FROM node:24.22.0-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS node-toolchain
+FROM node:26.12.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS node-toolchain
 
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
 # python:3.14-slim
-FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2 AS builder
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
 
 WORKDIR /app
 
@@ -35,7 +35,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 # Stage 2: Runtime
 # =============================================================================
 # python:3.14-slim
-FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 
 WORKDIR /app
 ARG BIFROST_VERSION=unknown
@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     git \
     awscli \
+    libatomic1 \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 

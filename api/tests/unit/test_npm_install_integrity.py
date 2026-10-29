@@ -49,10 +49,11 @@ def test_global_npm_installer_verifies_the_primary_registry_tarball_before_insta
 def test_api_images_use_the_same_verified_node_and_npm_toolchain(path):
     dockerfile = _find_api_file(path).read_text()
     assert (
-        "FROM node:24.22.0-bookworm-slim@sha256:"
-        "a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 "
+        "FROM node:26.12.1-bookworm-slim@sha256:"
+        "28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe "
         "AS node-toolchain"
     ) in dockerfile
+    assert "libatomic1" in dockerfile
     assert "COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node" in dockerfile
     assert "COPY --from=node-toolchain /usr/local/lib/node_modules/npm" in dockerfile
     assert "COPY api/scripts/install-npm.sh /usr/local/bin/install-npm.sh" in dockerfile
