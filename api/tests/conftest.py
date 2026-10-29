@@ -7,6 +7,7 @@ This module provides:
 3. Authentication/authorization fixtures
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -170,8 +171,14 @@ async def isolate_global_redis_client() -> AsyncGenerator[None, None]:
     """Close process-global Redis pools on their owning test loop."""
     from src.core.cache.redis_client import close_shared_redis
     from src.core.redis_client import close_redis_client
+    from src.services import platform_jobs
 
     yield
+    # A committed enqueue wakes executors in the background through the shared
+    # client. Let this loop's wakes finish first, or one can bind the shared
+    # client after it is closed and leave it bound to a dead loop.
+    loop = asyncio.get_running_loop()
+    await asyncio.gather(*(wake for wake in platform_jobs._wakes if wake.get_loop() is loop))
     await close_redis_client()
     await close_shared_redis()
 
