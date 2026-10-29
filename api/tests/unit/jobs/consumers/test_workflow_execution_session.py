@@ -243,7 +243,7 @@ class TestSuccessfulExecutionCompletionOrder:
                 await asyncio.wait_for(recovery_started.wait(), timeout=1)
                 assert not completion.done()
                 allow_recovery.set()
-                await completion
+                await asyncio.gather(completion)
 
         assert call_order[:2] == ["durable_commit", "push_result"]
         assert call_order.index("push_result") < call_order.index("daily_metrics")
