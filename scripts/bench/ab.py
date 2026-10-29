@@ -109,8 +109,9 @@ def compare(arms: list[dict], images: dict[str, str]) -> list[dict]:
         if any(infinite.values()):
             rows.append({"metric": f"{name} e2e p95 s", "infinite_in": infinite})
             continue
-        intervals = {variant: interval(vs) for variant, vs in values.items()}
-        rows.append({"metric": f"{name} e2e p95 s", **intervals, "differs": differs(intervals["a"], intervals["b"])})
+        intervals = {variant: interval(vs) for variant, vs in values.items() if vs}
+        rows.append({"metric": f"{name} e2e p95 s", **intervals,
+                     "differs": len(intervals) == 2 and differs(intervals["a"], intervals["b"])})
     gates = {variant: sum(1 for a in arms if a["api_image"] == image and a["overall"] == "pass") for variant, image in images.items()}
     counts = {variant: sum(1 for a in arms if a["api_image"] == image) for variant, image in images.items()}
     rows.append({"metric": "steps passing all gates", "a": f"{gates['a']}/{counts['a']}", "b": f"{gates['b']}/{counts['b']}"})

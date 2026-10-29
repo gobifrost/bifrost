@@ -337,6 +337,7 @@ def run_ab(profile_name: str, mix_name: str, rate: float, image_a: str, image_b:
         result = ab.arm(cluster, profile, plan, images[variant], rate,
                         lambda image: _prepare(cluster, current, profile, "fake", image))
         current.result["arms"].append(result)
+        current.save()
         current.result["comparison"] = ab.compare(current.result["arms"], images)
         current.save()
         print(f"  idle {result['idle']['xact_per_s']:.2f} tx/s ({result['idle']['rollbacks_per_s']:.2f} rollbacks/s); "

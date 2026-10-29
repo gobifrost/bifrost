@@ -33,6 +33,12 @@ class CompareTest(unittest.TestCase):
         self.assertFalse(rows["transactions per correct run"]["differs"])
         self.assertEqual(rows["steps passing all gates"], {"metric": "steps passing all gates", "a": "3/3", "b": "3/3"})
 
+    def test_a_variant_without_arms_yet_is_left_out(self) -> None:
+        rows = {row["metric"]: row for row in ab.compare([_arm("A", 9.0, 70)], {"a": "A", "b": "B"})}
+        self.assertNotIn("b", rows["wf-sdk e2e p95 s"])
+        self.assertFalse(rows["wf-sdk e2e p95 s"]["differs"])
+        self.assertEqual(rows["steps passing all gates"]["b"], "0/0")
+
     def test_infinite_p95_is_reported_not_averaged(self) -> None:
         arms = [_arm("A", 9.0, 70), {**_arm("B", 4.5, 70), "e2e_p95_s": {"wf-sdk": float("inf")}}]
         rows = {row["metric"]: row for row in ab.compare(arms, {"a": "A", "b": "B"})}
