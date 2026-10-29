@@ -40,7 +40,7 @@ def validate_python_decorators(source: str, *, path: str) -> None:
                 path=path,
                 location=(),
                 code="invalid_python",
-                message=f"Invalid Python: {exc.msg}",
+                message=f"Syntax error: {exc.msg}",
                 line=exc.lineno,
             )
         ]) from None

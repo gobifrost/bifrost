@@ -84,6 +84,28 @@ def test_solution_reader_keeps_typed_package_app_transport(tmp_path) -> None:
     assert app["prebuilt_sdk_metadata"]["contract_version"] == 1
 
 
+def test_solution_reader_keeps_app_repo_path_transport(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "apps.yaml",
+        """apps:
+  dashboard:
+    repo_path: apps/dashboard
+    app_model: standalone_v2
+""",
+    )
+
+    app = read_solution_definition(tmp_path).entries("apps")[0]
+    assert app["id"] == "dashboard"
+    assert app["repo_path"] == "apps/dashboard"
+
+    install_app = read_solution_definition(tmp_path).install_entries("apps")[0]
+    assert "path" not in install_app
+    assert install_app["repo_path"] == "apps/dashboard"
+
+
 def test_solution_reader_keeps_workflow_source_transport(tmp_path) -> None:
     from bifrost.solution_definition import read_solution_definition
 
@@ -250,3 +272,46 @@ def test_solution_reader_rejects_malformed_entity_instead_of_skipping_it(tmp_pat
         read_solution_definition(tmp_path)
 
     assert error.value.issues[0].path == ".bifrost/forms.yaml"
+
+
+def test_solution_reader_normalizes_legacy_workflow_content_transport(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "workflows.yaml",
+        """workflows:
+  daily:
+    path: workflows/daily.py
+    function_name: run
+    content: 'def run(): return 1'
+""",
+    )
+
+    workflow = read_solution_definition(tmp_path).entries("workflows")[0]
+    assert workflow["source"] == "def run(): return 1"
+    assert "content" not in workflow
+
+
+def test_solution_reader_normalizes_legacy_event_schedule(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "events.yaml",
+        """events:
+  nightly:
+    source_type: schedule
+    schedule:
+      cron: '0 0 * * *'
+      timezone: UTC
+    subscriptions: []
+""",
+    )
+
+    event = read_solution_definition(tmp_path).entries("events")[0]
+    assert event["cron_expression"] == "0 0 * * *"
+    assert event["timezone"] == "UTC"
+    assert event["schedule_enabled"] is True
+    assert event["overlap_policy"] == "skip"
+    assert "schedule" not in event

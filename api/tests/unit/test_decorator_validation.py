@@ -110,6 +110,7 @@ def test_reports_python_syntax_errors_with_source_location():
     issue = exc_info.value.issues[0]
     assert issue.code == "invalid_python"
     assert issue.line == 1
+    assert "syntax" in issue.message.lower()
 
 
 @pytest.mark.parametrize("module_name", ["bifrost.decorators", "src.sdk.decorators"])

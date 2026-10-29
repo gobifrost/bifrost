@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from bifrost.definition_validation import (
+    DefinitionIssue,
+    DefinitionValidationError,
     read_definition_section,
     read_manifest_document,
     read_workspace_manifest,
@@ -35,6 +37,12 @@ class SolutionAppTransport(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Install packages carry this in place of the workspace manifest's ``path``.
+    repo_path: str | None = None
+    logo_b64: str | None = None
+    logo_content_type: str | None = None
+    src_files: dict[str, str] | None = None
+    bin_files: dict[str, str] | None = None
     dist_files: dict[str, str] | None = None
     bin_dist_files: dict[str, str] | None = None
     prebuilt_sdk_metadata: dict[str, Any] | None = None
@@ -63,6 +71,19 @@ class SolutionWorkflowTransport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source: str | None = None
+
+
+class SolutionEventScheduleTransport(BaseModel):
+    """Legacy event API schedule payload projected into manifest fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cron_expression: str = Field(
+        validation_alias=AliasChoices("cron_expression", "cron")
+    )
+    timezone: str = "UTC"
+    enabled: bool = True
+    overlap_policy: str = "skip"
 
 
 class SolutionConnectionSchema(BaseModel):
@@ -252,6 +273,8 @@ def _read_solution_section(filename: str, content: str) -> dict[str, Any]:
             app_transports[str(base.get("id", key))] = validate_definition(
                 SolutionAppTransport, transport_data, path=path
             )
+            if "path" not in base and transport_data.get("repo_path") is not None:
+                base["path"] = transport_data["repo_path"]
             normalized_apps[key] = base
         data = {**data, "apps": normalized_apps}
     if section == "workflows" and isinstance(data.get("workflows"), dict):
@@ -261,6 +284,15 @@ def _read_solution_section(filename: str, content: str) -> dict[str, Any]:
                 normalized_workflows[key] = body
                 continue
             base = dict(body)
+            if "content" in base:
+                if "source" in base:
+                    raise DefinitionValidationError([DefinitionIssue(
+                        path,
+                        ("workflows", str(key), "content"),
+                        "conflicting_source",
+                        "Specify either source or content, not both",
+                    )])
+                base["source"] = base.pop("content")
             transport_data = {
                 field: base.pop(field)
                 for field in SolutionWorkflowTransport.model_fields
@@ -271,6 +303,37 @@ def _read_solution_section(filename: str, content: str) -> dict[str, Any]:
             )
             normalized_workflows[key] = base
         data = {**data, "workflows": normalized_workflows}
+    if section == "events" and isinstance(data.get("events"), dict):
+        normalized_events: dict[Any, Any] = {}
+        for key, body in data["events"].items():
+            if not isinstance(body, dict):
+                normalized_events[key] = body
+                continue
+            base = dict(body)
+            if "schedule" in base:
+                schedule = validate_definition(
+                    SolutionEventScheduleTransport,
+                    base.pop("schedule"),
+                    path=path,
+                )
+                projected = {
+                    "cron_expression": schedule.cron_expression,
+                    "timezone": schedule.timezone,
+                    "schedule_enabled": schedule.enabled,
+                    "overlap_policy": schedule.overlap_policy,
+                }
+                duplicates = set(base).intersection(projected)
+                if duplicates:
+                    field = sorted(duplicates)[0]
+                    raise DefinitionValidationError([DefinitionIssue(
+                        path,
+                        ("events", str(key), field),
+                        "conflicting_schedule",
+                        "Specify either flat schedule fields or schedule, not both",
+                    )])
+                base.update(projected)
+            normalized_events[key] = base
+        data = {**data, "events": normalized_events}
     if section == "forms" and isinstance(data.get("forms"), dict):
         normalized_forms: dict[Any, Any] = {}
         for key, body in data["forms"].items():
