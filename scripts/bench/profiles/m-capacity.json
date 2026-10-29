@@ -11,7 +11,7 @@
     "factor": 1.25,
     "bisections": 2,
     "warmup_s": 90,
-    "window_min_s": 240,
+    "window_min_s": 300,
     "drain_s": 120,
     "deadlines_s": {
       "wf-noop": 60,

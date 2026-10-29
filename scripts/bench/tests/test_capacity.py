@@ -157,7 +157,8 @@ class VerdictTest(unittest.TestCase):
         thresholds = {"queue_p95_s": {"wf": 2.0, "rare": 2.0}, "e2e_p95_s": {"wf": 2.0, "rare": 2.0}}
         result = capacity.step_verdict(records, backlog, (0.0, 500.0), 1.0, thresholds, seed=1, mix={"wf": 0.9, "rare": 0.1})
         self.assertEqual(result["reliability"]["rare"]["status"], "inconclusive")
-        self.assertEqual(result["reliability"]["rare"]["value"], 0)
+        self.assertEqual(result["reliability"]["rare"]["observations"], 0)
+        self.assertIsNone(result["latency"]["rare"]["e2e_p95"]["value"])
         self.assertNotEqual(result["overall"], "pass")
         few = capacity.step_verdict(records[:300], backlog, (0.0, 500.0), 1.0, thresholds, seed=1, mix={"wf": 1.0})
         self.assertEqual(few["reliability"]["wf"]["status"], "inconclusive")

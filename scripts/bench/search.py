@@ -19,7 +19,9 @@ from cluster import Cluster
 HERE = Path(__file__).resolve().parent
 LOADGEN = HERE / "incluster" / "loadgen.py"
 HOST_INTERVAL_S = 5.0
-MIN_CLASS_OBSERVATIONS = 400
+# Expected arrivals per gated class: 20 % above the 400 the gates require, so a
+# Poisson window rarely falls short of them.
+OBSERVATION_TARGET = 480
 CONFIRM_MIN_S = 900
 CONFIRM_CAP_S = 3600
 INFRA_LABELS = ("bench-driver", "bench-fake-llm", "bench-fake-api", "seaweedfs")
@@ -107,7 +109,7 @@ def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict
 def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, disk: dict[str, str]) -> dict:
     """One open-loop step: warm-up, measured window, drain; returns gates, validity and raw evidence."""
     mix = plan["mix"]
-    window_s = window_seconds(rate, mix, plan["window_min_s"], MIN_CLASS_OBSERVATIONS)
+    window_s = window_seconds(rate, mix, plan["window_min_s"], OBSERVATION_TARGET)
     duration = plan["warmup_s"] + window_s
     faults_before = cluster.tenant_faults()
     with HostSampler(cluster, disk) as host:

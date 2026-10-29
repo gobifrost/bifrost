@@ -356,7 +356,7 @@ def step_verdict(
             for record in class_records
         ]
         if len(class_records) < minimum:
-            short = _gate("inconclusive", len(class_records), minimum)
+            short = _gate("inconclusive", None, None, observations=len(class_records), minimum=minimum)
             latency[name] = {"queue_p95": short, "e2e_p95": short}
             reliability[name] = short
             continue
