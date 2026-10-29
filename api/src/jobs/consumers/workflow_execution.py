@@ -327,6 +327,7 @@ class WorkflowExecutionConsumer:
         roi_value = roi_data.get("value", 0.0)
         started_at: datetime | None = None
         completed_at: datetime | None = None
+        log_receipt = None
 
         # DB operations and log flush — single short-lived session
         # (log flush reads Redis internally but DB writes share the session)
@@ -364,20 +365,17 @@ class WorkflowExecutionConsumer:
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
 
-            if result.get("logs"):
-                try:
-                    from bifrost._logging import flush_logs_to_postgres
-                    logs_count = await flush_logs_to_postgres(
-                        execution_id, session=session
-                    )
-                    if logs_count > 0:
-                        logger.debug(
-                            f"Flushed {logs_count} logs for {execution_id[:8]}..."
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to flush logs for {execution_id[:8]}...: {e}"
-                    )
+            try:
+                from bifrost._logging import stage_logs_to_postgres
+
+                # Redis is authoritative for worker-side logs. Inspect it even
+                # when the result payload has no in-memory log list, then only
+                # acknowledge its receipt after this transaction commits.
+                log_receipt = await stage_logs_to_postgres(execution_id, session)
+                if log_receipt.count:
+                    logger.debug("Staged %d logs for %s", log_receipt.count, execution_id[:8])
+            except Exception as e:
+                logger.warning(f"Failed to stage logs for {execution_id[:8]}...: {e}")
             logs_flushed_ms = (time.perf_counter() - completion_started) * 1000
 
             if status == ExecutionStatus.SUCCESS:
@@ -404,6 +402,15 @@ class WorkflowExecutionConsumer:
 
         if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
+
+        if log_receipt is not None:
+            from bifrost._logging import acknowledge_staged_logs, recover_terminal_execution_logs
+
+            await acknowledge_staged_logs(log_receipt)
+            try:
+                await recover_terminal_execution_logs([execution_id], limit=1)
+            except Exception as e:
+                logger.warning(f"Failed terminal log recovery for {execution_id[:8]}...: {e}")
 
         # This is deliberately after the authoritative execution commit and
         # sync wakeup, before unrelated fan-out. Built-in event emission is
@@ -534,6 +541,7 @@ class WorkflowExecutionConsumer:
             status = ExecutionStatus.CANCELLED
         else:
             status = ExecutionStatus.FAILED
+        log_receipt = None
 
         # DB operations and log flush — single short-lived session
         session_factory = get_session_factory()
@@ -572,20 +580,16 @@ class WorkflowExecutionConsumer:
                         f"Failed to update event delivery for {execution_id[:8]}...: {e}"
                     )
 
-            if result.get("logs"):
-                try:
-                    from bifrost._logging import flush_logs_to_postgres
-                    logs_count = await flush_logs_to_postgres(
-                        execution_id, session=session
+            try:
+                from bifrost._logging import stage_logs_to_postgres
+
+                log_receipt = await stage_logs_to_postgres(execution_id, session)
+                if log_receipt.count:
+                    logger.debug(
+                        "Staged %d logs for failed %s", log_receipt.count, execution_id[:8]
                     )
-                    if logs_count > 0:
-                        logger.debug(
-                            f"Flushed {logs_count} logs for failed {execution_id[:8]}..."
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to flush logs for {execution_id[:8]}...: {e}"
-                    )
+            except Exception as e:
+                logger.warning(f"Failed to stage logs for {execution_id[:8]}...: {e}")
 
             await session.commit()
 
@@ -602,6 +606,15 @@ class WorkflowExecutionConsumer:
             )
 
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
+
+        if log_receipt is not None:
+            from bifrost._logging import acknowledge_staged_logs, recover_terminal_execution_logs
+
+            await acknowledge_staged_logs(log_receipt)
+            try:
+                await recover_terminal_execution_logs([execution_id], limit=1)
+            except Exception as e:
+                logger.warning(f"Failed terminal log recovery for {execution_id[:8]}...: {e}")
 
         failure_metrics = result.get("metrics") or {}
         await self._record_completion_metrics(

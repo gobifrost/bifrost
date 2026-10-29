@@ -59,8 +59,13 @@ def _bundle() -> SolutionBundle:
                 "name": "main",
                 "function_name": "run",
                 "path": "workflows/main.py",
+                "source": "def run(sdk):\n    return 'ok'\n",
                 "endpoint_enabled": True,
                 "timeout_seconds": 60,
+                "requested_permissions": {
+                    "mode": "restricted",
+                    "grants": [{"permission": "tables.read"}],
+                },
             }
         ],
         tables=[
@@ -69,7 +74,7 @@ def _bundle() -> SolutionBundle:
                 "name": "things",
                 "description": "demo rows",
                 "schema": {"fields": [{"name": "title", "type": "string"}]},
-                "policies": [{"role": "member", "action": "read"}],
+                "policies": [{"name": "member_read", "actions": ["read"]}],
             }
         ],
         apps=[
@@ -89,7 +94,11 @@ def _bundle() -> SolutionBundle:
                 "bin_files": {"public/font.woff2": base64.b64encode(b"\x00\x01binary").decode("ascii")},
             }
         ],
-        forms=[{"id": FORM_ID, "name": "Intake", "fields": [{"key": "email"}]}],
+        forms=[{
+            "id": FORM_ID,
+            "name": "Intake",
+            "form_schema": {"fields": [{"key": "email"}]},
+        }],
         agents=[{"id": AGENT_ID, "name": "Helper", "system_prompt": "be helpful"}],
         config_schemas=[
             {
@@ -145,14 +154,19 @@ def test_export_round_trips_through_preview() -> None:
     assert wf["function_name"] == "run"
     assert wf["endpoint_enabled"] is True  # full body passthrough, not a subset
     assert wf["timeout_seconds"] == 60
+    assert wf["source"] == "def run(sdk):\n    return 'ok'\n"
+    assert wf["requested_permissions"] == {
+        "mode": "restricted",
+        "grants": [{"permission": "tables.read"}],
+    }
 
     assert [t["id"] for t in result.tables] == [TBL_ID]
     tbl = result.tables[0]
     assert tbl["schema"] == {"fields": [{"name": "title", "type": "string"}]}
-    assert tbl["policies"] == [{"role": "member", "action": "read"}]
+    assert tbl["policies"] == [{"name": "member_read", "actions": ["read"]}]
 
     assert [f["id"] for f in result.forms] == [FORM_ID]
-    assert result.forms[0]["fields"] == [{"key": "email"}]
+    assert result.forms[0]["form_schema"] == {"fields": [{"key": "email"}]}
     assert [a["id"] for a in result.agents] == [AGENT_ID]
     assert result.agents[0]["system_prompt"] == "be helpful"
 
@@ -174,6 +188,7 @@ def test_export_apps_round_trip_source_and_logo() -> None:
     assert [a["id"] for a in result.apps] == [APP_ID]
     app = result.apps[0]
     assert app["slug"] == "dash"
+    assert app["path"] == "apps/dash"  # exporter normalizes captured repo_path
     assert app["app_model"] == "standalone_v2"
     assert app["dependencies"] == {"react": "^18.0.0"}
     assert app["role_names"] == ["Staff"]

@@ -449,7 +449,7 @@ class ExecutionRepository(BaseRepository[Execution]):
         logs_query = (
             select(ExecutionLog)
             .where(ExecutionLog.execution_id == execution_id)
-            .order_by(ExecutionLog.sequence)
+            .order_by(ExecutionLog.sequence, ExecutionLog.id)
         )
         if not user.is_superuser:
             logs_query = logs_query.where(
@@ -603,7 +603,7 @@ class ExecutionRepository(BaseRepository[Execution]):
         logs_query = (
             select(ExecutionLog)
             .where(ExecutionLog.execution_id == execution_id)
-            .order_by(ExecutionLog.sequence)
+            .order_by(ExecutionLog.sequence, ExecutionLog.id)
         )
 
         # Filter debug logs for non-superusers

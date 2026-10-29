@@ -229,6 +229,10 @@ async def release_unstarted_claims(worker_id: UUID, started: set[str]) -> list[U
                 extra={"worker_id": str(worker_id), "ended": len(ended), "requeued": len(unstarted)},
             )
         await db.commit()
+    if unstarted:
+        from src.services.work_dispatch import wake_pool_workers
+
+        await wake_pool_workers()
     await announce_ended_runs(ended, CLAIM_NOT_STARTED)
     return ended
 

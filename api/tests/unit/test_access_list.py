@@ -2125,7 +2125,12 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
 # Redis reads whose value never reaches a principal, a token, an
 # authorization decision or code loading: (count, reason).
 _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
-    "bifrost._logging.flush_logs_to_postgres": (1, "Moves a finished run's log lines into the database."),
+    "bifrost._logging.recover_terminal_execution_logs": (
+        1, "Bounded maintenance scan for terminal execution-log streams.",
+    ),
+    "bifrost._logging.stage_logs_to_postgres": (
+        1, "Reads the Redis source stream before staging durable log rows.",
+    ),
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
@@ -2172,6 +2177,9 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.services.access_check_writer._Writer._write_once": (
         1,
         "Audit-write marker: whether a report-only row is committed or still being inserted.",
+    ),
+    "src.services.run_retention.deleter.reclaim_orphaned_execution_log_streams": (
+        1, "Bounded retention scan for execution-log streams without a durable row.",
     ),
     "src.services.agent_run_step_streams.inspect_orphaned_agent_run_step_streams": (
         1, "Reads the newest step timestamp for an aggregate-only orphan preview; never grants access or loads code.",

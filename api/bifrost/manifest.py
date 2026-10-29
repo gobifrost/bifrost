@@ -931,11 +931,13 @@ class ManifestFiles(BaseModel):
 
     locations: list[str] = Field(default_factory=list, **classify(FieldClass.CONTENT))
 
-    @field_validator("locations")
+    @field_validator("locations", mode="before")
     @classmethod
     def normalize_locations(cls, value: list[str]) -> list[str]:
         from shared.file_paths import validate_location_name
 
+        if not isinstance(value, list):
+            raise ValueError("locations must be a list")
         normalized: list[str] = []
         seen: set[str] = set()
         for raw in value:

@@ -47,6 +47,29 @@ def _worker_with_pool(
     return worker
 
 
+async def test_an_idle_platform_job_loop_waits_for_a_wake_up(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Idle, the loop claims on a wake-up (an enqueue or a finished job) or a
+    ``SWEEP_SECONDS`` sweep, which is also when it recovers expired leases."""
+    claims = AsyncMock(return_value=None)
+    recover = AsyncMock(return_value=(0, 0))
+    monkeypatch.setattr(pool_main, "recover_expired_platform_jobs", recover)
+    monkeypatch.setattr(pool_main, "claim_platform_job", claims)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 30.0)
+    worker = _worker_with_pool()
+
+    loop = asyncio.create_task(worker._platform_job_loop())
+    try:
+        await asyncio.sleep(0.2)
+        assert (claims.await_count, recover.await_count) == (1, 1)
+
+        worker._platform_wake.set()
+        await asyncio.sleep(0.05)
+        assert (claims.await_count, recover.await_count) == (2, 1), "claims at once, recovers on the sweep"
+    finally:
+        worker._platform_stop.set()
+        await asyncio.wait_for(loop, timeout=3)
+
+
 def test_services_and_platform_jobs_keep_an_executor_busy_but_free_no_run_slots() -> None:
     idle = _worker_with_pool()
     assert not idle.busy()
@@ -109,7 +132,7 @@ async def test_a_job_worker_idles_out_on_the_idle_time_in_settings(monkeypatch) 
     monkeypatch.setattr(pool_main, "load_kubernetes_policy", load_kubernetes_policy)
     monkeypatch.setattr(pool_main, "claim_next", AsyncMock(return_value=None))
     monkeypatch.setattr(pool_main, "begin_idle_drain", drain)
-    monkeypatch.setattr(pool_main, "POLL_SECONDS", 0.01)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 0.01)
     worker = _worker_with_pool(incarnation_id=uuid4())
 
     loop = asyncio.create_task(worker._claim_loop())
@@ -124,6 +147,39 @@ async def test_a_job_worker_idles_out_on_the_idle_time_in_settings(monkeypatch) 
 
     assert len(reads) == 2
     drain.assert_awaited_once_with(worker.incarnation_id)
+
+
+async def test_an_idle_worker_waits_for_a_wake_up_and_sweeps_slowly(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Idle with nothing to claim, a worker looks again on a wake-up or after
+    ``SWEEP_SECONDS``, not every ``POLL_SECONDS``; held back by admission it
+    keeps polling."""
+    claims = AsyncMock(return_value=None)
+    monkeypatch.setattr(pool_main, "claim_next", claims)
+    monkeypatch.setattr(pool_main, "POLL_SECONDS", 0.01)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 30.0)
+    worker = _worker_with_pool(incarnation_id=uuid4())
+    worker._idle_seconds = AsyncMock(return_value=3600)  # type: ignore[method-assign]
+
+    loop = asyncio.create_task(worker._claim_loop())
+    try:
+        await asyncio.sleep(0.2)
+        assert claims.await_count == 1, "one look, then wait for a wake-up"
+
+        worker._wake.set()
+        await asyncio.sleep(0.05)
+        assert claims.await_count == 2, "a wake-up looks again at once"
+
+        worker.admission._under_pressure = lambda: True  # type: ignore[union-attr]
+        worker._wake.set()
+        await asyncio.sleep(0.2)
+        attempts = claims.await_count
+        assert worker._admission_blocked and attempts == 2, "held back: no claim query"
+        worker.admission._under_pressure = lambda: False  # type: ignore[union-attr]
+        await asyncio.sleep(0.1)
+        assert claims.await_count > attempts, "pressure easing is noticed by polling"
+    finally:
+        worker.request_stop()
+        await asyncio.wait_for(loop, timeout=3)
 
 
 async def test_draining_hands_services_over_first_and_waits_for_platform_jobs(monkeypatch) -> None:  # type: ignore[no-untyped-def]

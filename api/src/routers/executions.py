@@ -221,7 +221,7 @@ class ExecutionReadAdapter:
         logs_query = (
             select(ExecutionLogORM)
             .where(ExecutionLogORM.execution_id == execution_id)
-            .order_by(ExecutionLogORM.sequence)
+            .order_by(ExecutionLogORM.sequence, ExecutionLogORM.id)
         )
         if not access.diagnostics:
             logs_query = logs_query.where(ExecutionLogORM.level.notin_(["DEBUG", "TRACEBACK"]))

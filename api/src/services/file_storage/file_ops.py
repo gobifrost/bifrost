@@ -159,6 +159,26 @@ class FileOperationsService:
         if is_excluded_path(path):
             raise ValueError(f"Path is excluded from workspace: {path}")
 
+        # New Python source must be accepted before any durable write or side
+        # effect.  Runtime decorators keep their historical ``**kwargs``
+        # compatibility for source that was already deployed.
+        if path.endswith(".py"):
+            from bifrost.decorator_validation import validate_python_decorators
+            from bifrost.definition_validation import DefinitionIssue, DefinitionValidationError
+
+            try:
+                source = content.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise DefinitionValidationError([
+                    DefinitionIssue(
+                        path=path,
+                        location=(),
+                        code="invalid_python",
+                        message="Python source must be valid UTF-8.",
+                    )
+                ]) from exc
+            validate_python_decorators(source, path=path)
+
         content_hash = self._compute_hash(content)
         content_type = self._guess_content_type(path)
         size_bytes = len(content)

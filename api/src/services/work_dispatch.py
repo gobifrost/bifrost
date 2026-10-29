@@ -14,13 +14,15 @@ its domain's terminal sweeps.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
@@ -127,6 +129,66 @@ async def hand_off() -> None:
 
 
 POOL_WAKE_CHANNEL = "bifrost:pool:wake"
+WAKE_RECONNECT_SECONDS = 5.0
+
+
+async def listen_for_pool_wake(redis_url: str, *events: asyncio.Event) -> None:
+    """Set ``events`` on every pool wake-up until cancelled. Wake-ups are
+    hints: a dropped connection reconnects, and listeners sweep meanwhile."""
+    import redis.asyncio as aioredis
+
+    while True:
+        client = aioredis.from_url(redis_url)
+        try:
+            pubsub = client.pubsub()
+            await pubsub.subscribe(POOL_WAKE_CHANNEL)
+            async for message in pubsub.listen():
+                if message.get("type") == "message":
+                    for event in events:
+                        event.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Pool wake listener reconnecting", exc_info=True)
+            await asyncio.sleep(WAKE_RECONNECT_SECONDS)
+        finally:
+            await client.aclose()
+
+
+async def wait_for_next_pass(
+    stop: asyncio.Event, wake: asyncio.Event, *, since: float, spacing: float, sweep: float
+) -> None:
+    """Wait until a loop's next pass: on a wake-up, but no sooner than
+    ``spacing`` after the last pass began (``since``, monotonic), or after
+    ``sweep`` without one. Clears ``wake``. Returns early on ``stop``."""
+    stopped = asyncio.ensure_future(stop.wait())
+    woken = asyncio.ensure_future(wake.wait())
+    try:
+        remaining = sweep - (time.monotonic() - since)
+        await asyncio.wait({stopped, woken}, timeout=max(0.0, remaining), return_when=asyncio.FIRST_COMPLETED)
+        if wake.is_set() and not stop.is_set():
+            delay = spacing - (time.monotonic() - since)
+            if delay > 0:
+                await asyncio.wait({stopped}, timeout=delay)
+    finally:
+        stopped.cancel()
+        woken.cancel()
+        wake.clear()
+
+
+_wakes: set[asyncio.Task[None]] = set()
+
+
+def wake_pool_workers_after_commit(db: AsyncSession) -> None:
+    """Wake idle executors once ``db`` commits: a hint sent before the commit
+    would find nothing to claim (executors also sweep every 15 s)."""
+
+    def publish(_session: Any) -> None:
+        task = asyncio.get_running_loop().create_task(wake_pool_workers())
+        _wakes.add(task)
+        task.add_done_callback(_wakes.discard)
+
+    event.listen(db.sync_session, "after_commit", publish, once=True)
 
 
 async def wake_pool_workers() -> None:
@@ -179,7 +241,11 @@ async def _reconcile_one(
             # The run stopped waiting (cancelled) before an executor claimed it.
             await db.delete(row)
             return
+        held_by = row.assigned_worker_id
         failure = await _settle_pool_dispatch(db, family, row, largest)
+        released = held_by is not None and row.assigned_worker_id is None
+    if released:
+        await wake_pool_workers()
     if failure is not None:
         await family.report_failed(subject_id, *failure)
 
@@ -288,6 +354,9 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
 
 __all__ = [
     "DispatchFamily",
+    "listen_for_pool_wake",
+    "wake_pool_workers_after_commit",
+    "wait_for_next_pass",
     "POOL_CLAIM_DEADLINE",
     "POOL_WAKE_CHANNEL",
     "hand_off",
