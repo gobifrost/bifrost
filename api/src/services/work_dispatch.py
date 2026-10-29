@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
@@ -174,6 +174,21 @@ async def wait_for_next_pass(
         stopped.cancel()
         woken.cancel()
         wake.clear()
+
+
+_wakes: set[asyncio.Task[None]] = set()
+
+
+def wake_pool_workers_after_commit(db: AsyncSession) -> None:
+    """Wake idle executors once ``db`` commits: a hint sent before the commit
+    would find nothing to claim (executors also sweep every 15 s)."""
+
+    def publish(_session: Any) -> None:
+        task = asyncio.get_running_loop().create_task(wake_pool_workers())
+        _wakes.add(task)
+        task.add_done_callback(_wakes.discard)
+
+    event.listen(db.sync_session, "after_commit", publish, once=True)
 
 
 async def wake_pool_workers() -> None:
@@ -340,6 +355,7 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
 __all__ = [
     "DispatchFamily",
     "listen_for_pool_wake",
+    "wake_pool_workers_after_commit",
     "wait_for_next_pass",
     "POOL_CLAIM_DEADLINE",
     "POOL_WAKE_CHANNEL",
