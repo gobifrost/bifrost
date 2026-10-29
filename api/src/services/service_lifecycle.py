@@ -34,6 +34,7 @@ from shared.run_lineage import unattended_lineage
 from src.services.memory_requests import workflow_request_sql
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
+from src.services.work_dispatch import wake_pool_workers_after_commit
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ async def ensure_definition_for_workflow(
     )
     db.add(definition)
     await db.flush()
+    wake_pool_workers_after_commit(db)
     logger.info(
         "Created service definition for workflow %s (%s)",
         workflow.name,
@@ -278,6 +280,7 @@ async def set_enabled(
         if definition.blocked_reason == "disabled":
             definition.blocked_reason = None
             definition.restart_eligible_at = None
+        wake_pool_workers_after_commit(db)
     definition.updated_at = _now()
     await db.flush()
     return definition
@@ -294,6 +297,7 @@ async def start_service(db: AsyncSession, definition: ServiceDefinition) -> Serv
     definition.restart_eligible_at = None
     definition.updated_at = _now()
     await db.flush()
+    wake_pool_workers_after_commit(db)
     return definition
 
 
@@ -320,6 +324,7 @@ async def restart_service(db: AsyncSession, definition: ServiceDefinition) -> Se
     await _request_attempt_stop(db, definition.id)
     definition.updated_at = _now()
     await db.flush()
+    wake_pool_workers_after_commit(db)
     return definition
 
 
@@ -874,6 +879,20 @@ async def _apply_restart_decision(
             initial=definition.restart_backoff_initial_seconds,
             maximum=definition.restart_backoff_max_seconds,
             restarts_in_window=restarts,
+        )
+    )
+
+
+async def next_restart_at(db: AsyncSession, *, now: datetime | None = None) -> datetime | None:
+    """When the earliest backed-off restart becomes claimable, if any is due
+    later: an idle claim loop wakes for it instead of polling."""
+    now = now or _now()
+    return await db.scalar(
+        select(func.min(ServiceDefinition.restart_eligible_at)).where(
+            ServiceDefinition.enabled.is_(True),
+            ServiceDefinition.desired_state == "running",
+            ServiceDefinition.blocked_reason.is_(None),
+            ServiceDefinition.restart_eligible_at > now,
         )
     )
 
