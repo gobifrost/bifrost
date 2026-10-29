@@ -24,6 +24,7 @@ from typing import Any
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
+from pydantic import Field
 from starlette.middleware import Middleware as StarletteMiddleware
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import Request
@@ -48,7 +49,7 @@ _AUTH_CODE_TAG = re.compile(r"[0-9a-f]{64}")
 class MCPAccessToken(AccessToken):
     """SDK token with Bifrost identity claims for tool execution."""
 
-    claims: dict[str, Any]
+    claims: dict[str, Any] = Field(default=...)
 
 
 def _secret_hmac(message: str) -> str:

@@ -140,7 +140,7 @@ dependencies = [
     # =========================================================================
     # Dynamic workflow schemas and HTTP transport binding use SDK registry
     # hooks covered by protocol/refresh tests. Review those on SDK upgrades.
-    "mcp==1.27.0",
+    "mcp==1.30.0",
     "jsonschema>=4.26.0,<5",  # Validate live gateway tool arguments
 
     # =========================================================================
