@@ -4,9 +4,9 @@
  * Despite the name, this component is a details panel (not a list). It
  * renders a stack of cards whose visibility is gated by a handful of flags:
  *   - extrasOnly → hide the Details and Input Parameters sections
- *   - executionContext → show the Execution Context card (admin)
- *   - isPlatformAdmin + isComplete → show Runtime Variables card
- *   - Usage card when (admin compute metrics) OR aiUsage has entries
+ *   - executionContext → show the Execution Context card
+ *   - diagnostic access + isComplete → show Runtime Variables card
+ *   - Usage card when diagnostics allow compute metrics OR aiUsage has entries
  *
  * The status badge and error display intentionally do NOT live here —
  * status belongs to the page header and the error banner leads the main
@@ -36,9 +36,11 @@ vi.mock("@/components/ui/variables-tree-view", () => ({
 	),
 }));
 
-function render(
-	props: Partial<ComponentProps<typeof ExecutionSidebar>> = {},
-) {
+vi.mock("@/services/modelNames", () => ({
+	useModelDisplayName: () => (model: string) => model,
+}));
+
+function render(props: Partial<ComponentProps<typeof ExecutionSidebar>> = {}) {
 	const baseProps = {
 		executedByName: "alice",
 		orgName: "Acme",
@@ -46,7 +48,7 @@ function render(
 		completedAt: null,
 		inputData: { a: 1 },
 		isComplete: true,
-		isPlatformAdmin: false,
+		canReadDiagnostics: false,
 		isLoading: false,
 		...props,
 	};
@@ -83,7 +85,7 @@ describe("ExecutionSidebar — default layout", () => {
 				completedAt="2026-04-20T12:01:00Z"
 				inputData={{}}
 				isComplete={true}
-				isPlatformAdmin={false}
+				canReadDiagnostics={false}
 				isLoading={false}
 			/>,
 		);
@@ -108,53 +110,66 @@ describe("ExecutionSidebar — extrasOnly mode", () => {
 	it("hides details / input when extrasOnly is true", async () => {
 		await render({ extrasOnly: true });
 		expect(screen.queryByText(/^details$/i)).not.toBeInTheDocument();
-		expect(
-			screen.queryByText(/input parameters/i),
-		).not.toBeInTheDocument();
+		expect(screen.queryByText(/input parameters/i)).not.toBeInTheDocument();
 	});
 });
 
-describe("ExecutionSidebar — admin-only sections", () => {
-	it("renders Execution Context when executionContext is present", async () => {
+describe("ExecutionSidebar — diagnostic sections", () => {
+	it("renders Execution Context with diagnostic access", async () => {
 		await render({
+			canReadDiagnostics: true,
 			executionContext: { org_id: "o1", email: "a@b.com" },
 		});
 		expect(screen.getByText(/execution context/i)).toBeInTheDocument();
-		expect(screen.getByLabelText("variables-tree-stub")).toBeInTheDocument();
+		expect(
+			screen.getByLabelText("variables-tree-stub"),
+		).toBeInTheDocument();
 	});
 
-	it("shows Runtime Variables card for admins after completion", async () => {
+	it("hides Execution Context without diagnostic access", async () => {
 		await render({
-			isPlatformAdmin: true,
+			canReadDiagnostics: false,
+			executionContext: { org_id: "o1" },
+		});
+		expect(
+			screen.queryByText(/execution context/i),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows Runtime Variables card with diagnostic access after completion", async () => {
+		await render({
+			canReadDiagnostics: true,
 			isComplete: true,
 			variablesData: { counter: 3 },
 		});
 		expect(screen.getByText(/runtime variables/i)).toBeInTheDocument();
 	});
 
-	it("shows 'No variables captured' when admin variablesData is empty", async () => {
+	it("shows 'No variables captured' when diagnostic variablesData is empty", async () => {
 		await render({
-			isPlatformAdmin: true,
+			canReadDiagnostics: true,
 			isComplete: true,
 			variablesData: {},
 		});
 		expect(screen.getByText(/no variables captured/i)).toBeInTheDocument();
 	});
 
-	it("hides Runtime Variables card when not an admin", async () => {
+	it("hides Runtime Variables card without diagnostic access", async () => {
 		await render({
-			isPlatformAdmin: false,
+			canReadDiagnostics: false,
 			isComplete: true,
 			variablesData: { counter: 3 },
 		});
-		expect(screen.queryByText(/runtime variables/i)).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/runtime variables/i),
+		).not.toBeInTheDocument();
 	});
 });
 
 describe("ExecutionSidebar — Usage card", () => {
-	it("renders compute metrics for admins when memory/cpu are present", async () => {
+	it("renders compute metrics with diagnostic access when memory/cpu are present", async () => {
 		await render({
-			isPlatformAdmin: true,
+			canReadDiagnostics: true,
 			isComplete: true,
 			peakMemoryBytes: 1024 * 1024 * 200,
 			cpuTotalSeconds: 1.23456,
@@ -168,7 +183,7 @@ describe("ExecutionSidebar — Usage card", () => {
 
 	it("renders AI Usage rows and totals for everyone when aiUsage has entries", async () => {
 		await render({
-			isPlatformAdmin: false,
+			canReadDiagnostics: false,
 			isComplete: true,
 			aiUsage: [
 				{
@@ -203,7 +218,7 @@ describe("ExecutionSidebar — Usage card", () => {
 
 	it("singularises the AI call badge when there is exactly one call", async () => {
 		await render({
-			isPlatformAdmin: false,
+			canReadDiagnostics: false,
 			isComplete: true,
 			aiUsage: [
 				{
@@ -227,7 +242,7 @@ describe("ExecutionSidebar — Usage card", () => {
 
 	it("hides the Usage card when there's no data to show", async () => {
 		await render({
-			isPlatformAdmin: false,
+			canReadDiagnostics: false,
 			isComplete: true,
 			aiUsage: [],
 		});
@@ -235,10 +250,13 @@ describe("ExecutionSidebar — Usage card", () => {
 	});
 });
 
-
 describe("ExecutionSidebar — compute zero values", () => {
 	it("shows measured zero values instead of treating them as missing", async () => {
-		await render({ isPlatformAdmin: true, peakMemoryBytes: 0, cpuTotalSeconds: 0 });
+		await render({
+			canReadDiagnostics: true,
+			peakMemoryBytes: 0,
+			cpuTotalSeconds: 0,
+		});
 		await waitFor(() => expect(screen.getByText("Memory")).toBeVisible());
 		expect(screen.getByText("CPU Time")).toBeVisible();
 		expect(screen.getByText("0.000s")).toBeVisible();

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import {
@@ -27,6 +27,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { useCreateTable, useUpdateTable } from "@/services/tables";
 import type { TablePublic } from "@/services/tables";
 import { SolutionManagedBanner } from "@/components/solutions/SolutionManagedBanner";
@@ -71,16 +73,14 @@ export function TableDialog({
 }: TableDialogProps) {
 	const createTable = useCreateTable();
 	const updateTable = useUpdateTable();
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 	const isEditing = !!table;
 	// Solution-managed tables are read-only on the platform: deploy owns schema +
 	// policies (criterion 6). Row data stays editable elsewhere (criterion 7).
 	const isSolutionManaged = table?.is_solution_managed ?? false;
 
-	// Default organization_id for org users is their org, for platform admins it's null (global)
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId = user?.organizationId ?? null;
 
 	const form = useForm<FormValues>({
 		resolver: zodResolver(formSchema),
@@ -107,6 +107,28 @@ export function TableDialog({
 	const [policyParseError, setPolicyParseError] = useState<string | null>(
 		null,
 	);
+	const selectedOrganizationId = useWatch({
+		control: form.control,
+		name: "organization_id",
+	});
+	const currentOrganizationId = table ? table.organization_id : defaultOrgId;
+	const canManageCurrentScope = authorization.canAt(
+		"tables.readwrite",
+		orgTarget(currentOrganizationId),
+	);
+	const canManageSelectedScope = authorization.canAt(
+		"tables.readwrite",
+		orgTarget(selectedOrganizationId),
+	);
+	const canChooseScope = authorization.canAnywhere("tables.readwrite");
+	const knownOrganizations = [
+		...(defaultOrgId
+			? [{ id: defaultOrgId, name: "Your organization" }]
+			: []),
+		...(table?.organization_id
+			? [{ id: table.organization_id, name: "Table organization" }]
+			: []),
+	];
 
 	useEffect(() => {
 		if (table) {
@@ -135,7 +157,9 @@ export function TableDialog({
 			submitBusy.current ||
 			isPending ||
 			isSolutionManaged ||
-			policyParseError
+			policyParseError ||
+			!canManageCurrentScope ||
+			!canManageSelectedScope
 		)
 			return;
 		form.clearErrors("root.save");
@@ -229,8 +253,7 @@ export function TableDialog({
 						aria-label="Table settings"
 						className="min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto px-1 py-1"
 					>
-						{/* Organization Scope - Only show for platform admins */}
-						{isPlatformAdmin && (
+						{canChooseScope && (
 							<FormField
 								control={form.control}
 								name="organization_id"
@@ -242,6 +265,12 @@ export function TableDialog({
 												value={field.value}
 												onChange={field.onChange}
 												showGlobal={true}
+												loadOrganizations={authorization.canAnywhere(
+													"organizations.read",
+												)}
+												knownOrganizations={
+													knownOrganizations
+												}
 												disabled={
 													isEditing || isPending
 												}
@@ -375,7 +404,9 @@ export function TableDialog({
 								disabled={
 									isPending ||
 									isSolutionManaged ||
-									Boolean(policyParseError)
+									Boolean(policyParseError) ||
+									!canManageCurrentScope ||
+									!canManageSelectedScope
 								}
 							>
 								{isPending

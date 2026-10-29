@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Path, status
 from sqlalchemy import select
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentUser
 from src.core.security import encrypt_secret
 from src.models.contracts.applications import (
     EmbedSecretCreate,
@@ -17,6 +17,8 @@ from src.models.contracts.applications import (
 )
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.applications import Application
+from src.routers.applications import get_application_by_id_or_404
+from src.services.authorization.enforce import load_caller, require_named_permission
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +29,16 @@ router = APIRouter(
 
 
 async def _get_app_or_404(ctx: Context, app_id: UUID) -> Application:
-    result = await ctx.db.execute(select(Application).where(Application.id == app_id))
-    app = result.scalar_one_or_none()
-    if not app:
-        raise HTTPException(status_code=404, detail="Application not found")
+    """Resolve the App with its ordinary sharing and original-user reach."""
+    return await get_application_by_id_or_404(ctx, app_id)
+
+
+async def _require_embed_secret_permission(
+    ctx: Context, app_id: UUID, permission: str
+) -> Application:
+    app = await _get_app_or_404(ctx, app_id)
+    caller = await load_caller(ctx.db, ctx.user)
+    require_named_permission(caller, permission, app.organization_id)
     return app
 
 
@@ -43,10 +51,11 @@ async def _get_app_or_404(ctx: Context, app_id: UUID) -> Application:
 async def create_embed_secret(
     body: EmbedSecretCreate,
     ctx: Context,
-    current_user: CurrentSuperuser,
+    current_user: CurrentUser,
     app_id: UUID = Path(...),
 ):
-    await _get_app_or_404(ctx, app_id)
+    await _require_embed_secret_permission(ctx, app_id, "settings.readwrite")
+    await _require_embed_secret_permission(ctx, app_id, "secrets.read")
 
     raw_secret = body.secret or secrets.token_urlsafe(32)
     encrypted = encrypt_secret(raw_secret)
@@ -79,10 +88,10 @@ async def create_embed_secret(
 )
 async def list_embed_secrets(
     ctx: Context,
-    _user: CurrentSuperuser,
+    _user: CurrentUser,
     app_id: UUID = Path(...),
 ):
-    await _get_app_or_404(ctx, app_id)
+    await _require_embed_secret_permission(ctx, app_id, "secrets.read")
 
     result = await ctx.db.execute(
         select(AppEmbedSecret)
@@ -111,10 +120,11 @@ async def list_embed_secrets(
 async def update_embed_secret(
     body: EmbedSecretUpdate,
     ctx: Context,
-    _user: CurrentSuperuser,
+    _user: CurrentUser,
     app_id: UUID = Path(...),
     secret_id: UUID = Path(...),
 ):
+    await _require_embed_secret_permission(ctx, app_id, "settings.readwrite")
     result = await ctx.db.execute(
         select(AppEmbedSecret).where(
             AppEmbedSecret.id == secret_id,
@@ -151,10 +161,11 @@ async def update_embed_secret(
 )
 async def delete_embed_secret(
     ctx: Context,
-    _user: CurrentSuperuser,
+    _user: CurrentUser,
     app_id: UUID = Path(...),
     secret_id: UUID = Path(...),
 ):
+    await _require_embed_secret_permission(ctx, app_id, "settings.readwrite")
     result = await ctx.db.execute(
         select(AppEmbedSecret).where(
             AppEmbedSecret.id == secret_id,

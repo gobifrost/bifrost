@@ -26,7 +26,7 @@ import {
 	type Identity,
 } from "@/services/identities";
 
-const LIFECYCLE = "users.lifecycle.readwrite";
+const LIFECYCLE = "userlifecycle.readwrite";
 const GLOBAL_CHOICE = "global";
 
 /**

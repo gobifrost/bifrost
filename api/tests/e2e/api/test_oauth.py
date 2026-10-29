@@ -399,7 +399,7 @@ class TestOAuthCredentialsRedaction:
         from sqlalchemy import select
 
         from src.core.security import encrypt_secret
-        from src.models.orm import OAuthProvider, OAuthToken, User
+        from src.models.orm import OAuthProvider, OAuthToken
 
         integration = e2e_client.post(
             "/api/integrations",
@@ -426,14 +426,11 @@ class TestOAuthCredentialsRedaction:
                 select(OAuthProvider).where(OAuthProvider.integration_id == UUID(integration["id"]))
             )
         ).scalar_one()
-        admin = (
-            await db_session.execute(select(User).where(User.email == platform_admin.email))
-        ).scalar_one()
         access_token = f"access-plain-{uuid4().hex}"
         refresh_token = f"refresh-plain-{uuid4().hex}"
         db_session.add(
             OAuthToken(
-                organization_id=admin.organization_id,
+                organization_id=provider.organization_id,
                 provider_id=provider.id,
                 encrypted_access_token=encrypt_secret(access_token).encode(),
                 encrypted_refresh_token=encrypt_secret(refresh_token).encode(),

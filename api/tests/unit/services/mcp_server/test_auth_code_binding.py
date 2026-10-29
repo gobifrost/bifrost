@@ -58,6 +58,7 @@ def user() -> SimpleNamespace:
         email="person@example.com",
         name="Person",
         is_superuser=False,
+        is_external=False,
         organization_id=uuid4(),
         identity_kind=None,
     )
@@ -90,7 +91,6 @@ def minted(user: SimpleNamespace, redis: _FakeRedis):
         patch("src.core.security.create_refresh_token", return_value=("refresh.jwt", "jti")),
         patch("src.core.database.get_db_context", get_db_context),
         patch("src.repositories.users.UserRepository", return_value=users),
-        patch("src.services.mcp_server.auth.resolve_external_claim", new=AsyncMock(return_value=False)),
         patch("src.services.mcp_server.auth.resolve_provider_org_claim", new=AsyncMock(return_value=False)),
     ):
         yield minted_tokens
@@ -131,6 +131,36 @@ async def _exchange(provider: BifrostAuthProvider, code: str) -> tuple[int, dict
     request = SimpleNamespace(form=AsyncMock(return_value=form))
     response = await provider._token(request)  # type: ignore[arg-type]
     return response.status_code, json.loads(bytes(response.body))
+
+
+@pytest.mark.parametrize("claim", ["impersonated_by_user_id", "impersonation_session_id"])
+async def test_callback_rejects_support_token_in_normal_access_cookie(
+    redis: _FakeRedis, user: SimpleNamespace, claim: str
+) -> None:
+    from src.core.security import create_access_token
+
+    provider = BifrostAuthProvider(base_url="http://test")
+    redis.values[_mcp_state_key("internal")] = json.dumps({
+        "client_id": "client",
+        "redirect_uri": _REDIRECT_URI,
+        "state": "client-state",
+        "code_challenge": _challenge(_VERIFIER),
+        "scope": "mcp:access",
+    })
+    request = SimpleNamespace(
+        query_params={"internal_state": "internal"},
+        cookies={"access_token": create_access_token({"sub": str(user.id), claim: str(uuid4())})},
+        headers={"accept": "application/json"},
+    )
+    with (
+        patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=redis)),
+        patch.object(provider, "_check_mcp_access", new=AsyncMock(return_value=True)) as access,
+    ):
+        response = await provider._callback(request)  # type: ignore[arg-type]
+
+    assert response.status_code == 403
+    access.assert_not_awaited()
+    assert redis.values == {}
 
 
 async def test_code_round_trip_mints_tokens_for_the_signed_in_user(

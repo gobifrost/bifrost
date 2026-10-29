@@ -1,4 +1,4 @@
-"""RabbitMQ consumer for autonomous agent runs."""
+"""Runs the agent-run dispatches an executor claimed from PostgreSQL."""
 
 from __future__ import annotations
 
@@ -7,30 +7,37 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from src.config import get_settings
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
-from src.core.principal import UserPrincipal
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
-from src.jobs.rabbitmq import BaseConsumer
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
 from src.models.orm.agents import Agent, Conversation
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.organizations import Organization
+from src.models.orm.users import User
+from src.services.ai_behavior_service import AgentExecutionMode, AIBehaviorService
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from src.services.authorization.enforce import Caller
+    from src.services.execution.autonomous_agent_executor import ActingUser
 
 logger = logging.getLogger(__name__)
 
-QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
 DEFAULT_RUN_TIMEOUT = 1800  # 30 minutes
 CANCEL_CHECK_INTERVAL = 2  # seconds between cancel flag checks
+RUN_AS_INACTIVE_ERROR = "The user this run acts as is no longer active"
+ACTING_USER_UNAVAILABLE_ERROR = "Agent run actor is unavailable"
 
 
 async def _publish_sync_result(run_id: str, result: dict) -> None:
@@ -66,24 +73,64 @@ def _chat_chunk_status(chunk_type: str) -> str:
     return "failed"
 
 
-def _caller_to_principal(caller: dict[str, Any]) -> UserPrincipal:
-    user_id_raw = caller.get("user_id")
-    email = caller.get("email")
-    if not user_id_raw or not email:
-        raise ValueError("Chat caller context is incomplete")
 
-    organization_id = caller.get("organization_id")
-    return UserPrincipal(
-        user_id=UUID(str(user_id_raw)),
-        email=str(email),
-        organization_id=UUID(str(organization_id)) if organization_id else None,
-        name=str(caller.get("name") or ""),
-        is_active=True,
-        is_superuser=bool(caller.get("is_platform_admin", caller.get("is_superuser", False))),
-        is_verified=True,
-        is_external=bool(caller.get("is_external", False)),
-        is_provider_org=bool(caller.get("is_provider_org", False)),
-        roles=list(caller.get("roles") or []),
+async def _load_acting_user(
+    db: AsyncSession,
+    acting_user_id: UUID | None,
+) -> ActingUser | None:
+    """Load the persisted actor's current facts, or fail closed if absent."""
+    if acting_user_id is None:
+        return None
+
+    row = (
+        await db.execute(
+            select(User, Organization.is_provider)
+            .outerjoin(Organization, Organization.id == User.organization_id)
+            .where(User.id == acting_user_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+
+    user, is_provider_org = row
+    from src.services.execution.autonomous_agent_executor import ActingUser
+
+    acting = ActingUser(
+        user_id=str(user.id),
+        email=user.email,
+        name=user.name or user.email,
+        organization_id=user.organization_id,
+        is_platform_admin=user.is_superuser,
+        is_external=user.is_external,
+        is_provider_org=bool(is_provider_org),
+    )
+    return acting
+
+
+async def _load_run_as(
+    db: AsyncSession,
+    run_as_user_id: UUID,
+    run_org_id: UUID | None,
+) -> ActingUser | None:
+    """The run's Run As user from the database; None when it can no longer act.
+
+    The identity comes from the ``agent_runs`` and ``users`` rows only, never
+    from the run's dispatch context. Its organization is the run's.
+    """
+    from src.services.authorization.explain import load_run_as_target
+    from src.services.execution.autonomous_agent_executor import ActingUser
+
+    target = await load_run_as_target(db, run_as_user_id)
+    if target is None or not target.is_active or target.is_system:
+        return None
+    return ActingUser(
+        user_id=str(target.user_id),
+        email=target.email,
+        name=target.name or target.email,
+        organization_id=run_org_id,
+        is_platform_admin=target.is_superuser,
+        is_external=target.is_external,
+        is_provider_org=target.is_provider_org,
     )
 
 
@@ -126,16 +173,14 @@ async def _generate_conversation_title(
     return None
 
 
-class AgentRunConsumer(BaseConsumer):
+class AgentRunConsumer:
     def __init__(self):
-        settings = get_settings()
-        super().__init__(
-            queue_name=QUEUE_NAME,
-            prefetch_count=settings.max_concurrency,
-        )
         self._session_factory = get_session_factory()
 
     async def process_message(self, body: dict) -> None:
+        from src.services.authorization.enforce import load_caller
+        from src.services.authorization.runtime_auth import load_runtime_principal
+
         run_id = body["run_id"]
         agent_id = body.get("agent_id")
         trigger_type = body["trigger_type"]
@@ -143,37 +188,18 @@ class AgentRunConsumer(BaseConsumer):
 
         logger.info(f"Processing agent run {run_id} (agent={agent_id}, trigger={trigger_type})")
 
-        # Read full context from Redis
-        redis_key = f"{REDIS_PREFIX}:{run_id}:context"
-        async with get_redis() as redis:
-            context_raw = await redis.get(redis_key)
-
-        if not context_raw:
-            logger.error(f"Agent run {run_id}: context not found in Redis")
-            async with self._session_factory() as db:
-                queued_run = await db.get(AgentRun, UUID(run_id))
-                if queued_run is not None and queued_run.status == "queued":
-                    queued_run.status = "failed"
-                    queued_run.error = "Agent run context was unavailable"
-                    queued_run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
-            if sync:
-                await _publish_sync_result(
-                    run_id,
-                    {
-                        "output": None,
-                        "status": "failed",
-                        "error": "Agent run context was unavailable",
-                    },
-                )
-            return
-
-        context = json.loads(context_raw)
+        # The dispatch carries the context in PostgreSQL; it is taken with
+        # the claim below.
+        dispatch_id = UUID(body["dispatch_id"])
+        context: dict | None = None
 
         start_time = time.time()
         agent_run: AgentRun | None = None
         agent: Agent | None = None
         executor = None
+        acting: ActingUser | None = None
+        runtime_caller: Caller | None = None
+        agent_execution_mode: AgentExecutionMode | None = None
 
         try:
             # Atomically claim the durable queued row and load the agent.
@@ -190,29 +216,45 @@ class AgentRunConsumer(BaseConsumer):
                 if agent_run is None:
                     logger.error(f"Agent run {run_id}: queued record not found")
                     return
+                from src.services.work_dispatch import take_dispatch_payload
+
+                context = await take_dispatch_payload(db, dispatch_id)
                 if agent_run.status != "queued":
+                    # A duplicate delivery or a cancelled run; any dispatch
+                    # left behind is dropped by the reconciler.
                     logger.info(
                         "Agent run %s: skipping message for status %s",
                         run_id,
                         agent_run.status,
                     )
                     return
-                if context.get("cancelled"):
-                    logger.info(
-                        f"Agent run {run_id}: pre-cancelled, skipping execution"
-                    )
-                    agent_run.status = "cancelled"
+                if context is None:
+                    raise RuntimeError(f"Queued agent run {run_id} has no dispatch")
+                loaded_actor = await _load_acting_user(db, agent_run.acting_user_id)
+                if loaded_actor is None:
+                    logger.info("Agent run %s: its persisted actor is unavailable", run_id)
+                    agent_run.status = "failed"
+                    agent_run.error = ACTING_USER_UNAVAILABLE_ERROR
                     agent_run.completed_at = datetime.now(timezone.utc)
                     await db.commit()
                     if sync:
                         await _publish_sync_result(
                             run_id,
-                            {"output": None, "status": "cancelled", "error": None},
+                            {
+                                "output": None,
+                                "status": "failed",
+                                "error": ACTING_USER_UNAVAILABLE_ERROR,
+                            },
                         )
                     return
+                acting = loaded_actor
 
                 is_chat_trigger = trigger_type == "chat" or context.get("trigger_type") == "chat"
                 if is_chat_trigger:
+                    agent_execution_mode = await AIBehaviorService(
+                        db
+                    ).resolve_agent_run_execution_mode(agent_run)
+                    assert agent_execution_mode is not None
                     agent_run.status = "running"
                     agent_run.started_at = datetime.now(timezone.utc)
                     await db.commit()
@@ -229,14 +271,28 @@ class AgentRunConsumer(BaseConsumer):
                             run_status="running",
                         ),
                     )
+                    runtime_principal = await load_runtime_principal(
+                        db,
+                        {
+                            "credential_kind": "agent_run",
+                            "sub": str(agent_run.id),
+                        },
+                    )
+                    if runtime_principal is None:
+                        raise ValueError("Chat run runtime authority is unavailable")
+                    chat_caller = await load_caller(db, runtime_principal)
+                    if chat_caller.ctx is None:
+                        raise ValueError("Chat run caller is unavailable")
                     await publish_agent_run_update(agent_run, "Unknown")
                     await self._process_chat_run(
                         run_id=run_id,
                         context=context,
                         agent_run=agent_run,
                         agent=None,
+                        caller=chat_caller,
                         sync=sync,
                         start_time=start_time,
+                        agent_execution_mode=agent_execution_mode,
                     )
                     return
 
@@ -284,24 +340,53 @@ class AgentRunConsumer(BaseConsumer):
                         )
                     return
 
+                run_as: ActingUser | None = None
+                if agent_run.run_as_user_id is not None:
+                    run_as = await _load_run_as(
+                        db, agent_run.run_as_user_id, agent_run.org_id
+                    )
+                    if run_as is None:
+                        logger.info(
+                            "Agent run %s: its Run As user can no longer act",
+                            run_id,
+                        )
+                        agent_run.status = "failed"
+                        agent_run.error = RUN_AS_INACTIVE_ERROR
+                        agent_run.completed_at = datetime.now(timezone.utc)
+                        await db.commit()
+                        if sync:
+                            await _publish_sync_result(
+                                run_id,
+                                {
+                                    "output": None,
+                                    "status": "failed",
+                                    "error": RUN_AS_INACTIVE_ERROR,
+                                },
+                            )
+                        return
+
                 agent_run.status = "running"
+                agent_execution_mode = await AIBehaviorService(
+                    db
+                ).resolve_agent_run_execution_mode(agent_run)
                 agent_run.budget_max_iterations = agent.max_iterations
                 agent_run.budget_max_tokens = agent.max_token_budget
                 agent_run.started_at = datetime.now(timezone.utc)
                 await db.commit()
+                runtime_principal = await load_runtime_principal(
+                    db,
+                    {
+                        "credential_kind": "agent_run",
+                        "sub": str(agent_run.id),
+                    },
+                )
+                if runtime_principal is None:
+                    raise ValueError("Agent run runtime authority is unavailable")
+                runtime_caller = await load_caller(db, runtime_principal)
+                if runtime_caller.ctx is None:
+                    raise ValueError("Agent run caller is unavailable")
 
             await publish_agent_run_update(agent_run, agent.name if agent else "Unknown")
-
-            if trigger_type == "chat" or context.get("trigger_type") == "chat":
-                await self._process_chat_run(
-                    run_id=run_id,
-                    context=context,
-                    agent_run=agent_run,
-                    agent=agent,
-                    sync=sync,
-                    start_time=start_time,
-                )
-                return
 
             # Run the agent with timeout (Layer 1: hard safety net)
             run_timeout = agent.max_run_timeout or DEFAULT_RUN_TIMEOUT
@@ -325,8 +410,11 @@ class AgentRunConsumer(BaseConsumer):
                     input_data=context.get("input"),
                     output_schema=context.get("output_schema"),
                     run_id=run_id,
-                    _caller=context.get("caller"),
+                    caller=runtime_caller,
                     run_user_id=agent_run.run_user_id,
+                    run_as=run_as,
+                    acting=acting,
+                    agent_execution_mode=agent_execution_mode,
                 ))
 
                 # Cancel watcher: polls Redis flag, force-cancels task if stuck
@@ -373,6 +461,7 @@ class AgentRunConsumer(BaseConsumer):
             # Update run record and flush buffered steps (brief DB session)
             duration_ms = int((time.time() - start_time) * 1000)
             consumer_applied_result = False
+            summary = None
             async with self._session_factory() as db:
                 # Re-fetch the AgentRun in this session to update it, but only
                 # if it is still live. A scheduler may have already terminalized
@@ -420,35 +509,34 @@ class AgentRunConsumer(BaseConsumer):
                 if executor:
                     await executor.flush_to_db(db)
 
+                # A completed run's summary is requested with its result, so
+                # it is never stranded; failures and cancellations are not
+                # summarized (the UI offers regenerate from any state).
+                if consumer_applied_result and run_obj.status == "completed":
+                    from src.services.execution.summary_dispatch import stage_summary
+
+                    summary = await stage_summary(db, run_obj.id)
+
                 await db.commit()
 
                 # Re-read for publish (need agent relationship)
                 if run_obj:
                     agent_run = run_obj
 
-            # Clean up Redis Stream now that steps are committed to DB
+            # Clean up Redis Stream now that steps are committed to DB. Its TTL
+            # bounds the leak if this best-effort delete cannot reach Redis.
             try:
                 async with get_redis() as r:
                     await r.delete(agent_run_steps_stream_key(run_id))
             except Exception as e:
-                # Stream cleanup is best-effort — Redis stream has a TTL anyway
+                # Stream cleanup is best-effort; write-time TTL bounds a leak.
                 logger.debug(f"failed to delete agent_run steps stream for {run_id}: {e}")
 
             await publish_agent_run_update(agent_run, agent.name)
 
-            # Enqueue post-run summarization for completed runs only.
-            # Failures/timeouts/cancellations don't get summarized; the UI
-            # exposes a regenerate button to retry from any state.
-            # Errors here MUST NOT crash the run — summary_status stays
-            # 'pending' and the UI offers a regenerate path.
-            if consumer_applied_result and agent_run.status == "completed":
-                try:
-                    from src.services.execution.run_summarizer import enqueue_summarize
-                    await enqueue_summarize(UUID(run_id))
-                except Exception:
-                    logger.exception(
-                        f"Failed to enqueue summarizer for run {run_id}"
-                    )
+            from src.services.execution.summary_dispatch import hand_off_summary
+
+            await hand_off_summary(summary)
 
             # Update event delivery status if triggered by event
             if context.get("event_delivery_id"):
@@ -509,18 +597,20 @@ class AgentRunConsumer(BaseConsumer):
                 except Exception:
                     logger.exception(f"Failed to update agent_run {run_id} after error")
 
-                # Clean up Redis Stream on failure too
+                # Clean up Redis Stream on failure too; write-time TTL bounds a leak.
                 try:
                     async with get_redis() as r:
                         await r.delete(agent_run_steps_stream_key(run_id))
                 except Exception as cleanup_err:
-                    # Stream cleanup is best-effort
+                    # Stream cleanup is best-effort; write-time TTL bounds a leak.
                     logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
 
-                if trigger_type == "chat" or context.get("trigger_type") == "chat":
+                # The failure may precede the claim that loads the context.
+                known = context or {}
+                if trigger_type == "chat" or known.get("trigger_type") == "chat":
                     chat_conversation_id = (
-                        context.get("input", {}).get("conversation_id")
-                        or context.get("conversation_id")
+                        (known.get("input") or {}).get("conversation_id")
+                        or known.get("conversation_id")
                         or (agent_run.conversation_id if agent_run else None)
                     )
                     if chat_conversation_id is not None:
@@ -561,13 +651,6 @@ class AgentRunConsumer(BaseConsumer):
                     },
                 )
 
-        finally:
-            try:
-                async with get_redis() as r:
-                    await r.delete(f"{REDIS_PREFIX}:{run_id}:context")
-            except Exception as e:
-                # Context key has a TTL; leaking one for a few minutes is harmless
-                logger.debug(f"failed to delete agent_run context key for {run_id}: {e}")
 
     async def _process_chat_run(
         self,
@@ -576,8 +659,10 @@ class AgentRunConsumer(BaseConsumer):
         context: dict[str, Any],
         agent_run: AgentRun,
         agent: Agent | None,
+        caller: Caller,
         sync: bool,
         start_time: float,
+        agent_execution_mode: AgentExecutionMode = "delegated",
     ) -> None:
         input_data = context.get("input") or {}
         conversation_id_raw = (
@@ -603,8 +688,6 @@ class AgentRunConsumer(BaseConsumer):
             UUID(str(attachment_id))
             for attachment_id in (input_data.get("attachment_ids") or [])
         ]
-        caller = _caller_to_principal(context.get("caller") or {})
-
         from src.services.ai_model_service import AIModelService
 
         async with self._session_factory() as db:
@@ -692,11 +775,12 @@ class AgentRunConsumer(BaseConsumer):
                             user_message,
                             stream=True,
                             local_id=local_id,
-                            user=caller,
+                            caller=caller,
                             attachment_ids=attachment_ids or None,
                             model_profile_id=model_profile_id,
                             user_message_id=persisted_user_message_id,
                             run_user_id=agent_run.run_user_id,
+                            agent_execution_mode=agent_execution_mode,
                         ):
                             await publish_chat_run_event(
                                 conversation_id=conversation.id,
@@ -968,34 +1052,27 @@ class AgentRunConsumer(BaseConsumer):
         error_message: str | None = None,
     ) -> None:
         """Update EventDelivery status after agent run completes."""
-        from src.models.orm.events import EventDelivery
         from src.models.enums import EventDeliveryStatus
         from src.repositories.events import EventDeliveryRepository
 
         try:
-            result = await db.execute(
-                select(EventDelivery).where(
-                    EventDelivery.id == UUID(event_delivery_id)
-                )
-            )
-            delivery = result.scalar_one_or_none()
-            if not delivery:
-                return
-
             # Map agent run status to delivery status
             if run_status == "completed":
-                delivery.status = EventDeliveryStatus.SUCCESS
+                delivery_status = EventDeliveryStatus.SUCCESS
             else:
-                delivery.status = EventDeliveryStatus.FAILED
-                delivery.error_message = error_message
+                delivery_status = EventDeliveryStatus.FAILED
 
-            delivery.agent_run_id = UUID(agent_run_id)
-            delivery.completed_at = datetime.now(timezone.utc)
-            delivery.attempt_count += 1
-            await db.flush()
+            delivery_repo = EventDeliveryRepository(db)
+            delivery = await delivery_repo.complete_from_agent_run(
+                UUID(event_delivery_id),
+                UUID(agent_run_id),
+                delivery_status,
+                error_message,
+            )
+            if delivery is None:
+                return
 
             # Update parent event status
-            delivery_repo = EventDeliveryRepository(db)
             await delivery_repo.update_event_status(delivery.event_id)
 
             await db.commit()

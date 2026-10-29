@@ -26,15 +26,19 @@ interface IntegrationListProps {
 	onOpen: (id: string) => void;
 	onEdit: (id: string) => void;
 	onDelete: (integration: Integration) => void;
+	canManageDefinitions: boolean;
 }
 
 function IntegrationActions({
 	integration,
 	onEdit,
 	onDelete,
+	canManageDefinitions,
 }: Pick<IntegrationListProps, "onEdit" | "onDelete"> & {
 	integration: Integration;
+	canManageDefinitions: boolean;
 }) {
+	if (!canManageDefinitions) return null;
 	return (
 		<RecordActionsMenu label={`${integration.name} actions`}>
 			<DropdownMenuItem
@@ -63,6 +67,7 @@ function IntegrationCard({
 	onToggleSelect,
 	onEdit,
 	onDelete,
+	canManageDefinitions,
 }: Pick<
 	IntegrationListProps,
 	| "isCardSelectMode"
@@ -70,6 +75,7 @@ function IntegrationCard({
 	| "onToggleSelect"
 	| "onEdit"
 	| "onDelete"
+	| "canManageDefinitions"
 > & { integration: Integration }) {
 	const fields = integration.config_schema?.length ?? 0;
 	const selected = selectedIds.has(integration.id);
@@ -152,6 +158,7 @@ function IntegrationCard({
 							integration={integration}
 							onEdit={onEdit}
 							onDelete={onDelete}
+							canManageDefinitions={canManageDefinitions}
 						/>
 					</div>
 				)}
@@ -203,6 +210,7 @@ export function IntegrationList(props: IntegrationListProps) {
 		onOpen,
 		onEdit,
 		onDelete,
+		canManageDefinitions,
 	} = props;
 	const allSelected =
 		integrations.length > 0 &&
@@ -231,6 +239,7 @@ export function IntegrationList(props: IntegrationListProps) {
 								onToggleSelect,
 								onEdit,
 								onDelete,
+								canManageDefinitions,
 							}}
 						/>
 					))}
@@ -313,6 +322,7 @@ export function IntegrationList(props: IntegrationListProps) {
 								integration={integration}
 								onEdit={onEdit}
 								onDelete={onDelete}
+								canManageDefinitions={canManageDefinitions}
 							/>
 						</DataTableCell>
 					</DataTableRow>

@@ -57,11 +57,6 @@ const conversationRef: { data: Record<string, unknown> | undefined } = {
 };
 vi.mock("@/hooks/useChat", () => ({
 	useConversation: () => ({ data: conversationRef.data }),
-	useConversationStats: () => null,
-}));
-
-vi.mock("@/hooks/useUserPermissions", () => ({
-	useUserPermissions: () => ({ isPlatformAdmin: false }),
 }));
 
 const mediaQueryState = {

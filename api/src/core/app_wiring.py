@@ -34,6 +34,15 @@ def register_exception_handlers(app: FastAPI) -> None:
     (most specific first).
     """
 
+    from src.services.authorization.enforce import PermissionDenied
+
+    @app.exception_handler(PermissionDenied)
+    async def named_permission_handler(
+        request: Request, exc: PermissionDenied
+    ) -> JSONResponse:
+        """Map shared authorization refusals to the same HTTP 403 as route guards."""
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
         request: Request, exc: RequestValidationError
@@ -215,15 +224,26 @@ def install_request_context_middleware(app: FastAPI) -> None:
 
         # Parse token once; use for both request_user and audit actor contexts.
         payload = None
+        runtime_principal = None
         try:
-            token = None
             auth_header = request.headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-            elif "access_token" in request.cookies:
-                token = request.cookies["access_token"]
+            bearer_token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+            # Keep audit/access-check attribution on the same browser-wide
+            # impersonation credential chosen by the auth dependency.
+            from src.core.auth import select_http_auth_token
+
+            token = select_http_auth_token(request, bearer_token)
             if token:
                 payload = decode_token(token, expected_type="access")
+            if payload:
+                from src.core.database import get_session_factory
+                from src.services.authorization.runtime_auth import is_runtime_credential_payload, load_runtime_principal
+
+                if is_runtime_credential_payload(payload):
+                    async with get_session_factory()() as db:
+                        runtime_principal = await load_runtime_principal(db, payload)
+                    request.state.runtime_token = token
+                    request.state.runtime_principal = runtime_principal
             if payload:
                 user_id = payload.get("sub", "")
                 user_name = (
@@ -244,13 +264,22 @@ def install_request_context_middleware(app: FastAPI) -> None:
         user_agent = request.headers.get("user-agent")
         surface_header = request.headers.get("x-bifrost-surface")
 
-        actor = actor_from_token_payload(
-            payload,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            surface_header=surface_header,
-        )
+        if runtime_principal is not None:
+            from src.core.request_actor import actor_from_runtime_principal
+
+            actor = actor_from_runtime_principal(
+                runtime_principal, ip_address=ip_address, user_agent=user_agent,
+            )
+            set_request_user(RequestUser(user_id=str(runtime_principal.user_id), user_name=runtime_principal.name))
+        else:
+            actor = actor_from_token_payload(
+                payload,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                surface_header=surface_header,
+            )
         if actor is None:
+            set_request_user(None)
             # No token (or an undecodable one): still set an anonymous actor
             # so unauthenticated events (e.g. failed logins) capture network
             # metadata.
@@ -263,17 +292,17 @@ def install_request_context_middleware(app: FastAPI) -> None:
             )
         actor_token = set_actor(actor)
         scope_token = set_request_scope(request.scope)
-        # Report-only access checks must never affect the request: a token
-        # whose lineage claims cannot be read is simply not judged.
+        # Audit collection never replaces the authentication dependency.
+        # Runtime facts come only from the verified durable authority.
         try:
-            checks_token = access_checks.start_collecting(payload)
+            checks_token = access_checks.start_collecting(payload, surface=actor.surface, principal=runtime_principal)
         except ValueError:
             logger.warning("access checks skipped: unreadable lineage claims")
             checks_token = None
         collector = access_checks.current()
         # Attribution only (see mint_engine_token docstring): feeds the
         # workflow-operation-usage counter below, never read for authorization.
-        engine_workflow_id = payload.get("engine_workflow_id") if payload else None
+        engine_workflow_id = None if runtime_principal is None else runtime_principal.workflow_id
 
         try:
             response = await call_next(request)
@@ -287,7 +316,7 @@ def install_request_context_middleware(app: FastAPI) -> None:
                         or f"{request.method} {route.path}"
                     )
                     await _record_workflow_operation_usage(
-                        engine_workflow_id, operation_key
+                        str(engine_workflow_id), operation_key
                     )
             if collector is not None:
                 _judge_after_response(request, response, collector)
@@ -302,14 +331,16 @@ def install_request_context_middleware(app: FastAPI) -> None:
 
 
 def _judge_after_response(request: Request, response, collector) -> None:
-    """Judge and write a run's report-only access checks after the response
-    is sent (see ``shared.access_checks``), so the client never waits for it."""
+    """Write a request's collected access checks after the
+    response is sent (see ``shared.access_checks``), so the client never waits for it."""
     from starlette.background import BackgroundTask, BackgroundTasks
+
+    from src.services.access_check_writer import flush_detached
 
     route = request.scope.get("route")
     path = getattr(route, "path", None) or request.url.path
     operation = getattr(route, "operation_id", None) or f"{request.method} {path}"
-    judge = BackgroundTask(_judge_access_checks, collector, operation=operation, route=(request.method, path))
+    judge = BackgroundTask(flush_detached, collector, operation=operation, route=(request.method, path))
     if response.background is None:
         response.background = judge
         return
@@ -317,18 +348,6 @@ def _judge_after_response(request: Request, response, collector) -> None:
     tasks.add_task(response.background)
     tasks.add_task(judge)
     response.background = tasks
-
-
-async def _judge_access_checks(collector, *, operation: str, route: tuple[str, str]) -> None:
-    """Never raises: a failure here is logged, never surfaced."""
-    from src.core.database import get_db_context
-    from src.services import access_check_writer
-
-    try:
-        async with get_db_context() as db:
-            await access_check_writer.flush(db, collector, operation=operation, route=route)
-    except Exception as exc:
-        logger.warning("access checks not written (operation=%s): %s", operation, type(exc).__name__)
 
 
 async def _record_workflow_operation_usage(workflow_id: str, operation_key: str) -> None:

@@ -54,7 +54,7 @@ async def test_user_context_carries_base_permissions_and_no_grants(db_session) -
 
 @pytest.mark.asyncio
 async def test_platform_admin_context_is_recognised_by_the_assignment(db_session) -> None:
-    user = await _user(db_session, superuser=True, external=True, org_id=PROVIDER_ORG_ID)
+    user = await _user(db_session, superuser=True, org_id=PROVIDER_ORG_ID)
     ctx = await build_authorization_context(db_session, user.id)
     assert ctx.base_role_id == USER_ROLE_ID
     assert ctx.is_platform_admin

@@ -102,12 +102,11 @@ class ManifestRole(EntityCodec, BaseModel):
 
 
 class ManifestWorkflowPermissionGrant(BaseModel):
-    """A permission a Solution workflow requests (portable: a boundary is a kind, never an org id)."""
+    """A permission a Solution workflow requests."""
+
+    model_config = ConfigDict(extra="forbid")
+
     permission: str = Field(description="Permission, '<domain>.<read|readwrite|execute>'", **classify(FieldClass.CONTENT))
-    boundary: Literal["organization", "managed_organizations", "platform"] | None = Field(
-        default=None, description="Cross-org boundary; null = the run's own organization",
-        **classify(FieldClass.CONTENT),
-    )
 
 
 class ManifestRequestedPermissions(BaseModel):
@@ -434,6 +433,10 @@ class ManifestAgent(EntityCodec, BaseModel):
         in (rather than read from relationships) so the caller controls
         eager-loading and ordering — matching the pattern used for workflow/form roles.
         """
+        # A transient agent may have no profile foreign key and a ``lazy=raise``
+        # relationship.  Do not touch that relationship in the null case.  A
+        # configured profile remains an explicit caller-loading contract.
+        llm_profile = agent.llm_profile.name if agent.llm_profile_id is not None else None
         return cls(
             id=str(agent.id),
             name=agent.name,
@@ -451,7 +454,7 @@ class ManifestAgent(EntityCodec, BaseModel):
             knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
             system_tools=list(agent.system_tools) if agent.system_tools else [],
             mcp_connection_ids=[str(m) for m in (mcp_connection_ids or [])],
-            llm_profile=agent.llm_profile.name if getattr(agent, "llm_profile", None) else None,
+            llm_profile=llm_profile,
             llm_max_tokens=agent.llm_max_tokens,
             max_iterations=agent.max_iterations,
             max_token_budget=agent.max_token_budget,
@@ -928,11 +931,13 @@ class ManifestFiles(BaseModel):
 
     locations: list[str] = Field(default_factory=list, **classify(FieldClass.CONTENT))
 
-    @field_validator("locations")
+    @field_validator("locations", mode="before")
     @classmethod
     def normalize_locations(cls, value: list[str]) -> list[str]:
         from shared.file_paths import validate_location_name
 
+        if not isinstance(value, list):
+            raise ValueError("locations must be a list")
         normalized: list[str] = []
         seen: set[str] = set()
         for raw in value:
@@ -1540,12 +1545,9 @@ def parse_manifest(yaml_str: str) -> Manifest:
     """Parse a YAML string into a Manifest object."""
     if not yaml_str or not yaml_str.strip():
         return Manifest()
+    from bifrost.definition_validation import read_workspace_manifest
 
-    data = yaml.safe_load(yaml_str)
-    if not data or not isinstance(data, dict):
-        return Manifest()
-
-    return Manifest(**data)
+    return read_workspace_manifest(MANIFEST_LEGACY_FILE, yaml_str)
 
 
 def serialize_manifest(manifest: Manifest) -> str:
@@ -1629,16 +1631,16 @@ def parse_manifest_dir(files: dict[str, str]) -> Manifest:
     Missing files are treated as empty.
     """
     merged: dict[str, object] = {}
+    from bifrost.definition_validation import read_workspace_manifest
+
     for key, filename in MANIFEST_FILES.items():
         content = files.get(filename, "")
         if not content or not content.strip():
             continue
-        data = yaml.safe_load(content)
-        if data and isinstance(data, dict):
-            if key == "files":
-                merged[key] = data
-            else:
-                merged[key] = data.get(key)
+        decoded = read_workspace_manifest(filename, content)
+        value = getattr(decoded, key)
+        if value:
+            merged[key] = value
     return Manifest(**merged)  # type: ignore[arg-type]
 
 

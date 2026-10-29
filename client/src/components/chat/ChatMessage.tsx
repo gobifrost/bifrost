@@ -397,19 +397,11 @@ function ChatMessageView({
 
 				<div className="mt-2 flex items-center gap-3">
 					<MessageActions message={message} />
-				{(message.token_count_input != null && message.token_count_input > 0 || message.token_count_output != null && message.token_count_output > 0) && (
-					<div className="flex flex-wrap gap-3 text-sm leading-6 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-						{!!message.token_count_input && (
-							<span>In: {message.token_count_input}</span>
-						)}
-						{!!message.token_count_output && (
-							<span>Out: {message.token_count_output}</span>
-						)}
-						{!!message.duration_ms && (
+					{message.duration_ms != null && message.duration_ms > 0 && (
+						<div className="flex flex-wrap gap-3 text-sm leading-6 text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
 							<span>{message.duration_ms}ms</span>
-						)}
-					</div>
-				)}
+						</div>
+					)}
 				</div>
 			</div>
 		</div>

@@ -7,10 +7,8 @@ access checks resolve effective permissions by looking up a user's
 those sessions can do. Every writer of ``UserRole`` must reject the system
 account as an assignment target.
 
-There is no single shared repository all ``UserRole`` writers pass through
-(REST role assignment, the bulk user-update endpoint, and the workflow
-write-buffer flush each build the row directly), so this module holds the
-one check and every writer calls it.
+REST role assignment and the bulk user-update endpoint each build ``UserRole``
+rows directly. This module holds the shared check both writers call.
 """
 
 from uuid import UUID

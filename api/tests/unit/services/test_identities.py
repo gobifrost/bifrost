@@ -33,7 +33,7 @@ pytestmark = pytest.mark.asyncio
 
 
 def _lifecycle_holder(*organization_ids: UUID) -> Caller:
-    """Holds users.read and users.lifecycle.readwrite at each organization, and nothing else."""
+    """Holds users.read and userlifecycle.readwrite at each organization, and nothing else."""
     ctx = AuthorizationContext(
         user_id=uuid4(),
         home_organization_id=PROVIDER_ORG_ID,
@@ -43,7 +43,7 @@ def _lifecycle_holder(*organization_ids: UUID) -> Caller:
         role_grants=(
             RoleGrant(
                 uuid4(),
-                frozenset({"users.read", "users.lifecycle.readwrite"}),
+                frozenset({"users.read", "userlifecycle.readwrite"}),
                 tuple(Boundary(BoundaryKind.ORGANIZATION, org_id) for org_id in organization_ids),
             ),
         ),
@@ -158,7 +158,7 @@ class TestChange:
                 await create_identity(db_session, holder, IdentityCreate(name="Nope", organization_id=refused))
             assert getattr(error.value, "status_code", None) == 403
 
-    async def test_a_privileged_identity_is_changed_only_by_a_platform_admin(self, db_session) -> None:
+    async def test_a_privileged_identity_is_changed_by_a_scoped_privileged_access_holder(self, db_session) -> None:
         from src.models import Role, RolePermission
         from src.services.user_role_assignments import insert_assignment
 
@@ -169,7 +169,7 @@ class TestChange:
         role = Role(name=f"ids-role-{uuid4().hex[:6]}", created_by="t")
         db_session.add(role)
         await db_session.flush()
-        db_session.add(RolePermission(role_id=role.id, permission="users.lifecycle.readwrite"))
+        db_session.add(RolePermission(role_id=role.id, permission="userlifecycle.readwrite"))
         await db_session.flush()
         await insert_assignment(
             db_session,
@@ -185,7 +185,24 @@ class TestChange:
         with pytest.raises(Exception) as refused:
             await delete_identity(db_session, holder, privileged.id)
         assert getattr(refused.value, "status_code", None) == 403
-        renamed = await rename_identity(db_session, admin, privileged.id, IdentityUpdate(name="Renamed"))
+        privileged_access = Caller(
+            UserPrincipal(user_id=uuid4(), email="pa@example.com", organization_id=contoso.id),
+            AuthorizationContext(
+                user_id=uuid4(),
+                home_organization_id=contoso.id,
+                base_role_id=USER_ROLE_ID,
+                is_external=False,
+                base_permissions=USER_BASE_PERMISSIONS,
+                role_grants=(
+                    RoleGrant(
+                        uuid4(),
+                        frozenset({"users.read", "userlifecycle.readwrite", "privilegedaccess.readwrite"}),
+                        (Boundary(BoundaryKind.ORGANIZATION, contoso.id),),
+                    ),
+                ),
+            ),
+        )
+        renamed = await rename_identity(db_session, privileged_access, privileged.id, IdentityUpdate(name="Renamed"))
         assert renamed.name == "Renamed"
         assert [r.name for r in renamed.additional_roles] == [role.name]
 
@@ -382,3 +399,47 @@ class TestDelegation:
         await _give(db_session, custom, {"workflows.readwrite"}, contoso.id)
 
         await require_delegation(db_session, admin_caller(), custom.id)
+
+    async def test_platform_admin_needs_explicit_secrets_to_delegate_a_secrets_identity(self, db_session) -> None:
+        contoso = await _organization(db_session, "Contoso")
+        custom = await create_identity(db_session, admin_caller(), IdentityCreate(name="Reader", organization_id=contoso.id))
+        await _give(db_session, custom, {"secrets.read"}, contoso.id)
+
+        with pytest.raises(HTTPException) as refused:
+            await require_delegation(db_session, admin_caller(), custom.id)
+        assert refused.value.status_code == 403
+
+    @pytest.mark.parametrize("mode", ("full", "restricted"))
+    async def test_runtime_powers_and_run_as_actor_cannot_consent_to_delegation(
+        self, db_session, mode: str
+    ) -> None:
+        from src.models.contracts.workflow_permissions import WorkflowGrant, WorkflowPermissionMode
+        from src.services.authorization.explain import Powers, RunUser
+        from src.services.authorization.runtime import RuntimeAuthority
+
+        contoso = await _organization(db_session, "Contoso")
+        custom = await create_identity(db_session, admin_caller(), IdentityCreate(name="Reader", organization_id=contoso.id))
+        await _give(db_session, custom, {"secrets.read"}, contoso.id)
+        caller = _holding({"workflows.readwrite"}, contoso.id)
+        original_user_id = caller.ctx.user_id
+        caller.principal.user_id = uuid4()
+        caller.principal.organization_id = None
+        caller.principal.is_superuser = True
+        caller.principal.runtime_authority = RuntimeAuthority(
+            kind="workflow_execution",
+            credential_id=uuid4(),
+            run_user=RunUser(original_user_id, caller.ctx, None, is_active=True),
+            powers=Powers(
+                WorkflowPermissionMode(mode),
+                () if mode == "full" else (WorkflowGrant(permission="secrets.read"),),
+            ),
+            acting_user_id=caller.principal.user_id,
+            organization_id=contoso.id,
+            workflow_id=uuid4(),
+            started_by_user_id=original_user_id,
+            root_execution_id=uuid4(),
+        )
+
+        with pytest.raises(HTTPException) as refused:
+            await require_delegation(db_session, caller, custom.id)
+        assert refused.value.status_code == 403

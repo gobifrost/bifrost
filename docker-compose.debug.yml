@@ -50,31 +50,6 @@ services:
       timeout: 5s
       retries: 5
 
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    # Run as the rabbitmq user (uid 100) from the start. Docker >= 24 creates
-    # the named volume mount point as 0755 root:root, so the root entrypoint
-    # writes .erlang.cookie root-owned 0400 and the server (uid 100) then
-    # fails to read it: "Error when reading /var/lib/rabbitmq/.erlang.cookie:
-    # eacces". Starting as uid 100 means the cookie is created owned by
-    # rabbitmq, readable by both the server and the diagnostics healthcheck.
-    # This is the one fix that holds on Linux AND Docker Desktop/WSL2, where
-    # tmpfs uid/gid/mode options are NOT honoured under `docker compose`.
-    user: rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: bifrost
-      RABBITMQ_DEFAULT_PASS: bifrost_debug
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      # RabbitMQ can take 90s+ to boot on a resource-constrained Windows VM;
-      # without a start_period, dependent services give up before it is ready.
-      start_period: 120s
-
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
@@ -156,7 +131,6 @@ services:
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_S3_BUCKET: bifrost-local
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -170,16 +144,6 @@ services:
       BIFROST_S3_REGION: us-east-1
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
       BIFROST_MFA_ENABLED: "false"
-      # Opt-in elastic build backend (defaults keep local-only execution;
-      # set these in the environment to preview the Kubernetes Settings
-      # tab and placement behavior locally).
-      BIFROST_PLATFORM_BUILD_BACKEND: ${BIFROST_PLATFORM_BUILD_BACKEND:-local}
-      BIFROST_KUBERNETES_BUILD_NAMESPACE: ${BIFROST_KUBERNETES_BUILD_NAMESPACE:-}
-      BIFROST_KUBERNETES_BUILD_IMAGE: ${BIFROST_KUBERNETES_BUILD_IMAGE:-}
-      BIFROST_KUBERNETES_BUILD_CONFIGMAP: ${BIFROST_KUBERNETES_BUILD_CONFIGMAP:-}
-      BIFROST_KUBERNETES_BUILD_SECRET: ${BIFROST_KUBERNETES_BUILD_SECRET:-}
-      BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT: ${BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT:-}
-      BIFROST_KUBERNETES_BUILD_JOB_TYPES: ${BIFROST_KUBERNETES_BUILD_JOB_TYPES:-application.deploy,application.sdk_update,solution.deploy,solution.export,solution.git_sync}
       EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
       BIFROST_DEFAULT_USER_EMAIL: ${BIFROST_DEFAULT_USER_EMAIL:-dev@gobifrost.com}
       BIFROST_DEFAULT_USER_PASSWORD: ${BIFROST_DEFAULT_USER_PASSWORD:-password}
@@ -200,8 +164,6 @@ services:
       init:
         condition: service_completed_successfully
       pgbouncer:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -229,7 +191,6 @@ services:
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_S3_BUCKET: bifrost-local
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -242,15 +203,6 @@ services:
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
-      # Mirror the API's elastic build backend flags so the scheduler and
-      # API agree on placement. Defaults keep local-only execution.
-      BIFROST_PLATFORM_BUILD_BACKEND: ${BIFROST_PLATFORM_BUILD_BACKEND:-local}
-      BIFROST_KUBERNETES_BUILD_NAMESPACE: ${BIFROST_KUBERNETES_BUILD_NAMESPACE:-}
-      BIFROST_KUBERNETES_BUILD_IMAGE: ${BIFROST_KUBERNETES_BUILD_IMAGE:-}
-      BIFROST_KUBERNETES_BUILD_CONFIGMAP: ${BIFROST_KUBERNETES_BUILD_CONFIGMAP:-}
-      BIFROST_KUBERNETES_BUILD_SECRET: ${BIFROST_KUBERNETES_BUILD_SECRET:-}
-      BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT: ${BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT:-}
-      BIFROST_KUBERNETES_BUILD_JOB_TYPES: ${BIFROST_KUBERNETES_BUILD_JOB_TYPES:-application.deploy,application.sdk_update,solution.deploy,solution.export,solution.git_sync}
     volumes:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules
@@ -271,8 +223,6 @@ services:
       init:
         condition: service_completed_successfully
       pgbouncer:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -299,7 +249,6 @@ services:
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_S3_BUCKET: bifrost-local
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -312,6 +261,8 @@ services:
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
+      # Agent children call the API's REST routes over HTTP.
+      BIFROST_API_URL: http://api:8000
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
       # C1.5: pip cache parity with k8s (C1.3).
@@ -338,8 +289,6 @@ services:
       init:
         condition: service_completed_successfully
       pgbouncer:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -425,7 +374,6 @@ services:
 
 volumes:
   postgres_data:
-  rabbitmq_data:
   redis_data:
   seaweedfs_data:
   netbird_data:

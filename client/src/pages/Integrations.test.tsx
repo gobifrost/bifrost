@@ -48,6 +48,11 @@ vi.mock("@/services/exportImport", () => ({
 	exportEntities: (...args: unknown[]) => mockExportEntities(...args),
 }));
 
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
+
 vi.mock("@/components/search/SearchBox", () => ({
 	SearchBox: ({
 		value = "",
@@ -122,6 +127,10 @@ function makeIntegration(
 beforeEach(() => {
 	vi.clearAllMocks();
 	mockIsDesktop.mockReturnValue(true);
+	mockUseAuthorization.mockReturnValue({
+		canAt: () => true,
+		canAnywhere: () => true,
+	});
 	mockUseIntegrations.mockReturnValue({
 		data: { items: [], total: 0 },
 		isLoading: false,
@@ -135,6 +144,43 @@ beforeEach(() => {
 });
 
 describe("Integrations", () => {
+	it("keeps Global definition and catalog transfer controls out of a scoped writer's view", async () => {
+		mockUseAuthorization.mockReturnValue({
+			canAt: () => false,
+			canAnywhere: (permission: string) =>
+				permission === "integrations.readwrite",
+		});
+		mockUseIntegrations.mockReturnValue({
+			data: {
+				items: [makeIntegration({ id: "int-1", name: "Slack" })],
+				total: 1,
+			},
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			refetch: vi.fn(),
+		});
+
+		await renderPage();
+
+		expect(
+			screen.queryByRole("button", { name: "Create integration" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Import" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /export/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Slack actions" }),
+		).not.toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Slack" })).toHaveAttribute(
+			"href",
+			"/integrations/int-1",
+		);
+	});
+
 	it("renders the desktop table, exports selected integrations, and opens actions", async () => {
 		const refetch = vi.fn();
 		const mutateAsync = vi.fn();

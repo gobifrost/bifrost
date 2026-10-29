@@ -6,6 +6,7 @@ import {
 	changeSentence,
 	changedStepKeys,
 	checkKindTitle,
+	checkResourceTitle,
 	nowUnavailableSentence,
 	stepSentence,
 	stepTitle,
@@ -42,9 +43,26 @@ describe("stepTitle", () => {
 		expect(stepTitle("Run as another user")).toBe("Run as Another User");
 		expect(stepTitle("Workflow powers")).toBe("Workflow Powers");
 	});
+
+	it("keeps a word the server capitalized as written", () => {
+		expect(stepTitle("Run As User")).toBe("Run As User");
+		expect(stepTitle("Privileged User")).toBe("Privileged User");
+	});
 });
 
 describe("stepSentence", () => {
+	it("explains a workflow capability without inventing a placed role", () => {
+		expect(sentence(step("permission", "workflow_capability", { permission: "tables.read" }))).toBe(
+			"The workflow adds Read Tables within the run user's reach.",
+		);
+	});
+
+	it("keeps data policy separate from target reach", () => {
+		expect(sentence(step("permission", "reach:home_or_global"))).toBe(
+			"The data target is in reach. Its policy decides access.",
+		);
+	});
+
 	it("says whether a person can start the workflow", () => {
 		expect(sentence(step("workflow_access", "access"))).toBe(
 			"They can start this workflow.",
@@ -71,12 +89,12 @@ describe("stepSentence", () => {
 			"No workflow: only their own roles apply.",
 		);
 		expect(sentence(step("powers", "full", { grants: [] }))).toBe(
-			"The workflow has Full powers: every permission, secrets included.",
+			"The workflow has Full Access: every permission, secrets included.",
 		);
 		expect(
 			sentence(step("powers", "restricted", { grants: [{}, {}] })),
 		).toBe(
-			"The workflow is Restricted: 2 grants add to the run user's roles.",
+			"The workflow uses Declared Permissions: 2 grants add to the run user's roles.",
 		);
 	});
 
@@ -109,6 +127,7 @@ describe("stepSentence", () => {
 		expect(target("outside", "org-unknown")).toBe(
 			"This organization is outside their reach.",
 		);
+		expect(target("outside_reach")).toBe("Not a user they can run as.");
 	});
 
 	it("says which role grants the permission, by name", () => {
@@ -116,7 +135,7 @@ describe("stepSentence", () => {
 			sentence(step("permission", reason, { permission: "tables.read" }));
 
 		expect(permission("full")).toBe(
-			"Full powers include every permission.",
+			"Full Access includes every permission.",
 		);
 		expect(permission("platform_admin")).toBe(
 			"A Platform Admin holds All Permissions.",
@@ -130,7 +149,7 @@ describe("stepSentence", () => {
 		expect(permission("role:role-unknown:tables.read@organization")).toBe(
 			"A role placed there grants Read Tables.",
 		);
-		// A Restricted workflow's grants are judged as a role named by the run user's id.
+		// A Declared Permissions workflow's grants are judged as a role named by the run user's id.
 		expect(permission("role:user-1:tables.read@organization")).toBe(
 			"The workflow's grants include Read Tables.",
 		);
@@ -154,6 +173,40 @@ describe("stepSentence", () => {
 
 	it("says nothing for a step that wasn't reached", () => {
 		expect(sentence(step("permission", "", {}, "not_reached"))).toBe("");
+	});
+
+	it("names the permission a named permission check needs, even when not reached", () => {
+		const named = {
+			permission: "agents.read",
+			permission_display_name: "Read Agents",
+		};
+		expect(sentence(step("permission", "", named, "not_reached"))).toBe(
+			"Needs Read Agents.",
+		);
+		expect(sentence(step("target", "", named, "not_reached"))).toBe("");
+	});
+
+	it("says whether Run As is allowed for the target user", () => {
+		expect(sentence(step("run_as_user", "person"))).toBe(
+			"Active user, so Run As is allowed.",
+		);
+		expect(sentence(step("run_as_user", "inactive", {}, "stopped"))).toBe(
+			"This user is inactive, so no one can run as them.",
+		);
+		expect(
+			sentence(step("run_as_user", "system_account", {}, "stopped")),
+		).toBe("This is the system account, so no one can run as it.");
+		expect(
+			sentence(step("run_as_user", "managed_identity", {}, "stopped")),
+		).toBe(
+			"This is a managed identity, so no one can run as it. Assign it to the workflow or agent instead.",
+		);
+	});
+
+	it("says an inactive person can't run as another user", () => {
+		expect(sentence(step("run_user", "inactive", {}, "stopped"))).toBe(
+			"They're inactive, so they can't run as another user.",
+		);
 	});
 
 	it("shows a reason it doesn't know as written", () => {
@@ -293,6 +346,9 @@ describe("nowUnavailableSentence", () => {
 		expect(nowUnavailableSentence("run_user_missing")).toBe(
 			"The user or identity it ran as no longer exists, so this check can't be tested again.",
 		);
+		expect(nowUnavailableSentence("run_as_user_missing")).toBe(
+			"The user it acted as no longer exists, so this check can't be tested again.",
+		);
 		expect(nowUnavailableSentence("rows_not_stored")).toBe(
 			"Table row checks can't be tested again: the rows aren't stored.",
 		);
@@ -313,9 +369,195 @@ describe("checkKindTitle", () => {
 		expect(checkKindTitle("entry")).toBe("Workflow or Agent Access");
 		expect(checkKindTitle("policy")).toBe("Data Policy");
 		expect(checkKindTitle("secret")).toBe("Secret");
+		expect(checkKindTitle("permission")).toBe("Permission");
 	});
 
 	it("title-cases a kind it doesn't know", () => {
 		expect(checkKindTitle("new_kind")).toBe("New Kind");
+	});
+});
+
+describe("checkResourceTitle", () => {
+	const named = (permission_display_name: unknown) => ({
+		trace: trace(
+			"failure",
+			step("run_user", "person"),
+			step("target", "outside", {}, "stopped"),
+			step(
+				"permission",
+				"",
+				{ permission: "agents.read", permission_display_name },
+				"not_reached",
+			),
+		),
+	});
+
+	it("names the permission a permission check used", () => {
+		expect(checkResourceTitle("permission", named("Read Agents"))).toBe(
+			"Permission: Read Agents",
+		);
+	});
+
+	it("is the kind alone without a stored name, or for other kinds", () => {
+		expect(checkResourceTitle("permission", named(undefined))).toBe(
+			"Permission",
+		);
+		expect(checkResourceTitle("permission", null)).toBe("Permission");
+		expect(checkResourceTitle("secret", named("Read Agents"))).toBe(
+			"Secret",
+		);
+	});
+});
+
+describe("a stored Run As trace", () => {
+	const runAsNames: TraceNames = {
+		...names,
+		permission: (permission) =>
+			({
+				"users.impersonate": "Impersonate Users",
+				"privilegedaccess.readwrite":
+					"Read and Write Privileged Access",
+			})[permission] ?? permission,
+	};
+	const impersonate = {
+		permission: "users.impersonate",
+		permission_display_name: "Impersonate Users",
+	};
+	const privileged = {
+		permission: "privilegedaccess.readwrite",
+		permission_display_name: "Read and Write Privileged Access",
+	};
+	const runAsUser = {
+		key: "run_as_user",
+		label: "Run As User",
+		reason: "person",
+		facts: { run_as_user_id: "user-2", organization_id: "org-1" },
+	};
+	const read = (details: Record<string, unknown>) => {
+		const stored = storedTrace(details);
+		return stored?.steps.map((s) => [
+			stepTitle(s.label),
+			s.status,
+			stepSentence(s, runAsNames, "user-1"),
+		]);
+	};
+
+	it("reads every step of an allowed Run As of a privileged user", () => {
+		const details = {
+			trace: {
+				outcome: "success",
+				enforced: true,
+				steps: [
+					{
+						key: "run_user",
+						label: "Run user",
+						status: "passed",
+						reason: "person",
+						facts: { user_id: "user-1", is_platform_admin: true },
+					},
+					{
+						key: "powers",
+						label: "Workflow powers",
+						status: "not_applicable",
+						reason: "no_workflow",
+						facts: {},
+					},
+					{ ...runAsUser, status: "passed" },
+					{
+						key: "target",
+						label: "Target in reach",
+						status: "passed",
+						reason: "platform_admin",
+						facts: { organization_id: "org-1" },
+					},
+					{
+						key: "permission",
+						label: "Permission",
+						status: "passed",
+						reason: "platform_admin",
+						facts: impersonate,
+					},
+					{
+						key: "privileged_target",
+						label: "Privileged User",
+						status: "passed",
+						reason: "platform_admin",
+						facts: privileged,
+					},
+				],
+			},
+		};
+		expect(read(details)).toEqual([
+			["Run User", "passed", "Runs as this person, a Platform Admin."],
+			[
+				"Workflow Powers",
+				"not_applicable",
+				"No workflow: only their own roles apply.",
+			],
+			["Run As User", "passed", "Active user, so Run As is allowed."],
+			[
+				"Target in Reach",
+				"passed",
+				"A Platform Admin reaches every organization.",
+			],
+			["Permission", "passed", "A Platform Admin holds All Permissions."],
+			[
+				"Privileged User",
+				"passed",
+				"A Platform Admin holds All Permissions.",
+			],
+		]);
+		expect(checkResourceTitle("run_as", details)).toBe("Run As");
+	});
+
+	it("names the permission a refused Run As of a privileged user lacked", () => {
+		const details = {
+			trace: {
+				outcome: "failure",
+				enforced: true,
+				steps: [
+					{
+						key: "run_user",
+						label: "Run user",
+						status: "passed",
+						reason: "person",
+						facts: { user_id: "user-1", is_platform_admin: false },
+					},
+					{ ...runAsUser, status: "passed" },
+					{
+						key: "permission",
+						label: "Permission",
+						status: "passed",
+						reason: "role:role-helpdesk:users.impersonate@organization",
+						facts: impersonate,
+					},
+					{
+						key: "privileged_target",
+						label: "Privileged User",
+						status: "stopped",
+						reason: "denied:missing:privilegedaccess.readwrite",
+						facts: privileged,
+					},
+				],
+			},
+		};
+		expect(read(details)?.slice(2)).toEqual([
+			[
+				"Permission",
+				"passed",
+				"Helpdesk grants Impersonate Users there.",
+			],
+			[
+				"Privileged User",
+				"stopped",
+				"No role grants Read and Write Privileged Access there.",
+			],
+		]);
+	});
+
+	it("says what an unreached privileged step needs", () => {
+		expect(
+			sentence(step("privileged_target", "", privileged, "not_reached")),
+		).toBe("Needs Read and Write Privileged Access.");
 	});
 });

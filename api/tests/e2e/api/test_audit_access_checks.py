@@ -227,6 +227,42 @@ def test_admins_group_access_checks_by_workflow(e2e_client, platform_admin, worl
     assert group["sample"]["workflow_name"] is None
 
 
+def test_operators_aggregate_access_checks_and_drill_into_the_exact_group(e2e_client, world) -> None:
+    """Aggregate selectors never extend an Operator's organization reach."""
+    aggregate = _ok(
+        e2e_client.get(
+            "/api/audit",
+            headers=world["operator"].headers,
+            params={"aggregate": "1h", "execution_id": world["run"]},
+        )
+    )
+
+    assert aggregate["entries"] == []
+    [group] = aggregate["groups"]
+    assert group["count"] == 2
+    assert group["sample"]["action"] == "access.check"
+    assert group["window_start"] < group["window_end"]
+
+    detail = _ok(
+        e2e_client.get(
+            "/api/audit",
+            headers=world["operator"].headers,
+            params={"aggregate_key": group["key"], "execution_id": world["run"]},
+        )
+    )
+    assert len(detail["entries"]) == 2
+    assert {entry["actor"]["organization_id"] for entry in detail["entries"]} == {world["customer"]["id"]}
+
+
+def test_access_check_aggregate_rejects_invalid_combinations_and_selectors(e2e_client, platform_admin) -> None:
+    for params in (
+        {"aggregate": "1h", "group_by": "workflow"},
+        {"aggregate": "1h", "action": "access.check_gap"},
+        {"aggregate_key": "not-a-selector"},
+    ):
+        assert e2e_client.get("/api/audit", headers=platform_admin.headers, params=params).status_code == 422
+
+
 def _drill_in(e2e_client, headers: dict, world, **filters: str) -> list[dict]:
     params = {"action": "access.check", "outcome": "failure", "execution_id": world["drill"]["run"], **filters}
     return _ok(e2e_client.get("/api/audit", headers=headers, params=params))["entries"]

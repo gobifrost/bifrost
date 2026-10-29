@@ -1,6 +1,7 @@
 import { useBifrostMonacoTheme } from "@/hooks/useBifrostMonacoTheme";
 import { useRef, useState } from "react";
 import Editor, { OnMount } from "@monaco-editor/react";
+import { typescript } from "monaco-editor";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { AlertCircle } from "lucide-react";
@@ -75,18 +76,18 @@ export function ExpressionEditor({
 		});
 
 		// Configure JavaScript language features
-		monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+		typescript.javascriptDefaults.setDiagnosticsOptions({
 			noSemanticValidation: false,
 			noSyntaxValidation: false,
 		});
 
-		monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
-			target: monaco.languages.typescript.ScriptTarget.ES2020,
+		typescript.javascriptDefaults.setCompilerOptions({
+			target: typescript.ScriptTarget.ES2020,
 			allowNonTsExtensions: true,
 		});
 
 		// Add type definitions for form context
-		monaco.languages.typescript.javascriptDefaults.addExtraLib(
+		typescript.javascriptDefaults.addExtraLib(
 			`
       declare const context: {
         workflow: Record<string, any>;

@@ -1,0 +1,14 @@
+{
+  "key": "pr:972",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "CLI workflow execution exits correctly when a run finishes before log streaming connects.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/972",
+      "Controller reviewed this summary against the verified late-subscriber CLI exit codes, output, and live WebSocket/REST regression for issue #970."
+    ]
+  }
+}

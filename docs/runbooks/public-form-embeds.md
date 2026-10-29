@@ -24,6 +24,11 @@ unrelated execution. Signed HMAC values are available to workflows under
 `context.embed`; validated visitor fields are under `context.form_inputs`;
 server-held launch output is under `context.startup`.
 
+The secret's signing scheme defines which query values can enter
+`context.embed`. Shopify signs every query value except the signature itself.
+HaloPSA signs only `agent_id`; any other query values are untrusted and do not
+enter workflow context.
+
 ## Publishing and revocation
 
 Use **Share Form** from either the Forms list or the form editor toolbar. The
@@ -64,8 +69,9 @@ The iframe `src` accepts these presentation-only query parameters:
   theme with enough contrast against the host page when using transparency.
 
 These reserved parameters do not enter form inputs or HMAC workflow context.
-For HMAC embeds they are included in the signed query, then removed from the
-verified workflow context after signature validation.
+For Shopify HMAC embeds they are included in the signed query, then removed
+from the verified workflow context after signature validation. For HaloPSA
+HMAC embeds they remain presentation-only and are not signed.
 
 Capability-affecting edits invalidate public access until an administrator
 reviews and republishes. Copy, description, and confirmation-message edits stay

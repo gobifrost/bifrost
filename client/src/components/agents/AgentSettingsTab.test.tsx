@@ -35,6 +35,10 @@ const mockAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 const mockCreateMutation = vi.fn();
 const mockUpdateMutation = vi.fn();
@@ -108,7 +112,16 @@ vi.mock("@/components/ai/ModelProfileSelector", () => ({
 }));
 
 beforeEach(() => {
-	mockAuth.mockReturnValue({ isPlatformAdmin: false });
+	mockAuth.mockReturnValue({
+		isPlatformAdmin: false,
+		user: { id: "me", organizationId: "contoso" },
+	});
+	mockUseAuthorization.mockReturnValue({
+		// Most historical settings cases model a role already scoped to the
+		// fixture agent. Dedicated denial cases replace this summary explicitly.
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	mockCreateMutation.mockReset();
 	mockUpdateMutation.mockReset();
 	mockCreateMutation.mockResolvedValue({ id: "new-agent-id", name: "Bot" });
@@ -164,6 +177,13 @@ const existingAgent = {
 	llm_profile_id: null,
 };
 
+function denyScopedAgentManagement() {
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => false,
+		canAt: () => false,
+	});
+}
+
 describe("AgentSettingsTab — edit mode", () => {
 	it("prepopulates fields from the agent", async () => {
 		await renderTab({ mode: "edit", agent: existingAgent });
@@ -180,7 +200,11 @@ describe("AgentSettingsTab — edit mode", () => {
 	it("submits via update mutation on Save", async () => {
 		const { user } = await renderTab({
 			mode: "edit",
-			agent: existingAgent,
+			agent: {
+				...existingAgent,
+				access_level: "private",
+				owner_user_id: "me",
+			},
 		});
 		await user.click(screen.getByRole("button", { name: /save changes/i }));
 		await waitFor(() => {
@@ -213,9 +237,15 @@ describe("AgentSettingsTab — edit mode", () => {
 	});
 
 	it("preserves the assigned profile without admin controls for organization users", async () => {
+		denyScopedAgentManagement();
 		const { user } = await renderTab({
 			mode: "edit",
-			agent: { ...existingAgent, llm_profile_id: "profile-support" },
+			agent: {
+				...existingAgent,
+				access_level: "private",
+				owner_user_id: "me",
+				llm_profile_id: "profile-support",
+			},
 		});
 		expect(
 			screen.queryByLabelText(/model profile/i),
@@ -231,6 +261,7 @@ describe("AgentSettingsTab — edit mode", () => {
 	});
 
 	it("hides the Budgets section for non-admin users", async () => {
+		denyScopedAgentManagement();
 		await renderTab({ mode: "edit", agent: existingAgent });
 		expect(screen.queryByTestId("budget-card")).not.toBeInTheDocument();
 	});
@@ -294,7 +325,11 @@ describe("AgentSettingsTab — inherited max tokens", () => {
 		mockListModelProfiles.mockResolvedValue([profileWithDefault]);
 		const { user } = await renderTab({
 			mode: "edit",
-			agent: existingAgent,
+			agent: {
+				...existingAgent,
+				access_level: "private",
+				owner_user_id: "me",
+			},
 		});
 		await user.selectOptions(
 			screen.getByLabelText(/model profile/i),
@@ -408,6 +443,7 @@ describe("AgentSettingsTab — create mode", () => {
 	});
 
 	it("calls create mutation and onCreated with the new agent id", async () => {
+		denyScopedAgentManagement();
 		const onCreated = vi.fn();
 		const { user } = await renderTab({
 			mode: "create",
@@ -644,6 +680,7 @@ it("renders solution-managed settings as read-only", async () => {
 });
 
 it("uses private scope for regular users and hides sharing controls", async () => {
+	denyScopedAgentManagement();
 	await renderTab({ mode: "create", agent: null });
 	expect(screen.getByRole("combobox", { name: "Scope" })).toHaveTextContent(
 		"Only me",
@@ -680,6 +717,7 @@ describe("AgentSettingsTab — admin-only field gating", () => {
 	// must still include them.
 
 	it("omits admin-only fields from a non-admin create body", async () => {
+		denyScopedAgentManagement();
 		const { user } = await renderTab({ mode: "create", agent: null });
 		await user.type(
 			screen.getByRole("textbox", { name: /^name$/i }),
@@ -709,9 +747,14 @@ describe("AgentSettingsTab — admin-only field gating", () => {
 	});
 
 	it("omits admin-only fields from a non-admin update body", async () => {
+		denyScopedAgentManagement();
 		const { user } = await renderTab({
 			mode: "edit",
-			agent: existingAgent,
+			agent: {
+				...existingAgent,
+				access_level: "private",
+				owner_user_id: "me",
+			},
 		});
 		await user.click(screen.getByRole("button", { name: /save changes/i }));
 		await waitFor(() => {
@@ -785,6 +828,7 @@ describe("AgentSettingsTab — admin-only field gating", () => {
 	});
 
 	it("does not render admin-only sections for non-admins", async () => {
+		denyScopedAgentManagement();
 		mockToolsGrouped.mockReturnValue({
 			data: {
 				system: [

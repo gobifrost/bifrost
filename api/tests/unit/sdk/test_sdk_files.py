@@ -63,6 +63,21 @@ def _user(**kwargs) -> UserPrincipal:
     )
 
 
+@pytest.fixture(autouse=True)
+def _verified_caller_context(monkeypatch):
+    from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
+    from src.services.authorization.context import AuthorizationContext
+    from src.services.authorization.enforce import Caller
+
+    async def load_verified_caller(_db, user):
+        return Caller(user, AuthorizationContext(
+            user_id=user.user_id, home_organization_id=user.organization_id,
+            base_role_id=USER_ROLE_ID, base_permissions=USER_BASE_PERMISSIONS,
+            is_external=user.is_external,
+        ))
+    monkeypatch.setattr("src.services.authorization.enforce.load_caller", load_verified_caller)
+
+
 def _caller(**kwargs) -> FileCaller:
     db = MagicMock()
     db.commit = AsyncMock()
@@ -107,6 +122,55 @@ def _tiers(monkeypatch, tiers: list[FileTier]) -> None:
         "src.services.solution_scope.file_read_tiers",
         AsyncMock(return_value=tiers),
     )
+
+
+@pytest.mark.asyncio
+async def test_solution_write_scope_requires_active_install_with_original_user_reach(
+    monkeypatch,
+) -> None:
+    """A solution context cannot select a foreign or inactive install for PUT."""
+    from shared.file_access import resolve_effective_scope
+
+    caller = _caller(solution_id=str(SOLUTION_ID))
+    foreign_org = uuid4()
+    monkeypatch.setattr(
+        "src.services.solution_scope.get_active_solution",
+        AsyncMock(return_value=MagicMock(id=SOLUTION_ID, organization_id=foreign_org)),
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.load_caller",
+        AsyncMock(return_value=MagicMock()),
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.user_reach",
+        lambda _caller: MagicMock(covers=lambda _org: False),
+    )
+
+    with pytest.raises(FileServiceError) as exc:
+        await resolve_effective_scope(caller, "reports", None)
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_solution_write_scope_hides_inactive_install(monkeypatch) -> None:
+    """An install that is no longer active cannot receive a direct PUT."""
+    from shared.file_access import resolve_effective_scope
+
+    caller = _caller(solution_id=str(SOLUTION_ID))
+    monkeypatch.setattr(
+        "src.services.solution_scope.get_active_solution",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.load_caller",
+        AsyncMock(return_value=MagicMock()),
+    )
+
+    with pytest.raises(FileServiceError) as exc:
+        await resolve_effective_scope(caller, "reports", None)
+
+    assert exc.value.status_code == 404
 
 
 def _allow_all(monkeypatch) -> None:
@@ -759,6 +823,10 @@ class TestSdkWriteFile:
     ) -> None:
         caller = _mutation_caller(solution_id=str(SOLUTION_ID))
         monkeypatch.setattr(
+            "shared.sdk_files.resolve_effective_scope",
+            AsyncMock(return_value=str(SOLUTION_ID)),
+        )
+        monkeypatch.setattr(
             "src.services.solution_scope.solution_declares_file_location",
             AsyncMock(return_value=False),
         )
@@ -1101,6 +1169,30 @@ class TestSdkSignedUrl:
         storage.generate_presigned_download_url.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["workflows/new.py", ".bifrost/workflows.yaml"])
+    async def test_signed_put_preserves_authorized_workspace_definition_uploads(
+        self, monkeypatch, path: str,
+    ) -> None:
+        _allow_write_policy(monkeypatch)
+        storage = _storage(monkeypatch)
+
+        result = await sdk_signed_url(
+            _mutation_caller(),
+            path=path,
+            location="workspace",
+            scope=None,
+            method="PUT",
+        )
+
+        assert result.path == f"_repo/{path}"
+        storage.generate_presigned_upload_url.assert_awaited_once_with(
+            path=f"_repo/{path}",
+            content_type="application/octet-stream",
+            expires_in=600,
+        )
+        storage.record_file_write_metadata.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_signed_put_denied_is_403_with_audit(self, monkeypatch) -> None:
         _deny_all_policies(monkeypatch)
         emit = AsyncMock()
@@ -1120,7 +1212,7 @@ class TestSdkSignedUrl:
         emit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_signed_put_invalid_scope_propagates_value_error(
+    async def test_signed_put_invalid_scope_is_422(
         self, monkeypatch
     ) -> None:
         """An invalid superuser scope historically reaches the 422 middleware
@@ -1130,7 +1222,7 @@ class TestSdkSignedUrl:
         )
         _allow_write_policy(monkeypatch)
 
-        with pytest.raises(ValueError, match="Invalid scope value"):
+        with pytest.raises(FileServiceError) as exc_info:
             await sdk_signed_url(
                 caller,
                 path="file.pdf",
@@ -1138,6 +1230,8 @@ class TestSdkSignedUrl:
                 scope="not-a-uuid",
                 method="PUT",
             )
+
+        assert exc_info.value.status_code == 422
 
     @pytest.mark.asyncio
     async def test_signed_url_rejects_path_traversal_with_400(

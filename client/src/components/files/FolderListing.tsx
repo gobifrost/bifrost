@@ -35,9 +35,11 @@ export type ListingFolderAction = "effective" | "test" | "newPolicy" | "upload";
 
 interface FolderListingProps {
 	scope: string | null;
+	solution?: string;
 	location: string | null;
 	prefix: string;
 	readOnly: boolean;
+	policyReadOnly?: boolean;
 	managedBySolution?: boolean;
 	solutionId?: string | null;
 	selectedPath?: string | null;
@@ -50,9 +52,11 @@ interface FolderListingProps {
 
 export function FolderListing({
 	scope,
+	solution,
 	location,
 	prefix,
 	readOnly,
+	policyReadOnly = false,
 	managedBySolution = false,
 	solutionId = null,
 	selectedPath = null,
@@ -63,8 +67,11 @@ export function FolderListing({
 	onUploaded,
 }: FolderListingProps) {
 	const listing = useQuery({
-		queryKey: ["file-structure", scope, location, prefix],
-		queryFn: () => listStructure(location!, prefix, scope),
+		queryKey: ["file-structure", scope, solution, location, prefix],
+		queryFn: () =>
+			solution
+				? listStructure(location!, prefix, scope, solution)
+				: listStructure(location!, prefix, scope),
 		enabled: location !== null,
 		retry: false,
 	});
@@ -87,7 +94,10 @@ export function FolderListing({
 		setDownloadError(null);
 		let url: string | undefined;
 		try {
-			const blob = await files.download(path, { location, scope });
+			const blob = await files.download(
+				path,
+				solution ? { location, scope, solution } : { location, scope },
+			);
 			if (typeof URL.createObjectURL !== "function")
 				throw new Error("Downloads are unavailable in this browser.");
 			url = URL.createObjectURL(blob);
@@ -141,6 +151,7 @@ export function FolderListing({
 		<FileEntryActions
 			entry={entry}
 			readOnly={readOnly}
+			policyReadOnly={policyReadOnly}
 			downloading={downloading !== null}
 			onAction={(action, path) => {
 				if (action === "download") void handleDownload(path);
@@ -170,13 +181,15 @@ export function FolderListing({
 						onSelect={() => onFolderAction("test", entry.path)}
 					/>
 					{!readOnly && (
+						<EntryMenuItem
+							action="upload"
+							onSelect={() =>
+								onFolderAction("upload", entry.path)
+							}
+						/>
+					)}
+					{!policyReadOnly && (
 						<>
-							<EntryMenuItem
-								action="upload"
-								onSelect={() =>
-									onFolderAction("upload", entry.path)
-								}
-							/>
 							<EntryMenuItem
 								action="newPolicy"
 								onSelect={() =>
@@ -198,7 +211,7 @@ export function FolderListing({
 					action="test"
 					onSelect={() => onRowAction("test", entry.path)}
 				/>
-				{!readOnly && (
+				{!policyReadOnly && (
 					<EntryMenuItem
 						action="policy"
 						onSelect={() => onRowAction("policy", entry.path)}

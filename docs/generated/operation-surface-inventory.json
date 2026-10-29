@@ -136,7 +136,7 @@
       },
       "operation": {
         "action_scopes": [
-          "agents.read"
+          "agents.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -196,7 +196,7 @@
       },
       "operation": {
         "action_scopes": [
-          "agents.read"
+          "agents.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -453,7 +453,7 @@
       },
       "operation": {
         "action_scopes": [
-          "forms.read"
+          "forms.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -513,7 +513,7 @@
       },
       "operation": {
         "action_scopes": [
-          "forms.read"
+          "forms.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1089,7 +1089,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read"
+          "apps.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1149,7 +1149,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read"
+          "apps.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1532,7 +1532,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read"
+          "apps.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -1592,7 +1592,7 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.deploy.execute"
+          "apps.publish"
         ],
         "async_policy": "platform_job",
         "audit_event": "app.publish",
@@ -1653,7 +1653,9 @@
         }
       },
       "operation": {
-        "action_scopes": [],
+        "action_scopes": [
+          "platformjobs.read.all"
+        ],
         "async_policy": "synchronous",
         "audit_event": null,
         "authorization_resolver": "Platform-job requester identity or platform administrator",
@@ -1997,7 +1999,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.delete",
@@ -2053,7 +2055,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.sync",
@@ -2112,7 +2114,7 @@
       "operation": {
         "action_scopes": [
           "solutions.read",
-          "solutions.build.execute"
+          "solutions.build"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.export",
@@ -2175,7 +2177,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "platform_job",
         "audit_event": "solution.deploy",
@@ -2237,7 +2239,7 @@
       },
       "operation": {
         "action_scopes": [
-          "solutions.deploy.execute"
+          "solutions.deploy"
         ],
         "async_policy": "platform_job",
         "audit_event": "solution.install",
@@ -2300,7 +2302,7 @@
       "operation": {
         "action_scopes": [
           "solutions.readwrite",
-          "solutions.build.execute"
+          "solutions.build"
         ],
         "async_policy": "synchronous",
         "audit_event": "solution.capture",
@@ -4225,11 +4227,11 @@
       },
       "operation": {
         "action_scopes": [
-          "executions.read"
+          "executions.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "ExecutionRepository.list_executions and caller scope resolver",
+        "authorization_resolver": "shared.sdk_execution_reads.list_sdk_executions and caller scope resolver",
         "cli": {
           "path": [
             "workflows",
@@ -4285,11 +4287,11 @@
       },
       "operation": {
         "action_scopes": [
-          "executions.read"
+          "executions.readbasic"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "ExecutionRepository.get_execution access check",
+        "authorization_resolver": "shared.sdk_execution_reads.get_sdk_execution access check",
         "cli": {
           "path": [
             "workflows",
@@ -5252,11 +5254,11 @@
       },
       "operation": {
         "action_scopes": [
-          "forms.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "forms.read.all in the selected boundary and form organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and form organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5474,11 +5476,11 @@
       },
       "operation": {
         "action_scopes": [
-          "agents.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "agents.read.all in the selected boundary and Agent organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and Agent organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5696,11 +5698,11 @@
       },
       "operation": {
         "action_scopes": [
-          "apps.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "apps.read.all in the selected boundary and Application organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and Application organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5862,11 +5864,11 @@
       },
       "operation": {
         "action_scopes": [
-          "workflows.read.all"
+          "roles.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "workflows.read.all in the selected boundary and Workflow organization filtering",
+        "authorization_resolver": "roles.read in the selected boundary and Workflow organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -6135,11 +6137,11 @@
       "operation": {
         "action_scopes": [
           "users.readwrite",
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.create",
-        "authorization_resolver": "users.readwrite at the target organization for an ordinary invite; users.lifecycle.readwrite at Global for a Global or Platform Admin user",
+        "authorization_resolver": "users.readwrite at the target organization for an ordinary invite; userlifecycle.readwrite at Global for a Global or Platform Admin user",
         "cli": null,
         "exclusions": {
           "cli": "User lifecycle administration is available through the administrative UI and REST API, not the coding CLI.",
@@ -6192,7 +6194,7 @@
       },
       "operation": {
         "action_scopes": [
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.update",
@@ -6248,7 +6250,7 @@
       },
       "operation": {
         "action_scopes": [
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.delete",
@@ -6304,7 +6306,7 @@
       },
       "operation": {
         "action_scopes": [
-          "users.lifecycle.readwrite"
+          "userlifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.bulk_update",
@@ -9541,6 +9543,123 @@
     {
       "observed": {
         "cli": {
+          "path": [
+            "files",
+            "move"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "workspace.files.move",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "repository.readwrite"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": null,
+        "authorization_resolver": "File policy read and delete on the source and write on the destination, evaluated at enqueue",
+        "cli": {
+          "path": [
+            "files",
+            "move"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Moving runtime files does not change portable manifest state.",
+          "mcp": "File-content operations have no MCP tools; moves are an SDK and CLI surface."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": true,
+        "operation_id": "workspace.files.move",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/move",
+          "request_model": "FileMoveRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "enqueue a durable files.move Platform Job",
+          "copy server-side, re-key file metadata, and delete the source object",
+          "publish file activity"
+        ],
+        "summary": "Move one file within a location",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "workspace.files.move_many",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "repository.readwrite"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": null,
+        "authorization_resolver": "File policy read and delete on each source and write on each destination, evaluated at enqueue",
+        "cli": null,
+        "exclusions": {
+          "cli": "A batch is an SDK primitive; the CLI moves one file with `files move`.",
+          "manifest": "Moving runtime files does not change portable manifest state.",
+          "mcp": "File-content operations have no MCP tools; moves are an SDK and CLI surface."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": true,
+        "operation_id": "workspace.files.move_many",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/move-many",
+          "request_model": "FileMoveBatchRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "enqueue a durable files.move Platform Job",
+          "copy server-side, re-key file metadata, and delete source objects",
+          "publish file activity"
+        ],
+        "summary": "Move up to 500 files within a location",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": null,
           "status": "intentionally_unsupported"
         },
@@ -10075,10 +10194,10 @@
     }
   ],
   "counts": {
-    "cli": 171,
+    "cli": 172,
     "manifest": 16,
     "mcp": 94,
-    "rest": 677,
+    "rest": 689,
     "sdk": 21
   },
   "schema_version": 1,
@@ -11257,6 +11376,13 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/admin/kubernetes/execution",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/admin/kubernetes/policy",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -13685,6 +13811,41 @@
       {
         "method": "POST",
         "operation_id": "",
+        "path": "/api/sdk/runtime/data-provider-cache/read",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/data-provider-cache/write",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/logs",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/logs/{execution_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/runtime/service-control",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
         "path": "/api/sdk/tables/create",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -13947,6 +14108,13 @@
         "path": "/api/solutions/{solution_id}/deletion-summary",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/solutions/{solution_id}/dev-context",
+        "reason": "Issues user-bound context for local Solution development; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "GET",
@@ -14260,8 +14428,8 @@
         "method": "POST",
         "operation_id": "",
         "path": "/auth/device/authorize",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Records the user's decision for CLI authentication; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "POST",
@@ -14273,9 +14441,30 @@
       {
         "method": "POST",
         "operation_id": "",
+        "path": "/auth/device/deny",
+        "reason": "Records the user's decision for CLI authentication; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
         "path": "/auth/device/token",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/impersonate/{user_id}",
+        "reason": "Starts a browser authentication impersonation session; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/impersonation/end",
+        "reason": "Ends a browser authentication impersonation session; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "POST",

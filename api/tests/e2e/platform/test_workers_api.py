@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models import Execution, Workflow
 from src.models.enums import ExecutionStatus
 from src.models.orm.users import User
+from src.models.orm.work_dispatches import WorkDispatch
 from src.core.constants import PROVIDER_ORG_ID
 from tests.conftest import TEST_REDIS_URL
 
@@ -31,19 +32,16 @@ from tests.conftest import TEST_REDIS_URL
 def reset_redis_connections():
     """Reset module-level Redis connections before each test.
 
-    Each of these modules caches its own ``redis.asyncio`` client in a
-    module global. Redis connections pin themselves to the asyncio loop
-    that first touched them, so a client cached by a prior test's loop
-    will raise ``Event loop is closed`` when reused here.
+    The workers router caches its ``redis.asyncio`` client in a module
+    global. Redis connections pin themselves to the asyncio loop that first
+    touched them, so a client cached by a prior test's loop will raise
+    ``Event loop is closed`` when reused here.
     """
     import src.routers.platform.workers as workers_module
-    import src.services.execution.queue_tracker as queue_tracker_module
 
     workers_module._redis = None
-    queue_tracker_module._redis = None
     yield
     workers_module._redis = None
-    queue_tracker_module._redis = None
 
 
 @pytest_asyncio.fixture
@@ -390,12 +388,54 @@ class TestQueueEndpoint:
             is_superuser=True,
         )
 
-        result = await get_queue(admin, limit=50, offset=0)
+        result = await get_queue(admin, db_session, limit=50, offset=0)
 
         # Queue might have items from other tests, just verify structure
         assert hasattr(result, "total")
         assert hasattr(result, "items")
         assert isinstance(result.items, list)
+
+    async def test_get_queue_reads_a_pending_dispatch_from_postgresql(
+        self,
+        db_session: AsyncSession,
+    ):
+        """The read-only endpoint exposes the canonical pending dispatch queue."""
+        from src.core.principal import UserPrincipal
+        from src.routers.platform.workers import get_queue
+
+        execution = Execution(
+            id=uuid4(),
+            workflow_name="queue-endpoint-postgresql",
+            status=ExecutionStatus.PENDING,
+            executed_by_name="Queue Admin",
+        )
+        db_session.add(execution)
+        await db_session.flush()
+        queued_at = datetime(2026, 10, 27, tzinfo=timezone.utc)
+        db_session.add(
+            WorkDispatch(
+                family="workflow_execution",
+                subject_id=execution.id,
+                handler="workflow.execute",
+                handler_version=1,
+                message={},
+                payload={},
+                memory_request_bytes=1,
+                created_at=queued_at,
+            )
+        )
+        await db_session.flush()
+
+        admin = UserPrincipal(
+            user_id=uuid4(),
+            email="admin@test.com",
+            organization_id=None,
+            is_superuser=True,
+        )
+        result = await get_queue(admin, db_session, limit=50, offset=0)
+
+        item = next(item for item in result.items if item.execution_id == str(execution.id))
+        assert (item.position, item.queued_at) == (1, queued_at.isoformat())
 
 
 @pytest.mark.e2e

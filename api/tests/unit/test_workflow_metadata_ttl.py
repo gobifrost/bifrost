@@ -40,6 +40,8 @@ def _orm(**overrides):
         parameters_schema=None,
         execution_mode=None,
         timeout_seconds=None,
+        memory_request_mib=None,
+        learned_memory_bytes=None,
         endpoint_enabled=None,
         allowed_methods=None,
         disable_global_key=None,
@@ -79,4 +81,21 @@ def test_zero_timeout_is_preserved_not_defaulted():
 def test_permission_mode_is_the_workflows_own_else_the_platform_default():
     restricted = WorkflowPermissionMode.RESTRICTED
     assert _convert(_orm(), restricted).permission_mode is restricted
-    assert _convert(_orm(permission_mode="full"), restricted).permission_mode is WorkflowPermissionMode.FULL
+    assert (
+        _convert(_orm(permission_mode="full"), restricted).permission_mode
+        is WorkflowPermissionMode.FULL
+    )
+
+
+def test_metadata_reports_the_install_restriction_instead_of_the_full_default():
+    workflow = _orm(solution_id=uuid4())
+    request = SimpleNamespace(
+        workflow_id=workflow.id,
+        solution_id=workflow.solution_id,
+        requested_mode="restricted",
+        status="pending",
+    )
+    result = wf._convert_workflow_orm_to_schema(
+        workflow, WorkflowPermissionMode.FULL, permission_request=request
+    )
+    assert result.permission_mode is WorkflowPermissionMode.RESTRICTED

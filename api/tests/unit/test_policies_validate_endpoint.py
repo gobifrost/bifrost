@@ -1,44 +1,36 @@
-"""Unit tests for the `POST /api/tables/policies/validate` endpoint logic.
+"""Ref-free policy validation with an authorized current caller.
 
-The handler is a thin shell around ``TablePolicies.model_validate`` plus a
-path-translation pass and a ``$ref`` resolution step.  We exercise it directly
-(without the FastAPI test client) by constructing a lightweight stub context
-whose ``.db`` is never actually called for the ref-free bodies tested here.
-
-Note: ``validate_policies`` gained a ``ctx: Context`` parameter (Task 7) so
-it can build a ``PolicyRuleRepository(ctx.db, ...)`` to resolve ``{"$ref":…}``
-entries.  The existing tests all use ref-free inline policies, so ``ctx.db`` is
-never reached — a ``MagicMock`` stub suffices.  To test ``$ref`` resolution
-itself you would need a real (or async-capable) DB session; that coverage lives
-in the e2e suite.
+Reference resolution has separate live-service coverage. These tests exercise
+payload parsing and validation paths after the named table permission passes.
 """
 
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+from shared.builtin_roles import USER_ROLE_ID
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 from src.routers.tables import _loc_to_path, validate_policies
 
 
-def _make_ctx():
-    """Return a minimal stub context for ref-free validation tests.
-
-    ``ctx.db`` is a MagicMock that will raise if unexpectedly called, making
-    any accidental DB access visible rather than silently ignored.
-    """
-    ctx = MagicMock()
-    return ctx
-
-
 def _run(body):
-    """Drive the async handler synchronously.
-
-    We pass ``user=None`` because the handler doesn't use it for anything;
-    the dependency only exists to gate access at the FastAPI layer.
-    A stub ``ctx`` is provided; its ``.db`` is never reached for ref-free bodies.
-    """
-    return asyncio.run(validate_policies(ctx=_make_ctx(), user=None, body=body))  # type: ignore[arg-type]
+    principal = UserPrincipal(user_id=uuid4(), email="editor@contoso.example", organization_id=None)
+    caller = Caller(principal, AuthorizationContext(
+        user_id=principal.user_id,
+        home_organization_id=None,
+        base_role_id=USER_ROLE_ID,
+        is_external=False,
+        base_permissions=frozenset({"tables.readwrite"}),
+    ))
+    ctx = SimpleNamespace(db=MagicMock(), user=principal, org_id=None)
+    with patch("src.routers.tables.load_caller", AsyncMock(return_value=caller)):
+        return asyncio.run(validate_policies(ctx=ctx, user=principal, body=body))
 
 
 # ---------------------------------------------------------------------------
@@ -83,13 +75,11 @@ def test_valid_table_policies_returns_ok():
 
 
 def test_is_provider_org_is_a_known_user_field():
-    """``{user: is_provider_org}`` must validate — it is a documented bypass
-    flag on the principal (KNOWN_USER_FIELDS), letting authors write policies
-    that admit portal-hopping provider-org staff."""
+    """Policies may explicitly admit staff whose home is the provider org."""
     body = {
         "policies": [
             {
-                "name": "provider_bypass",
+                "name": "provider_staff",
                 "actions": ["read"],
                 "when": {"user": "is_provider_org"},
             }

@@ -2,7 +2,7 @@
 """
 MCP Tool Result Helpers
 
-Helpers for building FastMCP ToolResult objects with proper
+Helpers for building MCP tool results with proper
 content (human-readable) and structured_content (machine-parseable).
 
 Note: structured data is also appended as JSON to the display text
@@ -11,9 +11,50 @@ that don't support structuredContent can still parse the full data.
 """
 
 import json
+from dataclasses import dataclass
 from typing import Any
 
-from fastmcp.tools import ToolResult
+from mcp.types import CallToolResult, ContentBlock, TextContent
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """Bifrost's transport-independent MCP tool result.
+
+    Keeping this result owned by Bifrost lets tool implementations express the
+    existing display and structured-content contract without importing the
+    external FastMCP wrapper. ``to_call_tool_result`` performs the one protocol
+    conversion required by the bundled MCP SDK.
+    """
+
+    content: str | Any | list[ContentBlock]
+    structured_content: dict[str, Any] | None = None
+    is_error: bool = False
+
+    def __post_init__(self) -> None:
+        """Retain the former result's normalized content-block interface."""
+        if isinstance(self.content, list) and all(
+            getattr(block, "type", None) in {"text", "image", "audio", "resource_link", "resource"}
+            for block in self.content
+        ):
+            content = self.content
+        elif isinstance(self.content, str):
+            content = [TextContent(type="text", text=self.content)]
+        else:
+            content = [
+                TextContent(
+                    type="text",
+                    text=json.dumps(self.content, separators=(",", ":"), default=str),
+                )
+            ]
+        object.__setattr__(self, "content", content)
+
+    def to_call_tool_result(self) -> CallToolResult:
+        return CallToolResult(
+            content=self.content,
+            structuredContent=self.structured_content,
+            isError=self.is_error,
+        )
 
 
 def direct_result(data: Any) -> ToolResult:

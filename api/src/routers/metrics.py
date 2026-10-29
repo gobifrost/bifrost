@@ -35,8 +35,7 @@ from src.models import (
     WorkflowMetricsSummary,
     WorkflowMetricsResponse,
 )
-from shared.scope_resolver import has_scope_bypass
-from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import Context, CurrentActiveUser
 from src.core.principal import UserPrincipal
 from src.models import Execution as ExecutionModel
 from src.models import ExecutionMetricsDaily, Organization
@@ -44,7 +43,15 @@ from src.models.orm import PlatformMetricsSnapshot as PlatformMetricsSnapshotORM
 from src.models.enums import ExecutionStatus
 from src.services.roi_settings_service import ROISettingsService
 from src.services.run_retention.source import all_time_run_totals, workflow_run_source
+from src.services.authorization.enforce import (
+    load_caller,
+    permitted_organizations,
+    require_permission,
+    authorize_operation,
+)
+from src.services.authorization.evaluator import GLOBAL
 from shared.execution_timeseries import get_execution_time_series
+from shared.scope_resolver import ScopeNotAllowed
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +87,9 @@ async def get_metrics(
     Returns:
         Dashboard metrics including workflow/form counts, execution stats, etc.
     """
+    caller = await load_caller(ctx.db, user)
+    require_permission(caller, "metrics.read", ctx.org_id)
+    failure_reach = permitted_organizations(caller, "metrics.read")
     try:
         # Try to use pre-computed snapshot first (instant)
         snapshot_query = select(PlatformMetricsSnapshotORM).where(
@@ -101,20 +111,12 @@ async def get_metrics(
             )
 
             # Still need to fetch recent failures (they change frequently).
-            # Bypass callers (platform admin / provider org) see platform-wide
-            # recent failures; regular users see only their own org's.
-            bypass = has_scope_bypass(
-                is_platform_admin=user.is_superuser,
-                is_provider_org=user.is_provider_org,
-            )
             recent_failures = await _get_recent_failures(
-                ctx, bypass=bypass, organization_id=user.organization_id
+                ctx, reach=failure_reach
             )
 
-            # ROI is platform-wide (the snapshot carries one global row with
-            # no per-org breakdown) — bypass callers only.
             roi_24h = None
-            if bypass:
+            if permitted_organizations(caller, "metrics.read").covers(None):
                 roi_service = ROISettingsService(ctx.db)
                 roi_settings = await roi_service.get_settings()
                 roi_24h = ROISnapshot(
@@ -140,7 +142,7 @@ async def get_metrics(
 
         # Fallback: compute metrics directly (slower, for when snapshot doesn't exist)
         logger.warning("Snapshot not available, computing metrics directly")
-        return await _compute_metrics_directly(ctx, user)
+        return await _compute_metrics_directly(ctx, user, failure_reach)
 
     except Exception as e:
         logger.error(f"Error getting metrics: {str(e)}", exc_info=True)
@@ -155,7 +157,6 @@ async def get_metrics(
     response_model=PlatformMetricsResponse,
     summary="Get full platform metrics snapshot",
     description="Get the complete pre-computed metrics snapshot. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_metrics_snapshot(
     ctx: Context,
@@ -169,6 +170,7 @@ async def get_metrics_snapshot(
 
     Platform admin only.
     """
+    await authorize_operation(ctx.db, user, "GET /api/metrics/snapshot", GLOBAL)
     try:
         snapshot_query = select(PlatformMetricsSnapshotORM).where(
             PlatformMetricsSnapshotORM.id == 1
@@ -239,7 +241,7 @@ async def get_dashboard_execution_time_series(
     scope: str | None = Query(
         default=None,
         description=(
-            "Filter scope: omit for all (superusers), 'global' for global only, "
+            "Filter scope: omit for reachable execution history, 'global' for global only, "
             "or an organization UUID."
         ),
     ),
@@ -254,6 +256,8 @@ async def get_dashboard_execution_time_series(
             timezone_name,
             scope,
         )
+    except ScopeNotAllowed as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -283,7 +287,6 @@ async def get_dashboard_execution_time_series(
     response_model=DailyMetricsResponse,
     summary="Get daily execution metrics",
     description="Get daily execution metrics for trends. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_daily_metrics(
     ctx: Context,
@@ -303,6 +306,7 @@ async def get_daily_metrics(
     Returns:
         Daily metrics entries for the requested period
     """
+    await authorize_operation(ctx.db, user, "GET /api/metrics/executions/daily", GLOBAL)
     try:
         start_date = date.today() - timedelta(days=days)
 
@@ -361,7 +365,6 @@ async def get_daily_metrics(
     response_model=OrganizationMetricsResponse,
     summary="Get organization metrics breakdown",
     description="Get execution metrics grouped by organization. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_organization_metrics(
     ctx: Context,
@@ -381,6 +384,7 @@ async def get_organization_metrics(
     Returns:
         Organization metrics sorted by total executions (descending)
     """
+    await authorize_operation(ctx.db, user, "GET /api/metrics/organizations", GLOBAL)
     try:
         start_date = date.today() - timedelta(days=days)
 
@@ -446,7 +450,6 @@ async def get_organization_metrics(
     response_model=ResourceMetricsResponse,
     summary="Get resource usage trends",
     description="Get memory and CPU usage trends. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_resource_metrics(
     ctx: Context,
@@ -464,6 +467,7 @@ async def get_resource_metrics(
     Returns:
         Daily resource metrics for the requested period
     """
+    await authorize_operation(ctx.db, user, "GET /api/metrics/resources", GLOBAL)
     try:
         start_date = date.today() - timedelta(days=days)
 
@@ -512,7 +516,6 @@ async def get_resource_metrics(
     response_model=WorkflowMetricsResponse,
     summary="Get workflow-level metrics",
     description="Get aggregated execution metrics grouped by workflow. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_workflow_metrics(
     ctx: Context,
@@ -540,6 +543,7 @@ async def get_workflow_metrics(
     Returns:
         Workflow metrics sorted by the specified field (descending)
     """
+    await authorize_operation(ctx.db, user, "GET /api/metrics/workflows", GLOBAL)
     try:
         now = datetime.now(timezone.utc)
         runs = workflow_run_source(start=now - timedelta(days=days), end=now)
@@ -643,13 +647,11 @@ async def _get_recent_failures(
     ctx: Context,
     limit: int = 5,
     *,
-    bypass: bool = True,
-    organization_id=None,
+    reach,
 ) -> list[RecentFailure]:
     """Get recent failed executions.
 
-    Bypass callers (platform admin / provider org) see platform-wide recent
-    failures. Regular callers are scoped to their own org.
+    Rows are filtered to the original caller's metrics permission reach.
     """
     failures_query = (
         select(
@@ -662,10 +664,9 @@ async def _get_recent_failures(
         .order_by(ExecutionModel.started_at.desc())
         .limit(limit)
     )
-    if not bypass:
-        failures_query = failures_query.where(
-            ExecutionModel.organization_id == organization_id
-        )
+    predicate = reach.where(ExecutionModel.organization_id)
+    if predicate is not None:
+        failures_query = failures_query.where(predicate)
     failures_result = await ctx.db.execute(failures_query)
     failures_rows = failures_result.all()
 
@@ -681,7 +682,7 @@ async def _get_recent_failures(
 
 
 async def _compute_metrics_directly(
-    ctx: Context, user: UserPrincipal
+    ctx: Context, user: UserPrincipal, failure_reach
 ) -> DashboardMetricsResponse:
     """
     Compute metrics directly from tables.
@@ -755,14 +756,8 @@ async def _compute_metrics_directly(
     success_rate = (success_count / total_executions * 100) if total_executions > 0 else 0.0
     avg_duration_seconds = float(avg_duration_ms) / 1000.0 if avg_duration_ms else 0.0
 
-    # Get recent failures — bypass callers see platform-wide, regular users
-    # are scoped to their own org.
-    bypass = has_scope_bypass(
-        is_platform_admin=user.is_superuser,
-        is_provider_org=user.is_provider_org,
-    )
     recent_failures = await _get_recent_failures(
-        ctx, bypass=bypass, organization_id=user.organization_id
+        ctx, reach=failure_reach
     )
 
     # Execution statistics
@@ -776,9 +771,9 @@ async def _compute_metrics_directly(
         avg_duration_seconds=avg_duration_seconds,
     )
 
-    # ROI is platform-wide — bypass callers only.
+    # ROI aggregates require metric visibility at the Global target.
     roi_24h = None
-    if bypass:
+    if failure_reach.covers(None):
         roi_service = ROISettingsService(ctx.db)
         roi_settings = await roi_service.get_settings()
         roi_24h = ROISnapshot(

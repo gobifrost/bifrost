@@ -19,6 +19,7 @@ from src.services.role_permissions import (
     set_role_permissions,
     validate_permission,
 )
+from tests.helpers.authorization import admin_caller
 
 
 def test_validate_permission_accepts_known_domain_and_action():
@@ -28,8 +29,8 @@ def test_validate_permission_accepts_known_domain_and_action():
 
 
 def test_validate_permission_accepts_extended_suffix_and_identity_domains():
-    validate_permission("apps.read.all")
-    validate_permission("users.lifecycle.readwrite")
+    validate_permission("agents.read.all")
+    validate_permission("userlifecycle.readwrite")
     validate_permission("roleassignments.readwrite")
     validate_permission("secrets.read")
 
@@ -144,7 +145,7 @@ async def test_a_custom_role_cannot_be_given_the_wildcard(db_session):
     assert exc_info.value.status_code == 422
     with pytest.raises(RolePermissionError) as exc_info:
         await replace_identity_permissions(
-            db_session, role_id=role.id, permissions=[WILDCARD_PERMISSION]
+            db_session, caller=admin_caller(), role_id=role.id, permissions=[WILDCARD_PERMISSION]
         )
     assert exc_info.value.status_code == 422
     assert await get_role_permissions(db_session, role_id=role.id) == frozenset()
@@ -167,3 +168,17 @@ async def test_role_has_permission_checks_across_multiple_roles(db_session):
 @pytest.mark.asyncio
 async def test_role_has_permission_false_for_empty_role_list(db_session):
     assert not await role_has_permission(db_session, role_ids=[], permission="agents.read")
+
+
+@pytest.mark.asyncio
+async def test_impersonate_users_is_editable_on_a_custom_role_and_flagged_privileged(db_session):
+    role = await _seed_role(db_session)
+
+    described = await replace_identity_permissions(
+        db_session, caller=admin_caller(), role_id=role.id, permissions=["users.impersonate"]
+    )
+
+    held = {item.permission: item for item in described.permissions}
+    offered = {item.permission: item for item in described.identity_permissions}
+    assert (held["users.impersonate"].editable, held["users.impersonate"].privileged) == (True, True)
+    assert (offered["users.impersonate"].editable, offered["users.impersonate"].privileged) == (True, True)

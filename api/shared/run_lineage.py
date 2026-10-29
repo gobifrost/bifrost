@@ -13,9 +13,13 @@ run tree, and the tree's first execution. One rule per way a run starts:
 | Anonymous or embedded form/app, service            | the default identity of the principal's organization   | its own id      |
 | Agent tool call (incl. system tools via the MCP    | the agent run's run user                               | its own id      |
 | bridge, which carries it as a token claim)         |                                                        |                 |
+| Queued or scheduled by a release before lineage    | the user it recorded; the system account as a schedule | its own id      |
+| (v1.4.1 and earlier), recovered after the upgrade  | (agent runs: their organization's default identity)    |                 |
 
 A child whose parent recorded no lineage (started before lineage was
-recorded) records none. Nothing decides on lineage yet; it is attribution.
+recorded) records none. Execution reads use the starter and root to show
+an initiator the root runs they started (shared.execution_visibility);
+nothing else decides on lineage yet.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.system_account_guard import is_system_account
 from src.core.principal import UserPrincipal
 from src.models.enums import IdentityKind
 from src.models.orm.executions import Execution
@@ -93,6 +98,27 @@ async def unattended_lineage(session: AsyncSession, workflow_id: UUID | str) -> 
     ).one()
     if run_identity_id is not None:
         return RunLineage(run_user_id=run_identity_id, started_by_user_id=run_identity_id, root_execution_id=None)
+    return await identity_lineage(session, organization_id)
+
+
+async def recorded_user_lineage(
+    session: AsyncSession,
+    user_id: UUID | str | None,
+    *,
+    workflow_id: UUID | str | None,
+    organization_id: UUID | str | None,
+) -> RunLineage:
+    """A run an earlier release queued, which recorded only the user it runs as.
+
+    That release ran it as that user, so the user is its run user. The
+    system account stood for an unattended start, which runs as a schedule
+    does. The migration 20261023_legacy_run_lineage applies the same rule to
+    waiting execution rows.
+    """
+    if user_id is not None and not is_system_account(UUID(str(user_id))):
+        return person_lineage(user_id)
+    if workflow_id is not None:
+        return await unattended_lineage(session, workflow_id)
     return await identity_lineage(session, organization_id)
 
 

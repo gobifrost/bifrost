@@ -36,8 +36,6 @@ from .keys import (
     role_key,
     role_users_key,
     roles_hash_key,
-    execution_logs_stream_key,
-    pending_changes_key,
 )
 from src.core.log_safety import log_safe
 
@@ -344,21 +342,18 @@ async def cleanup_execution_cache(execution_id: str) -> None:
     """
     Clean up all execution-scoped cache entries.
 
-    Called after execution completes to remove:
-    - Pending changes (should already be flushed)
-    - Log stream (if using Redis streams)
-    - Active execution lease
+    Called after execution completes to remove the active execution lease.
+
+    The log stream remains until its explicitly staged entries have committed
+    and retention removes the execution record. Deleting it here can race a
+    final persistence pass and discard logs.
 
     Args:
         execution_id: Execution ID to clean up
     """
     try:
         r = await get_shared_redis()
-        await r.delete(
-            pending_changes_key(execution_id),
-            execution_logs_stream_key(execution_id),
-            active_execution_key(execution_id),
-        )
+        await r.delete(active_execution_key(execution_id))
         logger.debug(f"Cleaned up execution cache: execution_id={execution_id}")
     except Exception as e:
         logger.warning(f"Failed to cleanup execution cache: {e}")

@@ -8,17 +8,25 @@ dead pubsub — never reconnecting. This left affected worker pods unable
 to receive cancel or recycle commands.
 
 These tests assert that both loops construct a **new** pubsub after a
-failure and continue delivering messages, without touching a real Redis.
+failure and continue delivering messages. A real Redis regression also verifies
+that unsubscribe failures release checked-out connections.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import redis.asyncio as redis
 
-from src.services.execution.process_pool import ProcessPoolManager
+from src.services.execution.process_pool import (
+    PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
+    ProcessPoolManager,
+)
+from tests.conftest import TEST_REDIS_URL
 
 
 class _FakePubSub:
@@ -74,6 +82,74 @@ def _make_pool() -> ProcessPoolManager:
     pool.worker_id = "test-worker"
     pool._shutdown = False
     return pool
+
+
+@pytest.mark.asyncio
+async def test_pool_redis_configures_pubsub_health_checks() -> None:
+    """The pool client must ping idle Pub/Sub connections before proxy idle expiry."""
+    pool = ProcessPoolManager(worker_id="test-worker")
+    created_client = object()
+
+    with (
+        patch(
+            "src.services.execution.process_pool.get_settings",
+            return_value=SimpleNamespace(redis_url=TEST_REDIS_URL),
+        ),
+        patch(
+            "src.services.execution.process_pool.redis.from_url",
+            return_value=created_client,
+        ) as from_url,
+    ):
+        assert await pool._get_redis() is created_client
+        # The client is process-owned, so both listeners share this configured client.
+        assert await pool._get_redis() is created_client
+
+    from_url.assert_called_once_with(
+        TEST_REDIS_URL,
+        decode_responses=True,
+        health_check_interval=PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_pubsub_health_ping_is_filtered_and_command_still_delivers() -> None:
+    """An idle health PING keeps a listener connection usable for a later command."""
+    client = redis.from_url(
+        TEST_REDIS_URL,
+        decode_responses=True,
+        health_check_interval=PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
+    )
+    channel = "test:pool:health-check"
+    pubsub = client.pubsub()
+    try:
+        await pubsub.subscribe(channel)
+        # Consume the subscription acknowledgement before forcing an idle-health check.
+        assert await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0) is None
+        connection = pubsub.connection
+        assert connection is not None
+        connection.next_health_check = 0
+
+        # redis-py emits PING and consumes its PONG internally; listeners do not see it.
+        with patch.object(connection, "send_command", wraps=connection.send_command) as send_command:
+            assert await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0) is None
+        send_command.assert_awaited_once_with(
+            "PING", pubsub.HEALTH_CHECK_MESSAGE, check_health=False,
+        )
+        assert pubsub.connection is connection
+        assert connection.is_connected
+
+        command = {"action": "recycle_all"}
+        await client.publish(channel, json.dumps(command))
+        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+        assert message == {
+            "type": "message",
+            "pattern": None,
+            "channel": channel,
+            "data": json.dumps(command),
+        }
+    finally:
+        await pubsub.aclose()
+        await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -147,3 +223,42 @@ async def test_command_listener_reconnects_after_connection_drop() -> None:
         f"bifrost:pool:{pool.worker_id}:commands"
     ]
     assert dropped_pubsub.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("listener", ["_cancel_listener_loop", "_command_listener_loop"])
+async def test_listener_releases_real_pubsub_when_unsubscribe_fails(
+    listener: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed unsubscribe must not retain real Redis PubSub connections."""
+    client = redis.from_url(TEST_REDIS_URL, decode_responses=True)
+    pubsubs = []
+    try:
+        for _ in range(3):
+            pubsub = client.pubsub()
+            pubsubs.append(pubsub)
+            pool = _make_pool()
+
+            async def dropped_unsubscribe(*_channels: str) -> None:
+                raise redis.ConnectionError("connection dropped during unsubscribe")
+
+            async def dropped_read(*_args, **_kwargs) -> None:
+                assert pubsub.connection is not None
+                assert len(client.connection_pool._in_use_connections) == 1
+                pool._shutdown = True
+                raise redis.ConnectionError("connection dropped while listening")
+
+            monkeypatch.setattr(pubsub, "unsubscribe", dropped_unsubscribe)
+            monkeypatch.setattr(pubsub, "get_message", dropped_read)
+            monkeypatch.setattr(pool, "_get_redis", AsyncMock(return_value=client))
+            monkeypatch.setattr(client, "pubsub", lambda: pubsub)
+
+            with patch("src.services.execution.process_pool.asyncio.sleep", new=AsyncMock()):
+                await getattr(pool, listener)()
+
+            assert pubsub.connection is None
+            assert not client.connection_pool._in_use_connections
+    finally:
+        for pubsub in pubsubs:
+            await pubsub.aclose()
+        await client.aclose()

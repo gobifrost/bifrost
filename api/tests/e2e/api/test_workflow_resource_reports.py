@@ -12,7 +12,7 @@ from src.models.orm import AIUsage, Execution, Workflow
 
 @pytest.mark.e2e
 class TestWorkflowResourceReports:
-    def test_requires_platform_admin(self, e2e_client, org1_user) -> None:
+    def test_org_user_receives_only_visible_resource_rows(self, e2e_client, org1_user) -> None:
         response = e2e_client.get(
             "/api/reports/workflow-resources",
             headers=org1_user.headers,
@@ -22,7 +22,10 @@ class TestWorkflowResourceReports:
             },
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["total"] == 0
+        assert body["summary"]["run_count"] == 0
 
     @pytest.mark.asyncio
     async def test_reports_each_execution_once_with_aggregated_ai_usage(

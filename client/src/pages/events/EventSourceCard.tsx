@@ -48,14 +48,14 @@ function getSourceTypeLabel(source: EventSource) {
 
 export function EventSourceCard({
 	source,
-	isPlatformAdmin,
+	canManage,
 	onToggleActive,
 	onEdit,
 	onDelete,
 	updatePending,
 }: {
 	source: EventSource;
-	isPlatformAdmin: boolean;
+	canManage: boolean;
 	onToggleActive: (source: EventSource, e: MouseEvent) => void;
 	onEdit: (source: EventSource, e: MouseEvent) => void;
 	onDelete: (source: EventSource, e: MouseEvent) => void;
@@ -77,7 +77,7 @@ export function EventSourceCard({
 								{source.name}
 							</Link>
 						</div>
-						{isPlatformAdmin && (
+						{canManage && (
 							<EventSourceActions
 								source={source}
 								onEdit={onEdit}
@@ -173,7 +173,7 @@ export function EventSourceCard({
 							{rateLimitedCount} rate limited
 						</Badge>
 					)}
-					{!isPlatformAdmin && (
+					{!canManage && (
 						<Badge
 							variant="outline"
 							className="max-w-full whitespace-normal [overflow-wrap:anywhere]"
@@ -184,7 +184,7 @@ export function EventSourceCard({
 				</div>
 
 				<div className="flex flex-wrap items-center justify-between gap-3">
-					{isPlatformAdmin ? (
+					{canManage ? (
 						<div className="flex items-center gap-2">
 							<Switch
 								checked={source.is_active}

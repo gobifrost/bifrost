@@ -7,12 +7,12 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from shared.app_build_errors import AppBuildMemoryError
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.orm.solutions import Solution
 
@@ -59,6 +59,8 @@ async def run_solution_git_sync(
                 "retries. Retry the Git update to complete it.",
                 retryable=True,
             ) from exc
+        except AppBuildMemoryError as exc:
+            raise PlatformJobFailure("memory_pressure", str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - job records the safe failure
             logger.exception(
                 "Managed Solution Git sync failed",
@@ -90,21 +92,6 @@ async def run_solution_git_sync(
     return {"solution_id": str(payload.solution_id), "status": "synced"}
 
 
-SOLUTION_GIT_SYNC_DEFINITION = PlatformJobDefinition(
-    job_type="solution.git_sync",
-    payload_version=1,
-    payload_model=SolutionGitSyncPayload,
-    handler=run_solution_git_sync,
-    policy=PlatformJobPolicy(
-        timeout_seconds=60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        retry_on_runner_loss=True,
-        retry_on_failure=True,
-        min_memory_headroom_mb=512,
-        allow_running_cancellation=True,
-        execution_class="build",
-    ),
-    display_name="Solution Git syncs",
-    description="Pulls and compiles connected Solution apps in an isolated job pod.",
+SOLUTION_GIT_SYNC_DEFINITION = define_platform_job(
+    "solution.git_sync", SolutionGitSyncPayload, run_solution_git_sync
 )

@@ -14,7 +14,7 @@ Handles the chat completion loop for AI agents, including:
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -25,20 +25,23 @@ from pydantic_ai import Agent as PydanticAgent, AgentRunResultEvent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
+    FunctionToolResultEvent,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    RetryPromptPart,
 )
 from pydantic_ai.usage import RunUsage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from shared.scope_resolver import has_scope_bypass
-from src.core.principal import UserPrincipal
+from shared.chat_context import store_chat_context_usage
+from src.services.authorization.enforce import Caller
 from src.models.contracts.agents import (
     AgentSwitch,
+    ChatContextUsage,
     ChatStreamChunk,
     ContextWarning,
     ToolCall,
@@ -46,8 +49,7 @@ from src.models.contracts.agents import (
     ToolResult,
 )
 from src.models.enums import MessageRole
-from src.models.orm import Agent, Conversation, Message, MessageAttachment, Workflow
-from src.repositories.agents import AgentRepository
+from src.models.orm import Agent, Conversation, Message, MessageAttachment
 from src.services.ai_model_service import AIModelService
 from src.services.llm import (
     LLMMessage,
@@ -68,16 +70,39 @@ from src.services.agent_runtime import (
     reasoning_tokens,
 )
 from src.services.model_capabilities import should_offer_tool_calling
-from src.services.model_pricing import chain_context_window
+from src.services.model_pricing import chain_context_window, config_context_window
+from src.services.model_catalog import get_model_catalog
+from src.services.agent_runtime.model_factory import provider_name_for_config
+from src.services.agent_runtime.composition import build_agent_composition
+from src.services.agent_runtime.tool_policy import (
+    CODE_MODE_AUDIT_METADATA_KEY,
+    CODE_MODE_NESTED_TOOL_CALL_IDS_KEY,
+    build_automatic_code_mode_capabilities,
+    code_mode_nested_tool_call_ids_from_audit,
+)
+from src.services.agent_runtime.toolset import (
+    code_mode_safe_name_map,
+    get_code_mode_tool_result_scope,
+)
+from src.services.ai_behavior_service import (
+    AgentExecutionMode,
+    AIBehaviorService,
+    DEFAULT_AGENT_EXECUTION_MODE,
+)
+from src.services.capabilities.catalog import resolve_capability_route
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
-    parse_mcp_tool_name,
     resolve_agent_tools,
 )
-from shared.run_lineage import run_user_lineage
 from src.services.execution.agent_workflow_tools import (
-    AgentWorkflowCaller,
     execute_agent_workflow_tool,
+    workflow_failure_receipt,
+)
+from src.services.authorization.callers import refresh_caller
+from src.services.authorization.agent_runtime import (
+    AgentRuntimeAuthorizationError,
+    authorize_agent_execution,
+    authorize_agentless_ai,
 )
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
@@ -121,8 +146,30 @@ def _serialize_for_json(value: Any) -> str:
 def _serialize_tool_result_for_history(tool_result: ToolResult) -> str:
     """Serialize what the parent model sees, with failures taking precedence."""
     if tool_result.error:
-        return bound_tool_result_for_model(tool_result.error)
+        return bound_tool_result_for_model(_serialize_for_json({
+            "error": tool_result.error,
+            "result": tool_result.result,
+            **(tool_result.metadata or {}),
+        }))
     return bound_tool_result_for_model(_serialize_for_json(tool_result.result))
+
+
+def _serialize_tool_result_for_runtime(tool_result: ToolResult) -> str:
+    """Return the complete serialized receipt to BifrostToolset.
+
+    Ordinary calls are bounded there. CodeMode's scoped nested dispatch keeps
+    this exact serialized representation until it projects one bounded outer
+    ``run_code`` result, while chat persistence always uses the history helper.
+    """
+    if tool_result.error:
+        return _serialize_for_json(
+            {
+                "error": tool_result.error,
+                "result": tool_result.result,
+                **(tool_result.metadata or {}),
+            }
+        )
+    return _serialize_for_json(tool_result.result)
 
 
 # Fallback system prompt (used if no config set)
@@ -152,6 +199,7 @@ class AgentExecutor:
         self._active_llm_model: str | None = None
         self._active_failover_path: list[str] | None = None
         self._run_user_id: UUID | None = None
+        self._agent_execution_mode: AgentExecutionMode = DEFAULT_AGENT_EXECUTION_MODE
 
     @asynccontextmanager
     async def _db(self):
@@ -166,7 +214,7 @@ class AgentExecutor:
         new_agent: Agent,
         reason: str,
         *,
-        user: UserPrincipal | None,
+        caller: Caller,
     ) -> tuple[ChatStreamChunk | None, Agent | None]:
         """
         Centralized agent switching with all rule checks.
@@ -178,39 +226,19 @@ class AgentExecutor:
             conversation: The conversation to update
             new_agent: The agent to switch to
             reason: Why the switch happened ("@mention", "routed", etc.)
-            user: Current user whose agent access must authorize the switch
+            caller: Current original user whose authority must authorize the switch
 
         Returns:
             Tuple of optional agent_switch event and the access-checked agent.
         """
-        if user is None:
-            logger.warning(
-                "Denied agent switch without user context: conversation_id=%s agent_id=%s reason=%s",
-                conversation.id,
-                new_agent.id,
-                reason,
-            )
-            return None, None
-
-        # Persist only after reloading the target through the repository access
-        # boundary. This prevents high-level routing or mention logic from
-        # binding a conversation to an otherwise inaccessible agent.
         async with self._db() as session:
-            repo = AgentRepository(
-                session,
-                org_id=user.organization_id,
-                user_id=user.user_id,
-                is_superuser=has_scope_bypass(
-                    is_platform_admin=user.is_platform_admin,
-                    is_provider_org=user.is_provider_org,
-                ),
-                is_external=user.is_external,
-            )
-            accessible_agent = await repo.get_agent_with_access_check(new_agent.id)
-            if accessible_agent is None:
+            try:
+                _, accessible_agent = await authorize_agent_execution(
+                    session, caller, new_agent.id
+                )
+            except AgentRuntimeAuthorizationError:
                 logger.warning(
-                    "Denied agent switch because user lacks access: user_id=%s conversation_id=%s agent_id=%s reason=%s",
-                    user.user_id,
+                    "Denied agent switch because original caller lacks current access: conversation_id=%s agent_id=%s reason=%s",
                     conversation.id,
                     new_agent.id,
                     reason,
@@ -242,11 +270,12 @@ class AgentExecutor:
         stream: bool = True,
         enable_routing: bool = True,
         local_id: str | None = None,
-        user: UserPrincipal | None = None,
+        caller: Caller,
         attachment_ids: list[UUID] | None = None,
         model_profile_id: UUID | None = None,
         user_message_id: UUID | None = None,
         run_user_id: UUID | None,
+        agent_execution_mode: AgentExecutionMode | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -260,7 +289,7 @@ class AgentExecutor:
             user_message: The user's message text
             stream: Whether to stream the response (default True)
             enable_routing: Whether to enable @mention and AI routing (default True)
-            user: Current user for permission-aware agent routing
+            caller: Canonical caller for authorization and effect attribution
             user_message_id: Persisted user message id when the caller already
                 inserted the user row before invoking chat.
             run_user_id: Who the chat run is for (shared.run_lineage); its tool
@@ -272,13 +301,23 @@ class AgentExecutor:
         from src.services.agent_router import AgentRouter
 
         start_time = time.time()
+        model_name = None
+        chain = None
         self._knowledge_search_budget.reset()
         self._run_user_id = run_user_id
+        async with self._db() as session:
+            if agent is None:
+                caller = await authorize_agentless_ai(session, caller)
+            else:
+                caller, agent = await authorize_agent_execution(session, caller, agent.id)
+            self._agent_execution_mode = (
+                agent_execution_mode
+                if agent_execution_mode is not None
+                else await AIBehaviorService(session).get_agent_execution_mode()
+            )
         router = AgentRouter(
             self._session_factory,
-            user_id=user.user_id if user else None,
-            org_id=user.organization_id if user else None,
-            is_external=user.is_external if user else False,
+            caller=caller,
         )
 
         try:
@@ -330,7 +369,7 @@ class AgentExecutor:
                         conversation,
                         mentioned_agent,
                         "@mention",
-                        user=user,
+                        caller=caller,
                     )
                     if switch_chunk and switched_agent:
                         # Strip @mention from message for cleaner processing
@@ -358,7 +397,7 @@ class AgentExecutor:
                             conversation,
                             routed_agent,
                             "routed",
-                            user=user,
+                            caller=caller,
                         )
                         if switch_chunk and switched_agent:
                             yield switch_chunk
@@ -393,27 +432,9 @@ class AgentExecutor:
             # have a user — the conversation owner. The caller threads
             # all the way through to ``mcp_dispatch.invoke`` so the
             # auth-resolution layer makes the user-vs-service decision
-            # exactly once per call.
-            caller_user_id: UUID | None = conversation.user_id
-            caller = (
-                {
-                    "user_id": str(user.user_id),
-                    "email": user.email,
-                    "name": user.name,
-                    "organization_id": (
-                        str(user.organization_id)
-                        if user.organization_id
-                        else None
-                    ),
-                    "is_platform_admin": user.is_superuser,
-                }
-                if user
-                else (
-                    {"user_id": str(caller_user_id)}
-                    if caller_user_id
-                    else None
-                )
-            )
+            # Tool selection may use the effect actor for per-user OAuth, but
+            # authorization at every dispatch refreshes the canonical Caller.
+            caller_user_id = caller.principal.user_id
             tool_definitions = (
                 await self._get_agent_tools(agent, caller_user_id=caller_user_id)
                 if agent
@@ -421,23 +442,41 @@ class AgentExecutor:
             )
             if not should_offer_tool_calling(model_capabilities):
                 tool_definitions = []
+                chat_artifact_tool_names: set[str] = set()
             else:
                 from src.services.chat_artifacts import artifact_tool_definitions
 
                 existing_tool_names = {definition.name for definition in tool_definitions}
-                tool_definitions.extend(
+                chat_artifact_definitions = [
                     definition
                     for definition in artifact_tool_definitions(
                         image_generation_enabled=image_generation_enabled,
                         video_generation_enabled=video_generation_enabled,
                     )
                     if definition.name not in existing_tool_names
-                )
+                ]
+                tool_definitions.extend(chat_artifact_definitions)
+                chat_artifact_tool_names = {definition.name for definition in chat_artifact_definitions}
             logger.info(f"Agent '{agent.name if agent else 'None'}' has {len(tool_definitions)} tool definitions")
             if tool_definitions:
                 logger.debug(f"Tools: {[t.name for t in tool_definitions]}")
 
-            # 4b. Delegation tools are now included by resolve_agent_tools
+            composition = None
+            if (
+                self._agent_execution_mode == "automatic"
+                and agent
+                and agent.delegated_agents
+                and should_offer_tool_calling(model_capabilities)
+            ):
+                composition = await build_agent_composition(
+                    agent,
+                    caller=caller,
+                    session_factory=self._db,
+                    caller_user_id=caller_user_id,
+                    entry_definitions=tool_definitions,
+                    entry_workflow_ids=self._tool_workflow_id_map,
+                )
+                tool_definitions = list(composition.entry_definitions)
 
             # 5. Build message history and fix any corrupted ordering
             messages = await self._build_message_history(agent, conversation)
@@ -452,6 +491,20 @@ class AgentExecutor:
                     [llm_client.config, *llm_client.fallback_configs],
                     primary_model=model_override,
                 )
+                catalog = await get_model_catalog(session)
+                request_context_windows = {
+                    (
+                        provider_name_for_config(config),
+                        model_override if index == 0 else config.model,
+                    ): config_context_window(
+                        catalog,
+                        config,
+                        model=model_override if index == 0 else config.model,
+                    )
+                    for index, config in enumerate(
+                        [llm_client.config, *llm_client.fallback_configs]
+                    )
+                }
 
             # 7. Hand the full loop to Pydantic AI. Bifrost remains responsible
             # for authorization, persistence, and its stable stream contract;
@@ -479,6 +532,7 @@ class AgentExecutor:
             provider_cost_seen = False
             final_finish_reason: str | None = None
             final_incomplete: bool | None = None
+            pending_context_chunks: list[ChatStreamChunk] = []
 
             async def record_model_event(event: ModelCallEvent) -> None:
                 nonlocal total_input_tokens, total_output_tokens, model_name
@@ -489,6 +543,19 @@ class AgentExecutor:
                 if event.type != "response" or event.response is None:
                     return
                 response_usage = event.response.usage
+                context_usage = ChatContextUsage(
+                    input_tokens=response_usage.input_tokens,
+                    context_window=request_context_windows.get(
+                        (event.billing_provider, event.request_model)
+                    ),
+                    cache_read_tokens=response_usage.cache_read_tokens,
+                    model_profile_id=chat_profile.id,
+                )
+                async with self._db() as session:
+                    await store_chat_context_usage(session, conversation.id, context_usage)
+                pending_context_chunks.append(
+                    ChatStreamChunk(type="context_usage", context_usage=context_usage)
+                )
                 total_input_tokens += response_usage.input_tokens
                 total_output_tokens += response_usage.output_tokens
                 total_cache_read_tokens += response_usage.cache_read_tokens
@@ -517,6 +584,134 @@ class AgentExecutor:
             tool_execution_ids: dict[str, str] = {}
             tool_call_ready: dict[str, asyncio.Event] = {}
             pending_tool_chunks: list[ChatStreamChunk] = []
+            handled_runtime_ids: set[str] = set()
+            nested_tool_call_ids_by_outer: dict[str, list[str]] = {}
+
+            async def register_runtime_tool_call(
+                runtime_tool_call_id: str,
+                name: str,
+                arguments: dict[str, Any],
+                *,
+                outer_tool_call_id: str | None = None,
+            ) -> list[ChatStreamChunk]:
+                """Persist one native or CodeMode-nested call before dispatch."""
+                if runtime_tool_call_id in tool_calls:
+                    return []
+                display_id = runtime_tool_call_id
+                if display_id in seen_tc_ids:
+                    display_id = f"{display_id}_run{usage.requests}"
+                seen_tc_ids.add(display_id)
+                tool_call = ToolCall(id=display_id, name=name, arguments=arguments)
+                execution_id = str(uuid4())
+                tool_call_msg = await self._save_message(
+                    conversation_id=conversation.id,
+                    role=MessageRole.TOOL_CALL,
+                    tool_name=tool_call.name,
+                    tool_input=tool_call.arguments,
+                    tool_state="running",
+                    tool_call_id=display_id,
+                    execution_id=execution_id,
+                )
+                tool_calls[runtime_tool_call_id] = tool_call
+                tool_message_ids[runtime_tool_call_id] = tool_call_msg.id
+                tool_execution_ids[runtime_tool_call_id] = execution_id
+                tool_call_ready.setdefault(runtime_tool_call_id, asyncio.Event()).set()
+                if (
+                    outer_tool_call_id is not None
+                    and outer_tool_call_id in tool_calls
+                    and tool_calls[outer_tool_call_id].name == "run_code"
+                ):
+                    nested_tool_call_ids = nested_tool_call_ids_by_outer.setdefault(
+                        outer_tool_call_id,
+                        [],
+                    )
+                    nested_tool_call_ids.append(tool_call.id)
+                    # Write the relation before the effect dispatch. A
+                    # cancellation or process loss can then leave the outer
+                    # call running, but never makes a completed child raw
+                    # receipt eligible for a future model history.
+                    await self._update_tool_call_message(
+                        message_id=tool_message_ids[outer_tool_call_id],
+                        tool_state="running",
+                        tool_result={
+                            CODE_MODE_AUDIT_METADATA_KEY: {
+                                CODE_MODE_NESTED_TOOL_CALL_IDS_KEY: list(
+                                    nested_tool_call_ids
+                                ),
+                            }
+                        },
+                    )
+                chunks = [
+                    ChatStreamChunk(
+                        type="tool_call",
+                        tool_call=tool_call,
+                        execution_id=execution_id,
+                        message_id=str(tool_call_msg.id),
+                    ),
+                    ChatStreamChunk(
+                        type="tool_progress",
+                        tool_progress=ToolProgress(
+                            tool_call_id=display_id,
+                            execution_id=execution_id,
+                            status="running",
+                        ),
+                    ),
+                ]
+                from src.services.chat_artifacts import ARTIFACT_TOOL_NAMES
+
+                if tool_call.name in ARTIFACT_TOOL_NAMES:
+                    chunks.append(
+                        ChatStreamChunk(
+                            type="artifact_started",
+                            content=str(tool_call.arguments.get("filename") or "generated file"),
+                            message_id=str(tool_call_msg.id),
+                        )
+                    )
+                return chunks
+
+            async def persist_tool_result(tool_call_id: str, result: ToolResult) -> str:
+                tool_call = tool_calls[tool_call_id]
+                message_id = tool_message_ids[tool_call_id]
+                if stream:
+                    pending_tool_chunks.append(
+                        ChatStreamChunk(
+                            type="tool_result", tool_result=result,
+                            message_id=str(message_id),
+                        )
+                    )
+                persisted = (
+                    result.result if not result.error
+                    else {"error": result.error, "result": result.result, **(result.metadata or {})}
+                )
+                nested_tool_call_ids = nested_tool_call_ids_by_outer.get(tool_call_id)
+                if nested_tool_call_ids:
+                    # Keep the relation on the outer audit row, separately
+                    # from model-visible TOOL content. Rebuilt history uses it
+                    # instead of inferring provenance from a call-ID shape.
+                    persisted = {
+                        CODE_MODE_AUDIT_METADATA_KEY: {
+                            CODE_MODE_NESTED_TOOL_CALL_IDS_KEY: list(nested_tool_call_ids),
+                        },
+                        "result": persisted,
+                        **({"error": result.error} if result.error else {}),
+                    }
+                await self._update_tool_call_message(
+                    message_id=message_id,
+                    tool_state="completed" if not result.error else "error",
+                    tool_result=persisted,
+                    duration_ms=result.duration_ms,
+                )
+                content = _serialize_tool_result_for_history(result)
+                await self._save_message(
+                    conversation_id=conversation.id,
+                    role=MessageRole.TOOL,
+                    content=content,
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    execution_id=tool_execution_ids[tool_call_id],
+                    duration_ms=result.duration_ms,
+                )
+                return content
 
             async def execute_runtime_tool(
                 name: str,
@@ -527,25 +722,70 @@ class AgentExecutor:
                 # corresponding FunctionToolCallEvent has reached this stream
                 # consumer. Wait for that event to persist the compatibility
                 # message and register its IDs instead of racing the maps below.
+                # CodeMode child calls have no separate model event. Its
+                # ContextVar supplies the outer run_code ID, even when native
+                # child IDs are opaque. Wait for outer persistence first.
                 ready = tool_call_ready.setdefault(tool_call_id, asyncio.Event())
-                await ready.wait()
+                code_mode_scope = get_code_mode_tool_result_scope()
+                outer_tool_call_id = (
+                    code_mode_scope.outer_tool_call_id if code_mode_scope else None
+                )
+                if outer_tool_call_id is not None:
+                    await tool_call_ready.setdefault(
+                        outer_tool_call_id, asyncio.Event()
+                    ).wait()
+                    if (
+                        outer_tool_call_id not in tool_calls
+                        or tool_calls[outer_tool_call_id].name != "run_code"
+                    ):
+                        raise RuntimeError("CodeMode outer tool call was not registered")
+                    pending_tool_chunks.extend(
+                        await register_runtime_tool_call(
+                            tool_call_id,
+                            name,
+                            arguments,
+                            outer_tool_call_id=outer_tool_call_id,
+                        )
+                    )
+                else:
+                    await ready.wait()
                 tool_call = tool_calls[tool_call_id]
+                handled_runtime_ids.add(tool_call_id)
                 execution_id = tool_execution_ids[tool_call_id]
                 message_id = tool_message_ids[tool_call_id]
-                request = ToolCallRequest(
-                    id=tool_call.id,
-                    name=name,
-                    arguments=arguments,
-                )
-                tool_result = await self._execute_tool(
-                    request,
-                    agent,
-                    conversation,
-                    execution_id=execution_id,
-                    tool_message_id=message_id,
-                    caller_user_id=caller_user_id,
-                    caller=caller,
-                )
+                try:
+                    owner = agent
+                    workflow_ids = None
+                    # Chat artifact tools are added by the chat surface, not
+                    # bound to an AgentTool row. Their existing executor checks
+                    # the conversation/caller; specialist tools still require
+                    # an exact live composition binding.
+                    if composition is not None and name not in chat_artifact_tool_names:
+                        binding = await composition.resolve_call(name, arguments)
+                        owner = binding.owner
+                        name = binding.original_name
+                        arguments = binding.arguments
+                        workflow_ids = binding.workflow_ids
+                    request = ToolCallRequest(
+                        id=tool_call.id, name=name, arguments=arguments,
+                    )
+                    tool_result = await self._execute_tool(
+                        request,
+                        owner,
+                        conversation,
+                        execution_id=execution_id,
+                        tool_message_id=message_id,
+                        caller=caller,
+                        workflow_ids=workflow_ids,
+                    )
+                    tool_result = tool_result.model_copy(update={"tool_name": tool_call.name})
+                except Exception as exc:
+                    tool_result = ToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        result=None,
+                        error=str(exc),
+                    )
                 promoted_artifacts = []
                 from src.services.chat_artifacts import (
                     ARTIFACT_TOOL_NAMES,
@@ -562,13 +802,10 @@ class AgentExecutor:
                         async with self._db() as session:
                             promoted_artifacts = await promote_artifact_refs(
                                 session,
+                                caller=caller,
                                 result=tool_result.result,
                                 conversation_id=conversation.id,
-                                conversation_user_id=conversation.user_id,
                                 message_id=message_id,
-                                agent_organization_id=(
-                                    agent.organization_id if agent else None
-                                ),
                             )
                     except Exception as exc:
                         tool_result = ToolResult(
@@ -578,14 +815,8 @@ class AgentExecutor:
                             error=f"Artifact output could not be imported: {exc}",
                             duration_ms=tool_result.duration_ms,
                         )
-                if stream:
-                    pending_tool_chunks.append(
-                        ChatStreamChunk(
-                            type="tool_result",
-                            tool_result=tool_result,
-                            message_id=str(message_id),
-                        )
-                    )
+                await persist_tool_result(tool_call_id, tool_result)
+                tool_runtime_content = _serialize_tool_result_for_runtime(tool_result)
                 from src.models.contracts.artifacts import ArtifactRef
 
                 if name in ARTIFACT_TOOL_NAMES:
@@ -613,30 +844,11 @@ class AgentExecutor:
                             message_id=str(message_id),
                         )
                     )
-                persisted_tool_result = (
-                    tool_result.result
-                    if not tool_result.error
-                    else {"error": tool_result.error, **(tool_result.metadata or {})}
-                )
-                await self._update_tool_call_message(
-                    message_id=message_id,
-                    tool_state="completed" if not tool_result.error else "error",
-                    tool_result=persisted_tool_result,
-                    duration_ms=tool_result.duration_ms,
-                )
-                tool_history_content = _serialize_tool_result_for_history(tool_result)
-                await self._save_message(
-                    conversation_id=conversation.id,
-                    role=MessageRole.TOOL,
-                    content=tool_history_content,
-                    tool_call_id=tool_call.id,
-                    tool_name=name,
-                    execution_id=execution_id,
-                    duration_ms=tool_result.duration_ms,
-                )
-                return tool_history_content
+                return tool_runtime_content
 
             system_prompt = messages[0].content or FALLBACK_SYSTEM_PROMPT
+            if composition is not None:
+                system_prompt += composition.instructions
             from src.services.chat_artifacts import (
                 ARTIFACT_WORKSPACE_INSTRUCTIONS,
                 BUILTIN_ARTIFACT_TOOL_NAMES,
@@ -664,10 +876,30 @@ class AgentExecutor:
                 max_tokens=max_tokens_override,
                 session_id=str(conversation.id),
             )
-            toolset = BifrostToolset(
-                tool_definitions,
-                execute_runtime_tool,
-                toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+            automatic_code_mode = (
+                self._agent_execution_mode == "automatic"
+                and (tool_definitions or composition is not None)
+            )
+            toolset = (
+                composition.entry_toolset(
+                    execute_runtime_tool,
+                    toolset_id=f"bifrost-chat-{agent.id}",
+                )
+                if composition is not None
+                else BifrostToolset(
+                    tool_definitions,
+                    execute_runtime_tool,
+                    toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+                )
+            )
+            if automatic_code_mode and composition is None:
+                toolset = toolset.renamed(
+                    code_mode_safe_name_map(tuple(definition.name for definition in tool_definitions))
+                )
+            automatic_code_mode_capabilities = (
+                build_automatic_code_mode_capabilities()
+                if automatic_code_mode
+                else []
             )
             runtime = PydanticAgent(
                 chain.model,
@@ -677,9 +909,13 @@ class AgentExecutor:
                 # history already contains its original system part.
                 instructions=system_prompt,
                 toolsets=[toolset] if tool_definitions else [],
-                capabilities=build_runtime_capabilities(
-                    budget, context_window=context_window
-                ),
+                capabilities=[
+                    *build_runtime_capabilities(budget, context_window=context_window),
+                    *(composition.capabilities(
+                        execute_runtime_tool,
+                    ) if composition is not None else []),
+                    *automatic_code_mode_capabilities,
+                ],
                 model_settings=chain.primary_settings,
                 # Permit one schema/tool-name correction. It is charged to the
                 # same pre-request budget, so a malformed provider response can
@@ -703,6 +939,9 @@ class AgentExecutor:
                     conversation_id=str(conversation.id),
                 ) as events:
                     async for event in events:
+                        for chunk in pending_context_chunks:
+                            yield chunk
+                        pending_context_chunks.clear()
                         if pending_tool_chunks:
                             for pending_chunk in pending_tool_chunks:
                                 yield pending_chunk
@@ -789,6 +1028,34 @@ class AgentExecutor:
                                         ),
                                         message_id=str(tool_call_msg.id),
                                     )
+                        elif isinstance(event, FunctionToolResultEvent):
+                            part = event.part
+                            if (
+                                (
+                                    composition is not None
+                                    and part.tool_name
+                                    in {"load_capability", "search_tools", "delegate_task"}
+                                )
+                                or (
+                                    self._agent_execution_mode == "automatic"
+                                    and part.tool_name == "search_tools"
+                                )
+                                or part.tool_name == "run_code"
+                            ) and part.tool_call_id not in handled_runtime_ids:
+                                tool_call_id = part.tool_call_id
+                                if tool_call_id is None:
+                                    raise ValueError("Framework tool result has no call identity")
+                                handled_runtime_ids.add(tool_call_id)
+                                is_error = isinstance(part, RetryPromptPart)
+                                await persist_tool_result(
+                                    tool_call_id,
+                                    ToolResult(
+                                        tool_call_id=tool_calls[tool_call_id].id,
+                                        tool_name=part.tool_name,
+                                        result=None if is_error else part.content,
+                                        error=_serialize_for_json(part.content) if is_error else None,
+                                    ),
+                                )
                         elif isinstance(event, AgentRunResultEvent):
                             final_content = str(event.result.output or "")
                     for pending_chunk in pending_tool_chunks:
@@ -809,6 +1076,10 @@ class AgentExecutor:
                         message="The agent reached its run budget and left a resumable handoff.",
                     ),
                 )
+
+            for chunk in pending_context_chunks:
+                yield chunk
+            pending_context_chunks.clear()
 
             # 9. Save final assistant message (using pre-generated ID)
             duration_ms = int((time.time() - start_time) * 1000)
@@ -856,7 +1127,7 @@ class AgentExecutor:
             self._active_llm_model = model_name
             self._active_failover_path = (
                 chain.failover.fallback_path()
-                if chain.failover is not None
+                if chain is not None and chain.failover is not None
                 else None
             )
             yield ChatStreamChunk(
@@ -1022,6 +1293,16 @@ class AgentExecutor:
                     input_files,
                 )
 
+        nested_code_mode_tool_call_ids = frozenset(
+            nested_id
+            for message in db_messages
+            if message.role == MessageRole.TOOL_CALL
+            for nested_id in code_mode_nested_tool_call_ids_from_audit(
+                message.tool_name,
+                message.tool_result,
+            )
+        )
+
         # Track seen tool_call IDs to handle providers (e.g. Minimax) that
         # reuse the same IDs across turns. When a collision is detected, remap
         # to a unique ID and apply the same remap to the corresponding tool result.
@@ -1068,6 +1349,11 @@ class AgentExecutor:
                     )
                 )
             elif msg.role == MessageRole.TOOL_CALL:
+                if msg.tool_call_id in nested_code_mode_tool_call_ids:
+                    # Nested calls are retained for audit/progress, but their
+                    # raw values were already consumed inside run_code. Replay
+                    # only the bounded outer receipt on later chat turns.
+                    continue
                 # TOOL_CALL rows are stored separately from the assistant message.
                 # Attach them as tool_calls on the preceding assistant LLMMessage
                 # so the LLM sees the correct assistant→tool_use→tool_result sequence.
@@ -1105,6 +1391,8 @@ class AgentExecutor:
                         )
                     )
             elif msg.role == MessageRole.TOOL:
+                if msg.tool_call_id in nested_code_mode_tool_call_ids:
+                    continue
                 # Apply remapping if the preceding tool_call had its ID changed
                 tc_id = msg.tool_call_id
                 if tc_id:
@@ -1305,8 +1593,8 @@ class AgentExecutor:
         execution_id: str | None = None,
         tool_message_id: UUID | None = None,
         *,
-        caller_user_id: UUID | None = None,
-        caller: dict[str, Any] | None = None,
+        caller: Caller,
+        workflow_ids: Mapping[str, UUID] | None = None,
     ) -> ToolResult:
         """
         Execute a tool (workflow, delegation, system tool, knowledge search,
@@ -1320,6 +1608,19 @@ class AgentExecutor:
 
         from src.models.contracts.artifacts import ArtifactRef
         from src.services.chat_artifacts import BUILTIN_ARTIFACT_TOOL_NAMES
+
+        if agent is not None:
+            try:
+                async with self._db() as session:
+                    caller, agent = await authorize_agent_execution(session, caller, agent.id)
+            except AgentRuntimeAuthorizationError as exc:
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result=None,
+                    error=str(exc),
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
 
         if tool_call.name in BUILTIN_ARTIFACT_TOOL_NAMES:
             if conversation is None or tool_message_id is None:
@@ -1336,6 +1637,7 @@ class AgentExecutor:
                 async with self._db() as session:
                     _, artifact = await execute_artifact_tool(
                         session,
+                        caller=caller,
                         tool_name=tool_call.name,
                         arguments=tool_call.arguments or {},
                         conversation_id=conversation.id,
@@ -1361,12 +1663,25 @@ class AgentExecutor:
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
 
+        active_workflow_ids = (
+            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
+        )
+        route = (
+            resolve_capability_route(agent, tool_call.name, active_workflow_ids)
+            if agent is not None
+            else None
+        )
+
         # Check if this is a knowledge search tool call
-        if tool_call.name == "search_knowledge" and agent:
+        if (
+            route is not None
+            and route.source == "knowledge"
+            and agent.knowledge_sources
+        ):
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Check if this is a delegation tool call
-        if tool_call.name.startswith("delegate_to_") and agent:
+        if route is not None and route.source == "delegation":
             return await self._execute_delegation(
                 tool_call,
                 agent,
@@ -1375,48 +1690,31 @@ class AgentExecutor:
             )
 
         # Check if this is a system tool call
-        if agent and tool_call.name in (agent.system_tools or []):
-            return await self._execute_system_tool(tool_call, agent, conversation)
+        if route is not None and (
+            route.source == "system"
+            or (
+                route.source == "knowledge"
+                and tool_call.name in (agent.system_tools or [])
+            )
+        ):
+            return await self._execute_system_tool(tool_call, caller)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
         # MCP tools are routed BEFORE workflow tools because workflow lookup
         # would otherwise fall through to "tool not found" for an MCP name.
-        mcp_route = parse_mcp_tool_name(tool_call.name)
-        if mcp_route is not None:
-            connection_id, remote_tool_name = mcp_route
+        if route is not None and route.source == "external_mcp":
+            assert route.source_id is not None
+            assert route.remote_tool_name is not None
             return await self._execute_mcp_tool(
                 tool_call,
-                connection_id=connection_id,
-                remote_tool_name=remote_tool_name,
-                caller_user_id=caller_user_id,
+                connection_id=route.source_id,
+                remote_tool_name=route.remote_tool_name,
+                caller_user_id=caller.principal.user_id,
                 start_time=start_time,
             )
 
         try:
-            # Get the workflow for this tool — prefer ID lookup (handles normalized names)
-            workflow_id = self._tool_workflow_id_map.get(tool_call.name)
-            resolved_workflow: tuple[str, str] | None = None
-            async with self._db() as session:
-                if workflow_id:
-                    result = await session.execute(
-                        select(Workflow).where(Workflow.id == workflow_id)
-                    )
-                else:
-                    # Fallback: try by name (for non-prefixed tools or edge cases)
-                    result = await session.execute(
-                        select(Workflow)
-                        .where(Workflow.name == tool_call.name)
-                        .where(Workflow.type == "tool")
-                        .where(Workflow.is_active.is_(True))
-                    )
-                workflow = result.scalar_one_or_none()
-                if workflow is not None:
-                    # Keep ORM access inside the owning async session. Session exit
-                    # may expire attributes, and later implicit IO would fail with
-                    # MissingGreenlet outside SQLAlchemy's async bridge.
-                    resolved_workflow = (str(workflow.id), workflow.name)
-
-            if resolved_workflow is None:
+            if route is None or route.source != "workflow" or route.source_id is None:
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
@@ -1424,52 +1722,15 @@ class AgentExecutor:
                     error=f"Tool '{tool_call.name}' not found",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
-            resolved_workflow_id, resolved_workflow_name = resolved_workflow
-
-            # Chat constructs the authenticated caller once at entry and passes
-            # it through every dispatch path. Prefer that canonical context so
-            # workflow execution does not depend on a lazily loaded ORM user.
-            # The conversation fallback preserves direct/internal callers that
-            # predate the shared caller context.
-            user = conversation.user if conversation and not caller else None
-            caller_has_scope = caller is not None and "organization_id" in caller
+            workflow_id = route.source_id
 
             execution_response = await execute_agent_workflow_tool(
-                workflow_id=resolved_workflow_id,
-                workflow_name=resolved_workflow_name,
+                agent_id=agent.id,
+                workflow_id=workflow_id,
                 parameters=tool_call.arguments or {},
-                caller=AgentWorkflowCaller(
-                    user_id=(
-                        str(caller.get("user_id"))
-                        if caller and caller.get("user_id")
-                        else str(user.id) if user else "system"
-                    ),
-                    email=(
-                        str(caller.get("email"))
-                        if caller and caller.get("email")
-                        else user.email if user else "system@internal.gobifrost.com"
-                    ),
-                    name=(
-                        str(caller.get("name"))
-                        if caller and caller.get("name")
-                        else user.name if user else "System"
-                    ),
-                    organization_id=(
-                        caller.get("organization_id")
-                        if caller_has_scope and caller
-                        else user.organization_id
-                        if user is not None
-                        else agent.organization_id if agent else None
-                    ),
-                    is_platform_admin=(
-                        bool(caller.get("is_platform_admin", False))
-                        if caller
-                        else user.is_superuser if user else False
-                    ),
-                ),
+                caller=caller,
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
-                lineage=run_user_lineage(self._run_user_id),
             )
 
             duration_ms = int((time.time() - start_time) * 1000)
@@ -1483,12 +1744,14 @@ class AgentExecutor:
                     duration_ms=duration_ms,
                 )
             else:
+                receipt = workflow_failure_receipt(execution_response)
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
-                    result=None,
-                    error=execution_response.error or "Unknown error",
+                    result=execution_response.result,
+                    error=receipt["error"],
                     duration_ms=duration_ms,
+                    metadata=receipt,
                 )
 
         except Exception as e:
@@ -1706,7 +1969,11 @@ class AgentExecutor:
 
             if doc_id:
                 cached = self._knowledge_search_budget.cached_document(doc_id)
-                if cached is None:
+                if (
+                    cached is None
+                    or cached["namespace"] not in namespaces
+                    or cached["organization_id"] not in {None, str(agent.organization_id)}
+                ):
                     return ToolResult(
                         tool_call_id=tool_call.id,
                         tool_name=tool_call.name,
@@ -1836,7 +2103,7 @@ class AgentExecutor:
             # Search knowledge store
             async with self._db() as session:
                 repo = KnowledgeRepository(
-                    session, org_id=agent.organization_id, is_superuser=True
+                    session, org_id=agent.organization_id
                 )
                 results = await repo.search(
                     query_embedding=query_embedding,
@@ -1856,6 +2123,7 @@ class AgentExecutor:
                 self._knowledge_search_budget.cache_document(doc.id, {
                     "content": doc.content,
                     "namespace": doc.namespace,
+                    "organization_id": doc.organization_id,
                     "score": score,
                     "key": doc.key,
                     "metadata": metadata,
@@ -1914,7 +2182,7 @@ class AgentExecutor:
         agent: Agent,
         *,
         conversation: Conversation | None = None,
-        caller: dict[str, Any] | None = None,
+        caller: Caller,
     ) -> ToolResult:
         """Execute a delegation to another agent via AutonomousAgentExecutor."""
         start_time = time.time()
@@ -1954,15 +2222,24 @@ class AgentExecutor:
                 tool_call=tool_call,
                 conversation_id=conversation.id if conversation else None,
                 caller=caller,
+                acting_user_id=caller.principal.user_id,
                 _shared_usage=self._active_usage,
                 _shared_budget=self._active_budget,
                 run_user_id=self._run_user_id,
+                # Chat runs have no Run As user; the caller acts.
+                run_as=None,
+                agent_execution_mode=self._agent_execution_mode,
             )
-            metadata = {
+            metadata: dict[str, Any] = {
                 "child_run_id": str(outcome.child_run_id),
                 "agent": outcome.agent_name,
                 "status": outcome.status,
             }
+            if not outcome.succeeded:
+                if outcome.evidence is not None:
+                    metadata["evidence"] = outcome.evidence
+                if outcome.output is not None:
+                    metadata["partial_output"] = outcome.output
 
             logger.info(
                 f"Delegation to '{outcome.agent_name}' completed with "
@@ -2017,11 +2294,10 @@ class AgentExecutor:
     async def _execute_system_tool(
         self,
         tool_call: ToolCallRequest,
-        agent: Agent,
-        conversation: Conversation | None,
+        caller: Caller,
     ) -> ToolResult:
         """Execute a system tool and return the result."""
-        from src.services.mcp_server.server import MCPContext, get_system_tool_function
+        from src.services.mcp_server.server import get_system_tool_function
 
         start_time = time.time()
 
@@ -2036,27 +2312,12 @@ class AgentExecutor:
             )
 
         try:
-            # Get user from conversation (same pattern as workflow tool execution)
-            user = conversation.user if conversation else None
+            async with self._db() as session:
+                refreshed = await refresh_caller(session, caller)
+            from src.services.mcp_server.server import context_from_principal
 
-            # Create context from agent/conversation/user
-            # session=None: system tools create their own short-lived sessions
-            # via get_tool_db() fallback, avoiding long-lived connection holds
-            context = MCPContext(
-                user_id=str(user.id) if user else "",
-                org_id=(
-                    str(user.organization_id)
-                    if user and user.organization_id
-                    else str(agent.organization_id)
-                    if not user and agent.organization_id
-                    else None
-                ),
-                is_platform_admin=user.is_superuser if user else False,
-                user_email=user.email if user else "",
-                user_name=user.name if user else "",
-                run_user_id=self._run_user_id,
-                session=None,
-            )
+            context = context_from_principal(refreshed.principal)
+            context.session = None
 
             # Call the tool function
             result = await func(context, **tool_call.arguments)

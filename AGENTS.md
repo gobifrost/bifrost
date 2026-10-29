@@ -82,9 +82,9 @@ Tips:
 
 ## Technologies
 
--   **Backend**: Python 3.11 (FastAPI), SQLAlchemy, Pydantic, PostgreSQL, RabbitMQ, Redis
+-   **Backend**: Python 3.11 (FastAPI), SQLAlchemy, Pydantic, PostgreSQL, Redis
 -   **Frontend**: TypeScript 4.9+, React, Vite
--   **Storage**: PostgreSQL (data), Redis (cache/sessions), RabbitMQ (message queue)
+-   **Storage**: PostgreSQL (data and work dispatch), Redis (cache/sessions)
 -   **Infrastructure**: Docker, Docker Compose, GitHub Actions for CI/CD
 
 ## Development Environment (CRITICAL - READ FIRST)
@@ -105,7 +105,7 @@ Start the development stack (per-worktree isolated):
 
 The default mode allocates a free local port for the client (deterministic per worktree, in 30000-39999). If `NETBIRD_SETUP_KEY` is set in `~/.config/bifrost/debug.env`, the stack boots with a NetBird sidecar that provides both private mesh access and an ephemeral public HTTPS proxy through `netbird expose` — no host ports, durable Admin proxy mapping, or NetBird API key.
 
-Stack contains: API (port 8000 internal), Client (port 80 internal), Scheduler, Worker, Postgres, RabbitMQ, Redis, SeaweedFS. All Bifrost services build from `api/Dockerfile.dev` / `client/Dockerfile.dev` (source build, not public images).
+Stack contains: API (port 8000 internal), Client (port 80 internal), Scheduler, Worker, Postgres, Redis, SeaweedFS. All Bifrost services build from `api/Dockerfile.dev` / `client/Dockerfile.dev` (source build, not public images).
 
 ### Hot Reload is Automatic
 
@@ -302,7 +302,7 @@ export async function getDataProviders() {
     -   **Never rerun until green or mask instability.** Do not add retries, longer timeouts, `skip`, or `xfail`. Reproduce the exposing condition, fix the hypothesized cause, then use repetition only to validate the fix. See `.claude/skills/bifrost-testing/SKILL.md` for the full protocol.
     -   **Prefer simple, durable tests.** Keep one observable contract per test, minimal fixtures, deterministic state, explicit cleanup, and only one useful end-to-end happy path. Move edge cases down to unit/component tests; complexity is not evidence of rigor.
     -   **Expensive backend E2E tests:** Before adding a deploy, install, publish, build, sync, or worker job to a test, follow `.claude/skills/bifrost-testing/authoring-rules.md` → “Expensive backend E2E tests.” Count the jobs and identify the unique cross-process contract each one proves.
-    -   **IMPORTANT**: Always use `./test.sh` — it manages the Dockerized test stack (PostgreSQL, Redis, RabbitMQ, SeaweedFS, API, worker). Running pytest directly on the host will FAIL for anything touching DB/queue/cache.
+    -   **IMPORTANT**: Always use `./test.sh` — it manages the Dockerized test stack (PostgreSQL, Redis, SeaweedFS, API, worker). Running pytest directly on the host will FAIL for anything touching DB/cache/storage.
     -   **Stack lifecycle is separate from test execution.** Boot once per worktree, run tests many times. See the Commands section below.
     -   **Test results**: `./test.sh` writes JUnit XML to `/tmp/bifrost-<project>/test-results.xml` on the host (the project name is printed by `./test.sh stack status`) — parse this for pass/fail details instead of grepping stdout.
     -   **Logs**: Container logs are exported to `/tmp/bifrost-<project>/*.log` after test runs (per-worktree, so parallel worktrees don't clobber each other).

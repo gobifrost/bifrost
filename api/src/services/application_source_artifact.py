@@ -6,9 +6,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID
 
-from botocore.exceptions import ClientError
-
 from src.config import Settings, get_settings
+from src.core.s3_transport import S3Error
 from src.services.application_deploy_storage import CHUNK_SIZE
 from src.services.file_storage.s3_client import S3StorageClient
 
@@ -92,7 +91,7 @@ class ApplicationSourceArtifactStorage:
                     Bucket=self._bucket,
                     Key=self.deployment_source_key(app_id, deployment_id),
                 )
-            except ClientError as exc:
+            except S3Error as exc:
                 error = exc.response.get("Error", {})
                 if error.get("Code") in {"NoSuchKey", "404", "NotFound"}:
                     return False

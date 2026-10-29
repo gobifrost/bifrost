@@ -294,6 +294,13 @@ class TestUserService:
             )
         assert exc_info.value.status_code == 403
 
+        await create_user(
+            db_session,
+            _admin(),
+            email=f"surviving-admin-{uuid4().hex[:8]}@example.com",
+            name="Surviving Admin",
+            is_superuser=True,
+        )
         created = await create_user(
             db_session,
             _admin(),
@@ -309,6 +316,43 @@ class TestUserService:
         assert deleted_id == created.id
         with pytest.raises(UserServiceError):
             await get_user(db_session, _admin(), user_id=str(created.id))
+
+    async def test_last_active_platform_admin_cannot_be_deleted(self, db_session):
+        from shared.sdk_users import UserServiceError, create_user, delete_user
+
+        admin = await create_user(
+            db_session,
+            _admin(),
+            email=f"last-admin-{uuid4().hex[:8]}@example.com",
+            name="Last Admin",
+            is_superuser=True,
+        )
+        with pytest.raises(UserServiceError) as exc_info:
+            await delete_user(
+                db_session,
+                _admin(email="other-admin@example.com", user_id=uuid4()),
+                user_id=str(admin.id),
+            )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == "At least one active person must hold the Platform Admin role"
+
+    async def test_last_active_platform_admin_self_delete_returns_409(self, db_session):
+        from shared.sdk_users import UserServiceError, create_user, delete_user
+
+        admin = await create_user(
+            db_session,
+            _admin(),
+            email=f"self-last-admin-{uuid4().hex[:8]}@example.com",
+            name="Self Last Admin",
+            is_superuser=True,
+        )
+        with pytest.raises(UserServiceError) as exc_info:
+            await delete_user(
+                db_session,
+                _admin(email=admin.email, user_id=admin.id),
+                user_id=str(admin.id),
+            )
+        assert exc_info.value.status_code == 409
 
 
 @pytest.fixture

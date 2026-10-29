@@ -5,9 +5,8 @@ from pydantic import BaseModel
 from src.jobs.platform.base import (
     PlatformJobCancelled,
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 
 
@@ -47,15 +46,6 @@ async def run_embedding_reindex(
     }
 
 
-EMBEDDING_REINDEX_DEFINITION = PlatformJobDefinition(
-    job_type="embedding.reindex",
-    payload_version=1,
-    payload_model=EmbeddingReindexPayload,
-    handler=run_embedding_reindex,
-    policy=PlatformJobPolicy(
-        timeout_seconds=4 * 60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-    ),
+EMBEDDING_REINDEX_DEFINITION = define_platform_job(
+    "embedding.reindex", EmbeddingReindexPayload, run_embedding_reindex
 )

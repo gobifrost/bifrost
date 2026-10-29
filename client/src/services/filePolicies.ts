@@ -35,6 +35,7 @@ export interface FileAccessTestRequest {
 	action: FilePolicyAction;
 	scope?: string | null;
 	userId?: string;
+	solution?: string;
 }
 
 export interface FileAccessTestResult {
@@ -54,7 +55,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
 	}
 	let detail: string;
 	try {
-		const body = (await response.json()) as { detail?: unknown; message?: unknown };
+		const body = (await response.json()) as {
+			detail?: unknown;
+			message?: unknown;
+		};
 		const raw = body.detail ?? body.message;
 		detail = typeof raw === "string" ? raw : JSON.stringify(raw ?? body);
 	} catch {
@@ -63,7 +67,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
 	throw new Error(detail || `Request failed: ${response.status}`);
 }
 
-function withQuery(path: string, params: Record<string, string | null | undefined>) {
+function withQuery(
+	path: string,
+	params: Record<string, string | null | undefined>,
+) {
 	const query = new URLSearchParams();
 	for (const [key, value] of Object.entries(params)) {
 		if (value !== undefined && value !== null && value !== "") {
@@ -74,37 +81,45 @@ function withQuery(path: string, params: Record<string, string | null | undefine
 	return qs ? `${path}?${qs}` : path;
 }
 
-export async function listFilePolicies(params: {
-	location?: string;
-	scope?: string | null;
-	prefix?: string;
-} = {}): Promise<FilePolicyListResponse> {
+export async function listFilePolicies(
+	params: {
+		location?: string;
+		scope?: string | null;
+		prefix?: string;
+		solution?: string;
+	} = {},
+): Promise<FilePolicyListResponse> {
 	const response = await authFetch(
 		withQuery("/api/files/policies", {
 			location: params.location,
 			organization_id: params.scope ?? undefined,
 			path: params.prefix,
+			solution: params.solution,
 		}),
 	);
 	const result = await parseResponse<{
 		policies?: Array<
-			FilePolicy | {
-				id?: string;
-				location: string;
-				path: string;
-				organization_id?: string | null;
-				policies: FilePolicy["policies"];
-			}
+			| FilePolicy
+			| {
+					id?: string;
+					location: string;
+					path: string;
+					organization_id?: string | null;
+					policies: FilePolicy["policies"];
+			  }
 		>;
 	}>(response);
 	return {
 		policies: (result.policies ?? []).map((policy) => {
-			const raw = policy as FilePolicy & { organization_id?: string | null };
+			const raw = policy as FilePolicy & {
+				organization_id?: string | null;
+			};
 			return {
 				id: raw.id,
 				location: raw.location,
 				path: raw.path,
-				organizationId: raw.organizationId ?? raw.organization_id ?? null,
+				organizationId:
+					raw.organizationId ?? raw.organization_id ?? null,
 				policies: raw.policies,
 			};
 		}),
@@ -150,16 +165,19 @@ export async function deleteFilePolicy(policy: FilePolicy): Promise<void> {
 export async function testFileAccess(
 	request: FileAccessTestRequest,
 ): Promise<FileAccessTestResult> {
-	const response = await authFetch("/api/files/policies/test", {
-		method: "POST",
-		body: JSON.stringify({
-			path: request.path,
-			location: request.location,
-			action: request.action,
-			scope: request.scope ?? null,
-			user_id: request.userId || null,
-		}),
-	});
+	const response = await authFetch(
+		withQuery("/api/files/policies/test", { solution: request.solution }),
+		{
+			method: "POST",
+			body: JSON.stringify({
+				path: request.path,
+				location: request.location,
+				action: request.action,
+				scope: request.scope ?? null,
+				user_id: request.userId || null,
+			}),
+		},
+	);
 	const result = await parseResponse<{
 		allowed: boolean;
 		path: string;
@@ -192,10 +210,12 @@ export async function effectiveAccess(
 	location: string,
 	path: string,
 	scope: string | null,
+	solution?: string,
 ): Promise<FilePolicy[]> {
 	const { policies } = await listFilePolicies({
 		location,
 		scope: scope ?? undefined,
+		solution,
 	});
 	return policies
 		.filter((p) => p.location === location && path.startsWith(p.path))
@@ -211,6 +231,7 @@ export async function testAllActions(req: {
 	path: string;
 	scope: string | null;
 	userId: string;
+	solution?: string;
 }): Promise<Record<FilePolicyAction, FileAccessTestResult>> {
 	const results = await Promise.all(
 		FILE_ACTIONS.map((action) =>
@@ -218,6 +239,7 @@ export async function testAllActions(req: {
 				location: req.location,
 				path: req.path,
 				scope: req.scope,
+				solution: req.solution,
 				userId: req.userId,
 				action,
 			}).then((r) => [action, r] as const),

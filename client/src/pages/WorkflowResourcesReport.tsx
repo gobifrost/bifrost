@@ -31,6 +31,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
 	Select,
@@ -341,7 +343,17 @@ export function WorkflowResourcesReport({
 	const dateRange: DateRange = selectedFrom
 		? { from: selectedFrom, to: readDate("workflow_to") }
 		: { from: subDays(new Date(), 7), to: new Date() };
-	const orgId = searchParams.get("workflow_org") ?? undefined;
+	const { authorization, canAt, canAnywhere } = useAuthorization();
+	const knownOrganizations = authorization?.home_organization_id
+		? [
+				{
+					id: authorization.home_organization_id,
+					name: "Home organization",
+				},
+			]
+		: [];
+	const selectedOrg = searchParams.get("workflow_org");
+	const orgId = selectedOrg === "global" ? null : (selectedOrg ?? undefined);
 	const workflowSearch = searchParams.get("workflow_search") ?? "";
 	const workflowId = searchParams.get("workflow_id") ?? undefined;
 	const statusParam = searchParams.get("workflow_status");
@@ -383,7 +395,7 @@ export function WorkflowResourcesReport({
 			sort,
 			page,
 			pageSize: PAGE_SIZE,
-			orgId: typeof orgId === "string" ? orgId : undefined,
+			orgId: orgId === null ? "global" : orgId,
 			workflowId,
 			workflow: workflowId
 				? undefined
@@ -431,10 +443,26 @@ export function WorkflowResourcesReport({
 										workflow_org:
 											typeof value === "string"
 												? value
-												: null,
+												: value === null
+													? "global"
+													: null,
 									});
 								}}
 								showAll
+								showGlobal={canAt(
+									"metrics.read",
+									GLOBAL_TARGET,
+								)}
+								loadOrganizations={canAnywhere(
+									"organizations.read",
+								)}
+								knownOrganizations={knownOrganizations}
+								filterOrganizations={(organization) =>
+									canAt(
+										"metrics.read",
+										orgTarget(organization.id),
+									)
+								}
 								placeholder="All organizations"
 							/>
 						</div>

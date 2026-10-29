@@ -7,15 +7,55 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import delete
 
+from src.core.principal import UserPrincipal
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent, Conversation
 from src.models.orm.ai_usage import AIUsage
+from src.models.orm.organizations import Organization
 from src.services.agent_stats import (
     get_agent_stats,
     get_agent_stats_batch,
     get_fleet_stats,
 )
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
+
+
+def _stats_caller(
+    user_id=None,
+    *,
+    organization_id=None,
+    read_all: bool = True,
+    agent_read_all: bool = False,
+) -> Caller:
+    """Original-user stats caller with explicit Agent and history grants."""
+    user_id = user_id or uuid4()
+    permissions = {"agents.read"}
+    if read_all:
+        permissions.add("agentruns.read.all")
+    if agent_read_all:
+        permissions.add("agents.read.all")
+    principal = UserPrincipal(
+        user_id=user_id,
+        email="stats@contoso.example",
+        organization_id=organization_id,
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=user_id,
+            home_organization_id=organization_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(permissions),
+        ),
+    )
+
+
+@pytest.fixture
+def stats_caller() -> Caller:
+    return _stats_caller()
 
 
 @pytest_asyncio.fixture
@@ -115,8 +155,8 @@ async def seed_agents_with_runs(db_session):
 
 
 @pytest.mark.asyncio
-async def test_per_agent_stats(db_session, seed_agent, seed_runs_for_agent):
-    stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+async def test_per_agent_stats(db_session, seed_agent, seed_runs_for_agent, stats_caller):
+    stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
     assert stats.runs_7d == 5
     assert 0.0 <= stats.success_rate <= 1.0
     # 4 completed / 5 total = 0.8
@@ -133,15 +173,16 @@ async def test_per_agent_stats(db_session, seed_agent, seed_runs_for_agent):
 
 @pytest.mark.asyncio
 async def test_agent_stats_batch_matches_single_agent_rollup(
-    db_session, seed_agent, seed_runs_for_agent
+    db_session, seed_agent, seed_runs_for_agent, stats_caller
 ):
     empty_agent_id = uuid4()
     batch = await get_agent_stats_batch(
         [seed_agent.id, empty_agent_id],
         db_session,
+        stats_caller,
         window_days=7,
     )
-    single = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+    single = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
 
     assert batch[seed_agent.id] == single
     assert batch[empty_agent_id].runs_7d == 0
@@ -149,8 +190,8 @@ async def test_agent_stats_batch_matches_single_agent_rollup(
 
 
 @pytest.mark.asyncio
-async def test_per_agent_stats_empty(db_session, seed_agent):
-    stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+async def test_per_agent_stats_empty(db_session, seed_agent, stats_caller):
+    stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
     assert stats.runs_7d == 0
     assert stats.success_rate == 0.0  # no runs == 0% success
     assert stats.avg_duration_ms == 0
@@ -158,8 +199,8 @@ async def test_per_agent_stats_empty(db_session, seed_agent):
 
 
 @pytest.mark.asyncio
-async def test_fleet_stats(db_session, seed_agents_with_runs):
-    s = await get_fleet_stats(db_session, org_id=None, window_days=7)
+async def test_fleet_stats(db_session, seed_agents_with_runs, stats_caller):
+    s = await get_fleet_stats(db_session, stats_caller, window_days=7)
     assert s.total_runs >= 2
     assert s.active_agents >= 2
     assert 0.0 <= s.avg_success_rate <= 1.0
@@ -167,7 +208,7 @@ async def test_fleet_stats(db_session, seed_agents_with_runs):
 
 
 @pytest.mark.asyncio
-async def test_agent_stats_batch_caller_scoping_excludes_other_users_runs(
+async def test_agent_stats_batch_requires_read_all_for_other_users_runs(
     db_session, seed_agent
 ):
     """caller_user_id must restrict counted runs to that caller only."""
@@ -194,16 +235,115 @@ async def test_agent_stats_batch_caller_scoping_excludes_other_users_runs(
     await db_session.commit()
     try:
         scoped = await get_agent_stats_batch(
-            [seed_agent.id], db_session, caller_user_id=caller_a
+            [seed_agent.id], db_session, _stats_caller(caller_a, read_all=False)
         )
         assert scoped[seed_agent.id].runs_7d == 1
 
-        unscoped = await get_agent_stats_batch([seed_agent.id], db_session)
+        unscoped = await get_agent_stats_batch(
+            [seed_agent.id], db_session, _stats_caller(caller_a)
+        )
         assert unscoped[seed_agent.id].runs_7d == 2
     finally:
         await db_session.execute(
             delete(AgentRun).where(AgentRun.id.in_([run_a.id, run_b.id]))
         )
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_agent_stats_read_all_controls_other_users_chat_counts_and_cost(
+    db_session, seed_agent, seed_user
+):
+    """Chat rollups use the same all-user permission as AgentRun history."""
+    from src.models.orm.users import User
+
+    now = datetime.now(timezone.utc)
+    organization = Organization(
+        id=uuid4(),
+        name=f"Stats Chat {uuid4().hex[:8]}",
+        created_by="stats-test",
+    )
+    db_session.add(organization)
+    await db_session.flush()
+    other_user = User(
+        id=uuid4(),
+        email=f"other-chat-{uuid4().hex[:8]}@contoso.example",
+        name="Other Chat User",
+        organization_id=organization.id,
+        is_active=True,
+        is_superuser=False,
+        is_verified=True,
+        is_registered=True,
+    )
+    db_session.add(other_user)
+    await db_session.flush()
+    own = Conversation(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        user_id=seed_user.id,
+        channel="chat",
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    other = Conversation(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        user_id=other_user.id,
+        channel="chat",
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([own, other])
+    await db_session.flush()
+    own_usage = AIUsage(
+        conversation_id=own.id,
+        organization_id=None,
+        provider="test",
+        model="test",
+        input_tokens=1,
+        output_tokens=1,
+        cost=Decimal("0.10"),
+        timestamp=now,
+    )
+    other_usage = AIUsage(
+        conversation_id=other.id,
+        organization_id=None,
+        provider="test",
+        model="test",
+        input_tokens=1,
+        output_tokens=1,
+        cost=Decimal("0.20"),
+        timestamp=now,
+    )
+    db_session.add_all([own_usage, other_usage])
+    await db_session.commit()
+    try:
+        own_stats = await get_agent_stats(
+            seed_agent.id,
+            db_session,
+            _stats_caller(seed_user.id, read_all=False),
+        )
+        all_stats = await get_agent_stats(
+            seed_agent.id,
+            db_session,
+            _stats_caller(seed_user.id),
+        )
+
+        assert own_stats.runs_7d == 1
+        assert own_stats.total_cost_7d == Decimal("0.10")
+        assert all_stats.runs_7d == 2
+        assert all_stats.total_cost_7d == Decimal("0.30")
+    finally:
+        await db_session.execute(
+            delete(AIUsage).where(AIUsage.id.in_([own_usage.id, other_usage.id]))
+        )
+        await db_session.execute(
+            delete(Conversation).where(Conversation.id.in_([own.id, other.id]))
+        )
+        await db_session.execute(delete(User).where(User.id == other_user.id))
+        await db_session.execute(delete(Organization).where(Organization.id == organization.id))
         await db_session.commit()
 
 
@@ -214,12 +354,20 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
     from src.models.orm.users import User
 
     now = datetime.now(timezone.utc)
+    organization = Organization(
+        id=uuid4(),
+        name=f"Stats Fleet {uuid4().hex[:8]}",
+        created_by="stats-test",
+    )
+    db_session.add(organization)
+    await db_session.flush()
     caller_user = User(
         id=uuid4(),
         email=f"fleet-caller-{uuid4().hex[:8]}@example.com",
         name="Fleet Caller",
+        organization_id=organization.id,
         is_active=True,
-        is_superuser=True,
+        is_superuser=False,
         is_verified=True,
         is_registered=True,
     )
@@ -227,8 +375,9 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
         id=uuid4(),
         email=f"fleet-other-{uuid4().hex[:8]}@example.com",
         name="Fleet Other Owner",
+        organization_id=organization.id,
         is_active=True,
-        is_superuser=True,
+        is_superuser=False,
         is_verified=True,
         is_registered=True,
     )
@@ -236,6 +385,21 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
     await db_session.flush()
     caller = caller_user.id
     other_owner = other_user.id
+
+    history_caller = _stats_caller(caller, organization_id=organization.id, read_all=False)
+    all_agents_caller = _stats_caller(
+        caller, organization_id=organization.id, agent_read_all=True,
+    )
+    shared_agent = Agent(
+        id=uuid4(), name=f"Contoso Shared {uuid4().hex[:8]}",
+        system_prompt="test", channels=["chat"],
+        access_level=AgentAccessLevel.AUTHENTICATED,
+        organization_id=None, is_active=True, created_by="stats-test",
+    )
+    db_session.add(shared_agent)
+    await db_session.flush()
+    baseline_history = await get_fleet_stats(db_session, history_caller, window_days=7)
+    baseline_all_agents = await get_fleet_stats(db_session, all_agents_caller, window_days=7)
 
     own_agent = Agent(
         id=uuid4(),
@@ -245,7 +409,7 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
         channels=["chat"],
         access_level=AgentAccessLevel.PRIVATE,
         owner_user_id=caller,
-        organization_id=None,
+        organization_id=organization.id,
         is_active=True,
         knowledge_sources=[],
         system_tools=[],
@@ -259,7 +423,7 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
         channels=["chat"],
         access_level=AgentAccessLevel.PRIVATE,
         owner_user_id=other_owner,
-        organization_id=None,
+        organization_id=organization.id,
         is_active=True,
         knowledge_sources=[],
         system_tools=[],
@@ -273,6 +437,7 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
         agent_id=other_private_agent.id,
         trigger_type="test",
         status="completed",
+        org_id=organization.id,
         caller_user_id=str(other_owner),
         created_at=now,
     )
@@ -280,31 +445,43 @@ async def test_fleet_stats_excludes_other_users_private_agent(db_session):
     await db_session.commit()
 
     try:
-        scoped = await get_fleet_stats(
-            db_session, org_id=None, window_days=7, caller_user_id=caller
+        # Readable Global agents can already contribute to this fleet. Keep
+        # one present so the privacy contract never relies on an empty DB.
+        assert baseline_history.active_agents >= 1
+        history_only = await get_fleet_stats(
+            db_session,
+            history_caller,
+            window_days=7,
         )
-        # own_agent counts toward active_agents; other_private_agent must not.
-        unscoped_active = (
-            await get_fleet_stats(db_session, org_id=None, window_days=7)
-        ).active_agents
-        assert scoped.active_agents == unscoped_active - 1
-        assert scoped.total_runs == 0
+        assert history_only.active_agents == baseline_history.active_agents + 1
+        assert history_only.total_runs == baseline_history.total_runs
+
+        agent_read_all = await get_fleet_stats(
+            db_session,
+            all_agents_caller,
+            window_days=7,
+        )
+        # Run-history power alone cannot expose someone else's private
+        # Agent. The canonical Agent policy admits it only with agents.read.all.
+        assert agent_read_all.active_agents == baseline_all_agents.active_agents + 2
+        assert agent_read_all.total_runs == baseline_all_agents.total_runs + 1
     finally:
         from src.models.orm.users import User
 
         await db_session.execute(delete(AgentRun).where(AgentRun.id == other_run.id))
         await db_session.execute(
-            delete(Agent).where(Agent.id.in_([own_agent.id, other_private_agent.id]))
+            delete(Agent).where(Agent.id.in_([own_agent.id, other_private_agent.id, shared_agent.id]))
         )
         await db_session.execute(
             delete(User).where(User.id.in_([caller, other_owner]))
         )
+        await db_session.execute(delete(Organization).where(Organization.id == organization.id))
         await db_session.commit()
 
 
 @pytest.mark.asyncio
 async def test_summarizer_cost_is_included_in_total_cost_7d(
-    db_session, seed_agent
+    db_session, seed_agent, stats_caller
 ):
     """Regression: summarizer-generated AIUsage rows must roll up into
     AgentStats.total_cost_7d so a backfill's $$ impact is visible in the
@@ -350,7 +527,7 @@ async def test_summarizer_cost_is_included_in_total_cost_7d(
     ))
     await db_session.commit()
 
-    stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+    stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
     assert stats.total_cost_7d == Decimal("0.015"), (
         f"Expected 0.015 (0.01 agent-work + 0.005 summarizer), got {stats.total_cost_7d}. "
         "If this fails, the summarizer's cost is being silently dropped from "
@@ -450,14 +627,14 @@ async def seed_chat_conversations_for_agent(db_session, seed_agent, seed_user):
 
 @pytest.mark.asyncio
 async def test_per_agent_stats_counts_chat_conversations(
-    db_session, seed_agent, seed_chat_conversations_for_agent
+    db_session, seed_agent, seed_chat_conversations_for_agent, stats_caller
 ):
     """Chat agent with no AgentRun rows still reports non-zero runs_7d.
 
     A run for a chat agent is one Conversation. The fixture seeds two
     conversations, so runs_7d should be 2.
     """
-    stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+    stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
     assert stats.runs_7d == 2, (
         f"Expected 2 conversations counted as runs, got {stats.runs_7d}. "
         "If this is 0, the chat-channel rollup is missing — chat agents "
@@ -467,13 +644,13 @@ async def test_per_agent_stats_counts_chat_conversations(
 
 @pytest.mark.asyncio
 async def test_per_agent_stats_sums_chat_ai_usage_cost(
-    db_session, seed_agent, seed_chat_conversations_for_agent
+    db_session, seed_agent, seed_chat_conversations_for_agent, stats_caller
 ):
     """Chat agent total_cost_7d sums AIUsage.cost via conversation_id.
 
     The fixture seeds 0.02 + 0.03 + 0.05 = 0.10 inside the 7-day window.
     """
-    stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+    stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
     assert stats.total_cost_7d == Decimal("0.10"), (
         f"Expected 0.10 (sum of chat AIUsage.cost), got {stats.total_cost_7d}. "
         "Chat-channel cost is being silently dropped from the Spend (7d) card."
@@ -482,14 +659,14 @@ async def test_per_agent_stats_sums_chat_ai_usage_cost(
 
 @pytest.mark.asyncio
 async def test_per_agent_stats_chat_last_run_at_uses_conversation_updated_at(
-    db_session, seed_agent, seed_chat_conversations_for_agent
+    db_session, seed_agent, seed_chat_conversations_for_agent, stats_caller
 ):
     """last_run_at for a chat agent is max(Conversation.updated_at).
 
     The fixture seeds one conversation updated today and one updated 4 days
     ago. last_run_at should be ~now (within 1 minute).
     """
-    stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+    stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
     assert stats.last_run_at is not None
     drift = abs((datetime.now(timezone.utc) - stats.last_run_at).total_seconds())
     assert drift < 60, (
@@ -501,7 +678,7 @@ async def test_per_agent_stats_chat_last_run_at_uses_conversation_updated_at(
 
 @pytest.mark.asyncio
 async def test_per_agent_stats_chat_window_excludes_old_conversations(
-    db_session, seed_agent, seed_user
+    db_session, seed_agent, seed_user, stats_caller
 ):
     """Conversations updated outside the window don't count toward runs_7d.
 
@@ -525,7 +702,7 @@ async def test_per_agent_stats_chat_window_excludes_old_conversations(
     await db_session.commit()
 
     try:
-        stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+        stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
         assert stats.runs_7d == 0, (
             f"Conversation outside the 7d window must not count, got runs_7d={stats.runs_7d}. "
             "Window-on-updated_at semantics are not being applied."
@@ -539,7 +716,7 @@ async def test_per_agent_stats_chat_window_excludes_old_conversations(
 
 @pytest.mark.asyncio
 async def test_per_agent_stats_chat_cost_window_uses_ai_usage_timestamp(
-    db_session, seed_agent, seed_user
+    db_session, seed_agent, seed_user, stats_caller
 ):
     """total_cost_7d windows on AIUsage.timestamp, not Conversation.updated_at.
 
@@ -574,7 +751,7 @@ async def test_per_agent_stats_chat_cost_window_uses_ai_usage_timestamp(
     await db_session.commit()
 
     try:
-        stats = await get_agent_stats(seed_agent.id, db_session, window_days=7)
+        stats = await get_agent_stats(seed_agent.id, db_session, stats_caller, window_days=7)
         assert stats.total_cost_7d == Decimal("0"), (
             f"Expected 0 (ancient AIUsage outside 7d window), got {stats.total_cost_7d}. "
             "Cost is incurred at AIUsage time — window should be on AIUsage.timestamp, "
@@ -588,7 +765,7 @@ async def test_per_agent_stats_chat_cost_window_uses_ai_usage_timestamp(
 
 @pytest.mark.asyncio
 async def test_fleet_stats_includes_chat_conversations(
-    db_session, seed_agent, seed_chat_conversations_for_agent
+    db_session, seed_agent, seed_chat_conversations_for_agent, stats_caller
 ):
     """Fleet total_runs and total_cost_7d include chat-channel activity.
 
@@ -596,7 +773,7 @@ async def test_fleet_stats_includes_chat_conversations(
     fleet total_runs must be ≥ 2 and total_cost_7d must include the chat
     AIUsage cost (0.10).
     """
-    s = await get_fleet_stats(db_session, org_id=None, window_days=7)
+    s = await get_fleet_stats(db_session, stats_caller, window_days=7)
     assert s.total_runs >= 2, (
         f"Fleet total_runs={s.total_runs} excludes chat conversations. "
         "RUNS (7D) card on the fleet dashboard will undercount."

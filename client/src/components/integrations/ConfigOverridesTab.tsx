@@ -52,6 +52,7 @@ interface ConfigOverridesTabProps {
 	orgsWithMappings: OrgWithMapping[];
 	configSchema: ConfigSchemaItem[];
 	integrationId: string;
+	canManageMapping: (organizationId: string) => boolean;
 }
 
 interface EditingCell {
@@ -63,6 +64,7 @@ export function ConfigOverridesTab({
 	orgsWithMappings,
 	configSchema,
 	integrationId,
+	canManageMapping,
 }: ConfigOverridesTabProps) {
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
@@ -120,6 +122,7 @@ export function ConfigOverridesTab({
 	const getRowKey = (row: ConfigRow) => `${row.orgId}:${row.configKey}`;
 
 	const handleCellClick = (row: ConfigRow) => {
+		if (!canManageMapping(row.orgId)) return;
 		if (savingRows.size > 0) return;
 		setSaveError(null);
 		// Start with current value or empty - never show defaults
@@ -130,6 +133,7 @@ export function ConfigOverridesTab({
 	};
 
 	const handleSave = async (row: ConfigRow, newValue: unknown) => {
+		if (!canManageMapping(row.orgId)) return;
 		if (!row.mappingId || !row.mapping) {
 			toast.error("No mapping exists - create a mapping first");
 			return;
@@ -180,6 +184,7 @@ export function ConfigOverridesTab({
 	};
 
 	const handleDeleteClick = (row: ConfigRow) => {
+		if (!canManageMapping(row.orgId)) return;
 		setDeleteError(null);
 		// Show confirmation dialog
 		setDeleteConfirm(row);
@@ -187,7 +192,7 @@ export function ConfigOverridesTab({
 
 	const handleDeleteConfirm = async () => {
 		const row = deleteConfirm;
-		if (!row || isDeleting) return;
+		if (!row || !canManageMapping(row.orgId) || isDeleting) return;
 		setDeleteError(null);
 
 		// Delete the override by sending null for the key
@@ -306,6 +311,7 @@ export function ConfigOverridesTab({
 					const rowKey = getRowKey(row);
 					const isEditing = editingCell?.rowKey === rowKey;
 					const isSaving = savingRows.has(rowKey);
+					const canManage = canManageMapping(row.orgId);
 					return (
 						<ConfigurationOverrideRecord
 							key={rowKey}
@@ -313,6 +319,7 @@ export function ConfigOverridesTab({
 							configKey={row.configKey}
 							type={row.fieldType}
 							actions={
+								canManage &&
 								!isEditing && (
 									<RecordActionsMenu
 										label={`More actions for ${row.orgName} ${row.configKey}`}
@@ -348,7 +355,7 @@ export function ConfigOverridesTab({
 									}}
 									onCancel={handleCancel}
 								/>
-							) : (
+							) : canManage ? (
 								<button
 									type="button"
 									disabled={savingRows.size > 0}
@@ -362,6 +369,14 @@ export function ConfigOverridesTab({
 										row.hasOverride,
 									)}
 								</button>
+							) : (
+								<span className="block min-h-11 w-full rounded-[var(--bf-radius-control)] border border-border/70 bg-muted/30 px-3 py-3 text-left text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
+									{formatDisplayValue(
+										row.value,
+										row.fieldType,
+										row.hasOverride,
+									)}
+								</span>
 							)}
 						</ConfigurationOverrideRecord>
 					);

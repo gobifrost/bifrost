@@ -70,7 +70,6 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/claims.py', 'Table.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'ClaimORM.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'Table.organization_id == org_id, Table.access.is_not(None)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/claims.py', 'stmt = stmt.where(ClaimORM.organization_id == filter_org)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/tables.py', 'stmt = select(CustomClaimORM.name).where(CustomClaimORM.organization_id == organization_id)', 'tables custom claim cross-ref; phase 6 migrates'),
     # The cli.py `ConfigModel.organization_id == org_uuid` entry was removed
     # in the SDK engine-local stage 2a: cli_set/list/delete_config now share
@@ -79,22 +78,14 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     # removed in the SDK table-metadata stage: cli_create_table now shares
     # shared/sdk_table_metadata.py (exact-scope check, no cascade).
     # cli_list_tables migrated to TableRepository.list() in phase 6.
-    ('routers/export_import.py', 'Config.organization_id == mapping.organization_id', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'else Config.organization_id.is_(None),', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'Config.organization_id.is_(None),', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(KnowledgeStore.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(KnowledgeStore.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Table.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Table.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Config.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Config.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'mapping_query = mapping_query.where(IntegrationMapping.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'mapping_query = mapping_query.where(IntegrationMapping.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
     ('routers/integrations.py', 'IntegrationMapping.organization_id == org_id,', 'integration mapping inline; phase 6 migrates'),
     ('routers/integrations.py', 'OAuthToken.organization_id.is_(None),', 'integration health summary exact-scope lookup for the global default OAuth token (NOT cascade)'),
     ('routers/integrations.py', 'ConfigModel.organization_id.is_(None),', 'integration config inline; phase 5 migrates'),
     ('routers/integrations.py', 'ConfigModel.organization_id == organization_id,', 'integration config inline; phase 5 migrates'),
     ('routers/integrations.py', 'ConfigModel.organization_id == org_id,', 'integration config inline; phase 5 migrates'),
+    ('routers/claims.py', 'stmt = stmt.where(ClaimORM.organization_id == target)', 'claims list constrains an explicitly selected organization only after require_operation at that target; the collection case uses operation_reach'),
+    ('routers/events.py', 'conditions.append(EventSource.organization_id.is_(None))', 'event-source Global-only view first verifies original-user reach and events.read at Global; this is an exact selected-target predicate'),
+    ('routers/events.py', 'conditions.append(EventSource.organization_id == organization_id)', 'event-source selected-organization view first verifies original-user reach and events.read at that organization; this is an exact selected-target predicate'),
     # The KnowledgeStore document-list inline cascades were removed (EXT-1
     # NEW-J) — list_all_documents / list_documents now route through
     # org_filter_clause. The single-document update/conflict lookups moved
@@ -102,7 +93,10 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     # delete_document); this entry now covers only the BULK scope-update
     # conflict check.
     ('routers/knowledge_sources.py', 'KnowledgeStore.organization_id == target_org_id,', 'bulk scope-update conflict check; phase 6 migrates'),
-    ('routers/mcp_connections.py', 'query = query.where(MCPConnection.organization_id == scope_org)', 'MCP connection org filter; phase 6 migrates'),
+    ('routers/knowledge_sources.py', 'return KnowledgeStore.organization_id.is_(None)', 'knowledge explicit Global selection is authorized by _authorize_knowledge_scope before building the exact selected-target predicate'),
+    ('routers/knowledge_sources.py', 'KnowledgeStore.organization_id == organization_id,', 'knowledge explicit organization selection is authorized by _authorize_knowledge_scope; shared Global fallback is intentionally expressed beside that exact predicate'),
+    ('routers/knowledge_sources.py', 'KnowledgeStore.organization_id.is_(None),', 'knowledge selected-organization reads deliberately include the shared Global fallback after authorization of the selected target'),
+    ('routers/knowledge_sources.py', 'return or_(allowed, KnowledgeStore.organization_id.is_(None))', 'knowledge collection visibility intersects original-user and knowledge.read reach, then conditionally adds Global only when that shared fallback is reachable'),
     ('routers/metrics.py', 'query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
     ('routers/metrics.py', 'query = query.where(ExecutionMetricsDaily.organization_id.is_(None))', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
     ('routers/metrics.py', '.join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
@@ -111,34 +105,20 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     # All 5 OAuthProvider/Token inline-cascade entries in oauth_connections.py
     # disappeared with the class. The new OAuthProviderRepository in
     # api/src/repositories/oauth.py is the canonical class.
-    ('routers/roi_reports.py', 'query = query.where(ExecutionMetricsDaily.organization_id.is_(None))', 'identity-entity scope filter (permanent)'),
-    ('routers/roi_reports.py', 'query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)', 'identity-entity scope filter (permanent)'),
-    ('routers/roi_reports.py', 'query = query.where(WorkflowROIDaily.organization_id.is_(None))', 'identity-entity scope filter (permanent)'),
-    ('routers/roi_reports.py', 'query = query.where(WorkflowROIDaily.organization_id == org_uuid)', 'identity-entity scope filter (permanent)'),
     ('routers/roi_reports.py', '.join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)', 'identity-entity scope filter (permanent)'),
     ('routers/solutions.py', 'set_keys_q = select(Config.key).where(Config.organization_id == sol.organization_id)', 'entities endpoint: install-scoped config-key existence read for value_set status (NOT cascade)'),
     ('routers/solutions.py', 'set_keys_q = select(Config.key).where(Config.organization_id.is_(None))', 'entities endpoint: global-scope config-key existence read for value_set status (NOT cascade)'),
     ('routers/solutions.py', 'return model.organization_id.is_(None)  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
     ('routers/solutions.py', 'return model.organization_id == org_id  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
-    ('routers/usage_reports.py', 'base_conditions.append(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'filters.append(Execution.organization_id == org_id)', 'Execution identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'conv_query = conv_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'agent_query = agent_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', '.join(Organization, AIUsage.organization_id == Organization.id)', 'identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', '.outerjoin(Organization, Execution.organization_id == Organization.id)', 'Execution identity-entity scope filter (permanent)'),
     ('routers/usage_reports.py', 'Organization, KnowledgeStorageDaily.organization_id == Organization.id', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'KnowledgeStorageDaily.organization_id == filter_org_id', 'identity-entity scope filter (permanent)'),
-    ('routers/websocket.py', '(TableOrm.organization_id == user.organization_id)', 'websocket table subscription filter; phase 6 migrates'),
-    ('routers/websocket.py', '| TableOrm.organization_id.is_(None)', 'websocket table subscription filter; phase 6 migrates'),
+    ('routers/websocket.py', '.where((TableOrm.organization_id == caller.ctx.home_organization_id) | TableOrm.organization_id.is_(None))', 'websocket name resolution is limited to the caller home organization plus its shared Global fallback, then rechecked against original-user reach'),
+    ('routers/websocket.py', 'return execution is None or execution.organization_id == user.organization_id', 'verified embedded execution-session ownership is an exact persisted-row organization predicate; ordinary callers use the canonical execution-access helper'),
     ('routers/workflows.py', 'forms_query = forms_query.where(Form.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
     ('routers/workflows.py', 'agents_query = agents_query.where(Agent.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
     ('routers/workflows.py', 'apps_base_query = apps_base_query.where(Application.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
-    ('routers/agents.py', 'Workflow.organization_id.is_(None),', 'accessible-tools org filter on the role-join result; not an OrgScopedRepository read path'),
-    ('routers/agents.py', 'Workflow.organization_id == user.organization_id,', 'accessible-tools org filter on the role-join result; not an OrgScopedRepository read path'),
-    ('routers/agents.py', 'in_scope = a.organization_id is None or a.organization_id == user.organization_id', 'delegations: per-delegate visibility re-check, not a repository list query'),
-    ('routers/mcp_servers.py', 'else [conn for conn in server.connections if conn.organization_id == ctx.org_id]', 'get_mcp_server: filters an already-fetched relationship for the response, never assigned back to the ORM collection (see comment above) — not a query'),
-    ('routers/metrics.py', 'ExecutionModel.organization_id == organization_id', 'recent_failures org scoping for non-bypass dashboard callers; Execution is an identity-entity (telemetry), not OrgScopedRepository'),
+    ('routers/tables.py', 'stmt = stmt.where(Table.organization_id == target_org_id)', 'tables explicit scope is checked by require_operation at the selected target; collection reads use operation_reach instead'),
 }
 
 
@@ -243,10 +223,6 @@ IDENTITY_MODELS: set[str] = {
     # at). It belongs to an org but is never resolved by name with cascade
     # — it's read by (user_id, role_id), like UserRole itself.
     "UserRoleBoundary",
-    # A workflow permission grant's organization_id is the boundary a grant
-    # applies at, not a scope it resolves in. Read by workflow_id, never
-    # name-resolved through the cascade.
-    "WorkflowPermissionGrant",
     "Event",
     "AuditLog",
     # The catalog of archived audit segments: belongs with AuditLog, read by
@@ -451,11 +427,12 @@ SDK_ROUTER_FILES = {
 # the function across URL renames; the path-based version would have
 # missed the same drift the resolver test was meant to catch.
 EXEMPT_SDK_HANDLERS: dict[str, str] = {
-    # As of 2026-05-26 every scope-taking SDK handler in cli.py routes
-    # through _resolve_sdk_org_id. This list is left in place so that future
-    # exempt handlers can be added with an explicit justification — adding
-    # an entry without a one-line reason is itself a CI failure
+    # Adding an entry without a one-line reason is itself a CI failure
     # (test_exempt_list_well_formed).
+    "sdk_integrations_list_mappings": (
+        "Ignores the legacy scope field; lists every mapping in the caller's "
+        "integrations.read reach (shared.sdk_integrations)."
+    ),
 }
 
 
@@ -469,16 +446,22 @@ RESOLVER_CALL_NAMES = {
     "resolve_sdk_scope",
 }
 
-# These SDK handlers delegate scope-taking requests to one shared service
-# operation. Keep checking the delegate's body as well as the handler call:
-# accepting the delegate name alone would let a later refactor drop the gate.
-DELEGATED_SCOPE_SERVICES = {
-    "list_sdk_integration_mappings",
-    "get_sdk_integration_mapping_dict",
-    "upsert_sdk_integration_mapping",
-    "delete_sdk_integration_mapping",
-    "refresh_sdk_oauth_token",
+# Some handlers delegate scope-taking requests to a shared helper. The
+# delegate is accepted only after its own resolver call is checked below;
+# accepting a helper name by itself would let a later refactor remove the
+# authorization boundary while preserving this router-level tripwire.
+DELEGATED_SCOPE_SERVICES: dict[str, tuple[Path, str]] = {
+    "get_sdk_integration_mapping_dict": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),
+    "upsert_sdk_integration_mapping": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),
+    "delete_sdk_integration_mapping": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),
+    "refresh_sdk_oauth_token": (API_ROOT.parent / "shared" / "sdk_integrations.py", "resolve_sdk_scope"),
+    # Knowledge handlers use a router-local authorization helper. That helper
+    # must call the shared knowledge scope parser, whose body is checked to
+    # reach resolve_effective_scope below.
+    "_authorize_sdk_knowledge": (API_ROOT.parent / "src" / "routers" / "cli.py", "resolve_knowledge_scope"),
 }
+
+_KNOWLEDGE_SCOPE_RESOLVER = API_ROOT.parent / "shared" / "sdk_knowledge.py"
 
 
 def _handler_names_taking_scope(tree: ast.AST) -> dict[str, ast.AsyncFunctionDef | ast.FunctionDef]:
@@ -602,7 +585,7 @@ def _handler_calls_resolver(node: ast.AsyncFunctionDef | ast.FunctionDef) -> boo
     for sub in ast.walk(node):
         if isinstance(sub, ast.Call):
             func = sub.func
-            accepted_calls = RESOLVER_CALL_NAMES | DELEGATED_SCOPE_SERVICES
+            accepted_calls = RESOLVER_CALL_NAMES | set(DELEGATED_SCOPE_SERVICES)
             if isinstance(func, ast.Name) and func.id in accepted_calls:
                 return True
             if isinstance(func, ast.Attribute) and func.attr in accepted_calls:
@@ -634,25 +617,42 @@ class TestSDKEndpointsUseResolver:
 
         assert callable(resolve_effective_scope)
 
-    def test_delegated_integration_services_call_resolver(self) -> None:
-        service = ast.parse(
-            (API_ROOT.parent / "shared" / "sdk_integrations.py").read_text()
-        )
-        functions = {
-            node.name: node
-            for node in service.body
-            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
-        }
-        for name in DELEGATED_SCOPE_SERVICES:
-            assert name in functions, f"delegated SDK scope service missing: {name}"
+    def test_delegated_scope_services_call_their_verified_resolver(self) -> None:
+        functions_by_path: dict[Path, dict[str, ast.AsyncFunctionDef | ast.FunctionDef]] = {}
+        for name, (path, resolver) in DELEGATED_SCOPE_SERVICES.items():
+            functions = functions_by_path.setdefault(
+                path,
+                {
+                    node.name: node
+                    for node in ast.parse(path.read_text()).body
+                    if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+                },
+            )
+            assert name in functions, f"delegated SDK scope service missing: {path.name}::{name}"
             assert any(
                 isinstance(call, ast.Call)
                 and (
-                    (isinstance(call.func, ast.Name) and call.func.id == "resolve_sdk_scope")
-                    or (isinstance(call.func, ast.Attribute) and call.func.attr == "resolve_sdk_scope")
+                    (isinstance(call.func, ast.Name) and call.func.id == resolver)
+                    or (isinstance(call.func, ast.Attribute) and call.func.attr == resolver)
                 )
                 for call in ast.walk(functions[name])
-            ), f"delegated SDK scope service no longer resolves scope: {name}"
+            ), f"delegated SDK scope service no longer resolves scope: {path.name}::{name}"
+
+        knowledge = {
+            node.name: node
+            for node in ast.parse(_KNOWLEDGE_SCOPE_RESOLVER.read_text()).body
+            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        }
+        resolver = knowledge.get("resolve_knowledge_scope")
+        assert resolver is not None, "shared knowledge scope resolver is missing"
+        assert any(
+            isinstance(call, ast.Call)
+            and (
+                (isinstance(call.func, ast.Name) and call.func.id == "resolve_effective_scope")
+                or (isinstance(call.func, ast.Attribute) and call.func.attr == "resolve_effective_scope")
+            )
+            for call in ast.walk(resolver)
+        ), "shared knowledge scope resolver no longer enforces original-user reach"
 
     def test_exempt_list_well_formed(self) -> None:
         for name, reason in EXEMPT_SDK_HANDLERS.items():

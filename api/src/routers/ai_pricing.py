@@ -2,7 +2,7 @@
 AI Pricing Router
 
 Provides CRUD endpoints for AI model pricing configuration.
-Platform admin only.
+Requires the matching global Settings permission.
 
 Endpoint Structure:
 - GET /api/settings/ai/pricing - List all model pricing
@@ -18,7 +18,7 @@ from decimal import Decimal
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.core.cache import get_shared_redis
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
@@ -31,10 +31,29 @@ from src.models import (
 )
 from src.models.orm import AIModelPricing, AIUsage
 from src.services.ai_usage_service import backfill_model_costs
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/settings/ai", tags=["AI Settings"])
+AI_PRICING_LIST_OPERATION = "GET /api/settings/ai/pricing"
+AI_PRICING_CREATE_OPERATION = "POST /api/settings/ai/pricing"
+AI_PRICING_UPDATE_OPERATION = "PUT /api/settings/ai/pricing/{pricing_id}"
+AI_PRICING_DELETE_OPERATION = "DELETE /api/settings/ai/pricing/{pricing_id}"
+
+
+async def _authorize_platform_setting(
+    db: DbSession,
+    user: CurrentActiveUser,
+    operation: str,
+) -> None:
+    await authorize_operation(db, user, operation, GLOBAL)
+
+
+router = APIRouter(
+    prefix="/api/settings/ai",
+    tags=["AI Settings"],
+)
 
 
 @router.get(
@@ -42,7 +61,6 @@ router = APIRouter(prefix="/api/settings/ai", tags=["AI Settings"])
     response_model=AIModelPricingListResponse,
     summary="List model pricing",
     description="List all model pricing plus models used without pricing configured.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def list_pricing(
     user: CurrentActiveUser,
@@ -54,6 +72,7 @@ async def list_pricing(
     Returns list with pricing info and a flag for models that have been used
     but don't have pricing configured.
     """
+    await _authorize_platform_setting(db, user, AI_PRICING_LIST_OPERATION)
     # Get all pricing entries
     pricing_query = select(AIModelPricing).order_by(
         AIModelPricing.provider, AIModelPricing.model
@@ -114,7 +133,6 @@ async def list_pricing(
     status_code=status.HTTP_201_CREATED,
     summary="Create model pricing",
     description="Create a new model pricing entry.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def create_pricing(
     user: CurrentActiveUser,
@@ -122,6 +140,7 @@ async def create_pricing(
     data: AIModelPricingCreate,
 ) -> AIModelPricingPublic:
     """Create new pricing entry."""
+    await _authorize_platform_setting(db, user, AI_PRICING_CREATE_OPERATION)
     # Check if pricing already exists for this provider/model
     existing_query = select(AIModelPricing).where(
         AIModelPricing.provider == data.provider,
@@ -189,7 +208,6 @@ async def create_pricing(
     response_model=AIModelPricingPublic,
     summary="Update model pricing",
     description="Update an existing model pricing entry.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def update_pricing(
     pricing_id: int,
@@ -198,6 +216,7 @@ async def update_pricing(
     data: AIModelPricingUpdate,
 ) -> AIModelPricingPublic:
     """Update existing pricing entry."""
+    await _authorize_platform_setting(db, user, AI_PRICING_UPDATE_OPERATION)
     # Find pricing entry
     pricing_query = select(AIModelPricing).where(AIModelPricing.id == pricing_id)
     pricing_result = await db.execute(pricing_query)
@@ -236,7 +255,6 @@ async def update_pricing(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete model pricing",
     description="Delete an existing model pricing entry.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def delete_pricing(
     pricing_id: int,
@@ -244,6 +262,7 @@ async def delete_pricing(
     db: DbSession,
 ) -> None:
     """Delete pricing entry."""
+    await _authorize_platform_setting(db, user, AI_PRICING_DELETE_OPERATION)
     # Find pricing entry
     pricing_query = select(AIModelPricing).where(AIModelPricing.id == pricing_id)
     pricing_result = await db.execute(pricing_query)

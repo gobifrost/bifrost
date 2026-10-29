@@ -31,13 +31,14 @@ const SMALL_WORDS = new Set([
 	"with",
 ]);
 
-/** "Target in reach" → "Target in Reach". */
+/** "Target in reach" → "Target in Reach". A word the server already
+ * capitalized is part of a name and stays as written ("Run As User"). */
 export function stepTitle(label: string): string {
 	return label
 		.split(" ")
 		.map((word, index) =>
-			index > 0 && SMALL_WORDS.has(word.toLowerCase())
-				? word.toLowerCase()
+			index > 0 && SMALL_WORDS.has(word)
+				? word
 				: word.charAt(0).toUpperCase() + word.slice(1),
 		)
 		.join(" ");
@@ -69,6 +70,8 @@ function workflowAccessSentence(reason: string): string | undefined {
 }
 
 function runUserSentence(step: AccessStep): string | undefined {
+	if (step.reason === "inactive")
+		return "They're inactive, so they can't run as another user.";
 	const who = { person: "this person", identity: "this identity" }[
 		step.reason
 	];
@@ -78,12 +81,22 @@ function runUserSentence(step: AccessStep): string | undefined {
 		: `Runs as ${who}.`;
 }
 
+function runAsUserSentence(reason: string): string | undefined {
+	return {
+		person: "Active user, so Run As is allowed.",
+		inactive: "This user is inactive, so no one can run as them.",
+		system_account: "This is the system account, so no one can run as it.",
+		managed_identity:
+			"This is a managed identity, so no one can run as it. Assign it to the workflow or agent instead.",
+	}[reason];
+}
+
 function powersSentence(step: AccessStep): string | undefined {
 	const grants = Array.isArray(step.facts.grants) ? step.facts.grants : [];
 	return {
 		no_workflow: "No workflow: only their own roles apply.",
-		full: "The workflow has Full powers: every permission, secrets included.",
-		restricted: `The workflow is Restricted: ${grants.length} ${grants.length === 1 ? "grant adds" : "grants add"} to the run user's roles.`,
+		full: "The workflow has Full Access: every permission, secrets included.",
+		restricted: `The workflow uses Declared Permissions: ${grants.length} ${grants.length === 1 ? "grant adds" : "grants add"} to the run user's roles.`,
 	}[step.reason];
 }
 
@@ -108,6 +121,7 @@ function targetSentence(
 		platform_admin: "A Platform Admin reaches every organization.",
 		home: `${organization} is their home organization.`,
 		outside: `${organization} is outside their reach.`,
+		outside_reach: "Not a user they can run as.",
 	}[reason];
 }
 
@@ -123,6 +137,8 @@ function permissionSentence(
 		return `Their base role grants ${named("base_role:")}.`;
 	if (reason.startsWith("denied:missing:"))
 		return `No role grants ${named("denied:missing:")} there.`;
+	if (reason === "workflow_capability" && typeof step.facts.permission === "string")
+		return `The workflow adds ${names.permission(step.facts.permission)} within the run user's reach.`;
 	if (reason.startsWith("role:")) {
 		const [roleId, held] = roleParts(reason);
 		const permission = names.permission(held);
@@ -134,9 +150,10 @@ function permissionSentence(
 			: `A role placed there grants ${permission}.`;
 	}
 	return {
-		full: "Full powers include every permission.",
+		full: "Full Access includes every permission.",
 		platform_admin: "A Platform Admin holds All Permissions.",
 		public: "Anyone may do this.",
+		"reach:home_or_global": "The data target is in reach. Its policy decides access.",
 		signed_in: "Anyone signed in may do this in their home organization.",
 		"denied:operation_confined_to_own_org":
 			"This operation works only in their home organization.",
@@ -146,26 +163,41 @@ function permissionSentence(
 	}[reason];
 }
 
+/** The Graph-style name the server stored on a permission step ("Read Agents"). */
+function storedPermissionName(step: AccessStep): string | undefined {
+	const name = step.facts.permission_display_name;
+	return (step.key === "permission" || step.key === "privileged_target") &&
+		typeof name === "string"
+		? name
+		: undefined;
+}
+
 /**
  * What a step decided, as a sentence: roles and organizations by name where
  * `names` knows them ("a role placed there" where it doesn't), permissions by
- * their Graph-style names. `runUserId` recognizes a Restricted workflow's
+ * their Graph-style names. `runUserId` recognizes a Declared Permissions workflow's
  * grants, which the server judges as a role named by the run user's id. A
- * step that wasn't reached says nothing; a reason this doesn't know shows as
- * written.
+ * step that wasn't reached says nothing, except a named permission check's
+ * permission step, which says what it needs; a reason this doesn't know shows
+ * as written.
  */
 export function stepSentence(
 	step: AccessStep,
 	names: TraceNames,
 	runUserId: string | undefined,
 ): string {
-	if (step.status === "not_reached") return "";
+	if (step.status === "not_reached") {
+		const needed = storedPermissionName(step);
+		return needed ? `Needs ${needed}.` : "";
+	}
 	const sentences: Record<string, (() => string | undefined) | undefined> = {
 		workflow_access: () => workflowAccessSentence(step.reason),
 		run_user: () => runUserSentence(step),
 		powers: () => powersSentence(step),
 		target: () => targetSentence(step, names),
 		permission: () => permissionSentence(step, names, runUserId),
+		run_as_user: () => runAsUserSentence(step.reason),
+		privileged_target: () => permissionSentence(step, names, runUserId),
 	};
 	return sentences[step.key]?.() ?? step.reason;
 }
@@ -192,7 +224,7 @@ function canonical(value: unknown): string {
 
 /**
  * Keys of the steps that decided differently now than then: their status,
- * reason or facts (a Restricted workflow's grants, the run user's home)
+ * reason or facts (a Declared Permissions workflow's grants, the run user's home)
  * differ.
  */
 export function changedStepKeys(
@@ -236,6 +268,8 @@ export function nowUnavailableSentence(reason: NowUnavailable): string {
 			"Table row checks can't be tested again: the rows aren't stored.",
 		run_user_missing:
 			"The user or identity it ran as no longer exists, so this check can't be tested again.",
+		run_as_user_missing:
+			"The user it acted as no longer exists, so this check can't be tested again.",
 		workflow_missing:
 			"The workflow no longer exists, so this check can't be tested again.",
 		solution_not_recorded:
@@ -252,11 +286,30 @@ const CHECK_KINDS: Record<string, string> = {
 	entry: "Workflow or Agent Access",
 	policy: "Data Policy",
 	secret: "Secret",
+	permission: "Permission",
 };
 
 /** An access check's kind (its resource type) in Title Case. */
 export function checkKindTitle(kind: string): string {
 	return CHECK_KINDS[kind] ?? stepTitle(kind.replaceAll("_", " "));
+}
+
+/**
+ * What an access check checked: its kind, and for a named permission the
+ * permission's Graph-style name from the stored trace ("Permission: Read
+ * Agents").
+ */
+export function checkResourceTitle(
+	kind: string,
+	details: Record<string, unknown> | null | undefined,
+): string {
+	const title = checkKindTitle(kind);
+	if (kind !== "permission") return title;
+	const step = storedTrace(details)?.steps.find(
+		(candidate) => candidate.key === "permission",
+	);
+	const name = step && storedPermissionName(step);
+	return name ? `${title}: ${name}` : title;
 }
 
 function isTrace(value: unknown): value is AccessTrace {

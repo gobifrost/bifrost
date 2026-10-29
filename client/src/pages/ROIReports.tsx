@@ -64,7 +64,8 @@ import {
 	type ROITrends,
 	type WorkflowROI,
 } from "@/services/reports";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import {
@@ -300,9 +301,19 @@ type SortConfig = { by: string; dir: "asc" | "desc" };
 export function ROIReports() {
 	const reducedMotion = useReducedMotion();
 	const wideChart = useMediaQuery("(min-width: 640px)");
-	const { isPlatformAdmin } = useAuth();
+	const { authorization, canAt, canAnywhere } = useAuthorization();
+	const canReadReport = canAnywhere("reports.read");
+	const canDiscoverOrganizations = canAnywhere("organizations.read");
+	const knownOrganizations = authorization?.home_organization_id
+		? [
+				{
+					id: authorization.home_organization_id,
+					name: "Home organization",
+				},
+			]
+		: [];
 
-	// Organization filter state (platform admins only)
+	// Organization filters are constrained to the report permission.
 	// undefined = all, null = global only, UUID string = specific org
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
@@ -312,7 +323,9 @@ export function ROIReports() {
 	const isGlobalScope = filterOrgId === undefined || filterOrgId === null;
 
 	// Fetch real organizations for demo data generation
-	const { data: orgsData } = useOrganizations({ enabled: isPlatformAdmin });
+	const { data: orgsData } = useOrganizations({
+		enabled: canDiscoverOrganizations,
+	});
 
 	// Demo mode state
 	const [showDemoData, setShowDemoData] = useState(false);
@@ -542,7 +555,7 @@ export function ROIReports() {
 					title="ROI Reports"
 					description="Workflow automation value and time savings analytics"
 					actions={
-						isPlatformAdmin && (
+						canReadReport && (
 							<div className="flex min-h-11 flex-wrap items-center gap-3">
 								{showDemoData && (
 									<Badge variant="outline">Demo Mode</Badge>
@@ -584,13 +597,24 @@ export function ROIReports() {
 							dateRange={dateRange}
 							onDateRangeChange={setDateRange}
 						/>
-						{isPlatformAdmin && (
+						{canReadReport && (
 							<div className="w-full sm:ml-auto sm:w-56">
 								<OrganizationSelect
 									value={filterOrgId}
 									onChange={setFilterOrgId}
 									showAll={true}
-									showGlobal={true}
+									showGlobal={canAt(
+										"reports.read",
+										GLOBAL_TARGET,
+									)}
+									loadOrganizations={canDiscoverOrganizations}
+									knownOrganizations={knownOrganizations}
+									filterOrganizations={(organization) =>
+										canAt(
+											"reports.read",
+											orgTarget(organization.id),
+										)
+									}
 									placeholder="All organizations"
 								/>
 							</div>

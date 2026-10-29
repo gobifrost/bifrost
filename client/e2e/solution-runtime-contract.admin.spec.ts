@@ -44,6 +44,7 @@ const el = boot.mountEl;
 const h = {
   Authorization: "Bearer " + boot.token,
   "X-Bifrost-App": boot.appId,
+  ...(boot.orgScope ? { "X-Bifrost-Org": boot.orgScope } : {}),
   "Content-Type": "application/json",
 };
 const call = (path, init) =>
@@ -56,13 +57,14 @@ const mark = (id, txt) => {
 };
 (async () => {
   try {
+    mark("org-scope", boot.orgScope || "FAIL:no-org-scope");
     const wf = await call("/api/workflows/execute", {
       method: "POST",
       body: JSON.stringify({ workflow_id: "workflows/runtime.py::main", sync: true }),
     }).then((r) => r.json());
     mark("workflow-result", (wf.result && wf.result.marker) || "FAIL:" + JSON.stringify(wf).slice(0, 300));
 
-    const tq = await call("/api/tables/${TABLE_NAME}/documents/query", {
+    const tq = await call("/api/tables/${TABLE_NAME}/documents/query" + (boot.orgScope ? "?scope=" + encodeURIComponent(boot.orgScope) : ""), {
       method: "POST",
       body: JSON.stringify({ limit: 10 }),
     }).then((r) => r.json());
@@ -260,17 +262,29 @@ function workspaceZip(): Buffer {
 
 test.describe("deployed solution runtime contract", () => {
 	let createdSolutionId: string | null = null;
+	let createdOrganizationId: string | null = null;
 
 	test.afterEach(async ({ api }) => {
-		if (!createdSolutionId) return;
-		const cleanup = await api.delete(
-			`/api/solutions/${createdSolutionId}`,
-			{
-				params: { confirm: SLUG },
-			},
-		);
-		expect(cleanup.ok(), await cleanup.text()).toBeTruthy();
-		createdSolutionId = null;
+		if (createdSolutionId) {
+			const cleanup = await api.delete(
+				`/api/solutions/${createdSolutionId}`,
+				{
+					params: { confirm: SLUG },
+				},
+			);
+			expect(cleanup.ok(), await cleanup.text()).toBeTruthy();
+			createdSolutionId = null;
+		}
+		if (createdOrganizationId) {
+			const organizationCleanup = await api.delete(
+				`/api/organizations/${createdOrganizationId}`,
+			);
+			expect(
+				organizationCleanup.ok(),
+				await organizationCleanup.text(),
+			).toBeTruthy();
+			createdOrganizationId = null;
+		}
 	});
 
 	test("runtime resources resolve and solution forms expose sharing", async ({
@@ -284,12 +298,23 @@ test.describe("deployed solution runtime contract", () => {
 			/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
 		);
 
-		// --- create the install, then deploy the workspace zip ---
+		// One customer-scoped install and one deploy job prove the browser gets
+		// the App's organization as its SDK bootstrap scope.
+		const customer = await api.post("/api/organizations", {
+			data: {
+				name: `Runtime Contract ${UNIQUE}`,
+				domain: `runtime-contract-${UNIQUE}.gobifrost.dev`,
+			},
+		});
+		expect(customer.ok(), await customer.text()).toBeTruthy();
+		const customerOrganizationId = (await customer.json()).id as string;
+		createdOrganizationId = customerOrganizationId;
+
 		const sol = await api.post("/api/solutions", {
 			data: {
 				slug: SLUG,
 				name: SLUG,
-				organization_id: null,
+				organization_id: customerOrganizationId,
 				global_repo_access: false,
 			},
 		});
@@ -329,6 +354,9 @@ test.describe("deployed solution runtime contract", () => {
 
 		// --- drive the deployed app in the browser ---
 		await page.goto(`/apps/${APP_SLUG}`);
+		await expect(page.getByTestId("org-scope")).toHaveText(
+			customerOrganizationId,
+		);
 		await expect(page.getByTestId("workflow-result")).toHaveText("golden", {
 			timeout: 30_000,
 		});

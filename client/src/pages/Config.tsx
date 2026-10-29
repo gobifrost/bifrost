@@ -44,18 +44,27 @@ import { exportEntities } from "@/services/exportImport";
 import { ConfigDialog } from "@/components/config/ConfigDialog";
 import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import type { components } from "@/lib/v1";
 
 type ConfigType = components["schemas"]["ConfigResponse"];
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function Config() {
 	const addButtonRef = useRef<HTMLButtonElement>(null);
 	const { scope, isGlobalScope } = useOrgScope();
 	const isNarrow = useMediaQuery("(max-width: 1279px)");
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
+	const { user } = useAuth();
+	const canManageAnyConfigs = authorization.canAnywhere("configs.readwrite");
+	const canReadOrganizations =
+		authorization.canAnywhere("organizations.read");
+	const canTransferConfigs = authorization.canAt(
+		"platform.readwrite",
+		GLOBAL_TARGET,
+	);
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
@@ -73,27 +82,22 @@ export function Config() {
 	const [isExporting, setIsExporting] = useState(false);
 
 	// Pass filterOrgId to backend for filtering (undefined = all, null = global only)
-	// For platform admins, undefined means show all. For non-admins, backend handles filtering.
+	// Omission returns the permitted union; an explicit null selects only Global.
 	const {
 		data: configs,
 		isFetching,
 		isLoading,
 		isError,
 		refetch,
-	} = useConfigs(isPlatformAdmin ? filterOrgId : undefined);
+	} = useConfigs(filterOrgId);
 	const deleteConfig = useDeleteConfig({ showErrorToast: false });
 
-	// Fetch organizations for the org name lookup (platform admins only)
+	// Organization discovery is independent from configuration permissions.
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: canReadOrganizations,
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	// Apply weighted search — key matches dominate, integration_name/value/type
 	// still match but rank lower so a specific key search isn't drowned out by
@@ -186,26 +190,29 @@ export function Config() {
 			typeof value === "object" ? JSON.stringify(value) : String(value);
 		return text.length > 160 ? `${text.slice(0, 160)}…` : text;
 	};
-	const renderActions = (config: ConfigType) => (
-		<RecordActionsMenu label={`More actions for ${config.key}`}>
-			<DropdownMenuItem
-				className="min-h-11 whitespace-nowrap px-3"
-				onClick={() => handleEdit(config)}
-			>
-				<Pencil className="mr-2 h-4 w-4" />
-				Edit
-			</DropdownMenuItem>
-			<DropdownMenuItem
-				variant="destructive"
-				className="min-h-11 whitespace-nowrap px-3"
-				disabled={!config.id}
-				onClick={() => handleDelete(config)}
-			>
-				<Trash2 className="mr-2 h-4 w-4" />
-				Delete
-			</DropdownMenuItem>
-		</RecordActionsMenu>
-	);
+	const canManageConfig = (config: ConfigType) =>
+		authorization.canAt("configs.readwrite", orgTarget(config.org_id));
+	const renderActions = (config: ConfigType) =>
+		canManageConfig(config) ? (
+			<RecordActionsMenu label={`More actions for ${config.key}`}>
+				<DropdownMenuItem
+					className="min-h-11 whitespace-nowrap px-3"
+					onClick={() => handleEdit(config)}
+				>
+					<Pencil className="mr-2 h-4 w-4" />
+					Edit
+				</DropdownMenuItem>
+				<DropdownMenuItem
+					variant="destructive"
+					className="min-h-11 whitespace-nowrap px-3"
+					disabled={!config.id}
+					onClick={() => handleDelete(config)}
+				>
+					<Trash2 className="mr-2 h-4 w-4" />
+					Delete
+				</DropdownMenuItem>
+			</RecordActionsMenu>
+		) : null;
 	const renderSelection = (config: ConfigType) => (
 		<Checkbox
 			aria-label={`Select ${config.key}`}
@@ -256,15 +263,17 @@ export function Config() {
 								}`}
 							/>
 						</Button>
-						<Button
-							className="min-h-11 lg:min-h-0"
-							ref={addButtonRef}
-							onClick={handleAdd}
-							title="Add Config"
-						>
-							<Plus className="h-4 w-4" />
-							Add configuration
-						</Button>
+						{canManageAnyConfigs && (
+							<Button
+								className="min-h-11 lg:min-h-0"
+								ref={addButtonRef}
+								onClick={handleAdd}
+								title="Add Config"
+							>
+								<Plus className="h-4 w-4" />
+								Add configuration
+							</Button>
+						)}
 					</>
 				}
 			/>
@@ -277,18 +286,38 @@ export function Config() {
 					placeholder="Search configuration..."
 					className="w-full sm:flex-1"
 				/>
-				{isPlatformAdmin && (
+				{authorization.canAnywhere("configs.read") && (
 					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
 							onChange={setFilterOrgId}
 							showAll={true}
-							showGlobal={true}
+							showGlobal={authorization.canAt(
+								"configs.read",
+								GLOBAL_TARGET,
+							)}
+							loadOrganizations={canReadOrganizations}
+							knownOrganizations={
+								user?.organizationId
+									? [
+											{
+												id: user.organizationId,
+											name: getOrgName(user.organizationId),
+											},
+										]
+									: []
+							}
+							filterOrganizations={(org) =>
+								authorization.canAt(
+									"configs.read",
+									orgTarget(org.id),
+								)
+							}
 							placeholder="All organizations"
 						/>
 					</div>
 				)}
-				{isPlatformAdmin && (
+				{canTransferConfigs && (
 					<div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-auto sm:flex sm:flex-wrap sm:items-center">
 						{selectedIds.size > 0 && (
 							<span className="col-span-2 text-sm text-muted-foreground sm:col-span-1 sm:mr-1">
@@ -358,7 +387,7 @@ export function Config() {
 					<div className="flex-1 min-h-0">
 						{isNarrow ? (
 							<div className="rounded-[var(--bf-radius-surface)] border bg-card">
-								{isPlatformAdmin && (
+								{canTransferConfigs && (
 									<label className="flex min-h-11 items-center gap-3 border-b px-4 py-2 text-sm">
 										{renderSelectAll()}Select visible
 									</label>
@@ -376,7 +405,7 @@ export function Config() {
 											className="min-w-0 space-y-3 p-4"
 										>
 											<div className="flex items-start gap-2">
-												{isPlatformAdmin && (
+												{canTransferConfigs && (
 													<label className="flex h-11 w-11 shrink-0 items-center justify-center">
 														{renderSelection(
 															config,
@@ -388,6 +417,9 @@ export function Config() {
 														type="button"
 														className="min-h-11 w-full rounded-[var(--bf-radius-control)] text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 														onClick={() =>
+															canManageConfig(
+																config,
+															) &&
 															handleEdit(config)
 														}
 													>
@@ -400,7 +432,9 @@ export function Config() {
 												{getTypeBadge(config.type)}
 											</div>
 											<dl className="grid gap-3 text-sm sm:grid-cols-2">
-												{isPlatformAdmin && (
+												{authorization.canAnywhere(
+													"configs.read",
+												) && (
 													<div>
 														<dt className="text-xs text-muted-foreground">
 															Organization
@@ -454,12 +488,14 @@ export function Config() {
 							<DataTable className="max-h-full">
 								<DataTableHeader>
 									<DataTableRow>
-										{isPlatformAdmin && (
+										{canTransferConfigs && (
 											<DataTableHead className="w-10">
 												{renderSelectAll()}
 											</DataTableHead>
 										)}
-										{isPlatformAdmin && (
+										{authorization.canAnywhere(
+											"configs.read",
+										) && (
 											<DataTableHead className="w-0 whitespace-nowrap">
 												Organization
 											</DataTableHead>
@@ -483,19 +519,24 @@ export function Config() {
 								<DataTableBody>
 									{filteredConfigs.map((config) => (
 										<DataTableRow
-											clickable
-											onClick={() => handleEdit(config)}
+											clickable={canManageConfig(config)}
+											onClick={() =>
+												canManageConfig(config) &&
+												handleEdit(config)
+											}
 											key={
 												config.id ??
 												`${config.org_id}-${config.key}`
 											}
 										>
-											{isPlatformAdmin && (
+											{canTransferConfigs && (
 												<DataTableCell>
 													{renderSelection(config)}
 												</DataTableCell>
 											)}
-											{isPlatformAdmin && (
+											{authorization.canAnywhere(
+												"configs.read",
+											) && (
 												<DataTableCell className="min-w-40 max-w-56 [overflow-wrap:anywhere]">
 													{config.org_id ? (
 														<Badge

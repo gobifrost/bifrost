@@ -16,7 +16,7 @@ function renderList(selectionMode = false, busy = false) {
 	const result = renderWithProviders(
 		<TableRecordList
 			tables={[table]}
-			isPlatformAdmin
+			showOrganizationName
 			selectionMode={selectionMode}
 			selectedIds={new Set()}
 			allVisibleSelected={false}

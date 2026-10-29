@@ -1,0 +1,14 @@
+{
+  "key": "pr:971",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "CLI browser login keeps waiting through temporary throttling and stops when its device code expires.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/971",
+      "Controller reviewed this summary against the verified delayed-approval, throttling, and expiry regressions for issue #969."
+    ]
+  }
+}

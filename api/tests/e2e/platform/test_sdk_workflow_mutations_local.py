@@ -6,10 +6,8 @@ against the same seeded workflow the external HTTP endpoint serves,
 proving parity (durable scheduled row, queue status, 404/409 behavior)
 end to end:
 
-- the workflow records that the engine injected the worker's private
-  socket, so the migrated calls rode the shared client transport (the
-  zero-HTTP proof lives in the unit and forked-child socket tests, where
-  the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - the same values served over external HTTP ``/api/workflows/execute``
   and ``/api/workflows/executions/{id}/cancel`` match, and the
   cancelled row stays durable when re-read over external HTTP.
@@ -79,9 +77,6 @@ from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local execute/cancel E2E")
 async def {name}():
-    # The engine injected its private socket; the zero-HTTP proof lives in
-    # the unit and forked-child socket tests where the child's network API
-    # is dead by environment.
     used_socket = get_engine_socket_path() is not None
     eid = await workflows.execute("{inner_id}", {{"n": 1}}, delay_seconds=3600)
     await workflows.cancel(eid)
@@ -136,10 +131,8 @@ class TestSdkWorkflowMutationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The engine injected its socket; the zero-HTTP proof is in the
-        # unit and forked-child socket tests where the child's network API
-        # is dead.
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert isinstance(out["execution_id"], str) and out["execution_id"]
         assert str(out["duplicate"]).endswith(":409"), out
         assert str(out["missing"]).endswith(":404"), out

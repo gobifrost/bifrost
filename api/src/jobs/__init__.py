@@ -1,1 +1,1 @@
-# Background jobs - RabbitMQ consumers and schedulers
+# Background jobs - executor handlers and schedulers

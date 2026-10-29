@@ -161,7 +161,7 @@ class TestResetUserMfaRouter:
         from src.routers.users import reset_user_mfa as handler
 
         with handlers_as(admin_caller(), "src.routers.users"), patch(
-            "src.routers.users.reset_user_mfa_service",
+            "src.services.user_mfa_reset.reset_user_mfa",
             new=AsyncMock(side_effect=UserServiceError(409, PASSKEY_ONLY_MESSAGE)),
         ):
             with pytest.raises(HTTPException) as exc:

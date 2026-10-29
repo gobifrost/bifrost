@@ -1,0 +1,12 @@
+{
+  "key": "pr:1133",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal reliability fix: a reconnecting remote launcher's executor is no longer stopped by its previous owner's drain record.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1133"
+    ]
+  }
+}

@@ -24,14 +24,11 @@ k8s/
 │   ├── deployment.yaml # React frontend (nginx)
 │   └── service.yaml    # ClusterIP service (port 80)
 ├── worker/
-│   └── deployment.yaml # Background job workers
+│   └── deployment.yaml # Retired static executor (replicas: 0; see Upgrading)
 ├── scheduler/
-│   └── deployment.yaml # Scalable jobs + elected Cron trigger leader
-├── coding-agent/
-│   └── deployment.yaml # Claude Agent SDK container
-└── rabbitmq/
-    ├── deployment.yaml # RabbitMQ message broker
-    └── service.yaml    # ClusterIP service (port 5672, 15672)
+│   └── deployment.yaml # Retired static executor (replicas: 0; see Upgrading)
+└── coding-agent/
+    └── deployment.yaml # Claude Agent SDK container
 ```
 
 ## Quick Start
@@ -52,8 +49,6 @@ kubectl create secret generic bifrost-secrets \
   --from-literal=BIFROST_SECRET_KEY='your-32-char-secret-key-here' \
   --from-literal=BIFROST_DATABASE_URL='postgresql+asyncpg://user:pass@host:5432/bifrost' \
   --from-literal=BIFROST_DATABASE_URL_SYNC='postgresql://user:pass@host:5432/bifrost' \
-  --from-literal=BIFROST_RABBITMQ_URL='amqp://bifrost:pass@rabbitmq:5672/' \
-  --from-literal=BIFROST_RABBITMQ_PASSWORD='your-rabbitmq-password' \
   --from-literal=BIFROST_REDIS_URL='redis://redis:6379/0' \
   --from-literal=BIFROST_S3_ENDPOINT_URL='https://s3.us-east-1.amazonaws.com' \
   --from-literal=BIFROST_S3_ACCESS_KEY='your-access-key' \
@@ -94,7 +89,6 @@ kubectl apply -k k8s/
 **Option B: Apply individual manifests**
 
 ```bash
-kubectl apply -f k8s/rabbitmq/
 kubectl apply -f k8s/api/
 kubectl apply -f k8s/client/
 kubectl apply -f k8s/worker/
@@ -114,9 +108,29 @@ kubectl get svc -n bifrost
 # View API logs
 kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-api -f
 
-# View worker logs
-kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-worker -f
+# View worker logs (the worker Jobs the API starts)
+kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-pool-worker -f
 ```
+
+### Upgrading to API-Started Workers
+
+Work runs in worker Jobs that the API starts on demand: by default one
+stays warm and up to six run under load, each with a 512Mi request and a 2Gi
+limit (Settings → Kubernetes → Scaling & Isolation). The API needs the Job
+Role in `api/rbac.yaml`, which `kubectl apply -k k8s/` applies. The `bifrost-worker` and `bifrost-scheduler` Deployments are retired:
+the base sets them to zero replicas, so applying it stops their pods. Delete
+them once they are gone:
+
+```bash
+kubectl -n bifrost delete deployment bifrost-worker bifrost-scheduler
+```
+
+### Upgrading From a Release That Used RabbitMQ
+
+Bifrost no longer uses RabbitMQ. `kubectl apply -k k8s/` does not delete the
+`rabbitmq` Deployment and Service an earlier release created; see [Removing
+RabbitMQ and KEDA after
+upgrading](../docs/runbooks/kubernetes-worker-deployment.md#removing-rabbitmq-and-keda-after-upgrading).
 
 ## Exposing the Application
 
@@ -191,16 +205,22 @@ kubectl port-forward -n bifrost svc/api 8000:8000
 
 ## Scaling
 
-### Isolated App Build Jobs
+### Isolated Jobs
 
-The optional Kubernetes App build Jobs overlay lives outside this base at
-`deploy/kubernetes/builds`. It is not enabled by `kubectl apply -k k8s/`.
+App deploys, App SDK rebuilds and Solution deploys, backup exports and Git
+syncs can each run in their own pod instead of on a worker. A platform admin
+turns this on in Settings → Kubernetes → Scaling & Isolation; the base
+manifests already let the API start those pods, and they copy the API pod.
+
+The optional overlay at `deploy/kubernetes/builds` (not applied by
+`kubectl apply -k k8s/`) runs every Job the API starts as a dedicated
+service account with no token:
 
 ```bash
 kubectl apply -k deploy/kubernetes/builds
 ```
 
-See `docs/runbooks/kubernetes-build-jobs.md` before enabling or disabling it.
+See `docs/runbooks/kubernetes-build-jobs.md`.
 
 ### API
 
@@ -210,30 +230,33 @@ kubectl scale deployment bifrost-api -n bifrost --replicas=3
 
 ### Workers
 
-```bash
-kubectl scale deployment bifrost-worker -n bifrost --replicas=5
-```
+The API starts worker Jobs as work arrives and drains idle ones back to the
+warm minimum. A platform admin sets the range in Settings → Kubernetes →
+Scaling & Isolation; a change applies on the controllers' next pass, without
+a restart:
 
-### Scheduler
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Warm Workers | `1` | Worker Jobs kept warm for interactive runs |
+| Max Workers | `6` | Most worker Jobs at once |
+| Worker Memory (MiB) | `2048` | Memory limit of a standard worker Job |
+| Largest Worker (MiB) | `8192` | Largest worker Job sized for one large run |
+| Idle Time (Seconds) | `300` | How long a worker above the warm minimum waits for work |
 
-Every scheduler replica executes up to two durable platform jobs at a time. The
-two internal slots are a safety ceiling rather than a deployment setting. A
-fenced PostgreSQL lease elects exactly one replica to run Cron triggers and the
-legacy scheduler pub/sub listener.
+An install upgraded from a release that set these as `BIFROST_POOL_*`
+variables imports them once on first start (the page shows where each value
+came from); the API then logs those variables, and the page lists them, as
+no longer used until they are removed. The memory request and CPU stay
+deployment env (`BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB`,
+`BIFROST_POOL_WORKER_CPU_REQUEST`, `BIFROST_POOL_WORKER_CPU_LIMIT`).
 
-```bash
-kubectl scale deployment bifrost-scheduler -n bifrost --replicas=3
-```
+After an upgrade, the API replaces worker Jobs running the previous build once
+a replacement is ready; their runs finish first. See
+`docs/runbooks/kubernetes-worker-deployment.md` for sizing and draining.
 
-Deploy the lease-aware scheduler version before scaling an existing installation.
-The manifest retains the `Recreate` rollout strategy so an older singleton pod
-cannot overlap the first lease-aware rollout; `Recreate` does not restrict the
-steady-state replica count. Scale back to one before rolling back to a release
-that predates scheduler leader election.
-
-Long-running platform work runs through the shared durable queue on every
-replica; the elected leader retains only short trigger and housekeeping work.
-Scale gradually and monitor memory-pressure deferrals and queue wait time.
+Run at least two API replicas: the API also runs scheduling and the worker
+controller, and a second replica takes over within about 25 seconds when one
+is lost.
 
 ## Configuration Reference
 
@@ -244,8 +267,6 @@ Scale gradually and monitor memory-pressure deferrals and queue wait time.
 | `BIFROST_SECRET_KEY` | 32+ char secret for JWT and encryption |
 | `BIFROST_DATABASE_URL` | PostgreSQL async connection string |
 | `BIFROST_DATABASE_URL_SYNC` | PostgreSQL sync connection string |
-| `BIFROST_RABBITMQ_URL` | RabbitMQ AMQP connection string |
-| `BIFROST_RABBITMQ_PASSWORD` | RabbitMQ password (for in-cluster deployment) |
 | `BIFROST_REDIS_URL` | Redis connection string (for caching) |
 | `BIFROST_S3_ENDPOINT_URL` | S3 endpoint URL |
 | `BIFROST_S3_ACCESS_KEY` | S3 access key |
@@ -262,7 +283,6 @@ Scale gradually and monitor memory-pressure deferrals and queue wait time.
 | `BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | JWT access token TTL |
 | `BIFROST_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token TTL |
 | `BIFROST_MFA_ENABLED` | `true` | Enable MFA |
-| `BIFROST_MAX_CONCURRENCY` | `10` | Worker concurrency |
 | `BIFROST_WEBAUTHN_RP_ID` | (required) | WebAuthn relying party ID (your domain) |
 | `BIFROST_WEBAUTHN_RP_NAME` | `Bifrost` | WebAuthn display name |
 | `BIFROST_WEBAUTHN_ORIGIN` | (required) | WebAuthn origin URL (e.g., https://bifrost.example.com) |
@@ -294,6 +314,6 @@ kubectl logs -n bifrost <api-pod-name> -c migrate
 
 ### Workers not processing jobs
 
-1. Check RabbitMQ connection
-2. Verify worker logs for errors
-3. Ensure the queue exists in RabbitMQ
+1. Verify the API and worker Job logs for errors
+2. Check the database connection: executors claim work from PostgreSQL
+3. See `docs/runbooks/kubernetes-worker-deployment.md` for the executor model

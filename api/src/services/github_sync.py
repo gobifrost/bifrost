@@ -17,6 +17,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
@@ -62,6 +63,8 @@ if TYPE_CHECKING:
     )
     from src.services.sync_ops import SyncOp
 
+from bifrost.definition_validation import DefinitionIssue, DefinitionValidationError
+from bifrost.decorator_validation import validate_python_decorators
 from bifrost.manifest import (
     Manifest,
     get_all_entity_ids,
@@ -1592,6 +1595,7 @@ class GitHubSyncService:
 
         bifrost_dir = work_dir / ".bifrost"
         manifest = read_manifest_from_dir(bifrost_dir)
+        _validate_workspace_python_decorators(work_dir)
 
         has_entities = (
             manifest.organizations or manifest.roles
@@ -1939,6 +1943,17 @@ class GitHubSyncService:
                             fix_hint="This file was deleted but the entity is still registered. Use 'Clean up & Retry' to remove orphaned references.",
                             auto_fixable=True,
                         ))
+            except DefinitionValidationError as error:
+                for issue in error.issues:
+                    field = ".".join(map(str, issue.location))
+                    issues.append(PreflightIssue(
+                        path=issue.path,
+                        line=issue.line,
+                        message=f"{field}: {issue.message}" if field else issue.message,
+                        severity="error",
+                        category="manifest",
+                        fix_hint="Correct the manifest field in the repository, then retry.",
+                    ))
             except Exception as e:
                 issues.append(PreflightIssue(
                     path=".bifrost/",
@@ -1948,13 +1963,14 @@ class GitHubSyncService:
                     fix_hint="The manifest is malformed. Run 'Reimport' from Settings > Maintenance.",
                 ))
 
-        # 2. Syntax check all .py files
-        for py_file in repo_dir.rglob("*.py"):
-            rel = str(py_file.relative_to(repo_dir))
-            if rel.startswith(".git/"):
-                continue
+        # 2. Syntax check every publishable Python source.  Resolve candidates
+        # first so no preflight path can read through a symlink outside the tree.
+        try:
+            python_sources = list(_workspace_python_sources(repo_dir))
+        except DefinitionValidationError:
+            python_sources = []
+        for rel, source in python_sources:
             try:
-                source = py_file.read_text()
                 compile(source, rel, "exec")
             except SyntaxError as e:
                 issues.append(PreflightIssue(
@@ -1967,10 +1983,7 @@ class GitHubSyncService:
                 ))
 
         # 3. Ruff lint check
-        py_files = [
-            str(f) for f in repo_dir.rglob("*.py")
-            if not str(f.relative_to(repo_dir)).startswith(".git/")
-        ]
+        py_files = [str(repo_dir / path) for path, _source in python_sources]
         if py_files:
             try:
                 result = subprocess.run(
@@ -2018,6 +2031,9 @@ class GitHubSyncService:
                     except Exception:
                         pass
             return None, None
+
+        for issue in _decorator_preflight_issues(repo_dir):
+            issues.append(issue)
 
         if manifest:
             entity_ids = get_all_entity_ids(manifest)
@@ -2103,3 +2119,80 @@ class GitHubSyncService:
 
         has_errors = any(i.severity == "error" for i in issues)
         return PreflightResult(valid=not has_errors, issues=issues)
+
+
+def _candidate_python_source(work_dir: Path, path: str) -> str | None:
+    """Read a candidate Python source only when it stays inside its tree."""
+    candidate = work_dir / path
+    try:
+        root = work_dir.resolve()
+        candidate.resolve(strict=False).relative_to(root)
+        if not candidate.exists() and not candidate.is_symlink():
+            return None
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=path,
+                location=(),
+                code="unsafe_source_path",
+                message="Python source must resolve inside the workspace candidate.",
+            )
+        ]) from exc
+    if not resolved.is_file():
+        return None
+    try:
+        return resolved.read_text()
+    except UnicodeDecodeError as exc:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=path,
+                location=(),
+                code="invalid_python",
+                message="Python source must be valid UTF-8.",
+            )
+        ]) from exc
+
+
+def _workspace_python_sources(work_dir: Path) -> Iterable[tuple[str, str]]:
+    """Yield Python sources that workspace publication and indexing retain."""
+    from src.services.editor.file_filter import is_excluded_path
+
+    for source_path in work_dir.rglob("*.py"):
+        relative = source_path.relative_to(work_dir).as_posix()
+        if is_excluded_path(relative):
+            continue
+        source = _candidate_python_source(work_dir, relative)
+        if source is not None:
+            yield relative, source
+
+
+def _validate_workspace_python_decorators(work_dir: Path) -> None:
+    """Validate every publishable candidate Python file before import or sync."""
+    issues: list[DefinitionIssue] = []
+    for path, source in _workspace_python_sources(work_dir):
+        try:
+            validate_python_decorators(source, path=path)
+        except DefinitionValidationError as error:
+            issues.extend(error.issues)
+    if issues:
+        raise DefinitionValidationError(issues)
+
+
+def _decorator_preflight_issues(work_dir: Path) -> list[PreflightIssue]:
+    issues: list[PreflightIssue] = []
+    try:
+        _validate_workspace_python_decorators(work_dir)
+    except DefinitionValidationError as error:
+        for issue in error.issues:
+            field = ".".join(map(str, issue.location))
+            issues.append(PreflightIssue(
+                path=issue.path,
+                line=issue.line,
+                message=f"{field}: {issue.message}" if field else issue.message,
+                severity="error",
+                category="syntax",
+                fix_hint="Remove or migrate the unsupported decorator setting, then retry.",
+            ))
+    return issues

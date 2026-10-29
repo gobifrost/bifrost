@@ -4,6 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils";
 import { AppInfoDialog } from "./AppInfoDialog";
 
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAnywhere: () => true,
+		canAt: () => true,
+	}),
+}));
+
 const mockBumpEntityLogo = vi.fn();
 
 const existingApp = {

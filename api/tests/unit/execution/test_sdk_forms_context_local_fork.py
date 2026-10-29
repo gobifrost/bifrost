@@ -25,20 +25,15 @@ import asyncio
 import base64
 import os
 import time
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from src.services.execution.template_process import TemplateProcess
 from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
 
 pytestmark = pytest.mark.slow
-
-# The signed subject of a minted engine token (``mint_engine_token``), used
-# to build the parent's token-equivalent principal for parity.
-_ENGINE_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
-
 
 def _script_b64(source: str) -> str:
     return base64.b64encode(source.encode("utf-8")).decode("utf-8")
@@ -83,10 +78,15 @@ class TestForkedFormsContextTransport:
     ):
         """A real forked child reads forms and context over the socket."""
         from src.core.principal import UserPrincipal
-        from src.core.security import ENGINE_SDK_ACTOR_EMAIL, mint_engine_token
-        from src.models.enums import FormAccessLevel
+        from src.core.security import mint_engine_token
+        from src.models.enums import ExecutionStatus, FormAccessLevel
+        from src.models.orm.audit import AuditLog
+        from src.models.orm.executions import Execution
         from src.models.orm.forms import Form as FormModel
         from src.models.orm.organizations import Organization as OrganizationModel
+        from src.models.orm.users import User
+        from src.services.authorization.runtime import load_runtime_authority
+        from shared.sdk_users import set_platform_admin
         from shared.sdk_context import get_sdk_context
         from shared.sdk_forms import list_sdk_forms
 
@@ -96,6 +96,32 @@ class TestForkedFormsContextTransport:
         )
         db_session.add(org)
         await db_session.flush()
+        runtime_user = User(
+            email=f"{stem}-actor@example.test",
+            name="Fork Forms Runtime Actor",
+            # NULL-org users must be superuser
+            # (``ck_users_org_requires_superuser``); set_platform_admin below
+            # adds the assignment that makes it true.
+            is_superuser=True,
+        )
+        db_session.add(runtime_user)
+        await db_session.flush()
+        await set_platform_admin(
+            db_session, runtime_user, True, assigned_by="fork-forms-test"
+        )
+        engine_execution_id = uuid4()
+        db_session.add(
+            Execution(
+                id=engine_execution_id,
+                workflow_name="sdk-forms-context-local-fork",
+                status=ExecutionStatus.RUNNING,
+                executed_by=runtime_user.id,
+                executed_by_name=runtime_user.name or runtime_user.email,
+                run_user_id=runtime_user.id,
+                started_by_user_id=runtime_user.id,
+                root_execution_id=engine_execution_id,
+            )
+        )
         global_name = f"{stem}-global"
         org_name = f"{stem}-org"
         inactive_name = f"{stem}-inactive"
@@ -192,16 +218,10 @@ class TestForkedFormsContextTransport:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
-        from tests.helpers.live_execution import create_live_execution
-
-        engine_execution_id = str(uuid4())
-        await create_live_execution(async_session_factory, engine_execution_id)
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             mint_engine_token(
-                execution_id=engine_execution_id,
-                solution_id=None,
-                global_repo_access=True,
+                execution_id=str(engine_execution_id),
                 timeout_seconds=120,
             )[0],
         )
@@ -235,7 +255,7 @@ class TestForkedFormsContextTransport:
             assert result["detail_id"] == str(org_form_id), result
             assert result["detail_name"] == org_name, result
             assert result["missing"] == "ValueError", result
-            assert result["ctx_user"].get("email") == ENGINE_SDK_ACTOR_EMAIL, result
+            assert result["ctx_user"].get("email") == runtime_user.email, result
             assert result["ctx_org"] is None, result
             assert result["ctx_params"] == {}, result
             assert result["ctx_track"] is True, result
@@ -248,12 +268,16 @@ class TestForkedFormsContextTransport:
             # External parity: the child's context equals the shared service
             # output for the token-equivalent engine principal, and the
             # parent sees the same seeded rows over its own session.
+            authority = await load_runtime_authority(
+                db_session, "workflow_execution", engine_execution_id
+            )
             engine_user = UserPrincipal(
-                user_id=_ENGINE_USER_ID,
-                email=ENGINE_SDK_ACTOR_EMAIL,
-                name="Bifrost Engine",
+                user_id=authority.acting_user_id,
+                email=runtime_user.email,
+                name=runtime_user.name or "",
                 organization_id=None,
-                is_superuser=True,
+                is_superuser=authority.run_user.is_platform_admin,
+                runtime_authority=authority,
             )
             expected_ctx = await get_sdk_context(db_session, engine_user, org_id=None)
             child_ctx = {
@@ -273,6 +297,20 @@ class TestForkedFormsContextTransport:
         finally:
             template.shutdown()
             await server.stop()
-            from tests.helpers.live_execution import delete_live_execution
-
-            await delete_live_execution(async_session_factory, engine_execution_id)
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(AuditLog).where(AuditLog.execution_id == engine_execution_id)
+                )
+                await session.execute(
+                    delete(FormModel).where(
+                        FormModel.name.in_([global_name, org_name, inactive_name])
+                    )
+                )
+                await session.execute(
+                    delete(Execution).where(Execution.id == engine_execution_id)
+                )
+                await session.execute(delete(User).where(User.id == runtime_user.id))
+                await session.execute(
+                    delete(OrganizationModel).where(OrganizationModel.id == org.id)
+                )
+                await session.commit()

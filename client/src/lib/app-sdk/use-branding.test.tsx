@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createBrandPalette } from "./brand-palette";
@@ -13,6 +13,9 @@ const BRANDING = {
 };
 
 afterEach(() => {
+	// Branding is applied in a passive effect. Unmount before removing the
+	// document-level theme so a pending effect cannot recreate it afterwards.
+	cleanup();
 	document.querySelector("style#bifrost-branding-theme")?.remove();
 	document.documentElement.style.removeProperty("--logo-square-url");
 	document.documentElement.style.removeProperty("--logo-rectangle-url");
@@ -98,9 +101,11 @@ describe("useBranding", () => {
 			</BifrostProvider>,
 		);
 		await screen.findByText(/Acme Desk/);
-		expect(
-			document.querySelector("style#bifrost-branding-theme"),
-		).not.toBeNull();
+		await waitFor(() =>
+			expect(
+				document.querySelector("style#bifrost-branding-theme"),
+			).not.toBeNull(),
+		);
 		unmount();
 		document.querySelector("style#bifrost-branding-theme")?.remove();
 
@@ -156,11 +161,13 @@ describe("useBranding", () => {
 			</BifrostProvider>,
 		);
 		await screen.findByText(/Acme Desk/);
-		expect(
-			document.documentElement.style.getPropertyValue(
-				"--logo-square-url",
-			),
-		).toContain(BRANDING.square_logo_url);
+		await waitFor(() =>
+			expect(
+				document.documentElement.style.getPropertyValue(
+					"--logo-square-url",
+				),
+			).toContain(BRANDING.square_logo_url),
+		);
 		await act(async () =>
 			screen.getByRole("button", { name: "refresh" }).click(),
 		);

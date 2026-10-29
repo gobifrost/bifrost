@@ -185,7 +185,7 @@ async def test_get_solution_entities_includes_files(e2e_client, platform_admin, 
     policy_r = e2e_client.put(
         "/api/files/policies/",
         headers=headers,
-        params={"location": "solutions"},
+        params={"location": "solutions", "scope": "global"},
         json={"policies": {"policies": [{"name": "allow_all", "actions": ["read", "write", "delete", "list"]}]}},
     )
     assert policy_r.status_code in (200, 201, 204), policy_r.text

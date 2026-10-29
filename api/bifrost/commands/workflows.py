@@ -337,7 +337,19 @@ async def _stream_execution_logs(
                     msg = json.loads(raw)
                     msg_type = msg.get("type")
 
-                    if msg_type == "execution_log":
+                    if msg_type == "connected":
+                        # ``connected`` is sent only after the server has
+                        # registered this socket for execution updates. Read a
+                        # single snapshot at that point: a worker commits its
+                        # terminal status before publishing it, so this covers
+                        # executions that finished before the subscription.
+                        response = await client.get(f"/api/executions/{execution_id}")
+                        response.raise_for_status()
+                        status_val = response.json().get("status")
+                        if status_val in _TERMINAL_STATUSES:
+                            final_status = status_val
+                            break
+                    elif msg_type == "execution_log":
                         level = (msg.get("level") or "info").upper()
                         message = msg.get("message") or ""
                         click.echo(f"[{level}] {message}")

@@ -375,7 +375,14 @@
 			"tests": [
 				{
 					"spec": "table-records-acceptance.admin.spec.ts",
-					"title": "admin creates and edits a table, then creates edits deletes a document and deletes the table",
+					"title": "admin creates edits and deletes a table with persisted metadata",
+					"project": "platform-admin",
+					"variant": "desktop",
+					"proof": "real-platform"
+				},
+				{
+					"spec": "table-records-acceptance.admin.spec.ts",
+					"title": "admin creates edits and deletes documents with persisted content",
 					"project": "platform-admin",
 					"variant": "desktop",
 					"proof": "real-platform"
@@ -646,13 +653,13 @@
 			]
 		},
 		{
-			"id": "CHAT-INSTRUCTIONS-01",
+			"id": "AI-BEHAVIOR-01",
 			"area": "Platform settings",
-			"title": "CHAT-INSTRUCTIONS-01 saves and reloads default chat instructions",
+			"title": "AI-BEHAVIOR-01 saves and reloads agent execution and chat instructions",
 			"tests": [
 				{
 					"spec": "chat-instructions-acceptance.admin.spec.ts",
-					"title": "CHAT-INSTRUCTIONS-01 saves and reloads default chat instructions",
+					"title": "AI-BEHAVIOR-01 saves and reloads agent execution and chat instructions",
 					"project": "platform-admin",
 					"variant": "desktop",
 					"proof": "real-platform"

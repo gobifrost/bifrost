@@ -12,11 +12,14 @@ from uuid import uuid4
 import pytest
 
 from bifrost._logging import (
+    LogFlushReceipt,
     append_log_to_stream,
     publish_log_to_pubsub,
     log_and_broadcast,
     append_log_to_stream_async,
+    acknowledge_staged_logs,
     read_logs_from_stream,
+    recover_terminal_execution_logs,
     flush_logs_to_postgres,
     close_thread_redis,
 )
@@ -271,6 +274,28 @@ class TestAsyncLogFunctions:
 
             assert entry_id is None
 
+
+class TestPersistenceBoundary:
+    """Execution children must not acquire Redis or database persistence paths."""
+
+    @pytest.mark.asyncio
+    async def test_persistence_and_recovery_entrypoints_require_server_process(self):
+        receipt = LogFlushReceipt(
+            execution_id=str(uuid4()),
+            stream_key="bifrost:logs:test",
+            entry_ids=("1-0",),
+        )
+        with patch(
+            "bifrost._logging._require_server_process",
+            side_effect=RuntimeError("Direct log storage access is unavailable in execution children"),
+        ):
+            with pytest.raises(RuntimeError, match="execution children"):
+                await acknowledge_staged_logs(receipt)
+            with pytest.raises(RuntimeError, match="execution children"):
+                await flush_logs_to_postgres(receipt.execution_id)
+            with pytest.raises(RuntimeError, match="execution children"):
+                await recover_terminal_execution_logs()
+
     @pytest.mark.asyncio
     async def test_read_logs_from_stream_success(self):
         """Successfully reads logs from stream."""
@@ -337,39 +362,22 @@ class TestFlushLogsToPostgres:
 
     @pytest.mark.asyncio
     async def test_flush_logs_persists_entries(self):
-        """Successfully persists entries and clears stream."""
+        """The owned wrapper commits before it acknowledges its receipt."""
         exec_id = str(uuid4())
+        receipt = LogFlushReceipt(exec_id, f"bifrost:logs:{exec_id}", ("1234-0", "1234-1"))
+        mock_db = MagicMock()
+        mock_db.commit = AsyncMock()
+        with (
+            patch("src.core.database.get_session_factory") as mock_session_factory,
+            patch("bifrost._logging.stage_logs_to_postgres", AsyncMock(return_value=receipt)),
+            patch("bifrost._logging.acknowledge_staged_logs", new_callable=AsyncMock) as acknowledge,
+        ):
+            mock_session_factory.return_value.return_value.__aenter__.return_value = mock_db
+            count = await flush_logs_to_postgres(exec_id)
 
-        with patch("src.core.cache.get_redis") as mock_get_redis:
-            mock_redis = AsyncMock()
-            mock_redis.xrange.return_value = [
-                ("1234-0", {
-                    "level": "INFO",
-                    "message": "Log 1",
-                    "metadata": "{}",
-                    "timestamp": "2025-01-01T00:00:00",
-                }),
-                ("1234-1", {
-                    "level": "INFO",
-                    "message": "Log 2",
-                    "metadata": "{}",
-                    "timestamp": "2025-01-01T00:00:01",
-                }),
-            ]
-            mock_get_redis.return_value.__aenter__.return_value = mock_redis
-
-            # Patch at the location where it's used, not where it's defined
-            with patch("src.core.database.get_session_factory") as mock_session_factory:
-                mock_db = MagicMock()
-                mock_db.commit = AsyncMock()  # commit is async
-                mock_session_factory.return_value.return_value.__aenter__.return_value = mock_db
-
-                count = await flush_logs_to_postgres(exec_id)
-
-                assert count == 2
-                mock_db.add_all.assert_called_once()
-                mock_db.commit.assert_called_once()
-                mock_redis.delete.assert_called_once()
+        assert count == 2
+        mock_db.commit.assert_awaited_once()
+        acknowledge.assert_awaited_once_with(receipt)
 
 
 class TestCloseThreadRedis:

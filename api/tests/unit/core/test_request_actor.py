@@ -1,15 +1,15 @@
 """Unit tests for the shared audit-actor builder.
 
-Covers every branch of ``actor_from_token_payload`` — no payload, human
-access token, service token, engine token with and without a signed caller,
-embed session token — including malformed UUID claims (which must never
-raise) and per-token-type ``surface`` resolution (R2a-2).
+Human and embed claims provide attribution; runtime attribution requires
+a verified durable principal, never legacy or forged token fields.
 """
 
 from uuid import uuid4
 
-from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_UUID
-from src.core.request_actor import actor_from_token_payload, resolve_self_reported_surface
+import pytest
+
+from src.core.constants import SYSTEM_USER_ID
+from src.core.request_actor import actor_from_runtime_principal, actor_from_token_payload, resolve_self_reported_surface
 
 
 def _actor(payload, surface_header=None):
@@ -62,127 +62,73 @@ class TestHumanToken:
         assert actor.source == "http"
         assert actor.execution_id is None
 
+    def test_impersonation_claims_map_to_audit_provenance(self):
+        target_id, operator_id, session_id = (uuid4() for _ in range(3))
 
-class TestServiceToken:
-    def test_service_claim_uses_sentinel_and_service_source(self):
-        org_id = uuid4()
-        execution_id = uuid4()
         actor = _actor(
             {
-                "sub": SYSTEM_USER_ID,
-                "service_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                "org_id": str(org_id),
-                "engine_execution_id": str(execution_id),
-                "email": "service-aaaaaaaaaaaa@bifrost.internal",
-                "name": "service-aaaaaaaaaaaa",
+                "sub": str(target_id),
+                "org_id": str(uuid4()),
+                "impersonated_by_user_id": str(operator_id),
+                "impersonation_session_id": str(session_id),
             }
         )
+
         assert actor is not None
-        assert actor.user_id == SYSTEM_USER_UUID
-        assert actor.organization_id == org_id
-        assert actor.email == "service-aaaaaaaaaaaa@bifrost.internal"
-        assert actor.name == "service-aaaaaaaaaaaa"
-        assert actor.source == "service"
-        assert actor.execution_id == execution_id
-
-    def test_malformed_execution_id_is_none(self):
-        actor = _actor(
-            {
-                "service_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                "engine_execution_id": "attempt-1",
-            }
-        )
-        assert actor is not None
-        assert actor.source == "service"
-        assert actor.execution_id is None
+        assert actor.user_id == target_id
+        assert actor.impersonated_by_user_id == operator_id
+        assert actor.impersonation_session_id == session_id
 
 
-class TestEngineTokenWithCaller:
-    def test_caller_claims_win_and_source_is_workflow(self):
-        caller_id = uuid4()
-        org_id = uuid4()
-        execution_id = uuid4()
-        actor = _actor(
-            {
-                "sub": SYSTEM_USER_ID,
-                "engine_execution_id": str(execution_id),
-                "engine_caller_user_id": str(caller_id),
-                "engine_caller_org_id": str(org_id),
-                "engine_caller_email": "caller@example.com",
-                "engine_caller_name": "Caller Name",
-                "email": "engine@bifrost.internal",
-                "name": "Bifrost Engine",
-            }
-        )
-        assert actor is not None
-        assert actor.user_id == caller_id
-        assert actor.organization_id == org_id
-        assert actor.email == "caller@example.com"
-        assert actor.name == "Caller Name"
-        assert actor.source == "workflow"
-        assert actor.execution_id == execution_id
-
-    def test_malformed_caller_uuid_is_none_not_raised(self):
-        actor = _actor(
-            {
-                "engine_execution_id": str(uuid4()),
-                "engine_caller_user_id": "not-a-uuid",
-                "engine_caller_org_id": "not-a-uuid-either",
-                "engine_caller_email": "caller@example.com",
-                "engine_caller_name": "Caller Name",
-            }
-        )
-        assert actor is not None
-        assert actor.user_id is None
-        assert actor.organization_id is None
-        assert actor.source == "workflow"
+@pytest.mark.parametrize("claims", [
+    {"credential_kind": "workflow_execution", "sub": str(uuid4())},
+    {"service_id": str(uuid4()), "engine_execution_id": str(uuid4())},
+    {"engine_execution_id": str(uuid4()), "engine_caller_user_id": str(uuid4())},
+    {"engine_execution_id": "not-a-uuid", "engine_caller_user_id": SYSTEM_USER_ID},
+    {"engine_agent_run_id": str(uuid4())},
+])
+def test_runtime_claims_cannot_supply_an_actor(claims):
+    assert _actor(claims, surface_header="mcp") is None
 
 
-class TestEngineTokenWithoutHumanCaller:
-    def test_absent_caller_uses_sentinel_with_workflow_source(self):
-        org_id = uuid4()
-        execution_id = uuid4()
-        actor = _actor(
-            {
-                "sub": SYSTEM_USER_ID,
-                "engine_execution_id": str(execution_id),
-                "engine_caller_org_id": str(org_id),
-                "email": "engine@bifrost.internal",
-                "name": "Bifrost Engine",
-            }
-        )
-        assert actor is not None
-        assert actor.user_id == SYSTEM_USER_UUID
-        assert actor.organization_id == org_id
-        assert actor.email == "engine@bifrost.internal"
-        assert actor.name == "Bifrost Engine"
-        assert actor.source == "workflow"
-        assert actor.execution_id == execution_id
+@pytest.mark.parametrize("kind,surface", [
+    ("workflow_execution", "workflow"),
+    ("service_attempt", "service"),
+    ("agent_run", "agent"),
+])
+def test_runtime_actor_uses_verified_identity_and_scope(kind, surface):
+    from src.core.principal import UserPrincipal
+    from src.services.authorization.context import AuthorizationContext
+    from src.services.authorization.explain import RunUser
+    from src.services.authorization.runtime import RuntimeAuthority
 
-    def test_sentinel_caller_is_not_treated_as_human(self):
-        actor = _actor(
-            {
-                "engine_execution_id": str(uuid4()),
-                "engine_caller_user_id": SYSTEM_USER_ID,
-                "email": "engine@bifrost.internal",
-                "name": "Bifrost Engine",
-            }
-        )
-        assert actor is not None
-        assert actor.user_id == SYSTEM_USER_UUID
-        assert actor.organization_id is None
-        assert actor.source == "workflow"
+    actor_id, run_user_id, credential_id, scope = (uuid4() for _ in range(4))
+    context = AuthorizationContext(user_id=run_user_id, home_organization_id=None,
+        base_role_id=uuid4(), base_permissions=frozenset(), is_external=False)
+    operator_id, session_id = uuid4(), uuid4()
+    authority = RuntimeAuthority(kind=kind, credential_id=credential_id,
+        run_user=RunUser(run_user_id, context, None, is_active=True), powers=None,
+        acting_user_id=actor_id, organization_id=scope, workflow_id=None,
+        started_by_user_id=None, root_execution_id=None,
+        impersonated_by_user_id=operator_id, impersonation_session_id=session_id)
+    principal = UserPrincipal(user_id=actor_id, email="actor@example.test",
+        organization_id=uuid4(), name="Contoso Actor", runtime_authority=authority)
+    actor = actor_from_runtime_principal(principal, ip_address=None, user_agent="pytest")
+    assert (actor.user_id, actor.organization_id) == (actor_id, scope)
+    assert (actor.name, actor.email) == ("Contoso Actor", "actor@example.test")
+    assert (actor.source, actor.surface) == (surface, surface)
+    assert actor.execution_id == (None if kind == "agent_run" else credential_id)
+    assert actor.ip_address is None
+    assert actor.user_agent == "pytest"
+    assert actor.impersonated_by_user_id == operator_id
+    assert actor.impersonation_session_id == session_id
 
-    def test_malformed_execution_id_is_none(self):
-        actor = _actor(
-            {
-                "engine_execution_id": "not-a-uuid",
-                "email": "engine@bifrost.internal",
-            }
-        )
-        assert actor is not None
-        assert actor.execution_id is None
-        assert actor.source == "workflow"
+
+def test_runtime_actor_requires_verified_authority():
+    from src.core.principal import UserPrincipal
+    principal = UserPrincipal(user_id=uuid4(), email="actor@example.test", organization_id=None)
+    with pytest.raises(ValueError, match="Runtime authority required"):
+        actor_from_runtime_principal(principal, ip_address=None, user_agent=None)
 
 
 class TestSurfaceResolution:
@@ -213,34 +159,6 @@ class TestSurfaceResolution:
         )
         assert actor is not None
         assert actor.surface == "web"
-
-    def test_service_token_surface_is_service_regardless_of_header(self):
-        actor = _actor(
-            {
-                "service_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                "engine_execution_id": str(uuid4()),
-            },
-            surface_header="cli",
-        )
-        assert actor is not None
-        assert actor.surface == "service"
-
-    def test_engine_token_surface_is_workflow_regardless_of_header(self):
-        actor = _actor(
-            {"engine_execution_id": str(uuid4())}, surface_header="mcp"
-        )
-        assert actor is not None
-        assert actor.surface == "workflow"
-
-    def test_engine_token_with_caller_surface_is_workflow(self):
-        actor = _actor(
-            {
-                "engine_execution_id": str(uuid4()),
-                "engine_caller_user_id": str(uuid4()),
-            }
-        )
-        assert actor is not None
-        assert actor.surface == "workflow"
 
     def test_embed_token_surface_is_embed(self):
         actor = _actor(

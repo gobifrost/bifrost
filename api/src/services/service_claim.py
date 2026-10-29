@@ -1,7 +1,7 @@
 """
 Supervised service claim loop (Slice 3, worker-pull per §18.4).
 
-Runs inside the worker container next to the RabbitMQ consumers. Each tick:
+Runs inside every executor, next to its run claims. Each tick:
 
 1. ``expire_leases`` — fail attempts whose owner stopped renewing and apply
    restart decisions (lease expiry is the worker-loss backstop).
@@ -9,7 +9,7 @@ Runs inside the worker container next to the RabbitMQ consumers. Each tick:
    ``ready()`` report, mirror ``stop_requested`` to the child (Redis stop key
    + SIGTERM), and rotate the service credential.
 3. Claim eligible services while service slots remain — the DB lease (fenced,
-   partial-unique) owns the lifetime; RabbitMQ carries no assignment.
+   partial-unique) owns the lifetime; nothing else carries an assignment.
 
 The scheduler leader only advances durable eligibility (already encoded in
 ``restart_eligible_at``/``blocked_reason`` at completion time); there is no
@@ -25,7 +25,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Awaitable, cast
 from uuid import UUID
 
@@ -37,6 +41,13 @@ from src.core.cache.keys import (
 
 logger = logging.getLogger(__name__)
 
+# While it supervises attempts, the loop ticks every claim interval (leases
+# need renewing). Idle, it ticks on a pool wake-up (a service started, enabled
+# or created, or one of its attempts ended), when the earliest backed-off
+# restart comes due, and otherwise sweeps every SERVICE_SWEEP_SECONDS, which
+# also bounds how late it notices another worker's expired lease.
+SERVICE_SWEEP_SECONDS = 15.0
+
 
 @dataclass
 class OwnedAttempt:
@@ -46,6 +57,11 @@ class OwnedAttempt:
     service_id: UUID
     lease_token: str
     stop_mirrored: bool = False
+    # The service's workflow, its memory request (held from the executor's
+    # budget while supervised) and the most memory it reported.
+    workflow_id: UUID | None = None
+    memory_request_bytes: int = 0
+    peak_memory_bytes: int = 0
 
 
 @dataclass
@@ -62,9 +78,20 @@ class ServiceClaimLoop:
     # The DB lease (not this wait) owns the lifetime: anything still live
     # expires and restarts elsewhere.
     handover_wait_seconds: float = 5.0
+    # The executor's memory gate (src.worker.admission.Admission.claiming:
+    # yields the bytes a claim may take, None while over the threshold), and
+    # how it holds (bytes) or releases (None) one attempt's request.
+    claiming: Callable[[], AbstractAsyncContextManager[int | None]] | None = None
+    hold_memory: Callable[[str, int | None], None] | None = None
+    # Set on every pool wake-up; None ticks every claim interval regardless.
+    wake: asyncio.Event | None = None
+    sweep_seconds: float = SERVICE_SWEEP_SECONDS
 
     _owned: dict[str, OwnedAttempt] = field(default_factory=dict)
     _running: bool = False
+    _stop: asyncio.Event = field(default_factory=asyncio.Event)
+    # Earliest backed-off restart due later, read while idle.
+    _next_restart: datetime | None = None
     _task: asyncio.Task[None] | None = None
     _last_beat: float = 0.0
     # Staged flush cursors (attempt_id -> last stream ID), written to Redis
@@ -98,6 +125,7 @@ class ServiceClaimLoop:
         expires and restarts elsewhere.
         """
         self._running = False
+        self._stop.set()
         if self._task is not None:
             try:
                 await self._task
@@ -110,34 +138,57 @@ class ServiceClaimLoop:
     # -- tick ----------------------------------------------------------
 
     async def _run(self) -> None:
+        from src.services.work_dispatch import wait_for_next_pass
+
         while self._running:
+            started = time.monotonic()
             try:
                 await self.tick()
             except Exception as e:
                 logger.exception("service claim tick failed: %s", e)
-            await asyncio.sleep(self.claim_interval_seconds)
+            if self._owned or self.wake is None:
+                # The interval elapsing is the normal case; stop ends it early.
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(self._stop.wait(), self.claim_interval_seconds)
+                continue
+            sweep = self.sweep_seconds
+            if self._next_restart is not None:
+                due = (self._next_restart - datetime.now(timezone.utc)).total_seconds()
+                sweep = min(sweep, time.monotonic() - started + max(0.0, due))
+            await wait_for_next_pass(
+                self._stop, self.wake, since=started,
+                spacing=self.claim_interval_seconds, sweep=sweep,
+            )
 
     async def tick(self) -> None:
         """One claim-loop iteration: expire, beat owned, claim fill."""
         from src.core.database import get_db_context
 
+        stops: list[str] = []
         async with get_db_context() as db:
             from src.services import service_lifecycle as lifecycle
 
             expired = await lifecycle.expire_leases(db)
             if expired:
                 logger.warning("expired %d service lease(s)", expired)
+            if not self._owned:
+                self._next_restart = await lifecycle.next_restart_at(db)
             await db.commit()
 
-            await self._beat_owned(db)
+            await self._beat_owned(db, stops)
             await db.commit()
-            await self._store_cursors()
 
+        # A child can send its terminal result while SIGTERM waits for it to
+        # exit.  That callback needs an independent transaction and may lock
+        # this attempt, so never await child termination while this tick owns
+        # a session or its heartbeat row lock.
+        await self._store_cursors()
+        await self._stop_children(stops)
         await self._claim_available()
 
     # -- owned-attempt supervision -------------------------------------
 
-    async def _beat_owned(self, db) -> None:
+    async def _beat_owned(self, db, stops: list[str]) -> None:
         """Renew leases, drain ready reports, mirror stops, rotate tokens."""
         import time as _time
 
@@ -162,19 +213,23 @@ class ServiceClaimLoop:
                 logger.warning(
                     "lost ownership of attempt %s; dropping", attempt_key[:8]
                 )
-                await self._drop_ownership(owned)
+                await self._drop_ownership(owned, stops)
                 continue
 
             definition = await db.get(ServiceDefinition, owned.service_id)
-            if await self._enforce_startup_grace(db, owned, attempt, definition):
+            if await self._enforce_startup_grace(
+                db, owned, attempt, definition, stops
+            ):
                 continue
-            await self._drain_ready(db, owned)
-            await self._mirror_stop(db, owned, attempt)
+            await self._drain_ready(db, owned, stops)
+            await self._mirror_stop(db, owned, attempt, stops)
             await self._report_memory(owned)
             await self._rotate_token(db, owned, definition)
             await self._flush_logs(db, owned)
 
-    async def _enforce_startup_grace(self, db, owned, attempt, definition) -> bool:
+    async def _enforce_startup_grace(
+        self, db, owned, attempt, definition, stops: list[str]
+    ) -> bool:
         """Fail attempts that never report ready within their grace.
 
         A live-but-never-ready child would otherwise renew its lease forever
@@ -217,10 +272,10 @@ class ServiceClaimLoop:
             # Lost the race: another owner already moved the attempt, so
             # our completion was fenced and there is nothing to roll back.
             pass
-        await self._drop_ownership(owned)
+        await self._drop_ownership(owned, stops)
         return True
 
-    async def _drain_ready(self, db, owned: OwnedAttempt) -> None:
+    async def _drain_ready(self, db, owned: OwnedAttempt, stops: list[str]) -> None:
         """Consume the child's ready() report into the attempt row."""
         from src.core.cache import get_redis
         from src.services import service_lifecycle as lifecycle
@@ -243,13 +298,15 @@ class ServiceClaimLoop:
                 lease_token=owned.lease_token,
             )
         except lifecycle.StaleLeaseError:
-            await self._drop_ownership(owned)
+            await self._drop_ownership(owned, stops)
         except Exception as e:
             logger.warning(
                 "mark_attempt_ready failed for %s: %s", owned.attempt_id, e
             )
 
-    async def _mirror_stop(self, db, owned: OwnedAttempt, attempt) -> None:
+    async def _mirror_stop(
+        self, db, owned: OwnedAttempt, attempt, stops: list[str]
+    ) -> None:
         """Mirror durable stop_requested to the child exactly once."""
         if attempt.stop_requested_at is None or owned.stop_mirrored:
             return
@@ -263,15 +320,7 @@ class ServiceClaimLoop:
                 )
         except Exception as e:
             logger.debug("stop mirror failed for %s: %s", owned.attempt_id, e)
-        if self.pool is not None:
-            try:
-                await self.pool.stop_service_child(str(owned.attempt_id))
-            except Exception as e:
-                logger.warning(
-                    "stop_service_child failed for %s: %s",
-                    owned.attempt_id,
-                    e,
-                )
+        stops.append(str(owned.attempt_id))
 
     async def _report_memory(self, owned: OwnedAttempt) -> None:
         """Publish one owned attempt's memory into the pool registration hash.
@@ -290,6 +339,7 @@ class ServiceClaimLoop:
             return
         if memory_mb is None:
             return
+        owned.peak_memory_bytes = max(owned.peak_memory_bytes, int(memory_mb * 2**20))
         try:
             from datetime import datetime, timezone
 
@@ -405,31 +455,14 @@ class ServiceClaimLoop:
         from src.core.cache import get_redis
         from src.core.security import mint_service_token
         from src.models.orm.services import ServiceDefinition
-        from src.models.orm.solutions import Solution
 
         if definition is None:
             definition = await db.get(ServiceDefinition, owned.service_id)
         if definition is None or not definition.organization_id:
             return
-        solution = (
-            await db.get(Solution, definition.solution_id)
-            if definition.solution_id
-            else None
-        )
         token, expires_at = mint_service_token(
             service_id=str(owned.service_id),
             attempt_id=str(owned.attempt_id),
-            organization_id=str(definition.organization_id),
-            solution_id=(
-                str(definition.solution_id)
-                if definition.solution_id
-                else None
-            ),
-            global_repo_access=bool(
-                solution
-                and solution.status == "active"
-                and solution.allow_outbound_access
-            ),
             lifetime_seconds=self.token_lifetime_seconds,
         )
         try:
@@ -444,9 +477,26 @@ class ServiceClaimLoop:
                 "token rotation failed for %s: %s", owned.attempt_id, e
             )
 
-    async def _drop_ownership(self, owned: OwnedAttempt) -> None:
+    async def _release(self, owned: OwnedAttempt | None) -> None:
+        """Return an attempt's memory to the budget and learn its peak."""
+        if owned is None:
+            return
+        self._release_memory(str(owned.attempt_id))
+        if owned.workflow_id is None or owned.peak_memory_bytes <= 0:
+            return
+        try:
+            from src.core.database import get_db_context
+            from src.services.memory_requests import record_peak_growth
+
+            async with get_db_context() as db:
+                await record_peak_growth(db, owned.workflow_id, owned.peak_memory_bytes, None)
+                await db.commit()
+        except Exception as e:
+            logger.debug("service memory learning failed for %s: %s", owned.attempt_id, e)
+
+    async def _drop_ownership(self, owned: OwnedAttempt, stops: list[str]) -> None:
         """Forget an attempt and revoke its rotation channel."""
-        self._owned.pop(str(owned.attempt_id), None)
+        await self._release(self._owned.pop(str(owned.attempt_id), None))
         await self._clear_reported_memory(str(owned.attempt_id))
         try:
             from src.core.cache import get_redis
@@ -457,27 +507,24 @@ class ServiceClaimLoop:
             logger.debug(
                 "token key cleanup failed for %s: %s", owned.attempt_id, e
             )
-        if self.pool is not None:
+        stops.append(str(owned.attempt_id))
+
+    async def _stop_children(self, attempt_ids: list[str]) -> None:
+        """Terminate children only after the tick transaction has closed."""
+        if self.pool is None:
+            return
+        for attempt_id in dict.fromkeys(attempt_ids):
             try:
-                await self.pool.stop_service_child(str(owned.attempt_id))
-            except Exception:
-                # Best-effort child stop during ownership drop: the DB
-                # lease expiry (not this signal) owns the lifetime.
-                pass
+                await self.pool.stop_service_child(attempt_id)
+            except Exception as e:
+                # The durable stop state and lease expiry own recovery; this
+                # signal only prompts the local child to exit promptly.
+                logger.warning("stop_service_child failed for %s: %s", attempt_id, e)
 
     # -- claiming ------------------------------------------------------
 
-    def _service_capacity(self) -> int:
-        if self.pool is None:
-            return 0
-        return max(
-            0,
-            self.pool.max_service_workers
-            - len(self.pool.service_processes),
-        )
-
     async def _claim_available(self) -> None:
-        """Claim eligible services while local slots remain (worker-pull).
+        """Claim eligible services while one fits the free budget (worker-pull).
 
         The durable claim commits BEFORE the child forks: a fast outcome
         (load failure, instant return) completes through ``handle_service_result``
@@ -485,57 +532,79 @@ class ServiceClaimLoop:
         whose child then fails to launch completes without failure
         accounting (``requested``/``route_failed``) so the service relaunches
         promptly instead of leaking a childless live attempt.
+
+        Each claim and launch happens inside the executor's memory gate, and
+        the attempt's request is held before its child forks, so no other
+        claim can spend the same free bytes.
         """
+        if self.pool is None:
+            return
+        assert self.claiming is not None, "an executor's claim loop has a budget"
+        while True:
+            async with self.claiming() as fits:
+                if fits is None or not await self._claim_and_launch(fits):
+                    return
+
+    async def _claim_and_launch(self, fits_bytes: int) -> bool:
+        """Claim one eligible service that fits and launch it; True when one
+        launched (look for another)."""
         from src.core.database import get_db_context
         from src.services import service_lifecycle as lifecycle
 
-        while self._service_capacity() > 0:
-            async with get_db_context() as db:
-                try:
-                    attempt = await lifecycle.claim_eligible_service(
-                        db,
-                        worker_id=self.worker_id,
-                        lease_ttl_seconds=self.lease_ttl_seconds,
-                    )
-                    if attempt is None:
-                        await db.rollback()
-                        return
-                    # Durable before fork: completions must observe this row.
-                    await db.commit()
-                    # Read back inside the session: commit expires attributes.
-                    attempt_id, lease_token, service_id = (
-                        attempt.id,
-                        attempt.lease_token,
-                        attempt.service_id,
-                    )
-                except lifecycle.ServiceClaimConflict:
-                    await db.rollback()
-                    return
-                except Exception as e:
-                    logger.warning("service claim failed: %s", e)
-                    await db.rollback()
-                    return
+        async with get_db_context() as db:
             try:
-                async with get_db_context() as db:
-                    # Re-attach by id: the claim above committed in a closed
-                    # session, so the ORM object is detached here.
-                    from src.models.orm.services import ServiceAttempt
-
-                    fresh = await db.get(ServiceAttempt, attempt_id)
-                    if fresh is None:
-                        return
-                    await self._launch_claimed(db, fresh)
-                    await db.commit()
+                attempt = await lifecycle.claim_eligible_service(
+                    db,
+                    worker_id=self.worker_id,
+                    fits_bytes=fits_bytes,
+                    lease_ttl_seconds=self.lease_ttl_seconds,
+                )
+                if attempt is None:
+                    await db.rollback()
+                    return False
+                # Durable before fork: completions must observe this row.
+                await db.commit()
+                # Read back inside the session: commit expires attributes.
+                attempt_id, lease_token, service_id = (
+                    attempt.id,
+                    attempt.lease_token,
+                    attempt.service_id,
+                )
             except lifecycle.ServiceClaimConflict:
-                return
+                await db.rollback()
+                return False
             except Exception as e:
-                logger.warning(
-                    "service launch failed for %s: %s", attempt_id, e
-                )
-                await self._complete_route_failure(
-                    attempt_id, lease_token, service_id
-                )
-                return
+                logger.warning("service claim failed: %s", e)
+                await db.rollback()
+                return False
+        try:
+            async with get_db_context() as db:
+                # Re-attach by id: the claim above committed in a closed
+                # session, so the ORM object is detached here.
+                from src.models.orm.services import ServiceAttempt
+
+                fresh = await db.get(ServiceAttempt, attempt_id)
+                if fresh is None:
+                    return False
+                await self._launch_claimed(db, fresh)
+                await db.commit()
+            return True
+        except lifecycle.ServiceClaimConflict:
+            self._release_memory(str(attempt_id))
+            return False
+        except Exception as e:
+            logger.warning(
+                "service launch failed for %s: %s", attempt_id, e
+            )
+            self._release_memory(str(attempt_id))
+            await self._complete_route_failure(
+                attempt_id, lease_token, service_id
+            )
+            return False
+
+    def _release_memory(self, attempt_id: str) -> None:
+        if self.hold_memory is not None:
+            self.hold_memory(attempt_id, None)
 
     async def _complete_route_failure(
         self, attempt_id, lease_token: str, service_id
@@ -610,21 +679,18 @@ class ServiceClaimLoop:
             if org
             else None
         )
-        from src.core.security import service_sdk_actor_email
+        from src.models.orm.users import User
+        from src.services.authorization.runtime import load_runtime_authority
 
-        short_id = str(definition.id).replace("-", "")[:12]
+        authority = await load_runtime_authority(
+            db, "service_attempt", attempt.id, service_id=definition.id
+        )
+        actor = await db.get(User, authority.acting_user_id)
+        if actor is None:
+            raise RuntimeError("Service attempt has no current acting user")
         token, expires_at = mint_service_token(
             service_id=str(definition.id),
             attempt_id=str(attempt.id),
-            organization_id=str(definition.organization_id),
-            solution_id=(
-                str(definition.solution_id)
-                if definition.solution_id
-                else None
-            ),
-            global_repo_access=bool(
-                workflow_data.get("can_access_global_repo", False)
-            ),
             lifetime_seconds=self.token_lifetime_seconds,
         )
         context = {
@@ -634,10 +700,11 @@ class ServiceClaimLoop:
             "file_path": workflow_data["path"],
             "content_hash": definition.current_revision,
             "caller": {
-                "user_id": "00000000-0000-0000-0000-000000000001",
-                "email": service_sdk_actor_email(str(definition.id)),
-                "name": f"service-{short_id}",
+                "user_id": str(actor.id),
+                "email": actor.email,
+                "name": actor.name or actor.email,
             },
+            "is_platform_admin": authority.run_user.is_platform_admin,
             "organization": org_data,
             "timeout_seconds": 0,
             "solution_id": workflow_data.get("solution_id"),
@@ -655,6 +722,22 @@ class ServiceClaimLoop:
                 "token_expires_at": expires_at,
             },
         }
+        from sqlalchemy import select
+
+        from src.models.orm.workflows import Workflow
+        from src.services.memory_requests import workflow_request_bytes
+
+        learned, declared = (
+            await db.execute(
+                select(Workflow.learned_memory_bytes, Workflow.memory_request_mib).where(
+                    Workflow.id == definition.workflow_id
+                )
+            )
+        ).one()
+        request = workflow_request_bytes(learned, declared)
+        # Held before the fork: the claim's free bytes are spent here.
+        if self.hold_memory is not None:
+            self.hold_memory(str(attempt.id), request)
         await self.pool.route_service(
             service_id=str(definition.id),
             attempt_id=str(attempt.id),
@@ -672,6 +755,8 @@ class ServiceClaimLoop:
             attempt_id=attempt.id,
             service_id=definition.id,
             lease_token=attempt.lease_token,
+            workflow_id=definition.workflow_id,
+            memory_request_bytes=request,
         )
         logger.info(
             "worker %s launched service %s (attempt %s)",
@@ -752,6 +837,7 @@ class ServiceClaimLoop:
             return
         finally:
             owned = self._owned.pop(str(attempt_id), None)
+            await self._release(owned)
             await self._clear_reported_memory(str(attempt_id))
             # Drop any cursor staged by an earlier beat for this attempt:
             # the completion path owns the cursor from here.
@@ -788,6 +874,9 @@ class ServiceClaimLoop:
                     # expire via TTL and carry no authority without the
                     # DB lease.
                     pass
+            if self.wake is not None:
+                # Read the attempt's restart time (or claim its slot) now.
+                self.wake.set()
 
     @staticmethod
     def _completion_for(envelope: dict, attempt) -> tuple[str, str | None, str | None]:

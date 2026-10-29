@@ -24,7 +24,7 @@ const isPolicyRuleRef = (rule: PolicyRule): rule is PolicyRuleRef =>
 	"$ref" in rule;
 const readableRuleName = (name: string) =>
 	name === "admin_bypass"
-		? "Administrator Access"
+		? "Platform Admin Access"
 		: name.replace(/[_-]+/g, " ");
 const describeRule = (rule: PolicyRule) =>
 	isPolicyRuleRef(rule)
@@ -33,6 +33,8 @@ const describeRule = (rule: PolicyRule) =>
 
 interface PoliciesViewProps {
 	scope: string | null;
+	solution?: string;
+	readOnly?: boolean;
 	location?: string | null;
 	prefix?: string;
 	/** Bump to force a refetch after a policy mutation elsewhere. */
@@ -49,6 +51,8 @@ interface PoliciesViewProps {
  */
 export function PoliciesView({
 	scope,
+	solution,
+	readOnly = false,
 	location = null,
 	prefix = "",
 	refreshKey,
@@ -57,8 +61,11 @@ export function PoliciesView({
 }: PoliciesViewProps) {
 	const [query, setQuery] = useState("");
 	const policiesQuery = useQuery({
-		queryKey: ["file-policies", scope, refreshKey],
-		queryFn: () => listFilePolicies({ scope: scope ?? undefined }),
+		queryKey: ["file-policies", scope, solution, refreshKey],
+		queryFn: () =>
+			solution
+				? listFilePolicies({ scope: scope ?? undefined, solution })
+				: listFilePolicies({ scope: scope ?? undefined }),
 		retry: false,
 	});
 	const policies = useMemo(
@@ -119,25 +126,28 @@ export function PoliciesView({
 		);
 	};
 
-	const renderActions = (policy: FilePolicy) => (
-		<RecordActionsMenu label={`Policy ${formatIdentity(policy)} actions`}>
-			<DropdownMenuItem
-				className="min-h-11"
-				onSelect={() => onEdit(policy)}
+	const renderActions = (policy: FilePolicy) =>
+		!readOnly && (
+			<RecordActionsMenu
+				label={`Policy ${formatIdentity(policy)} actions`}
 			>
-				<ShieldCheck aria-hidden="true" className="size-4" />
-				Manage Policy
-			</DropdownMenuItem>
-			<DropdownMenuItem
-				variant="destructive"
-				className="min-h-11"
-				onSelect={() => onDelete(policy)}
-			>
-				<Trash2 aria-hidden="true" className="size-4" />
-				Delete
-			</DropdownMenuItem>
-		</RecordActionsMenu>
-	);
+				<DropdownMenuItem
+					className="min-h-11"
+					onSelect={() => onEdit(policy)}
+				>
+					<ShieldCheck aria-hidden="true" className="size-4" />
+					Manage Policy
+				</DropdownMenuItem>
+				<DropdownMenuItem
+					variant="destructive"
+					className="min-h-11"
+					onSelect={() => onDelete(policy)}
+				>
+					<Trash2 aria-hidden="true" className="size-4" />
+					Delete
+				</DropdownMenuItem>
+			</RecordActionsMenu>
+		);
 
 	const renderPolicy = (policy: FilePolicy) => (
 		<li key={policy.id ?? `${policy.location}:${policy.path}`}>
@@ -145,8 +155,9 @@ export function PoliciesView({
 				<button
 					type="button"
 					className="min-h-11 min-w-0 rounded-[var(--bf-radius-control)] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					onClick={() => onEdit(policy)}
-					aria-label={`Manage policy for ${formatIdentity(policy)}`}
+					disabled={readOnly}
+					onClick={readOnly ? undefined : () => onEdit(policy)}
+					aria-label={`${readOnly ? "Policy" : "Manage policy"} for ${formatIdentity(policy)}`}
 				>
 					<span className="flex items-center gap-2 text-sm font-semibold leading-6 [overflow-wrap:anywhere]">
 						<FolderKey
@@ -172,9 +183,11 @@ export function PoliciesView({
 						policy.policies.policies.map(renderRule)
 					)}
 				</div>
-				<div className="col-start-2 row-start-1 shrink-0 justify-self-end">
-					{renderActions(policy)}
-				</div>
+				{renderActions(policy) && (
+					<div className="col-start-2 row-start-1 shrink-0 justify-self-end">
+						{renderActions(policy)}
+					</div>
+				)}
 			</div>
 		</li>
 	);

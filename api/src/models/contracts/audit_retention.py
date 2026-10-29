@@ -17,7 +17,7 @@ def _check_windows(hot_days: int, archive_days: int | None) -> None:
 
 class AuditRetentionSettings(BaseModel):
     hot_days: int = Field(
-        default=90,
+        default=30,
         ge=1,
         le=3650,
         description="Days events stay in the database before they are archived.",

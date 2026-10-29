@@ -21,12 +21,18 @@ from src.models import (
     BrandingUpdateRequest,
     GlobalBranding,
 )
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.database import AsyncSession, get_db
+from src.services.authorization.enforce import load_caller, require_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/branding", tags=["Branding"])
+
+
+async def _authorize_branding(ctx: Context, user: CurrentActiveUser) -> None:
+    caller = await load_caller(ctx.db, user)
+    require_permission(caller, "settings.readwrite", None)
 
 # Allowed image types for logo upload
 ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
@@ -97,7 +103,7 @@ async def get_branding(
 async def update_branding(
     request: BrandingUpdateRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> BrandingSettings:
     """
     Update primary color only.
@@ -106,6 +112,7 @@ async def update_branding(
     Use POST /logo/{type} to upload logos.
     """
 
+    await _authorize_branding(ctx, user)
     from src.repositories.branding import BrandingRepository
 
     branding_repo = BrandingRepository(ctx.db)
@@ -144,7 +151,7 @@ async def upload_logo(
     logo_type: str,
     file: Annotated[UploadFile, File(description="Logo image file")],
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> BrandingSettings:
     """
     Upload a logo file.
@@ -154,6 +161,7 @@ async def upload_logo(
         file: Image file (PNG, JPEG, SVG)
     """
 
+    await _authorize_branding(ctx, user)
     if logo_type not in ("square", "rectangle"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -266,7 +274,7 @@ async def get_logo(logo_type: str, db: AsyncSession = Depends(get_db, scope="fun
 async def reset_logo(
     logo_type: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> BrandingSettings:
     """
     Reset a specific logo to default.
@@ -281,6 +289,7 @@ async def reset_logo(
             detail="logo_type must be 'square' or 'rectangle'",
         )
 
+    await _authorize_branding(ctx, user)
     from src.repositories.branding import BrandingRepository
 
     branding_repo = BrandingRepository(ctx.db)
@@ -311,10 +320,11 @@ async def reset_logo(
 )
 async def reset_color(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> BrandingSettings:
     """Reset primary color to default."""
 
+    await _authorize_branding(ctx, user)
     from src.repositories.branding import BrandingRepository
 
     branding_repo = BrandingRepository(ctx.db)
@@ -336,9 +346,10 @@ async def reset_color(
 )
 async def reset_application_name(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> BrandingSettings:
     """Reset application name to default."""
+    await _authorize_branding(ctx, user)
     from src.repositories.branding import BrandingRepository
 
     branding_repo = BrandingRepository(ctx.db)
@@ -360,10 +371,11 @@ async def reset_application_name(
 )
 async def reset_all_branding(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> BrandingSettings:
     """Reset all branding to defaults."""
 
+    await _authorize_branding(ctx, user)
     from src.repositories.branding import BrandingRepository
 
     branding_repo = BrandingRepository(ctx.db)

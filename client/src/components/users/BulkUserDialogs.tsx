@@ -260,11 +260,11 @@ function BulkMoveOrgDialogInner({
 					onChange={setOrgId}
 					// A move needs authority at the destination too.
 					showGlobal={authorization.canAt(
-						"users.lifecycle.readwrite",
+						"userlifecycle.readwrite",
 						GLOBAL_TARGET,
 					)}
 					filterOrganizations={(org) =>
-						authorization.canAt("users.lifecycle.readwrite", {
+						authorization.canAt("userlifecycle.readwrite", {
 							kind: "org",
 							id: org.id,
 						})

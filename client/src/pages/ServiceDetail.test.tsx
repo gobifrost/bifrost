@@ -12,6 +12,13 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ isPlatformAdmin: true }),
 }));
 
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAt: () => true,
+		canAnywhere: () => true,
+	}),
+}));
+
 const liveAttempt = makeAttempt({
 	id: "11111111-1111-4111-8111-111111111111",
 	service_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

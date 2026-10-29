@@ -11,7 +11,7 @@ from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.orm.platform_jobs import PlatformJob
 from src.scheduler.registry import ScheduledTaskOutcome
@@ -179,83 +179,32 @@ async def run_model_catalog_refresh(
     }
 
 
-OAUTH_REFRESH_DEFINITION = PlatformJobDefinition(
-    job_type="oauth.refresh",
-    payload_version=1,
-    payload_model=OAuthRefreshPayload,
-    handler=run_oauth_refresh,
-    policy=PlatformJobPolicy(
-        timeout_seconds=15 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=128,
-    ),
+OAUTH_REFRESH_DEFINITION = define_platform_job(
+    "oauth.refresh", OAuthRefreshPayload, run_oauth_refresh
 )
 
-WEBHOOK_RENEWAL_DEFINITION = PlatformJobDefinition(
-    job_type="webhook.renew",
-    payload_version=1,
-    payload_model=EmptyMaintenancePayload,
-    handler=run_webhook_renewal,
-    policy=PlatformJobPolicy(
-        timeout_seconds=30 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=128,
-    ),
+WEBHOOK_RENEWAL_DEFINITION = define_platform_job(
+    "webhook.renew", EmptyMaintenancePayload, run_webhook_renewal
 )
 
-SOLUTION_UPDATE_CHECK_DEFINITION = PlatformJobDefinition(
-    job_type="solution.update_check",
-    payload_version=1,
-    payload_model=EmptyMaintenancePayload,
-    handler=run_solution_update_check,
-    policy=PlatformJobPolicy(
-        timeout_seconds=30 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=256,
-    ),
+SOLUTION_UPDATE_CHECK_DEFINITION = define_platform_job(
+    "solution.update_check", EmptyMaintenancePayload, run_solution_update_check
 )
 
-FILE_INDEX_RECONCILIATION_DEFINITION = PlatformJobDefinition(
-    job_type="workspace.file_index_reconcile",
-    payload_version=1,
-    payload_model=EmptyMaintenancePayload,
-    handler=run_file_index_reconciliation,
-    policy=PlatformJobPolicy(
-        timeout_seconds=60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=256,
-    ),
+FILE_INDEX_RECONCILIATION_DEFINITION = define_platform_job(
+    "workspace.file_index_reconcile",
+    EmptyMaintenancePayload,
+    run_file_index_reconciliation,
 )
 
-ARTIFACT_RETENTION_CLEANUP_DEFINITION = PlatformJobDefinition(
-    job_type="artifact.retention_cleanup",
-    payload_version=1,
-    payload_model=EmptyMaintenancePayload,
-    handler=run_artifact_retention_cleanup,
-    policy=PlatformJobPolicy(
-        timeout_seconds=30 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=128,
-    ),
+ARTIFACT_RETENTION_CLEANUP_DEFINITION = define_platform_job(
+    "artifact.retention_cleanup",
+    EmptyMaintenancePayload,
+    run_artifact_retention_cleanup,
 )
 
-
-MODEL_CATALOG_REFRESH_DEFINITION = PlatformJobDefinition(
-    job_type="model_catalog.refresh",
-    payload_version=1,
-    payload_model=EmptyMaintenancePayload,
-    handler=run_model_catalog_refresh,
-    policy=PlatformJobPolicy(
-        timeout_seconds=5 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=256,
-    ),
+MODEL_CATALOG_REFRESH_DEFINITION = define_platform_job(
+    "model_catalog.refresh", EmptyMaintenancePayload, run_model_catalog_refresh
 )
 
 

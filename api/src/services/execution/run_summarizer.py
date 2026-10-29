@@ -5,8 +5,8 @@ This module owns:
 - :func:`summarize_run`: load the completed run, render the input/output, ask
   the configured summarization model, and persist the parsed result onto
   ``AgentRun`` (asked/did/confidence/run_metadata/summary_status).
-- :func:`enqueue_summarize`: thin RabbitMQ publish helper used by the
-  ``agent-runs`` consumer once a run finishes.
+
+Summaries are requested through :mod:`src.services.execution.summary_dispatch`.
 
 Failure semantics: any error during the LLM call or JSON parsing is caught,
 recorded on ``run.summary_error`` with ``summary_status='failed'``, and
@@ -26,15 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.pubsub import publish_agent_run_update
 from src.core.cache import get_shared_redis
-from src.jobs.queue_names import (
-    SUMMARIZE_BACKFILL_QUEUE as SUMMARIZE_BACKFILL_QUEUE,
-    SUMMARIZE_QUEUE,
-)
-from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
+from src.services.ai_behavior_service import AGENT_EXECUTION_MODE_METADATA_KEY
 from src.services.ai_usage_service import record_ai_usage
 from src.services.execution.model_selection import get_summarization_client
+from src.services.execution.run_metadata import MAX_KEYS
 from src.services.llm import LLMMessage
 
 logger = logging.getLogger(__name__)
@@ -373,12 +370,29 @@ async def summarize_run(
             extracted = {
                 str(k): str(v)[:256]
                 for k, v in md.items()
-                if isinstance(v, (str, int, float))
+                if (
+                    isinstance(v, (str, int, float))
+                    and k != AGENT_EXECUTION_MODE_METADATA_KEY
+                )
             }
             existing = run.run_metadata or {}
             # Existing (agent-supplied) wins; LLM fills in gaps.
-            merged = {**extracted, **existing}
-            run.run_metadata = dict(list(merged.items())[:16])
+            persisted_mode = existing.get(AGENT_EXECUTION_MODE_METADATA_KEY)
+            merged = {
+                **extracted,
+                **{
+                    key: value
+                    for key, value in existing.items()
+                    if key != AGENT_EXECUTION_MODE_METADATA_KEY
+                },
+            }
+            # Execution topology is selected by the platform before a run
+            # begins. It is not summarizer metadata, so an LLM may neither
+            # invent nor displace it, even when the metadata cap is full.
+            limit = MAX_KEYS - (1 if persisted_mode in {"delegated", "automatic"} else 0)
+            run.run_metadata = dict(list(merged.items())[:limit])
+            if persisted_mode in {"delegated", "automatic"}:
+                run.run_metadata[AGENT_EXECUTION_MODE_METADATA_KEY] = persisted_mode
 
         run.summary_generated_at = datetime.now(timezone.utc)
         run.summary_status = "completed"
@@ -403,8 +417,3 @@ async def summarize_run(
         )
         await db.commit()
         await _broadcast_run(run, db)
-
-
-async def enqueue_summarize(run_id: UUID) -> None:
-    """Publish a summarize message for the agent-summarization worker."""
-    await publish_message(SUMMARIZE_QUEUE, {"run_id": str(run_id)})

@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Path, status
 from sqlalchemy import select
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentUser
 from src.core.security import encrypt_secret
 from src.models.contracts.applications import (
     EmbedSecretCreate,
@@ -17,6 +17,8 @@ from src.models.contracts.applications import (
 )
 from src.models.orm.form_embed_secrets import FormEmbedSecret
 from src.models.orm.forms import Form
+from shared.sdk_forms import check_form_access
+from src.services.authorization.enforce import load_caller, require_permission, user_reach
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,20 @@ async def _get_form_or_404(ctx: Context, form_id: UUID) -> Form:
     return form
 
 
+async def _require_embed_secret_permission(
+    ctx: Context, user: CurrentUser, form_id: UUID, permission: str
+) -> Form:
+    """Apply normal Form sharing plus a named permission at the actual row."""
+    form = await _get_form_or_404(ctx, form_id)
+    caller = await load_caller(ctx.db, user)
+    if not user_reach(caller).covers(form.organization_id):
+        raise HTTPException(status_code=404, detail="Form not found")
+    if not await check_form_access(ctx.db, form, caller):
+        raise HTTPException(status_code=403, detail="Access denied to form")
+    require_permission(caller, permission, form.organization_id)
+    return form
+
+
 @router.post(
     "",
     response_model=EmbedSecretCreatedResponse,
@@ -43,10 +59,11 @@ async def _get_form_or_404(ctx: Context, form_id: UUID) -> Form:
 async def create_form_embed_secret(
     body: EmbedSecretCreate,
     ctx: Context,
-    current_user: CurrentSuperuser,
+    current_user: CurrentUser,
     form_id: UUID = Path(...),
 ):
-    await _get_form_or_404(ctx, form_id)
+    await _require_embed_secret_permission(ctx, current_user, form_id, "settings.readwrite")
+    await _require_embed_secret_permission(ctx, current_user, form_id, "secrets.read")
 
     raw_secret = body.secret or secrets.token_urlsafe(32)
     encrypted = encrypt_secret(raw_secret)
@@ -79,10 +96,14 @@ async def create_form_embed_secret(
 )
 async def list_form_embed_secrets(
     ctx: Context,
-    _user: CurrentSuperuser,
+    _user: CurrentUser,
     form_id: UUID = Path(...),
 ):
-    await _get_form_or_404(ctx, form_id)
+    # This response deliberately excludes raw secret material.  It is form
+    # configuration metadata, so keep its gate aligned with the other HMAC
+    # settings operations.  Creating a secret remains separately gated by
+    # ``secrets.read`` because it returns the raw value once.
+    await _require_embed_secret_permission(ctx, _user, form_id, "settings.readwrite")
 
     result = await ctx.db.execute(
         select(FormEmbedSecret)
@@ -111,10 +132,11 @@ async def list_form_embed_secrets(
 async def update_form_embed_secret(
     body: EmbedSecretUpdate,
     ctx: Context,
-    _user: CurrentSuperuser,
+    _user: CurrentUser,
     form_id: UUID = Path(...),
     secret_id: UUID = Path(...),
 ):
+    await _require_embed_secret_permission(ctx, _user, form_id, "settings.readwrite")
     result = await ctx.db.execute(
         select(FormEmbedSecret).where(
             FormEmbedSecret.id == secret_id,
@@ -151,10 +173,11 @@ async def update_form_embed_secret(
 )
 async def delete_form_embed_secret(
     ctx: Context,
-    _user: CurrentSuperuser,
+    _user: CurrentUser,
     form_id: UUID = Path(...),
     secret_id: UUID = Path(...),
 ):
+    await _require_embed_secret_permission(ctx, _user, form_id, "settings.readwrite")
     result = await ctx.db.execute(
         select(FormEmbedSecret).where(
             FormEmbedSecret.id == secret_id,

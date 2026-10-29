@@ -26,7 +26,9 @@ Anything that isn't a sentence is Title Case: buttons, headings, tabs, labels, b
 
 A heading names the thing; what it shows or why belongs in its description ("Effective Access", not "What they can do, and where").
 
-Permissions are named the way Microsoft Graph names them: `{Verb} {Resource}`, from the permission catalog's `names`. Verbs are Read, Read All, Read and Write, and an action's own verb for `execute` (Run Workflows, Publish Apps). The Platform Admin wildcard is All Permissions. Show these names wherever a permission appears, in the UI and in CLI output; never the raw `domain.action` string as the label.
+Permissions are named the way Microsoft Graph names them: `{Verb} {Resource}`, from the permission catalog's `names`. Verbs are Read, Read Basic, Read and Write, Read All and Read and Write All, or a resource's own verb (Run Workflows, Run Agents, Use AI, Impersonate Users, Publish Apps, Deploy Solutions, Build Solutions). The Platform Admin wildcard is All Permissions. Show these names wherever a permission appears, in the UI and in CLI output; never the raw `domain.action` string as the label.
+
+A permission string has the Graph shape `resource.action[.all]`: all lower case, and the resource is one word with no dot. Read Basic is the everyday view of items shared with the holder; Read is the full view. `.all` means other people's private items (agents, runs, artifacts) and never widens which organizations the holder reaches. No permission implies another: Read and Write does not include Read, and Read All does not include Read.
 
 ## Verification
 

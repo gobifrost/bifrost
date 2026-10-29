@@ -121,6 +121,19 @@ async def register_embed_execution(jti: str, execution_id: str) -> None:
         )
 
 
+async def embed_session_owns_execution(jti: str, execution_id: str) -> bool:
+    """Return whether this embed session created this exact execution.
+
+    The mapping is server-owned and short lived. It is a capability binding,
+    not a substitute for the resource's persisted organization check.
+    """
+    from src.core.cache.keys import embed_execution_key
+    from src.core.cache.redis_client import get_redis
+
+    async with get_redis() as redis:
+        return bool(await redis.exists(embed_execution_key(jti, execution_id)))
+
+
 class EmbedScopeMiddleware(BaseHTTPMiddleware):
     """Apply the typed embed capability policy before router authorization."""
 
@@ -162,12 +175,7 @@ class EmbedScopeMiddleware(BaseHTTPMiddleware):
                     content={"detail": "Embed token missing session identifier"},
                 )
 
-            from src.core.cache.keys import embed_execution_key
-            from src.core.cache.redis_client import get_redis
-
-            async with get_redis() as redis:
-                exists = await redis.exists(embed_execution_key(jti, execution_id))
-            if not exists:
+            if not await embed_session_owns_execution(jti, execution_id):
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "Access denied to this execution"},

@@ -11,10 +11,10 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
 from src.core.database import get_db_context
 from src.core.pubsub import manager as pubsub_manager
 from src.jobs.platform.base import PlatformJobDefinition
+from src.jobs.platform.catalog import get_platform_job_metadata
 from src.models.contracts.notifications import (
     NotificationCategory,
     NotificationCreate,
@@ -28,51 +28,67 @@ from src.models.contracts.platform_jobs import (
     PlatformJobStatus,
 )
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.solution_export_jobs import SolutionExportJob
+from src.services.durable_impersonation import current_durable_impersonation
 from src.services.platform_job_memory_profiles import (
     resolve_platform_job_memory_required_bytes,
     record_platform_job_memory_profile,
 )
 from src.services.notification_service import get_notification_service
+from src.services.work_dispatch import wake_pool_workers_after_commit
 
 logger = logging.getLogger(__name__)
 ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requested")
 TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled", "requires_action")
-
-#: Job types eligible for Kubernetes placement when the build backend is
-#: enabled. Mirrors the config default so partial settings doubles in tests
-#: behave like production. (The product opt-in default lives separately in
-#: kubernetes_execution.DEFAULT_REMOTE_JOB_TYPES; both are pinned by tests.)
-DEFAULT_KUBERNETES_JOB_TYPES = frozenset(
-    {
-        "application.deploy",
-        "application.sdk_update",
-        "solution.deploy",
-        "solution.export",
-        "solution.git_sync",
-    }
-)
-
-
-def kubernetes_remote_job_types(settings: Any) -> frozenset[str]:
-    """Parse the operator allowlist of remotely-eligible job types."""
-    raw = getattr(
-        settings,
-        "kubernetes_build_job_types",
-        ",".join(sorted(DEFAULT_KUBERNETES_JOB_TYPES)),
-    )
-    types = frozenset(
-        part.strip() for part in str(raw).split(",") if part.strip()
-    )
-    return types or DEFAULT_KUBERNETES_JOB_TYPES
-
+# A queued local job whose memory requirement no executor's free budget holds yet.
+WAITING_FOR_MEMORY = "Waiting for executor memory"
+# What a Solution export reports when its platform job fails outside its
+# own worker (``fail_linked_solution_export``).
+EXPORT_RUNNER_LOST = "Backup export runner stopped before completion"
+EXPORT_TOO_LARGE = "Backup export needs more memory than any executor can hold"
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
-    from src.jobs.platform.registry import get_platform_job_definition
+async def fail_linked_solution_export(
+    db: AsyncSession,
+    platform_job: PlatformJob,
+    *,
+    completed_at: datetime,
+    failure_message: str,
+) -> None:
+    """Fail an active export projection when its platform job fails outside
+    the export worker (its runner lost, or the job too large to run).
 
+    Export rows carry encrypted options until their worker reaches a terminal
+    state. Such a failure bypasses the export worker's own cleanup, so the
+    platform-job terminal transition must also make that projection safe
+    and observable. The platform job's curated error is deliberately not
+    copied: its detail is for operators, while the export API stays generic.
+    """
+    if platform_job.job_type != "solution.export" or not platform_job.resource_id:
+        return
+    try:
+        export_id = UUID(platform_job.resource_id)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Solution export platform job has an invalid resource identifier",
+            extra={"platform_job_id": str(platform_job.id)},
+        )
+        return
+    export = await db.get(SolutionExportJob, export_id, with_for_update=True)
+    if export is None or export.status not in {"pending", "running"}:
+        return
+    export.status = "failed"
+    export.progress_percent = 100
+    export.message = "Backup failed"
+    export.failure_message = failure_message
+    export.encrypted_options = None
+    export.completed_at = completed_at
+
+
+def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
     error = None
     if job.error_message:
         error = PlatformJobError(
@@ -80,11 +96,11 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
             message=job.error_message,
             retryable=bool(job.error_retryable),
         )
-    definition = get_platform_job_definition(job.job_type)
+    metadata = get_platform_job_metadata(job.job_type)
     can_cancel = job.status in ("queued", "waiting") or (
         job.status == "running"
-        and definition is not None
-        and definition.policy.allow_running_cancellation
+        and metadata is not None
+        and metadata.policy.allow_running_cancellation
     )
     return PlatformJobPublic(
         id=job.id,
@@ -180,6 +196,46 @@ async def publish_platform_job_update(job: PlatformJob) -> None:
             )
 
 
+async def find_active_platform_job(
+    db: AsyncSession, job_type: str, dedupe_key: str
+) -> PlatformJob | None:
+    """The oldest active job for a deduplication key, if any."""
+    return (
+        await db.execute(
+            select(PlatformJob)
+            .where(
+                PlatformJob.job_type == job_type,
+                PlatformJob.dedupe_key == dedupe_key,
+                PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
+            )
+            .order_by(PlatformJob.created_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def finalize_enqueued_platform_job(
+    db: AsyncSession, job: PlatformJob, *, log_label: str
+) -> None:
+    """Attach the notification, commit, refresh, and publish an enqueued job.
+
+    Notification creation is best effort (a failure only warns), and the
+    commit precedes the publish so a caller polling right after the 202
+    always finds the durable row.
+    """
+    try:
+        await ensure_platform_job_notification(db, job)
+    except Exception:
+        logger.warning(
+            f"{log_label} queued without a progress notification",
+            extra={"platform_job_id": str(job.id)},
+            exc_info=True,
+        )
+    await db.commit()
+    await db.refresh(job)
+    await publish_platform_job_update(job)
+
+
 async def enqueue_platform_job(
     db: AsyncSession,
     definition: PlatformJobDefinition,
@@ -209,18 +265,7 @@ async def enqueue_platform_job(
             ),
             {"lock_key": f"{definition.job_type}:{dedupe_key}"},
         )
-        existing = (
-            await db.execute(
-                select(PlatformJob)
-                .where(
-                    PlatformJob.job_type == definition.job_type,
-                    PlatformJob.dedupe_key == dedupe_key,
-                    PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
-                )
-                .order_by(PlatformJob.created_at.asc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        existing = await find_active_platform_job(db, definition.job_type, dedupe_key)
         if existing is not None:
             return existing, True
 
@@ -238,18 +283,13 @@ async def enqueue_platform_job(
         memory_profile_key=memory_profile_key,
     )
 
-    settings = get_settings()
-    # Three gates must agree: Bifrost classification (build class),
-    # operator ceiling (backend flag + deployment allowlist), and product
-    # opt-in (Settings UI, defaulting to the measured high-memory jobs).
-    # Resolved through the kubernetes_execution service (imported lazily:
-    # it pulls the job registry, which pulls this module at load time).
+    # Isolated when the job is build class and Settings -> Kubernetes
+    # isolates its type.
     from src.services.kubernetes_execution import decide_execution_backend
 
-    execution_backend = await decide_execution_backend(
-        db, settings, definition
-    )
+    execution_backend = await decide_execution_backend(db, definition)
 
+    impersonation = current_durable_impersonation()
     job = PlatformJob(
         id=job_id or uuid4(),
         job_type=definition.job_type,
@@ -263,6 +303,7 @@ async def enqueue_platform_job(
         requested_by_user_id=str(requested_by_user_id),
         requested_by_email=requested_by_email,
         requested_by_name=requested_by_name,
+        **impersonation.columns(),
         resource_type=resource_type,
         resource_id=resource_id,
         title=title[:200],
@@ -278,6 +319,8 @@ async def enqueue_platform_job(
         retry_on_runner_loss=definition.policy.retry_on_runner_loss,
     )
     db.add(job)
+    # Local executors claim it; the Kubernetes build controller places it.
+    wake_pool_workers_after_commit(db)
     await db.flush()
     return job, False
 
@@ -409,9 +452,19 @@ async def finish_platform_job(
 
 
 async def checkpoint_platform_job(
-    job_id: UUID, lease_token: UUID, *, result: dict[str, Any], phase: str
+    job_id: UUID,
+    lease_token: UUID,
+    *,
+    result: dict[str, Any],
+    phase: str,
+    current: int | None = None,
+    total: int | None = None,
 ) -> bool:
-    """Durably save resumable handler state on the fenced shared job row."""
+    """Durably save resumable handler state on the fenced shared job row.
+
+    With ``current`` the same write also records progress, so a job that
+    checkpoints per unit of work does not need a second progress write.
+    """
     async with get_db_context() as db:
         job = (await db.execute(
             select(PlatformJob).where(
@@ -423,6 +476,10 @@ async def checkpoint_platform_job(
             return False
         job.result = result
         job.phase = phase[:200]
+        if current is not None:
+            job.progress_current = max(0, current)
+            job.progress_total = total
+            job.progress_percent = (current / total * 100) if total else None
         job.revision += 1
         await db.commit()
     await publish_platform_job_update(job)
@@ -580,10 +637,8 @@ async def request_platform_job_cancel(
     if job.status in TERMINAL_PLATFORM_JOB_STATUSES:
         return job, False
     if job.status in ("running", "cancel_requested"):
-        from src.jobs.platform.registry import get_platform_job_definition
-
-        definition = get_platform_job_definition(job.job_type)
-        if definition is None or not definition.policy.allow_running_cancellation:
+        metadata = get_platform_job_metadata(job.job_type)
+        if metadata is None or not metadata.policy.allow_running_cancellation:
             return job, False
     now = _now()
     accepted = job.cancel_requested_at is None

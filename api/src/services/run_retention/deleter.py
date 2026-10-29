@@ -17,10 +17,13 @@ from sqlalchemy import delete, exists, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from src.core.cache import get_redis
+from src.core.cache.keys import execution_log_retention_cursor_key, execution_logs_stream_key
 from src.core.database import get_db_context
 from src.models.contracts.run_retention import RunRetentionSettings
 from src.models.enums import ExecutionStatus
 from src.models.orm import AgentRun, AIUsage, Event, Execution, PlatformJob, WorkflowRunDaily
+from src.services.agent_run_step_streams import delete_agent_run_step_streams
 from src.services.platform_job_lease import hold_lease
 
 RUN_RETENTION_JOB_TYPE = "run.retention"
@@ -75,6 +78,51 @@ class DeleteMismatch(Exception):
     """The delete removed a different number of rows than were selected."""
 
 
+async def delete_execution_log_streams(execution_ids: list[UUID]) -> None:
+    """Delete streams only after their execution-row transaction committed."""
+    if not execution_ids:
+        return
+    try:
+        async with get_redis() as redis:
+            await redis.delete(*(execution_logs_stream_key(str(execution_id)) for execution_id in execution_ids))
+    except Exception as exc:
+        # A committed database deletion must not be undone for Redis cleanup.
+        # The bounded orphan sweep below will retry this key after a crash.
+        import logging
+
+        logging.getLogger(__name__).warning("Failed to delete retained execution-log streams: %s", exc)
+
+
+async def reclaim_orphaned_execution_log_streams(*, limit: int = 100) -> dict[str, int]:
+    """Boundedly reclaim valid execution streams with no durable execution."""
+    async with get_redis() as redis:
+        cursor = int(await redis.get(execution_log_retention_cursor_key()) or 0)
+        next_cursor, keys = await redis.scan(
+            cursor=cursor, match="bifrost:logs:*", count=limit
+        )
+    candidates: dict[UUID, str] = {}
+    for key in keys:
+        try:
+            execution_id = UUID(key.removeprefix("bifrost:logs:"))
+        except ValueError:
+            continue
+        candidates[execution_id] = key
+    if candidates:
+        async with get_db_context() as db:
+            existing = set(
+                (await db.scalars(select(Execution.id).where(Execution.id.in_(candidates)))).all()
+            )
+        orphaned_keys = [key for execution_id, key in candidates.items() if execution_id not in existing]
+        if orphaned_keys:
+            async with get_redis() as redis:
+                await redis.delete(*orphaned_keys)
+    else:
+        orphaned_keys = []
+    async with get_redis() as redis:
+        await redis.set(execution_log_retention_cursor_key(), next_cursor)
+    return {"scanned": len(keys), "orphaned": len(orphaned_keys)}
+
+
 def _expired_workflow_runs(cutoff: datetime):
     return (Execution.completed_at < cutoff, Execution.status.in_(FINISHED_WORKFLOW_STATUSES))
 
@@ -116,6 +164,7 @@ async def delete_workflow_run_batch(
         if deleted.rowcount != len(ids):
             raise DeleteMismatch(f"workflow runs: deleted {deleted.rowcount} of {len(ids)}")
         await db.commit()
+        await delete_execution_log_streams(ids)
         return len(ids)
 
 
@@ -160,6 +209,7 @@ async def delete_agent_run_batch(
         if deleted.rowcount != len(ids):
             raise DeleteMismatch(f"agent runs: deleted {deleted.rowcount} of {len(ids)}")
         await db.commit()
+        await delete_agent_run_step_streams(ids)
         return len(ids)
 
 

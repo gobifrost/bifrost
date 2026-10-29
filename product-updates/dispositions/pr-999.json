@@ -1,0 +1,12 @@
+{
+  "key": "pr:999",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Activate previously reviewed notices through verified source metadata; no separate customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/999"
+    ]
+  }
+}

@@ -1343,6 +1343,7 @@ async def test_agent_git_sync_parity(db_session):
         knowledge_sources=["kb1"],
         system_tools=["execute_workflow"],
         llm_profile_id=profile.id,
+        llm_profile=profile,
         llm_max_tokens=4096,
         max_iterations=10,
         max_token_budget=50000,
@@ -1437,6 +1438,65 @@ def test_agent_from_row_coerces_uuid_junction_ids():
     assert m.delegated_agent_ids == [str(deleg_uuid)]
     assert m.mcp_connection_ids == [str(mcp_uuid)]
     assert all(isinstance(x, str) for x in m.tool_ids)
+
+
+def test_agent_from_row_does_not_read_an_unloaded_profile_without_a_foreign_key():
+    """Transient agents have no profile relationship to load or serialize."""
+    from uuid import uuid4
+
+    from bifrost.manifest import ManifestAgent
+
+    class _AgentWithoutProfile:
+        id = uuid4()
+        name = "no-profile"
+        organization_id = None
+        access_level = None
+        description = None
+        system_prompt = "x"
+        channels = []
+        knowledge_sources = []
+        system_tools = []
+        llm_profile_id = None
+        llm_max_tokens = None
+        max_iterations = None
+        max_token_budget = None
+
+        @property
+        def llm_profile(self):
+            raise AssertionError("a null llm_profile_id must not read the relationship")
+
+    manifest = ManifestAgent.from_row(_AgentWithoutProfile())
+
+    assert manifest.llm_profile is None
+
+
+def test_agent_from_row_still_requires_a_loaded_nonnull_profile():
+    """Callers with a configured profile must eagerly load it before serializing."""
+    from uuid import uuid4
+
+    from bifrost.manifest import ManifestAgent
+
+    class _AgentWithUnloadedProfile:
+        id = uuid4()
+        name = "unloaded-profile"
+        organization_id = None
+        access_level = None
+        description = None
+        system_prompt = "x"
+        channels = []
+        knowledge_sources = []
+        system_tools = []
+        llm_profile_id = uuid4()
+        llm_max_tokens = None
+        max_iterations = None
+        max_token_budget = None
+
+        @property
+        def llm_profile(self):
+            raise AssertionError("configured profiles must be explicitly loaded")
+
+    with pytest.raises(AssertionError, match="explicitly loaded"):
+        ManifestAgent.from_row(_AgentWithUnloadedProfile())
 
 
 @pytest.mark.e2e
@@ -1583,6 +1643,7 @@ async def test_agent_to_orm_values_partition(db_session):
         knowledge_sources=["kb_partition"],
         system_tools=["execute_workflow"],
         llm_profile_id=profile.id,
+        llm_profile=profile,
         llm_max_tokens=1024,
         max_iterations=5,
         max_token_budget=10000,

@@ -5,8 +5,12 @@ Tests user creation, listing, profile operations,
 disable/enable, permanent delete, and system user protection.
 """
 
-import pytest
+from uuid import uuid4
 
+import pytest
+from sqlalchemy import select, update
+
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.core.constants import SYSTEM_USER_ID
 
 
@@ -224,14 +228,160 @@ class TestSystemUserProtection:
 class TestSelfProtection:
     """Test that admins cannot demote or delete themselves."""
 
-    def test_cannot_delete_self(self, e2e_client, platform_admin):
-        """Admin cannot delete themselves."""
+    def test_cannot_delete_self_when_another_platform_admin_exists(
+        self, e2e_client, platform_admin, second_platform_admin
+    ):
+        """Self-deletion remains a 400 while another active admin survives."""
+        assert second_platform_admin.is_superuser is True
         response = e2e_client.delete(
             f"/api/users/{platform_admin.user_id}",
             headers=platform_admin.headers,
         )
         assert response.status_code == 400
         assert "yourself" in response.json()["detail"].lower()
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_last_active_platform_admin_rest_mutations_are_refused(
+    e2e_client, platform_admin, db_session
+):
+    """REST mutation paths retain one active human Platform Admin, including self-delete."""
+    from src.models import User as UserORM
+    from src.models import UserRole
+
+    rows = (
+        await db_session.execute(
+            select(UserORM.id, UserORM.is_active)
+            .join(UserRole, UserRole.user_id == UserORM.id)
+            .where(
+                UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+                UserORM.id != platform_admin.user_id,
+                UserORM.is_system.is_(False),
+                UserORM.identity_kind.is_(None),
+            )
+        )
+    ).all()
+    try:
+        if rows:
+            await db_session.execute(
+                update(UserORM)
+                .where(UserORM.id.in_([row.id for row in rows]))
+                .values(is_active=False)
+            )
+            await db_session.commit()
+
+        responses = [
+            e2e_client.patch(
+                "/api/users/bulk",
+                headers=platform_admin.headers,
+                json={"user_ids": [str(platform_admin.user_id)], "operation": "set_active", "is_active": False},
+            ),
+            e2e_client.patch(
+                f"/api/users/{platform_admin.user_id}",
+                headers=platform_admin.headers,
+                json={"is_superuser": False},
+            ),
+            e2e_client.patch(
+                f"/api/users/{platform_admin.user_id}",
+                headers=platform_admin.headers,
+                json={"is_active": False},
+            ),
+            e2e_client.delete(
+                f"/api/roles/{PLATFORM_ADMIN_ROLE_ID}/users/{platform_admin.user_id}",
+                headers=platform_admin.headers,
+            ),
+            e2e_client.delete(
+                f"/api/users/{platform_admin.user_id}",
+                headers=platform_admin.headers,
+            ),
+        ]
+        assert all(response.status_code == 409 for response in responses)
+        assert all("active person" in response.json()["detail"] for response in responses)
+    finally:
+        for row in rows:
+            await db_session.execute(
+                update(UserORM).where(UserORM.id == row.id).values(is_active=row.is_active)
+            )
+        await db_session.commit()
+
+
+@pytest.mark.e2e
+def test_external_role_guards_apply_to_rest_mutations(e2e_client, platform_admin, org1):
+    """External people cannot receive, retain, or inherit privileged access."""
+    user_ids: list[str] = []
+    role_ids: list[str] = []
+
+    def create_user(*, external: bool) -> str:
+        response = e2e_client.post(
+            "/api/users",
+            headers=platform_admin.headers,
+            json={
+                "email": f"contoso-{uuid4().hex[:8]}@example.com",
+                "name": "Contoso User",
+                "organization_id": org1["id"],
+                "is_external": external,
+            },
+        )
+        assert response.status_code == 201, response.text
+        user_ids.append(response.json()["id"])
+        return user_ids[-1]
+
+    def create_role() -> str:
+        response = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={"name": f"Contoso Role {uuid4().hex[:8]}", "description": "Test role"},
+        )
+        assert response.status_code == 201, response.text
+        role_ids.append(response.json()["id"])
+        return role_ids[-1]
+
+    try:
+        external = create_user(external=True)
+        plain_role = create_role()
+        assert e2e_client.post(
+            f"/api/roles/{plain_role}/users",
+            headers=platform_admin.headers,
+            json={"user_ids": [external]},
+        ).status_code == 204
+        permission = e2e_client.put(
+            f"/api/roles/{plain_role}/permissions",
+            headers=platform_admin.headers,
+            json={"permissions": ["users.readwrite"]},
+        )
+        assert permission.status_code == 409
+
+        privileged_role = create_role()
+        assert e2e_client.put(
+            f"/api/roles/{privileged_role}/permissions",
+            headers=platform_admin.headers,
+            json={"permissions": ["users.readwrite"]},
+        ).status_code == 200
+        assignment = e2e_client.post(
+            f"/api/roles/{privileged_role}/users",
+            headers=platform_admin.headers,
+            json={"user_ids": [external]},
+        )
+        assert assignment.status_code == 409
+
+        internal = create_user(external=False)
+        assert e2e_client.post(
+            f"/api/roles/{privileged_role}/users",
+            headers=platform_admin.headers,
+            json={"user_ids": [internal]},
+        ).status_code == 204
+        external_transition = e2e_client.patch(
+            f"/api/users/{internal}",
+            headers=platform_admin.headers,
+            json={"is_external": True},
+        )
+        assert external_transition.status_code == 409
+    finally:
+        for user_id in user_ids:
+            e2e_client.delete(f"/api/users/{user_id}", headers=platform_admin.headers)
+        for role_id in role_ids:
+            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
 
 
 @pytest.mark.e2e

@@ -28,6 +28,7 @@
 | POST | `/api/admin/ai/profiles/{profile_id}/verify` |
 | GET | `/api/admin/kubernetes/execution` |
 | PUT | `/api/admin/kubernetes/execution` |
+| PUT | `/api/admin/kubernetes/policy` |
 | GET | `/api/admin/kubernetes/status` |
 | DELETE | `/api/admin/llm/embedding-config` |
 | GET | `/api/admin/llm/embedding-config` |
@@ -214,6 +215,8 @@
 | POST | `/api/files/exists` |
 | POST | `/api/files/list` |
 | GET | `/api/files/manifest` |
+| POST | `/api/files/move` |
+| POST | `/api/files/move-many` |
 | GET | `/api/files/policies` |
 | POST | `/api/files/policies/test` |
 | DELETE | `/api/files/policies/{policy_path}` |
@@ -498,6 +501,11 @@
 | GET | `/api/sdk/modules-resolve` |
 | GET | `/api/sdk/modules/{path}` |
 | GET | `/api/sdk/requirements` |
+| POST | `/api/sdk/runtime/data-provider-cache/read` |
+| POST | `/api/sdk/runtime/data-provider-cache/write` |
+| POST | `/api/sdk/runtime/logs` |
+| GET | `/api/sdk/runtime/logs/{execution_id}` |
+| POST | `/api/sdk/runtime/service-control` |
 | POST | `/api/sdk/tables/create` |
 | POST | `/api/sdk/tables/list` |
 | GET | `/api/services` |
@@ -544,6 +552,7 @@
 | POST | `/api/solutions/{solution_id}/capture/preview` |
 | GET | `/api/solutions/{solution_id}/deletion-summary` |
 | POST | `/api/solutions/{solution_id}/deploy` |
+| POST | `/api/solutions/{solution_id}/dev-context` |
 | GET | `/api/solutions/{solution_id}/entities` |
 | POST | `/api/solutions/{solution_id}/export` |
 | GET | `/api/solutions/{solution_id}/export-jobs` |
@@ -619,7 +628,10 @@
 | GET | `/auth/authorization` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
+| POST | `/auth/device/deny` |
 | POST | `/auth/device/token` |
+| POST | `/auth/impersonate/{user_id}` |
+| POST | `/auth/impersonation/end` |
 | POST | `/auth/login` |
 | POST | `/auth/logout` |
 | GET | `/auth/me` |

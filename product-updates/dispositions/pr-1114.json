@@ -1,0 +1,14 @@
+{
+  "key": "pr:1114",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "On Kubernetes, an upgrade now always replaces worker Jobs that are still running the previous version.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1114",
+      "Found in production on 2026-10-28: an old-image worker launched during a rollout was recorded as the new version and never replaced."
+    ]
+  }
+}

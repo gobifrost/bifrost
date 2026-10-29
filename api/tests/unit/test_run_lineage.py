@@ -220,3 +220,26 @@ async def test_principal_lineage_reads_the_run_user_a_bridge_token_carries(db_se
     )
 
     assert await principal_lineage(db_session, bridge) == RunLineage(org_identity, org_identity, None)
+
+
+@pytest.mark.asyncio
+async def test_unattended_enqueue_uses_the_pinned_identity_as_actor(db_session: AsyncSession, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from src.services.execution import async_executor
+
+    stage = AsyncMock()
+    monkeypatch.setattr(async_executor, "stage_workflow_run", stage)
+    lineage = await identity_lineage(db_session, None)
+    identity = await db_session.get(User, lineage.run_user_id)
+    assert identity is not None
+
+    await async_executor.stage_system_workflow_execution(
+        db_session, workflow_id=str(uuid4()), parameters={}, lineage=lineage,
+    )
+
+    pending = stage.await_args.args[1]
+    assert pending["user_id"] == str(identity.id)
+    assert pending["user_email"] == identity.email
+    assert not pending["is_platform_admin"]
+    assert pending["lineage"] == lineage.bound(pending["execution_id"])

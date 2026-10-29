@@ -14,6 +14,7 @@ modules from Redis cache instead of the filesystem.
 from __future__ import annotations
 
 import logging
+import hashlib
 import resource
 import sys
 from dataclasses import dataclass
@@ -115,27 +116,22 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
     from src.sdk.context import Caller, Organization
     from src.services.execution.engine import ExecutionRequest, execute
     from src.models.enums import ExecutionStatus
-    from bifrost.credentials import is_token_expired
 
     service_cfg = context_data.get("service")
     if service_cfg:
         return await run_service(service_cfg, context_data)
 
-    # Engine credentials: prefer the pre-minted token handed down from the
-    # consumer via context_data["engine_token"].  This keeps SECRET_KEY out of
-    # the child process entirely.
-    # Fall back to authenticate_engine() only for callers (e.g. direct engine
-    # tests) that bypass the consumer and do not supply a pre-minted token.
-    if not _set_process_engine_credentials(context_data) and is_token_expired(
-        buffer_seconds=3600
-    ):
-        from src.core.security import authenticate_engine
-        authenticate_engine()
+    # Every SDK-capable execution must receive a pre-minted, typed runtime
+    # credential from its parent. There is no process-wide engine fallback.
+    if not _set_process_engine_credentials(context_data):
+        raise RuntimeError("Missing pre-minted runtime credential for execution")
 
     start_time = datetime.now(timezone.utc)
 
     # Capture starting resource usage
     start_rss, start_utime, start_stime = _get_resource_usage()
+    # The loaded workflow's code version; its memory is learned per version.
+    code_hash: str | None = None
 
     # Activate the per-execution Solution import root BEFORE any workspace code
     # loads. With no solution_id this is a no-op (plain _repo/ behavior). The
@@ -200,6 +196,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                     cached = get_module_sync(file_path)
                     if cached:
                         loaded_code = cached["content"]
+                        code_hash = hashlib.sha256(loaded_code.encode("utf-8")).hexdigest()
                         workflow_func, metadata, load_error = load_workflow_from_db(
                             code=loaded_code,
                             path=file_path,
@@ -227,8 +224,6 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
             # Validate content hash if pinned at dispatch time
             content_hash = context_data.get("content_hash")
             if content_hash and loaded_code:
-                import hashlib
-
                 actual_hash = hashlib.sha256(
                     loaded_code.encode("utf-8")
                 ).hexdigest()
@@ -258,6 +253,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                         "cpu_user_seconds": metrics.cpu_user_seconds,
                         "cpu_system_seconds": metrics.cpu_system_seconds,
                         "cpu_total_seconds": metrics.cpu_total_seconds,
+                        "code_hash": code_hash,
                     },
                 }
 
@@ -327,6 +323,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                 "cpu_user_seconds": metrics.cpu_user_seconds,
                 "cpu_system_seconds": metrics.cpu_system_seconds,
                 "cpu_total_seconds": metrics.cpu_total_seconds,
+                "code_hash": code_hash,
             },
         }
 
@@ -353,6 +350,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                 "cpu_user_seconds": metrics.cpu_user_seconds,
                 "cpu_system_seconds": metrics.cpu_system_seconds,
                 "cpu_total_seconds": metrics.cpu_total_seconds,
+                "code_hash": code_hash,
             },
         }
 
@@ -456,8 +454,6 @@ async def run_service(
 
         content_hash = context_data.get("content_hash")
         if content_hash and loaded_code:
-            import hashlib
-
             actual_hash = hashlib.sha256(loaded_code.encode("utf-8")).hexdigest()
             if actual_hash != content_hash:
                 logger.warning(
@@ -484,7 +480,7 @@ async def run_service(
             tags=["service"],
             timeout_seconds=0,
             parameters={},
-            is_platform_admin=False,
+            is_platform_admin=context_data.get("is_platform_admin", False),
             broadcaster=None,
             solution_id=context_data.get("solution_id"),
             artifact_workspace_id=context_data.get("artifact_workspace_id"),

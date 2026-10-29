@@ -3,7 +3,7 @@
 Identities are the accounts that run work no person started. They are listed,
 created (custom ones), renamed and deleted here, and kept out of the people
 list; roles go through the role-assignment routes. Reading is ``users.read``
-and changing is ``users.lifecycle.readwrite``, at the identity's organization
+and changing is ``userlifecycle.readwrite``, at the identity's organization
 (Global for the global identities).
 """
 
@@ -113,7 +113,7 @@ def world(e2e_client, platform_admin):
         e2e_client.put(
             f"/api/roles/{role['id']}/permissions",
             headers=admin,
-            json={"permissions": ["users.read", "users.lifecycle.readwrite"]},
+            json={"permissions": ["users.read", "userlifecycle.readwrite"]},
         )
     )
     lifecycle = _person(

@@ -1,0 +1,12 @@
+{
+  "key": "pr:1037",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Runtime infrastructure for opt-in pool executors: an executor also hosts supervised services and local platform jobs, so the scheduler and worker containers can run the same process. Default installations are unchanged.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1037"
+    ]
+  }
+}

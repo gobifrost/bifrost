@@ -17,6 +17,10 @@ it("groups documentation, internal release notes, community destinations and the
 		"href",
 		"https://discord.gg/x84pft2YDa",
 	);
+	const youtube = screen.getByRole("menuitem", { name: "YouTube" });
+	expect(youtube).toHaveAttribute("href", "https://www.youtube.com/@gobifrost");
+	expect(youtube).toHaveAttribute("target", "_blank");
+	expect(youtube).toHaveAttribute("rel", "noreferrer");
 	const website = screen.getByRole("menuitem", { name: "Website" });
 	expect(website).toHaveAttribute("href", "https://gobifrost.com");
 	expect(website).toHaveAttribute("target", "_blank");

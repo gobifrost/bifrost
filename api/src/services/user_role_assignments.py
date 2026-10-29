@@ -5,20 +5,17 @@ Every path that adds a ``user_roles`` row writes its boundaries here
 through the database cascade. The default boundary is the user's home
 organization, or ``platform`` for a Global user.
 
-The grant ceiling (``src.services.authorization.privilege``): an actor who is
-not a Platform Admin may grant or remove only roles that carry no
-permissions and are not builtin, never on a privileged user, and may write
-only ``organization`` boundaries their own ``roleassignments.readwrite``
-reach covers. A Platform Admin may assign anything, with limits that hold for
-everyone: a base role is User or a custom role, never a builtin role beyond
-User; Platform Operator is held only by people in the provider organization
-and applies only at managed organizations or at customer organizations (not
-the provider org, not Platform); Platform Admin is an additional role held only
-by people in the provider organization or Global users, always at the
-``platform`` boundary, and only a Platform Admin may grant or remove it; and
-Secrets Reader has one fixed set of boundaries (``SECRETS_READER_BOUNDARIES``)
-that nobody chooses. Every one of these carries permissions, so only a
-Platform Admin can grant or remove them.
+``roleassignments.readwrite`` grants ordinary assignment changes. Changing a
+privileged role or protected account additionally needs
+``privilegedaccess.readwrite`` at the target account's organization. Boundary
+placement follows the original caller's home organization and the caller's
+role-assignment reach. A base role is User or a custom role, never a builtin
+role beyond User; Platform Operator is held only by people in the provider
+organization and applies only at managed organizations or at customer
+organizations (not the provider org, not Platform); Platform Admin is an
+additional role held only by people in the provider organization or Global
+users, always at the ``platform`` boundary; and Secrets Reader has one fixed
+set of boundaries (``SECRETS_READER_BOUNDARIES``) that nobody chooses.
 """
 
 from __future__ import annotations
@@ -64,17 +61,18 @@ from src.services.authorization.context import (
 from src.services.authorization.enforce import (
     Caller,
     allows_operation,
+    allows_permission,
     held_permissions_by_user,
     operation_reach,
     org_target,
     permitted_organizations,
     require_operation,
-    require_unprotected,
+    require_permission,
 )
 from src.services.authorization.reach import OrgReach
 from src.services.authorization.privilege import (
     is_privileged_principal,
-    may_change_role_assignment,
+    role_assignment_requires_privileged_access,
 )
 
 GET_OPERATION = "GET /api/users/{user_id}/role-assignments"
@@ -82,14 +80,9 @@ PUT_OPERATION = "PUT /api/users/{user_id}/role-assignments"
 # The access map is read exactly as the role assignments are.
 ACCESS_OPERATION = "GET /api/users/{user_id}/access"
 
-CEILING_MESSAGE = (
-    "You can only assign or remove roles that carry no permissions, on users "
-    "without privileged access"
-)
 BOUNDARY_REACH_MESSAGE = (
     "You can only make a role apply at organizations where you can assign roles"
 )
-ADMIN_ROLE_MESSAGE = "Only a Platform Admin can grant or remove the Platform Admin role"
 OPERATOR_HOLDER_MESSAGE = (
     "Platform Operator can only be given to people in the provider organization"
 )
@@ -153,6 +146,17 @@ async def insert_assignment(
     assigned_by: str,
 ) -> None:
     """Add a ``user_roles`` row and its boundary rows."""
+    from shared.account_guards import (
+        AccountGuardError,
+        assert_role_assignment_allowed_for_user,
+    )
+
+    try:
+        await assert_role_assignment_allowed_for_user(
+            session, user_id=user_id, role_id=role_id
+        )
+    except AccountGuardError as exc:
+        raise RoleAssignmentError(exc.status_code, exc.detail) from None
     session.add(
         UserRole(
             user_id=user_id,
@@ -208,15 +212,17 @@ async def load_roles(session: AsyncSession, role_ids: Iterable[UUID]) -> dict[UU
     }
 
 
-def check_role_change(caller: Caller, role: RoleInfo, target_permissions: frozenset[str]) -> None:
-    """The grant ceiling for granting or removing one role on one user."""
-    if not may_change_role_assignment(
-        actor_is_platform_admin=caller.is_platform_admin,
-        role_id=role.id,
-        role_permissions=role.permissions,
-        target_permissions=target_permissions,
+def check_role_change(
+    caller: Caller,
+    role: RoleInfo,
+    target_permissions: frozenset[str],
+    target_organization_id: UUID | None,
+) -> None:
+    """Require privileged access only for a privileged role or target."""
+    if role_assignment_requires_privileged_access(
+        role_permissions=role.permissions, target_permissions=target_permissions
     ):
-        raise RoleAssignmentError(403, CEILING_MESSAGE)
+        require_permission(caller, "privilegedaccess.readwrite", target_organization_id)
 
 
 def may_hold(role: RoleInfo, holder_organization_id: UUID | None) -> bool:
@@ -249,9 +255,10 @@ def _role_boundary_rule(role: RoleInfo) -> tuple[frozenset[BoundaryKind], bool]:
 def boundary_placement(caller: Caller, role: RoleInfo) -> tuple[frozenset[BoundaryKind], bool]:
     """Where ``caller`` may make ``role`` apply (``check_boundaries`` decides
     the same): the role's own rule, narrowed to ``organization`` boundaries
-    for anyone but a Platform Admin (and those only within their reach)."""
+    for callers outside the platform organization. This uses the original
+    caller context, never the runtime operation organization or acting user."""
     kinds, provider_allowed = _role_boundary_rule(role)
-    if not caller.is_platform_admin:
+    if caller.ctx is None or caller.ctx.home_organization_id not in (None, PROVIDER_ORG_ID):
         kinds = kinds & {BoundaryKind.ORGANIZATION}
     return kinds, provider_allowed
 
@@ -266,7 +273,7 @@ def check_boundaries(
         if boundaries != SECRETS_READER_BOUNDARIES:
             raise RoleAssignmentError(422, SECRETS_READER_BOUNDARY_MESSAGE)
         return
-    kinds, provider_allowed = _role_boundary_rule(role)
+    kinds, provider_allowed = boundary_placement(caller, role)
     for boundary in boundaries:
         if boundary.kind not in kinds or (
             not provider_allowed
@@ -280,10 +287,14 @@ def check_boundaries(
                 "Platform Operator applies only at managed organizations or at "
                 "customer organizations",
             )
-    if caller.is_platform_admin:
-        return
     for boundary in boundaries:
-        if boundary.kind != BoundaryKind.ORGANIZATION or not reach.covers(boundary.organization_id):
+        if boundary.kind == BoundaryKind.ORGANIZATION:
+            covered = reach.covers(boundary.organization_id)
+        elif boundary.kind == BoundaryKind.MANAGED_ORGANIZATIONS:
+            covered = reach.everything or reach.managed
+        else:
+            covered = reach.everything or reach.include_global
+        if not covered:
             raise RoleAssignmentError(403, BOUNDARY_REACH_MESSAGE)
 
 
@@ -344,15 +355,17 @@ def _assignable_roles(
     org = org_target(target.user.organization_id)
     if not allows_operation(caller, PUT_OPERATION, org):
         return []
-    if target.is_privileged and not caller.is_platform_admin:
+    if target.is_privileged and not allows_permission(
+        caller, "privilegedaccess.readwrite", target.user.organization_id
+    ):
         return []
     current_base = roles[target.user.base_role_id]
     may_change_base = allows_operation(
-        caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite"
-    ) and _may_change(caller, current_base, target.held)
+        caller, PUT_OPERATION, org, permission="userlifecycle.readwrite"
+    ) and _may_change(caller, current_base, target.held, target.user.organization_id)
     out: list[AssignableRole] = []
     for role in sorted(roles.values(), key=lambda r: (not r.is_builtin, r.name.lower())):
-        if not _may_change(caller, role, target.held):
+        if not _may_change(caller, role, target.held, target.user.organization_id):
             continue
         # A Global user can't lose Platform Admin, so it is neither offered
         # nor removable.
@@ -405,12 +418,15 @@ def _fixed_boundaries() -> list[RoleBoundaryInput]:
     ]
 
 
-def _may_change(caller: Caller, role: RoleInfo, target_permissions: frozenset[str]) -> bool:
-    try:
-        check_role_change(caller, role, target_permissions)
-    except RoleAssignmentError:
-        return False
-    return True
+def _may_change(
+    caller: Caller,
+    role: RoleInfo,
+    target_permissions: frozenset[str],
+    target_organization_id: UUID | None,
+) -> bool:
+    return not role_assignment_requires_privileged_access(
+        role_permissions=role.permissions, target_permissions=target_permissions
+    ) or allows_permission(caller, "privilegedaccess.readwrite", target_organization_id)
 
 
 async def _response(
@@ -519,7 +535,7 @@ async def replace_role_assignments(
     as they leave it as it is.
     """
     from shared.role_cache import invalidate_user as invalidate_user_role_cache
-    from shared.sdk_users import set_platform_admin, set_user_base_role
+    from shared.sdk_users import UserServiceError, set_platform_admin, set_user_base_role
     from src.core.cache import invalidate_role_users
     from src.services.audit import emit_audit
 
@@ -527,9 +543,23 @@ async def replace_role_assignments(
     user = target.user
     if is_system_account(user.id):
         raise RoleAssignmentError(422, SYSTEM_ACCOUNT_ROLE_MESSAGE)
-    if user.id == caller.principal.user_id:
+    is_self = user.id == caller.principal.user_id
+    # Temporary bridge for local SDK development; the intended dev path keeps
+    # secrets in the engine.
+    if is_self and not caller.is_platform_admin:
+        if PLATFORM_ADMIN_ROLE_ID not in {item.role_id for item in request.additional}:
+            from shared.account_guards import (
+                AccountGuardError,
+                refuse_last_active_platform_admin_removal,
+            )
+
+            try:
+                await refuse_last_active_platform_admin_removal(session, {user.id})
+            except AccountGuardError as exc:
+                raise RoleAssignmentError(exc.status_code, exc.detail) from None
         raise RoleAssignmentError(400, "You can't change your own role assignments")
-    require_unprotected(caller, target.is_privileged)
+    if target.is_privileged:
+        require_permission(caller, "privilegedaccess.readwrite", user.organization_id)
 
     requested: dict[UUID, frozenset[Boundary]] = {}
     for item in request.additional:
@@ -563,17 +593,38 @@ async def replace_role_assignments(
     for role_id in added | rebounded:
         if role_id in BASE_ROLE_IDS:
             raise RoleAssignmentError(422, f"'{roles[role_id].name}' is a base role")
+    if user.is_external:
+        from shared.account_guards import (
+            AccountGuardError,
+            assert_role_assignment_allowed_for_user,
+        )
+
+        for role_id in added | ({request.base_role_id} if base_changed else set()):
+            try:
+                await assert_role_assignment_allowed_for_user(
+                    session, user_id=user.id, role_id=role_id
+                )
+            except AccountGuardError as exc:
+                raise RoleAssignmentError(exc.status_code, exc.detail) from None
     if PLATFORM_ADMIN_ROLE_ID in added | removed:
-        if not caller.is_platform_admin:
-            raise RoleAssignmentError(403, ADMIN_ROLE_MESSAGE)
         if (
             PLATFORM_ADMIN_ROLE_ID in removed
             and user.organization_id is None
             and not is_identity(user)
         ):
             raise RoleAssignmentError(409, ADMIN_REMOVAL_MESSAGE)
+        if PLATFORM_ADMIN_ROLE_ID in removed:
+            from shared.account_guards import (
+                AccountGuardError,
+                refuse_last_active_platform_admin_removal,
+            )
+
+            try:
+                await refuse_last_active_platform_admin_removal(session, {user.id})
+            except AccountGuardError as exc:
+                raise RoleAssignmentError(exc.status_code, exc.detail) from None
     for role_id in added | removed | rebounded:
-        check_role_change(caller, roles[role_id], target.held)
+        check_role_change(caller, roles[role_id], target.held, user.organization_id)
     for role_id in added | rebounded:
         check_holder(roles[role_id], user.organization_id)
         check_boundaries(caller, reach, roles[role_id], requested[role_id])
@@ -589,7 +640,10 @@ async def replace_role_assignments(
 
     before = _audit_view(user.base_role_id, current)
     if base_changed:
-        await set_user_base_role(session, user, request.base_role_id)
+        try:
+            await set_user_base_role(session, user, request.base_role_id)
+        except UserServiceError as exc:
+            raise RoleAssignmentError(exc.status_code, exc.detail) from None
     if removed - {PLATFORM_ADMIN_ROLE_ID}:
         await session.execute(
             delete(UserRole).where(
@@ -643,11 +697,11 @@ async def replace_role_assignments(
 
 def _check_base_change(caller: Caller, target: AssignmentTarget, old: RoleInfo, new: RoleInfo) -> None:
     org = org_target(target.user.organization_id)
-    require_operation(caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite")
+    require_operation(caller, PUT_OPERATION, org, permission="userlifecycle.readwrite")
     if new.is_builtin and new.id not in BASE_ROLE_IDS:
         raise RoleAssignmentError(422, f"'{new.name}' can't be a base role")
-    check_role_change(caller, old, target.held)
-    check_role_change(caller, new, target.held)
+    check_role_change(caller, old, target.held, target.user.organization_id)
+    check_role_change(caller, new, target.held, target.user.organization_id)
 
 
 async def _require_organizations_exist(session: AsyncSession, organization_ids: set[UUID]) -> None:
@@ -682,6 +736,13 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     """The signed-in user's own authorization, read from the database."""
     ctx = await build_authorization_context(session, user_id)
     base_name = await session.scalar(select(Role.name).where(Role.id == ctx.base_role_id))
+    home_organization_name = (
+        await session.scalar(
+            select(Organization.name).where(Organization.id == ctx.home_organization_id)
+        )
+        if ctx.home_organization_id
+        else None
+    )
     grants = [
         AuthorizationGrant(
             permission=permission,
@@ -704,6 +765,7 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     return AuthorizationSummary(
         is_platform_admin=ctx.is_platform_admin,
         home_organization_id=ctx.home_organization_id,
+        home_organization_name=home_organization_name,
         provider_organization_id=PROVIDER_ORG_ID,
         base_role=AuthorizationBaseRole(id=ctx.base_role_id, name=base_name or ""),
         grants=grants,

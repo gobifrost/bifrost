@@ -495,18 +495,17 @@ class TestDiffDetection:
 
 
 # =============================================================================
-# Group C: Entity change hook serialization compatibility
+# Group C: Compact manifest codec serialization compatibility
 # =============================================================================
 
 
-class TestEntityHookSerialization:
-    """Verify that the entity_change_hook's serialization (exclude_defaults=True)
-    produces data that round-trips cleanly through YAML and diffs as equal."""
+class TestCompactManifestCodecSerialization:
+    """Verify compact manifest serialization round-trips through YAML cleanly."""
 
     def test_exclude_defaults_serialization_round_trip(self, kitchen_sink_manifest: Manifest):
-        """Simulates entity_change_hook: serialize with exclude_defaults=True,
+        """Exercises compact manifest serialization with exclude_defaults=True,
         write to YAML, parse back, diff against original."""
-        # Simulate what entity_change_hook does for each entity type
+        # Compact-codec coverage for each entity type
         for wf in kitchen_sink_manifest.workflows.values():
             hook_data = wf.model_dump(mode="json", exclude_defaults=True, by_alias=True)
             # Write to YAML and parse back
@@ -515,10 +514,10 @@ class TestEntityHookSerialization:
             # The restored workflow should diff as equal against the original
             minimal = Manifest(workflows={wf.id: wf})
             changes, _ = _diff_and_collect(parsed, minimal)
-            assert changes == [], f"Hook-serialized workflow should round-trip cleanly: {changes}"
+            assert changes == [], f"Compact-serialized workflow should round-trip cleanly: {changes}"
 
     def test_exclude_defaults_integration_round_trip(self, kitchen_sink_manifest: Manifest):
-        """Integration with OAuth and mappings round-trips through hook serialization."""
+        """Integration with OAuth and mappings round-trips through compact serialization."""
         integ = kitchen_sink_manifest.integrations[INTEG_ID]
         hook_data = integ.model_dump(mode="json", exclude_defaults=True, by_alias=True)
         yaml_str = yaml.dump({"integrations": {INTEG_ID: hook_data}}, sort_keys=True)
@@ -529,7 +528,7 @@ class TestEntityHookSerialization:
         assert changes == [], f"Hook-serialized integration should round-trip cleanly: {changes}"
 
     def test_exclude_defaults_config_round_trip(self, kitchen_sink_manifest: Manifest):
-        """All config types round-trip through hook serialization."""
+        """All config types round-trip through compact serialization."""
         for cfg_id, cfg in kitchen_sink_manifest.configs.items():
             hook_data = cfg.model_dump(mode="json", exclude_defaults=True, by_alias=True)
             yaml_str = yaml.dump({"configs": {cfg_id: hook_data}}, sort_keys=True)
@@ -540,7 +539,7 @@ class TestEntityHookSerialization:
             assert changes == [], f"Hook-serialized config {cfg.key} should round-trip cleanly: {changes}"
 
     def test_exclude_defaults_event_round_trip(self, kitchen_sink_manifest: Manifest):
-        """Event source with subscriptions round-trips through hook serialization."""
+        """Event source with subscriptions round-trips through compact serialization."""
         event = kitchen_sink_manifest.events[EVENT_ID]
         hook_data = event.model_dump(mode="json", exclude_defaults=True, by_alias=True)
         yaml_str = yaml.dump({"events": {EVENT_ID: hook_data}}, sort_keys=True)

@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import pytest
+import pytest_asyncio
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedError
 
@@ -458,6 +459,46 @@ class TestWebSocketEdgeCases:
             logger.info("Unknown message type handled gracefully")
 
 
+@pytest_asyncio.fixture
+async def visible_service(async_session_factory, platform_admin):
+    """A durable stopped service whose scope the admin can inspect."""
+    from uuid import uuid4
+
+    from src.models.orm.services import ServiceDefinition
+    from src.models.orm.workflows import Workflow
+
+    workflow = Workflow(
+        id=uuid4(),
+        name=f"Contoso Service {uuid4().hex}",
+        function_name="contoso_service",
+        path=f"contoso_services/{uuid4().hex}.py",
+        type="service",
+        organization_id=platform_admin.organization_id,
+    )
+    definition = ServiceDefinition(
+        id=uuid4(),
+        workflow_id=workflow.id,
+        organization_id=platform_admin.organization_id,
+        created_by=platform_admin.email,
+        desired_state="stopped",
+    )
+    async with async_session_factory() as session:
+        session.add_all([workflow, definition])
+        await session.commit()
+    try:
+        yield str(definition.id)
+    finally:
+        async with async_session_factory() as session:
+            stored = await session.get(ServiceDefinition, definition.id)
+            assert stored is not None
+            await session.delete(stored)
+            await session.flush()
+            stored_workflow = await session.get(Workflow, workflow.id)
+            assert stored_workflow is not None
+            await session.delete(stored_workflow)
+            await session.commit()
+
+
 @pytest.mark.e2e
 class TestServiceLogStreaming:
     """Supervised service log streaming over the standard WebSocket (2.4).
@@ -472,13 +513,14 @@ class TestServiceLogStreaming:
         self,
         e2e_ws_url,
         platform_admin,
+        visible_service,
     ):
         """Subscribe service:{id} → published attempt lines arrive live."""
         from uuid import uuid4
 
         from src.core.cache import get_redis
 
-        service_id = str(uuid4())
+        service_id = visible_service
         attempt_id = str(uuid4())
         ws_url = f"{e2e_ws_url}/ws/connect"
         extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
@@ -554,9 +596,9 @@ class TestServiceLogStreaming:
         self,
         e2e_ws_url,
         org1_user,
+        visible_service,
     ):
-        """Service log channels are platform-admin-only."""
-        from uuid import uuid4
+        """A person outside the service's scope cannot subscribe."""
 
         ws_url = f"{e2e_ws_url}/ws/connect"
         extra_headers = {"Authorization": f"Bearer {org1_user.access_token}"}
@@ -567,7 +609,7 @@ class TestServiceLogStreaming:
 
             await ws.send(json.dumps({
                 "type": "subscribe",
-                "channels": [f"service:{uuid4()}"],
+                "channels": [f"service:{visible_service}"],
             }))
             msg = await asyncio.wait_for(ws.recv(), timeout=5)
             data = json.loads(msg)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from shared.app_build_errors import subprocess_memory_error
+
 
 async def run_node_script(script: Path, input_data: bytes) -> tuple[int | None, bytes, bytes]:
     """Run ``node <script>`` with ``input_data`` on stdin; return (returncode, stdout, stderr).
@@ -26,4 +28,7 @@ async def run_node_script(script: Path, input_data: bytes) -> tuple[int | None, 
             proc.kill()
             await proc.wait()
         raise
+    memory_error = subprocess_memory_error(proc.returncode, stderr, stdout)
+    if memory_error is not None:
+        stderr = str(memory_error).encode()
     return proc.returncode, stdout, stderr

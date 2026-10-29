@@ -14,6 +14,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
 
+const mockAuthorization = vi.hoisted(() => vi.fn());
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
+}));
+
 const mockUseAgents = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useAgents", () => ({
 	useAgents: (scope: unknown, options: unknown) =>
@@ -121,6 +126,10 @@ beforeEach(() => {
 	sessionStorage.clear();
 	mockIsDesktop.mockReturnValue(true);
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockAuthorization.mockReturnValue({
+		canAt: () => true,
+		canAnywhere: () => true,
+	});
 	mockUseAgents.mockReturnValue({
 		data: [
 			{ id: "agent-1", name: "Service Desk Triage" },

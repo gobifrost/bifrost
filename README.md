@@ -126,13 +126,34 @@ This starts:
 -   **API** (FastAPI) - proxied through client
 -   **PostgreSQL** - Database
 -   **Redis** - Caching and sessions
--   **RabbitMQ** - Message queue for async workflows
+-   **Scheduler and Worker** - Executors that run workflows and agent runs
 
 **Access the Platform:**
 
 -   **Client UI**: http://localhost:3000
 -   **API Docs (Swagger)**: http://localhost:3000/api/docs
 -   **API Docs (ReDoc)**: http://localhost:3000/api/redoc
+
+### Upgrading
+
+Bifrost no longer uses RabbitMQ. If your `docker-compose.yml` predates this,
+leave its `rabbitmq` service and `BIFROST_RABBITMQ_URL` settings in place for the
+first start after upgrading: the API moves any runs an earlier release left
+queued there into PostgreSQL, then disconnects. Once the API logs
+`Drained work queued by an earlier release`, clean up: delete the `rabbitmq` service, its
+`depends_on` entries, the `BIFROST_RABBITMQ_URL` lines and the `rabbitmq_data`
+volume from the compose file, remove `RABBITMQ_PASSWORD` from `.env`, then run:
+
+```bash
+docker compose up -d --remove-orphans
+docker volume rm bifrost_rabbitmq_data
+```
+
+The API records the drain once nothing is left queued, and later starts no
+longer connect (each start warns that `BIFROST_RABBITMQ_URL` is no longer used
+until it is removed). A rollback to a release that queues to RabbitMQ needs
+that record deleted, so the next upgrade drains again:
+`DELETE FROM system_configs WHERE category = 'runtime' AND key = 'legacy_broker_drained';`
 
 ---
 
@@ -146,7 +167,7 @@ The full stack runs in Docker with hot reload enabled for both API and client:
 ./debug.sh              # Start all services with hot reload
 ```
 
-This launches PostgreSQL, Redis, RabbitMQ, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
+This launches PostgreSQL, Redis, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
 
 Changes to files in `api/src/`, `api/shared/`, and `client/src/` automatically reload — **do not restart containers for code changes.**
 
@@ -207,16 +228,17 @@ For test authoring conventions, fixture layout, and debugging tips, see [`CLAUDE
                            │
                     ┌──────┴──────┐
                     ▼             ▼
-              ┌─────────┐   ┌──────────┐
-              │  Redis  │   │ RabbitMQ │
-              │ (Cache) │   │ (Queue)  │
-              └─────────┘   └──────────┘
+              ┌─────────┐   ┌─────────────┐
+              │  Redis  │   │  Executors  │
+              │ (Cache) │   │ (scheduler, │
+              └─────────┘   │   worker)   │
+                            └─────────────┘
 ```
 
 -   **FastAPI** - Async Python API with automatic OpenAPI documentation
 -   **PostgreSQL** - Primary data store with SQLAlchemy ORM
 -   **Redis** - Session storage and caching
--   **RabbitMQ** - Async workflow execution queue
+-   **Executors** - Scheduler and worker containers that claim workflow and agent runs from PostgreSQL
 -   **React** - Modern frontend with TypeScript
 
 ---
@@ -231,6 +253,16 @@ For detailed documentation on architecture, development, deployment, and usage:
 ---
 
 ## Security & Verification
+
+### Zero Trust Automation
+
+Zero Trust Automation checks each run against the run user's current roles and
+organization reach. A run identity records who acts. Workflows use **Full
+Access** or **Declared Permissions** only within that reach. Full Access remains
+the default. See [Zero Trust Automation](docs/runbooks/zero-trust-automation.md)
+for access modes, Solution approvals, and moving to narrower permissions.
+
+### Verify Release Artifacts
 
 Bifrost release artifacts are signed with [Sigstore](https://www.sigstore.dev/) using GitHub's keyless OIDC signing. You can verify any image or release pulled from this repo:
 

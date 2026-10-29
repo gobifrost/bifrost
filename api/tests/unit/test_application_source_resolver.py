@@ -161,8 +161,9 @@ async def test_independent_malformed_archive_is_typed(
 
 
 @pytest.mark.asyncio
-async def test_solution_success_maps_remapped_id_and_returns_only_target_app(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("captured", [False, True], ids=["installed", "captured"])
+async def test_solution_success_maps_captured_or_remapped_id_and_returns_only_target_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, captured: bool
 ) -> None:
     from src.services import application_source_resolver as resolver
 
@@ -170,12 +171,56 @@ async def test_solution_success_maps_remapped_id_and_returns_only_target_app(
     target_manifest_id = uuid4()
     other_manifest_id = uuid4()
     app = _app(
-        app_id=solution_entity_id(solution_id, target_manifest_id),
+        app_id=(
+            target_manifest_id
+            if captured
+            else solution_entity_id(solution_id, target_manifest_id)
+        ),
         solution_id=solution_id,
     )
     archive_data = _workspace_zip(
         tmp_path / "solution.zip",
         app_ids=[target_manifest_id, other_manifest_id],
+    )
+
+    storage_owners: list[UUID] = []
+
+    class Storage:
+        async def copy_to_path(self, path):
+            path.write_bytes(archive_data)
+            return True
+
+    def storage_for(solution_owner: UUID) -> Storage:
+        storage_owners.append(solution_owner)
+        return Storage()
+
+    monkeypatch.setattr(resolver, "SolutionSourceArtifactStorage", storage_for)
+
+    source = await resolver.resolve_application_source(app)
+
+    assert source.source_kind == "solution"
+    assert storage_owners == [solution_id]
+    assert source.dependencies == {"react": "^18.3.1"}
+    assert source.files == {
+        "package.json": b'{"name":"target"}',
+        "index.html": b"<div id='root'></div>",
+        "src/main.tsx": b"export const target = true;\n",
+        "logo.png": b"\x89PNG\r\n\x1a\nTARGET",
+    }
+
+
+@pytest.mark.asyncio
+async def test_solution_matching_captured_and_remapped_entries_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from src.services import application_source_resolver as resolver
+
+    solution_id = uuid4()
+    original_manifest_id = uuid4()
+    app_id = solution_entity_id(solution_id, original_manifest_id)
+    archive_data = _workspace_zip(
+        tmp_path / "solution.zip",
+        app_ids=[app_id, original_manifest_id],
     )
 
     class Storage:
@@ -185,16 +230,52 @@ async def test_solution_success_maps_remapped_id_and_returns_only_target_app(
 
     monkeypatch.setattr(resolver, "SolutionSourceArtifactStorage", lambda _sid: Storage())
 
+    with pytest.raises(resolver.ApplicationSourceUnavailable, match="Multiple") as exc:
+        await resolver.resolve_application_source(
+            _app(app_id=app_id, solution_id=solution_id)
+        )
+
+    _assert_unavailable(exc.value, "invalid_source")
+
+
+@pytest.mark.asyncio
+async def test_solution_source_resolver_reads_identical_duplicate_logo_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from src.services import application_source_resolver as resolver
+
+    solution_id = uuid4()
+    manifest_id = uuid4()
+    app = _app(
+        app_id=solution_entity_id(solution_id, manifest_id), solution_id=solution_id
+    )
+    archive_path = tmp_path / "solution.zip"
+    archive_data = _workspace_zip(archive_path, app_ids=[manifest_id, uuid4()])
+    with zipfile.ZipFile(archive_path, "a") as archive:
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr("apps/target/logo.png", b"\x89PNG\r\n\x1a\nTARGET")
+    archive_data = archive_path.read_bytes()
+
+    class Storage:
+        write = AsyncMock(side_effect=AssertionError("source resolution must not write"))
+        write_from_path = AsyncMock(side_effect=AssertionError("source resolution must not write"))
+        delete = AsyncMock(side_effect=AssertionError("source resolution must not write"))
+
+        async def copy_to_path(self, path):
+            path.write_bytes(archive_data)
+            return True
+
+    storage = Storage()
+    monkeypatch.setattr(
+        resolver, "SolutionSourceArtifactStorage", lambda _solution_id: storage
+    )
+
     source = await resolver.resolve_application_source(app)
 
-    assert source.source_kind == "solution"
-    assert source.dependencies == {"react": "^18.3.1"}
-    assert source.files == {
-        "package.json": b'{"name":"target"}',
-        "index.html": b"<div id='root'></div>",
-        "src/main.tsx": b"export const target = true;\n",
-        "logo.png": b"\x89PNG\r\n\x1a\nTARGET",
-    }
+    assert source.files["logo.png"] == b"\x89PNG\r\n\x1a\nTARGET"
+    assert storage.write.await_count == 0
+    assert storage.write_from_path.await_count == 0
+    assert storage.delete.await_count == 0
 
 
 @pytest.mark.asyncio

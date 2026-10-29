@@ -30,6 +30,10 @@ vi.mock("@/hooks/useConfig", () => ({
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 vi.mock("@/contexts/OrgScopeContext", () => ({
 	useOrgScope: () => ({
@@ -85,6 +89,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mockUseMediaQuery.mockReturnValue(false);
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: false });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	mockUseConfigs.mockReturnValue({
 		data: [regularConfig],
 		isFetching: false,
@@ -313,4 +321,18 @@ describe("Config — list", () => {
 		);
 		expect(deleteMutation).toHaveBeenCalledOnce();
 	});
+});
+
+it("shows transfer selection for a named role without the legacy admin flag", async () => {
+	mockUseAuth.mockReturnValue({ isPlatformAdmin: false });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: (permission: string) => permission !== "configs.readwrite",
+	});
+	const { user } = await renderPage();
+	await user.click(
+		screen.getByRole("checkbox", { name: "Select api_token" }),
+	);
+	await user.click(screen.getByRole("button", { name: "Export (1)" }));
+	expect(mockExport).toHaveBeenCalledWith("configs", ["cfg-1"]);
 });

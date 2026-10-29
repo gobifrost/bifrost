@@ -14,10 +14,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-from aiobotocore.session import get_session
-from botocore.exceptions import ClientError
-
 from src.config import Settings, get_settings
+from src.core.s3_transport import S3Error, S3Transport
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +30,6 @@ class S3FileMetadata:
     size: int
 
 
-_shared_session = None
-
-
-def _get_shared_session():
-    """Reuse a single aiobotocore session to share the connection pool."""
-    global _shared_session
-    if _shared_session is None:
-        _shared_session = get_session()
-    return _shared_session
-
-
 class RepoStorage:
     """S3 storage scoped to _repo/ prefix."""
 
@@ -52,13 +39,11 @@ class RepoStorage:
 
     @asynccontextmanager
     async def _get_client(self):
-        session = _get_shared_session()
-        async with session.create_client(
-            "s3",
+        async with S3Transport(
             endpoint_url=self._settings.s3_endpoint_url,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key,
-            region_name=self._settings.s3_region,
+            access_key_id=self._settings.s3_access_key,
+            secret_access_key=self._settings.s3_secret_key,
+            region=self._settings.s3_region,
         ) as client:
             yield client
 
@@ -237,7 +222,7 @@ class RepoStorage:
         async with self._get_client() as client:
             try:
                 response = await client.head_object(Bucket=self._bucket, Key=self._repo_key(path))
-            except ClientError as exc:
+            except S3Error as exc:
                 if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
                     return None
                 raise

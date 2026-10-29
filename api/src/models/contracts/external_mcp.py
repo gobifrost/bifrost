@@ -56,6 +56,8 @@ class MCPServerOAuthProviderCreate(BaseModel):
 class MCPServerCreate(BaseModel):
     """Request model for creating an MCP server template."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(
         ...,
         min_length=1,
@@ -68,16 +70,11 @@ class MCPServerCreate(BaseModel):
         max_length=2048,
         description="MCP server URL (Streamable HTTP endpoint)",
     )
-    oauth_provider_id: UUID | None = Field(
-        default=None,
-        description="OAuth provider configuration FK; absent for servers without auth",
-    )
     oauth_provider: MCPServerOAuthProviderCreate | None = Field(
         default=None,
         description=(
             "Inline OAuth provider creation. When set, the router creates an "
-            "OAuthProvider row and links it via ``oauth_provider_id``. Mutually "
-            "exclusive with ``oauth_provider_id``."
+            "OAuthProvider row and links it via ``oauth_provider_id``."
         ),
     )
     redirect_url: str | None = Field(
@@ -99,9 +96,10 @@ class MCPServerCreate(BaseModel):
 class MCPServerUpdate(BaseModel):
     """Request model for updating an MCP server template."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=255)
     server_url: str | None = Field(default=None, min_length=1, max_length=2048)
-    oauth_provider_id: UUID | None = Field(default=None)
     redirect_url: str | None = Field(default=None, max_length=2048)
     discovery_metadata: dict[str, Any] | None = Field(default=None)
     organization_id: UUID | None = Field(default=None)

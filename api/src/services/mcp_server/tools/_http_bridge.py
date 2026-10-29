@@ -21,8 +21,8 @@ Why in-process HTTP instead of calling router functions directly:
 
 Auth strategy — two mutually exclusive paths:
 
-1. **FastMCP HTTP context** (a tool call reached the MCP server via HTTP):
-   :func:`fastmcp.server.dependencies.get_access_token` yields the caller's
+1. **MCP SDK HTTP context** (a tool call reached the MCP server via HTTP):
+   :func:`mcp.server.auth.middleware.auth_context.get_access_token` yields the caller's
    bearer token. We reuse it directly.
 2. **Executor / test context** (no FastMCP request on the stack, the MCP
    context was constructed by the agent executor or a unit test): we mint
@@ -55,13 +55,13 @@ _BRIDGE_URL_ENV = "BIFROST_MCP_HTTP_BRIDGE_URL"
 def _token_from_context(context: "MCPContext") -> str:
     """Return a bearer token usable for an in-process REST call.
 
-    Prefers the live FastMCP access token (same bytes the external MCP
+    Prefers the live MCP SDK access token (same bytes the external MCP
     client sent); falls back to minting a short-lived JWT from the
     context's claims so executor / test contexts still go through the
     standard auth path.
     """
     try:
-        from fastmcp.server.dependencies import get_access_token
+        from mcp.server.auth.middleware.auth_context import get_access_token
 
         token = get_access_token()
         if token is not None and getattr(token, "token", None):
@@ -72,16 +72,26 @@ def _token_from_context(context: "MCPContext") -> str:
 
     from src.core.security import create_access_token
 
+    if context.runtime_credential_kind is not None:
+        if context.runtime_credential_id is None:
+            raise ValueError("Runtime MCP context requires a credential ID")
+        claims: dict[str, Any] = {
+            "sub": str(context.runtime_credential_id),
+            "credential_kind": context.runtime_credential_kind,
+        }
+        if context.runtime_credential_kind == "service_attempt":
+            if context.runtime_service_id is None:
+                raise ValueError("Service runtime MCP context requires a service ID")
+            claims["service_id"] = str(context.runtime_service_id)
+        return create_access_token(data=claims)
+
     claims: dict[str, Any] = {
         "sub": str(context.user_id) if context.user_id else "",
         "email": context.user_email or "",
         "name": context.user_name or "",
         "is_superuser": bool(context.is_platform_admin),
         "is_provider_org": bool(getattr(context, "is_provider_org", False)),
-        # OPEN-F: carry is_external from the MCP context. The real user-token
-        # mints (mcp_server/auth.py) stamp this via resolve_external_claim;
-        # this fallback mint (executor / test contexts) is the one site that
-        # dropped it, re-opening the global tier to external MCP principals.
+        # Preserve the account flag exactly as the normal sign-in paths do.
         "is_external": bool(getattr(context, "is_external", False)),
         "org_id": str(context.org_id) if context.org_id else None,
     }
@@ -89,6 +99,8 @@ def _token_from_context(context: "MCPContext") -> str:
         # Run lineage of the agent run (attribution and access checks only).
         claims["engine_run_user_id"] = str(context.run_user_id)
         claims["engine_started_by_user_id"] = str(context.run_user_id)
+    if context.agent_run_id:
+        claims["engine_agent_run_id"] = str(context.agent_run_id)
     return create_access_token(data=claims)
 
 

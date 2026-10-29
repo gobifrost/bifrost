@@ -11,14 +11,15 @@ Auth model:
 - is_superuser=false, org_id=None: INVALID (rejected at token parsing)
 """
 
-import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from fastapi import Request
 from fastapi.security import HTTPAuthorizationCredentials
 
-from src.core.auth import get_current_user_optional
+from src.core.auth import get_current_user_optional, get_current_user_ws
 from src.core.security import create_access_token
 
 
@@ -198,3 +199,37 @@ class TestMissingClaimsHandling:
         assert user is not None
         assert str(user.organization_id) == org_id
         assert user.is_superuser is False
+
+
+class TestWebSocketCredentialPrecedence:
+    @pytest.mark.asyncio
+    async def test_explicit_query_token_wins_over_operator_cookie(self) -> None:
+        operator_id = uuid4()
+        target_id = uuid4()
+        org_id = str(uuid4())
+        websocket = SimpleNamespace(
+            headers={},
+            query_params={
+                "token": create_access_token(
+                    {
+                        "sub": str(target_id),
+                        "email": "target@example.com",
+                        "org_id": org_id,
+                    }
+                )
+            },
+            cookies={
+                "access_token": create_access_token(
+                    {
+                        "sub": str(operator_id),
+                        "email": "operator@example.com",
+                        "org_id": org_id,
+                    }
+                )
+            },
+        )
+
+        user = await get_current_user_ws(websocket)
+
+        assert user is not None
+        assert user.user_id == target_id

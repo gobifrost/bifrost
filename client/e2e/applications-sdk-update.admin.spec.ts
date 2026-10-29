@@ -235,9 +235,15 @@ test.describe("Applications SDK update UI", () => {
 		await expect(
 			page.getByRole("button", { name: "Update all SDKs (3)" }),
 		).toBeVisible();
+		// Update All covers Apps the search hides. Wait for the debounced search
+		// to hide Workflow Monitor, update, then clear the search to see it.
 		await page.getByLabel(/search apps/i).fill("Dispatch");
+		await expect(
+			page.getByRole("article").filter({ hasText: "Workflow Monitor" }),
+		).toHaveCount(0);
 		await page.getByRole("button", { name: "Update all SDKs (3)" }).click();
 		sdkFixture.runMonitorUpdate();
+		await page.getByRole("button", { name: "Clear search" }).click();
 		await expect(
 			page
 				.getByRole("article")

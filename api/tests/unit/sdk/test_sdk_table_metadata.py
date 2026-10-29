@@ -15,7 +15,7 @@ parity:
 """
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 from uuid import uuid4
 
 import pytest
@@ -36,6 +36,13 @@ from src.models.contracts.cli import (
     SDKTableListRequest,
 )
 from src.models.orm.tables import Table
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    RoleGrant,
+)
+from src.services.authorization.enforce import Caller
 from src.services.solutions.guard import SOLUTION_MANAGED_MESSAGE
 
 
@@ -97,6 +104,46 @@ def _user(*, org_id=None, is_superuser=False, is_external=False):
     )
 
 
+def _caller(org_id=None, *, is_external=False, email="writer@test.local") -> Caller:
+    user = UserPrincipal(
+        user_id=uuid4(),
+        email=email,
+        organization_id=org_id,
+        is_external=is_external,
+    )
+    permissions = frozenset({"tables.read", "tables.readwrite"})
+    ctx = AuthorizationContext(
+        user_id=user.user_id,
+        home_organization_id=org_id,
+        base_role_id=uuid4(),
+        is_external=is_external,
+        base_permissions=permissions,
+        role_grants=(
+            RoleGrant(
+                uuid4(),
+                permissions,
+                (Boundary(BoundaryKind.PLATFORM),),
+            ),
+        ),
+    )
+    return Caller(user, ctx)
+
+
+@pytest.fixture(autouse=True)
+def _load_authorized_caller(monkeypatch):
+    async def load_authorized_caller(_db, user):
+        return _caller(
+            user.organization_id,
+            is_external=user.is_external,
+            email=user.email,
+        )
+
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.load_caller", load_authorized_caller
+    )
+    monkeypatch.setattr("src.routers.tables.load_caller", load_authorized_caller)
+
+
 def _ctx(db_session, user, *, org_id=None, solution_id=None):
     return SimpleNamespace(
         db=db_session,
@@ -124,7 +171,7 @@ class TestCreateService:
             table_schema={"columns": [{"name": "label"}]},
             description="meta test",
             org_id=org.id,
-            actor_email="writer@test.local",
+            caller=_caller(org.id),
             solution_present=False,
         )
 
@@ -153,7 +200,7 @@ class TestCreateService:
                 table_schema=None,
                 description=None,
                 org_id=org.id,
-                actor_email="writer@test.local",
+                caller=_caller(org.id),
                 solution_present=False,
             )
         assert exc.value.status_code == 409
@@ -172,7 +219,7 @@ class TestCreateService:
             table_schema=None,
             description=None,
             org_id=org_b.id,
-            actor_email="writer@test.local",
+            caller=_caller(org_b.id),
             solution_present=False,
         )
         assert result["organization_id"] == str(org_b.id)
@@ -190,7 +237,7 @@ class TestCreateService:
             table_schema=None,
             description=None,
             org_id=org.id,
-            actor_email="writer@test.local",
+            caller=_caller(org.id),
             solution_present=False,
         )
         assert result["organization_id"] == str(org.id)
@@ -208,7 +255,7 @@ class TestCreateService:
             table_schema=None,
             description=None,
             org_id=None,
-            actor_email="writer@test.local",
+            caller=_caller(None),
             solution_present=False,
         )
         assert result["organization_id"] is None
@@ -227,7 +274,7 @@ class TestCreateService:
             table_schema=None,
             description=None,
             org_id=org.id,
-            actor_email="writer@test.local",
+            caller=_caller(org.id),
             solution_present=False,
         )
         assert result["name"] == name
@@ -243,7 +290,7 @@ class TestCreateService:
                 table_schema=None,
                 description=None,
                 org_id=org.id,
-                actor_email="writer@test.local",
+                caller=_caller(org.id),
                 solution_present=True,
             )
         assert exc.value.status_code == 404
@@ -340,7 +387,7 @@ class TestCreateHandler:
             )
         assert exc.value.status_code == 403
 
-    async def test_handler_provider_cross_org_allowed(self, db_session):
+    async def test_handler_provider_membership_does_not_expand_reach(self, db_session):
         from src.routers.cli import cli_create_table
 
         provider_org = await _seed_org(db_session, is_provider=True)
@@ -349,14 +396,14 @@ class TestCreateHandler:
         tag = uuid4().hex[:8]
         name = _table_name(tag)
 
-        result = await cli_create_table(
-            SDKTableCreateRequest(name=name, scope=str(other_org.id)),
-            _ctx(db_session, user, org_id=provider_org.id),
-            user,
-            db_session,
-        )
-        assert result.name == name
-        assert result.organization_id == str(other_org.id)
+        with pytest.raises(HTTPException) as exc:
+            await cli_create_table(
+                SDKTableCreateRequest(name=name, scope=str(other_org.id)),
+                _ctx(db_session, user, org_id=provider_org.id),
+                user,
+                db_session,
+            )
+        assert exc.value.status_code == 403
 
     async def test_handler_global_create_by_admin(self, db_session):
         from src.routers.cli import cli_create_table
@@ -397,14 +444,12 @@ class TestCreateHandler:
 
         create_spy.assert_awaited_once()
         _, kwargs = create_spy.call_args
-        assert kwargs == {
-            "name": name,
-            "table_schema": None,
-            "description": None,
-            "org_id": org.id,
-            "actor_email": user.email,
-            "solution_present": False,
-        }
+        assert kwargs["name"] == name
+        assert kwargs["table_schema"] is None
+        assert kwargs["description"] is None
+        assert kwargs["org_id"] == org.id
+        assert kwargs["caller"].principal.email == user.email
+        assert kwargs["solution_present"] is False
         row = await _row_by_name(db_session, name, org_id=org.id)
         assert row is not None
         assert result == SDKTableInfo(
@@ -433,7 +478,7 @@ class TestListService:
         await _seed_table(db_session, foreign_name, org_id=other_org.id)
 
         items = await list_sdk_tables(
-            db_session, org_id=org.id, external=False
+            db_session, org_id=org.id, caller=_caller(org.id)
         )
 
         # Other tests in this run commit global rows to the shared DB, so
@@ -451,13 +496,13 @@ class TestListService:
         await _seed_table(db_session, global_name, org_id=None)
         await _seed_table(db_session, org_name, org_id=org.id)
 
-        items = await list_sdk_tables(db_session, org_id=None, external=False)
+        items = await list_sdk_tables(db_session, org_id=None, caller=_caller(org.id))
 
         assert global_name in [item["name"] for item in items]
         assert org_name not in [item["name"] for item in items]
 
-    async def test_list_external_keeps_cascade_drops_sentinel(self, db_session):
-        """OPEN-B: externals list org+global names but without superuser trust."""
+    async def test_list_external_keeps_literal_identity_after_reach_check(self, db_session):
+        """Repository cascade preserves the external marker after authorization."""
         import shared.sdk_table_metadata as svc
 
         org = await _seed_org(db_session)
@@ -477,17 +522,17 @@ class TestListService:
 
         with patch.object(svc.tables_repo_module, "TableRepository", SpyRepo):
             items = await list_sdk_tables(
-                db_session, org_id=org.id, external=True
+                db_session, org_id=org.id, caller=_caller(org.id, is_external=True)
             )
 
-        assert captured["is_superuser"] is False
+        assert captured["is_superuser"] is True
         assert captured["is_external"] is True
         assert captured["org_id"] == org.id
         mine = sorted(item["name"] for item in items if tag in item["name"])
         assert mine == sorted([org_name, global_name])
 
-    async def test_list_engine_trust(self, db_session):
-        """Non-external callers keep the sentinel is_superuser=True trust."""
+    async def test_list_uses_authorized_target_repository(self, db_session):
+        """The repository receives an already reach-checked target."""
         import shared.sdk_table_metadata as svc
 
         org = await _seed_org(db_session)
@@ -500,7 +545,7 @@ class TestListService:
                 super().__init__(session, org_id, **kwargs)
 
         with patch.object(svc.tables_repo_module, "TableRepository", SpyRepo):
-            await list_sdk_tables(db_session, org_id=org.id, external=False)
+            await list_sdk_tables(db_session, org_id=org.id, caller=_caller(org.id))
 
         assert captured["is_superuser"] is True
         assert captured["is_external"] is False
@@ -519,7 +564,7 @@ class TestListHandler:
         user = _user(org_id=org.id)
 
         service_items = await list_sdk_tables(
-            db_session, org_id=org.id, external=False
+            db_session, org_id=org.id, caller=_caller(org.id)
         )
         handler_items = await cli_list_tables(
             SDKTableListRequest(scope=str(org.id)), user, db_session
@@ -556,7 +601,7 @@ class TestDeleteService:
 
         assert (
             await delete_sdk_table(
-                db_session, table_id=row.id, org_id=org.id
+                db_session, table_id=row.id, org_id=org.id, caller=_caller(org.id)
             )
         ) is True
         assert (
@@ -568,7 +613,7 @@ class TestDeleteService:
 
         assert (
             await delete_sdk_table(
-                db_session, table_id=uuid4(), org_id=org.id
+                db_session, table_id=uuid4(), org_id=org.id, caller=_caller(org.id)
             )
         ) is False
 
@@ -582,7 +627,7 @@ class TestDeleteService:
 
         with pytest.raises(SDKTableMetadataError) as exc:
             await delete_sdk_table(
-                db_session, table_id=row.id, org_id=org.id
+                db_session, table_id=row.id, org_id=org.id, caller=_caller(org.id)
             )
         assert exc.value.status_code == 409
         assert exc.value.detail == SOLUTION_MANAGED_MESSAGE
@@ -642,4 +687,4 @@ class TestDeleteHandler:
 
         delete_spy.assert_awaited_once()
         _, kwargs = delete_spy.call_args
-        assert kwargs == {"table_id": row.id, "org_id": org.id}
+        assert kwargs == {"table_id": row.id, "org_id": org.id, "caller": ANY}

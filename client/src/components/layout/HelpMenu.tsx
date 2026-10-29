@@ -10,6 +10,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { DiscordIcon } from "@/components/icons/DiscordIcon";
+import { YouTubeIcon } from "@/components/icons/YouTubeIcon";
 import { Github } from "@/components/icons/GithubIcon";
 import { VersionMenuItem } from "./VersionMenuItem";
 
@@ -79,6 +80,20 @@ export function HelpMenu() {
 					>
 						<DiscordIcon aria-hidden="true" className="size-4" />
 						Discord
+						<ExternalLink
+							aria-hidden="true"
+							className="ml-auto size-3 text-muted-foreground"
+						/>
+					</a>
+				</DropdownMenuItem>
+				<DropdownMenuItem asChild className="min-h-11">
+					<a
+						href="https://www.youtube.com/@gobifrost"
+						target="_blank"
+						rel="noreferrer"
+					>
+						<YouTubeIcon aria-hidden="true" className="size-4" />
+						YouTube
 						<ExternalLink
 							aria-hidden="true"
 							className="ml-auto size-3 text-muted-foreground"

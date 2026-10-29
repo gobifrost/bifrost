@@ -31,6 +31,7 @@ addressable through the resolver.
 from __future__ import annotations
 
 import re
+from uuid import UUID
 
 WORKSPACE_PREFIX = "_repo/"
 TEMP_PREFIX = "_tmp/"
@@ -95,3 +96,30 @@ def resolve_s3_key(location: str, scope: str | None, path: str) -> str:
         return f"{TEMP_PREFIX}{scope}/{clean_path}"
 
     return f"{location}/{scope}/{clean_path}"
+
+
+# Sentinel — returned by scope_to_org_id to signal "no metadata to write".
+SCOPE_SKIP = object()
+
+
+def scope_to_org_id(location: str, scope: str | None) -> "UUID | None | object":
+    """Coerce a storage-scope string to the org UUID for FileMetadata rows.
+
+    Returns:
+        ``None``        — global (org IS NULL), and the unscoped workspace
+        ``UUID(scope)`` — org-scoped row
+        ``SCOPE_SKIP``  — no metadata row applies (missing or non-UUID scope)
+
+    This is the NON-solution path. Solution rows use the install's org so
+    the install UUID never ends up in organization_id (C2).
+    """
+    if location == "workspace":
+        return None
+    if scope is None:
+        return SCOPE_SKIP
+    if scope == "global":
+        return None
+    try:
+        return UUID(scope)
+    except ValueError:
+        return SCOPE_SKIP

@@ -3,7 +3,7 @@
 Every organization has a default identity, there is one global default, and
 admins add custom ones (see ``shared.identities``); only custom ones are
 renamed or deleted. Reading is ``users.read`` at the identity's organization;
-creating, renaming and deleting are ``users.lifecycle.readwrite`` there
+creating, renaming and deleting are ``userlifecycle.readwrite`` there
 (Global for a Global identity), decided by the evaluator. Roles are assigned
 through the user role-assignment routes.
 """
@@ -11,6 +11,7 @@ through the user role-assignment routes.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
@@ -54,7 +55,7 @@ from src.services.authorization.enforce import (
     permitted_organizations,
     privileged_user_ids,
     require_operation,
-    require_unprotected,
+    require_permission,
 )
 from src.services.authorization.reach import OrgReach
 
@@ -291,14 +292,14 @@ async def create_identity(session: AsyncSession, caller: Caller, request: Identi
 
 
 async def _managed_identity(session: AsyncSession, caller: Caller, identity_id: UUID, operation: str) -> User:
-    """The identity, once ``caller`` may perform ``operation`` on it; a
-    privileged identity only changes at a Platform Admin's hand."""
+    """The identity, once ``caller`` may perform ``operation`` on it."""
     operation_reach(caller, operation)
     identity = await session.get(User, identity_id)
     if identity is None or not is_identity(identity):
         raise IdentityError(404, "Identity not found")
     require_operation(caller, operation, org_target(identity.organization_id))
-    require_unprotected(caller, identity.id in await privileged_user_ids(session, [identity.id]))
+    if identity.id in await privileged_user_ids(session, [identity.id]):
+        require_permission(caller, "privilegedaccess.readwrite", identity.organization_id)
     return identity
 
 
@@ -350,6 +351,9 @@ async def delete_identity(session: AsyncSession, caller: Caller, identity_id: UU
     details = {"name": identity.name, "organization_id": str(identity.organization_id) if identity.organization_id else None}
     try:
         async with session.begin_nested():
+            from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
+
+            await cancel_unstarted_runs_for_deleted_user(session, identity.id)
             await session.delete(identity)
             await session.flush()
     except IntegrityError as e:
@@ -382,16 +386,17 @@ def _holds(reach: OrgReach, boundary: Boundary) -> bool:
 
 
 async def require_delegation(session: AsyncSession, caller: Caller, identity_id: UUID) -> None:
-    """403 unless ``caller`` may make a workflow run as ``identity_id``: a
-    Platform Admin, or someone who holds every permission the identity holds,
-    at every place it holds it. A workflow running as an identity uses its
-    powers, so only someone who has them may hand them out."""
-    if caller.is_platform_admin:
-        return
+    """403 unless the original user may make a workflow run as this identity.
+
+    Runtime workflow powers cannot consent to a persistent identity
+    delegation; only the original user's current role context supplies the
+    permissions and reach checked here.
+    """
+    unelevated = Caller(replace(caller.principal, runtime_authority=None), caller.ctx)
     identity = await session.get(User, identity_id)
     assert identity is not None
     for permission, boundary in _powers(await build_authorization_context(session, identity_id)):
-        if not _holds(permitted_organizations(caller, permission), boundary):
+        if not _holds(permitted_organizations(unelevated, permission), boundary):
             label = identity_label(identity, await organization_name(session, identity))
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,

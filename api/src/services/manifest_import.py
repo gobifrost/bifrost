@@ -26,8 +26,44 @@ from bifrost.manifest import (
     Manifest,
     read_manifest_from_dir,
 )
+from bifrost.decorator_validation import validate_python_decorators
+from bifrost.definition_validation import DefinitionIssue, DefinitionValidationError
 
 logger = logging.getLogger(__name__)
+
+
+def _read_confined_worktree_source(work_dir: Path, path: str) -> str | None:
+    """Read a manifest source only when it resolves inside its worktree."""
+    candidate = work_dir / path
+    try:
+        root = work_dir.resolve()
+        candidate.resolve(strict=False).relative_to(root)
+        if not candidate.exists() and not candidate.is_symlink():
+            return None
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=path,
+                location=(),
+                code="unsafe_source_path",
+                message="Workflow source must resolve inside the workspace candidate.",
+            )
+        ]) from exc
+    if not resolved.is_file():
+        return None
+    try:
+        return resolved.read_text()
+    except UnicodeDecodeError as exc:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=path,
+                location=(),
+                code="invalid_python",
+                message="Python source must be valid UTF-8.",
+            )
+        ]) from exc
 
 
 @dataclass(frozen=True)
@@ -743,6 +779,29 @@ class ManifestResolver:
         if not work_dir and not repo:
             raise ValueError("plan_import requires either work_dir or repo")
 
+        # Source must be accepted before this importer creates a DB operation.
+        # This reads bytes only; it never imports submitted Python.
+        for workflow in manifest.workflows.values():
+            if work_dir:
+                source = _read_confined_worktree_source(work_dir, workflow.path)
+                if source is not None:
+                    validate_python_decorators(source, path=workflow.path)
+            elif repo:
+                source = await repo.read(workflow.path)
+                if source is not None:
+                    try:
+                        decoded = source.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise DefinitionValidationError([
+                            DefinitionIssue(
+                                path=workflow.path,
+                                location=(),
+                                code="invalid_python",
+                                message="Python source must be valid UTF-8.",
+                            )
+                        ]) from exc
+                    validate_python_decorators(decoded, path=workflow.path)
+
         all_ops: list[SyncOp] = []
 
         # Helpers: abstract file reads over repo (S3) or work_dir (filesystem)
@@ -1192,10 +1251,9 @@ class ManifestResolver:
 
             # Sync MCP connection grants. The manifest carries the grants
             # the agent had at export time; round-trip is byte-stable
-            # because the IDs are sorted in the serializer. Connections
-            # whose UUIDs aren't present in the target environment are
-            # silently skipped — the manifest cannot create connections,
-            # only grant existing ones.
+            # because the IDs are sorted in the serializer. The manifest
+            # cannot create connections; an absent or cross-org reference is
+            # rejected by the repository before it can change existing grants.
             mcp_ids = list(getattr(magent, "mcp_connection_ids", None) or [])
             if mcp_ids or _agent_has_inline_content(magent):
                 from src.repositories.agents import AgentRepository
@@ -1204,7 +1262,6 @@ class ManifestResolver:
                     session=self.db,
                     org_id=org_id_uuid,
                     user_id=None,
-                    is_superuser=True,
                 )
                 try:
                     parsed_ids = [UUID(cid) for cid in mcp_ids]
@@ -1217,7 +1274,7 @@ class ManifestResolver:
                 # ``granted_by=None`` flags the grant as system-driven so
                 # the audit log distinguishes manifest sync from explicit
                 # admin grants.
-                await repo.set_mcp_connection_grants(
+                await repo.set_trusted_manifest_mcp_connection_grants(
                     agent_id_uuid,
                     parsed_ids,
                     granted_by=None,
@@ -3060,6 +3117,15 @@ class ManifestResolver:
         server_id = UUID(vals["id"])
         oauth_provider_id = UUID(vals["oauth_provider_id"]) if vals["oauth_provider_id"] else None
         organization_id = UUID(vals["organization_id"]) if vals["organization_id"] else None
+
+        if oauth_provider_id is not None:
+            from src.models.orm.oauth import OAuthProvider
+
+            provider = await self.db.get(OAuthProvider, oauth_provider_id)
+            if provider is None or provider.integration_id is not None:
+                raise ValueError(
+                    f"MCP server {server_name!r} must reference an independent MCP OAuth provider"
+                )
 
         stmt = insert(MCPServer).values(
             id=server_id,

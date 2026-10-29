@@ -23,6 +23,8 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Conversation
 from src.routers import agent_runs as agent_runs_router
 from src.services import chat_runs
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 pytestmark = pytest.mark.asyncio
 
@@ -41,6 +43,20 @@ def _principal(user) -> UserPrincipal:
         organization_id=user.organization_id,
         name=user.name or "",
         is_superuser=True,
+    )
+
+
+def _caller(user) -> Caller:
+    principal = _principal(user)
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=user.id,
+            home_organization_id=user.organization_id,
+            base_role_id=user.base_role_id,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
     )
 
 
@@ -69,7 +85,7 @@ async def test_agent_run_cancel_route_records_cancel_request(
     redis_client = SimpleNamespace(set_agent_run_cancel_flag=AsyncMock())
     monkeypatch.setattr(agent_runs_router, "get_redis_client", lambda: redis_client)
     monkeypatch.setattr("src.core.pubsub.publish_agent_run_update", AsyncMock())
-    run = _running_run(trigger_type="api")
+    run = _running_run(trigger_type="api", caller_user_id=str(seed_user.id))
     db_session.add(run)
     await db_session.commit()
 
@@ -102,7 +118,7 @@ async def test_chat_run_cancel_records_cancel_request(
     await db_session.commit()
 
     before = datetime.now(timezone.utc)
-    response = await chat_runs.cancel_chat_run(db_session, _principal(seed_user), run.id)
+    response = await chat_runs.cancel_chat_run(db_session, _caller(seed_user), run.id)
 
     assert response.status == "cancelling"
     reloaded = await _load_run(async_session_factory, run.id)

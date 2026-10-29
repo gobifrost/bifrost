@@ -29,7 +29,7 @@ export interface IdentityActionsSubject {
 }
 
 /** Whether the caller may rename and delete this identity: custom ones only,
- * with users.lifecycle.readwrite at its organization. */
+ * with userlifecycle.readwrite at its organization. */
 export function canManageIdentity(
 	authorization: Pick<ReturnType<typeof useAuthorization>, "canAt">,
 	identity: Pick<IdentityActionsSubject, "identity_kind" | "organization_id">,
@@ -37,7 +37,7 @@ export function canManageIdentity(
 	return (
 		identity.identity_kind === "custom" &&
 		authorization.canAt(
-			"users.lifecycle.readwrite",
+			"userlifecycle.readwrite",
 			orgTarget(identity.organization_id),
 		)
 	);

@@ -25,6 +25,10 @@ const mockUseAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
@@ -91,6 +95,11 @@ function makeWorkflow(overrides: Partial<Record<string, unknown>> = {}) {
 beforeEach(() => {
 	mockUseIsDesktop.mockReturnValue(true);
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+		isPlatformAdmin: true,
+	});
 	mockUseWorkflowsMetadata.mockReturnValue({ data: { workflows: [] } });
 	mockUseWorkflowsFiltered.mockReturnValue({
 		data: [],

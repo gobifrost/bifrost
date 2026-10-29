@@ -532,7 +532,7 @@ Options:
 
 Commands:
   explain  Explain a stored access check: how it was decided then, and...
-  list     List audit log entries, or count them with --group-by.
+  list     List audit log entries, group them, or aggregate access checks...
 ```
 
 ### `audit explain`
@@ -553,7 +553,7 @@ Options:
 ```
 Usage: audit list [OPTIONS]
 
-  List audit log entries, or count them with --group-by.
+  List audit log entries, group them, or aggregate access checks by time.
 
 Options:
   --action TEXT                   Action prefix, e.g. 'user.' or
@@ -574,6 +574,8 @@ Options:
   --group-by [workflow|action|resource_type|outcome|user|organization]
                                   Count matching events per value instead of
                                   listing them.
+  --aggregate [1h|6h|24h]         Group exact access checks into fixed UTC
+                                  windows.
   --limit INTEGER RANGE           Maximum entries to return (server default
                                   50).  [1<=x<=500]
   --json                          Emit JSON instead of human-readable output.
@@ -1173,6 +1175,7 @@ Commands:
   delete    Delete a workspace file, optionally guarded by its current...
   exists    Check if a file exists.
   list      List files in a directory (default: location root).
+  move      Move one file within a location as a durable server-side job.
   policies  Manage file access policies.
   read      Read a workspace file and write its contents to stdout.
   search    Search workspace and Solution source like grep, one page at a...
@@ -1229,6 +1232,32 @@ Options:
   --solution TEXT  Solution install slug or UUID. When given, targets that
                    install's file scope (location defaults to "solutions").
                    Slug resolved via GET /api/solutions.
+  --json           Emit JSON instead of human-readable output.
+  --help           Show this message and exit.
+```
+
+### `files move`
+
+```
+Usage: files move [OPTIONS] SOURCE DESTINATION
+
+  Move one file within a location as a durable server-side job.
+
+  The file is copied server-side, its metadata follows it, and the original is
+  deleted only after the copy is verified. Workspace files cannot be moved.
+  Prints the final path.
+
+Options:
+  --location TEXT  Storage location. Special: "workspace" (default), "temp",
+                   "uploads". Custom names (e.g. "reports") are accepted;
+                   "_repo", "_tmp", and "_apps" are blocked.  [required]
+  --solution TEXT  Solution install slug or UUID. When given, targets that
+                   install's file scope (location defaults to "solutions").
+                   Slug resolved via GET /api/solutions.
+  --rename         If the destination exists, use the next free 'name (n).ext'
+                   instead of failing.
+  --timeout FLOAT  Seconds to follow the move job; the job keeps running after
+                   the CLI stops waiting.  [default: 14400]
   --json           Emit JSON instead of human-readable output.
   --help           Show this message and exit.
 ```
@@ -3520,6 +3549,7 @@ Options:
   --description TEXT              description
   --category TEXT                 category
   --timeout-seconds INTEGER       timeout_seconds
+  --memory-request-mib INTEGER    memory_request_mib
   --tags TEXT                     tags (repeat for multiple).
   --endpoint-enabled / --no-endpoint-enabled
                                   endpoint_enabled (tri-state; omit to leave

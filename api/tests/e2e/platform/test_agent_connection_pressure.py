@@ -6,7 +6,7 @@ configured with pool_size=1, max_overflow=2 (3 max connections).
 
 Requires:
 - LLM API key configured (ANTHROPIC_API_TEST_KEY or OPENAPI_API_TEST_KEY)
-- Full stack running (API + worker + Redis + Postgres + RabbitMQ)
+- Full stack running (API + executors + Redis + Postgres)
 """
 
 import concurrent.futures

@@ -56,24 +56,27 @@ def _verify_halopsa(query_params: dict[str, str], secret: str) -> bool:
     return hmac_module.compare_digest(expected, received_hmac)
 
 
-def verify_embed_hmac(
+def verified_embed_context(
     query_params: dict[str, str], secret: str, scheme: str
-) -> bool:
-    """Verify an embed URL's HMAC signature using the named scheme.
+) -> dict[str, str] | None:
+    """Verify an embed signature and return only the fields it covers.
 
-    Args:
-        query_params: All query parameters including 'hmac'.
-        secret: Shared secret.
-        scheme: One of ``shopify`` or ``halopsa``.
+    A successful Shopify signature covers every query field except ``hmac``.
+    A successful HaloPSA signature covers only ``agent_id``; additional query
+    fields remain untrusted and therefore cannot enter an embed context.
 
     Returns:
-        True if the HMAC is valid for the given scheme.
+        The signature-covered query fields, or ``None`` when verification fails.
 
     Raises:
         ValueError: If ``scheme`` is not a recognized value.
     """
     if scheme == SCHEME_SHOPIFY:
-        return _verify_shopify(query_params, secret)
+        if not _verify_shopify(query_params, secret):
+            return None
+        return {key: value for key, value in query_params.items() if key != "hmac"}
     if scheme == SCHEME_HALOPSA:
-        return _verify_halopsa(query_params, secret)
+        if not _verify_halopsa(query_params, secret):
+            return None
+        return {"agent_id": query_params["agent_id"]}
     raise ValueError(f"Unknown HMAC scheme: {scheme!r}")

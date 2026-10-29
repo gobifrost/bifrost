@@ -1,20 +1,11 @@
-"""Workflow permission mode and grants, and Solution permission requests.
-
-Data only: nothing reads these at run time until delegated execution.
-"""
+"""Permission-only workflow capabilities and Solution permission requests."""
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
-from uuid import UUID
-
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from src.services.role_permissions import RolePermissionError, validate_permission
-
-GrantBoundary = Literal["organization", "managed_organizations", "platform"]
-
 
 class WorkflowPermissionMode(StrEnum):
     FULL = "full"
@@ -28,15 +19,11 @@ class RequestStatus(StrEnum):
 
 
 class WorkflowPermissionGrantSpec(BaseModel):
-    """One requested grant: a permission plus an optional cross-org boundary.
+    """One permission enabled for a workflow."""
 
-    No boundary means the run's own organization.
-    """
-
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     permission: str
-    boundary: GrantBoundary | None = None
 
     @field_validator("permission")
     @classmethod
@@ -64,6 +51,4 @@ class RequestedWorkflowPermissions(BaseModel):
 
 
 class WorkflowGrant(WorkflowPermissionGrantSpec):
-    """A stored grant; ``organization_id`` is set only for an 'organization' boundary."""
-
-    organization_id: UUID | None = None
+    """A stored workflow capability."""

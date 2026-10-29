@@ -6,16 +6,19 @@ import { InlineLoader } from "./InlineLoader";
 
 export function SharesOverview({
 	scope,
+	solution,
 	readOnly,
 	onSelect,
 }: {
 	scope: string;
+	solution?: string;
 	readOnly: boolean;
 	onSelect: (location: string, prefix: string) => void;
 }) {
 	const shares = useQuery({
-		queryKey: ["file-shares", scope],
-		queryFn: () => listShares(scope),
+		queryKey: ["file-shares", scope, solution],
+		queryFn: () =>
+			solution ? listShares(scope, solution) : listShares(scope),
 		retry: false,
 	});
 	return (

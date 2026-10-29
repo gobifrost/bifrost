@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from src.core.principal import UserPrincipal
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
 from src.models.orm.external_mcp import (
@@ -22,6 +24,10 @@ from src.models.orm.external_mcp import (
 )
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
+from src.models.orm.users import User
+from src.repositories.agents import AgentRepository
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 
 
 @pytest.mark.asyncio
@@ -280,6 +286,116 @@ async def test_agent_mcp_connection_relationship(db_session):
     )
     bound_agent_ids = [row[0] for row in result.all()]
     assert bound_agent_ids == [agent.id]
+
+
+def _agent_manager(*, user_id, organization_id, permissions, actor_admin=False) -> Caller:
+    return Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email="actor@contoso.example",
+            organization_id=organization_id,
+            is_superuser=actor_admin,
+        ),
+        AuthorizationContext(
+            user_id=user_id,
+            home_organization_id=organization_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(permissions),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_mcp_grants_require_original_configuration_permission_before_revoke(
+    db_session,
+):
+    """Actor flags cannot replace the original caller's scoped Agent grant."""
+    org = Organization(
+        id=uuid4(),
+        name=f"agent-grant-auth-org-{uuid4().hex[:8]}",
+        is_active=True,
+        created_by="test@example.com",
+    )
+    server = MCPServer(
+        id=uuid4(),
+        name=f"agent-grant-auth-server-{uuid4().hex[:8]}",
+        server_url="https://example.com/mcp",
+        organization_id=None,
+        is_active=True,
+    )
+    db_session.add_all([org, server])
+    await db_session.flush()
+    connection = MCPConnection(
+        id=uuid4(),
+        server_id=server.id,
+        organization_id=org.id,
+        client_id="grant-auth-client",
+        encrypted_client_secret="encrypted-blob",
+    )
+    agent = Agent(
+        id=uuid4(),
+        name=f"grant-auth-agent-{uuid4().hex[:8]}",
+        system_prompt="Be a test agent.",
+        channels=["chat"],
+        access_level=AgentAccessLevel.ROLE_BASED,
+        organization_id=org.id,
+        is_active=True,
+        knowledge_sources=[],
+        system_tools=[],
+        created_by="test@example.com",
+    )
+    db_session.add_all([connection, agent])
+    await db_session.flush()
+
+    permitted_user = User(
+        id=uuid4(),
+        email=f"agent-grant-manager-{uuid4().hex[:8]}@contoso.example",
+        name="Agent Grant Manager",
+        organization_id=org.id,
+        is_active=True,
+        is_superuser=False,
+        is_verified=True,
+        is_registered=True,
+    )
+    db_session.add(permitted_user)
+    await db_session.flush()
+
+    repo = AgentRepository(session=db_session, org_id=org.id)
+    permitted = _agent_manager(
+        user_id=permitted_user.id,
+        organization_id=org.id,
+        permissions={"agents.readwrite"},
+    )
+    assert await repo.set_mcp_connection_grants(
+        agent.id,
+        [connection.id],
+        caller=permitted,
+        granted_by=permitted.ctx.user_id,
+    ) == [connection.id]
+
+    flagged_actor = _agent_manager(
+        user_id=uuid4(),
+        organization_id=org.id,
+        permissions=set(),
+        actor_admin=True,
+    )
+    with pytest.raises(HTTPException) as exc:
+        await repo.set_mcp_connection_grants(
+            agent.id,
+            [],
+            caller=flagged_actor,
+            granted_by=flagged_actor.ctx.user_id,
+        )
+    assert exc.value.status_code == 403
+    remaining = (
+        await db_session.execute(
+            select(AgentMCPConnection.connection_id).where(
+                AgentMCPConnection.agent_id == agent.id
+            )
+        )
+    ).scalars().all()
+    assert remaining == [connection.id]
 
 
 @pytest.mark.asyncio

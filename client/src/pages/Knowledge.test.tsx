@@ -12,6 +12,7 @@ const mockUseAuth = vi.fn();
 const mockUseOrganizations = vi.fn();
 const mockAuthFetch = vi.fn();
 const mockExportEntities = vi.fn();
+const mockUseAuthorization = vi.fn();
 
 vi.mock("@/hooks/useMediaQuery", () => ({
 	useMediaQuery: (...args: unknown[]) => mockUseMediaQuery(...args),
@@ -19,6 +20,10 @@ vi.mock("@/hooks/useMediaQuery", () => ({
 
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -106,6 +111,10 @@ describe("Knowledge", () => {
 		mockUseAuth.mockReturnValue({
 			user: { id: "user-1" },
 			isPlatformAdmin: true,
+		});
+		mockUseAuthorization.mockReturnValue({
+			canAnywhere: () => true,
+			canAt: () => true,
 		});
 		mockUseOrganizations.mockReturnValue({ data: organizations });
 		mockExportEntities.mockResolvedValue(undefined);
@@ -196,6 +205,34 @@ describe("Knowledge", () => {
 		expect(
 			screen.getByRole("button", { name: "sales-02" }),
 		).toHaveAttribute("aria-pressed", "true");
+	});
+
+	it("shows destructive controls only at the organization with knowledge write permission", async () => {
+		mockUseAuthorization.mockReturnValue({
+			canAnywhere: (permission: string) =>
+				permission === "knowledge.readwrite",
+			canAt: (
+				permission: string,
+				target: { kind: "org" | "global"; id?: string },
+			) =>
+				permission === "knowledge.readwrite" &&
+				target.kind === "org" &&
+				target.id === "org-acme",
+		});
+
+		renderWithProviders(<Knowledge />);
+		await screen.findByRole("button", { name: "support-01" });
+
+		expect(
+			screen.queryByRole("button", {
+				name: "More actions for support-01",
+			}),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "More actions for sales-02",
+			}),
+		).toBeInTheDocument();
 	});
 
 	it("opens delete confirmation from the overflow menu without losing primary open access", async () => {

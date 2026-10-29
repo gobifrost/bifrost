@@ -27,14 +27,19 @@ class ActorContext:
     ip_address: str | None = None
     user_agent: str | None = None
     source: str = "http"
-    # Execution (or service attempt) that produced the event, from a signed
-    # engine/service token's ``engine_execution_id``; None for human HTTP.
+    # Execution or service attempt from verified durable runtime authority;
+    # None for human HTTP and agent requests.
     execution_id: UUID | None = None
     # Transport the request came in over: "web", "cli", "mcp", "embed",
     # "workflow", or "service". Unlike ``source`` (actor type), this is
     # about which client made the call. See
     # src/core/request_actor.py::actor_from_token_payload for resolution.
     surface: str = "web"
+    # Browser impersonation provenance. ``user_id`` remains the effective
+    # target for the request; these identify the operator and their browser
+    # impersonation session without affecting authorization.
+    impersonated_by_user_id: UUID | None = None
+    impersonation_session_id: UUID | None = None
 
 
 _actor: ContextVar[ActorContext | None] = ContextVar("audit_actor", default=None)

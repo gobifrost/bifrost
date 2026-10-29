@@ -11,13 +11,15 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from src.core.auth import CurrentSuperuser
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models import DependencyAvailabilityRequest, DependencyAvailabilityResponse
 from src.services.dependency_graph import (
     DependencyGraphService,
     compute_relationship_availability,
 )
+from src.services.authorization.enforce import load_caller, require_operation
+from src.services.authorization.evaluator import GLOBAL
 
 
 router = APIRouter(prefix="/api/dependencies", tags=["Dependencies"])
@@ -69,7 +71,7 @@ async def get_dependency_graph(
     entity_type: Literal["workflow", "form", "app", "agent"],
     entity_id: UUID,
     db: DbSession,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     depth: int = Query(
         default=2,
         ge=1,
@@ -95,7 +97,9 @@ async def get_dependency_graph(
 
     Platform admin only.
     """
-    service = DependencyGraphService(db)
+    caller = await load_caller(db, user)
+    require_operation(caller, "GET /api/dependencies/{entity_type}/{entity_id}", GLOBAL)
+    service = DependencyGraphService(db, caller=caller)
     graph = await service.build_graph(entity_type, entity_id, depth)
 
     # Check if root entity was found
@@ -133,11 +137,14 @@ async def get_dependency_graph(
 async def get_dependency_availability(
     request: DependencyAvailabilityRequest,
     db: DbSession,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> DependencyAvailabilityResponse:
     """Return whether each requested entity has dependency graph relationships."""
+    caller = await load_caller(db, user)
+    require_operation(caller, "POST /api/dependencies/availability", GLOBAL)
     availability = await compute_relationship_availability(
         db,
+        caller=caller,
         workflow_ids=request.workflow_ids,
         form_ids=request.form_ids,
         app_ids=request.app_ids,

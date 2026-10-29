@@ -133,10 +133,10 @@ class WorkflowExecutionRequest(BaseModel):
     caller_solution_id: str | None = Field(default=None, description="SPIKE: the caller's OWN install on per-call targeted requests (SDK-attested, engine requests only). Lets the inbound gate tell own-calls (caller == target, always allow) from cross-install calls (target's allow_inbound_access decides).")
     transient: bool = Field(default=False, description="If true, skip database persistence (for code editor debugging)")
     sync: bool | None = Field(default=None, description="If true, block until execution completes and return result inline. Overrides workflow's execution_mode setting.")
-    code: str | None = Field(default=None, description="Optional: Python code to execute as script (base64 encoded). If provided, executes code instead of looking up workflow by ID.")
+    code: str | None = Field(default=None, description="Optional: Python code to execute as a script, as plain text. If provided, executes code instead of looking up workflow by ID.")
     script_name: str | None = Field(default=None, description="Optional: Name/identifier for the script (used for logging when code is provided)")
-    org_id: str | None = Field(default=None, description="Override execution org context. Requires platform admin.")
-    run_as: str | None = Field(default=None, description="Execute as this user UUID (impersonation). Requires platform admin.")
+    org_id: str | None = Field(default=None, description="Override execution org context within the caller's reach. Requires workflows.execute in the target organization.")
+    run_as: str | None = Field(default=None, description="Execute as this user UUID. Requires Impersonate Users in that user's organization.")
     scheduled_at: datetime | None = Field(
         default=None,
         description=(

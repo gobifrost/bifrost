@@ -63,7 +63,8 @@ import { term, useTerminology } from "@/lib/terminology";
 import { useAgent, useUpdateAgent } from "@/hooks/useAgents";
 import { useAgentRuns } from "@/services/agentRuns";
 import { useCreateConversation } from "@/hooks/useChat";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { parseSolutionFrom } from "@/lib/solution-back-nav";
 
 type Tab = "overview" | "runs" | "settings";
@@ -119,7 +120,7 @@ export function AgentDetailPage() {
 
 	const updateAgent = useUpdateAgent();
 	const createConversation = useCreateConversation();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 	const actionBusy = useRef(false);
 	const [actionFailure, setActionFailure] = useState<{
@@ -154,6 +155,12 @@ export function AgentDetailPage() {
 
 	const hasChat = (agent?.channels ?? []).includes("chat");
 	const isActive = agent?.is_active ?? true;
+	const canBackfillAgent = agent
+		? authorization.canAt(
+				"agentruns.readwrite.all",
+				orgTarget(agent.organization_id),
+			)
+		: false;
 
 	function handleStartChat() {
 		if (!agent?.id || !isActive || actionBusy.current) return;
@@ -393,7 +400,7 @@ export function AgentDetailPage() {
 							>
 								<Trash2 className="h-3.5 w-3.5" />
 							</Button>
-							{isPlatformAdmin ? (
+							{canBackfillAgent ? (
 								<SummaryBackfillButton
 									agentId={agent.id ?? undefined}
 								/>

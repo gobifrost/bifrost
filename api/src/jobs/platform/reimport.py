@@ -6,9 +6,8 @@ from src.config import get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 
 
@@ -59,15 +58,6 @@ async def run_workspace_reimport(
     }
 
 
-WORKSPACE_REIMPORT_DEFINITION = PlatformJobDefinition(
-    job_type="workspace.reimport",
-    payload_version=1,
-    payload_model=WorkspaceReimportPayload,
-    handler=run_workspace_reimport,
-    policy=PlatformJobPolicy(
-        timeout_seconds=60 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        min_memory_headroom_mb=512,
-    ),
+WORKSPACE_REIMPORT_DEFINITION = define_platform_job(
+    "workspace.reimport", WorkspaceReimportPayload, run_workspace_reimport
 )

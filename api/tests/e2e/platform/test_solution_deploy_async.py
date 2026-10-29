@@ -14,7 +14,9 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from sqlalchemy import delete
 
+from src.jobs.schedulers.platform_jobs import LEASE_DURATION
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.platform_jobs import PlatformJob
 
@@ -223,6 +225,7 @@ async def test_deploy_status_projects_canonical_platform_job(
 ):
     """The legacy status route reads, but never owns, canonical job state."""
     now = datetime.now(timezone.utc)
+    is_running = canonical_status == "running"
     projection = SolutionDeployJob(
         id=uuid.uuid4(),
         install_id=None,
@@ -247,25 +250,40 @@ async def test_deploy_status_projects_canonical_platform_job(
         result=result,
         error_code=error_code,
         error_message=error_message,
+        attempt=1 if is_running else 0,
+        started_at=now if is_running else None,
+        lease_owner="test-solution-deploy-status" if is_running else None,
+        lease_token=uuid.uuid4() if is_running else None,
+        heartbeat_at=now if is_running else None,
+        lease_expires_at=now + LEASE_DURATION if is_running else None,
         created_at=now,
         updated_at=now,
     )
     db_session.add_all((projection, canonical))
     await db_session.commit()
 
-    response = e2e_client.get(
-        f"/api/solutions/deploy-jobs/{projection.id}", headers=platform_admin.headers
-    )
+    try:
+        response = e2e_client.get(
+            f"/api/solutions/deploy-jobs/{projection.id}", headers=platform_admin.headers
+        )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == expected_status
-    assert body["result"] == expected_result
-    assert body["error"] == expected_error
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == expected_status
+        assert body["result"] == expected_result
+        assert body["error"] == expected_error
 
-    await db_session.refresh(projection)
-    assert projection.status == "running"
-    assert projection.result == {"phase": "stale legacy phase"}
+        await db_session.refresh(projection)
+        assert projection.status == "running"
+        assert projection.result == {"phase": "stale legacy phase"}
+    finally:
+        await db_session.execute(
+            delete(SolutionDeployJob).where(SolutionDeployJob.id == projection.id)
+        )
+        await db_session.execute(
+            delete(PlatformJob).where(PlatformJob.id == canonical.id)
+        )
+        await db_session.commit()
 
 
 @pytest.mark.asyncio

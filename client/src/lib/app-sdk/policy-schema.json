@@ -37,6 +37,16 @@
         }
       }
     },
+    "AuthorityRef": {
+      "type": "object",
+      "title": "Policy authority",
+      "description": "Platform Admin role membership or the powers added by a Full workflow, within the run user's reach.",
+      "required": ["authority"],
+      "additionalProperties": false,
+      "properties": {
+        "authority": { "type": "string", "enum": ["platform_admin"] }
+      }
+    },
     "Call": {
       "type": "object",
       "title": "Function call",
@@ -64,6 +74,7 @@
         { "type": "array" },
         { "$ref": "#/definitions/RowRef" },
         { "$ref": "#/definitions/UserRef" },
+        { "$ref": "#/definitions/AuthorityRef" },
         { "$ref": "#/definitions/Call" },
         { "$ref": "#" }
       ]
@@ -72,6 +83,7 @@
   "oneOf": [
     { "$ref": "#/definitions/RowRef" },
     { "$ref": "#/definitions/UserRef" },
+    { "$ref": "#/definitions/AuthorityRef" },
     { "$ref": "#/definitions/Call" },
     {
       "type": "object",

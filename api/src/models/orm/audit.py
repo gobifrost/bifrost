@@ -26,6 +26,10 @@ class AuditLog(Base):
         ForeignKey("organizations.id"), default=None
     )
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), default=None)
+    # The operator is an immutable audit stamp, rather than an FK: audit rows
+    # retain the attribution when that operator account is deleted.
+    impersonated_by_user_id: Mapped[UUID | None] = mapped_column(default=None)
+    impersonation_session_id: Mapped[UUID | None] = mapped_column(default=None)
     action: Mapped[str] = mapped_column(String(100))
     resource_type: Mapped[str | None] = mapped_column(String(100), default=None)
     resource_id: Mapped[UUID | None] = mapped_column(default=None)

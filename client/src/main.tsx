@@ -26,7 +26,7 @@ initReactShim();
 // allows: refetch the caller's authorization so the UI corrects itself.
 setRefusedChangeListener(() => void invalidateAuthorization(queryClient));
 
-// Configure Monaco editor before React renders (sets up CDN paths for workers)
+// Configure Monaco's local ESM API and Vite worker routes before React renders.
 configureMonaco();
 
 createRoot(document.getElementById("root")!).render(

@@ -19,6 +19,7 @@ from sqlalchemy.orm import joinedload
 from src.models import ExecutionLog
 from src.models.orm.executions import Execution
 from src.models.orm.organizations import Organization
+from src.services.authorization.reach import OrgReach
 
 
 def encode_execution_log_cursor(timestamp: datetime, log_id: int) -> str:
@@ -265,6 +266,7 @@ class ExecutionLogRepository:
         cursor: tuple[datetime, int] | None = None,
         workflow_id: UUID | None = None,
         global_only: bool = False,
+        organization_reaches: tuple[OrgReach, ...] = (),
     ) -> tuple[list[dict[str, Any]], str | None]:
         """
         List logs across all executions with filtering and pagination.
@@ -274,6 +276,8 @@ class ExecutionLogRepository:
             workflow_name: Filter by workflow name (partial match)
             workflow_id: Filter by exact workflow identity
             global_only: Include only executions without an organization
+            organization_reaches: Every supplied reach is applied before
+                pagination, preventing a permission from widening user reach.
             levels: Filter by log levels (e.g., ["ERROR", "WARNING"])
             message_search: Search in log messages (partial match)
             start_date: Filter logs from this date
@@ -304,6 +308,11 @@ class ExecutionLogRepository:
 
         if global_only:
             query = query.where(Execution.organization_id.is_(None))
+
+        for reach in organization_reaches:
+            reach_filter = reach.where(Execution.organization_id)
+            if reach_filter is not None:
+                query = query.where(reach_filter)
 
         if workflow_id:
             query = query.where(Execution.workflow_id == workflow_id)

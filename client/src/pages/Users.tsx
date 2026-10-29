@@ -178,7 +178,7 @@ export function Users() {
 			? authorization.canAt(permission, orgTarget(filterOrgId))
 			: authorization.canAnywhere(permission);
 	const bulkAbilities = {
-		canMoveOrg: canBulk("users.lifecycle.readwrite"),
+		canMoveOrg: canBulk("userlifecycle.readwrite"),
 		// The replace-roles dialog lists every role, which needs roles.read.
 		canReplaceRoles:
 			canBulk("roleassignments.readwrite") &&

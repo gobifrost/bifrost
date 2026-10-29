@@ -12,6 +12,7 @@ from src.services.llm.base import LLMConfig
 from src.services.model_pricing import (
     canonical_provider,
     chain_context_window,
+    config_context_window,
     fill_pricing_from_catalog,
     is_openrouter_endpoint,
     usage_model_name,
@@ -182,6 +183,17 @@ def _config(provider: str, model: str, catalog_provider_id: str | None = None) -
         api_key="test",
         catalog_provider_id=catalog_provider_id,
     )
+
+
+def test_individual_context_window_preserves_the_serving_models_capacity(catalog) -> None:
+    assert config_context_window(
+        catalog, _config("anthropic", "claude-opus-4-5-20251101")
+    ) == 200_000
+    assert config_context_window(
+        catalog,
+        _config("openai", "accounts/fireworks/models/kimi-k3", "fireworks-ai"),
+    ) == 131_072
+    assert config_context_window(catalog, _config("openai", "unknown-model")) is None
 
 
 @pytest.mark.asyncio

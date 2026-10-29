@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastmcp.tools import ToolResult
+from src.services.mcp_server.tool_result import ToolResult
 
 from shared.form_runtime import DEFAULT_FORM_CONFIRMATION_MARKDOWN
 from src.services.mcp_server.tool_result import error_result, success_result

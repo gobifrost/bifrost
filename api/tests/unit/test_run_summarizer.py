@@ -5,6 +5,8 @@ Validates the Task 12 implementation: ``summarize_run`` loads a completed
 extraction, and persists the parsed result onto the run record + an
 ``AIUsage`` row.
 """
+import json
+
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -127,6 +129,39 @@ async def test_summarize_run_populates_asked_did_confidence(
             .all()
         )
         assert any(u.model == "claude-haiku-4-5" for u in usages)
+
+
+@pytest.mark.asyncio
+async def test_summarize_run_preserves_pinned_execution_mode_outside_llm_metadata(
+    async_session_factory, seed_completed_run
+):
+    from src.services.execution import run_summarizer as mod
+
+    async with async_session_factory() as db:
+        run = await db.get(AgentRun, seed_completed_run.id)
+        assert run is not None
+        run.run_metadata = {"agent_execution_mode": "delegated"}
+        await db.commit()
+
+    generated_metadata = {
+        **{f"fact_{index}": str(index) for index in range(16)},
+        "agent_execution_mode": "automatic",
+    }
+    mock_client = _build_mock_client(
+        _build_mock_llm_response(json.dumps({"metadata": generated_metadata}))
+    )
+    with patch.object(
+        mod,
+        "get_summarization_client",
+        new=AsyncMock(return_value=(mock_client, "claude-haiku-4-5")),
+    ):
+        await summarize_run(seed_completed_run.id, async_session_factory)
+
+    async with async_session_factory() as db:
+        run = await db.get(AgentRun, seed_completed_run.id)
+        assert run is not None
+        assert run.run_metadata["agent_execution_mode"] == "delegated"
+        assert len(run.run_metadata) == 16
 
 
 @pytest.mark.asyncio

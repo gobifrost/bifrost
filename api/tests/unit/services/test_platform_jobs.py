@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -10,6 +12,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
 from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
@@ -17,6 +20,7 @@ from src.jobs.platform.application_deploy import (
 from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
+    run_application_publish,
 )
 from src.jobs.platform.solution_export import (
     SOLUTION_EXPORT_DEFINITION,
@@ -39,7 +43,17 @@ from src.jobs.platform.base import (
 from src.jobs.platform import runner
 from src.models.contracts.platform_jobs import PlatformJobStatus
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.audit_context import ActorContext, clear_actor, set_actor
 from src.services import platform_jobs as service
+
+
+async def _isolate_jobs(db_session: AsyncSession) -> None:
+    """Turn isolated jobs on in Settings -> Kubernetes (rolled back with the session)."""
+    from src.services.kubernetes_execution import KubernetesExecutionService
+
+    await KubernetesExecutionService(db_session).update_policy(
+        {"isolated_jobs_enabled": True}, updated_by="test"
+    )
 
 
 async def _enqueue(db_session: AsyncSession) -> PlatformJob:
@@ -63,15 +77,70 @@ async def _enqueue(db_session: AsyncSession) -> PlatformJob:
 
 
 @pytest.mark.asyncio
+async def test_enqueue_persists_current_impersonation_provenance(
+    db_session: AsyncSession,
+) -> None:
+    operator_id, session_id = uuid4(), uuid4()
+    token = set_actor(
+        ActorContext(
+            user_id=uuid4(),
+            organization_id=None,
+            impersonated_by_user_id=operator_id,
+            impersonation_session_id=session_id,
+        )
+    )
+    try:
+        job = await _enqueue(db_session)
+    finally:
+        clear_actor(token)
+
+    assert job.impersonated_by_user_id == operator_id
+    assert job.impersonation_session_id == session_id
+
+
+@pytest.mark.asyncio
+async def test_enqueue_wakes_executors_only_once_the_job_is_committed(
+    async_session_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sqlalchemy import delete
+
+    from src.services import work_dispatch
+
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
+    async with async_session_factory() as session:
+        job = await _enqueue(session)
+        await asyncio.sleep(0)
+        wake.assert_not_awaited()  # executors would find nothing to claim yet
+
+        await session.commit()
+        await asyncio.sleep(0)
+        wake.assert_awaited_once_with()
+
+        await session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_enqueue_wakes_nobody(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.services import work_dispatch
+
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
+    await _enqueue(db_session)
+    await db_session.rollback()
+    await asyncio.sleep(0)
+
+    wake.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_enqueue_routes_build_class_jobs_to_configured_backend(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        service,
-        "get_settings",
-        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
-    )
+    await _isolate_jobs(db_session)
     app_id = uuid4()
     job, reused = await service.enqueue_platform_job(
         db_session,
@@ -99,13 +168,8 @@ async def test_enqueue_routes_build_class_jobs_to_configured_backend(
 @pytest.mark.asyncio
 async def test_enqueue_routes_full_solution_exports_to_isolated_build_backend(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        service,
-        "get_settings",
-        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
-    )
+    await _isolate_jobs(db_session)
     export_id = uuid4()
 
     job, reused = await service.enqueue_platform_job(
@@ -154,17 +218,12 @@ async def test_enqueue_routes_full_solution_exports_to_isolated_build_backend(
 )
 async def test_enqueue_routes_solution_build_jobs_to_configured_backend(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
     definition: PlatformJobDefinition,
     payload,
     resource_type: str,
     title: str,
 ) -> None:
-    monkeypatch.setattr(
-        service,
-        "get_settings",
-        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
-    )
+    await _isolate_jobs(db_session)
     body = payload()
     resource_id = str(body.deploy_job_id if hasattr(body, "deploy_job_id") else body.solution_id)
 
@@ -208,17 +267,11 @@ async def test_enqueue_routes_solution_build_jobs_to_configured_backend(
     ],
     ids=["solution-deploy", "solution-git-sync"],
 )
-async def test_enqueue_keeps_solution_build_jobs_local_when_kubernetes_is_disabled(
+async def test_enqueue_keeps_solution_build_jobs_local_when_isolation_is_off(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
     definition: PlatformJobDefinition,
     payload,
 ) -> None:
-    monkeypatch.setattr(
-        service,
-        "get_settings",
-        lambda: SimpleNamespace(platform_build_backend="local"),
-    )
     body = payload()
     resource_id = str(body.deploy_job_id if hasattr(body, "deploy_job_id") else body.solution_id)
 
@@ -241,71 +294,14 @@ async def test_enqueue_keeps_solution_build_jobs_local_when_kubernetes_is_disabl
 
 
 @pytest.mark.asyncio
-async def test_enqueue_keeps_default_class_jobs_local_when_build_backend_is_remote(
+async def test_enqueue_keeps_default_class_jobs_local_when_isolation_is_on(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        service,
-        "get_settings",
-        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
-    )
+    await _isolate_jobs(db_session)
 
     job = await _enqueue(db_session)
 
     assert job.execution_backend == "local"
-
-
-@pytest.mark.asyncio
-async def test_enqueue_honors_remote_job_type_allowlist(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        service,
-        "get_settings",
-        lambda: SimpleNamespace(
-            platform_build_backend="kubernetes",
-            kubernetes_build_job_types="application.sdk_update",
-        ),
-    )
-    app_id = uuid4()
-    job, _ = await service.enqueue_platform_job(
-        db_session,
-        APPLICATION_DEPLOY_DEFINITION,
-        ApplicationDeployPayload(
-            application_id=app_id,
-            deployment_id=uuid4(),
-            input_sha256="a" * 64,
-        ),
-        dedupe_key=str(app_id),
-        organization_id=None,
-        requested_by_user_id=uuid4(),
-        requested_by_email="dev@example.com",
-        requested_by_name="Dev",
-        resource_type="application",
-        resource_id=str(app_id),
-        title="Deploying App",
-        action_url=None,
-    )
-
-    assert job.execution_backend == "local"
-
-
-def test_remote_job_type_allowlist_parsing() -> None:
-    assert service.kubernetes_remote_job_types(
-        SimpleNamespace(
-            kubernetes_build_job_types=" application.deploy ,,application.sdk_update "
-        )
-    ) == frozenset({"application.deploy", "application.sdk_update"})
-    # An empty allowlist cannot silently disable remote execution; it falls
-    # back to the default set.
-    assert service.kubernetes_remote_job_types(
-        SimpleNamespace(kubernetes_build_job_types="  , ")
-    ) == service.DEFAULT_KUBERNETES_JOB_TYPES
-    assert service.kubernetes_remote_job_types(SimpleNamespace()) == (
-        service.DEFAULT_KUBERNETES_JOB_TYPES
-    )
 
 
 @pytest.mark.asyncio
@@ -582,6 +578,107 @@ async def test_websocket_event_matches_public_http_contract_and_hides_payload(
         assert "requested_by_email" not in event["job"]
 
 
+@pytest.mark.parametrize("job_type", sorted(APP_BUILD_JOB_TYPES))
+async def test_build_oom_message_reaches_notification_and_public_job(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, job_type: str,
+) -> None:
+    job = await _enqueue(db_session)
+    job.job_type = job_type
+    job.status = "failed"
+    job.error_code = "memory_pressure"
+    job.error_message = app_build_memory_message()
+    job.notification_id = uuid4()
+    notifications = MagicMock()
+    notifications.update_notification = AsyncMock()
+    broadcast = AsyncMock()
+    monkeypatch.setattr(service, "get_notification_service", lambda: notifications)
+    monkeypatch.setattr(service.pubsub_manager, "broadcast", broadcast)
+
+    await service.publish_platform_job_update(job)
+
+    update = notifications.update_notification.await_args.args[1]
+    assert update.error == app_build_memory_message()
+    assert update.status.value == "failed"
+    for call in broadcast.await_args_list:
+        assert call.args[1]["job"]["error"]["message"] == app_build_memory_message()
+
+
+async def test_python_build_memory_error_is_recorded_with_recovery(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    job.status = "running"
+    job.lease_token = uuid4()
+    token = job.lease_token
+    await db_session.commit()
+
+    async def allocation_failed(*_args):
+        raise MemoryError
+
+    definition = PlatformJobDefinition(
+        job_type=job.job_type,
+        payload_version=job.payload_version,
+        payload_model=APPLICATION_PUBLISH_DEFINITION.payload_model,
+        handler=allocation_failed,
+        policy=PlatformJobPolicy(timeout_seconds=30),
+    )
+    monkeypatch.setattr(runner, "get_platform_job_definition", lambda _: definition)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    await runner.run_claimed_platform_job(job.id, token)
+    await db_session.refresh(job)
+    assert job.error_code == "memory_pressure"
+    assert job.error_message == app_build_memory_message()
+
+
+@pytest.mark.asyncio
+async def test_application_publish_preserves_bundle_oom_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_id = uuid4()
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(id=app_id, organization_id=None)
+            )
+        )
+
+    class Repository:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        async def publish(self, *_args, **_kwargs):
+            raise ValueError(
+                "Bundle build failed during publish: " + app_build_memory_message()
+            )
+
+    monkeypatch.setattr(
+        "src.jobs.platform.application_publish.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.application_publish.ApplicationRepository", Repository
+    )
+
+    with pytest.raises(PlatformJobFailure) as failure:
+        await run_application_publish(
+            SimpleNamespace(
+                requested_by_user_id=str(uuid4()),
+                requested_by_email="dev@example.test",
+                requested_by_name="Dev",
+                report=AsyncMock(),
+            ),
+            ApplicationPublishPayload(application_id=app_id),
+        )
+
+    assert failure.value.code == "application_publish_failed"
+    assert failure.value.retryable is False
+    assert failure.value.message == (
+        "Bundle build failed during publish: " + app_build_memory_message()
+    )
+
+
 @pytest.mark.asyncio
 async def test_notification_projection_is_persisted_before_websocket_broadcasts(
     db_session: AsyncSession,
@@ -780,3 +877,35 @@ async def test_stale_runner_cannot_defer_job(
     )
     await db_session.refresh(job)
     assert job.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_with_progress_sets_percent_in_same_write(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = await _enqueue(db_session)
+    token = uuid4()
+    job.status = "running"
+    job.lease_token = token
+    await db_session.commit()
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    assert await service.checkpoint_platform_job(
+        job.id, token, result={"moved": 1}, phase="Moving 2 of 4", current=1, total=4
+    )
+    await db_session.refresh(job)
+    assert (job.result, job.phase) == ({"moved": 1}, "Moving 2 of 4")
+    assert (job.progress_current, job.progress_total, job.progress_percent) == (1, 4, 25.0)
+
+    assert await service.checkpoint_platform_job(job.id, token, result={"moved": 2}, phase="Later")
+    await db_session.refresh(job)
+    assert (job.progress_current, job.progress_total, job.progress_percent) == (1, 4, 25.0)
+
+
+@pytest.mark.asyncio
+async def test_find_active_platform_job_ignores_terminal_jobs(db_session: AsyncSession) -> None:
+    job = await _enqueue(db_session)
+    assert (await service.find_active_platform_job(db_session, job.job_type, job.dedupe_key)).id == job.id
+    job.status = "succeeded"
+    await db_session.flush()
+    assert await service.find_active_platform_job(db_session, job.job_type, job.dedupe_key) is None

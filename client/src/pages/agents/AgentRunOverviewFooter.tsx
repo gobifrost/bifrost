@@ -17,13 +17,11 @@ type Disclosure = "usage" | "metadata" | null;
 export function AgentRunOverviewFooter({
 	run,
 	agentName,
-	showRegen,
-	isPlatformAdmin,
+	canRegenerateSummary,
 }: {
 	run: Run;
 	agentName: string | null;
-	showRegen: boolean;
-	isPlatformAdmin: boolean;
+	canRegenerateSummary: boolean;
 }) {
 	const [active, setActive] = useState<Disclosure>(null);
 	const hasUsage =
@@ -55,10 +53,10 @@ export function AgentRunOverviewFooter({
 						}
 					/>
 				</div>
-				{showRegen ? (
+				{canRegenerateSummary ? (
 					<SummaryRegenerationControl
 						runId={run.id}
-						allowed={isPlatformAdmin}
+						allowed={canRegenerateSummary}
 						testId="regen-summary-button"
 					/>
 				) : !run.agent_id ? (
@@ -83,8 +81,7 @@ export function AgentRunOverviewFooter({
 						<MetadataDetail
 							run={run}
 							agentName={agentName}
-							showRegen={showRegen}
-							isPlatformAdmin={isPlatformAdmin}
+							canRegenerateSummary={canRegenerateSummary}
 						/>
 					)}
 				</div>
@@ -150,13 +147,11 @@ function metadataSummary(run: Run): string {
 function MetadataDetail({
 	run,
 	agentName,
-	showRegen,
-	isPlatformAdmin,
+	canRegenerateSummary,
 }: {
 	run: Run;
 	agentName: string | null;
-	showRegen: boolean;
-	isPlatformAdmin: boolean;
+	canRegenerateSummary: boolean;
 }) {
 	const metadata = run.metadata ?? {};
 	return (
@@ -192,13 +187,13 @@ function MetadataDetail({
 						value={run.agent_name ?? "Deleted agent"}
 					/>
 				)}
-				{showRegen ? (
+				{canRegenerateSummary ? (
 					<div className="min-w-0">
 						<div className="text-muted-foreground">Summary</div>
 						<div className="mt-1 flex min-h-11 items-center">
 							<SummaryRegenerationControl
 								runId={run.id}
-								allowed={isPlatformAdmin}
+								allowed={canRegenerateSummary}
 								testId="regen-summary-metadata-button"
 							/>
 						</div>

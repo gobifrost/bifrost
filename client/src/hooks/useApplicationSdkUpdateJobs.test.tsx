@@ -118,6 +118,54 @@ describe("useApplicationSdkUpdateJobs", () => {
 		expect(result.current.isAnyUpdating(["app-1", "app-2"])).toBe(true);
 	});
 
+	it("keeps a job's own update that arrived before its enqueue response", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const { result } = renderHook(() => useApplicationSdkUpdateJobs(), {
+			wrapper: wrapper(queryClient),
+		});
+
+		act(() => {
+			mocks.callback?.(makeJob({ id: "job-2", status: "running" }));
+			result.current.trackAccepted([
+				{
+					application_id: "app-1",
+					job_id: "job-2",
+					status: "queued",
+					reused: false,
+					notification_id: null,
+				},
+			]);
+		});
+
+		expect(result.current.getUpdateState("app-1")).toBe("updating");
+	});
+
+	it("replaces an earlier job's state when a new job is accepted", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const { result } = renderHook(() => useApplicationSdkUpdateJobs(), {
+			wrapper: wrapper(queryClient),
+		});
+
+		act(() => {
+			mocks.callback?.(makeJob({ id: "job-1", status: "failed" }));
+			result.current.trackAccepted([
+				{
+					application_id: "app-1",
+					job_id: "job-2",
+					status: "queued",
+					reused: false,
+					notification_id: null,
+				},
+			]);
+		});
+
+		expect(result.current.getUpdateState("app-1")).toBe("queued");
+	});
+
 	it("treats action-required SDK updates as terminal failures", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },

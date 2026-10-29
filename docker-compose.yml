@@ -13,7 +13,6 @@ name: bifrost
 # Required environment variables:
 #   BIFROST_SECRET_KEY  - 32+ char secret for JWT signing and secret encryption
 #   POSTGRES_PASSWORD   - PostgreSQL password
-#   RABBITMQ_PASSWORD   - RabbitMQ password
 #
 # The BIFROST_SECRET_KEY is critical - it's used for:
 #   - JWT token signing (HS256)
@@ -43,25 +42,6 @@ services:
       test: ["CMD-SHELL", "pg_isready -U bifrost -d bifrost"]
       interval: 5s
       timeout: 5s
-      retries: 5
-
-  # RabbitMQ Message Broker
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: bifrost-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: bifrost
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
-    ports:
-      - "5672:5672"
-      # Management UI port (15672) only exposed in docker-compose.dev.yml
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 10s
-      timeout: 10s
       retries: 5
 
   # Redis (Sessions & Cache)
@@ -165,8 +145,7 @@ services:
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      # Message Queue & Cache
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      # Cache
       BIFROST_REDIS_URL: redis://redis:6379/0
       # S3-compatible storage (SeaweedFS locally, AWS S3 in production)
       BIFROST_S3_BUCKET: ${BIFROST_S3_BUCKET:-bifrost-local}
@@ -198,8 +177,6 @@ services:
         condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       redis:
         condition: service_healthy
       seaweedfs:
@@ -212,7 +189,10 @@ services:
       start_period: 120s
     deploy:
       replicas: ${API_REPLICAS:-1}
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    # Preserve the API-owned executor's canonical 300-second drain window.
+    # Compose otherwise sends SIGKILL ten seconds after SIGTERM.
+    stop_grace_period: 310s
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 300
 
   # Frontend (Vite)
   client:
@@ -231,64 +211,12 @@ services:
       api:
         condition: service_healthy
 
-  # Scheduler Service + isolated platform-job host. Every replica runs a small
-  # job pool; a PostgreSQL lease elects one trigger leader.
-  # Workflow/agent execution remains in worker containers.
-  scheduler:
-    # build:
-    #   context: .
-    #   dockerfile: api/Dockerfile
-    image: ghcr.io/gobifrost/bifrost-api:latest
-    environment:
-      # Core (must match API)
-      BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
-      BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
-      # Database (via PgBouncer for connection pooling)
-      BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      # Message Queue & Cache
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      BIFROST_REDIS_URL: redis://redis:6379/0
-      # API URL (for SDK client injection in workflows)
-      BIFROST_API_URL: http://api:8000
-      # S3 Storage (for scheduled jobs that need file access)
-      BIFROST_S3_BUCKET: ${BIFROST_S3_BUCKET:-bifrost-local}
-      BIFROST_S3_ENDPOINT_URL: ${BIFROST_S3_ENDPOINT_URL:-http://seaweedfs:8333}
-      BIFROST_S3_ACCESS_KEY: ${BIFROST_S3_ACCESS_KEY:-${SEAWEEDFS_ACCESS_KEY:-bifrost}}
-      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
-      BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
-    depends_on:
-      init:
-        condition: service_completed_successfully
-      pgbouncer:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    deploy:
-      replicas: ${SCHEDULER_REPLICAS:-1}
-      resources:
-        reservations:
-          cpus: "0.05"
-          memory: 256M
-        limits:
-          cpus: "1.0"
-          memory: 1G
-    command: >
-      python -m src.scheduler.main
-
-  # Worker Service (RabbitMQ Consumers)
-  # Can be scaled horizontally for increased throughput
-  # Workers load Python modules from Redis cache (no filesystem sync needed)
+  # Worker Service: executors that run every kind of work (workflows, agent
+  # runs, services and local platform jobs); the API runs scheduling. Two
+  # workers with 2 GB each are recommended: an executor takes work that fits
+  # 85% of its memory limit. Upgrading from a compose file that also has a
+  # `scheduler` service? That service runs the same executor and keeps working;
+  # with this file, run `docker compose up -d --remove-orphans` to retire it.
   worker:
     # build:
     #   context: .
@@ -301,8 +229,7 @@ services:
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      # Message Queue & Cache
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      # Cache
       BIFROST_REDIS_URL: redis://redis:6379/0
       # API URL (for SDK client injection in workflows)
       BIFROST_API_URL: http://api:8000
@@ -312,8 +239,6 @@ services:
       BIFROST_S3_ACCESS_KEY: ${BIFROST_S3_ACCESS_KEY:-${SEAWEEDFS_ACCESS_KEY:-bifrost}}
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
       BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
-      # Concurrency
-      BIFROST_MAX_CONCURRENCY: ${BIFROST_MAX_CONCURRENCY:-10}
       # Worker needs minimal DB connections — Redis-first pattern for agent runs
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
@@ -345,18 +270,22 @@ services:
         condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       redis:
         condition: service_healthy
       api:
         condition: service_healthy
     deploy:
-      replicas: ${WORKER_REPLICAS:-1}
+      replicas: ${WORKER_REPLICAS:-2}
+      resources:
+        reservations:
+          cpus: "0.05"
+          memory: 256M
+        limits:
+          cpus: "2.0"
+          memory: 2G
     command: python -m src.worker.main
 
 volumes:
   postgres_data:
-  rabbitmq_data:
   redis_data:
   seaweedfs_data:

@@ -13,7 +13,7 @@ import re
 from typing import Any
 from uuid import UUID
 
-from fastmcp.tools import ToolResult
+from src.services.mcp_server.tool_result import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client

@@ -1,20 +1,15 @@
 """End-to-end coverage for the four org-scoping scenarios.
 
-These tests inspire confidence that the consolidation works against a
-production-shaped environment, not just against mocked resolvers. They
-were added during the 2026-05 consolidation when the user pointed out
-that we had unit-level confidence in the C2 bypass gate but no e2e
-proof — particularly for the non-admin provider-org-member path, which
-is the caller archetype the bypass rule was added for (e.g. a Covi
-employee in the platform org).
+These tests cover the persisted role and organization-reach model against
+real endpoints, rather than mocked resolvers.
 
 Scenarios — each is verified against a different real user via real
 endpoints (config, tables, mapping):
 
     (1) Orgs can get to their own stuff.
     (2a) Platform admin (is_superuser=True) can get to everybody.
-    (2b) Provider-org member (is_superuser=False, in is_provider=True org)
-         can get to everybody. ← The new C2 path.
+    (2b) Provider-org membership alone grants neither foreign reach nor
+         named permissions.
     (3) Resolution returns org-then-global cascade.
     (4) Regular orgs can't get to other orgs.
 """
@@ -162,27 +157,60 @@ class TestScenario2a_PlatformAdminBypass:
         assert r.status_code == 200, r.text
         assert r.json() is not None
 
+    def test_platform_admin_lists_every_mapping_whatever_the_scope(
+        self, e2e_client, platform_admin, org1, org2
+    ):
+        integration_name = f"admin_list_mappings_{uuid4().hex[:8]}"
+        integration_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": integration_name},
+        )
+        assert integration_resp.status_code == 201, integration_resp.text
+        integration = integration_resp.json()
+
+        try:
+            for org_id, entity_id in (
+                (str(PROVIDER_ORG_ID), "provider-tenant"),
+                (org1["id"], "org1-tenant"),
+                (org2["id"], "org2-tenant"),
+            ):
+                mapping_resp = e2e_client.post(
+                    f"/api/integrations/{integration['id']}/mappings",
+                    headers=platform_admin.headers,
+                    json={"organization_id": org_id, "entity_id": entity_id},
+                )
+                assert mapping_resp.status_code == 201, mapping_resp.text
+
+            def listed(scope: str | None) -> set[str]:
+                r = e2e_client.post(
+                    "/api/sdk/integrations/list_mappings",
+                    headers=platform_admin.headers,
+                    json={"name": integration_name, "scope": scope},
+                )
+                assert r.status_code == 200, r.text
+                return {item["entity_id"] for item in r.json()["items"]}
+
+            every = {"provider-tenant", "org1-tenant", "org2-tenant"}
+            for scope in (None, "global", str(PROVIDER_ORG_ID), org1["id"]):
+                assert listed(scope) == every, scope
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
 
 # =============================================================================
-# Scenario 2b: Provider-org member (non-admin) can reach any org
-# This is the new C2 path that had no e2e before this PR.
+# Scenario 2b: Provider-org membership does not grant foreign authority
 # =============================================================================
 
 
 @pytest.mark.e2e
-class TestScenario2b_ProviderOrgBypass:
-    """A non-superuser in the provider org bypasses scope restrictions.
+class TestScenario2b_ProviderOrgRequiresExplicitGrants:
+    """A provider-org member has only its persisted roles and reach."""
 
-    Pre-overhaul this case would have failed in two ways:
-    (a) The pre-overhaul ``_resolve_sdk_org_id`` accepted any UUID without
-        a gate, so even regular users could traverse — not a "test passes
-        for the right reason" outcome.
-    (b) Post-overhaul fix had to grant the provider-org membership path.
-    These tests pin the post-fix behavior so the C2 bypass doesn't
-    silently regress to "platform admin only."
-    """
-
-    def test_provider_member_explicit_scope_to_other_org(
+    def test_provider_member_foreign_scope_is_refused(
         self, e2e_client, platform_admin, provider_org_user, org1
     ):
         key = f"prov_to_org1_{uuid4().hex[:8]}"
@@ -190,21 +218,15 @@ class TestScenario2b_ProviderOrgBypass:
             e2e_client,
             platform_admin.headers,
             key=key,
-            value="org1_via_provider_member",
+            value="org1_private_value",
             org_id=org1["id"],
         )
         r = _get_config_via_sdk(
             e2e_client, provider_org_user.headers, key=key, scope=org1["id"]
         )
-        assert r.status_code == 200, (
-            f"Provider-org member should reach org1 via explicit scope. "
-            f"Got: {r.status_code} {r.text}"
-        )
-        body = r.json()
-        assert body is not None, "Provider-org bypass should return the row"
-        assert body["value"] == "org1_via_provider_member"
+        assert r.status_code == 403, r.text
 
-    def test_provider_member_explicit_global(
+    def test_provider_member_global_scope_is_refused_without_config_read(
         self, e2e_client, platform_admin, provider_org_user
     ):
         key = f"prov_to_global_{uuid4().hex[:8]}"
@@ -214,14 +236,16 @@ class TestScenario2b_ProviderOrgBypass:
         r = _get_config_via_sdk(
             e2e_client, provider_org_user.headers, key=key, scope="global"
         )
-        assert r.status_code == 200, (
-            f"Provider-org member should reach global via explicit scope. "
-            f"Got: {r.status_code} {r.text}"
-        )
-        assert r.json() is not None
+        assert r.status_code == 403, r.text
 
-    def test_provider_member_unset_list_mappings_returns_all_orgs(
-        self, e2e_client, platform_admin, provider_org_user, org1, org1_service_headers, org2
+    def test_provider_member_cannot_list_mappings_without_integration_read(
+        self,
+        e2e_client,
+        platform_admin,
+        provider_org_user,
+        org1,
+        org1_service_headers,
+        org2,
     ):
         integration_name = f"prov_list_mappings_{uuid4().hex[:8]}"
         integration_resp = e2e_client.post(
@@ -259,13 +283,7 @@ class TestScenario2b_ProviderOrgBypass:
                 headers=provider_org_user.headers,
                 json={"name": integration_name},
             )
-            assert provider_resp.status_code == 200, provider_resp.text
-            provider_items = provider_resp.json()["items"]
-            assert {item["entity_id"] for item in provider_items} == {
-                "provider-tenant",
-                "org1-tenant",
-                "org2-tenant",
-            }
+            assert provider_resp.status_code == 403, provider_resp.text
 
             org1_resp = e2e_client.post(
                 "/api/sdk/integrations/list_mappings",
@@ -281,54 +299,31 @@ class TestScenario2b_ProviderOrgBypass:
                 headers=platform_admin.headers,
             )
 
-    def test_provider_member_cross_org_read_through_engine(
+    def test_full_workflow_permission_does_not_extend_provider_member_reach(
         self, e2e_client, platform_admin, provider_org_user, org1
     ):
-        """Provider-org member reads another org's config FROM INSIDE a workflow.
-
-        This is the path the two tests above do NOT cover. They hit
-        ``/api/sdk/config/get`` directly, where the API authenticates the
-        *user* and the API-side ``_resolve_sdk_org_id`` resolves scope.
-
-        Under real workflow execution the path is different and is the one
-        that actually matters for the C2 bypass:
-
-          form/execute → enqueue (context reduced to ``org_id`` + scalars,
-          stored in Redis) → ``workflow_execution`` consumer rehydrates the
-          org via ``OrganizationRepository.get_with_cache(org_id)`` (which
-          must carry ``is_provider``) → worker → SDK ``resolve_scope`` is the
-          security gate (the API is the engine sentinel, ``is_superuser=True``,
-          so the API-side gate always passes).
-
-        If ``get_with_cache`` ever drops ``is_provider`` (e.g. a cache entry
-        that omits the field), the SDK-side ``resolve_scope`` sees
-        ``is_provider=False`` and raises ``PermissionError`` — and this test
-        fails. That is exactly the regression we want pinned: the provider-org
-        bypass must survive the enqueue→rehydrate round-trip, not just the
-        direct API call.
-        """
-        # Seed an org1-scoped config the workflow will read cross-org.
+        """Full workflow permissions still retain the original user's reach."""
+        # Seed an org1-scoped config the provider-org workflow cannot read.
         key = f"prov_engine_{uuid4().hex[:8]}"
         _seed_config(
             e2e_client,
             platform_admin.headers,
             key=key,
-            value="org1_secret_read_by_provider_member",
+            value="org1_private_value",
             org_id=org1["id"],
         )
 
-        # A workflow that reads the org1 config with an explicit cross-org scope.
-        # It returns the value (success) or the exception type (gate denied),
-        # so the assertion can distinguish "bypass worked" from "bypass broke".
+        # The workflow catches the refused SDK read so the execution itself
+        # stays successful and exposes the authorization outcome as data.
         workflow_name = f"e2e_prov_read_{uuid4().hex[:8]}"
         workflow_path = f"{workflow_name}.py"
         workflow_content = (
-            '"""E2E: provider-org member cross-org read through the engine."""\n'
+            '"""E2E: provider member has no implicit foreign config reach."""\n'
             "from bifrost import workflow, config\n"
             "\n"
             "@workflow(\n"
             f'    name="{workflow_name}",\n'
-            '    description="Provider-org member reads another org\'s config.",\n'
+            '    description="Catches a refused foreign config read.",\n'
             ")\n"
             f"async def {workflow_name}():\n"
             "    try:\n"
@@ -340,47 +335,47 @@ class TestScenario2b_ProviderOrgBypass:
 
         from tests.e2e.conftest import execute_workflow_sync, write_and_register
 
-        # Register as platform admin (engine needs the file), then move the
-        # workflow into the provider org so provider_org_user can execute it.
-        registered = write_and_register(
-            e2e_client,
-            platform_admin.headers,
-            workflow_path,
-            workflow_content,
-            workflow_name,
-        )
-        workflow_id = registered["id"]
-        patch_resp = e2e_client.patch(
-            f"/api/workflows/{workflow_id}",
-            headers=platform_admin.headers,
-            json={
-                "organization_id": str(PROVIDER_ORG_ID),
-                "access_level": "authenticated",
-            },
-        )
-        assert patch_resp.status_code == 200, patch_resp.text
+        workflow_id: str | None = None
+        try:
+            # Register as platform admin, then place the workflow in the
+            # provider org so the provider user may execute its own workflow.
+            registered = write_and_register(
+                e2e_client,
+                platform_admin.headers,
+                workflow_path,
+                workflow_content,
+                workflow_name,
+            )
+            workflow_id = registered["id"]
+            patch_resp = e2e_client.patch(
+                f"/api/workflows/{workflow_id}",
+                headers=platform_admin.headers,
+                json={
+                    "organization_id": str(PROVIDER_ORG_ID),
+                    "access_level": "authenticated",
+                },
+            )
+            assert patch_resp.status_code == 200, patch_resp.text
 
-        # Execute as provider_org_user — non-admin (is_superuser=False),
-        # is_provider=True. The C2 bypass must let the cross-org read through.
-        result = execute_workflow_sync(
-            e2e_client,
-            provider_org_user.headers,
-            workflow_id,
-        )
-        assert result["status"] == "Success", (
-            f"Workflow should not error — the SDK read is inside try/except. "
-            f"Got: {result}"
-        )
-        payload = result.get("result", {})
-        assert payload.get("raised") is False, (
-            f"Provider-org member's cross-org read was DENIED inside the engine. "
-            f"This means is_provider did not survive the enqueue→get_with_cache "
-            f"rehydration (the C2 bypass is broken on the execution path). "
-            f"Got: {payload!r}"
-        )
-        assert payload.get("value") == "org1_secret_read_by_provider_member", (
-            f"Cross-org read returned the wrong value: {payload!r}"
-        )
+            result = execute_workflow_sync(
+                e2e_client,
+                provider_org_user.headers,
+                workflow_id,
+            )
+            assert result["status"] == "Success", result
+            payload = result.get("result", {})
+            assert payload.get("raised") is True, payload
+            assert payload.get("value") is None, payload
+        finally:
+            if workflow_id is not None:
+                e2e_client.delete(
+                    f"/api/workflows/{workflow_id}", headers=platform_admin.headers
+                )
+            e2e_client.delete(
+                "/api/files/editor",
+                headers=platform_admin.headers,
+                params={"path": workflow_path},
+            )
 
 
 # =============================================================================
@@ -450,9 +445,8 @@ class TestScenario3_OrgThenGlobalCascade:
 @pytest.mark.e2e
 class TestScenario4_CrossOrgBlocked:
     """A regular org user (not platform admin, not provider-org member)
-    must not be able to surface another org's data — not via explicit
-    scope, not via UNSET (because their resolved org_id is their own,
-    not the other org's), not via explicit global."""
+    cannot read or mutate another organization's data. Internal identities
+    can still read shared Global configuration within their normal reach."""
 
     def test_org_user_explicit_other_org_returns_403(
         self, e2e_client, platform_admin, org2, org1_service_headers
@@ -476,15 +470,22 @@ class TestScenario4_CrossOrgBlocked:
             f"Cross-org explicit scope must be 403, not {r.status_code}: {r.text}"
         )
 
-    def test_org_user_explicit_global_returns_403(
-        self, e2e_client, org1_service_headers
+    def test_org_service_reads_shared_global_config(
+        self, e2e_client, platform_admin, org1_service_headers
     ):
+        key = f"shared_global_{uuid4().hex[:8]}"
+        _seed_config(
+            e2e_client,
+            platform_admin.headers,
+            key=key,
+            value="shared-global-value",
+            org_id=None,
+        )
         r = _get_config_via_sdk(
-            e2e_client, org1_service_headers, key="anything", scope="global"
+            e2e_client, org1_service_headers, key=key, scope="global"
         )
-        assert r.status_code == 403, (
-            f"Org user requesting global must be 403, not {r.status_code}: {r.text}"
-        )
+        assert r.status_code == 200, r.text
+        assert r.json()["value"] == "shared-global-value"
 
     def test_org_user_unset_does_not_leak_other_org(
         self, e2e_client, platform_admin, org2, org1_service_headers
@@ -524,27 +525,10 @@ class TestScenario4_CrossOrgBlocked:
         org2,
         org1_user,
     ):
-        """Regression for Codex round-3 HIGH finding.
+        """The runtime evaluator denies a foreign mapping write over the socket.
 
-        Under workflow execution, the API authenticates the engine
-        sentinel (``is_superuser=True``), so the API-side C2 gate ALWAYS
-        passes. The SDK-side ``resolve_scope`` is the security boundary
-        for workflow callers — it must catch a non-bypass workflow
-        trying to mutate another org's mapping.
-
-        This test:
-          1. Seeds a real integration with an org2 mapping.
-          2. Defines a workflow in org1 (non-provider).
-          3. Executes it as ``org1_user`` (non-admin, non-provider).
-          4. The workflow attempts ``integrations.upsert_mapping``
-             with ``scope=org2_id``.
-          5. Asserts a PermissionError was raised inside the workflow
-             (caught and surfaced via the workflow result).
-
-        Before the fix, the SDK posted the caller-supplied scope raw
-        and the API let it through (engine sentinel is superuser).
-        After the fix the SDK calls ``resolve_scope(scope)`` locally
-        which raises PermissionError under the C2 rule.
+        A real org1 workflow tries to change an org2 mapping. The SDK exposes
+        the HTTP denial, and the mapping keeps its original value.
         """
         integration_name = f"engine_isolation_{uuid4().hex[:8]}"
         integration_resp = e2e_client.post(
@@ -577,7 +561,7 @@ class TestScenario4_CrossOrgBlocked:
             workflow_name = f"e2e_engine_iso_{uuid4().hex[:8]}"
             workflow_path = f"{workflow_name}.py"
             workflow_content = (
-                '"""E2E engine-sentinel isolation regression."""\n'
+                '"""E2E workflow runtime isolation regression."""\n'
                 'from bifrost import workflow, integrations\n'
                 '\n'
                 '@workflow(\n'
@@ -630,14 +614,10 @@ class TestScenario4_CrossOrgBlocked:
                     f"raise inside the try/except. Got: {result}"
                 )
                 payload = result.get("result", {})
-                assert payload.get("raised") is True, (
-                    f"SDK-side resolve_scope must raise PermissionError; "
-                    f"got result {payload!r}"
-                )
-                assert payload.get("error_type") == "PermissionError", (
-                    f"Expected PermissionError, got {payload.get('error_type')!r}: "
-                    f"{payload.get('error')!r}"
-                )
+                assert payload.get("raised") is True, payload
+                assert payload.get("error_type") == "RuntimeError", payload
+                assert "403" in payload.get("error", ""), payload
+                assert "outside the caller's organization reach" in payload["error"], payload
 
                 # Confirm the org2 mapping is unchanged (no forgery side-effect).
                 check = e2e_client.get(
@@ -724,7 +704,7 @@ class TestScenario4_CrossOrgBlocked:
         )
 
     def test_mapping_endpoint_isolation(
-        self, e2e_client, platform_admin, org1_user, org2
+        self, e2e_client, platform_admin, org1_user, org1_service_headers, org2
     ):
         """Mapping endpoints were a Codex HIGH finding (unguarded). A
         non-bypass org user must not be able to list or mutate another
@@ -764,15 +744,15 @@ class TestScenario4_CrossOrgBlocked:
             )
             assert mapping_resp.status_code == 201, mapping_resp.text
 
-            # list_mappings with scope=org2 as an org1 user must be 403.
+            # list_mappings ignores scope: asking for org2 from org1 still
+            # lists only what org1 can read, never org2's mapping.
             r = e2e_client.post(
                 "/api/sdk/integrations/list_mappings",
-                headers=org1_user.headers,
+                headers=org1_service_headers,
                 json={"name": integration_name, "scope": org2["id"]},
             )
-            assert r.status_code == 403, (
-                f"Cross-org list_mappings must be 403, got {r.status_code}: {r.text}"
-            )
+            assert r.status_code == 200, r.text
+            assert "org2-tenant-secret" not in {item["entity_id"] for item in r.json()["items"]}
 
             # get_mapping with scope=org2 as an org1 user must be 403.
             r = e2e_client.post(

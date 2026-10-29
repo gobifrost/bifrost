@@ -3,6 +3,7 @@
 import gzip
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -146,6 +147,63 @@ def test_reasoning_choices_come_from_the_catalog_options() -> None:
     # Budget-only models get on/off; the adapter picks the budget.
     assert catalog.model("anthropic", "claude-haiku-4-5").reasoning_choices == ["off", "on"]
     assert catalog.model("community-00", "model-0").reasoning_choices == []
+
+
+def test_parse_skips_invalid_models_and_validates_slotted_nested_records() -> None:
+    raw = _raw_catalog()
+    valid = raw["deepseek"]["models"]["deepseek-v4"]
+    valid["reasoning_options"] = [{"type": "budget_tokens", "min": "1024"}]
+    valid["limit"] = {"context": "128"}
+    valid["cost"] = {"input": "1.25"}
+    raw["deepseek"]["models"]["invalid"] = {
+        "id": "invalid",
+        "name": "Invalid",
+        "cost": {"input": "not-a-decimal"},
+    }
+
+    catalog = parse_catalog(trim_catalog(raw), fetched_at=None, source="bundled")
+    provider = catalog.provider("deepseek")
+    model = provider.models["deepseek-v4"]
+
+    assert "invalid" not in provider.models
+    assert model.context_window == 128
+    assert model.reasoning_options[0].min == 1024
+    assert model.cost.input == Decimal("1.25")
+    assert not hasattr(provider, "__dict__")
+    assert not hasattr(model, "__dict__")
+
+
+def test_models_are_validated_bytes_with_a_bounded_materialization_cache() -> None:
+    raw = _raw_catalog()
+    models = raw["deepseek"]["models"]
+    for index in range(model_catalog._MODEL_CACHE_SIZE):
+        model_id = f"cached-{index}"
+        models[model_id] = {
+            "id": model_id,
+            "name": f"Cached {index}",
+            "cost": {"input": "1.25", "output": 2},
+        }
+
+    catalog = parse_catalog(trim_catalog(raw), fetched_at=None, source="bundled")
+    provider = catalog.provider("deepseek")
+    assert provider is not None
+    assert not isinstance(provider.models, dict)
+    anthropic = catalog.provider("anthropic")
+    assert anthropic is not None
+    assert provider.models._cache is anthropic.models._cache
+
+    first = provider.models["deepseek-v4"]
+    assert first.cost is None
+    assert provider.models["cached-0"].cost.input == Decimal("1.25")
+    for index in range(model_catalog._MODEL_CACHE_SIZE):
+        assert provider.models[f"cached-{index}"].id == f"cached-{index}"
+
+    assert len(provider.models._cache) == model_catalog._MODEL_CACHE_SIZE
+    # The oldest parsed record is evicted; it remains semantically identical
+    # when materialized again from its validated normalized bytes.
+    rematerialized = provider.models["deepseek-v4"]
+    assert rematerialized == first
+    assert rematerialized is not first
 
 
 def test_bundled_snapshot_is_a_usable_catalog() -> None:

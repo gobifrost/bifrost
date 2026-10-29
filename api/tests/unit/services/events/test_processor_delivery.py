@@ -97,9 +97,9 @@ async def test_queued_workflow_runs_for_the_workflow_identity(monkeypatch):
     lineage = RunLineage(identity, identity, None)
     resolve = AsyncMock(return_value=lineage)
     monkeypatch.setattr("shared.run_lineage.unattended_lineage", resolve)
-    enqueue = AsyncMock(return_value=str(uuid.uuid4()))
+    enqueue = AsyncMock(return_value=SimpleNamespace(pending={"execution_id": str(uuid.uuid4())}))
     monkeypatch.setattr(
-        "src.services.execution.async_executor.enqueue_system_workflow_execution", enqueue
+        "src.services.execution.async_executor.stage_system_workflow_execution", enqueue
     )
 
     await processor._queue_workflow_execution(delivery, event)
@@ -142,9 +142,9 @@ async def test_queued_workflow_receives_trusted_byte_exact_raw_webhook_body(monk
         "shared.run_lineage.unattended_lineage",
         AsyncMock(return_value=RunLineage(identity, identity, None)),
     )
-    enqueue = AsyncMock(return_value=str(uuid.uuid4()))
+    enqueue = AsyncMock(return_value=SimpleNamespace(pending={"execution_id": str(uuid.uuid4())}))
     monkeypatch.setattr(
-        "src.services.execution.async_executor.enqueue_system_workflow_execution", enqueue
+        "src.services.execution.async_executor.stage_system_workflow_execution", enqueue
     )
 
     await processor._queue_workflow_execution(delivery, event)
@@ -186,9 +186,9 @@ async def test_queued_workflow_encodes_an_empty_accepted_body(monkeypatch):
         "shared.run_lineage.unattended_lineage",
         AsyncMock(return_value=RunLineage(identity, identity, None)),
     )
-    enqueue = AsyncMock(return_value=str(uuid.uuid4()))
+    enqueue = AsyncMock(return_value=SimpleNamespace(pending={"execution_id": str(uuid.uuid4())}))
     monkeypatch.setattr(
-        "src.services.execution.async_executor.enqueue_system_workflow_execution", enqueue
+        "src.services.execution.async_executor.stage_system_workflow_execution", enqueue
     )
 
     await processor._queue_workflow_execution(delivery, event)
@@ -216,3 +216,41 @@ async def test_event_websocket_update_excludes_raw_body(monkeypatch):
     websocket_event = broadcast.await_args.args[1]["event"]
     assert "raw_body" not in websocket_event
     assert "raw_body_base64" not in websocket_event
+
+
+@pytest.mark.asyncio
+async def test_agent_event_delivery_reauthorizes_the_durable_identity(monkeypatch):
+    """A persisted event target cannot execute on its creation-time authority."""
+    session = AsyncMock()
+    processor = p.EventProcessor(session)
+    agent_id = uuid.uuid4()
+    identity_id = uuid.uuid4()
+    agent = SimpleNamespace(id=agent_id, organization_id=uuid.uuid4())
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        subscription=SimpleNamespace(agent=agent, input_mapping=None),
+    )
+    event = SimpleNamespace(
+        id=uuid.uuid4(),
+        event_type="ticket.created",
+        data={},
+        raw_body=None,
+        headers={},
+        received_at=None,
+        source_ip=None,
+    )
+    lineage = SimpleNamespace(run_user_id=identity_id)
+    caller = MagicMock()
+    authorize = AsyncMock()
+    enqueue = AsyncMock(return_value=SimpleNamespace(run_id=str(uuid.uuid4())))
+    monkeypatch.setattr("shared.run_lineage.identity_lineage", AsyncMock(return_value=lineage))
+    monkeypatch.setattr(
+        "src.services.authorization.callers.load_human_caller", AsyncMock(return_value=caller)
+    )
+    monkeypatch.setattr("src.services.authorization.agent_runtime.authorize_agent_execution", authorize)
+    monkeypatch.setattr("src.services.execution.agent_run_service.stage_agent_run_request", enqueue)
+
+    await processor._queue_agent_run(delivery, event)
+
+    authorize.assert_awaited_once_with(session, caller, agent_id)
+    enqueue.assert_awaited_once()

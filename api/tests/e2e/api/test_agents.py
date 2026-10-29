@@ -424,7 +424,7 @@ class TestAgentsAccessControl:
             json={"name": "Hacked Name"},
             headers=org1_user.headers,
         )
-        assert response.status_code in [401, 403]
+        assert response.status_code == 404
 
     def test_org_user_cannot_delete_agent(
         self,
@@ -437,7 +437,7 @@ class TestAgentsAccessControl:
             f"/api/agents/{test_agent['id']}",
             headers=org1_user.headers,
         )
-        assert response.status_code in [401, 403]
+        assert response.status_code == 404
 
     def test_org_user_can_list_authenticated_agents(
         self,
@@ -644,17 +644,16 @@ class TestAgentScopeFiltering:
         assert "tools" in data or "tool_ids" in data
         assert "roles" in data or "role_ids" in data
 
-    def test_provider_user_can_explicitly_get_cross_org_agent(
+    def test_provider_user_cannot_get_cross_org_agent(
         self, e2e_client, provider_org_user, scoped_agents
     ):
-        """An exact agent ID activates the provider caller's scope bypass."""
+        """An exact agent ID does not expand the provider caller's reach."""
         org2_agent_id = scoped_agents["org2"]["id"]
         response = e2e_client.get(
             f"/api/agents/{org2_agent_id}",
             headers=provider_org_user.headers,
         )
-        assert response.status_code == 200, response.text
-        assert response.json()["id"] == org2_agent_id
+        assert response.status_code == 404, response.text
 
     def test_org_user_cannot_get_cross_org_agent(
         self, e2e_client, org1_user, scoped_agents

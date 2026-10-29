@@ -8,20 +8,23 @@ Tests cover:
 - JSON serialization of tool results
 """
 
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.exc import MissingGreenlet
 
 from src.models.contracts.agents import ToolResult
+from src.core.principal import UserPrincipal
 from src.repositories.knowledge import KnowledgeDocument
 from src.services.agent_executor import (
     AgentExecutor,
     _serialize_for_json,
     _serialize_tool_result_for_history,
 )
+from src.services.authorization.enforce import Caller
 from src.services.execution.autonomous_agent_executor import DelegationOutcome
 from src.services.llm import ToolCallRequest, ToolDefinition
 
@@ -51,6 +54,21 @@ def mock_session_factory(mock_session):
 def executor(mock_session_factory):
     """Create an AgentExecutor instance with mocked session factory."""
     return AgentExecutor(mock_session_factory)
+
+
+@pytest.fixture
+def contoso_caller() -> Caller:
+    """Canonical chat caller used by tool-branch contract tests."""
+    return Caller(
+        UserPrincipal(
+            user_id=uuid4(),
+            email="operator@contoso.example",
+            name="Contoso Operator",
+            organization_id=uuid4(),
+            is_active=True,
+        ),
+        None,
+    )
 
 
 @pytest.fixture
@@ -414,38 +432,14 @@ class TestWorkflowToolIdResolution:
         assert executor._tool_workflow_id_map["wf_execute_halopsa_sql"] == workflow_id
 
     @pytest.mark.asyncio
-    async def test_execute_tool_uses_id_lookup_for_normalized_names(self, executor, mock_session):
-        """Workflow identity is captured before session exit and executed as an agent."""
+    async def test_execute_tool_uses_id_lookup_for_normalized_names(
+        self, executor, contoso_caller
+    ):
+        """Workflow tools dispatch through their resolved workflow ID."""
         from src.services.llm.base import ToolCallRequest
 
         workflow_id = uuid4()
         executor._tool_workflow_id_map["wf_execute_halopsa_sql"] = workflow_id
-
-        class ExpiringWorkflow:
-            expired = False
-
-            @property
-            def id(self):
-                if self.expired:
-                    raise MissingGreenlet("workflow.id accessed after session exit")
-                return workflow_id
-
-            @property
-            def name(self):
-                if self.expired:
-                    raise MissingGreenlet("workflow.name accessed after session exit")
-                return "Execute HaloPSA SQL"
-
-        mock_workflow = ExpiringWorkflow()
-
-        async def expire_workflow_on_commit():
-            mock_workflow.expired = True
-
-        mock_session.commit.side_effect = expire_workflow_on_commit
-
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_workflow
-        mock_session.execute = AsyncMock(return_value=mock_result)
 
         tool_call = ToolCallRequest(
             id="call_123",
@@ -453,53 +447,47 @@ class TestWorkflowToolIdResolution:
             arguments={"query": "SELECT 1"},
         )
 
-        with patch("src.services.execution.service.execute_tool", new_callable=AsyncMock) as mock_exec:
-            mock_exec.return_value = MagicMock(
-                execution_id="exec_1",
-                status="completed",
-                result={"data": []},
-            )
-
-            mock_conversation = MagicMock()
-            mock_conversation.user = MagicMock()
-            mock_conversation.user.id = uuid4()
-            mock_conversation.user.name = "Test User"
-            mock_conversation.user.email = "test@example.com"
-            caller_org_id = uuid4()
-            mock_conversation.user.organization_id = caller_org_id
-            mock_conversation.user.is_superuser = False
-
-            mock_agent = MagicMock()
-            mock_agent.organization_id = None
-
+        mock_agent = MagicMock()
+        mock_agent.id = uuid4()
+        mock_conversation = MagicMock()
+        mock_conversation.id = uuid4()
+        response = SimpleNamespace(
+            status=SimpleNamespace(value="Success"), result={"data": []}, error=None
+        )
+        with (
+            patch(
+                "src.services.agent_executor.authorize_agent_execution",
+                new_callable=AsyncMock,
+                return_value=(contoso_caller, mock_agent),
+            ),
+            patch(
+                "src.services.agent_executor.execute_agent_workflow_tool",
+                new_callable=AsyncMock,
+                return_value=response,
+            ) as mock_exec,
+        ):
             await executor._execute_tool(
-                tool_call, agent=mock_agent, conversation=mock_conversation
+                tool_call,
+                agent=mock_agent,
+                conversation=mock_conversation,
+                caller=contoso_caller,
             )
 
-        execution_kwargs = mock_exec.await_args.kwargs
-        assert mock_workflow.expired is True
-        assert execution_kwargs["workflow_id"] == str(workflow_id)
-        assert execution_kwargs["workflow_name"] == "Execute HaloPSA SQL"
-        assert execution_kwargs["is_agent"] is True
-        assert execution_kwargs["org_id"] == str(caller_org_id)
-
-        # Verify the DB query used Workflow.id, not Workflow.name
-        call_args = mock_session.execute.call_args
-        query = call_args[0][0]
-        # The compiled query should reference the workflow ID, not the normalized name
-        compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
-        assert workflow_id.hex in compiled
-        assert "wf_execute_halopsa_sql" not in compiled
+        mock_exec.assert_awaited_once_with(
+            agent_id=mock_agent.id,
+            workflow_id=workflow_id,
+            parameters={"query": "SELECT 1"},
+            caller=contoso_caller,
+            execution_id=None,
+            artifact_workspace_id=str(mock_conversation.id),
+        )
 
     @pytest.mark.asyncio
-    async def test_execute_tool_falls_back_to_name_lookup(self, executor, mock_session):
-        """_execute_tool falls back to name-based lookup when tool not in ID map."""
+    async def test_execute_tool_returns_not_found_for_unknown_tool(
+        self, executor, contoso_caller
+    ):
+        """Unknown tool names do not bypass the resolved workflow ID map."""
         from src.services.llm.base import ToolCallRequest
-
-        # Don't populate _tool_workflow_id_map — simulate an unknown tool
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_session.execute = AsyncMock(return_value=mock_result)
 
         tool_call = ToolCallRequest(
             id="call_456",
@@ -507,15 +495,10 @@ class TestWorkflowToolIdResolution:
             arguments={},
         )
 
-        result = await executor._execute_tool(tool_call)
+        result = await executor._execute_tool(tool_call, caller=contoso_caller)
 
         assert result.error == "Tool 'some_unknown_tool' not found"
 
-        # Verify the DB query used Workflow.name (fallback path)
-        call_args = mock_session.execute.call_args
-        query = call_args[0][0]
-        compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
-        assert "some_unknown_tool" in compiled
 
 
 class TestSerializeForJson:
@@ -609,7 +592,9 @@ class TestChatDelegation:
     """Test that chat _execute_delegation uses AutonomousAgentExecutor."""
 
     @pytest.mark.asyncio
-    async def test_delegation_calls_autonomous_executor(self, executor, mock_session):
+    async def test_delegation_calls_autonomous_executor(
+        self, executor, mock_session, contoso_caller
+    ):
         """Chat delegation dispatches through the shared durable runner."""
         from src.services.llm.base import ToolCallRequest
 
@@ -623,11 +608,6 @@ class TestChatDelegation:
         agent.delegated_agents = [delegated]
         conversation = MagicMock()
         conversation.id = uuid4()
-        caller = {
-            "user_id": str(uuid4()),
-            "email": "person@example.com",
-            "name": "Person",
-        }
 
         tool_call = ToolCallRequest(
             id="tc1",
@@ -659,7 +639,7 @@ class TestChatDelegation:
                 tool_call,
                 agent,
                 conversation=conversation,
-                caller=caller,
+                caller=contoso_caller,
             )
 
         assert result.error is None
@@ -676,14 +656,17 @@ class TestChatDelegation:
             parent_agent=agent,
             tool_call=tool_call,
             conversation_id=conversation.id,
-            caller=caller,
+            caller=contoso_caller,
+            acting_user_id=contoso_caller.principal.user_id,
             _shared_usage=None,
             _shared_budget=None,
             run_user_id=None,
+            run_as=None,
+            agent_execution_mode="delegated",
         )
 
-    def test_parent_history_prefers_error_over_partial_result(self):
-        """A failed child must not look successful merely because it returned data."""
+    def test_parent_history_keeps_failure_explicit_with_partial_result(self):
+        """The owner can recover from partial data without mistaking it for success."""
         tool_result = ToolResult(
             tool_call_id="tc1",
             tool_name="delegate_to_specialist",
@@ -691,9 +674,10 @@ class TestChatDelegation:
             error="Specialist failed after producing a partial answer",
         )
 
-        assert _serialize_tool_result_for_history(tool_result) == (
-            "Specialist failed after producing a partial answer"
-        )
+        assert json.loads(_serialize_tool_result_for_history(tool_result)) == {
+            "error": "Specialist failed after producing a partial answer",
+            "result": {"response": "partial answer"},
+        }
 
     def test_parent_history_bounds_large_tool_result(self):
         tool_result = ToolResult(
@@ -709,7 +693,7 @@ class TestChatDelegation:
 
     @pytest.mark.asyncio
     async def test_delegation_without_conversation_still_uses_shared_runner(
-        self, executor
+        self, executor, contoso_caller
     ):
         from src.services.llm.base import ToolCallRequest
 
@@ -746,21 +730,26 @@ class TestChatDelegation:
             )
             MockExecutorClass.return_value = mock_sub
 
-            result = await executor._execute_delegation(tool_call, agent)
+            result = await executor._execute_delegation(
+                tool_call, agent, caller=contoso_caller
+            )
 
         mock_sub.run_delegation.assert_awaited_once_with(
             parent_agent=agent,
             tool_call=tool_call,
             conversation_id=None,
-            caller=None,
+            caller=contoso_caller,
+            acting_user_id=contoso_caller.principal.user_id,
             _shared_usage=None,
             _shared_budget=None,
             run_user_id=None,
+            run_as=None,
+            agent_execution_mode="delegated",
         )
         assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_delegation_agent_not_found(self, executor):
+    async def test_delegation_agent_not_found(self, executor, contoso_caller):
         """Returns error when delegated agent doesn't match."""
         from src.services.llm.base import ToolCallRequest
 
@@ -773,12 +762,14 @@ class TestChatDelegation:
             arguments={"task": "Do something"},
         )
 
-        result = await executor._execute_delegation(tool_call, agent)
+        result = await executor._execute_delegation(
+            tool_call, agent, caller=contoso_caller
+        )
         assert result.error is not None
         assert "not found" in result.error
 
     @pytest.mark.asyncio
-    async def test_delegation_no_task(self, executor):
+    async def test_delegation_no_task(self, executor, contoso_caller):
         """Returns error when no task is provided."""
         from src.services.llm.base import ToolCallRequest
 
@@ -795,12 +786,17 @@ class TestChatDelegation:
             arguments={},
         )
 
-        result = await executor._execute_delegation(tool_call, agent)
+        result = await executor._execute_delegation(
+            tool_call, agent, caller=contoso_caller
+        )
         assert result.error is not None
         assert "No task" in result.error
 
     @pytest.mark.asyncio
-    async def test_delegation_propagates_failure_status(self, executor, mock_session):
+    @pytest.mark.parametrize("has_partial_evidence", [False, True])
+    async def test_delegation_propagates_failure_status(
+        self, executor, mock_session, contoso_caller, has_partial_evidence,
+    ):
         """When sub-executor returns failed status, error is propagated."""
         from src.services.llm.base import ToolCallRequest
 
@@ -831,22 +827,35 @@ class TestChatDelegation:
                     child_run_id=child_run_id,
                     agent_name="Broken Agent",
                     status="failed",
-                    output=None,
+                    output={"accepted_action": "action-1"} if has_partial_evidence else None,
                     error="LLM call failed",
                     duration_ms=10,
+                    evidence={"verification_receipt": "readback-1"} if has_partial_evidence else None,
                 )
             )
             MockExecutorClass.return_value = mock_sub
 
-            result = await executor._execute_delegation(tool_call, agent)
+            result = await executor._execute_delegation(
+                tool_call, agent, caller=contoso_caller
+            )
 
         assert result.error == "LLM call failed"
         assert result.result is None
-        assert result.metadata == {
+        expected_metadata = {
             "child_run_id": str(child_run_id),
             "agent": "Broken Agent",
             "status": "failed",
         }
+        if has_partial_evidence:
+            expected_metadata.update({
+                "partial_output": {"accepted_action": "action-1"},
+                "evidence": {"verification_receipt": "readback-1"},
+            })
+        assert result.metadata == expected_metadata
+        history = json.loads(_serialize_tool_result_for_history(result))
+        assert history["error"] == result.error
+        if has_partial_evidence:
+            assert history["partial_output"] == {"accepted_action": "action-1"}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -859,7 +868,7 @@ class TestChatDelegation:
         ],
     )
     async def test_delegation_propagates_every_non_success_status(
-        self, executor, status, error
+        self, executor, status, error, contoso_caller
     ):
         from src.services.llm.base import ToolCallRequest
 
@@ -897,6 +906,7 @@ class TestChatDelegation:
                     arguments={"task": "Exercise lifecycle"},
                 ),
                 agent,
+                caller=contoso_caller,
             )
 
         assert result.result is None
@@ -908,7 +918,9 @@ class TestChatDelegation:
         }
 
     @pytest.mark.asyncio
-    async def test_delegation_handles_exception(self, executor, mock_session):
+    async def test_delegation_handles_exception(
+        self, executor, mock_session, contoso_caller
+    ):
         """Exceptions during delegation are caught and returned as errors."""
         from src.services.llm.base import ToolCallRequest
 
@@ -938,13 +950,17 @@ class TestChatDelegation:
             )
             MockExecutorClass.return_value = mock_sub
 
-            result = await executor._execute_delegation(tool_call, agent)
+            result = await executor._execute_delegation(
+                tool_call, agent, caller=contoso_caller
+            )
 
         assert result.error is not None
         assert "Connection lost" in result.error
 
     @pytest.mark.asyncio
-    async def test_delegation_timeout_returns_error(self, executor, mock_session):
+    async def test_delegation_timeout_returns_error(
+        self, executor, mock_session, contoso_caller
+    ):
         """Delegation returns timeout error when sub-executor takes too long."""
         from src.services.llm.base import ToolCallRequest
 
@@ -985,9 +1001,47 @@ class TestChatDelegation:
             )
             MockExecutorClass.return_value = mock_sub
 
-            result = await executor._execute_delegation(tool_call, agent)
+            result = await executor._execute_delegation(
+                tool_call, agent, caller=contoso_caller
+            )
 
         assert result.result is None
         assert result.error is not None
         assert "timed out" in result.error
         assert "completed step evidence-step (read_device): reachable" in result.error
+
+
+@pytest.mark.asyncio
+async def test_system_tool_bridge_preserves_the_chat_users_external_flag(executor):
+    person = SimpleNamespace(
+        id=uuid4(), organization_id=uuid4(), is_superuser=False, is_external=True,
+        email="guest@fabrikam.example", name="Fabrikam Guest",
+    )
+    caller = Caller(
+        UserPrincipal(
+            user_id=person.id,
+            organization_id=person.organization_id,
+            email=person.email,
+            name=person.name,
+            is_active=True,
+            is_external=True,
+        ),
+        None,
+    )
+    tool = AsyncMock(return_value="ok")
+    with (
+        patch("src.services.mcp_server.server.get_system_tool_function", return_value=tool),
+        patch(
+            "src.services.agent_executor.refresh_caller",
+            new_callable=AsyncMock,
+            return_value=caller,
+        ),
+    ):
+        result = await executor._execute_system_tool(
+            ToolCallRequest(id="call", name="list_tables", arguments={}),
+            caller,
+        )
+    assert result.error is None
+    context = tool.await_args.args[0]
+    assert context.is_external is True
+    assert context.user_id == person.id

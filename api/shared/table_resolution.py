@@ -12,12 +12,10 @@ name fallback, inbound gate — keep it in that order on both paths.
 
 The resolution context carries ``db``, ``user``, ``org_id``, ``app_id``,
 ``solution_id``, and ``caller_solution_id``. Both entry points build it from
-an authenticated request/execution context: the ``user`` is a token-equivalent
-``UserPrincipal`` (engine superuser or service non-superuser — never the
-initiating user's admin flag), ``solution_id`` is the per-call *target*
-(falling back to the caller's own install), and ``app_id``/
-``caller_solution_id`` stay server-owned (None for engine children — never
-child frame claims).
+an authenticated request/execution context. Target reach is resolved from the
+original user and typed runtime powers; ``solution_id`` is the per-call
+target, while a caller installation is separately derived from durable runtime
+state.
 """
 
 from __future__ import annotations
@@ -27,10 +25,10 @@ from typing import Protocol
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_target_org
 from src.core.principal import UserPrincipal
 from src.models.orm.tables import Table
 from src.repositories.tables import TableRepository
@@ -56,16 +54,21 @@ class TableResolutionContext(Protocol):
     caller_solution_id: str | None
 
 
-def resolve_target_org_safe(
+async def resolve_target_org_safe(
     ctx: TableResolutionContext, scope: str | None
 ) -> UUID | None:
-    """Resolve the target organization ID from scope parameter (with auth check)."""
+    """Resolve a table target from the verified caller's reach."""
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from src.services.authorization.enforce import load_caller
+
     try:
-        return resolve_target_org(ctx.user, scope, ctx.org_id)
-    except ValueError as e:
+        return await resolve_sdk_scope(
+            scope, caller=await load_caller(ctx.db, ctx.user)
+        )
+    except ScopeResolutionError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
+            status_code=e.status_code,
+            detail=e.detail,
         )
 
 
@@ -87,19 +90,49 @@ async def assert_explicit_scope_targets_table(
 ) -> None:
     if scope is None:
         return
-    target_org_id = resolve_target_org_safe(ctx, scope)
-    exact_table = await TableRepository(
-        ctx.db,
-        target_org_id,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    ).get(id=table.id, organization_id=target_org_id)
+    target_org_id = await resolve_target_org_safe(ctx, scope)
+    exact_table = (
+        await ctx.db.execute(
+            select(Table).where(
+                Table.id == table.id,
+                Table.organization_id == target_org_id,
+            )
+        )
+    ).scalar_one_or_none()
     if exact_table is not None:
         return
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Table '{table.name}' not found",
     )
+
+
+async def assert_resolved_table_reachable(
+    ctx: TableResolutionContext,
+    table: Table,
+    *,
+    target_org_id: UUID | None,
+    scope: str | None,
+) -> None:
+    """Keep a resolved row inside the original user's reach.
+
+    UUID resolution deliberately uses an exact ORM lookup, because a role can
+    reach a table outside the caller's default organization.  It therefore
+    must check the row's actual organization after lookup.  An explicit scope
+    is exact rather than a cascade selector, so it cannot select a row from a
+    different organization merely because that row is also reachable.
+    """
+    from src.services.authorization.enforce import load_caller, user_reach
+
+    caller = await load_caller(ctx.db, ctx.user)
+    if (
+        not user_reach(caller).covers(table.organization_id)
+        or (scope is not None and table.organization_id != target_org_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Table '{table.name}' not found",
+        )
 
 
 async def get_table_or_404(
@@ -109,35 +142,37 @@ async def get_table_or_404(
 ) -> Table:
     """Get table by name or UUID, raise 404 if not found.
 
-    Routes both UUID and name lookups through ``OrgScopedRepository.get``,
-    which already enforces the org gate (its ID-lookup branch returns None
-    for non-superusers reaching outside their own-or-global scope). Avoids
-    bypassing the gate with raw SELECT.
+    Resolves the target scope from the verified caller before every lookup.
+    The repository then applies only the allowed org→Global cascade.
 
     Install-scoped name resolution (a Solution app via ``X-Bifrost-App`` OR a
     solution workflow via ``ctx.solution_id``) is handled in
     ``resolve_solution_table_by_name`` — own-first, then the org/_repo/ cascade.
     Gated by the org check.
     """
-    target_org_id = resolve_target_org_safe(ctx, scope)
+    target_org_id = await resolve_target_org_safe(ctx, scope)
     repo = TableRepository(
         ctx.db,
         target_org_id,
-        is_superuser=ctx.user.is_superuser,
+        is_superuser=False,
         is_external=ctx.user.is_external,
     )
 
-    # Try UUID lookup first — repo.get(id=...) enforces the org gate for
-    # non-superusers (returns None if entity is in a different org).
+    # Try UUID lookup first after the target reach gate above.
     table: Table | None = None
+    name_resolution = False
     try:
         table_uuid = UUID(name_or_id)
-        table = await repo.get(id=table_uuid)
+        table = await ctx.db.get(Table, table_uuid)
     except ValueError:
         # Not a UUID — fall through to name-based lookup
         logger.debug(
             f"table identifier {log_safe(name_or_id)!r} is not a UUID, "
             "falling back to name lookup"
+        )
+    if table is not None:
+        await assert_resolved_table_reachable(
+            ctx, table, target_org_id=target_org_id, scope=scope
         )
     solution_id = await resolve_effective_solution_id(ctx.db, ctx, target_org_id)
     if table is not None and solution_id is not None and table.solution_id != solution_id:
@@ -161,6 +196,7 @@ async def get_table_or_404(
             table = None
         else:
             table = await repo.get_by_name(name_or_id)
+        name_resolution = table is not None
 
     if not table:
         raise HTTPException(
@@ -168,17 +204,25 @@ async def get_table_or_404(
             detail=f"Table '{name_or_id}' not found",
         )
 
+    await assert_resolved_table_reachable(
+        ctx,
+        table,
+        target_org_id=target_org_id,
+        # A name goes through the canonical org-then-Global cascade, which a
+        # scope only starts; it never reaches another org. A UUID is exact,
+        # so an explicit scope must match the table's own org.
+        scope=None if name_resolution else scope,
+    )
+
     # SPIKE inbound gate for direct UUID access to install-owned tables
     # (the name path is gated inside resolve_solution_table_by_name).
     # Own-install callers pass; otherwise allow_inbound_access decides.
     if table.solution_id is not None:
         from src.services.solution_scope import (
-            check_inbound_allowed,
-            resolve_trustworthy_caller,
+            inbound_allowed_for_context,
         )
 
-        caller = await resolve_trustworthy_caller(ctx.db, ctx)
-        if not await check_inbound_allowed(ctx.db, table.solution_id, caller):
+        if not await inbound_allowed_for_context(ctx.db, ctx, table.solution_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Table '{name_or_id}' not found",

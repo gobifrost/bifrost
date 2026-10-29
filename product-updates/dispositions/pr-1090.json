@@ -1,0 +1,14 @@
+{
+  "key": "pr:1090",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Show only pending workflows in queue positions and clearly reject invalid execution status filters.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1090",
+      "Codex and Astra reviewed this routine production repair under the user\u2019s authorization to fix, merge, and deploy. Existing authorization and queue notification payloads are preserved; no customer upgrade action is required."
+    ]
+  }
+}

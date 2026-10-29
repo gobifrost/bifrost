@@ -19,7 +19,7 @@ from src.models.contracts.export_import import (
     TableExportFile,
     TableExportItem,
 )
-from src.routers.export_import import _parse_target_org
+from shared.export_import import _parse_target_org
 
 
 class TestKnowledgeExport:

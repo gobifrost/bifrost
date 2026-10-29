@@ -10,6 +10,7 @@ data:
   # Environment
   BIFROST_ENVIRONMENT: "production"
   BIFROST_DEBUG: "false"
+  BIFROST_API_URL: "http://api:8000"
 
   # S3 Configuration (non-sensitive)
   BIFROST_S3_BUCKET: "my-bifrost-bucket"
@@ -22,9 +23,6 @@ data:
   # MFA Settings
   BIFROST_MFA_ENABLED: "true"
   BIFROST_MFA_TOTP_ISSUER: "Bifrost"
-
-  # Worker Concurrency
-  BIFROST_MAX_CONCURRENCY: "10"
 
   # WebAuthn/Passkeys Configuration
   BIFROST_WEBAUTHN_RP_ID: "bifrost.example.com"

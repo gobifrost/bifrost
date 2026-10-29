@@ -1,23 +1,27 @@
 """Unit tests for AutonomousAgentExecutor."""
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
-from shared.run_lineage import RunLineage
 from pydantic_ai.usage import RunUsage
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
 from src.core.constants import SYSTEM_USER_EMAIL, SYSTEM_USER_ID
+from src.core.principal import UserPrincipal
 from src.models.contracts.executions import WorkflowExecutionResponse
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.repositories.knowledge import KnowledgeDocument
-from src.services.agent_runtime import AgentRunBudget
+from src.services.agent_runtime import AgentRunBudget, BifrostToolset
+from src.services.authorization.enforce import Caller
+from src.services.authorization.agent_runtime import AgentRuntimeAuthorizationError
 from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
+    ActingUser,
     AutonomousAgentExecutor,
     DELEGATION_TIMEOUT_SECONDS,
     DelegationOutcome,
@@ -29,12 +33,69 @@ from src.services.execution.autonomous_agent_executor import (
 from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest, ToolDefinition
 
 
+UUID_SYSTEM_USER = UUID(SYSTEM_USER_ID)
+
+
+def _canonical_caller(data: Caller | dict | None, *, fallback_organization_id=None) -> Caller:
+    """Build verified-looking test input; production always reloads it at a boundary."""
+    if isinstance(data, Caller):
+        return data
+    data = data or {}
+    user_id = UUID(str(data.get("user_id") or uuid4()))
+    organization_id = data.get("organization_id", fallback_organization_id)
+    return Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email=str(data.get("email") or "operator@contoso.example"),
+            name=str(data.get("name") or "Operator"),
+            organization_id=(
+                UUID(str(organization_id)) if organization_id is not None else None
+            ),
+            is_active=True,
+            is_superuser=bool(data.get("is_superuser", False)),
+            is_external=bool(data.get("is_external", False)),
+            is_provider_org=bool(data.get("is_provider_org", False)),
+        ),
+        None,
+    )
+
+
+def _acting_from_test_data(user_id, data, agent) -> ActingUser:
+    """Test fixture for persisted actor facts; never a production authority source."""
+    data = data or {}
+    organization_id = data.get("organization_id", agent.organization_id)
+    return ActingUser(
+        user_id=str(user_id or data.get("user_id") or SYSTEM_USER_ID),
+        email=str(data.get("email") or SYSTEM_USER_EMAIL),
+        name=str(data.get("name") or agent.name),
+        organization_id=(UUID(str(organization_id)) if organization_id is not None else None),
+        is_platform_admin=bool(data.get("is_superuser", False)),
+        is_external=bool(data.get("is_external", False)),
+        is_provider_org=bool(data.get("is_provider_org", False)),
+    )
+
+
 def _tool(name: str) -> ToolDefinition:
     return ToolDefinition(
         name=name,
         description=f"Test tool {name}",
         parameters={"type": "object", "properties": {}},
     )
+
+
+def _redis_with_transactional_pipeline() -> MagicMock:
+    """Redis double whose queued transaction commands are synchronous."""
+    redis = MagicMock()
+    pipeline = MagicMock()
+    pipeline.xadd = MagicMock()
+    pipeline.expire = MagicMock()
+    pipeline.execute = AsyncMock(return_value=["1-0", True])
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock(return_value=False)
+    redis.pipeline = MagicMock(return_value=pipeline)
+    redis.delete = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    return redis
 
 
 def test_timeout_receipt_keeps_only_sanitized_terminal_tool_evidence() -> None:
@@ -136,7 +197,10 @@ def mock_runtime_config():
                 api_key="test-key",
             )
         ],
-    ) as mock_get_config:
+    ) as mock_get_config, patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
+    ):
         yield mock_get_config
 
 
@@ -182,7 +246,92 @@ def mock_agent():
     return agent
 
 
+@pytest.fixture(autouse=True)
+def authorized_agent_runtime(mock_agent):
+    """Keep loop tests independent of durable caller rehydration.
+
+    Authorization freshness, original-user reach, and live tool bindings are
+    covered by test_agent_runtime_authorization's database-backed cases.
+    """
+
+    async def authorize(_session, caller, agent_id):
+        assert agent_id == mock_agent.id
+        return caller, mock_agent
+
+    child_caller = _canonical_caller(
+        None, fallback_organization_id=mock_agent.organization_id
+    )
+    child_caller = Caller(child_caller.principal, MagicMock())
+
+    async def fixed_composition(agent, **kwargs):
+        """These legacy lifecycle units isolate the newly shared catalog adapter.
+
+        Real composition and live graph authorization have their own focused
+        unit and DB/E2E coverage. Preserve this module's explicit tool scripts.
+        """
+        async def resolve(name, arguments):
+            return SimpleNamespace(
+                owner=agent, original_name=name, arguments=arguments,
+                workflow_ids=kwargs["entry_workflow_ids"],
+            )
+
+        def entry_toolset(execute, event_handler=None, toolset_id="test-entry"):
+            return BifrostToolset(
+                kwargs["entry_definitions"], execute,
+                event_handler=event_handler, toolset_id=toolset_id,
+            )
+
+        return SimpleNamespace(
+            entry_definitions=kwargs["entry_definitions"], instructions="",
+            resolve_call=resolve, provenance_for=lambda *_: {},
+            entry_toolset=entry_toolset,
+            capabilities=lambda *_: [],
+        )
+
+    with (
+        patch(
+            "src.services.execution.autonomous_agent_executor.build_agent_composition",
+            new=AsyncMock(side_effect=fixed_composition),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+            new=AsyncMock(side_effect=authorize),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.load_runtime_principal",
+            new=AsyncMock(return_value=MagicMock()),
+        ) as load_child_principal,
+        patch(
+            "src.services.execution.autonomous_agent_executor.load_caller",
+            new=AsyncMock(return_value=child_caller),
+        ),
+    ):
+        yield SimpleNamespace(
+            child_caller=child_caller,
+            load_child_principal=load_child_principal,
+        )
+
+
 class TestAutonomousAgentExecutor:
+    @pytest.mark.asyncio
+    async def test_revocation_during_composition_returns_failure_without_model_request(
+        self, mock_session, mock_agent, mock_runtime_config,
+    ):
+        mock_agent.delegated_agents = [SimpleNamespace(id=uuid4())]
+        with (
+            patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools", new=AsyncMock(return_value=([], {}))),
+            patch("src.services.execution.autonomous_agent_executor.build_agent_composition", new=AsyncMock(side_effect=AgentRuntimeAuthorizationError("Agent revoked"))),
+            patch("src.services.agent_runtime.model_factory.create_agent_model") as create_model,
+        ):
+            result = await AutonomousAgentExecutor(mock_session).run(
+                agent=mock_agent, input_data={}, caller=_canonical_caller(None),
+                run_user_id=None, run_as=None, agent_execution_mode="automatic",
+            )
+        assert result["status"] == "failed"
+        assert result["error"] == "Agent revoked"
+        assert result["iterations_used"] == 0
+        create_model.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_knowledge_search_deduplicates_evidence_across_queries(
         self,
@@ -260,7 +409,9 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"message": "hello"},
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
@@ -274,7 +425,7 @@ class TestAutonomousAgentExecutor:
 
     @pytest.mark.asyncio
     async def test_run_delegation_persists_chat_child_and_caller(
-        self, mock_session, mock_agent
+        self, mock_session, mock_agent, authorized_agent_runtime
     ):
         delegated = MagicMock()
         delegated.id = uuid4()
@@ -343,18 +494,21 @@ class TestAutonomousAgentExecutor:
                 },
             ) as mock_child_run,
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
-            ) as mock_enqueue_summarize,
+                return_value=None,
+            ) as mock_stage_summary,
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
                 tool_call=tool_call,
                 conversation_id=conversation_id,
-                caller=caller,
+                caller=_canonical_caller(caller),
+                acting_user_id=UUID(caller["user_id"]),
                 _shared_usage=shared_usage,
                 _shared_budget=shared_budget,
                 run_user_id=run_user_id,
+                run_as=None,
             )
 
         assert outcome.status == "completed"
@@ -369,9 +523,11 @@ class TestAutonomousAgentExecutor:
         assert child_run.caller_name == caller["name"]
         # A delegated run keeps the delegating run's user.
         assert child_run.run_user_id == run_user_id
+        assert child_run.acting_user_id == UUID(caller["user_id"])
         assert child_run.status == "completed"
         assert child_run.completed_at is not None
-        mock_enqueue_summarize.assert_awaited_once_with(child_run.id)
+        mock_stage_summary.assert_awaited_once()
+        assert mock_stage_summary.await_args.args[1] == child_run.id
         mock_child_run.assert_awaited_once_with(
             agent=delegated,
             input_data={
@@ -379,134 +535,112 @@ class TestAutonomousAgentExecutor:
                 "_delegated_from": mock_agent.name,
             },
             run_id=str(child_run.id),
-            _caller=caller,
+            caller=authorized_agent_runtime.child_caller,
             _shared_usage=shared_usage,
             _shared_budget=shared_budget,
             run_user_id=run_user_id,
+            run_as=None,
+            acting=None,
+            agent_execution_mode="delegated",
         )
-
-    @pytest.mark.asyncio
-    async def test_delegated_workflow_inherits_caller_identity(
-        self,
-        mock_session,
-        mock_agent,
-    ):
-        workflow_id = uuid4()
-        caller_user_id = uuid4()
-        caller_org_id = uuid4()
-        executor = AutonomousAgentExecutor(mock_session)
-        executor._tool_workflow_id_map = {"specialist_tool": workflow_id}
-        executor._caller_user_id = caller_user_id
-        executor._run_user_id = caller_user_id
-        executor._caller = {
-            "user_id": str(caller_user_id),
-            "email": "person@example.com",
-            "name": "Person",
-            "organization_id": str(caller_org_id),
-            "is_platform_admin": True,
+        child_payload = authorized_agent_runtime.load_child_principal.await_args.args[1]
+        assert child_payload == {
+            "credential_kind": "agent_run",
+            "sub": str(child_run.id),
         }
 
-        with patch(
-            "src.services.execution.service.execute_tool",
-            new_callable=AsyncMock,
-            return_value=MagicMock(
-                execution_id=str(uuid4()),
-                status=ExecutionStatus.SUCCESS,
-                result={"ok": True},
-            ),
-        ) as mock_execute_tool:
-            result = await executor._execute_tool(
-                ToolCallRequest(
-                    id="tc1",
-                    name="specialist_tool",
-                    arguments={"value": 1},
-                ),
-                mock_agent,
-            )
-
-        assert result == '{"ok": true}'
-        mock_execute_tool.assert_awaited_once_with(
-            workflow_id=str(workflow_id),
-            workflow_name="specialist_tool",
-            parameters={"value": 1},
-            user_id=str(caller_user_id),
-            user_email="person@example.com",
-            user_name="Person",
-            org_id=str(caller_org_id),
-            is_platform_admin=True,
-            is_agent=True,
-            execution_id=None,
-            artifact_workspace_id=None,
-            sync=True,
-            lineage=RunLineage(caller_user_id, caller_user_id, None),
-        )
-
     @pytest.mark.asyncio
-    async def test_autonomous_workflow_without_caller_uses_system_identity(
-        self,
-        mock_session,
-        mock_agent,
+    async def test_bound_workflow_launch_keeps_canonical_caller_separate_from_actor(
+        self, mock_session, mock_agent
     ):
         workflow_id = uuid4()
-        identity_id = uuid4()
+        original_user_id = uuid4()
+        actor_id = uuid4()
+        organization_id = uuid4()
         executor = AutonomousAgentExecutor(mock_session)
-        executor._tool_workflow_id_map = {"scheduled_tool": workflow_id}
-        # An event-started run is for its organization's identity.
-        executor._run_user_id = identity_id
+        executor._tool_workflow_id_map = {"specialist_tool": workflow_id}
+        caller = _canonical_caller(
+            {
+                "user_id": str(original_user_id),
+                "email": "original@contoso.example",
+                "organization_id": str(organization_id),
+            }
+        )
+        executor._caller = caller
+        executor._acting = ActingUser(
+            user_id=str(actor_id), email="actor@contoso.example", name="Actor",
+            organization_id=organization_id, is_platform_admin=False,
+            is_external=False, is_provider_org=False,
+        )
 
         with patch(
-            "src.services.execution.service.execute_tool",
+            "src.services.execution.autonomous_agent_executor.execute_agent_workflow_tool",
             new_callable=AsyncMock,
             return_value=MagicMock(
-                execution_id=str(uuid4()),
-                status=ExecutionStatus.SUCCESS,
-                result={"ok": True},
+                execution_id=str(uuid4()), status=ExecutionStatus.SUCCESS, result={"ok": True}
             ),
-        ) as mock_execute_tool:
+        ) as launch:
             result = await executor._execute_tool(
-                ToolCallRequest(
-                    id="tc1",
-                    name="scheduled_tool",
-                    arguments={"value": 1},
-                ),
+                ToolCallRequest(id="tc1", name="specialist_tool", arguments={"value": 1}),
                 mock_agent,
             )
 
         assert result == '{"ok": true}'
-        mock_execute_tool.assert_awaited_once_with(
-            workflow_id=str(workflow_id),
-            workflow_name="scheduled_tool",
-            parameters={"value": 1},
-            user_id=SYSTEM_USER_ID,
-            user_email=SYSTEM_USER_EMAIL,
-            user_name=mock_agent.name,
-            org_id=str(mock_agent.organization_id),
-            is_platform_admin=False,
-            is_agent=True,
-            execution_id=None,
-            artifact_workspace_id=None,
-            sync=True,
-            lineage=RunLineage(identity_id, identity_id, None),
+        launch.assert_awaited_once_with(
+            agent_id=mock_agent.id, workflow_id=workflow_id, parameters={"value": 1},
+            caller=caller, artifact_workspace_id=None,
         )
+
+
+    @pytest.mark.asyncio
+    async def test_workflow_tool_refuses_missing_canonical_caller(self, mock_session, mock_agent):
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._tool_workflow_id_map = {"scheduled_tool": uuid4()}
+
+        with pytest.raises(ToolError, match="caller is unavailable"):
+            await executor._execute_tool(
+                ToolCallRequest(id="tc1", name="scheduled_tool", arguments={}), mock_agent
+            )
+
 
     def test_global_caller_scope_does_not_fall_back_to_agent_org(
         self, mock_session, mock_agent
     ):
-        executor = AutonomousAgentExecutor(mock_session)
-        executor._caller_user_id = uuid4()
-        executor._caller = {"organization_id": None}
+        caller_user_id = uuid4()
+        acting = _acting_from_test_data(
+            caller_user_id,
+            {"user_id": str(caller_user_id), "organization_id": None},
+            mock_agent,
+        )
 
-        assert executor._execution_org_id(mock_agent) is None
+        assert acting.organization_id is None
+
+    def test_caller_claims_use_canonical_superuser_key_and_keep_scope_flags(
+        self, mock_session, mock_agent
+    ):
+        caller_user_id = uuid4()
+
+        acting = _acting_from_test_data(
+            caller_user_id,
+            {
+                "user_id": str(caller_user_id),
+                "organization_id": str(uuid4()),
+                "is_superuser": True,
+                "is_external": True,
+                "is_provider_org": True,
+            },
+            mock_agent,
+        )
+
+        assert (acting.is_platform_admin, acting.is_external, acting.is_provider_org) == (True, True, True)
 
     def test_run_without_caller_uses_agent_org(self, mock_session, mock_agent):
-        executor = AutonomousAgentExecutor(mock_session)
-        executor._caller_user_id = None
-        executor._caller = None
+        acting = _acting_from_test_data(None, None, mock_agent)
 
-        assert executor._execution_org_id(mock_agent) == mock_agent.organization_id
+        assert acting.organization_id == mock_agent.organization_id
 
     @pytest.mark.asyncio
-    async def test_delegated_system_tool_inherits_caller_identity(
+    async def test_system_tool_uses_canonical_caller_and_current_agent_namespaces(
         self,
         mock_session,
         mock_agent,
@@ -520,15 +654,17 @@ class TestAutonomousAgentExecutor:
             captured_context = context
             return "ok"
 
+        mock_agent.knowledge_sources = ["current-agent-kb"]
         executor = AutonomousAgentExecutor(mock_session)
-        executor._caller_user_id = caller_user_id
-        executor._caller = {
-            "user_id": str(caller_user_id),
-            "email": "person@example.com",
-            "name": "Person",
-            "organization_id": str(caller_org_id),
-            "is_platform_admin": True,
-        }
+        executor._caller = _canonical_caller(
+            {
+                "user_id": str(caller_user_id),
+                "email": "person@example.com",
+                "name": "Person",
+                "organization_id": str(caller_org_id),
+                "is_superuser": True,
+            }
+        )
 
         with patch(
             "src.services.mcp_server.server.get_system_tool_function",
@@ -549,37 +685,23 @@ class TestAutonomousAgentExecutor:
         assert captured_context.user_name == "Person"
         assert captured_context.org_id == caller_org_id
         assert captured_context.is_platform_admin is True
+        assert captured_context.is_external is False
+        assert captured_context.is_provider_org is False
+        assert captured_context.accessible_namespaces == ["current-agent-kb"]
+        assert captured_context.session is mock_session._mock_session
 
     @pytest.mark.asyncio
-    async def test_system_tool_of_an_agent_nobody_started_carries_its_run_user(
+    async def test_system_tool_refuses_missing_canonical_caller(
         self,
         mock_session,
         mock_agent,
     ):
-        identity = uuid4()
-        captured_context = None
-
-        async def system_tool(context, **_arguments):
-            nonlocal captured_context
-            captured_context = context
-            return "ok"
-
         executor = AutonomousAgentExecutor(mock_session)
-        executor._caller_user_id = None
-        executor._caller = None
-        executor._run_user_id = identity
-
-        with patch(
-            "src.services.mcp_server.server.get_system_tool_function",
-            return_value=system_tool,
-        ):
+        with pytest.raises(ToolError, match="caller is unavailable"):
             await executor._execute_system_tool(
                 ToolCallRequest(id="tc1", name="specialist_system_tool", arguments={}),
                 mock_agent,
             )
-
-        assert captured_context is not None
-        assert captured_context.run_user_id == identity
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -657,6 +779,9 @@ class TestAutonomousAgentExecutor:
         )
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         tool_call = ToolCallRequest(
             id="tc1",
             name="delegate_to_lifecycle_specialist",
@@ -678,7 +803,10 @@ class TestAutonomousAgentExecutor:
                 parent_agent=mock_agent,
                 tool_call=tool_call,
                 parent_run_id=str(uuid4()),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
+                run_as=None,
             )
 
         assert outcome.status == expected_status
@@ -718,6 +846,9 @@ class TestAutonomousAgentExecutor:
         )
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with patch.object(
             AutonomousAgentExecutor,
             "run",
@@ -732,7 +863,10 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Crash"},
                 ),
                 parent_run_id=str(uuid4()),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
+                run_as=None,
             )
 
         assert outcome.status == "failed"
@@ -805,6 +939,9 @@ class TestAutonomousAgentExecutor:
             await asyncio.Event().wait()
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         original_wait_for = asyncio.wait_for
 
         async def shortened_deadline(coro, timeout):
@@ -829,7 +966,10 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Take too long"},
                 ),
                 parent_run_id=str(uuid4()),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
+                run_as=None,
             )
 
         assert outcome.status == "timeout"
@@ -882,9 +1022,11 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "do something"},
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             _shared_usage=shared_usage,
             _shared_budget=AgentRunBudget(max_requests=10, max_total_tokens=50_000),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
@@ -903,6 +1045,9 @@ class TestAutonomousAgentExecutor:
         mock_agent.delegated_agents = [delegated]
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with pytest.raises(ToolError, match="outside the parent agent's organization"):
             await executor.run_delegation(
                 parent_agent=mock_agent,
@@ -912,7 +1057,10 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Cross a boundary"},
                 ),
                 parent_run_id=str(uuid4()),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
+                run_as=None,
             )
 
         mock_session._mock_session.add.assert_not_called()
@@ -935,6 +1083,9 @@ class TestAutonomousAgentExecutor:
         mock_session._mock_session.execute = AsyncMock(return_value=query_result)
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with pytest.raises(
             ToolError,
             match="no longer active, authorized, or in scope",
@@ -947,7 +1098,10 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Use a stale parent relationship"},
                 ),
                 parent_run_id=str(uuid4()),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
+                run_as=None,
             )
 
         statement = mock_session._mock_session.execute.await_args.args[0]
@@ -1004,6 +1158,9 @@ class TestAutonomousAgentExecutor:
             raise asyncio.CancelledError()
 
         executor = AutonomousAgentExecutor(mock_session)
+        caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
         with patch.object(
             AutonomousAgentExecutor,
             "run",
@@ -1018,7 +1175,10 @@ class TestAutonomousAgentExecutor:
                     arguments={"task": "Wait"},
                 ),
                 parent_run_id=str(uuid4()),
+                caller=caller,
+                acting_user_id=caller.principal.user_id,
                 run_user_id=None,
+                run_as=None,
             )
 
         assert created_runs[0].status == "cancelled"
@@ -1059,7 +1219,10 @@ class TestAutonomousAgentExecutor:
     ):
         executor = AutonomousAgentExecutor(mock_session)
         executor._current_run_id = str(uuid4())
-        executor._caller = {"user_id": str(uuid4())}
+        executor._caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
+        executor._acting_user_id = executor._caller.principal.user_id
         failed = DelegationOutcome(
             child_run_id=uuid4(),
             agent_name="Broken Specialist",
@@ -1086,6 +1249,10 @@ class TestAutonomousAgentExecutor:
     ):
         executor = AutonomousAgentExecutor(mock_session)
         executor._current_run_id = str(uuid4())
+        executor._caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
+        executor._acting_user_id = executor._caller.principal.user_id
         receipt = (
             "Delegation to Slow Specialist timed out after 600s\n"
             "completed step evidence-step (read_device): reachable"
@@ -1112,6 +1279,28 @@ class TestAutonomousAgentExecutor:
             )
 
     @pytest.mark.asyncio
+    async def test_autonomous_delegation_refuses_missing_acting_user(
+        self, mock_session, mock_agent
+    ):
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._caller = _canonical_caller(
+            None, fallback_organization_id=mock_agent.organization_id
+        )
+        executor.run_delegation = AsyncMock()
+
+        with pytest.raises(ToolError, match="acting user is unavailable"):
+            await executor._execute_delegation(
+                ToolCallRequest(
+                    id="tc1",
+                    name="delegate_to_missing_actor",
+                    arguments={"task": "Do work"},
+                ),
+                mock_agent,
+            )
+
+        executor.run_delegation.assert_not_awaited()
+
+    @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_run_records_steps(self, mock_resolve_tools, mock_create_model, mock_session, mock_agent):
@@ -1133,7 +1322,9 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "analyze"},
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         # Verify steps were buffered (Redis-first: steps are in _pending_steps, not DB)
@@ -1179,7 +1370,7 @@ class TestAutonomousAgentExecutor:
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         # Mock the workflow tool execution (imported inside _execute_tool)
-        with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
+        with patch("src.services.execution.autonomous_agent_executor.execute_agent_workflow_tool") as mock_exec_tool:
             mock_exec_tool.return_value = WorkflowExecutionResponse(
                 execution_id=workflow_execution_id,
                 status=ExecutionStatus.SUCCESS,
@@ -1192,7 +1383,9 @@ class TestAutonomousAgentExecutor:
                 agent=mock_agent,
                 input_data={"task": "do something"},
                 run_id=str(uuid4()),
+                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
                 run_user_id=None,
+                run_as=None,
             )
 
         assert result["status"] == "completed"
@@ -1263,7 +1456,7 @@ class TestAutonomousAgentExecutor:
         )
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
-        with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
+        with patch("src.services.execution.autonomous_agent_executor.execute_agent_workflow_tool") as mock_exec_tool:
             mock_exec_tool.return_value = WorkflowExecutionResponse(
                 execution_id=workflow_execution_id,
                 status=workflow_status,
@@ -1271,7 +1464,7 @@ class TestAutonomousAgentExecutor:
             )
 
             executor = AutonomousAgentExecutor(mock_session)
-            await executor.run(agent=mock_agent, run_id=str(uuid4()), run_user_id=None)
+            await executor.run(agent=mock_agent, run_id=str(uuid4()), caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id), run_user_id=None, run_as=None)
 
         tool_result = next(
             step["content"]
@@ -1304,14 +1497,16 @@ class TestAutonomousAgentExecutor:
         ))
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
-        with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
+        with patch("src.services.execution.autonomous_agent_executor.execute_agent_workflow_tool") as mock_exec_tool:
             mock_exec_tool.return_value = MagicMock(result="ok", status=MagicMock(value="completed"))
 
             executor = AutonomousAgentExecutor(mock_session)
             result = await executor.run(
                 agent=mock_agent,
                 run_id=str(uuid4()),
+                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
                 run_user_id=None,
+                run_as=None,
             )
 
         assert result["status"] == "completed"
@@ -1334,7 +1529,9 @@ class TestAutonomousAgentExecutor:
         result = await executor.run(
             agent=mock_agent,
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "failed"
@@ -1370,7 +1567,9 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             output_schema={"type": "object", "properties": {"result": {"type": "integer"}}},
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
@@ -1429,14 +1628,16 @@ class TestAutonomousAgentExecutor:
         ])
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
-        with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
+        with patch("src.services.execution.autonomous_agent_executor.execute_agent_workflow_tool") as mock_exec_tool:
             mock_exec_tool.side_effect = RuntimeError("Tool crashed")
 
             executor = AutonomousAgentExecutor(mock_session)
             result = await executor.run(
                 agent=mock_agent,
                 run_id=str(uuid4()),
+                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
                 run_user_id=None,
+                run_as=None,
             )
 
         assert result["status"] == "completed"
@@ -1521,7 +1722,9 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "Delegate work"},
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
@@ -1615,7 +1818,9 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "Triage this ticket"},
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
@@ -1681,7 +1886,7 @@ class TestAutonomousAgentExecutor:
         ])
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
-        mock_redis = MagicMock()
+        mock_redis = _redis_with_transactional_pipeline()
         executor = AutonomousAgentExecutor(mock_session, redis_client=mock_redis)
 
         with patch.object(
@@ -1693,7 +1898,9 @@ class TestAutonomousAgentExecutor:
                 agent=mock_agent,
                 input_data={"task": "Delegate"},
                 run_id=str(uuid4()),
+                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
                 run_user_id=None,
+                run_as=None,
             )
 
         assert result["status"] == "completed"
@@ -1750,7 +1957,9 @@ class TestAutonomousAgentExecutor:
             agent=mock_agent,
             input_data={"task": "Deep delegation"},
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
@@ -1828,7 +2037,9 @@ class TestAutonomousAgentExecutor:
                 agent=mock_agent,
                 input_data={"task": "Delegate to slow agent"},
                 run_id=str(uuid4()),
+                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
                 run_user_id=None,
+                run_as=None,
             )
 
         assert result["status"] == "completed"
@@ -1868,7 +2079,9 @@ class TestAutonomousAgentExecutor:
         result = await executor.run(
             agent=mock_agent,
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
@@ -1939,12 +2152,24 @@ class TestAutonomousAgentExecutor:
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         parent_run_id = str(uuid4())
+        actor = ActingUser(
+            user_id=str(uuid4()),
+            email="actor@example.com",
+            name="Actor",
+            organization_id=mock_agent.organization_id,
+            is_platform_admin=False,
+            is_external=False,
+            is_provider_org=False,
+        )
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(
             agent=mock_agent,
             input_data={"task": "Delegate"},
             run_id=parent_run_id,
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
+            acting=actor,
         )
 
         assert result["status"] == "completed"
@@ -1963,6 +2188,7 @@ class TestAutonomousAgentExecutor:
         assert child_run.parent_run_id is not None
         assert str(child_run.parent_run_id) == parent_run_id
         assert child_run.agent_id == delegated.id
+        assert child_run.acting_user_id == UUID(actor.user_id)
 
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
@@ -1995,7 +2221,7 @@ class TestAutonomousAgentExecutor:
         mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         # Mock Redis client to return cancel flag after first iteration
-        mock_redis = AsyncMock()
+        mock_redis = _redis_with_transactional_pipeline()
         call_count = 0
 
         async def mock_get(key):
@@ -2010,14 +2236,16 @@ class TestAutonomousAgentExecutor:
 
         mock_redis.get = mock_get
 
-        with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
+        with patch("src.services.execution.autonomous_agent_executor.execute_agent_workflow_tool") as mock_exec_tool:
             mock_exec_tool.return_value = MagicMock(result="ok", status=MagicMock(value="completed"))
 
             executor = AutonomousAgentExecutor(mock_session, redis_client=mock_redis)
             result = await executor.run(
                 agent=mock_agent,
                 run_id=str(uuid4()),
+                caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
                 run_user_id=None,
+                run_as=None,
             )
 
         assert result["status"] == "cancelled"
@@ -2046,7 +2274,295 @@ class TestAutonomousAgentExecutor:
         result = await executor.run(
             agent=mock_agent,
             run_id=str(uuid4()),
+            caller=_canonical_caller(None, fallback_organization_id=mock_agent.organization_id),
             run_user_id=None,
+            run_as=None,
         )
 
         assert result["status"] == "completed"
+
+
+def _contoso_lead(organization_id) -> dict:
+    """The person who started the run (the initiator)."""
+    return {
+        "user_id": str(uuid4()),
+        "email": "helpdesk.lead@contoso.example",
+        "name": "Contoso Helpdesk Lead",
+        "organization_id": str(organization_id),
+        "is_superuser": True,
+    }
+
+
+def _contoso_portal_user(organization_id) -> ActingUser:
+    """A Run As user as the consumer loads it from the database."""
+    return ActingUser(
+        user_id=str(uuid4()),
+        email="portal.user@contoso.example",
+        name="Contoso Portal User",
+        organization_id=organization_id,
+        is_platform_admin=False,
+        is_external=True,
+        is_provider_org=False,
+    )
+
+
+def _calls_one_tool(name: str) -> LegacyMockModel:
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=[
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(id="tc1", name=name, arguments={})],
+            finish_reason="tool_use",
+            input_tokens=10,
+            output_tokens=5,
+        ),
+        LLMResponse(
+            content="Done",
+            tool_calls=None,
+            finish_reason="end_turn",
+            input_tokens=10,
+            output_tokens=5,
+        ),
+    ])
+    return LegacyMockModel(llm)
+
+
+class TestRunAsActingUser:
+    """Every tool and delegated child of a run uses its acting user."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("with_run_as", [True, False], ids=["run_as", "caller"])
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
+    @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
+    async def test_workflow_tool_launch_keeps_original_caller_when_actor_differs(
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent, with_run_as
+    ):
+        contoso, provider = uuid4(), uuid4()
+        mock_agent.organization_id = contoso
+        caller_data = _contoso_lead(provider)
+        caller = _canonical_caller(caller_data)
+        run_user_id = caller.principal.user_id
+        run_as = _contoso_portal_user(contoso) if with_run_as else None
+        workflow_id = uuid4()
+        mock_resolve_tools.return_value = ([_tool("contoso_lookup")], {"contoso_lookup": workflow_id})
+        mock_create_model.return_value = _calls_one_tool("contoso_lookup")
+        run_id = str(uuid4())
+
+        with patch(
+            "src.services.execution.autonomous_agent_executor.execute_agent_workflow_tool",
+            new_callable=AsyncMock,
+            return_value=MagicMock(
+                execution_id=str(uuid4()), status=ExecutionStatus.SUCCESS, result={"ok": True}
+            ),
+        ) as launch:
+            await AutonomousAgentExecutor(mock_session).run(
+                agent=mock_agent, run_id=run_id, caller=caller,
+                run_user_id=run_user_id, run_as=run_as,
+            )
+
+        launch.assert_awaited_once_with(
+            agent_id=mock_agent.id, workflow_id=workflow_id, parameters={}, caller=caller,
+            artifact_workspace_id=run_id,
+        )
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("with_run_as", [True, False], ids=["run_as", "caller"])
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
+    @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
+    async def test_system_tool_context_uses_original_caller_despite_run_as_actor(
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent, with_run_as
+    ):
+        contoso, provider = uuid4(), uuid4()
+        mock_agent.organization_id = contoso
+        mock_agent.system_tools = ["contoso_system_tool"]
+        mock_agent.knowledge_sources = ["contoso-kb"]
+        caller_data = _contoso_lead(provider)
+        caller = _canonical_caller(caller_data)
+        run_user_id = caller.principal.user_id
+        run_as = _contoso_portal_user(contoso) if with_run_as else None
+        mock_resolve_tools.return_value = ([_tool("contoso_system_tool")], {})
+        mock_create_model.return_value = _calls_one_tool("contoso_system_tool")
+        contexts = []
+
+        async def system_tool(context):
+            contexts.append(context)
+            return "ok"
+
+        with patch(
+            "src.services.mcp_server.server.get_system_tool_function",
+            return_value=system_tool,
+        ):
+            await AutonomousAgentExecutor(mock_session).run(
+                agent=mock_agent,
+                run_id=str(uuid4()),
+                caller=caller,
+                run_user_id=run_user_id,
+                run_as=run_as,
+            )
+
+        [context] = contexts
+        seen = (
+            context.user_id,
+            context.user_email,
+            context.user_name,
+            context.org_id,
+            context.is_platform_admin,
+            context.is_external,
+            context.is_provider_org,
+            context.run_user_id,
+        )
+        assert seen == (
+            run_user_id,
+            "helpdesk.lead@contoso.example",
+            "Contoso Helpdesk Lead",
+            provider,
+            True,
+            False,
+            False,
+            None,
+        )
+        assert context.accessible_namespaces == ["contoso-kb"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("with_run_as", [True, False], ids=["run_as", "caller"])
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
+    @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
+    async def test_delegation_hands_the_child_the_same_run_as(
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent, with_run_as
+    ):
+        contoso = uuid4()
+        mock_agent.organization_id = contoso
+        caller_data = _contoso_lead(contoso)
+        caller = _canonical_caller(caller_data)
+        run_user_id = caller.principal.user_id
+        run_as = _contoso_portal_user(contoso) if with_run_as else None
+        mock_agent.delegated_agents = [SimpleNamespace(
+            id=uuid4(), name="Contoso Specialist", is_active=True,
+        )]
+        mock_resolve_tools.return_value = ([_tool("delegate_to_contoso_specialist")], {})
+        mock_create_model.return_value = _calls_one_tool("delegate_to_contoso_specialist")
+        run_id = str(uuid4())
+
+        with patch.object(
+            AutonomousAgentExecutor,
+            "run_delegation",
+            new_callable=AsyncMock,
+            return_value=DelegationOutcome(
+                child_run_id=uuid4(),
+                agent_name="Contoso Specialist",
+                status="completed",
+                output="checked",
+                error=None,
+                duration_ms=5,
+            ),
+        ) as mock_run_delegation:
+            await AutonomousAgentExecutor(mock_session).run(
+                agent=mock_agent,
+                run_id=run_id,
+                caller=caller,
+                run_user_id=run_user_id,
+                run_as=run_as,
+            )
+
+        mock_run_delegation.assert_awaited_once_with(
+            parent_agent=mock_agent,
+            tool_call=ToolCallRequest(
+                id="tc1", name="delegate_to_contoso_specialist", arguments={}
+            ),
+            parent_run_id=run_id,
+            caller=caller,
+            acting_user_id=(
+                UUID(run_as.user_id) if run_as else caller.principal.user_id
+            ),
+            run_user_id=run_user_id,
+            run_as=run_as,
+            agent_execution_mode="delegated",
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("with_run_as", [True, False], ids=["run_as", "caller"])
+    async def test_delegated_child_row_keeps_run_as_caller_and_run_user(
+        self, mock_session, mock_agent, with_run_as, authorized_agent_runtime
+    ):
+        contoso, provider = uuid4(), uuid4()
+        delegated = MagicMock()
+        delegated.id = uuid4()
+        delegated.name = "Contoso Specialist"
+        delegated.organization_id = None
+        delegated.max_iterations = 5
+        delegated.max_token_budget = 1000
+        delegated.llm_profile_id = None
+        # A Global parent: the child's organization follows the acting user.
+        mock_agent.organization_id = None
+        mock_agent.delegated_agents = [delegated]
+        query_result = MagicMock()
+        query_result.scalar_one_or_none.return_value = delegated
+        mock_session._mock_session.execute = AsyncMock(return_value=query_result)
+        created_runs: list[AgentRun] = []
+
+        def capture_add(value):
+            if isinstance(value, AgentRun):
+                created_runs.append(value)
+
+        mock_session._mock_session.add.side_effect = capture_add
+
+        async def get_created(model, run_id):
+            if model is AgentRun and created_runs and created_runs[0].id == run_id:
+                return created_runs[0]
+            return None
+
+        mock_session._mock_session.get.side_effect = get_created
+        caller_data = _contoso_lead(provider)
+        caller = _canonical_caller(caller_data)
+        run_user_id = caller.principal.user_id
+        run_as = _contoso_portal_user(contoso) if with_run_as else None
+        executor = AutonomousAgentExecutor(mock_session)
+
+        with (
+            patch.object(
+                AutonomousAgentExecutor,
+                "run",
+                new_callable=AsyncMock,
+                return_value={"output": "checked", "status": "completed"},
+            ) as mock_child_run,
+            patch(
+                "src.services.execution.summary_dispatch.stage_summary",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await executor.run_delegation(
+                parent_agent=mock_agent,
+                tool_call=ToolCallRequest(
+                    id="tc1",
+                    name="delegate_to_contoso_specialist",
+                    arguments={"task": "Check the mailbox"},
+                ),
+                parent_run_id=str(uuid4()),
+                caller=caller,
+                acting_user_id=(
+                    UUID(run_as.user_id) if run_as else caller.principal.user_id
+                ),
+                run_user_id=run_user_id,
+                run_as=run_as,
+            )
+
+        [child] = created_runs
+        assert child.caller_user_id == str(caller.principal.user_id)
+        assert child.caller_email == "helpdesk.lead@contoso.example"
+        assert child.caller_name == "Contoso Helpdesk Lead"
+        assert child.run_user_id == run_user_id
+        if run_as is not None:
+            target = UUID(run_as.user_id)
+            assert child.run_as_user_id == target
+            assert child.acting_user_id == target
+            assert child.org_id == contoso
+        else:
+            assert child.run_as_user_id is None
+            assert child.acting_user_id == caller.principal.user_id
+            assert child.org_id == provider
+        assert mock_child_run.await_args is not None
+        assert mock_child_run.await_args.kwargs["run_as"] == run_as
+        assert mock_child_run.await_args.kwargs["caller"] is authorized_agent_runtime.child_caller
+        assert mock_child_run.await_args.kwargs["run_user_id"] == run_user_id

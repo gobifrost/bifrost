@@ -1,0 +1,14 @@
+{
+  "key": "pr:1002",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Restore standard users’ ability to open authorized Apps and show readable App-loading errors.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1002",
+      "Codex reviewed this routine-fix summary on 2026-10-19 under the user’s authorization to implement the repair. The change preserves App sharing, organization reach, source-read permissions, and rebuild authorization. No customer upgrade action is required."
+    ]
+  }
+}

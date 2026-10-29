@@ -23,7 +23,7 @@ import asyncio
 import base64
 import os
 import time
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -153,13 +153,14 @@ class TestForkedUsersSocket:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
-        from tests.helpers.live_execution import create_live_execution
+        from tests.helpers.live_execution import (
+            create_live_execution,
+            delete_live_execution,
+        )
 
         engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
             execution_id=engine_execution_id,
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=120,
         )
         await create_live_execution(async_session_factory, engine_execution_id)
@@ -210,9 +211,9 @@ class TestForkedUsersSocket:
             from sqlalchemy import delete as sa_delete
 
             from src.models import User as UserORM
-            from src.models.orm.executions import Execution as ExecutionModel
             from src.models.orm.organizations import Organization as OrganizationModel
 
+            await delete_live_execution(async_session_factory, engine_execution_id)
             async with async_session_factory() as cleanup:
                 await cleanup.execute(
                     sa_delete(UserORM).where(UserORM.email == email)
@@ -220,11 +221,6 @@ class TestForkedUsersSocket:
                 await cleanup.execute(
                     sa_delete(OrganizationModel).where(
                         OrganizationModel.name == f"{stem}-org"
-                    )
-                )
-                await cleanup.execute(
-                    sa_delete(ExecutionModel).where(
-                        ExecutionModel.id == UUID(engine_execution_id)
                     )
                 )
                 await cleanup.commit()
@@ -250,8 +246,6 @@ class TestForkedUsersSocket:
         engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
             execution_id=engine_execution_id,
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=120,
         )
         await create_live_execution(async_session_factory, engine_execution_id)

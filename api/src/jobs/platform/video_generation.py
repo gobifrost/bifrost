@@ -9,9 +9,8 @@ from pydantic import BaseModel, Field
 
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 
 VIDEO_GENERATION_JOB_TYPE = "chat.video_generation"
@@ -130,7 +129,10 @@ async def run_video_generation(
         try:
             async with get_db_context() as db:
                 message = await db.get(Message, payload.message_id)
-                if message is not None and message.conversation_id == payload.conversation_id:
+                if (
+                    message is not None
+                    and message.conversation_id == payload.conversation_id
+                ):
                     message.tool_state = "error"
                     message.tool_result = {
                         "type": "platform_job",
@@ -154,19 +156,8 @@ async def run_video_generation(
         ) from exc
 
 
-VIDEO_GENERATION_DEFINITION = PlatformJobDefinition(
-    job_type=VIDEO_GENERATION_JOB_TYPE,
-    payload_version=1,
-    payload_model=VideoGenerationPayload,
-    handler=run_video_generation,
-    policy=PlatformJobPolicy(
-        timeout_seconds=30 * 60,
-        max_attempts=1,
-        retry_on_runner_loss=False,
-        min_memory_headroom_mb=512,
-        allow_running_cancellation=True,
-    ),
-    encrypt_payload=True,
+VIDEO_GENERATION_DEFINITION = define_platform_job(
+    VIDEO_GENERATION_JOB_TYPE, VideoGenerationPayload, run_video_generation
 )
 
 
@@ -200,7 +191,7 @@ async def run_sdk_video_generation(
             report=report,
         )
         async with get_db_context() as db:
-            stored = await ArtifactService(db).store(
+            stored = await ArtifactService(db).store_trusted_job(
                 filename=artifact.filename,
                 content_type=artifact.content_type,
                 content=artifact.content,
@@ -226,11 +217,6 @@ async def run_sdk_video_generation(
         ) from exc
 
 
-SDK_VIDEO_GENERATION_DEFINITION = PlatformJobDefinition(
-    job_type="sdk.video_generation",
-    payload_version=1,
-    payload_model=SDKVideoGenerationPayload,
-    handler=run_sdk_video_generation,
-    policy=VIDEO_GENERATION_DEFINITION.policy,
-    encrypt_payload=True,
+SDK_VIDEO_GENERATION_DEFINITION = define_platform_job(
+    "sdk.video_generation", SDKVideoGenerationPayload, run_sdk_video_generation
 )

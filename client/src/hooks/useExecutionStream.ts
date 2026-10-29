@@ -249,8 +249,8 @@ export function useNewExecutions(options: { enabled?: boolean } = {}) {
  * when new executions are created or existing ones complete.
  *
  * Channel logic:
- * - Platform admins: Subscribe to `history:GLOBAL` (see all executions)
- * - Regular users: Subscribe to `history:user:{userId}` (see only their own)
+ * - Callers with Read All Executions: subscribe to `history:GLOBAL`
+ * - Other callers: subscribe to `history:user:{userId}` for their own runs
  *
  * Org filtering: If a platform admin filters to a specific org, updates are filtered
  * client-side to only show executions from that org.
@@ -259,25 +259,24 @@ export function useExecutionHistory(
 	options: {
 		scope: string;
 		enabled?: boolean;
-		isPlatformAdmin?: boolean;
+		includeOthers?: boolean;
 		userId?: string;
 	} = { scope: "GLOBAL" },
 ) {
-	const { scope, enabled = true, isPlatformAdmin = false, userId } = options;
+	const { scope, enabled = true, includeOthers = false, userId } = options;
 	const [isConnected, setIsConnected] = useState(false);
 	const queryClient = useQueryClient();
 
-	// Determine the channel to subscribe to:
-	// - Platform admins: always history:GLOBAL
-	// - Regular users: history:user:{userId}
-	const channel = isPlatformAdmin
+	// The global stream carries other users' runs. The server authorizes each
+	// delivery using the caller's current authorization and organization reach.
+	const channel = includeOthers
 		? "history:GLOBAL"
 		: userId
 			? `history:user:${userId}`
 			: null;
 
-	// For platform admins with org filter, track which org to filter for
-	const orgFilter = isPlatformAdmin && scope !== "GLOBAL" ? scope : null;
+	// Keep a selected org filter local to the current history query.
+	const orgFilter = includeOthers && scope !== "GLOBAL" ? scope : null;
 
 	useEffect(() => {
 		if (!enabled || !channel) {
@@ -312,9 +311,10 @@ export function useExecutionHistory(
 
 						// Optimistically update ALL executions queries (handles different filters/pages)
 						// Query key is ["get", "/api/executions", { params: ... }]
-						const caches = queryClient.getQueriesData<ExecutionHistoryPage>({
-							queryKey: ["get", "/api/executions"],
-						});
+						const caches =
+							queryClient.getQueriesData<ExecutionHistoryPage>({
+								queryKey: ["get", "/api/executions"],
+							});
 
 						caches.forEach(([queryKey, oldData]) => {
 							// Skip if no data or not an executions list response
@@ -346,10 +346,10 @@ export function useExecutionHistory(
 							const queryParams = params?.params?.query || {};
 							const hasFilters = Boolean(
 								queryParams.status ||
-									queryParams.startDate ||
-									queryParams.endDate ||
-									queryParams.workflowId ||
-									queryParams.workflow_name,
+								queryParams.startDate ||
+								queryParams.endDate ||
+								queryParams.workflowId ||
+								queryParams.workflow_name,
 							);
 							const nextData = mergeExecutionHistoryPage(
 								oldData,

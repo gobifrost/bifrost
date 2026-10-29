@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
 import { cn } from "@/lib/utils";
 
 const TITLE_CLASS_NAME =
@@ -17,7 +17,7 @@ const HOME_TABS: WorkspaceTab[] = [
 
 /**
  * The page title as route navigation between sibling views. Without `tabs`
- * it is Workspace | Dashboard, the dashboard only for Platform Admins; a
+ * it is Workspace | Dashboard when the caller can read metrics; a
  * single view is a plain title.
  */
 export function WorkspaceTabs({
@@ -27,8 +27,10 @@ export function WorkspaceTabs({
 	tabs?: WorkspaceTab[];
 	label?: string;
 }) {
-	const { isPlatformAdmin } = useAuth();
-	const views = tabs ?? (isPlatformAdmin ? HOME_TABS : HOME_TABS.slice(0, 1));
+	const { canAnywhere } = useAuthorization();
+	const views =
+		tabs ??
+		(canAnywhere("metrics.read") ? HOME_TABS : HOME_TABS.slice(0, 1));
 	if (views.length === 1) {
 		return <h1 className={TITLE_CLASS_NAME}>{views[0].label}</h1>;
 	}

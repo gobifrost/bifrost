@@ -14,8 +14,17 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.db_deps import DbSession
-from src.core.principal import UserPrincipal, run_lineage_fields
+from src.core.principal import UserPrincipal
 from src.core.security import decode_token
+from shared.browser_impersonation import (
+    BrowserImpersonationError,
+    IMPERSONATION_COOKIE_NAME,
+    validate_browser_impersonation,
+)
+from src.services.authorization.runtime_auth import (
+    is_runtime_credential_payload,
+    load_runtime_principal,
+)
 from shared.role_cache import get_user_roles
 
 if TYPE_CHECKING:
@@ -25,6 +34,32 @@ logger = logging.getLogger(__name__)
 
 # HTTP Bearer token scheme
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def select_http_auth_token(
+    request: Request,
+    bearer_token: str | None,
+    *,
+    allow_impersonation_cookie: bool = True,
+) -> str | None:
+    """Resolve HTTP credentials with browser impersonation precedence.
+
+    An active marker deliberately wins over ordinary human bearer and access
+    cookies. Typed runtime and embed credentials retain their own authority and
+    never become impersonated browser traffic.
+    """
+    token = (
+        bearer_token
+        or request.cookies.get("access_token")
+        or request.cookies.get("embed_token")
+    )
+    marker = request.cookies.get(IMPERSONATION_COOKIE_NAME)
+    if allow_impersonation_cookie and marker:
+        payload = decode_token(token, expected_type="access") if token else None
+        if payload and (is_runtime_credential_payload(payload) or payload.get("embed")):
+            return token
+        return marker
+    return token
 
 
 @dataclass
@@ -61,6 +96,11 @@ class ExecutionContext:
     # format only; malformed values are ignored (caller treated as outside).
     # Trusted on engine requests only — resolvers decide via is_engine_user.
     caller_solution_id: str | None = None
+    # A server-validated local Solution preview context.  This is never read
+    # from a client-supplied app header and is set only after its signed token,
+    # human subject, canonical Platform Admin grant, and install membership are
+    # revalidated for this request.
+    dev_solution_id: str | None = None
 
     @property
     def scope(self) -> str:
@@ -87,6 +127,17 @@ async def get_current_user_optional(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     db: DbSession,
+) -> UserPrincipal | None:
+    """Get the current user using normal browser-wide credential precedence."""
+    return await _get_current_user_optional(request, credentials, db)
+
+
+async def _get_current_user_optional(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None,
+    db: DbSession,
+    *,
+    allow_impersonation_cookie: bool = True,
 ) -> UserPrincipal | None:
     """
     Get the current user from JWT token (optional).
@@ -115,18 +166,11 @@ async def get_current_user_optional(
     token = None
     token_type = "access"
 
-    # Try Authorization header first (API clients)
-    if credentials:
-        token = credentials.credentials
-    # Fall back to cookie (browser clients)
-    elif "access_token" in request.cookies:
-        token = request.cookies["access_token"]
-    # Fall back to embed_token cookie (iframe embed sessions)
-    elif "embed_token" in request.cookies:
-        token = request.cookies["embed_token"]
-        # Embed sessions are deliberately access tokens with additional typed
-        # capability claims; the cookie name is only a credential location.
-        token_type = "access"
+    token = select_http_auth_token(
+        request,
+        credentials.credentials if credentials else None,
+        allow_impersonation_cookie=allow_impersonation_cookie,
+    )
 
     if not token:
         return None
@@ -135,6 +179,16 @@ async def get_current_user_optional(
     payload = decode_token(token, expected_type=token_type)
 
     if payload is None:
+        return None
+
+    if getattr(request.state, "runtime_token", None) == token:
+        return request.state.runtime_principal
+    runtime_principal = await load_runtime_principal(db, payload)
+    if runtime_principal is not None:
+        return runtime_principal
+    # A legacy engine/service claim, malformed typed credential, or runtime
+    # record that is no longer valid never falls through to human-token auth.
+    if is_runtime_credential_payload(payload):
         return None
 
     # Extract user ID from token
@@ -178,29 +232,23 @@ async def get_current_user_optional(
     # else: superuser with no org = system account (valid)
     # else: embed token without org = valid (HMAC-verified)
 
-    # Execution-scoped engine tokens (mint_engine_token: superuser + an
-    # engine_execution_id claim) stop working once their execution is no
-    # longer running. A supervised-service token (mint_service_token) also
-    # carries engine_execution_id but is never superuser, so it is
-    # unaffected. Liveness is read from the execution row's status in
-    # Postgres, the authoritative source - see shared.execution_liveness
-    # and src.models.enums.LIVE_EXECUTION_STATUSES.
-    engine_execution_id = payload.get("engine_execution_id")
-    if engine_execution_id and is_superuser:
-        from shared.execution_liveness import is_execution_live
+    try:
+        impersonated_by_user_id = (
+            UUID(payload["impersonated_by_user_id"])
+            if payload.get("impersonated_by_user_id") is not None
+            else None
+        )
+        impersonation_session_id = (
+            UUID(payload["impersonation_session_id"])
+            if payload.get("impersonation_session_id") is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        return None
+    if (impersonated_by_user_id is None) != (impersonation_session_id is None):
+        return None
 
-        try:
-            live = await is_execution_live(db, engine_execution_id)
-        except Exception:
-            logger.exception(
-                f"Could not verify execution liveness for engine token "
-                f"(execution_id={engine_execution_id}); rejecting"
-            )
-            return None
-        if not live:
-            return None
-
-    return UserPrincipal(
+    principal = UserPrincipal(
         user_id=user_id,
         email=payload.get("email", ""),
         organization_id=organization_id,
@@ -219,13 +267,76 @@ async def get_current_user_optional(
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
-        engine_execution_id=payload.get("engine_execution_id"),
-        engine_solution_id=payload.get("engine_solution_id"),
-        service_id=payload.get("service_id"),
-        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
-        **run_lineage_fields(payload),
+        impersonated_by_user_id=impersonated_by_user_id,
+        impersonation_session_id=impersonation_session_id,
+    )
+    if impersonation_session_id is not None:
+        try:
+            await validate_browser_impersonation(db, principal)
+        except BrowserImpersonationError:
+            return None
+    return principal
+
+
+async def get_original_human_user(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    db: DbSession,
+) -> UserPrincipal:
+    """Authenticate the original browser operator for impersonation Exit.
+
+    The normal dependency must never be used here: an impersonation marker
+    intentionally overrides ordinary authentication everywhere else. A still
+    live refresh JTI lets the operator clear an expired marker after their
+    original access JWT has naturally expired.
+    """
+    user = await _get_current_user_optional(
+        request,
+        credentials,
+        db,
+        allow_impersonation_cookie=False,
+    )
+    if user is not None and not (
+        user.embed or user.runtime_authority is not None or user.impersonation_session_id is not None
+    ):
+        return user
+
+    refresh_token = request.cookies.get("refresh_token")
+    if refresh_token is not None:
+        payload = decode_token(refresh_token, expected_type="refresh")
+        user_id = payload.get("sub") if payload else None
+        jti = payload.get("jti") if payload else None
+        if isinstance(user_id, str) and isinstance(jti, str):
+            try:
+                operator_id = UUID(user_id)
+            except ValueError:
+                operator_id = None
+            if operator_id is not None:
+                from src.core.cache import get_shared_redis
+                from src.core.cache.keys import refresh_token_jti_key
+                from src.models.orm.users import User
+
+                redis = await get_shared_redis()
+                if await redis.exists(refresh_token_jti_key(str(operator_id), jti)):
+                    operator = await db.get(User, operator_id)
+                    if operator is not None and operator.is_active:
+                        return UserPrincipal(
+                            user_id=operator.id,
+                            email=operator.email,
+                            organization_id=operator.organization_id,
+                            name=operator.name or "",
+                            is_active=operator.is_active,
+                            is_superuser=operator.is_superuser,
+                            is_verified=operator.is_verified,
+                            is_external=operator.is_external,
+                        )
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Original operator authentication is required",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
@@ -287,61 +398,6 @@ async def get_current_active_user(
     return user
 
 
-async def get_current_superuser(
-    user: Annotated[UserPrincipal, Depends(get_current_active_user)],
-) -> UserPrincipal:
-    """
-    Get the current superuser (platform admin).
-
-    Raises HTTPException if user is not a superuser.
-
-    Args:
-        user: Current active user
-
-    Returns:
-        UserPrincipal for superuser
-
-    Raises:
-        HTTPException: If user is not a superuser
-    """
-    if not user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Superuser privileges required"
-        )
-    return user
-
-
-async def get_current_engine_or_bypass_user(
-    user: Annotated[UserPrincipal, Depends(get_current_user)],
-) -> UserPrincipal:
-    """Admit execution credentials and scope-bypass principals only.
-
-    Execution credentials are the signed engine and service tokens: they
-    carry ``engine_execution_id`` and never an embed claim. Bypass is
-    platform admin OR provider-org member. Every other principal, including
-    an ordinary user's own session token, is refused.
-    """
-    from shared.scope_resolver import has_scope_bypass
-
-    if user.engine_execution_id and not user.embed:
-        return user
-    if has_scope_bypass(
-        is_platform_admin=user.is_platform_admin,
-        is_provider_org=user.is_provider_org,
-    ):
-        return user
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Execution credentials or platform access required",
-    )
-
-
-# Dependency for requiring platform admin access
-# Usage: dependencies=[RequirePlatformAdmin]
-RequirePlatformAdmin = Depends(get_current_superuser)
-
-
 async def get_execution_context(
     request: Request,
     user: Annotated[UserPrincipal, Depends(get_current_active_user)],
@@ -376,6 +432,13 @@ async def get_execution_context(
         user.role_ids = role_ids
         user.role_names = role_names
 
+    dev_context = None
+    raw_dev_context = request.headers.get("X-Bifrost-Dev-Context")
+    if raw_dev_context:
+        from shared.solution_dev import validate_solution_dev_context
+
+        dev_context = await validate_solution_dev_context(db, user, raw_dev_context)
+
     # Appended by the SDK (?solution=<install_id>) when a solution workflow is
     # executing.  Before forwarding it to the context, load the Solution row and
     # refuse execution for any install that has been uninstalled (status !=
@@ -406,7 +469,15 @@ async def get_execution_context(
     # with its install.  Fail closed only when the app DOES resolve to a known
     # inactive solution; a missing/unknown app_id leaves existing behaviour
     # unchanged (no 500 on a bad header value).
-    app_id_header = request.headers.get("X-Bifrost-App")
+    requested_app_id = request.headers.get("X-Bifrost-App")
+    if dev_context is not None and requested_app_id not in (None, str(dev_context.app_id)):
+        from shared.solution_dev import INVALID_DEV_CONTEXT_DETAIL
+
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=INVALID_DEV_CONTEXT_DETAIL)
+    # For local Python workflows there is no browser app header.  The validated
+    # context still supplies the app/install identity to the normal resolution
+    # path, without treating the capability token as bearer authentication.
+    app_id_header = str(dev_context.app_id) if dev_context is not None else requested_app_id
     app_solution_id: UUID | None = None
     if app_id_header is not None:
         from src.models.orm.applications import Application as ApplicationORM
@@ -422,7 +493,7 @@ async def get_execution_context(
                 sol_row = await db.get(SolutionORM, app_row.solution_id)
                 if sol_row is not None:
                     await _refuse_if_solution_inactive(sol_row)
-    if solution_id_param is not None and app_solution_id is not None:
+    if solution_id_param is not None and app_solution_id is not None and dev_context is None:
         try:
             if UUID(solution_id_param) != app_solution_id:
                 raise HTTPException(
@@ -434,7 +505,9 @@ async def get_execution_context(
             pass
 
     effective_solution_id = solution_id_param or (
-        str(app_solution_id) if app_solution_id is not None else None
+        str(dev_context.solution_id)
+        if dev_context is not None
+        else str(app_solution_id) if app_solution_id is not None else None
     )
 
     # SPIKE: per-call caller attestation (see field docs). Format-gated only;
@@ -456,6 +529,7 @@ async def get_execution_context(
         app_id=app_id_header,
         solution_id=effective_solution_id,
         caller_solution_id=caller_solution_id,
+        dev_solution_id=str(dev_context.solution_id) if dev_context is not None else None,
     )
 
 
@@ -475,8 +549,6 @@ async def _refuse_if_solution_inactive(solution_row: object) -> None:
 # Type aliases for dependency injection
 CurrentUser = Annotated[UserPrincipal, Depends(get_current_user)]
 CurrentActiveUser = Annotated[UserPrincipal, Depends(get_current_active_user)]
-CurrentSuperuser = Annotated[UserPrincipal, Depends(get_current_superuser)]
-CurrentEngineOrBypassUser = Annotated[UserPrincipal, Depends(get_current_engine_or_bypass_user)]
 Context = Annotated[ExecutionContext, Depends(get_execution_context)]
 
 
@@ -520,12 +592,9 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     """
     Get current user from WebSocket connection.
 
-    Checks for token in this order:
-    1. Cookie: access_token (for browser clients - most common)
-    2. Authorization header (for service clients)
-
-    Note: Query parameter tokens are NOT supported for security reasons
-    (URLs may be logged by proxies/servers).
+    Checks explicit credentials before the ordinary access-token cookie:
+    Authorization header, then query token, then cookie. The query form is
+    needed for browser WebSockets, whose API cannot set Authorization headers.
 
     Args:
         websocket: FastAPI WebSocket connection
@@ -533,21 +602,28 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     Returns:
         UserPrincipal if authenticated, None otherwise
     """
-    token = None
-
-    # Try cookie first (browser clients)
-    if "access_token" in websocket.cookies:
-        token = websocket.cookies["access_token"]
+    explicit_token = None
 
     # Try Authorization header (some WebSocket clients support this)
-    if not token:
-        auth_header = websocket.headers.get("authorization", "")
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:]
+    auth_header = websocket.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        explicit_token = auth_header[7:]
 
-    # Try query parameter (for embed tokens — browser WebSocket API can't set headers)
-    if not token:
-        token = websocket.query_params.get("token")
+    if not explicit_token:
+        explicit_token = websocket.query_params.get("token")
+
+    # Preserve explicit/query then ordinary-cookie precedence, then apply the
+    # same marker override as HTTP. Runtime and embed credentials remain
+    # independent from browser impersonation.
+    token = explicit_token or websocket.cookies.get("access_token") or websocket.cookies.get("embed_token")
+    marker = websocket.cookies.get(IMPERSONATION_COOKIE_NAME)
+    if marker:
+        selected_payload = decode_token(token, expected_type="access") if token else None
+        if not (
+            selected_payload
+            and (is_runtime_credential_payload(selected_payload) or selected_payload.get("embed"))
+        ):
+            token = marker
 
     if not token:
         return None
@@ -555,6 +631,11 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     # Decode and validate token - must be an access token
     payload = decode_token(token, expected_type="access")
     if payload is None:
+        return None
+
+    # WebSockets have no database dependency to resolve typed runtime
+    # credentials. They must not accept them through the ordinary token path.
+    if is_runtime_credential_payload(payload):
         return None
 
     user_id_str = payload.get("sub")
@@ -595,7 +676,23 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     # else: superuser with no org = system account (valid)
     # else: embed token without org = valid (HMAC-verified)
 
-    return UserPrincipal(
+    try:
+        impersonated_by_user_id = (
+            UUID(payload["impersonated_by_user_id"])
+            if payload.get("impersonated_by_user_id") is not None
+            else None
+        )
+        impersonation_session_id = (
+            UUID(payload["impersonation_session_id"])
+            if payload.get("impersonation_session_id") is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        return None
+    if (impersonated_by_user_id is None) != (impersonation_session_id is None):
+        return None
+
+    principal = UserPrincipal(
         user_id=user_id,
         email=payload.get("email", ""),
         organization_id=organization_id,
@@ -614,11 +711,17 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
-        engine_execution_id=payload.get("engine_execution_id"),
-        engine_solution_id=payload.get("engine_solution_id"),
-        service_id=payload.get("service_id"),
-        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
-        **run_lineage_fields(payload),
+        impersonated_by_user_id=impersonated_by_user_id,
+        impersonation_session_id=impersonation_session_id,
     )
+    if impersonation_session_id is not None:
+        from src.core.database import get_db_context
+
+        try:
+            async with get_db_context() as db:
+                await validate_browser_impersonation(db, principal)
+        except BrowserImpersonationError:
+            return None
+    return principal

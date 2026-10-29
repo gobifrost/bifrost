@@ -32,6 +32,30 @@ logging.basicConfig(
 logger = logging.getLogger("init_container")
 
 
+async def database_is_ahead() -> bool:
+    """True when a newer release already migrated past this image's history.
+
+    Starting an older image (a rollback) against that database must not run
+    ``alembic upgrade``, which cannot locate the newer revision. The API and
+    executors accept a newer schema (``shared.schema_gate``).
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from shared.schema_gate import revisions_from_a_newer_image
+    from src.config import get_settings
+
+    engine = create_async_engine(get_settings().database_url)
+    try:
+        newer = await revisions_from_a_newer_image(engine)
+    finally:
+        await engine.dispose()
+    if newer:
+        logger.warning(
+            f"Database is at {sorted(newer)}, newer than this image; skipping migrations"
+        )
+    return bool(newer)
+
+
 def run_migrations() -> bool:
     """
     Run alembic migrations.
@@ -132,7 +156,11 @@ async def main() -> int:
     logger.info("Step 1/2: Database Migrations")
     logger.info("-" * 40)
 
-    if not run_migrations():
+    if await database_is_ahead():
+        migrations = "Skipped (database is newer than this image)"
+    elif run_migrations():
+        migrations = "Applied"
+    else:
         logger.error("FAILED: Database migrations failed - aborting startup")
         return 1
 
@@ -151,7 +179,7 @@ async def main() -> int:
     logger.info("")
     logger.info("=" * 60)
     logger.info("Init Container Completed Successfully")
-    logger.info("  - Migrations: Applied")
+    logger.info(f"  - Migrations: {migrations}")
     logger.info(f"  - Requirements cache: {'cached' if requirements_found else 'empty'}")
     logger.info("=" * 60)
 

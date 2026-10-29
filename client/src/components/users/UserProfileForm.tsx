@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { useUpdateUser } from "@/hooks/useUsers";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { useAuth } from "@/contexts/AuthContext";
 import { orgTarget } from "@/lib/authorization";
 import { cn } from "@/lib/utils";
@@ -38,7 +39,7 @@ export function profileAbilities(
 		!blockedByProtection && authorization.canAt("users.readwrite", target);
 	const canLifecycle =
 		!blockedByProtection &&
-		authorization.canAt("users.lifecycle.readwrite", target);
+		authorization.canAt("userlifecycle.readwrite", target);
 	const canEditName = isEditingSelf || canSupport;
 	const canEditStatus = !isEditingSelf && canSupport;
 	const canEditLifecycle = !isEditingSelf && canLifecycle;
@@ -127,14 +128,14 @@ export function UserProfileForm({
 	const destinationOrganizations = (organizations ?? []).filter(
 		(org: Organization) =>
 			org.id === user.organization_id ||
-			authorization.canAt("users.lifecycle.readwrite", {
+			authorization.canAt("userlifecycle.readwrite", {
 				kind: "org",
 				id: org.id,
 			}),
 	);
+	const getOrgName = useOrganizationName(organizations);
 	const currentOrgName = user.organization_id
-		? (organizations?.find((org) => org.id === user.organization_id)
-				?.name ?? "Unavailable")
+		? getOrgName(user.organization_id, "Unavailable")
 		: "Global (no organization)";
 
 	const validateForm = (): boolean => {

@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models import (
@@ -25,6 +25,8 @@ from src.models import (
 )
 from src.services.decorator_property_service import DecoratorPropertyService
 from src.services.file_storage import FileStorageService
+from src.services.authorization.enforce import load_caller, require_operation
+from src.services.authorization.evaluator import GLOBAL
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ router = APIRouter(prefix="/api/decorator-properties", tags=["Decorator Properti
 )
 async def get_decorator_properties(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     path: str = Query(..., description="File path relative to workspace root"),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DecoratorPropertiesResponse:
@@ -52,6 +54,7 @@ async def get_decorator_properties(
     Returns:
         DecoratorPropertiesResponse with list of decorators and their properties
     """
+    require_operation(await load_caller(db, user), "GET /api/decorator-properties", GLOBAL)
     if not path.endswith(".py"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -101,7 +104,7 @@ async def get_decorator_properties(
 )
 async def update_decorator_properties(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     request: UpdatePropertiesRequest,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> UpdatePropertiesResponse:
@@ -117,6 +120,7 @@ async def update_decorator_properties(
     Returns:
         UpdatePropertiesResponse with modification status and new ETag
     """
+    require_operation(await load_caller(db, user), "PUT /api/decorator-properties", GLOBAL)
     if not request.path.endswith(".py"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

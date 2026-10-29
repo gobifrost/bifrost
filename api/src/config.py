@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import AliasChoices, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -70,28 +70,36 @@ class Settings(BaseSettings):
         description="Max overflow connections beyond pool size"
     )
 
+    database_dispatch_pool_size: int = Field(
+        default=4,
+        description=(
+            "Connections kept for accepting workflow runs. Separate from the "
+            "main pool so request handlers holding a connection never wait on "
+            "each other for a second one."
+        ),
+    )
+
+    database_dispatch_max_overflow: int = Field(
+        default=6,
+        description="Max overflow connections for the work-acceptance pool",
+    )
+
     # ==========================================================================
-    # RabbitMQ
+    # Legacy broker
     # ==========================================================================
-    rabbitmq_url: str = Field(
-        default="amqp://bifrost:bifrost_dev@localhost:5672/",
-        description="RabbitMQ connection URL"
+    rabbitmq_url: str | None = Field(
+        default=None,
+        description=(
+            "RabbitMQ of an earlier release. While reachable, work it left "
+            "queued is moved into PostgreSQL; remove it once drained."
+        ),
     )
 
     # ==========================================================================
     # Workflow Execution
     # ==========================================================================
-    max_concurrency: int = Field(
-        default=10,
-        description="Max concurrent workflow executions (controls RabbitMQ prefetch)"
-    )
-
-    # Process Pool Configuration (on-demand only — every execution forks
-    # a fresh one-shot worker, capped at `max_workers` concurrent forks).
-    max_workers: int = Field(
-        default=10,
-        description="Maximum concurrent worker processes (queue cap)"
-    )
+    # Every execution forks a fresh one-shot worker. Executors admit work by
+    # memory (src.services.memory_requests), not by count.
     execution_timeout_seconds: int = Field(
         default=300,
         description="Default execution timeout in seconds (5 minutes)"
@@ -116,10 +124,6 @@ class Settings(BaseSettings):
     # ==========================================================================
     # Supervised Services (Slice 3)
     # ==========================================================================
-    max_service_workers: int = Field(
-        default=20,
-        description="Maximum concurrent service children per worker (never consumes max_workers workflow slots)"
-    )
     service_claim_interval_seconds: int = Field(
         default=5,
         description="Worker-pull claim loop tick: expire leases, beat owned attempts, claim eligible services"
@@ -139,80 +143,91 @@ class Settings(BaseSettings):
 
 
     # ==========================================================================
-    # Platform build jobs
+    # Executors and on-demand Kubernetes workers (#769)
     # ==========================================================================
-    platform_build_backend: Literal["local", "kubernetes"] = Field(
-        default="local",
-        description="Execution backend for build-class platform jobs",
+    # Warm workers, Max workers, Worker memory, Largest worker and Idle time
+    # live in Settings -> Kubernetes (src.services.kubernetes_execution).
+    pool_max_lifetime_seconds: int = Field(
+        default=6 * 3600,
+        ge=60,
+        description="A reusable worker drains (never kills work) after this lifetime",
     )
-    kubernetes_build_namespace: str | None = Field(
+    pool_start_timeout_seconds: int = Field(
+        default=300,
+        ge=10,
+        description="Seconds a launched worker may take to become ready",
+    )
+    pool_worker_memory_request_mib: int = Field(default=512, ge=1)
+    pool_worker_cpu_request: str = Field(default="250m")
+    pool_worker_cpu_limit: str = Field(default="2")
+
+    # ==========================================================================
+    # Kubernetes Job identity (worker Jobs and isolated Jobs)
+    # ==========================================================================
+    # Scaling and isolation policy lives in Settings -> Kubernetes
+    # (src.services.kubernetes_execution). These stay deployment env: what a
+    # Job runs as is not something a Settings page may choose. Each reads the
+    # BIFROST_KUBERNETES_JOB_* name first, then the BIFROST_KUBERNETES_BUILD_*
+    # name it replaced (src.services.deployment_environment warns about the
+    # latter; the old names are removed in the release after next).
+    kubernetes_job_namespace: str | None = Field(
         default=None,
-        description="Kubernetes namespace for on-demand build platform jobs",
-    )
-    kubernetes_build_image: str | None = Field(
-        default=None,
-        description="Container image for on-demand build platform jobs",
-    )
-    kubernetes_build_configmap: str | None = Field(
-        default=None,
-        description="ConfigMap mounted by on-demand build platform jobs",
-    )
-    kubernetes_build_secret: str | None = Field(
-        default=None,
-        description="Secret mounted by on-demand build platform jobs",
-    )
-    kubernetes_build_service_account: str | None = Field(
-        default=None,
-        description="Service account for on-demand build platform jobs",
-    )
-    kubernetes_build_memory_request_mib: int = Field(
-        default=512,
-        ge=1,
-        description=(
-            "Guaranteed memory, in MiB, reserved on a node for one on-demand "
-            "build platform job. Lower values pack more densely; the pod may "
-            "burst above this up to the memory limit."
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_NAMESPACE", "BIFROST_KUBERNETES_BUILD_NAMESPACE"
         ),
+        description="Kubernetes namespace for Jobs; defaults to this pod's",
     )
-    kubernetes_build_memory_limit_mib: int = Field(
-        default=2048,
-        ge=1,
-        description=(
-            "Hard memory ceiling, in MiB, for one on-demand build platform "
-            "job. The pod is OOM-killed past this. Must be at least the "
-            "memory request; splitting request and limit makes build pods "
-            "Burstable rather than Guaranteed."
+    kubernetes_job_image: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_IMAGE", "BIFROST_KUBERNETES_BUILD_IMAGE"
         ),
+        description="Container image for Jobs; defaults to this pod's",
     )
-    kubernetes_build_cpu_request: str = Field(
+    kubernetes_job_configmap: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_CONFIGMAP", "BIFROST_KUBERNETES_BUILD_CONFIGMAP"
+        ),
+        description="ConfigMap mounted by Jobs",
+    )
+    kubernetes_job_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_SECRET", "BIFROST_KUBERNETES_BUILD_SECRET"
+        ),
+        description="Secret mounted by Jobs",
+    )
+    kubernetes_job_service_account: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_SERVICE_ACCOUNT",
+            "BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT",
+        ),
+        description="Service account Jobs run as",
+    )
+    kubernetes_job_cpu_request: str = Field(
         default="250m",
-        description="CPU request for one on-demand build platform job",
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_CPU_REQUEST", "BIFROST_KUBERNETES_BUILD_CPU_REQUEST"
+        ),
+        description="CPU request for one isolated Job",
     )
-    kubernetes_build_cpu_limit: str = Field(
+    kubernetes_job_cpu_limit: str = Field(
         default="1",
-        description="CPU limit for one on-demand build platform job",
-    )
-    kubernetes_build_max_jobs: int = Field(
-        default=2,
-        ge=1,
-        description="Maximum concurrent on-demand build platform jobs",
-    )
-    kubernetes_build_job_types: str = Field(
-        default=(
-            "application.deploy,application.sdk_update,solution.deploy,"
-            "solution.export,solution.git_sync"
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_CPU_LIMIT", "BIFROST_KUBERNETES_BUILD_CPU_LIMIT"
         ),
-        description=(
-            "Comma-separated job types eligible for Kubernetes placement "
-            "when the build backend is enabled. Other build-class jobs stay "
-            "local. Lets operators pilot remote execution one job type at a "
-            "time without a code change."
-        ),
+        description="CPU limit for one isolated Job",
     )
-    kubernetes_build_pending_timeout_seconds: int = Field(
+    kubernetes_job_pending_timeout_seconds: int = Field(
         default=300,
         ge=1,
-        description="Seconds before an unstarted Kubernetes build job is stale",
+        validation_alias=AliasChoices(
+            "BIFROST_KUBERNETES_JOB_PENDING_TIMEOUT_SECONDS",
+            "BIFROST_KUBERNETES_BUILD_PENDING_TIMEOUT_SECONDS",
+        ),
+        description="Seconds before an unstarted isolated Job is stale",
     )
 
     # ==========================================================================

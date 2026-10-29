@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 
 from bifrost.commands.solution import _poll_deploy_job
+from shared.app_build_errors import app_build_memory_message
 
 
 class _FakeResponse:
@@ -92,6 +93,17 @@ def test_poll_surfaces_failure(capsys):
     assert "diverged" in combined
     assert "solution_deploy_failed" in combined
     assert "https://bifrost.example/api/platform-jobs/job-2" in combined
+
+
+def test_poll_preserves_build_oom_recovery(capsys):
+    message = app_build_memory_message()
+    client = _FakeClient(
+        {"status": "failed", "error": message}, running_count=0,
+        platform_error={"code": "memory_pressure", "message": message, "retryable": False},
+    )
+    assert _run(_poll_deploy_job(client, "oom-job", interval=0.0)) == 1
+    captured = capsys.readouterr()
+    assert message in captured.out + captured.err
 
 
 def test_poll_preserves_failure_when_job_details_lookup_fails(capsys):

@@ -233,6 +233,11 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	const streamingMessageId = useChatStore((state) =>
 		conversationId ? state.streamingMessageIds[conversationId] : null,
 	);
+	const contextUsage = useChatStore((state) =>
+		conversationId
+			? (state.projectionsByConversation[conversationId]?.context_usage ?? null)
+			: null,
+	);
 	const todos = useTodos();
 	const setActiveConversation = useChatStore(
 		(state) => state.setActiveConversation,
@@ -243,13 +248,31 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	const [selectedModelProfileId, setSelectedModelProfileId] =
 		useState<ChatModelProfileId | null>(null);
 	const modelProfiles = modelProfileData?.profiles ?? [];
+	const contextModelProfileId = modelProfiles.some(
+		(profile) => profile.id === contextUsage?.model_profile_id,
+	)
+		? (contextUsage?.model_profile_id ?? null)
+		: null;
 	const effectiveModelProfileId = modelProfiles.some(
 		(profile) => profile.id === selectedModelProfileId,
 	)
 		? selectedModelProfileId
-		: (modelProfileData?.default_profile_id ??
+		: (contextModelProfileId ??
+			modelProfileData?.default_profile_id ??
 			modelProfiles[0]?.id ??
 			null);
+
+	const previousConversationIdRef = useRef(conversationId);
+	useEffect(() => {
+		const previousConversationId = previousConversationIdRef.current;
+		if (
+			previousConversationId !== undefined &&
+			previousConversationId !== conversationId
+		) {
+			setSelectedModelProfileId(null);
+		}
+		previousConversationIdRef.current = conversationId;
+	}, [conversationId]);
 
 	// Use WebSocket streaming
 	const {
@@ -505,6 +528,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					modelProfiles={modelProfiles}
 					modelProfileId={effectiveModelProfileId}
 					onModelProfileChange={setSelectedModelProfileId}
+					contextUsage={contextUsage}
 				/>
 			</div>
 		);
@@ -537,6 +561,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					modelProfiles={modelProfiles}
 					modelProfileId={effectiveModelProfileId}
 					onModelProfileChange={setSelectedModelProfileId}
+					contextUsage={contextUsage}
 				/>
 			</div>
 		);
@@ -573,6 +598,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					modelProfiles={modelProfiles}
 					modelProfileId={effectiveModelProfileId}
 					onModelProfileChange={setSelectedModelProfileId}
+					contextUsage={contextUsage}
 				/>
 			</div>
 		);
@@ -603,6 +629,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					modelProfiles={modelProfiles}
 					modelProfileId={effectiveModelProfileId}
 					onModelProfileChange={setSelectedModelProfileId}
+					contextUsage={contextUsage}
 				/>
 			</div>
 		);
@@ -858,6 +885,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				modelProfiles={modelProfiles}
 				modelProfileId={effectiveModelProfileId}
 				onModelProfileChange={setSelectedModelProfileId}
+				contextUsage={contextUsage}
 			/>
 		</div>
 	);

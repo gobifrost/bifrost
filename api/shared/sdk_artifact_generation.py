@@ -18,9 +18,9 @@ Out of scope (unchanged): ``artifacts.write/read/list/get_download_url``
 (``shared.sdk_artifacts``), video generation/PlatformJob, AI routes, the
 public SDK, and the worker-local engine socket.
 
-The caller passes an explicit trusted actor (the auth-verified
-``UserPrincipal``) plus the DB session — never a FastAPI Request and
-never a child-provided actor claim. Actor/org scope, templates,
+The caller passes explicit verified original-user authority plus the DB session
+— never a FastAPI Request and never a child-provided actor claim. Effects
+attribution remains separate from authority. Templates,
 rendering, binary validation, provider calls and usage, error
 precedence, storage, and metadata match the historical handlers exactly.
 Storage behavior is not duplicated here: rendering delegates to
@@ -69,7 +69,7 @@ from src.models.contracts.artifacts import (
     SpreadsheetArtifactSpec,
     TextArtifactSpec,
 )
-from shared.scope_resolver import has_scope_bypass
+from shared import access_checks
 from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,8 +95,8 @@ async def sdk_render_document_artifact(
 ) -> ArtifactRef:
     """Render and store a trusted PDF or DOCX artifact.
 
-    Workspace image references resolve through the caller's
-    (owner-or-org, admin-bypass) scope before rendering; a resolved
+    Workspace image references resolve through the caller's original-user
+    owner-or-named-power scope before rendering; a resolved
     non-image raises transport-neutral 422, and an unresolvable path
     propagates as ``ArtifactAccessError`` (``ValueError`` → 422),
     exactly as the historical handler did.
@@ -105,7 +105,7 @@ async def sdk_render_document_artifact(
         generate_document,
         generate_document_with_images,
     )
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
 
     image_content: dict[str, bytes] = {}
     if workspace_id is not None and any(section.images for section in spec.sections):
@@ -114,14 +114,10 @@ async def sdk_render_document_artifact(
             for image in (
                 image for section in spec.sections for image in section.images
             ):
-                stored_image = await read_service.resolve_workspace_path(
+                stored_image = await read_service.resolve_workspace_path_for_caller(
                     workspace_id,
                     image.path,
-                    user_id=caller.user.user_id,
-                    bypass=has_scope_bypass(
-                        is_platform_admin=caller.user.is_superuser,
-                        is_provider_org=caller.user.is_provider_org,
-                    ),
+                    caller=caller.caller,
                 )
                 if not stored_image.content_type.startswith("image/"):
                     raise SdkArtifactError(
@@ -133,19 +129,17 @@ async def sdk_render_document_artifact(
         spec,
         *([image_content] if image_content else []),
     )
-    artifact = await ArtifactService(caller.db).store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=caller.user.user_id,
-        organization_id=caller.user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=generated.filename,
-        bypass=has_scope_bypass(
-            is_platform_admin=caller.user.is_superuser,
-            is_provider_org=caller.user.is_provider_org,
-        ),
-    )
+    try:
+        artifact = await ArtifactService(caller.db).store_for_caller(
+            caller.caller,
+            filename=generated.filename,
+            content_type=generated.content_type,
+            content=generated.content,
+            workspace_id=workspace_id,
+            logical_path=generated.filename,
+        )
+    except ArtifactAccessError as exc:
+        raise SdkArtifactError(404, str(exc)) from exc
     return artifact_ref(artifact)
 
 
@@ -157,22 +151,20 @@ async def sdk_render_spreadsheet_artifact(
 ) -> ArtifactRef:
     """Render and store a trusted XLSX artifact."""
     from shared.artifact_generation import generate_spreadsheet
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
 
     generated = await asyncio.to_thread(generate_spreadsheet, spec)
-    artifact = await ArtifactService(caller.db).store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=caller.user.user_id,
-        organization_id=caller.user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=generated.filename,
-        bypass=has_scope_bypass(
-            is_platform_admin=caller.user.is_superuser,
-            is_provider_org=caller.user.is_provider_org,
-        ),
-    )
+    try:
+        artifact = await ArtifactService(caller.db).store_for_caller(
+            caller.caller,
+            filename=generated.filename,
+            content_type=generated.content_type,
+            content=generated.content,
+            workspace_id=workspace_id,
+            logical_path=generated.filename,
+        )
+    except ArtifactAccessError as exc:
+        raise SdkArtifactError(404, str(exc)) from exc
     return artifact_ref(artifact)
 
 
@@ -184,22 +176,20 @@ async def sdk_render_text_artifact(
 ) -> ArtifactRef:
     """Render and store a trusted text-family artifact."""
     from shared.artifact_generation import generate_text
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
 
     generated = await asyncio.to_thread(generate_text, spec)
-    artifact = await ArtifactService(caller.db).store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=caller.user.user_id,
-        organization_id=caller.user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=generated.filename,
-        bypass=has_scope_bypass(
-            is_platform_admin=caller.user.is_superuser,
-            is_provider_org=caller.user.is_provider_org,
-        ),
-    )
+    try:
+        artifact = await ArtifactService(caller.db).store_for_caller(
+            caller.caller,
+            filename=generated.filename,
+            content_type=generated.content_type,
+            content=generated.content,
+            workspace_id=workspace_id,
+            logical_path=generated.filename,
+        )
+    except ArtifactAccessError as exc:
+        raise SdkArtifactError(404, str(exc)) from exc
     return artifact_ref(artifact)
 
 
@@ -218,13 +208,14 @@ async def sdk_generate_image_artifact(
     Provider request, response, error, model, usage, and artifact
     behavior match the historical handler exactly.
     """
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.artifacts import ArtifactAccessError, ArtifactService, artifact_ref
     from src.services.media_generation import (
         generate_image_with_config,
         get_media_provider_config,
         record_media_usage,
     )
 
+    access_checks.note_launch("ai.execute", None, caller.caller.principal.organization_id, subject="ai:image")
     async with _isolated_session(caller.db) as config_db:
         config = await get_media_provider_config(config_db, "image")
     generated = await generate_image_with_config(
@@ -232,25 +223,23 @@ async def sdk_generate_image_artifact(
         filename=spec.filename,
         prompt=spec.prompt,
     )
-    artifact = await ArtifactService(caller.db).store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=caller.user.user_id,
-        organization_id=caller.user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=generated.filename,
-        bypass=has_scope_bypass(
-            is_platform_admin=caller.user.is_superuser,
-            is_provider_org=caller.user.is_provider_org,
-        ),
-    )
+    try:
+        artifact = await ArtifactService(caller.db).store_for_caller(
+            caller.caller,
+            filename=generated.filename,
+            content_type=generated.content_type,
+            content=generated.content,
+            workspace_id=workspace_id,
+            logical_path=generated.filename,
+        )
+    except ArtifactAccessError as exc:
+        raise SdkArtifactError(404, str(exc)) from exc
     await record_media_usage(
         caller.db,
         generated,
         execution_id=execution_id,
-        organization_id=caller.user.organization_id,
-        user_id=caller.user.user_id,
+        organization_id=caller.caller.principal.organization_id,
+        user_id=caller.caller.principal.user_id,
     )
     return artifact_ref(artifact)
 

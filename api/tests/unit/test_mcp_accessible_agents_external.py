@@ -1,102 +1,92 @@
-"""
-LEAK #2 failing-first proof: MCPToolAccessService._get_accessible_agents
-queried agents across ALL orgs with a role-NAME match and no org filter, so a
-role_based agent in another org (or global) with a same-named role leaked to
-the caller. The org cascade must be applied in-query. The cascade is the same
-for every principal (org + global) — external access is governed by the
-access-level filter, not by scope.
-"""
+"""MCP agent queries use the current Caller reach in the SQL predicate."""
 
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.mcp_server.tool_access import MCPToolAccessService
+from tests.helpers.authorization import admin_caller
 
 
 @pytest.fixture
 def session():
-    s = AsyncMock()
-    s.execute = AsyncMock()
+    value = AsyncMock()
+    value.execute = AsyncMock()
     result = MagicMock()
     result.scalars.return_value.unique.return_value.all.return_value = []
-    s.execute.return_value = result
-    return s
+    value.execute.return_value = result
+    return value
+
+
+def _caller(*, external: bool = False) -> Caller:
+    org_id = uuid4()
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="agent-user@example.test",
+        organization_id=org_id,
+        is_external=external,
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=org_id,
+            base_role_id=uuid4(),
+            is_external=external,
+            base_permissions=frozenset(),
+            role_grants=(),
+        ),
+    )
 
 
 def _executed_sql(session) -> str:
-    """Concatenated WHERE clauses of every executed statement (the column list
-    always names organization_id, so inspect only the predicate)."""
-    out = []
+    """Inspect WHERE clauses only; selected columns always include org id."""
+    clauses = []
     for call in session.execute.await_args_list:
-        stmt = call.args[0]
+        statement = call.args[0]
         try:
-            full = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            full = str(statement.compile(compile_kwargs={"literal_binds": True}))
         except Exception:
-            full = str(stmt)
+            full = str(statement)
         _, _, where = full.partition("WHERE")
-        out.append(where)
-    return "\n".join(out)
+        clauses.append(where)
+    return "\n".join(clauses)
 
 
 @pytest.mark.asyncio
 class TestAccessibleAgentsOrgScope:
     async def test_regular_user_query_is_org_scoped(self, session):
-        svc = MCPToolAccessService(session)
-        org = uuid4()
-        await svc._get_accessible_agents(
-            user_roles=["r"], is_superuser=False, org_id=org
-        )
+        await MCPToolAccessService(session)._get_accessible_agents(_caller())
         sql = _executed_sql(session)
-        # Org cascade present: own org AND global arm.
         assert "organization_id" in sql
         assert "IS NULL" in sql
 
     async def test_external_user_query_keeps_normal_cascade(self, session):
-        svc = MCPToolAccessService(session)
-        org = uuid4()
-        await svc._get_accessible_agents(
-            user_roles=["r"], is_superuser=False, is_external=True, org_id=org
-        )
+        await MCPToolAccessService(session)._get_accessible_agents(_caller(external=True))
         sql = _executed_sql(session)
-        # Same cascade as any org user — global role_based agents an external
-        # was granted must remain reachable; the access-level filter (not the
-        # scope) is what excludes authenticated-tier agents.
         assert "organization_id" in sql
         assert "IS NULL" in sql
 
-    async def test_superuser_query_unscoped(self, session):
-        svc = MCPToolAccessService(session)
-        await svc._get_accessible_agents(
-            user_roles=[], is_superuser=True, org_id=uuid4()
-        )
-        sql = _executed_sql(session)
-        # Superuser: no org filter (full visibility).
-        assert "organization_id" not in sql
+    async def test_platform_admin_query_is_unscoped(self, session):
+        await MCPToolAccessService(session)._get_accessible_agents(admin_caller())
+        assert "organization_id" not in _executed_sql(session)
 
 
 @pytest.mark.asyncio
 class TestGetToolsForAgentByIdOrgScope:
-    """get_tools_for_agent fetches a specific agent by id — that fetch must be
-    org-scoped IN THE DATABASE, else a cross-org/global role_based agent with a
-    same-named role passes _check_agent_access (LEAK #2 by-id variant)."""
-
     async def test_regular_user_by_id_query_is_org_scoped(self, session):
-        svc = MCPToolAccessService(session)
-        await svc.get_tools_for_agent(
-            agent_id=str(uuid4()), user_roles=["r"], is_superuser=False,
-            org_id=uuid4(),
-        )
+        await MCPToolAccessService(session).get_tools_for_agent(uuid4(), _caller())
         sql = _executed_sql(session)
         assert "organization_id" in sql
         assert "IS NULL" in sql
 
     async def test_external_user_by_id_query_keeps_normal_cascade(self, session):
-        svc = MCPToolAccessService(session)
-        await svc.get_tools_for_agent(
-            agent_id=str(uuid4()), user_roles=["r"], is_superuser=False,
-            is_external=True, org_id=uuid4(),
+        await MCPToolAccessService(session).get_tools_for_agent(
+            uuid4(), _caller(external=True)
         )
         sql = _executed_sql(session)
         assert "organization_id" in sql

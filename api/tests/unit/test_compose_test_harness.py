@@ -129,6 +129,8 @@ def test_test_runner_mounts_pyright_inputs():
     assert "./api/pyrightconfig.json:/app/pyrightconfig.json:ro" in volumes
     assert "./test.sh:/app/test.sh:ro" in volumes
     assert "./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro" in volumes
+    assert "./docker-compose.yml:/app/docker-compose.yml:ro" in volumes
+    assert "./docker-compose.dev.yml:/app/docker-compose.dev.yml:ro" in volumes
 
 
 def test_hardened_test_runner_writes_coverage_to_results_mount():
@@ -221,11 +223,83 @@ def test_api_quality_script_runs_pyright_without_ci_venv_config():
 
 
 def test_state_reset_reloads_the_mounted_scheduler_fixture_server():
-    """A fixture edit must not leave a stale long-lived HTTP process running."""
+    """Fixture trust is ready before reset restarts remote executors."""
     script = _find_repo_file("test.sh").read_text()
     reset_state = script.split("reset_state() {", 1)[1].split("\n}", 1)[0]
     stop_block = reset_state.split("docker compose", 1)[1].split("2>/dev/null", 1)[0]
     assert "scheduler-fixtures" in stop_block
+    fixture_start = 'docker compose -f "$COMPOSE_FILE" --profile e2e start scheduler-fixtures'
+    executor_start = 'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build \\\n        api worker scheduler'
+    assert fixture_start in reset_state
+    assert 'wait_for_service "$COMPOSE_FILE" scheduler-fixtures' in reset_state
+    assert executor_start in reset_state
+    assert reset_state.index(fixture_start) < reset_state.index(executor_start)
+
+
+def test_state_reset_recreates_application_containers_and_removes_anonymous_volumes():
+    """A fresh DB/object-store generation cannot reuse an old writable worktree.
+
+    GitHubSyncService caches its workspace under ``/tmp/git`` in each
+    application container. Resetting SeaweedFS while merely stopping and
+    starting the worker leaves a stale ``.git`` directory behind, which can no
+    longer be restored from the new object-store generation. Recreate only the
+    application containers; postgres, redis, fixture volumes, and the test
+    image remain long-lived. Anonymous dependency volumes must be removed with
+    the containers so repeated resets do not fill the host disk.
+    """
+    script = _find_repo_file("test.sh").read_text()
+    reset_state = script.split("reset_state() {", 1)[1].split("\n}", 1)[0]
+
+    recreate = 'docker compose -f "$COMPOSE_FILE" rm -sfv api worker scheduler'
+    executor_up = 'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build \\\n        api worker scheduler'
+
+    assert recreate in reset_state
+    assert executor_up in reset_state
+    assert reset_state.index(recreate) < reset_state.index(executor_up)
+    assert 'start \\\n        api worker scheduler' not in reset_state
+
+
+def test_canonical_scheduler_fixture_serves_thin_provider_jobs():
+    """Every platform-job executor uses the shared local TLS/Git fixture.
+
+    The thin platform-job E2E suite runs through the normal ``./test.sh e2e``
+    path.  Keeping its video provider and Git rewrite in the canonical
+    scheduler fixture prevents a second Compose overlay from silently falling
+    out of the merge gate.
+    """
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    services = compose["services"]
+    fixture = services["scheduler-fixtures"]
+
+    assert fixture["command"] == ["python", "-m", "scripts.thin_provider_fixture"]
+    # The unprofiled API depends on this service, including during the
+    # Dockerized quality lane. A profiled dependency makes Compose reject the
+    # project before `--no-deps` can run the test-runner.
+    assert "profiles" not in fixture
+    assert "thin-providers" not in services
+    assert "thin-provider-tls:/fixture-tls" in fixture["volumes"]
+    assert fixture["networks"]["default"]["aliases"] == ["fixture.openrouter.ai"]
+
+    fixture_source = _find_repo_file("api/scripts/thin_provider_fixture.py").read_text()
+    assert "scheduler_fixture_server.main()" in fixture_source
+    assert "target=tls_server.serve_forever, daemon=True" in fixture_source
+    assert "tls_server.shutdown()" in fixture_source
+    assert "tls_server.server_close()" in fixture_source
+    assert 'ThreadingHTTPServer(("0.0.0.0", 8080)' not in fixture_source
+
+    for executor_name in ("api", "worker", "scheduler"):
+        executor = services[executor_name]
+        assert executor["environment"]["SSL_CERT_FILE"] == "/fixture-tls/trust.pem"
+        assert executor["environment"]["GIT_CONFIG_GLOBAL"] == "/fixture-gitconfig"
+        assert executor["environment"]["EMBEDDING_ALLOWED_HOSTS"] == "scheduler-fixtures"
+        assert "thin-provider-tls:/fixture-tls:ro" in executor["volumes"]
+        assert "./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro" in executor["volumes"]
+        assert executor["depends_on"]["scheduler-fixtures"]["condition"] == "service_healthy"
+
+    git_config = _find_repo_file("api/scripts/thin_fixture.gitconfig").read_text()
+    assert 'url "file:///tmp/bifrost/solution-repo-fixtures/thin-github/thin-"' in git_config
+    assert "insteadOf = https://github.com/thin-" in git_config
+    assert "insteadOf = https://github.com/\n" not in git_config
 
 
 def test_clean_boot_optimization_is_one_shot_and_shared_by_test_runners():

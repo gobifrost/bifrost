@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
+from shared.form_execution import create_form_execution_context
+from shared.run_lineage import RunLineage
+
 
 class FormProviderError(ValueError):
     pass
@@ -64,14 +67,14 @@ async def execute_form_field_provider(
     user: Any,
     caller_org_id: Any,
     browser_inputs: dict[str, Any],
+    lineage: RunLineage,
 ) -> list[dict[str, Any]]:
     """Execute only the provider persisted on ``field`` in the form's scope."""
 
-    from shared.run_lineage import principal_lineage
     from src.repositories.workflows import WorkflowRepository
-    from src.sdk.context import ExecutionContext, Organization
     from src.services.execution.service import run_workflow
     from src.services.solution_scope import solution_allows_global
+    from src.services.authorization.enforce import load_caller, user_reach
 
     anchor_org_id = form.organization_id or caller_org_id
     repo = WorkflowRepository(db, org_id=anchor_org_id, is_superuser=True)
@@ -86,22 +89,20 @@ async def execute_form_field_provider(
     )
     if provider is None or not provider.is_active or provider.type != "data_provider":
         raise FormProviderError("Provider unavailable")
+    # The form capability is the resource gate; authenticated callers still
+    # cannot use it to resolve a workflow beyond their original reach.
+    if not user.embed:
+        caller = await load_caller(db, user)
+        if not user_reach(caller).covers(provider.organization_id):
+            raise FormProviderError("Provider unavailable")
 
-    organization = (
-        Organization(id=str(anchor_org_id), name="", is_active=True)
-        if anchor_org_id
-        else None
-    )
-    context = ExecutionContext(
-        user_id=str(user.user_id),
-        name=user.name,
-        email=user.email,
-        scope=str(anchor_org_id) if anchor_org_id else "GLOBAL",
-        organization=organization,
-        is_platform_admin=user.is_superuser,
-        is_function_key=False,
+    context = await create_form_execution_context(
+        db,
+        user=user,
+        lineage=lineage,
         execution_id=str(uuid4()),
-        embed=user.verified_context or {},
+        organization_id=anchor_org_id,
+        is_platform_admin=user.is_superuser,
     )
     response = await run_workflow(
         context=context,
@@ -110,7 +111,7 @@ async def execute_form_field_provider(
         form_id=str(form.id),
         transient=True,
         sync=True,
-        lineage=await principal_lineage(db, user),
+        lineage=lineage,
     )
     metadata_keys = set((field.auto_fill or {}).values())
     return _normalize_options(response.result, metadata_keys)

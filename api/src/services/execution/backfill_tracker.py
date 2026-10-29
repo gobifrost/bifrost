@@ -35,11 +35,12 @@ async def record_backfill_outcome(
     """
     try:
         async with session_factory() as db:
+            # Locked: several executors count outcomes for one job at once.
             job = (
                 await db.execute(
-                    select(SummaryBackfillJob).where(
-                        SummaryBackfillJob.id == job_id
-                    )
+                    select(SummaryBackfillJob)
+                    .where(SummaryBackfillJob.id == job_id)
+                    .with_for_update()
                 )
             ).scalar_one_or_none()
             if job is None:

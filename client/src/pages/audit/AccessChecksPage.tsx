@@ -10,10 +10,7 @@ import {
 
 import { AuditEventDrawer } from "@/components/audit/AuditEventDrawer";
 import { RunUserLabel } from "@/components/audit/RunUserLabel";
-import {
-	PageScrollArea,
-	PageWorkspace,
-} from "@/components/layout/PageWorkspace";
+import { PageScrollArea } from "@/components/layout/PageWorkspace";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +22,14 @@ import {
 	DataTableRow,
 } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
 	Tooltip,
@@ -43,6 +48,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import {
 	checkKindTitle,
+	checkResourceTitle,
 	stepTitle,
 	stoppedStep,
 	storedTrace,
@@ -52,11 +58,20 @@ import { formatRelativeTime } from "@/lib/utils";
 import { useAuthorization } from "@/services/authorization";
 
 import { AuditPagination } from "./AuditPagination";
+import { AccessCheckAggregates } from "./AccessCheckAggregates";
+import { AccessCheckRecords } from "./AccessCheckRecords";
+import { AuditPageLayout } from "./AuditPageLayout";
 
-/** Report-only checks that would have been denied. */
+/** Failed actual and historical report-only checks. */
 const WOULD_DENY = { action: "access.check", outcome: "failure" } as const;
 /** The `key` (and filter value) of a group whose entries have no value. */
 const NONE = "none";
+
+type OpenCheck = (
+	entry: AuditLogEntry,
+	opener: HTMLElement | null,
+	group?: AuditLogGroup,
+) => void;
 
 const GROUPINGS: { value: AuditGroupBy; label: string }[] = [
 	{ value: "workflow", label: "Workflow" },
@@ -92,7 +107,8 @@ function StopChip({
 	return (
 		<span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bf-warning-soft)] px-2 py-0.5 text-xs font-medium text-[var(--bf-warning)]">
 			<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-			{labelled && "Would Stop Here · "}
+			{labelled &&
+				(trace.enforced ? "Stopped Here · " : "Would Stop Here · ")}
 			{stepTitle(step.label)}
 		</span>
 	);
@@ -222,7 +238,7 @@ function GroupList({
 					<DataTableHead>{heading}</DataTableHead>
 					<DataTableHead className="text-right">Checks</DataTableHead>
 					<DataTableHead>Last Seen</DataTableHead>
-					<DataTableHead>Would Stop Here</DataTableHead>
+					<DataTableHead>Decision Point</DataTableHead>
 				</DataTableRow>
 			</DataTableHeader>
 			<DataTableBody>
@@ -314,7 +330,10 @@ function CheckList({
 								</dt>
 								<dd className="mt-1">
 									{entry.resource_type
-										? checkKindTitle(entry.resource_type)
+										? checkResourceTitle(
+												entry.resource_type,
+												entry.details,
+											)
 										: "—"}
 								</dd>
 							</div>
@@ -332,7 +351,7 @@ function CheckList({
 					<DataTableHead>Time</DataTableHead>
 					<DataTableHead>Run User</DataTableHead>
 					<DataTableHead>Resource Type</DataTableHead>
-					<DataTableHead>Would Stop Here</DataTableHead>
+					<DataTableHead>Decision Point</DataTableHead>
 				</DataTableRow>
 			</DataTableHeader>
 			<DataTableBody>
@@ -360,7 +379,10 @@ function CheckList({
 						</DataTableCell>
 						<DataTableCell>
 							{entry.resource_type
-								? checkKindTitle(entry.resource_type)
+								? checkResourceTitle(
+										entry.resource_type,
+										entry.details,
+									)
 								: "—"}
 						</DataTableCell>
 						<DataTableCell>
@@ -373,16 +395,14 @@ function CheckList({
 	);
 }
 
-/** One group's checks, newest first, a page at a time. */
-function GroupChecks({
-	groupBy,
-	groupKey,
+/** Matching summaries or original checks, newest first, a page at a time. */
+function CheckResults({
+	filters,
 	onOpen,
 	desktop,
 }: {
-	groupBy: AuditGroupBy;
-	groupKey: string;
-	onOpen: (entry: AuditLogEntry, opener: HTMLElement | null) => void;
+	filters: GetAuditLogParams;
+	onOpen: OpenCheck;
 	desktop: boolean;
 }) {
 	const [tokens, setTokens] = useState<string[]>([]);
@@ -390,7 +410,7 @@ function GroupChecks({
 	const { data, isLoading, isFetching, error, refetch } = useAuditLog(
 		{
 			...WOULD_DENY,
-			...groupFilter(groupBy, groupKey),
+			...filters,
 			limit: 50,
 			continuation_token: tokens[page],
 		},
@@ -398,6 +418,8 @@ function GroupChecks({
 		{ preservePageData: true },
 	);
 	const entries = data?.entries ?? [];
+	const groups = data?.groups ?? [];
+	const aggregating = !!filters.aggregate;
 
 	if (error || (isLoading && !data))
 		return (
@@ -408,19 +430,35 @@ function GroupChecks({
 				label="Loading checks"
 			/>
 		);
-	if (entries.length === 0)
+	if ((aggregating ? groups : entries).length === 0)
 		return (
 			<EmptyState
 				icon={ShieldCheck}
 				title="No Checks in This Group"
-				description="None of the recorded would-deny checks are in this group now."
+				description="No denied or report-only failed checks are in this group."
 			/>
 		);
 	return (
 		<>
-			<CheckList entries={entries} onOpen={onOpen} desktop={desktop} />
+			{aggregating ? (
+				<AccessCheckAggregates
+					groups={groups}
+					desktop={desktop}
+					showWorkflow={!filters.workflow_id}
+					onOpen={(group, opener) =>
+						onOpen(group.sample, opener, group)
+					}
+				/>
+			) : (
+				<CheckList
+					entries={entries}
+					onOpen={onOpen}
+					desktop={desktop}
+				/>
+			)}
 			<AuditPagination
-				count={entries.length}
+				count={aggregating ? groups.length : entries.length}
+				kind={aggregating ? "summary" : "event"}
 				page={page}
 				hasNext={!!data?.continuation_token}
 				pending={isFetching}
@@ -432,6 +470,62 @@ function GroupChecks({
 					setTokens(next);
 					setPage(page + 1);
 				}}
+			/>
+		</>
+	);
+}
+
+type AggregateWindow = NonNullable<GetAuditLogParams["aggregate"]>;
+
+function GroupChecks({
+	groupBy,
+	groupKey,
+	onOpen,
+	desktop,
+}: {
+	groupBy: AuditGroupBy;
+	groupKey: string;
+	onOpen: OpenCheck;
+	desktop: boolean;
+}) {
+	const [aggregate, setAggregate] = useState<AggregateWindow | "none">("1h");
+	return (
+		<>
+			<div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
+				<div className="flex items-center gap-2">
+					<Label htmlFor="check-time-aggregate">Time Aggregate</Label>
+					<Select
+						value={aggregate}
+						onValueChange={(value) =>
+							setAggregate(value as AggregateWindow | "none")
+						}
+					>
+						<SelectTrigger
+							id="check-time-aggregate"
+							className="min-h-11 w-32 sm:min-h-9"
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="1h">1 Hour</SelectItem>
+							<SelectItem value="6h">6 Hours</SelectItem>
+							<SelectItem value="24h">24 Hours</SelectItem>
+							<SelectItem value="none">Off</SelectItem>
+						</SelectContent>
+					</Select>
+				</div>
+				<p className="text-xs text-muted-foreground">
+					Open a summary to inspect its recorded checks.
+				</p>
+			</div>
+			<CheckResults
+				key={aggregate}
+				filters={{
+					...groupFilter(groupBy, groupKey),
+					...(aggregate === "none" ? {} : { aggregate }),
+				}}
+				onOpen={onOpen}
+				desktop={desktop}
 			/>
 		</>
 	);
@@ -449,7 +543,7 @@ export function AccessChecksPage() {
 	const current = grouping(params.get("group_by"));
 	const groupBy = current.value;
 	const groupKey = params.get("key");
-	const desktop = useMediaQuery("(min-width: 1024px)");
+	const desktop = useMediaQuery("(min-width: 1280px)");
 	const authorization = useAuthorization();
 
 	const groupsQuery = useAuditGroups(groupBy, WOULD_DENY);
@@ -463,6 +557,7 @@ export function AccessChecksPage() {
 	const [selected, setSelected] = useState<{
 		entry: AuditLogEntry;
 		opener: HTMLElement | null;
+		group?: AuditLogGroup;
 	}>();
 	const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -492,17 +587,8 @@ export function AccessChecksPage() {
 		groupBy === GROUPINGS[0].value ? "" : `?group_by=${groupBy}`;
 
 	return (
-		<PageWorkspace className="mx-auto flex w-full min-w-0 max-w-[1400px] flex-col gap-5">
+		<AuditPageLayout view="access-checks">
 			<div className="shrink-0 space-y-4">
-				<div>
-					<h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
-						Access Checks
-					</h1>
-					<p className="mt-2 text-sm text-muted-foreground">
-						Checks that would have been denied if enforcement were
-						on. Nothing is blocked yet.
-					</p>
-				</div>
 				{groupKey ? (
 					<div className="space-y-1">
 						<Link
@@ -523,7 +609,7 @@ export function AccessChecksPage() {
 						</h2>
 						{openGroup && (
 							<p className="text-sm text-muted-foreground">
-								{openGroup.count} would-deny{" "}
+								{openGroup.count} failed{" "}
 								{openGroup.count === 1 ? "check" : "checks"}
 							</p>
 						)}
@@ -559,15 +645,17 @@ export function AccessChecksPage() {
 				)}
 			</div>
 
-			<PageScrollArea className="lg:overflow-hidden">
+			<PageScrollArea
+				className={desktop ? "lg:overflow-hidden" : undefined}
+			>
 				<div className="flex min-w-0 flex-col gap-4 lg:h-full lg:min-h-0">
 					{groupKey ? (
 						<GroupChecks
 							key={`${groupBy}:${groupKey}`}
 							groupBy={groupBy}
 							groupKey={groupKey}
-							onOpen={(entry, opener) => {
-								setSelected({ entry, opener });
+							onOpen={(entry, opener, group) => {
+								setSelected({ entry, opener, group });
 								setDrawerOpen(true);
 							}}
 							desktop={desktop}
@@ -583,8 +671,8 @@ export function AccessChecksPage() {
 					) : groups.length === 0 ? (
 						<EmptyState
 							icon={ShieldCheck}
-							title="No Would-Deny Checks"
-							description="Every recorded check would have been allowed."
+							title="No Failed Access Checks"
+							description="No denied or report-only failed checks match these filters."
 						/>
 					) : (
 						<GroupList
@@ -609,8 +697,30 @@ export function AccessChecksPage() {
 				open={drawerOpen}
 				onOpenChange={setDrawerOpen}
 				returnFocus={selected?.opener}
+				recordNavigation={
+					drawerOpen &&
+					selected?.group &&
+					selected.group.count > 1 &&
+					groupKey ? (
+						<AccessCheckRecords
+							key={selected.group.key}
+							filters={{
+								...groupFilter(groupBy, groupKey),
+								aggregate_key: selected.group.key!,
+							}}
+							count={selected.group.count}
+							selectedId={selected.entry.id}
+							onSelect={(entry) =>
+								setSelected(
+									(current) =>
+										current && { ...current, entry },
+								)
+							}
+						/>
+					) : undefined
+				}
 			/>
-		</PageWorkspace>
+		</AuditPageLayout>
 	);
 }
 

@@ -176,5 +176,6 @@ def rate_limit(
 
 # Pre-configured rate limiters for common auth scenarios
 auth_limiter = RateLimiter(max_requests=10, window_seconds=60)  # 10 req/min
+device_token_limiter = RateLimiter(max_requests=20, window_seconds=60)  # 20 req/min
 mfa_limiter = RateLimiter(max_requests=5, window_seconds=60)    # 5 req/min
 password_reset_limiter = RateLimiter(max_requests=3, window_seconds=300)  # 3 req/5min

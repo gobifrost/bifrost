@@ -9,7 +9,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.llm import (
@@ -21,13 +21,14 @@ from src.models.contracts.llm import (
     EmbeddingTestResponse,
 )
 from src.services.ai_model_service import AIModelService
+from src.services.authorization.enforce import load_caller, require_operation
+from src.services.authorization.evaluator import GLOBAL
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/admin/llm",
     tags=["LLM Configuration"],
-    dependencies=[RequirePlatformAdmin],  # All endpoints require platform admin
 )
 
 
@@ -62,6 +63,9 @@ async def get_embedding_config_endpoint(
     resolved endpoint (dedicated → inherited LLM → null = OpenAI default).
     Requires platform admin access.
     """
+    require_operation(
+        await load_caller(db, user), "GET /api/admin/llm/embedding-config", GLOBAL
+    )
     service = AIModelService(db)
     config = await service.get_embedding_config_row()
     if config:
@@ -110,6 +114,9 @@ async def set_embedding_config(
     reindex via the scheduler.
     Requires platform admin access.
     """
+    require_operation(
+        await load_caller(db, user), "POST /api/admin/llm/embedding-config", GLOBAL
+    )
     from src.models.contracts.notifications import (
         NotificationCategory,
         NotificationCreate,
@@ -301,6 +308,9 @@ async def delete_embedding_config(
     OpenAI key (if available).
     Requires platform admin access.
     """
+    require_operation(
+        await load_caller(db, user), "DELETE /api/admin/llm/embedding-config", GLOBAL
+    )
     deleted = await AIModelService(db).delete_embedding_config()
     if not deleted:
         raise HTTPException(
@@ -329,6 +339,9 @@ async def trigger_embedding_reindex(
     is created).
     Requires platform admin access.
     """
+    require_operation(
+        await load_caller(db, user), "POST /api/admin/llm/embedding-reindex", GLOBAL
+    )
     from src.jobs.platform.embedding_reindex import (
         EMBEDDING_REINDEX_DEFINITION,
         EmbeddingReindexPayload,
@@ -423,6 +436,9 @@ async def test_embedding_connection(
     3. LLM provider config — only when provider is openai (Anthropic doesn't
        have embeddings). Inherits both key and endpoint.
     """
+    require_operation(
+        await load_caller(db, user), "POST /api/admin/llm/embedding-test", GLOBAL
+    )
     try:
         api_key = request.api_key
         normalized_endpoint = _normalize_endpoint(request.endpoint)

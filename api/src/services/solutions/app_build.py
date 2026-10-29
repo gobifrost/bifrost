@@ -22,10 +22,10 @@ import tempfile
 from pathlib import Path
 from uuid import UUID
 
-from aiobotocore.session import get_session
-
+from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
 from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
+from src.core.s3_transport import S3Transport
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,17 @@ APPS_PREFIX = "_apps/"
 # dependency's postinstall script waiting on the network — would wedge the
 # install until process restart (every subsequent deploy 409s).
 _BUILD_STEP_TIMEOUT_S = 600
+
+# How much of a failed step's output is surfaced on the deploy job.
+_FAILURE_OUTPUT_LINES = 20
+
+
+def _output_tail(exc: subprocess.CalledProcessError) -> str:
+    """The last lines of a failed step's stderr, or stdout when stderr is empty."""
+    raw = exc.stderr or exc.output or b""
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    return "\n".join(lines[-_FAILURE_OUTPUT_LINES:]) or "(no output)"
 
 
 class SolutionAppBuilder:
@@ -60,13 +71,11 @@ class SolutionAppBuilder:
         return f"{base}{rel.lstrip('/')}" if rel else base
 
     def _client(self):
-        session = get_session()
-        return session.create_client(
-            "s3",
+        return S3Transport(
             endpoint_url=self._settings.s3_endpoint_url,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key,
-            region_name=self._settings.s3_region,
+            access_key_id=self._settings.s3_access_key,
+            secret_access_key=self._settings.s3_secret_key,
+            region=self._settings.s3_region,
         )
 
     def compile_dist(
@@ -89,8 +98,8 @@ class SolutionAppBuilder:
             return prebuilt_dist
         with tempfile.TemporaryDirectory(prefix=f"bifrost-appbuild-{app_id}-") as tmp:
             workdir = Path(tmp)
-            self._materialize(workdir, src_files, dependencies)
             try:
+                self._materialize(workdir, src_files, dependencies)
                 # base must match the serving route so emitted asset URLs resolve
                 # under /api/applications/{id}/dist/ rather than the site root.
                 return self._run_vite_build(workdir, base=self._dist_base(app_id))
@@ -103,6 +112,23 @@ class SolutionAppBuilder:
                     f"npm/vite step timed out after {_BUILD_STEP_TIMEOUT_S}s for "
                     f"app {app_id}; a dependency's install script may be hanging"
                 ) from exc
+            except subprocess.CalledProcessError as exc:
+                memory_error = subprocess_memory_error(
+                    exc.returncode, exc.stderr, exc.stdout
+                )
+                if memory_error is not None:
+                    raise memory_error from exc
+                # Same translation for a non-OOM failing step, carrying the
+                # tool's own error so the deploy job reports why instead of
+                # "see server logs".
+                from src.services.solutions.deploy import SolutionDeployConflict
+
+                raise SolutionDeployConflict(
+                    f"`{' '.join(exc.cmd[:2])}` failed for app {app_id} "
+                    f"(exit {exc.returncode}):\n{_output_tail(exc)}"
+                ) from exc
+            except MemoryError as exc:
+                raise AppBuildMemoryError() from exc
 
     async def upload_dist(self, app_id: UUID | str, dist: dict[str, bytes]) -> None:
         """Full-replace upload of an already-compiled dist/ to

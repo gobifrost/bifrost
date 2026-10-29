@@ -48,6 +48,28 @@ def _request() -> EventSourceCreate:
     )
 
 
+def _caller(organization_id):
+    return SimpleNamespace(
+        principal=SimpleNamespace(runtime_authority=None),
+        ctx=SimpleNamespace(home_organization_id=organization_id),
+    )
+
+
+def _stub_create_authorization(monkeypatch, organization_id):
+    caller = _caller(organization_id)
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.load_caller", AsyncMock(return_value=caller)
+    )
+    monkeypatch.setattr(
+        "shared.scope_resolver.resolve_effective_scope", lambda **_kwargs: organization_id
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.user_reach",
+        lambda _caller: SimpleNamespace(covers=lambda _target: True),
+    )
+    monkeypatch.setattr("src.services.authorization.enforce.require_permission", MagicMock())
+
+
 @pytest.mark.asyncio
 async def test_provider_subscription_starts_after_webhook_source_commit(monkeypatch):
     db, added = _session_that_assigns_ids()
@@ -64,7 +86,8 @@ async def test_provider_subscription_starts_after_webhook_source_commit(monkeypa
     )
     registry = MagicMock()
     registry.get.return_value = adapter
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: registry)
+    _stub_create_authorization(monkeypatch, uuid4())
     monkeypatch.setattr(
         "src.routers.events._build_event_source_secret_response",
         AsyncMock(return_value=response),
@@ -98,7 +121,8 @@ async def test_failed_provider_subscription_removes_provisional_source(monkeypat
     )
     registry = MagicMock()
     registry.get.return_value = adapter
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: registry)
+    _stub_create_authorization(monkeypatch, uuid4())
 
     with pytest.raises(HTTPException, match="Failed to create provider subscription"):
         await create_source(

@@ -1,5 +1,6 @@
 """Shared helpers for agent execution (used by both chat and autonomous executors)."""
 import logging
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -13,7 +14,8 @@ from src.models.orm.external_mcp import (
     MCPConnection,
     MCPServer,
 )
-from src.services.llm import ToolDefinition
+from src.services.llm.base import ToolDefinition, bifrost_adapter_return_schema
+from src.services.mcp_client.auth_resolution import service_token_binding_error
 from src.services.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -52,8 +54,9 @@ def _autonomous_service_token_usable(connection: MCPConnection) -> bool:
     considered usable because dispatch can refresh it.
     """
     token = connection.service_oauth_token
-    if token is None:
+    if service_token_binding_error(connection, token) is not None:
         return False
+    assert token is not None
     if token.expires_at is None:
         return True
     # Treat tokens whose expiry is more than the hard margin in the past
@@ -70,7 +73,9 @@ EXECUTION MODE: You are running autonomously — there is no human in this conve
 - Your final response MUST be conclusive: a summary, report, action result, or structured output.
 - Do NOT ask questions, request clarification, or use phrases like "let me know if you need anything else."
 - If you lack information, state what you could not determine and why, then provide the best result possible with available data.
-- If a tool call fails, attempt reasonable alternatives before reporting failure."""
+- Use only a tool whose exact callable name and input schema are supplied by the runtime or returned by discovery. Never guess a tool name, arguments, or schema.
+- If a tool call is rejected as unknown or its arguments do not match the schema, use the correction before another call. Do not improvise alternatives or retry an effect.
+- If access is denied, stop that operation. Do not use another tool or child agent as a permission workaround."""
 
 
 def agent_delegation_slug(name: str) -> str:
@@ -153,6 +158,7 @@ async def resolve_agent_tools(
                     name=t["id"],
                     description=t["description"],
                     parameters=t["parameters"],
+                    return_schema=bifrost_adapter_return_schema(),
                 )
                 seen_names[td.name] = f"system tool '{td.name}'"
                 tool_definitions.append(td)
@@ -173,6 +179,7 @@ async def resolve_agent_tools(
                         name=td.name,
                         description=td.description,
                         parameters=td.parameters,
+                        return_schema=bifrost_adapter_return_schema(),
                     )
                 )
             else:
@@ -202,6 +209,7 @@ async def resolve_agent_tools(
                             },
                             "required": ["task"],
                         },
+                        return_schema=bifrost_adapter_return_schema(),
                     )
                 )
 
@@ -301,6 +309,16 @@ async def resolve_agent_tools(
                     or schema.get("input_schema")
                     or {"type": "object", "properties": {}}
                 )
+                # ``outputSchema`` describes only a successful MCP
+                # ``structuredContent`` payload. Preserve an advertised JSON
+                # Schema as metadata without changing Bifrost's text result
+                # transport or inferring schemas from tool output.
+                output_schema = schema.get("outputSchema")
+                structured_output_schema = (
+                    deepcopy(output_schema)
+                    if isinstance(output_schema, dict)
+                    else None
+                )
 
                 seen_names[qualified_name] = (
                     f"MCP tool '{catalog_row.tool_name}' on connection {connection.id}"
@@ -311,6 +329,8 @@ async def resolve_agent_tools(
                         name=qualified_name,
                         description=description,
                         parameters=parameters,
+                        return_schema=bifrost_adapter_return_schema(),
+                        structured_output_schema=structured_output_schema,
                     )
                 )
 

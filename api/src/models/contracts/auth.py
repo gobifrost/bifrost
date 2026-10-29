@@ -144,8 +144,3 @@ class DeviceTokenResponse(BaseModel):
 class DeviceTokenErrorResponse(BaseModel):
     """Error response for device token request."""
     error: str  # "authorization_pending", "expired_token", "access_denied"
-
-
-class DeviceAuthorizeRequest(BaseModel):
-    """Request to authorize a device using user code."""
-    user_code: str

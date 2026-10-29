@@ -1,0 +1,15 @@
+{
+  "key": "pr:996",
+  "classification": "highlight",
+  "entry_ids": [
+    "c3e5b1a6-d2a4-49ce-9d25-2d0996382ee4"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/996",
+      "Security and copy review: verified durable runtime identity, original-user roles/reach, Full and Restricted capabilities, Secrets/OAuth boundaries, old-token rejection, migration/re-consent requirements, and coordinated upgrade instructions against implementation and passing authority tests. Maintainer authorized merge and rollout on 2026-10-17.",
+      "Maintainer approved Zero Trust Automation as the umbrella name and Declared Permissions as the workflow mode label on 2026-10-17; stored full/restricted values and behavior remain unchanged. Copy and security review confirmed the terminology describes current roles, original reach, acting identity, and permission capabilities."
+    ]
+  }
+}

@@ -115,6 +115,10 @@ test.describe("Workflow access panel", () => {
 			name: "Edit Workflow Settings",
 		});
 		await dialog.getByRole("tab", { name: "Access", exact: true }).click();
+		await expect(dialog.getByText("Full Access", { exact: true })).toBeVisible();
+		await expect(dialog.getByText(
+			"Full Access adds every permission, including Secrets, within the run user's organization reach.",
+		)).toBeVisible();
 
 		const runsAs = dialog.getByRole("combobox", {
 			name: "Runs Unattended As",

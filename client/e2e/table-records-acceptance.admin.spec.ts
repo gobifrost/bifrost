@@ -1,7 +1,6 @@
 import { expect, test } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
 import type { Page as PlaywrightPage } from "@playwright/test";
-import { routeMonacoAssets } from "./fixtures/monaco-assets";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const TABLE_NAME = `e2e_records_${UNIQUE}`.replace(/[^a-z0-9_]/g, "_");
@@ -42,19 +41,6 @@ async function searchTable(page: PlaywrightPage) {
 	await expect(page.getByText(TABLE_NAME, { exact: true })).toBeVisible({
 		timeout: 10000,
 	});
-}
-
-async function openCreatedTable(page: PlaywrightPage) {
-	await page.getByText(TABLE_NAME, { exact: true }).click();
-	await page.waitForURL(/\/tables\/[^/]+$/);
-	const routeTableId = new URL(page.url()).pathname.split("/").pop();
-	if (!routeTableId)
-		throw new Error("Expected table detail route to include table id");
-	if (tableId) expect(routeTableId).toBe(tableId);
-	tableId = routeTableId;
-	await expect(
-		page.getByRole("heading", { name: TABLE_NAME, exact: true }),
-	).toBeVisible({ timeout: 10000 });
 }
 
 async function fillDocumentEditor(
@@ -102,15 +88,11 @@ async function expectDocumentStatus(page: PlaywrightPage, status: string) {
 test.describe("Table records acceptance", () => {
 	test.use({ viewport: { width: 1440, height: 900 } });
 
-	test.beforeEach(async ({ page }) => {
-		await routeMonacoAssets(page.context());
-	});
-
 	test.afterEach(async ({ api }) => {
 		await cleanupTable(api);
 	});
 
-	test("admin creates and edits a table, then creates edits deletes a document and deletes the table", async ({
+	test("admin creates edits and deletes a table with persisted metadata", async ({
 		page,
 	}) => {
 		await gotoTables(page);
@@ -161,7 +143,47 @@ test.describe("Table records acceptance", () => {
 		await page.reload();
 		await searchTable(page);
 		await expect(page.getByText(UPDATED_DESCRIPTION)).toBeVisible();
-		await openCreatedTable(page);
+
+		await page
+			.getByRole("button", { name: `${TABLE_NAME} actions` })
+			.click();
+		await page.getByRole("menuitem", { name: "Delete" }).click();
+		await page
+			.getByRole("alertdialog", { name: "Delete table" })
+			.getByRole("button", { name: "Delete table" })
+			.click();
+		await expect(
+			page.getByRole("alertdialog", { name: "Delete table" }),
+		).toBeHidden({ timeout: 10000 });
+		tableId = undefined;
+
+		await page.reload();
+		await page
+			.getByRole("textbox", { name: "Search tables" })
+			.fill(TABLE_NAME);
+		await expect(page.getByText("No tables match your search")).toBeVisible(
+			{
+				timeout: 10000,
+			},
+		);
+	});
+
+	test("admin creates edits and deletes documents with persisted content", async ({
+		page,
+		api,
+	}) => {
+		const response = await api.post("/api/tables", {
+			data: { name: TABLE_NAME, description: INITIAL_DESCRIPTION },
+		});
+		expect(
+			response.ok(),
+			`create document table fixture: ${await response.text()}`,
+		).toBe(true);
+		tableId = ((await response.json()) as { id: string }).id;
+		await page.goto(`/tables/${tableId}`);
+		await expect(
+			page.getByRole("heading", { name: TABLE_NAME, exact: true }),
+		).toBeVisible();
 
 		const pageContent = page.getByRole("region", {
 			name: "Documents",
@@ -241,30 +263,5 @@ test.describe("Table records acceptance", () => {
 				.getByRole("region", { name: "Documents", exact: true })
 				.getByText("No documents yet"),
 		).toBeVisible({ timeout: 10000 });
-
-		await page.getByRole("link", { name: "Back to Tables" }).click();
-		await searchTable(page);
-		await page
-			.getByRole("button", { name: `${TABLE_NAME} actions` })
-			.click();
-		await page.getByRole("menuitem", { name: "Delete" }).click();
-		await page
-			.getByRole("alertdialog", { name: "Delete table" })
-			.getByRole("button", { name: "Delete table" })
-			.click();
-		await expect(
-			page.getByRole("alertdialog", { name: "Delete table" }),
-		).toBeHidden({ timeout: 10000 });
-		tableId = undefined;
-
-		await page.reload();
-		await page
-			.getByRole("textbox", { name: "Search tables" })
-			.fill(TABLE_NAME);
-		await expect(page.getByText("No tables match your search")).toBeVisible(
-			{
-				timeout: 10000,
-			},
-		);
 	});
 });

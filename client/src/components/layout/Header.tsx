@@ -17,6 +17,8 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/contexts/AuthContext";
+import { GLOBAL_TARGET } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import { useEditorStore } from "@/stores/editorStore";
 import { useQuickAccessStore } from "@/stores/quickAccessStore";
 import { NotificationCenter } from "@/components/layout/NotificationCenter";
@@ -49,7 +51,11 @@ export function Header({
 	const navigate = useNavigate();
 	const compactHeader = useMediaQuery("(max-width: 1279px)");
 	const mobileHeader = useMediaQuery("(max-width: 639px)");
-	const { user, logout, isPlatformAdmin } = useAuth();
+	const { user, logout } = useAuth();
+	const { canAt } = useAuthorization();
+	const canReadSettings = canAt("settings.read", GLOBAL_TARGET);
+	const canWriteSettings = canAt("settings.readwrite", GLOBAL_TARGET);
+	const canWriteRepository = canAt("repository.readwrite", GLOBAL_TARGET);
 	const openEditor = useEditorStore((state) => state.openEditor);
 	const openQuickAccess = useQuickAccessStore(
 		(state) => state.openQuickAccess,
@@ -87,8 +93,8 @@ export function Header({
 	};
 
 	return (
-		<header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-			<div className="flex min-h-16 items-center px-1 py-2 sm:py-0 sm:px-4 lg:px-6">
+		<header className="sticky top-0 z-40 min-h-16 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+			<div className="flex min-h-[calc(4rem-1px)] items-center px-1 py-2 sm:py-0 sm:px-4 lg:px-6">
 				{/* Mobile Menu Button */}
 				<Button
 					variant="ghost"
@@ -124,11 +130,7 @@ export function Header({
 				<div className="hidden flex-1 sm:block" />
 
 				<div className="flex min-w-0 flex-1 flex-wrap items-center justify-end sm:flex-none sm:flex-nowrap">
-					{!compactHeader && (
-						<HeaderStatusIndicators
-							isPlatformAdmin={isPlatformAdmin}
-						/>
-					)}
+					{!compactHeader && <HeaderStatusIndicators />}
 
 					{!mobileHeader && <PasskeySetupBadge />}
 
@@ -146,8 +148,8 @@ export function Header({
 						<Search className="h-4 w-4" />
 					</Button>
 
-					{/* Shell Button (Platform Admin only) */}
-					{isPlatformAdmin && (
+					{/* Shell Button */}
+					{canWriteRepository && (
 						<Button
 							variant="ghost"
 							size="icon-lg"
@@ -171,7 +173,7 @@ export function Header({
 					</div>
 				</div>
 
-				{isPlatformAdmin && <HelpMenu />}
+				{canReadSettings && <HelpMenu />}
 
 				{/* User Menu */}
 				<DropdownMenu>
@@ -200,7 +202,7 @@ export function Header({
 						avatarUrl={avatarUrl}
 						onSettings={() => navigate("/user-settings")}
 						onLogout={logout}
-						showVersion={!isPlatformAdmin}
+						showVersion
 					/>
 				</DropdownMenu>
 			</div>
@@ -209,10 +211,10 @@ export function Header({
 					className="flex flex-wrap items-center justify-end gap-1 px-3 pb-2 empty:hidden sm:px-4"
 					aria-label="Workspace status"
 				>
-					<HeaderStatusIndicators isPlatformAdmin={isPlatformAdmin} />
+					<HeaderStatusIndicators />
 				</div>
 			)}
-			{isPlatformAdmin && user?.id && (
+			{canWriteSettings && user?.id && (
 				<Suspense fallback={null}>
 					<ProductUpdatesDialog key={user.id} adminId={user.id} />
 				</Suspense>

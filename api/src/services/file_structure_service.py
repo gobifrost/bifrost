@@ -47,9 +47,10 @@ class FileStructureService:
         self.policies = FilePolicyService(db)
 
     async def list_prefix(
-        self, *, org_id: UUID | None, location: str, prefix: str
+        self, *, org_id: UUID | None, location: str, prefix: str,
+        solution_id: UUID | None = None,
     ) -> list[StructureEntry]:
-        scope = _scope_seg(org_id)
+        scope = _scope_seg(solution_id if solution_id is not None else org_id)
         base = resolve_s3_key(location, scope, prefix)
         if prefix and not base.endswith("/"):
             base += "/"
@@ -75,8 +76,10 @@ class FileStructureService:
             key=lambda e: (e.kind != "folder", e.name),
         )
 
-    async def list_shares(self, *, org_id: UUID | None) -> list[ShareEntry]:
-        scope = _scope_seg(org_id)
+    async def list_shares(
+        self, *, org_id: UUID | None, solution_id: UUID | None = None
+    ) -> list[ShareEntry]:
+        scope = _scope_seg(solution_id if solution_id is not None else org_id)
         # Locations carrying files in this scope: bucket every key's top segment.
         all_keys = await self.storage.list_raw_s3("")
         file_locations: set[str] = set()
@@ -93,7 +96,9 @@ class FileStructureService:
             file_locations.add("uploads" if top == _UPLOADS_TOP else top)
         # Locations carrying a policy in this scope (so a freshly-policied,
         # empty share still appears until a file lands).
-        policy_rows = await self.policies.list_policies(organization_id=org_id)
+        policy_rows = await self.policies.list_policies(
+            organization_id=org_id, solution_id=solution_id
+        )
         policy_locations = {
             r.location
             for r in policy_rows

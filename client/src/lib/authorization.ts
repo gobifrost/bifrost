@@ -22,10 +22,18 @@ export type AuthorizationTarget =
 
 /** A route or navigation item's requirement: the permission held anywhere,
  * or held platform-wide. */
-export interface PermissionRequirement {
+export interface SinglePermissionRequirement {
 	permission: string;
 	at?: "anywhere" | "global";
 }
+
+/** A route or navigation item may need several independent API surfaces. */
+export interface AllPermissionRequirement {
+	allOf: readonly SinglePermissionRequirement[];
+}
+
+export type PermissionRequirement =
+	SinglePermissionRequirement | AllPermissionRequirement;
 
 export const AUTHORIZATION_QUERY_KEY = ["authorization"] as const;
 
@@ -104,6 +112,11 @@ export function meetsRequirement(
 	authz: AuthorizationSummary | undefined,
 	requirement: PermissionRequirement,
 ): boolean {
+	if ("allOf" in requirement) {
+		return requirement.allOf.every((member) =>
+			meetsRequirement(authz, member),
+		);
+	}
 	return requirement.at === "global"
 		? canAt(authz, requirement.permission, GLOBAL_TARGET)
 		: canAnywhere(authz, requirement.permission);

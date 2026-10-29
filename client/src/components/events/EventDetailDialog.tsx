@@ -26,6 +26,7 @@ interface EventDetailDialogProps {
 	event: Event | null;
 	eventId?: string;
 	onClose: () => void;
+	canManage?: boolean;
 }
 
 function EventReadError({
@@ -142,7 +143,13 @@ function EventMetadata({ event }: { event: Event }) {
 	);
 }
 
-function EventDetailContent({ eventId }: { eventId: string }) {
+function EventDetailContent({
+	eventId,
+	canManage,
+}: {
+	eventId: string;
+	canManage: boolean;
+}) {
 	const {
 		data: event,
 		isLoading: eventLoading,
@@ -246,6 +253,7 @@ function EventDetailContent({ eventId }: { eventId: string }) {
 					<DeliveriesTable
 						deliveries={deliveriesData?.items || []}
 						eventId={eventId}
+						canManage={canManage}
 					/>
 				) : null}
 			</div>
@@ -257,6 +265,7 @@ export function EventDetailDialog({
 	event,
 	eventId,
 	onClose,
+	canManage = false,
 }: EventDetailDialogProps) {
 	const dialogEventId = event?.id ?? eventId;
 	return (
@@ -277,6 +286,7 @@ export function EventDetailDialog({
 						<EventDetailContent
 							key={dialogEventId}
 							eventId={dialogEventId}
+							canManage={canManage}
 						/>
 					</div>
 				)}

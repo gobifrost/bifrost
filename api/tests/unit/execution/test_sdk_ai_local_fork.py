@@ -126,11 +126,13 @@ class TestForkedAISocket:
         self, async_session_factory, monkeypatch
     ):
         """A real forked child completes + reads model info over the socket."""
-        from src.core.constants import SYSTEM_USER_UUID
         from src.core.security import mint_engine_token
         from src.models.orm.ai_usage import AIUsage
-        from src.models.orm.executions import Execution
         from src.models.orm.organizations import Organization as OrganizationModel
+        from tests.helpers.live_execution import (
+            create_live_execution,
+            delete_live_execution,
+        )
 
         stem = f"sdk-ai-fork-{uuid4().hex[:8]}"
         async with async_session_factory() as seed:
@@ -142,16 +144,12 @@ class TestForkedAISocket:
             seed.add(org)
             await seed.flush()
             execution_id = str(uuid4())
-            seed.add(
-                Execution(
-                    id=_UUID(execution_id),
-                    workflow_name="sdk-ai-fork-test",
-                    executed_by_name="sdk-ai-fork-test",
-                    organization_id=org.id,
-                )
-            )
             await seed.commit()
             org_id = str(org.id)
+
+        live_execution = await create_live_execution(
+            async_session_factory, execution_id, organization_id=org.id
+        )
 
         # Hard-disable the network API for the forked child: any SDK call that
         # fell back to HTTP would fail with connection-refused.
@@ -163,6 +161,7 @@ class TestForkedAISocket:
             output_tokens=9,
             cache_read_tokens=0,
             cache_write_tokens=0,
+            reasoning_tokens=0,
             provider_cost=None,
             model="gpt-4o",
         )
@@ -186,8 +185,6 @@ class TestForkedAISocket:
 
         engine_token, _ = mint_engine_token(
             execution_id=execution_id,
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=120,
         )
         context = _context_for(
@@ -224,9 +221,9 @@ class TestForkedAISocket:
             assert sent_kwargs["model"] == "gpt-4o"
             assert sent_kwargs["messages"][-1].content == "Hello"
 
-            # Committed usage is visible via the database with the
-            # parent-derived attribution (sentinel user, requested org,
-            # parent execution id) — the socket route's commit boundary held.
+            # Committed usage is visible via the database with attribution
+            # derived from the durable execution — the socket route's commit
+            # boundary held.
             async with async_session_factory() as session:
                 rows = (
                     await session.execute(
@@ -237,16 +234,16 @@ class TestForkedAISocket:
                 ).scalars().all()
                 assert len(rows) == 1
                 assert rows[0].organization_id == org.id
-                assert rows[0].user_id == SYSTEM_USER_UUID
+                assert rows[0].user_id == live_execution.actor_id
                 assert rows[0].model is not None
         finally:
             async with async_session_factory() as cleanup:
                 await cleanup.execute(
                     delete(AIUsage).where(AIUsage.execution_id == _UUID(execution_id))
                 )
-                await cleanup.execute(
-                    delete(Execution).where(Execution.id == _UUID(execution_id))
-                )
+                await cleanup.commit()
+            await delete_live_execution(async_session_factory, execution_id)
+            async with async_session_factory() as cleanup:
                 await cleanup.execute(
                     delete(OrganizationModel).where(OrganizationModel.id == org.id)
                 )

@@ -31,6 +31,8 @@ from shared.sdk_artifact_generation import (
 )
 from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
 from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.models.contracts.artifacts import (
     DocumentArtifactSpec,
     ImageArtifactSpec,
@@ -65,7 +67,21 @@ def _user(**kwargs) -> UserPrincipal:
 
 
 def _caller(**kwargs) -> ArtifactCaller:
-    return ArtifactCaller(user=kwargs.get("user", _user()), db=MagicMock())
+    user = kwargs.get("user", _user())
+    original_user_id = kwargs.get("original_user_id", user.user_id)
+    return ArtifactCaller(
+        caller=Caller(
+            user,
+            AuthorizationContext(
+                user_id=original_user_id,
+                home_organization_id=user.organization_id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+            ),
+        ),
+        db=MagicMock(),
+    )
 
 
 def _orm_artifact(**kwargs) -> Artifact:
@@ -97,9 +113,9 @@ async def test_document_stores_with_actor_scope() -> None:
     caller = _caller(user=user)
     stored = _orm_artifact(filename="Brief.pdf")
     service = MagicMock()
-    service.resolve_workspace_path = AsyncMock()
+    service.resolve_workspace_path_for_caller = AsyncMock()
     service.read = AsyncMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     with patch(
         "src.services.artifacts.ArtifactService", return_value=service
     ) as cls:
@@ -107,13 +123,12 @@ async def test_document_stores_with_actor_scope() -> None:
             caller, spec=_document_request()
         )
     cls.assert_called_once_with(caller.db)
-    service.resolve_workspace_path.assert_not_called()
-    assert service.store.await_args.kwargs["created_by_user_id"] == user.user_id
-    assert service.store.await_args.kwargs["organization_id"] == user.organization_id
-    assert service.store.await_args.kwargs["workspace_id"] is None
+    service.resolve_workspace_path_for_caller.assert_not_called()
+    assert service.store_for_caller.await_args.args[0] is caller.caller
+    assert service.store_for_caller.await_args.kwargs["workspace_id"] is None
     assert (
-        service.store.await_args.kwargs["logical_path"]
-        == service.store.await_args.kwargs["filename"]
+        service.store_for_caller.await_args.kwargs["logical_path"]
+        == service.store_for_caller.await_args.kwargs["filename"]
     )
     assert ref.id == str(stored.id)
 
@@ -136,9 +151,9 @@ async def test_document_resolves_images_with_caller_scope() -> None:
     )
     stored_doc = _orm_artifact(filename="Brief.pdf")
     service = MagicMock()
-    service.resolve_workspace_path = AsyncMock(return_value=stored_image)
+    service.resolve_workspace_path_for_caller = AsyncMock(return_value=stored_image)
     service.read = AsyncMock(return_value=png_bytes)
-    service.store = AsyncMock(return_value=stored_doc)
+    service.store_for_caller = AsyncMock(return_value=stored_doc)
     request = DocumentArtifactSpec(
         filename="brief",
         format="pdf",
@@ -154,11 +169,10 @@ async def test_document_resolves_images_with_caller_scope() -> None:
         ref = await sdk_render_document_artifact(
             caller, spec=request, workspace_id=workspace_id
         )
-    service.resolve_workspace_path.assert_awaited_once_with(
+    service.resolve_workspace_path_for_caller.assert_awaited_once_with(
         workspace_id,
         "Portrait.png",
-        user_id=user.user_id,
-        bypass=False,
+        caller=caller.caller,
     )
     service.read.assert_awaited_once_with(stored_image)
     assert ref.id == str(stored_doc.id)
@@ -169,9 +183,9 @@ async def test_document_non_image_is_422_without_storing() -> None:
     caller = _caller()
     stored_doc = _orm_artifact(filename="Notes.txt", content_type="text/plain")
     service = MagicMock()
-    service.resolve_workspace_path = AsyncMock(return_value=stored_doc)
+    service.resolve_workspace_path_for_caller = AsyncMock(return_value=stored_doc)
     service.read = AsyncMock()
-    service.store = AsyncMock()
+    service.store_for_caller = AsyncMock()
     request = DocumentArtifactSpec(
         filename="brief",
         format="pdf",
@@ -187,17 +201,17 @@ async def test_document_non_image_is_422_without_storing() -> None:
         )
     assert exc.value.status_code == 422
     assert "is not an image artifact" in str(exc.value.detail)
-    service.store.assert_not_awaited()
+    service.store_for_caller.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_document_missing_image_propagates_value_error() -> None:
     caller = _caller()
     service = MagicMock()
-    service.resolve_workspace_path = AsyncMock(
+    service.resolve_workspace_path_for_caller = AsyncMock(
         side_effect=ArtifactAccessError("Artifact workspace path x was not found.")
     )
-    service.store = AsyncMock()
+    service.store_for_caller = AsyncMock()
     request = DocumentArtifactSpec(
         filename="brief",
         format="pdf",
@@ -211,7 +225,7 @@ async def test_document_missing_image_propagates_value_error() -> None:
         await sdk_render_document_artifact(
             caller, spec=request, workspace_id=uuid4()
         )
-    service.store.assert_not_awaited()
+    service.store_for_caller.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -225,7 +239,7 @@ async def test_spreadsheet_stores_with_actor_scope() -> None:
         ),
     )
     service = MagicMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     request = SpreadsheetArtifactSpec(
         filename="report",
         sheets=[{"name": "Data", "columns": ["A"], "rows": [["1"]]}],
@@ -235,8 +249,7 @@ async def test_spreadsheet_stores_with_actor_scope() -> None:
     ) as cls:
         ref = await sdk_render_spreadsheet_artifact(caller, spec=request)
     cls.assert_called_once_with(caller.db)
-    assert service.store.await_args.kwargs["created_by_user_id"] == user.user_id
-    assert service.store.await_args.kwargs["organization_id"] == user.organization_id
+    assert service.store_for_caller.await_args.args[0] is caller.caller
     assert ref.id == str(stored.id)
 
 
@@ -246,7 +259,7 @@ async def test_text_stores_with_actor_scope() -> None:
     caller = _caller(user=user)
     stored = _orm_artifact(filename="Notes.md", content_type="text/markdown")
     service = MagicMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     request = TextArtifactSpec(
         filename="notes", format="markdown", content="# Ready"
     )
@@ -255,8 +268,7 @@ async def test_text_stores_with_actor_scope() -> None:
     ) as cls:
         ref = await sdk_render_text_artifact(caller, spec=request)
     cls.assert_called_once_with(caller.db)
-    assert service.store.await_args.kwargs["created_by_user_id"] == user.user_id
-    assert service.store.await_args.kwargs["organization_id"] == user.organization_id
+    assert service.store_for_caller.await_args.args[0] is caller.caller
     assert ref.id == str(stored.id)
 
 
@@ -289,7 +301,7 @@ async def test_image_generates_stores_and_records_usage() -> None:
         filename="Launch Concept.png", content_type="image/png"
     )
     service = MagicMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     request = ImageArtifactSpec(
         filename="launch-concept", prompt="A launch concept"
     )
@@ -331,15 +343,13 @@ async def test_image_generates_stores_and_records_usage() -> None:
     gen.assert_awaited_once_with(
         config, filename="launch-concept", prompt="A launch concept"
     )
-    service.store.assert_awaited_once_with(
+    service.store_for_caller.assert_awaited_once_with(
+        caller.caller,
         filename="Launch Concept.png",
         content_type="image/png",
         content=b"png-data",
-        created_by_user_id=user.user_id,
-        organization_id=user.organization_id,
         workspace_id=workspace_id,
         logical_path="Launch Concept.png",
-        bypass=False,
     )
     record.assert_awaited_once_with(
         caller.db,
@@ -397,7 +407,7 @@ async def test_image_provider_starts_after_config_session_released() -> None:
         return generated
 
     service = MagicMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     request = ImageArtifactSpec(
         filename="launch-concept", prompt="A launch concept"
     )
@@ -456,10 +466,10 @@ async def test_document_render_starts_after_image_session_released() -> None:
             events.append("images-released")
 
     read_service = MagicMock()
-    read_service.resolve_workspace_path = AsyncMock(return_value=stored_image)
+    read_service.resolve_workspace_path_for_caller = AsyncMock(return_value=stored_image)
     read_service.read = AsyncMock(return_value=png_bytes)
     store_service = MagicMock()
-    store_service.store = AsyncMock(return_value=stored_doc)
+    store_service.store_for_caller = AsyncMock(return_value=stored_doc)
 
     def service_factory(db):
         return read_service if db is not caller.db else store_service
@@ -501,8 +511,8 @@ async def test_document_render_starts_after_image_session_released() -> None:
             caller, spec=request, workspace_id=workspace_id
         )
     assert events == ["images-open", "images-released", "render-start"]
-    read_service.resolve_workspace_path.assert_awaited_once()
-    store_service.store.assert_awaited_once()
+    read_service.resolve_workspace_path_for_caller.assert_awaited_once()
+    store_service.store_for_caller.assert_awaited_once()
     assert ref.id == str(stored_doc.id)
 
 
@@ -520,7 +530,7 @@ async def test_spreadsheet_does_not_touch_db_before_render() -> None:
         ),
     )
     service = MagicMock()
-    service.store = AsyncMock(return_value=stored)
+    service.store_for_caller = AsyncMock(return_value=stored)
     request = SpreadsheetArtifactSpec(
         filename="report",
         sheets=[{"name": "Data", "columns": ["A"], "rows": [["1"]]}],
@@ -552,7 +562,7 @@ async def test_spreadsheet_does_not_touch_db_before_render() -> None:
         await sdk_render_spreadsheet_artifact(caller, spec=request)
     assert events == ["render-start"]
     assert not service_used_before_render
-    service.store.assert_awaited_once()
+    service.store_for_caller.assert_awaited_once()
 
 
 def test_service_takes_explicit_actor_never_a_request() -> None:

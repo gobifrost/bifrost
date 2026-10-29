@@ -179,6 +179,30 @@ describe("canAnywhere and meetsRequirement", () => {
 			}),
 		).toBe(true);
 	});
+
+	it("requires every member of a composite requirement", () => {
+		const complete = summary([
+			grant("metrics.read", "platform"),
+			grant("platform.read", "platform"),
+		]);
+
+		expect(
+			meetsRequirement(complete, {
+				allOf: [
+					{ permission: "metrics.read", at: "global" },
+					{ permission: "platform.read", at: "global" },
+				],
+			}),
+		).toBe(true);
+		expect(
+			meetsRequirement(summary([grant("metrics.read", "platform")]), {
+				allOf: [
+					{ permission: "metrics.read", at: "global" },
+					{ permission: "platform.read", at: "global" },
+				],
+			}),
+		).toBe(false);
+	});
 });
 
 describe("invalidateAuthorization", () => {

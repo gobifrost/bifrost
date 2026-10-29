@@ -31,6 +31,8 @@ import { Label } from "@/components/ui/label";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { useRoles } from "@/hooks/useRoles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { AccessLevelSelect } from "@/components/access/AccessLevelSelect";
 import type { components } from "@/lib/v1";
@@ -69,7 +71,8 @@ export function FormInfoDialog({
 	initialData,
 	initialRoleIds,
 }: FormInfoDialogProps) {
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 
 	const {
 		data: metadata,
@@ -84,9 +87,7 @@ export function FormInfoDialog({
 		refetch: refetchRoles,
 	} = useRoles();
 
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId = user?.organizationId ?? null;
 
 	const form = useForm<FormInfoValues>({
 		resolver: zodResolver(formInfoSchema),
@@ -114,6 +115,30 @@ export function FormInfoDialog({
 		control: form.control,
 		name: "default_launch_params",
 	});
+	const selectedOrganizationId = useWatch({
+		control: form.control,
+		name: "organization_id",
+	});
+	const currentOrganizationId = initialData
+		? (initialData.organization_id ?? null)
+		: defaultOrgId;
+	const canManageCurrentScope = authorization.canAt(
+		"forms.readwrite",
+		orgTarget(currentOrganizationId),
+	);
+	const canManageSelectedScope = authorization.canAt(
+		"forms.readwrite",
+		orgTarget(selectedOrganizationId),
+	);
+	const canChooseScope = authorization.canAnywhere("forms.readwrite");
+	const knownOrganizations = [
+		...(defaultOrgId
+			? [{ id: defaultOrgId, name: "Your organization" }]
+			: []),
+		...(initialData?.organization_id
+			? [{ id: initialData.organization_id, name: "Form organization" }]
+			: []),
+	];
 
 	// Reset form when dialog opens or initialData changes
 	useEffect(() => {
@@ -168,6 +193,7 @@ export function FormInfoDialog({
 	};
 
 	const handleSave = (values: FormInfoValues) => {
+		if (!canManageCurrentScope || !canManageSelectedScope) return;
 		// Handle "__none__" special value for launch workflow
 		const finalLaunchWorkflowId =
 			values.launch_workflow_id === "__none__" ||
@@ -231,8 +257,7 @@ export function FormInfoDialog({
 									</Button>
 								</div>
 							)}
-							{/* Organization Scope - Only show for platform admins */}
-							{isPlatformAdmin && (
+							{canChooseScope && (
 								<FormField
 									control={form.control}
 									name="organization_id"
@@ -245,6 +270,12 @@ export function FormInfoDialog({
 													value={field.value}
 													onChange={field.onChange}
 													showGlobal={true}
+													loadOrganizations={authorization.canAnywhere(
+														"organizations.read",
+													)}
+													knownOrganizations={
+														knownOrganizations
+													}
 												/>
 											</FormControl>
 											<FormDescription>

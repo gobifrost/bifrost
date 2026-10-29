@@ -3,7 +3,7 @@ LEAK #1 failing-first proof: the MCP OAuth token endpoint minted access tokens
 WITHOUT the is_external claim, so every MCP-OAuth session was is_external=False
 (the verifier reads payload.get("is_external", False)). Both the
 authorization_code and refresh_token grants must stamp
-``is_external = resolve_external_claim(db, user)``.
+``is_external = user.is_external``.
 """
 
 import json
@@ -58,10 +58,6 @@ def _patches(captured: dict, user):
         patch(
             "src.repositories.users.UserRepository",
             return_value=user_repo,
-        ),
-        patch(
-            "src.services.mcp_server.auth.resolve_external_claim",
-            new=AsyncMock(return_value=user.is_external),
         ),
     ]
 

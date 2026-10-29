@@ -17,6 +17,7 @@ import os
 import re
 import tempfile
 import zipfile
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -35,8 +36,11 @@ from bifrost.solution_jobs import (
     DEPLOY_JOB_TIMEOUT_ERROR,
     DEPLOY_JOB_TIMEOUT_SECONDS,
 )
+from shared.app_build_errors import AppBuildMemoryError
 from shared.logo_processing import is_logo_thumbnail_version
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
+from src.core.principal import UserPrincipal
+from shared.models import SolutionDevContextRequest, SolutionDevContextResponse
 from src.models.contracts.applications import (
     ApplicationSdkUpdateSkipped,
 )
@@ -139,14 +143,19 @@ from src.services.application_sdk_status import (
     load_current_sdk_metadata,
     sdk_source_available,
 )
-from src.services.platform_job_memory_profiles import build_solution_memory_profile_key
+from src.services.platform_job_memory_profiles import (
+    build_resource_memory_profile_key,
+    build_solution_memory_profile_key,
+)
 from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
 from shared.solution_deploy_status import project_solution_deploy_job_status
 from src.services.solutions.deploy import (
     SolutionDeployConflict,
+    SolutionDeployInstrumentation,
     SolutionDowngradeBlocked,
     SolutionFinalizeIncomplete,
     SolutionWorkflowNameMismatch,
+    solution_deploy_instrumentation,
 )
 from src.services.solutions.export_jobs import (
     create_export_job,
@@ -154,6 +163,10 @@ from src.services.solutions.export_jobs import (
     public_job,
 )
 from src.services.operation_catalog import operation_route
+from src.services.authorization.enforce import load_caller, permitted_organizations, require_permission, user_reach
+from src.services.solutions.authorization import (
+    authorize_backup_archive, authorize_scope, authorize_solution, original_organization, original_user_id,
+)
 
 if TYPE_CHECKING:
     from src.services.solutions.zip_install import PreviewResult
@@ -164,6 +177,27 @@ router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
 
 UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 _ZIP_FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+@router.post(
+    "/{solution_id}/dev-context",
+    response_model=SolutionDevContextResponse,
+    summary="Create a local Solution development context",
+)
+async def create_solution_dev_context(
+    solution_id: UUID,
+    body: SolutionDevContextRequest,
+    ctx: Context,
+    user: CurrentActiveUser,
+) -> SolutionDevContextResponse:
+    """Issue a ten-minute, app-bound context for ``bifrost solution start``.
+
+    The shared service deliberately checks current canonical Platform Admin
+    authority rather than the access-token's legacy ``is_superuser`` claim.
+    """
+    from shared.solution_dev import issue_solution_dev_context
+
+    return await issue_solution_dev_context(ctx.db, user, solution_id, body.app_id)
 
 
 def _cleanup_file(path: str | Path) -> None:
@@ -239,7 +273,7 @@ async def _load_workspace_preview_metadata(
     summary="Preview a Solution archive as workspace content",
 )
 async def preview_workspace_import(
-    file: Annotated[UploadFile, File()], ctx: Context, user: CurrentSuperuser,
+    file: Annotated[UploadFile, File()], ctx: Context, user: CurrentActiveUser,
     organization_id: Annotated[str | None, FastapiForm()] = None,
 ) -> WorkspaceBundlePreview:
     """Stage a requester-bound immutable archive and return its collision plan.
@@ -249,6 +283,9 @@ async def preview_workspace_import(
     always global.
     """
     scope_org_id = await _resolve_workspace_scope_org(ctx.db, organization_id)
+    caller = await authorize_scope(ctx.db, user, scope_org_id, "solutions.readwrite")
+    # Workspace imports also write global files, integrations, and roles.
+    require_permission(caller, "solutions.readwrite", None)
     path = await _spool_upload_to_temp(file, prefix="bifrost-workspace-preview-")
     preview_id = uuid4()
     storage = WorkspaceBundleStorage(preview_id)
@@ -271,7 +308,7 @@ async def preview_workspace_import(
                 "preview_token": str(preview_id), "package_sha256": digest,
             })
             await storage.stage_metadata({
-                "requested_by": str(user.user_id),
+                "requested_by": str(original_user_id(caller)),
                 "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
                 "package_sha256": digest,
                 "organization_id": str(scope_org_id) if scope_org_id is not None else None,
@@ -295,11 +332,15 @@ async def preview_workspace_import(
     summary="Queue a reviewed workspace bundle import",
 )
 async def enqueue_workspace_import(
-    body: WorkspaceBundleImportRequest, response: Response, ctx: Context, user: CurrentSuperuser,
+    body: WorkspaceBundleImportRequest, response: Response, ctx: Context, user: CurrentActiveUser,
 ) -> PlatformJobAccepted:
+    caller = await load_caller(ctx.db, user)
     preview_id, storage, metadata = await _load_workspace_preview_metadata(
-        body.preview_token, requested_by=user.user_id
+        body.preview_token, requested_by=original_user_id(caller)
     )
+    scope_org_id = UUID(metadata["organization_id"]) if metadata.get("organization_id") else None
+    caller = await authorize_scope(ctx.db, user, scope_org_id, "solutions.readwrite")
+    require_permission(caller, "solutions.readwrite", None)
     preview = WorkspaceBundlePreview.model_validate(metadata["preview"])
     conflicts = {item.id for item in preview.items if item.classification == "conflict"}
     if {decision.item_id for decision in body.decisions} != conflicts:
@@ -329,11 +370,11 @@ async def enqueue_workspace_import(
         payload,
         # A preview is requester-bound state, even when two archives have the
         # same bytes. Never let a caller reuse another preview's active job.
-        dedupe_key=f"{user.user_id}:{preview_id}",
+        dedupe_key=f"{original_user_id(caller)}:{preview_id}",
         resource_lock_key=WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
         priority=500,
-        organization_id=None,
-        requested_by_user_id=user.user_id,
+        organization_id=scope_org_id,
+        requested_by_user_id=original_user_id(caller),
         requested_by_email=user.email,
         requested_by_name=user.name or user.email or "Unknown",
         resource_type="workspace",
@@ -362,7 +403,7 @@ async def enqueue_workspace_import(
 
 async def _stage_workspace_preview(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     *,
     work_dir: Path,
     staging_zip: Path,
@@ -380,6 +421,8 @@ async def _stage_workspace_preview(
     """
     from src.services.solutions.zip_install import _parse_workspace
 
+    caller = await authorize_scope(ctx.db, user, organization_id, "solutions.readwrite")
+    require_permission(caller, "solutions.readwrite", None)
     preview_id = uuid4()
     storage = WorkspaceBundleStorage(preview_id)
     try:
@@ -401,7 +444,7 @@ async def _stage_workspace_preview(
             "resolved_commit": resolved_commit,
         })
         await storage.stage_metadata({
-            "requested_by": str(user.user_id),
+            "requested_by": str(original_user_id(caller)),
             "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
             "package_sha256": digest,
             "organization_id": str(organization_id) if organization_id is not None else None,
@@ -427,7 +470,7 @@ async def _stage_workspace_preview(
     summary="Preview a Solution repository snapshot as workspace content",
 )
 async def preview_workspace_import_repo(
-    body: WorkspaceBundleRepoPreviewRequest, ctx: Context, user: CurrentSuperuser,
+    body: WorkspaceBundleRepoPreviewRequest, ctx: Context, user: CurrentActiveUser,
 ) -> WorkspaceBundlePreview:
     """Clone, validate, and plan a one-time repository snapshot.
 
@@ -437,6 +480,9 @@ async def preview_workspace_import_repo(
     or descriptor failures return 422 before any preview token is issued.
     ``organization_id`` selects the target scope (absent = global).
     """
+    scope_org_id = await _resolve_workspace_scope_org(ctx.db, body.organization_id)
+    caller = await authorize_scope(ctx.db, user, scope_org_id, "solutions.readwrite")
+    require_permission(caller, "solutions.readwrite", None)
     import shutil
 
     from src.services.solutions.git_sync import (
@@ -494,7 +540,7 @@ async def preview_workspace_import_repo(
         return await _stage_workspace_preview(
             ctx, user,
             work_dir=root, staging_zip=staging_zip, source_kind="repo",
-            organization_id=await _resolve_workspace_scope_org(ctx.db, body.organization_id),
+            organization_id=scope_org_id,
             repo_url=body.repo_url, git_ref=body.git_ref,
             repo_subpath=body.repo_subpath, resolved_commit=resolved_commit,
         )
@@ -592,7 +638,7 @@ async def _enqueue_solution_deploy_job(
     requested_by_name: str,
     input_path: Path | None = None,
     input_bytes: bytes | None = None,
-    memory_profile_key: str | None = None,
+    memory_profile_key: str,
 ) -> SolutionDeployJob:
     """Stage one validated input and atomically expose its central job row."""
     if (input_path is None) == (input_bytes is None):
@@ -654,14 +700,15 @@ async def _enqueue_solution_deploy_job(
 
 
 @router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)", **operation_route("solutions.create"))
-async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
+async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentActiveUser) -> SolutionDTO:
     # Install kind is DERIVED from organization_id (unified --org standard) —
     # there is no `scope` input. HOME (organization_id absent) => the caller's
     # own org; explicit null => global (org NULL); a UUID => that org.
+    caller = await load_caller(ctx.db, user)
     if "organization_id" in body.model_fields_set:
         org_id: UUID | None = body.organization_id  # explicit (null == global)
     else:
-        org_id = ctx.org_id  # HOME — the caller's own org
+        org_id = original_organization(caller)
         if org_id is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -669,6 +716,7 @@ async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuper
                 "pass organization_id, or null for a global install)",
             )
 
+    await authorize_scope(ctx.db, user, org_id, "solutions.readwrite")
     row = SolutionORM(
         slug=body.slug,
         name=body.name,
@@ -820,11 +868,19 @@ async def _solution_sdk_statuses_for_rows(
 
 
 @router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)", **operation_route("solutions.list"))
-async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
+async def list_solutions(ctx: Context, user: CurrentActiveUser) -> SolutionsList:
+    caller = await load_caller(ctx.db, user)
+    predicates = [
+        condition for condition in (
+            user_reach(caller).where(SolutionORM.organization_id),
+            permitted_organizations(caller, "solutions.read").where(SolutionORM.organization_id),
+        ) if condition is not None
+    ]
     rows = (
         (
             await ctx.db.execute(
                 select(SolutionORM)
+                .where(*predicates)
                 .options(
                     defer(SolutionORM.logo_data),
                     defer(SolutionORM.logo_thumbnail_data),
@@ -928,8 +984,9 @@ async def _solution_sdk_status(
     summary="Get Solution App SDK status",
 )
 async def get_solution_sdk_status(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionSdkStatus:
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     status_response, _ = await _solution_sdk_status(ctx, solution_id)
     return status_response
 
@@ -940,9 +997,11 @@ async def get_solution_sdk_status(
     summary="Enqueue SDK updates for Apps in selected Solutions",
 )
 async def batch_update_solution_app_sdks(
-    data: SolutionSdkUpdateBatchRequest, ctx: Context, user: CurrentSuperuser
+    data: SolutionSdkUpdateBatchRequest, ctx: Context, user: CurrentActiveUser
 ) -> SolutionSdkUpdateBatchResponse:
     solution_ids = data.solution_ids
+    for solution_id in solution_ids:
+        await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     rows = (
         (
             await ctx.db.execute(
@@ -1029,8 +1088,9 @@ async def batch_update_solution_app_sdks(
     summary="Enqueue SDK updates for Solution Apps",
 )
 async def update_solution_app_sdks(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionSdkUpdateResponse:
+    await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     if await _solution_deploy_in_progress(ctx, solution_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1064,7 +1124,8 @@ async def update_solution_app_sdks(
 
 
 @router.get("/{solution_id}", response_model=SolutionDTO, summary="Get a Solution install (admin only)", **operation_route("solutions.get"))
-async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
+async def get_solution(solution_id: UUID, ctx: Context, user: CurrentActiveUser) -> SolutionDTO:
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -1094,11 +1155,12 @@ async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) 
     },
 )
 async def get_solution_logo(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> Response:
     """The solution-level icon (bifrost.solution.yaml ``logo:``), shown on the
     /solutions catalog cards. Bytes only — mirrors the application logo
     endpoint."""
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None or not row.logo_data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Icon not set")
@@ -1128,10 +1190,11 @@ async def get_solution_logo(
     summary="Get an install's README markdown (admin only)",
 )
 async def get_solution_readme(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionReadme:
     """The install's long-form README markdown (repo-sourced on deploy, or
     edited directly via PUT). ``null`` when none is set."""
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -1147,7 +1210,7 @@ async def put_solution_readme(
     solution_id: UUID,
     body: SolutionReadmeUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> SolutionReadme:
     """Full-replace the install's README markdown (``readme=null`` clears it).
 
@@ -1156,6 +1219,7 @@ async def put_solution_readme(
     install the next auto-pull would clobber any hand edit, so editing the
     README here is refused (409) — the repo owns it. The UI hides the edit
     affordance for connected installs to match."""
+    await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -1179,11 +1243,12 @@ async def put_solution_readme(
     summary="Required-config setup status (admin only)",
 )
 async def solution_setup(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionSetupStatus:
     """Return all config declarations for the install paired with whether each
     has a matching Config value in the install's org scope.  ``setup_complete``
     is True only when every required declaration is satisfied."""
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     from src.services.solutions.setup_status import compute_setup_status
 
     sol = await ctx.db.get(SolutionORM, solution_id)
@@ -1203,7 +1268,7 @@ async def solution_setup(
 async def export_solution(
     solution_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     mode: str = "shareable",
     include_values: bool | None = None,
     include_files: bool | None = None,
@@ -1225,6 +1290,7 @@ async def export_solution(
     ``include_data`` controls table row data. A password is required whenever a
     backup payload is requested.
     """
+    caller = await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     if mode not in ("shareable", "full"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1236,6 +1302,10 @@ async def export_solution(
     # all large runtime data" unless include_files is sent explicitly.
     include_files_flag = include_data if include_files is None else include_files
     wants_backup_payload = include_values_flag or include_files_flag or include_data
+    if include_values_flag:
+        sol = await ctx.db.get(SolutionORM, solution_id)
+        assert sol is not None
+        require_permission(caller, "secrets.read", sol.organization_id)
 
     if mode == "shareable" and wants_backup_payload:
         raise HTTPException(
@@ -1335,9 +1405,10 @@ async def create_solution_export_job(
     solution_id: UUID,
     body: SolutionExportJobCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> SolutionExportJobPublic:
     """Create a scheduler-owned backup export job without building the zip."""
+    caller = await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     from src.models.contracts.notifications import (
         NotificationCategory,
         NotificationCreate,
@@ -1349,7 +1420,9 @@ async def create_solution_export_job(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
     try:
-        created = await create_export_job(ctx.db, sol, user.user_id, body.options)
+        if body.options.include_secrets:
+            require_permission(caller, "secrets.read", sol.organization_id)
+        created = await create_export_job(ctx.db, sol, original_user_id(caller), body.options)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1358,7 +1431,7 @@ async def create_solution_export_job(
 
     try:
         notification = await get_notification_service().create_notification(
-            str(user.user_id),
+            str(original_user_id(caller)),
             NotificationCreate(
                 category=NotificationCategory.SYSTEM,
                 title="Backup queued",
@@ -1396,13 +1469,16 @@ async def create_solution_export_job(
         resource_lock_key=f"solution:{solution_id}",
         priority=100,
         organization_id=sol.organization_id,
-        requested_by_user_id=user.user_id,
+        requested_by_user_id=original_user_id(caller),
         requested_by_email=user.email,
         requested_by_name=user.name or user.email or "Unknown",
         resource_type="solution_export",
         resource_id=str(row.id),
         title=f"Exporting {sol.name}",
         action_url=f"/solutions/{solution_id}",
+        memory_profile_key=build_resource_memory_profile_key(
+            SOLUTION_EXPORT_DEFINITION.job_type, solution_id
+        ),
     )
     await ctx.db.commit()
     await ctx.db.refresh(row)
@@ -1418,12 +1494,13 @@ async def create_solution_export_job(
 async def get_solution_export_jobs(
     solution_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> SolutionExportJobsList:
+    caller = await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
-    return SolutionExportJobsList(jobs=await list_export_jobs(ctx.db, solution_id))
+    return SolutionExportJobsList(jobs=await list_export_jobs(ctx.db, solution_id, caller=caller))
 
 
 @router.get(
@@ -1434,18 +1511,41 @@ async def get_solution_export_jobs(
 async def get_solution_export_job(
     job_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> SolutionExportJobPublic:
     row = await ctx.db.get(SolutionExportJob, job_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+    await _authorize_export_job(ctx.db, user, row)
+    await authorize_scope(ctx.db, user, row.organization_id, "solutions.read")
     return public_job(row)
 
 
-async def _downloadable_export_job(db: AsyncSession, job_id: UUID) -> SolutionExportJob:
+async def _authorize_export_job(db: AsyncSession, user: UserPrincipal, row: SolutionExportJob) -> None:
+    from src.services.platform_job_access import PlatformJobAccessDenied, require_platform_job_access
+
+    caller = await load_caller(db, user)
+    canonical = await db.scalar(select(PlatformJob).where(
+        PlatformJob.job_type == "solution.export",
+        PlatformJob.resource_type == "solution_export",
+        PlatformJob.resource_id == str(row.id),
+    ))
+    if canonical is None:
+        raise HTTPException(404, "Export job not found")
+    try:
+        require_platform_job_access(caller, canonical)
+    except PlatformJobAccessDenied as exc:
+        raise HTTPException(404, "Export job not found") from exc
+
+
+async def _downloadable_export_job(db: AsyncSession, job_id: UUID, user: UserPrincipal) -> SolutionExportJob:
     row = await db.get(SolutionExportJob, job_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+    await _authorize_export_job(db, user, row)
+    caller = await authorize_scope(db, user, row.organization_id, "solutions.read")
+    if row.contains_secrets:
+        require_permission(caller, "secrets.read", row.organization_id)
     if (
         row.status != "completed"
         or not row.artifact_storage_key
@@ -1466,12 +1566,12 @@ async def _downloadable_export_job(db: AsyncSession, job_id: UUID) -> SolutionEx
 async def create_solution_export_download_link(
     job_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     response: Response,
 ) -> SolutionExportDownloadLink:
     from src.services.file_storage import FileStorageService
 
-    row = await _downloadable_export_job(ctx.db, job_id)
+    row = await _downloadable_export_job(ctx.db, job_id, user)
     # The shared guard requires a storage key and a future artifact expiry.
     assert row.artifact_storage_key is not None
     assert row.expires_at is not None
@@ -1504,11 +1604,11 @@ async def create_solution_export_download_link(
 async def download_solution_export_job(
     job_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> StreamingResponse:
     from src.services.file_storage import FileStorageService
 
-    row = await _downloadable_export_job(ctx.db, job_id)
+    row = await _downloadable_export_job(ctx.db, job_id, user)
     assert row.artifact_storage_key is not None
     filename = _safe_zip_filename(row.artifact_filename or f"solution-export-{row.id}.zip")
     return StreamingResponse(
@@ -1524,11 +1624,12 @@ async def download_solution_export_job(
     summary="Get an install + everything it owns (admin only)",
 )
 async def get_solution_entities(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionEntities:
     """One call for the detail UI: the install, all owned entities, and each
     config declaration paired with whether a value is set in the install's scope
     (plus the derived required-but-unset key list)."""
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -1841,8 +1942,9 @@ def _same_scope(model: type, org_id: UUID | None):
     summary="List loose same-scope entities capturable by an install (admin only)",
 )
 async def get_solution_capture_candidates(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionCaptureCandidates:
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -1896,7 +1998,7 @@ async def preview_solution_capture(
     solution_id: UUID,
     body: SolutionDependencyPreviewRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> SolutionDependencyPreview:
     """Dependency preview for a capture selection (§3.2/§3.3).
 
@@ -1906,6 +2008,7 @@ async def preview_solution_capture(
     everything is deselectable in the UI; nothing is silently blocked. The scan
     is static, so computed/dynamic refs are invisible — the UI says so.
     """
+    await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -1931,7 +2034,7 @@ async def preview_solution_capture(
     summary="Update an install's local fields (admin only)",
 **operation_route("solutions.update"))
 async def update_solution(
-    solution_id: UUID, body: SolutionUpdate, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, body: SolutionUpdate, ctx: Context, user: CurrentActiveUser
 ) -> SolutionDTO:
     """Edit INSTALL-LOCAL fields only (name/scope/allow_outbound_access/allow_inbound_access/git fields).
 
@@ -1947,6 +2050,7 @@ async def update_solution(
     operator re-enters the values in the new scope. (The 5 entity tables above
     ARE re-homed because they carry ``solution_id`` and are owned by the bundle.)
     """
+    await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -1955,6 +2059,8 @@ async def update_solution(
     # organization_id=None is a legitimate value (global scope), distinguished
     # from "not provided" via model_fields_set (exclude_unset).
     fields = body.model_dump(exclude_unset=True)
+    if "organization_id" in fields:
+        await authorize_scope(ctx.db, user, body.organization_id, "solutions.readwrite")
     if not fields:
         return SolutionDTO.model_validate(sol)  # nothing to do
 
@@ -2113,7 +2219,7 @@ async def _validate_solution_git_connection_source(
     summary="Uninstall: flip status to inactive, data frozen in place (admin only)",
 )
 async def uninstall_solution(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionDTO:
     """Flip the install's lifecycle status to ``inactive``.
 
@@ -2126,6 +2232,7 @@ async def uninstall_solution(
     To permanently destroy an install and all of its owned data, use the hard-delete
     path: ``DELETE /{id}?confirm=<slug>``.
     """
+    await authorize_solution(ctx.db, user, solution_id, "solutions.deploy")
     sol = await ctx.db.get(SolutionORM, solution_id)
     if sol is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -2145,7 +2252,7 @@ async def uninstall_solution(
     summary="Preview counts of what a hard-delete would destroy (admin only)",
 )
 async def get_solution_deletion_summary(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionDeletionSummary:
     """Return per-entity counts of what ``DELETE /{id}?confirm=<slug>`` would destroy.
 
@@ -2153,6 +2260,7 @@ async def get_solution_deletion_summary(
     to delete N tables, M workflows, …", then requires the operator to type the
     install slug before issuing the hard-delete.
     """
+    await authorize_solution(ctx.db, user, solution_id, "solutions.read")
     from src.models.orm.events import EventSource, EventSubscription
     from src.services.solution_files import enumerate_solution_files
 
@@ -2213,7 +2321,7 @@ async def get_solution_deletion_summary(
 async def delete_solution(
     solution_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     confirm: str = "",
 ) -> SolutionDeleteSummary:
     """Confirmed hard-delete: drops the Solution row and ALL owned entities.
@@ -2233,6 +2341,7 @@ async def delete_solution(
     To uninstall non-destructively (freeze data, flip status only), use:
     ``POST /{id}/uninstall``.
     """
+    await authorize_solution(ctx.db, user, solution_id, "solutions.deploy")
     # Load WITHOUT eager-loading selectin child relationships.
     # If the children are loaded, the relationship's ``delete-orphan`` cascade marks
     # them in ``session.deleted`` at flush and the Solutions read-only backstop
@@ -2351,6 +2460,8 @@ async def _run_deploy_job(
     force: bool,
     allow_connected_install: bool = False,
     delete_install_on_failure: bool = False,
+    progress_callback: Callable[[str, float], Awaitable[None]] | None = None,
+    timing_callback: Callable[[str, int], Awaitable[None]] | None = None,
 ) -> None:
     """Execute the deploy under a fresh session (background task).
 
@@ -2409,6 +2520,10 @@ async def _run_deploy_job(
     async def _set_phase(phase: str) -> None:
         await _set_status("running", result={"phase": phase})
 
+    async def _report(phase: str, percent: float) -> None:
+        if progress_callback is not None:
+            await progress_callback(phase, percent)
+
     if not await _set_status("running"):
         _cleanup_file(zip_path)
         return
@@ -2427,14 +2542,22 @@ async def _run_deploy_job(
                         "deploy is disabled (auto-pull is the only writer)."
                     )
                 await _set_phase("validating bundle and applying resources")
-                result = await deploy_zip_to_solution_path(
-                    db, solution, zip_path, force=force
+                await _report("Validating Solution bundle", 12)
+                instrumentation = SolutionDeployInstrumentation(
+                    progress_callback=progress_callback,
+                    timing_callback=timing_callback,
                 )
+                with solution_deploy_instrumentation(instrumentation):
+                    result = await deploy_zip_to_solution_path(
+                        db, solution, zip_path, force=force
+                    )
+                await _report("Committing Solution resources", 65)
                 await db.commit()
                 # S3 only after the DB is durable — a failed commit changes no running
                 # code (P1-c). Still inside the lock so finalize can't race another deploy.
                 await _set_phase("storing source artifact and runtime files")
                 await result.finalize_s3()
+                await _report("Persisting Solution source index", 98)
                 await db.commit()  # source search index rows written by finalize
                 deploy_result = {
                     "solution_id": str(solution_id),
@@ -2473,6 +2596,8 @@ async def _run_deploy_job(
             "Deploy committed but storage was unavailable after retries. "
             "Re-run the deploy to complete it (it is idempotent).",
         )
+    except AppBuildMemoryError as exc:
+        await _set_status("failed", str(exc))
     except (
         SolutionDowngradeBlocked,
         SolutionDeployConflict,
@@ -2503,6 +2628,8 @@ async def _run_install_job(
     replace_secrets: bool,
     replace_data: bool,
     reactivate: bool,
+    progress_callback: Callable[[str, float], Awaitable[None]] | None = None,
+    timing_callback: Callable[[str, int], Awaitable[None]] | None = None,
 ) -> None:
     """Execute a zip install under a fresh session (background task).
 
@@ -2554,21 +2681,32 @@ async def _run_install_job(
         return
     install_result: dict | None = None
 
+    async def _report(phase: str, percent: float) -> None:
+        if progress_callback is not None:
+            await progress_callback(phase, percent)
+
     async def _execute() -> None:
         nonlocal install_result
         async with get_db_context() as db:
-            solution = await install_zip_path(
-                db,
-                zip_path,
-                organization_id=organization_id,
-                config_values=config_values,
-                deployer_email=deployer_email,
-                force=force,
-                password=password,
-                replace_secrets=replace_secrets,
-                replace_data=replace_data,
-                reactivate=reactivate,
+            await _report("Validating Solution install bundle", 12)
+            instrumentation = SolutionDeployInstrumentation(
+                progress_callback=progress_callback,
+                timing_callback=timing_callback,
             )
+            with solution_deploy_instrumentation(instrumentation):
+                solution = await install_zip_path(
+                    db,
+                    zip_path,
+                    organization_id=organization_id,
+                    config_values=config_values,
+                    deployer_email=deployer_email,
+                    force=force,
+                    password=password,
+                    replace_secrets=replace_secrets,
+                    replace_data=replace_data,
+                    reactivate=reactivate,
+                )
+            await _report("Finalizing Solution installation", 98)
             install_result = {"solution_id": str(solution.id), "slug": solution.slug}
     try:
         await asyncio.wait_for(
@@ -2629,9 +2767,10 @@ async def deploy_solution(
     solution_id: UUID,
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     force: bool = False,
 ) -> SolutionDeployEnqueued:
+    caller = await authorize_solution(ctx.db, user, solution_id, "solutions.deploy")
     solution = await ctx.db.get(SolutionORM, solution_id)
     if solution is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -2704,7 +2843,7 @@ async def deploy_solution(
             install_id=solution_id,
             organization_id=solution.organization_id,
             options={"force": force},
-            requested_by_user_id=user.user_id,
+            requested_by_user_id=original_user_id(caller),
             requested_by_email=user.email,
             requested_by_name=user.name or user.email or "Unknown",
             input_path=zip_path,
@@ -2721,7 +2860,7 @@ async def deploy_solution(
     summary="Poll the status of an async deploy job (admin only)",
 )
 async def get_deploy_job(
-    job_id: UUID, ctx: Context, user: CurrentSuperuser
+    job_id: UUID, ctx: Context, user: CurrentActiveUser
 ) -> SolutionDeployJobStatus:
     projection = await ctx.db.get(SolutionDeployJob, job_id)
     canonical = await ctx.db.get(PlatformJob, job_id)
@@ -2735,6 +2874,14 @@ async def get_deploy_job(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Deploy job not found"
         )
+    from src.services.platform_job_access import PlatformJobAccessDenied, require_platform_job_access
+
+    caller = await load_caller(ctx.db, user)
+    try:
+        require_platform_job_access(caller, canonical)
+    except PlatformJobAccessDenied as exc:
+        raise HTTPException(404, "Deploy job not found") from exc
+    await authorize_scope(ctx.db, user, canonical.organization_id, "solutions.read")
     return project_solution_deploy_job_status(projection, canonical)
 
 
@@ -2744,7 +2891,7 @@ async def get_deploy_job(
     summary="Capture existing loose entities into an install (admin only)",
 **operation_route("solutions.capture"))
 async def capture_solution_entities(
-    solution_id: UUID, body: SolutionCaptureRequest, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, body: SolutionCaptureRequest, ctx: Context, user: CurrentActiveUser
 ) -> SolutionCaptureResponse:
     """Adopt existing `_repo/` entities into this install in place.
 
@@ -2752,6 +2899,7 @@ async def capture_solution_entities(
     clusters into a Solution. It stamps compatible loose entities with
     ``solution_id`` and stores an export zip containing the captured definitions.
     """
+    await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     solution = await ctx.db.get(SolutionORM, solution_id)
     if solution is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -2809,7 +2957,7 @@ async def capture_solution_entities(
     summary="Clear pending_captures rows the client pulled into source (admin only)",
 )
 async def ack_pulled_captures(
-    solution_id: UUID, body: PullAckRequest, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, body: PullAckRequest, ctx: Context, user: CurrentActiveUser
 ) -> PullAckResponse:
     """Server-authoritative clear of pending_captures rows.
 
@@ -2818,6 +2966,7 @@ async def ack_pulled_captures(
     deletes those queue rows. A stale client can only clear rows it names, so it
     can't double-clear another client's un-pulled captures.
     """
+    await authorize_solution(ctx.db, user, solution_id, "solutions.readwrite")
     from sqlalchemy import and_, delete
 
     from src.models.orm.pending_capture import PendingCaptureORM
@@ -2849,7 +2998,7 @@ async def ack_pulled_captures(
     summary="Queue a git-connected install update from its repo (admin only)",
 **operation_route("solutions.sync"))
 async def sync_solution(
-    solution_id: UUID, response: Response, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID, response: Response, ctx: Context, user: CurrentActiveUser
 ) -> PlatformJobAccepted:
     """Queue a pull of the connected install's configured Git ref (criterion 13).
 
@@ -2857,6 +3006,7 @@ async def sync_solution(
     deploys and SDK updates. The git-sync handler retains the service-level
     write lock, which also protects non-platform writers.
     """
+    caller = await authorize_solution(ctx.db, user, solution_id, "solutions.deploy")
     solution = await ctx.db.get(SolutionORM, solution_id)
     if solution is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
@@ -2886,13 +3036,16 @@ async def sync_solution(
         resource_lock_key=f"solution:{solution_id}",
         priority=500,
         organization_id=solution.organization_id,
-        requested_by_user_id=user.user_id,
+        requested_by_user_id=original_user_id(caller),
         requested_by_email=user.email,
         requested_by_name=user.name or user.email or "Unknown",
         resource_type="solution",
         resource_id=str(solution_id),
         title=f"Update {solution.name} from Git",
         action_url=f"/solutions/{solution_id}",
+        memory_profile_key=build_resource_memory_profile_key(
+            SOLUTION_GIT_SYNC_DEFINITION.job_type, solution_id
+        ),
     )
     if job.notification_id is None:
         await ensure_platform_job_notification(ctx.db, job)
@@ -2987,7 +3140,7 @@ async def _preview_to_dto(
 async def install_preview(
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     organization_id: Annotated[str | None, FastapiForm()] = None,
 ) -> SolutionInstallPreview:
     """Unzip + parse a Solution workspace zip and report what it would create.
@@ -3012,6 +3165,7 @@ async def install_preview(
                 detail=f"Invalid organization_id: {organization_id}",
             ) from exc
 
+    await authorize_scope(ctx.db, user, org_id, "solutions.readwrite")
     zip_path = await _spool_upload_to_temp(
         file, prefix="bifrost-solution-preview-", max_bytes=MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
     )
@@ -3034,10 +3188,13 @@ async def install_preview(
     summary="Preview a Solution install from a git repo (parse-only, admin only)",
 )
 async def install_preview_repo(
-    body: SolutionRepoPreviewRequest, ctx: Context, user: CurrentSuperuser
+    body: SolutionRepoPreviewRequest, ctx: Context, user: CurrentActiveUser
 ) -> SolutionInstallPreview:
     """Clone the repo (+ optional subpath/ref), parse the workspace, and report
     the install plan — the same plan the zip preview returns. No DB write."""
+    caller = await load_caller(ctx.db, user)
+    org_id = body.organization_id if "organization_id" in body.model_fields_set else original_organization(caller)
+    await authorize_scope(ctx.db, user, org_id, "solutions.readwrite")
     import tempfile
     from pathlib import Path
 
@@ -3072,7 +3229,7 @@ async def install_preview_repo(
                 f"{body.repo_subpath or '<repo root>'} in {body.repo_url}",
             )
         result = _parse_workspace(root)
-    return await _preview_to_dto(ctx, result, None)
+    return await _preview_to_dto(ctx, result, org_id)
 
 
 @router.post(
@@ -3084,7 +3241,7 @@ async def install_preview_repo(
 async def install_from_repo(
     body: SolutionRepoPreviewRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> SolutionDeployEnqueued:
     """Create a git-connected install from a repo (+ optional subpath/ref) and
     enqueue its first deploy as an async job. git-connected from birth: deploy is
@@ -3099,6 +3256,11 @@ async def install_from_repo(
     ``result`` carries the installed ``solution_id``. If the first deploy fails,
     the job removes the brand-new install so no empty git_connected orphan remains.
     """
+    caller = await load_caller(ctx.db, user)
+    org_id = body.organization_id if "organization_id" in body.model_fields_set else original_organization(caller)
+    if "organization_id" not in body.model_fields_set and org_id is None:
+        raise HTTPException(422, "An organization is required for the install")
+    caller = await authorize_scope(ctx.db, user, org_id, "solutions.deploy")
     import tempfile
     from pathlib import Path
 
@@ -3144,20 +3306,6 @@ async def install_from_repo(
                 detail="Repo has no valid bifrost.solution.yaml (missing slug)",
             )
         memory_profile_key = build_solution_memory_profile_key(parsed)
-
-        # Install kind comes from the REQUEST (unified --org standard), not the
-        # descriptor: HOME (organization_id absent) => the caller's own org;
-        # explicit null => global; a UUID => that org.
-        if "organization_id" in body.model_fields_set:
-            org_id: UUID | None = body.organization_id
-        else:
-            org_id = ctx.org_id
-            if org_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="install requires an organization (caller has no org; "
-                    "pass organization_id, or null for a global install)",
-                )
 
         # Fast-path 409 with a clear message for the common sequential case; the
         # flush() catch below covers the concurrent race on the unique index.
@@ -3206,7 +3354,7 @@ async def install_from_repo(
             install_id=solution.id,
             organization_id=solution.organization_id,
             options={"force": True},
-            requested_by_user_id=user.user_id,
+            requested_by_user_id=original_user_id(caller),
             requested_by_email=user.email,
             requested_by_name=user.name or user.email or "Unknown",
             input_bytes=archive,
@@ -3228,7 +3376,7 @@ async def install_from_repo(
 async def install_solution(
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     organization_id: Annotated[str | None, FastapiForm()] = None,
     config_values: Annotated[str, FastapiForm()] = "{}",
     password: Annotated[str | None, FastapiForm()] = None,
@@ -3277,6 +3425,7 @@ async def install_solution(
                 detail=f"Invalid organization_id: {organization_id}",
             ) from exc
 
+    caller = await authorize_scope(ctx.db, user, org_id, "solutions.deploy")
     try:
         values = json.loads(config_values) if config_values else {}
     except json.JSONDecodeError as exc:
@@ -3297,7 +3446,11 @@ async def install_solution(
     # a non-workspace or a wrong/missing password returns a synchronous 4xx.
     # The job scans encrypted payload checksums before any installation writes.
     try:
+        authorize_backup_archive(caller, zip_path, org_id)
         preview = validate_install_zip(zip_path, password=password)
+    except HTTPException:
+        _cleanup_file(zip_path)
+        raise
     except BadExportPassword as exc:
         _cleanup_file(zip_path)
         raise HTTPException(
@@ -3350,7 +3503,7 @@ async def install_solution(
                 "replace_data": replace_data,
                 "reactivate": reactivate,
             },
-            requested_by_user_id=user.user_id,
+            requested_by_user_id=original_user_id(caller),
             requested_by_email=user.email,
             requested_by_name=user.name or user.email or "Unknown",
             input_path=zip_path,
