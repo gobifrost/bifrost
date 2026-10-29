@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -24,6 +25,8 @@ def _repo_file(path: str) -> Path:
 
 
 ENTRYPOINT = _repo_file("api/entrypoint.sh")
+ALLOCATOR_HELPER = _repo_file("api/scripts/api-allocator.sh")
+UVICORN_SHIM = _repo_file("api/scripts/uvicorn-shim.sh")
 DOCKERFILES = (_repo_file("api/Dockerfile"), _repo_file("api/Dockerfile.dev"))
 DEV_COMPOSE = _repo_file("docker-compose.dev.yml")
 
@@ -98,6 +101,28 @@ def _run_dev_api_command(tmp_path: Path, command: str, *, enable_debug: str) -> 
     return json.loads(capture.read_text())
 
 
+def _run_uvicorn_shim(
+    tmp_path: Path, *, extra_env: dict[str, str] | None = None
+) -> dict[str, object]:
+    """Run the image's direct-Uvicorn path without the image entrypoint."""
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    shutil.copyfile(UVICORN_SHIM, shim_dir / "uvicorn")
+    (shim_dir / "uvicorn").chmod(0o755)
+    shutil.copyfile(ALLOCATOR_HELPER, shim_dir / "api-allocator.sh")
+    _write_command(shim_dir, "uvicorn-real")
+    capture = tmp_path / "capture.json"
+    environment = {"ENTRYPOINT_CAPTURE": str(capture)}
+    environment.update(extra_env or {})
+
+    subprocess.run(
+        [str(shim_dir / "uvicorn"), "src.main:app", "--port", "8000"],
+        check=True,
+        env=environment,
+    )
+    return json.loads(capture.read_text())
+
+
 @pytest.mark.parametrize("uvicorn", ["uvicorn", "/usr/local/bin/uvicorn"])
 def test_uvicorn_startup_uses_the_api_allocator_configuration(
     tmp_path: Path, uvicorn: str
@@ -127,6 +152,48 @@ def test_uvicorn_startup_preserves_operator_allocator_configuration(tmp_path: Pa
         "argv": ["src.main:app"],
         "pythonmalloc": "debug",
         "ld_preload": "libinstrumentation.so:libjemalloc.so.2",
+        "malloc_conf": "dirty_decay_ms:5000",
+    }
+
+
+def test_direct_uvicorn_shim_configures_the_api_without_the_image_entrypoint(
+    tmp_path: Path,
+) -> None:
+    captured = _run_uvicorn_shim(tmp_path)
+
+    assert captured == {
+        "argv": ["src.main:app", "--port", "8000"],
+        "pythonmalloc": "malloc",
+        "ld_preload": "libjemalloc.so.2",
+        "malloc_conf": "background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000",
+    }
+
+
+@pytest.mark.parametrize(
+    "preload",
+    [
+        "libinstrumentation.so:libjemalloc.so.2",
+        "libinstrumentation.so libjemalloc.so.2",
+        "libinstrumentation.so\tlibjemalloc.so.2",
+        "libinstrumentation.so:/usr/lib/x86_64-linux-gnu/libjemalloc.so.2",
+    ],
+)
+def test_direct_uvicorn_shim_preserves_operator_settings_without_duplicate_preload(
+    tmp_path: Path, preload: str
+) -> None:
+    captured = _run_uvicorn_shim(
+        tmp_path,
+        extra_env={
+            "PYTHONMALLOC": "debug",
+            "MALLOC_CONF": "dirty_decay_ms:5000",
+            "LD_PRELOAD": preload,
+        },
+    )
+
+    assert captured == {
+        "argv": ["src.main:app", "--port", "8000"],
+        "pythonmalloc": "debug",
+        "ld_preload": preload,
         "malloc_conf": "dirty_decay_ms:5000",
     }
 
@@ -221,3 +288,6 @@ def test_api_runtime_image_installs_jemalloc(dockerfile: Path) -> None:
         "# Match the production", 1
     )[0]
     assert "libjemalloc2" in runtime
+    assert "uvicorn-real" in source
+    assert "api/scripts/api-allocator.sh" in source
+    assert "api/scripts/uvicorn-shim.sh" in source

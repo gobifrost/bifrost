@@ -4,18 +4,10 @@
 
 set -e
 
-# The API's JSON response workload benefits from a purging allocator. Scope its
-# defaults to the API service process because this image also runs workers, init, and
-# CLI commands. Operators can retain explicit allocator and instrumentation settings.
-configure_api_allocator() {
-    if [ -z "${PYTHONMALLOC+x}" ]; then
-        export PYTHONMALLOC=malloc
-    fi
-    if [ -z "${MALLOC_CONF+x}" ]; then
-        export MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:1000
-    fi
-    export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}libjemalloc.so.2"
-}
+# This image also runs workers, init, and CLI commands. The helper's defaults
+# apply only to the API role; the direct `uvicorn` shim handles entrypoint
+# bypasses such as Kubernetes command overrides.
+. /usr/local/bin/api-allocator.sh
 
 if [ "${BIFROST_API_PROCESS:-}" = "1" ]; then
     configure_api_allocator
