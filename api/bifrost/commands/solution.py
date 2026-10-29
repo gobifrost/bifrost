@@ -1282,20 +1282,7 @@ def _collect_tables(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """
     from bifrost.solution_definition import read_solution_definition
 
-    raw = (definition or read_solution_definition(workspace)).entries("tables")
-    entries: list[dict] = []
-    for body in raw:
-        key = body["id"]
-        entry = {
-            "id": body.get("id", key),
-            "name": body.get("name") or key,
-            "description": body.get("description"),
-            "schema": body.get("schema"),
-        }
-        if "policies" in body:
-            entry["policies"] = body["policies"]
-        entries.append(entry)
-    return entries
+    return (definition or read_solution_definition(workspace)).install_entries("tables")
 
 
 def _collect_config_schemas(workspace: pathlib.Path, *, definition=None) -> list[dict]:
@@ -1326,17 +1313,7 @@ def _collect_file_policies(workspace: pathlib.Path, *, definition=None) -> list[
     """
     from bifrost.solution_definition import read_solution_definition
 
-    raw = (definition or read_solution_definition(workspace)).entries("file_policies")
-    entries: list[dict] = []
-    for body in raw:
-        key = body["id"]
-        entries.append({
-            "id": body.get("id", key),
-            "location": body.get("location"),
-            "path": body.get("path", ""),
-            "policies": body.get("policies", []),
-        })
-    return entries
+    return (definition or read_solution_definition(workspace)).install_entries("file_policies")
 
 
 def _collect_connection_schemas(workspace: pathlib.Path, *, definition=None) -> list[dict]:
@@ -1364,42 +1341,26 @@ def _collect_claims(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read Custom Claim definitions from .bifrost/claims.yaml (keyed by UUID)."""
     from bifrost.solution_definition import read_solution_definition
 
-    raw = (definition or read_solution_definition(workspace)).entries("claims")
-    entries: list[dict] = []
-    for body in raw:
-        key = body["id"]
-        entries.append({
-            "id": body.get("id", key),
-            "name": body.get("name") or key,
-            "description": body.get("description"),
-            "type": body.get("type", "list"),
-            "query": body["query"],
-        })
-    return entries
-
-
-def _collect_manifest_entities(workspace: pathlib.Path, filename: str, key: str, *, definition=None) -> list[dict]:
-    """Pass through inline manifest entries (forms/agents) keyed by UUID.
-
-    The form/agent inline content (fields, system_prompt, etc.) lives in the
-    manifest body; deploy stamps solution_id + scope and full-replaces.
-    """
-    from bifrost.solution_definition import read_solution_definition
-
-    return (definition or read_solution_definition(workspace)).entries(key)
+    return (definition or read_solution_definition(workspace)).install_entries("claims")
 
 
 def _collect_forms(workspace: pathlib.Path, *, definition=None) -> list[dict]:
-    return _collect_manifest_entities(workspace, "forms.yaml", "forms", definition=definition)
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).entries("forms")
 
 
 def _collect_agents(workspace: pathlib.Path, *, definition=None) -> list[dict]:
-    return _collect_manifest_entities(workspace, "agents.yaml", "agents", definition=definition)
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).entries("agents")
 
 
 def _collect_events(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read event/schedule triggers from .bifrost/events.yaml (keyed by EventSource UUID)."""
-    return _collect_manifest_entities(workspace, "events.yaml", "events", definition=definition)
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).entries("events")
 
 
 # Text source files sent inline as UTF-8 in ``src_files``. Everything else in

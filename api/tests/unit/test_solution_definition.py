@@ -160,6 +160,86 @@ def test_solution_reader_retains_declaration_defaults(tmp_path) -> None:
     }]
 
 
+def test_solution_reader_normalizes_documented_empty_map_key_defaults(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "workflows.yaml",
+        """workflows:
+  daily:
+    name: ''
+    path: workflows/daily.py
+    function_name: run
+""",
+    )
+    (tmp_path / ".bifrost" / "tables.yaml").write_text(
+        "tables:\n  inventory:\n    name: ''\n    schema: {}\n"
+    )
+    (tmp_path / ".bifrost" / "apps.yaml").write_text(
+        "apps:\n  dashboard:\n    path: apps/dashboard\n    slug: ''\n    name: ''\n"
+    )
+    (tmp_path / ".bifrost" / "claims.yaml").write_text(
+        """claims:
+  allowed_ids:
+    name: ''
+    query: {table: memberships, select: id}
+"""
+    )
+
+    definition = read_solution_definition(tmp_path)
+    assert definition.entries("workflows")[0]["name"] == "daily"
+    assert definition.entries("tables")[0]["name"] == "inventory"
+    assert definition.entries("apps")[0]["slug"] == "dashboard"
+    assert definition.entries("apps")[0]["name"] == "dashboard"
+    assert definition.entries("claims")[0]["name"] == "allowed_ids"
+
+
+def test_solution_collectors_use_the_canonical_install_view(tmp_path) -> None:
+    from bifrost.commands.solution import (
+        _collect_claims,
+        _collect_file_policies,
+        _collect_tables,
+    )
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "tables.yaml",
+        """tables:
+  inventory:
+    organization_id: source-org
+    description: Inventory
+    schema: {serial: {type: string}}
+    policies: [{name: readers, actions: [read]}]
+""",
+    )
+    (tmp_path / ".bifrost" / "claims.yaml").write_text(
+        """claims:
+  allowed_ids:
+    organization_id: source-org
+    description: Allowed IDs
+    query: {table: memberships, select: id}
+"""
+    )
+    (tmp_path / ".bifrost" / "file-policies.yaml").write_text(
+        """file_policies:
+  reports-root:
+    organization_id: source-org
+    location: reports
+    path: ''
+    policies: [{$ref: admin_bypass}]
+"""
+    )
+
+    definition = read_solution_definition(tmp_path)
+    assert _collect_tables(tmp_path, definition=definition) == definition.install_entries("tables")
+    assert _collect_claims(tmp_path, definition=definition) == definition.install_entries("claims")
+    assert _collect_file_policies(tmp_path, definition=definition) == definition.install_entries("file_policies")
+    for section in ("tables", "claims", "file_policies"):
+        assert "organization_id" not in definition.install_entries(section)[0]
+
+
 def test_solution_reader_rejects_malformed_entity_instead_of_skipping_it(tmp_path) -> None:
     from bifrost.definition_validation import DefinitionValidationError
     from bifrost.solution_definition import read_solution_definition

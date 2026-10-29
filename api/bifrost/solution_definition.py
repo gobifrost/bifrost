@@ -26,6 +26,7 @@ from bifrost.manifest import (
     Manifest,
     ManifestSolutionConfigSchema,
 )
+from bifrost.manifest_codec import Destination
 from bifrost.solution_descriptor import DESCRIPTOR_FILENAME, SolutionDescriptor, load_descriptor
 
 
@@ -100,13 +101,33 @@ class SolutionDefinition:
     workflow_transports: dict[str, SolutionWorkflowTransport]
 
     def entries(self, section: str) -> list[dict[str, Any]]:
+        return self._entries(section)
+
+    def install_entries(self, section: str) -> list[dict[str, Any]]:
+        """Return common entities through their canonical install projection."""
+        return self._entries(section, destination=Destination.INSTALL)
+
+    def _entries(
+        self, section: str, *, destination: Destination | None = None
+    ) -> list[dict[str, Any]]:
         values = getattr(self.manifest, section)
         if not isinstance(values, dict):
             raise ValueError(f"{section} is not an entity mapping")
-        entries = [
-            value.model_dump(mode="json", by_alias=True, exclude_unset=True)
-            for value in values.values()
-        ]
+        entries: list[dict[str, Any]] = []
+        for value in values.values():
+            source = value.model_dump(mode="json", by_alias=True, exclude_unset=True)
+            if destination is None:
+                entries.append(source)
+                continue
+            # The codec decides which entity fields cross the install boundary.
+            # Use the source dump for those selected fields to retain an input's
+            # fields_set shape inside nested open/content objects; the codec
+            # supplies documented defaults that old collectors materialized.
+            projected = value.view(destination)
+            entries.append({
+                key: source.get(key, default)
+                for key, default in projected.items()
+            })
         if section == "apps":
             for entry in entries:
                 transport = self.app_transports.get(str(entry["id"]))
@@ -159,6 +180,14 @@ _DEFAULT_KEY_FIELDS: dict[str, tuple[str, ...]] = {
     "events": ("id", "name"),
 }
 
+_EMPTY_VALUE_KEY_DEFAULTS: dict[str, tuple[str, ...]] = {
+    "workflows": ("name",),
+    "tables": ("name",),
+    "apps": ("slug", "name"),
+    "claims": ("name",),
+    "configs": ("key",),
+}
+
 
 def _path(workspace: Path, *parts: str) -> Path | None:
     root = os.path.realpath(workspace)
@@ -181,6 +210,8 @@ def _with_mapping_defaults(data: dict[str, Any], section: str) -> dict[str, Any]
         entry = dict(body)
         for field in _DEFAULT_KEY_FIELDS.get(section, ()):
             entry.setdefault(field, key)
+        for field in _EMPTY_VALUE_KEY_DEFAULTS.get(section, ()):
+            entry[field] = entry.get(field) or key
         if section == "file_policies":
             entry.setdefault("organization_id", None)
             entry.setdefault("solution_id", None)
