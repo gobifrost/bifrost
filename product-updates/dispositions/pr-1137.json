@@ -1,0 +1,17 @@
+{
+  "key": "pr:1137",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine pinned runtime-image maintenance and the shared library required to run Node 26; no separate customer announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1137",
+      "https://github.com/gobifrost/bifrost/pull/1075",
+      "https://github.com/gobifrost/bifrost/pull/978",
+      "https://github.com/gobifrost/bifrost/pull/1003",
+      "https://github.com/gobifrost/bifrost/pull/909",
+      "Root reviewed exact source pins, production/dev parity, allocator compatibility, final Babel 8 and Node 26 child smoke, client and Playwright image checks, and focused passing tests."
+    ]
+  }
+}
