@@ -167,6 +167,21 @@ class VerdictTest(unittest.TestCase):
         self.assertEqual(lowered["reliability"]["wf"]["status"], "inconclusive")
 
 
+class ReliabilityEvidenceTest(unittest.TestCase):
+    def test_pass_fail_and_shortfall(self) -> None:
+        self.assertEqual(capacity.reliability_evidence(0, 3000, 0.001), ("pass", 3000))
+        self.assertEqual(capacity.reliability_evidence(5, 3000, 0.001)[0], "fail")
+        status, needed = capacity.reliability_evidence(0, 2500, 0.001)
+        self.assertEqual(status, "insufficient")
+        self.assertEqual(needed, capacity.observations_needed(0.001))
+
+    def test_one_failure_needs_more_observations_not_a_fail(self) -> None:
+        status, needed = capacity.reliability_evidence(1, 3000, 0.001)
+        self.assertEqual(status, "insufficient")
+        self.assertGreater(needed, 3000)
+        self.assertLessEqual(capacity.clopper_pearson_upper(1, needed), 0.001)
+
+
 class SearchTest(unittest.TestCase):
     def test_geometric_ramp_then_two_bisections(self) -> None:
         self.assertEqual(capacity.search_next([(10.0, "pass")]), 12.5)

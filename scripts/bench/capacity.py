@@ -127,6 +127,24 @@ def observations_needed(rate: float, confidence: float = 0.95) -> int:
     return needed
 
 
+def reliability_evidence(failures: int, n: int, limit: float, confidence: float = 0.95) -> tuple[str, int]:
+    """Whether ``failures`` in ``n`` shows a failure rate at or below ``limit``.
+
+    Returns ("pass", n) when the exact upper bound is within the limit,
+    ("fail", n) when the observed rate itself exceeds it, otherwise
+    ("insufficient", n_needed): the sample size at which the same failure
+    count would prove the limit.
+    """
+    if n > 0 and clopper_pearson_upper(failures, n, confidence) <= limit:
+        return "pass", n
+    if n > 0 and failures / n > limit:
+        return "fail", n
+    needed = max(n + 1, observations_needed(limit, confidence))
+    while clopper_pearson_upper(failures, needed, confidence) > limit:
+        needed = math.ceil(needed * 1.1)
+    return "insufficient", needed
+
+
 def ols_slope(points: list[tuple[float, float]]) -> tuple[float, float, list[float]]:
     """Fit ``y = slope * x + intercept`` and return residuals in point order."""
     if len(points) < 2:

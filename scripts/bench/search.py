@@ -8,6 +8,7 @@ and ``hostmetrics.py`` (external contention).
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from pathlib import Path
@@ -142,6 +143,7 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         validity["invalid"].append(f"driver lag p99 {sent['driver_lag_p99_s']:.3f} s")
     overall = "invalid" if validity["invalid"] else verdict["overall"]
     return {
+        "window": window,
         "rate": rate, "seed": seed, "window_s": window_s, "confirm": confirm, "drift_limit_per_s": drift_limit, "overall": overall, "verdict": verdict, "validity": validity,
         "faults": faults, "driver_lag_p99_s": sent["driver_lag_p99_s"], "missing": outcomes["missing"],
         "records": records, "backlog": backlog,
@@ -180,26 +182,55 @@ def search(cluster: Cluster, ids: dict, plan: dict, disk: dict[str, str], on_ste
     return {"steps": steps, "bracket": [max(passed, default=None), min(failed, default=None)], "stopped": None}
 
 
-def confirmation_seconds(rate: float, mix: dict[str, float]) -> tuple[float, bool]:
-    """Window for the 0.1 % per-class failure bound, capped; returns (seconds, whether the cap bound it)."""
-    needed = window_seconds(rate, mix, CONFIRM_MIN_S, capacity.observations_needed(0.001))
+CONFIRM_FAILURE_UPPER = 0.001
+# Size confirmation windows for 25 % more arrivals than the bound needs, so a
+# Poisson window rarely falls short.
+CONFIRM_HEADROOM = 1.25
+
+
+def confirmation_seconds(rate: float, mix: dict[str, float], observations: int) -> tuple[float, bool]:
+    """Window giving every gated class ``observations`` (with headroom), capped; (seconds, whether capped)."""
+    needed = window_seconds(rate, mix, CONFIRM_MIN_S, math.ceil(observations * CONFIRM_HEADROOM))
     return min(needed, CONFIRM_CAP_S), needed > CONFIRM_CAP_S
 
 
 def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str, str]) -> dict:
-    """A confirmation run: strict drift tolerance and a 0.1 % per-class failure bound.
+    """Confirmation at ``rate``: strict drift tolerance and a 0.1 % per-class failure bound.
 
-    When the 60 min cap leaves too few observations for that bound, a result
-    that would otherwise pass is inconclusive, never certified.
+    Runs until the evidence settles: any other gate failing, or a class whose
+    observed failure rate exceeds the bound, fails; every class proving the
+    bound passes; otherwise the window is lengthened to the observations the
+    observed failures require and run again, until the 60 min cap, after which
+    the result is inconclusive, never certified.
     """
-    window_s, capped = confirmation_seconds(rate, plan["mix"])
-    strict = {**plan, "thresholds": {**plan["thresholds"], "failure_upper": 0.001}}
-    step = run_step(cluster, ids, rate, strict, plan["seed"] + 1000, disk, window_s=window_s, confirm=True)
-    step["capped"] = capped
-    if capped and step["overall"] == "fail":
+    observations = capacity.observations_needed(CONFIRM_FAILURE_UPPER)
+    segments: list[dict] = []
+    while True:
+        window_s, capped = confirmation_seconds(rate, plan["mix"], observations)
+        loose = {**plan, "thresholds": {**plan["thresholds"], "failure_upper": 1.0}}
+        step = run_step(cluster, ids, rate, loose, plan["seed"] + 1000 + len(segments), disk, window_s=window_s, confirm=True)
+        segments.append(step)
         verdict = step["verdict"]
-        others = [verdict["throughput"], verdict["drift"], verdict["tenant_faults"],
-                  *(gate for gates in verdict["latency"].values() for gate in gates.values())]
-        if all(gate["status"] != "fail" for gate in others):
-            step["overall"] = "inconclusive"
-    return step
+        if step["overall"] in ("fail", "invalid"):
+            outcome = step["overall"]
+            break
+        evidence = {}
+        for name, gate in verdict["reliability"].items():
+            records = [r for r in step["records"] if r["class"] == name and step["window"][0] <= r["scheduled_s"] < step["window"][1]]
+            failures = sum(1 for r in records if r["outcome"] != "correct")
+            evidence[name] = capacity.reliability_evidence(failures, len(records), CONFIRM_FAILURE_UPPER)
+        step["reliability_evidence"] = evidence
+        if any(status == "fail" for status, _ in evidence.values()):
+            outcome = "fail"
+            break
+        if step["overall"] == "pass" and all(status == "pass" for status, _ in evidence.values()):
+            outcome = "pass"
+            break
+        needed = max((n for status, n in evidence.values() if status == "insufficient"), default=observations)
+        if capped or confirmation_seconds(rate, plan["mix"], needed)[1] or needed <= observations:
+            outcome = "inconclusive"
+            break
+        observations = needed
+    final = dict(segments[-1])
+    final.update({"overall": outcome, "segments": len(segments), "capped": capped})
+    return final
