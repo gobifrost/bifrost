@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -19,6 +19,12 @@ function writePng(path, { width = 1, height = 1, pixels = [15, 25, 35, 255] } = 
   writeFileSync(path, PNG.sync.write(png));
 }
 
+function temporaryDirectory(t, prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
+}
+
 function initializeGitRepo(path) {
   mkdirSync(path, { recursive: true });
   execFileSync("git", ["init", "--quiet"], { cwd: path });
@@ -30,8 +36,8 @@ function initializeGitRepo(path) {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: path, encoding: "utf8" }).trim();
 }
 
-test("an unchanged successful capture advances the manifest watermark", () => {
-  const root = mkdtempSync(join(tmpdir(), "bifrost-docs-post-process-"));
+test("an unchanged successful capture advances the manifest watermark", (t) => {
+  const root = temporaryDirectory(t, "bifrost-docs-post-process-");
   const docsRepo = join(root, "docs");
   const bifrostRepo = join(root, "bifrost");
   const expectedSha = initializeGitRepo(bifrostRepo);
@@ -72,8 +78,8 @@ test("an unchanged successful capture advances the manifest watermark", () => {
   assert.notEqual(manifest.entries[0].captured_at.timestamp, "2026-01-01T00:00:00.000Z");
 });
 
-test("a capture inherited through a YAML merge keeps its crop configuration", () => {
-  const root = mkdtempSync(join(tmpdir(), "bifrost-docs-post-process-"));
+test("a capture inherited through a YAML merge keeps its crop configuration", (t) => {
+  const root = temporaryDirectory(t, "bifrost-docs-post-process-");
   const docsRepo = join(root, "docs");
   const bifrostRepo = join(root, "bifrost");
   initializeGitRepo(bifrostRepo);
@@ -117,8 +123,8 @@ entries:
   assert.deepEqual(PNG.sync.read(readFileSync(imagePath)).data, Buffer.from([15, 25, 35, 255]));
 });
 
-test("a visual change above the replacement threshold commits the new capture", () => {
-  const root = mkdtempSync(join(tmpdir(), "bifrost-docs-post-process-"));
+test("a visual change above the replacement threshold commits the new capture", (t) => {
+  const root = temporaryDirectory(t, "bifrost-docs-post-process-");
   const docsRepo = join(root, "docs");
   const bifrostRepo = join(root, "bifrost");
   initializeGitRepo(bifrostRepo);
@@ -160,8 +166,8 @@ test("a visual change above the replacement threshold commits the new capture", 
   );
 });
 
-test("capture selection excludes an external entry inherited through a YAML merge", () => {
-  const root = mkdtempSync(join(tmpdir(), "bifrost-docs-decide-captures-"));
+test("capture selection excludes an external entry inherited through a YAML merge", (t) => {
+  const root = temporaryDirectory(t, "bifrost-docs-decide-captures-");
   writeFileSync(
     join(root, "screenshots.yaml"),
     `external_entry: &external_entry
@@ -182,8 +188,8 @@ entries:
   assert.equal(output, "");
 });
 
-test("manifest bootstrap retains a title inherited through a YAML merge", () => {
-  const root = mkdtempSync(join(tmpdir(), "bifrost-docs-bootstrap-"));
+test("manifest bootstrap retains a title inherited through a YAML merge", (t) => {
+  const root = temporaryDirectory(t, "bifrost-docs-bootstrap-");
   const contentPath = join(root, "src", "content", "docs", "page.mdx");
   mkdirSync(dirname(contentPath), { recursive: true });
   writeFileSync(
