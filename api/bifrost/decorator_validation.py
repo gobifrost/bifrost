@@ -149,8 +149,7 @@ class _DecoratorValidator:
         if statement.level:
             for imported in statement.names:
                 if imported.name == "*":
-                    for decorator in _DECORATORS:
-                        scope[decorator] = None
+                    scope.clear()
                 else:
                     scope[imported.asname or imported.name] = None
             return
@@ -164,8 +163,7 @@ class _DecoratorValidator:
                 else:
                     # An unknown star import may replace an imported decorator
                     # binding. Do not claim its provenance through the import.
-                    for decorator in _DECORATORS:
-                        scope[decorator] = None
+                    scope.clear()
                 continue
             name = imported.asname or imported.name
             if module == "bifrost" and imported.name in _DECORATORS:

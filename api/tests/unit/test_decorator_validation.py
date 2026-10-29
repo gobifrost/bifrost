@@ -73,6 +73,8 @@ def test_rejects_dynamic_expansion_without_executing_source():
         "from bifrost import workflow\nworkflow = other\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from other import workflow\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from bifrost import workflow\nfrom other import *\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
+        "from bifrost import workflow as flow\nfrom other import *\n@flow(timeout_seconds=10)\ndef run(): pass\n",
+        "import bifrost as bf\nfrom .other import *\n@bf.workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from .bifrost import workflow\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         "from .bifrost import *\n@workflow(timeout_seconds=10)\ndef run(): pass\n",
         (
