@@ -45,7 +45,9 @@ class OAuthUserInfo:
     email: str
     name: str | None = None
     picture: str | None = None
-    email_verified: bool = False
+    # This records only the provider's claim. Email authority for a new link is
+    # established separately by ``validate_email_for_linking``.
+    email_verified: bool | None = None
     raw_data: dict | None = None
 
 
@@ -319,58 +321,67 @@ class OAuthService:
 
             user_data = response.json()
 
-        return self._parse_user_info(provider, user_data, tokens.id_token)
+        return self._parse_user_info(provider, user_data)
 
-    def _parse_user_info(self, provider: str, data: dict, id_token: str | None = None) -> OAuthUserInfo:
-        """Parse provider-specific user info into standard format.
-
-        ``email`` is only ever an address the provider has proven the user owns, because
-        sign-in links to (and auto-provisions) Bifrost users by email. Raises OAuthError
-        when the provider can't vouch for one.
-        """
+    def _parse_user_info(self, provider: str, data: dict) -> OAuthUserInfo:
+        """Extract a normalized OAuth identity without authorizing a new email link."""
         if provider == "microsoft":
-            # The Graph `mail` attribute is free text any tenant admin can set to any
-            # address, so it never identifies a user. The UPN's domain must be one the
-            # user's tenant has verified, so it does, unless the account is a guest
-            # (whose UPN is a rewritten external address) or a personal account.
-            tenant_id = _microsoft_tenant_id(id_token)
-            if tenant_id == MICROSOFT_CONSUMER_TENANT_ID:
-                raise OAuthError("Personal Microsoft accounts can't sign in. Use your work or school account.")
-            upn = (data.get("userPrincipalName") or "").lower()
-            if "#ext#" in upn:
-                raise OAuthError("Guest accounts can't sign in. Sign in with your own organization's account.")
             return OAuthUserInfo(
                 provider=provider,
-                provider_user_id=data.get("id", ""),
-                email=upn,
+                provider_user_id=_provider_user_id(data.get("id")),
+                # Graph's `mail` is free text and never identifies a Bifrost user.
+                email=_normalized_email(data.get("userPrincipalName")),
                 name=data.get("displayName"),
                 picture=None,  # Microsoft requires separate Graph API call for photo
-                email_verified=True,
+                email_verified=None,
                 raw_data=data,
             )
 
-        email = (data.get("email") or "").lower()
-        if provider == "google":
-            if data.get("email_verified") is not True:
-                raise OAuthError("Google hasn't verified this account's email address.")
-            # Anyone can create a personal Google account on an address at any domain, so
-            # only a Workspace account for that domain can claim one.
-            domain = email.rpartition("@")[2]
-            if domain not in GOOGLE_CONSUMER_DOMAINS and (data.get("hd") or "").lower() != domain:
-                raise OAuthError(f"Sign in with your {domain} Google Workspace account.")
-        elif data.get("email_verified") is False:
-            # A configured OIDC provider is the organization's own identity provider and is
-            # trusted for its addresses, unless it says it hasn't verified one.
-            raise OAuthError("Your identity provider hasn't verified this account's email address.")
         return OAuthUserInfo(
             provider=provider,
-            provider_user_id=data.get("sub", ""),
-            email=email,
+            provider_user_id=_provider_user_id(data.get("sub")),
+            email=_normalized_email(data.get("email")),
             name=data.get("name"),
             picture=data.get("picture"),
-            email_verified=True,
+            email_verified=data.get("email_verified") if isinstance(data.get("email_verified"), bool) else None,
             raw_data=data,
         )
+
+    def validate_email_for_linking(self, user_info: OAuthUserInfo, tokens: OAuthTokens) -> None:
+        """Require a provider-authoritative email before creating a new OAuth link.
+
+        A linked account is authenticated solely by its provider ID, so current
+        email claims cannot revoke access to an established mapping. Email is
+        only relevant when creating that mapping or provisioning a user.
+        """
+        if not user_info.email:
+            raise OAuthError("OAuth provider did not return email address")
+
+        data = user_info.raw_data or {}
+
+        if user_info.provider == "microsoft":
+            tenant_id = _microsoft_tenant_id(tokens.id_token)
+            if tenant_id == MICROSOFT_CONSUMER_TENANT_ID:
+                raise OAuthError("Personal Microsoft accounts can't sign in. Use your work or school account.")
+            if "#ext#" in user_info.email:
+                raise OAuthError("Guest accounts can't sign in. Sign in with your own organization's account.")
+            return
+
+        if user_info.provider == "google":
+            if data.get("email_verified") is not True:
+                raise OAuthError("Google hasn't verified this account's email address.")
+            domain = user_info.email.rpartition("@")[2]
+            hosted_domain = data.get("hd")
+            if domain not in GOOGLE_CONSUMER_DOMAINS and (
+                not isinstance(hosted_domain, str) or not hosted_domain.strip()
+            ):
+                raise OAuthError(f"Sign in with your {domain} Google Workspace account.")
+            return
+
+        # Generic OIDC is a trusted issuer selected through platform settings.
+        # Preserve its existing email policy unless it explicitly denies verification.
+        if data.get("email_verified") is False:
+            raise OAuthError("Your identity provider hasn't verified this account's email address.")
 
     # ========================================================================
     # OAuth Account Management
@@ -516,3 +527,15 @@ def _microsoft_tenant_id(id_token: str | None) -> str:
     if not tenant_id:
         raise OAuthError("Microsoft's ID token has no tenant")
     return str(tenant_id).lower()
+
+
+def _provider_user_id(value: object) -> str:
+    """Return a stable provider identifier or reject it before any lookup."""
+    if not isinstance(value, str) or not value.strip():
+        raise OAuthError("OAuth provider did not return a stable user ID")
+    return value
+
+
+def _normalized_email(value: object) -> str:
+    """Normalize an optional email-like claim without deciding whether to trust it."""
+    return value.strip().lower() if isinstance(value, str) else ""

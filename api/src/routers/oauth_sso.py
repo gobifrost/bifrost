@@ -337,12 +337,6 @@ async def oauth_callback(
             tokens=tokens,
         )
 
-        if not user_info.email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OAuth provider did not return email address",
-            )
-
     except OAuthError as e:
         logger.error(f"OAuth callback error: {log_safe(e)}")
         raise HTTPException(
@@ -368,7 +362,17 @@ async def oauth_callback(
         await db.commit()
 
     else:
-        # New user or linking new OAuth account - provision user
+        # New user or linking new OAuth account. Existing mappings authenticate
+        # by stable provider ID; email authority is only required to create one.
+        try:
+            oauth_service.validate_email_for_linking(user_info, tokens)
+        except OAuthError as e:
+            logger.error(f"OAuth callback linking error: {log_safe(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
         try:
             result = await ensure_user_provisioned(
                 db=db,

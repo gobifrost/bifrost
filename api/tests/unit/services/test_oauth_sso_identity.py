@@ -1,16 +1,16 @@
-"""SSO sign-in only trusts an email address the identity provider has proven the user owns.
-
-Sign-in links to existing Bifrost users, and auto-provisions new ones, by email, so an
-address the user (or their tenant admin) can simply type in would let them take over
-another person's account.
-"""
+"""OAuth SSO separates stable identity parsing from new-link email authority."""
 
 from unittest.mock import MagicMock
 
 import jwt
 import pytest
 
-from src.services.oauth_sso import MICROSOFT_CONSUMER_TENANT_ID, OAuthError, OAuthService
+from src.services.oauth_sso import (
+    MICROSOFT_CONSUMER_TENANT_ID,
+    OAuthError,
+    OAuthService,
+    OAuthTokens,
+)
 
 WORK_TENANT = "6f1d2c3b-0000-4000-8000-00000000abcd"
 
@@ -24,6 +24,10 @@ def _id_token(tenant_id: str | None) -> str:
     return jwt.encode(claims, "signature-is-not-checked-on-sign-in", algorithm="HS256")
 
 
+def _tokens(tenant_id: str | None = WORK_TENANT) -> OAuthTokens:
+    return OAuthTokens(access_token="access-token", id_token=_id_token(tenant_id))
+
+
 def _graph_me(**overrides) -> dict:
     return {
         "id": "user-oid",
@@ -34,65 +38,104 @@ def _graph_me(**overrides) -> dict:
     }
 
 
+def _google(**overrides) -> dict:
+    return {
+        "sub": "g-1",
+        "email": "kim@clientco.com",
+        "email_verified": True,
+        "hd": "clientco.com",
+        **overrides,
+    }
+
+
 def test_microsoft_identifies_the_user_by_upn_not_the_mail_attribute():
-    # Any tenant admin can set `mail` to someone else's address; the UPN's domain is verified.
-    info = _service()._parse_user_info(
-        "microsoft", _graph_me(mail="will@kw-corp.com"), _id_token(WORK_TENANT)
-    )
+    # Graph mail is free text any tenant admin can set to someone else's address.
+    info = _service()._parse_user_info("microsoft", _graph_me(mail="will@kw-corp.com"))
+
     assert info.email == "kim.braun@clientco.com"
     assert info.provider_user_id == "user-oid"
 
 
-def test_microsoft_refuses_personal_accounts():
-    with pytest.raises(OAuthError, match="Personal Microsoft accounts"):
-        _service()._parse_user_info("microsoft", _graph_me(), _id_token(MICROSOFT_CONSUMER_TENANT_ID))
+@pytest.mark.parametrize(
+    ("provider", "data"),
+    [
+        ("microsoft", _graph_me(id=None)),
+        ("microsoft", _graph_me(id=42)),
+        ("google", _google(sub="   ")),
+        ("google", _google(sub=None)),
+        ("oidc", {"sub": [], "email": "kim@clientco.com"}),
+    ],
+)
+def test_parse_rejects_missing_or_malformed_stable_provider_ids(provider, data):
+    with pytest.raises(OAuthError, match="stable user ID"):
+        _service()._parse_user_info(provider, data)
 
 
-def test_microsoft_refuses_guest_accounts():
-    guest = _graph_me(userPrincipalName="kim_gmail.com#EXT#@clientco.onmicrosoft.com")
-    with pytest.raises(OAuthError, match="Guest accounts"):
-        _service()._parse_user_info("microsoft", guest, _id_token(WORK_TENANT))
+def test_parse_normalizes_claims_without_authorizing_a_new_link():
+    info = _service()._parse_user_info(
+        "oidc",
+        {"sub": "  subject-1  ", "email": " Kim@ClientCo.com ", "name": " Kim ", "email_verified": False},
+    )
 
-
-@pytest.mark.parametrize("id_token", [None, "not-a-jwt", _id_token(None)])
-def test_microsoft_refuses_a_sign_in_without_a_readable_tenant(id_token):
-    with pytest.raises(OAuthError):
-        _service()._parse_user_info("microsoft", _graph_me(), id_token)
-
-
-def _google(**overrides) -> dict:
-    return {"sub": "g-1", "email": "kim@clientco.com", "email_verified": True, "hd": "clientco.com", **overrides}
-
-
-def test_google_workspace_account_signs_in_with_its_domain_address():
-    info = _service()._parse_user_info("google", _google())
+    assert info.provider_user_id == "  subject-1  "
     assert info.email == "kim@clientco.com"
+    assert info.name == " Kim "
+    assert info.email_verified is False
 
 
-def test_google_personal_account_on_a_work_address_is_refused():
-    # A consumer Google account can be registered on any address and has no `hd`.
+@pytest.mark.parametrize(
+    ("data", "tokens", "message"),
+    [
+        (_graph_me(), _tokens(MICROSOFT_CONSUMER_TENANT_ID), "Personal Microsoft accounts"),
+        (_graph_me(userPrincipalName="kim_gmail.com#EXT#@clientco.onmicrosoft.com"), _tokens(), "Guest accounts"),
+        (_graph_me(), OAuthTokens(access_token="access-token"), "didn't return an ID token"),
+        (_graph_me(), OAuthTokens(access_token="access-token", id_token="not-a-jwt"), "unreadable ID token"),
+        (_graph_me(), _tokens(None), "ID token has no tenant"),
+    ],
+)
+def test_microsoft_rejects_untrusted_new_links(data, tokens, message):
+    service = _service()
+    with pytest.raises(OAuthError, match=message):
+        service.validate_email_for_linking(service._parse_user_info("microsoft", data), tokens)
+
+
+def test_google_workspace_account_can_link_an_email_from_a_different_domain():
+    service = _service()
+    info = service._parse_user_info("google", _google(hd="workspace.example"))
+
+    service.validate_email_for_linking(info, _tokens())
+
+
+def test_google_personal_account_on_a_work_address_cannot_link():
+    service = _service()
     with pytest.raises(OAuthError, match="clientco.com Google Workspace account"):
-        _service()._parse_user_info("google", _google(hd=None))
+        service.validate_email_for_linking(service._parse_user_info("google", _google(hd=None)), _tokens())
 
 
-def test_google_workspace_account_cannot_claim_another_domain():
-    with pytest.raises(OAuthError, match="Google Workspace account"):
-        _service()._parse_user_info("google", _google(hd="othercorp.com"))
+def test_gmail_address_can_link_without_a_workspace_domain():
+    service = _service()
+    info = service._parse_user_info("google", _google(email="kim@gmail.com", hd=None))
 
-
-def test_gmail_address_signs_in_without_a_workspace_domain():
-    info = _service()._parse_user_info("google", _google(email="kim@gmail.com", hd=None))
-    assert info.email == "kim@gmail.com"
+    service.validate_email_for_linking(info, _tokens())
 
 
 @pytest.mark.parametrize("verified", [False, None])
-def test_google_unverified_email_is_refused(verified):
-    with pytest.raises(OAuthError, match="verified"):
-        _service()._parse_user_info("google", _google(email_verified=verified))
-
-
-def test_oidc_provider_is_trusted_unless_it_says_the_email_is_unverified():
+def test_google_requires_an_explicitly_verified_email_for_a_new_link(verified):
     service = _service()
-    assert service._parse_user_info("oidc", {"sub": "o-1", "email": "Kim@ClientCo.com"}).email == "kim@clientco.com"
     with pytest.raises(OAuthError, match="verified"):
-        service._parse_user_info("oidc", {"sub": "o-1", "email": "kim@clientco.com", "email_verified": False})
+        service.validate_email_for_linking(service._parse_user_info("google", _google(email_verified=verified)), _tokens())
+
+
+def test_oidc_trusts_a_missing_verification_claim_but_refuses_explicit_false():
+    service = _service()
+    service.validate_email_for_linking(
+        service._parse_user_info("oidc", {"sub": "o-1", "email": "Kim@ClientCo.com"}), _tokens()
+    )
+
+    with pytest.raises(OAuthError, match="verified"):
+        service.validate_email_for_linking(
+            service._parse_user_info(
+                "oidc", {"sub": "o-1", "email": "kim@clientco.com", "email_verified": False}
+            ),
+            _tokens(),
+        )
