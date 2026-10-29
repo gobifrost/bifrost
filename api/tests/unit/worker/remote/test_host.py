@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
@@ -32,7 +33,7 @@ async def test_admission_stale_telemetry_still_renews_the_connected_owner() -> N
     )
     bridge.sample_at = 96
     session = object.__new__(RemoteSession)
-    session.bridge, session.lease = bridge, LEASE
+    session.bridge, session.lease, session.owned_until = bridge, LEASE, 120
     session.lose_ownership = AsyncMock()
 
     with (
@@ -128,6 +129,142 @@ async def test_owner_does_not_renew_disconnected_or_expired_telemetry(connected,
         session.lose_ownership.assert_awaited_once_with("Remote launcher telemetry expired")
     else:
         session.lose_ownership.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_renewal_retries_before_the_current_lease_expires() -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    bridge.sample_at = 100
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease, session.owned_until = bridge, LEASE, 120
+    session.lose_ownership = AsyncMock()
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch(
+            "src.worker.remote.host.renew_remote_owner",
+            new=AsyncMock(side_effect=[RuntimeError("database restarted"), True, asyncio.CancelledError()]),
+        ) as renew,
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await session._renew()
+
+    assert sleeps == [10, 2, 10]
+    assert session.owned_until == 120
+    assert renew.await_count == 3
+    session.lose_ownership.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_owner_renewal_failing_throughout_loses_ownership_only_when_no_retry_fits() -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    clock = SimpleNamespace(now=100.0)
+    bridge.sample_at = 100
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease, session.owned_until = bridge, LEASE, 120.0
+    lost_at: list[float] = []
+
+    async def lose_ownership(_reason: str) -> None:
+        lost_at.append(clock.now)
+
+    async def sleep(seconds: float) -> None:
+        clock.now += seconds
+        bridge.sample_at = clock.now  # telemetry stays fresh; only the database fails
+
+    session.lose_ownership = lose_ownership
+    with (
+        patch("src.worker.remote.host.time.monotonic", new=lambda: clock.now),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch(
+            "src.worker.remote.host.renew_remote_owner",
+            new=AsyncMock(side_effect=RuntimeError("database restarted")),
+        ) as renew,
+    ):
+        await session._renew()
+
+    # Attempts at 110, 112, 114, 116 and 118; after 118 a 2 s retry would end at the lease.
+    assert renew.await_count == 5
+    assert lost_at == [118.0]
+
+
+@pytest.mark.asyncio
+async def test_owner_renewal_failure_without_a_retry_window_loses_ownership() -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    bridge.sample_at = 100
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease, session.owned_until = bridge, LEASE, 102
+    session.lose_ownership = AsyncMock()
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=AsyncMock()),
+        patch(
+            "src.worker.remote.host.renew_remote_owner",
+            new=AsyncMock(side_effect=RuntimeError("database restarted")),
+        ),
+    ):
+        await session._renew()
+
+    session.lose_ownership.assert_awaited_once_with(
+        "Remote API owner lease could not be renewed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_owner_renewal_hung_past_the_current_lease_loses_ownership() -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    bridge.sample_at = time.monotonic()
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease = bridge, LEASE
+    session.owned_until = time.monotonic() + 0.001
+    session.lose_ownership = AsyncMock()
+
+    async def hung_renewal(_lease: RemoteOwnerLease) -> bool:
+        await asyncio.Future()
+        return True
+
+    with (
+        patch("src.worker.remote.host.asyncio.sleep", new=AsyncMock()),
+        patch("src.worker.remote.host.renew_remote_owner", new=hung_renewal),
+    ):
+        await session._renew()
+
+    session.lose_ownership.assert_awaited_once_with(
+        "Remote API owner lease could not be renewed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_owner_renewal_refusal_loses_ownership_immediately() -> None:
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    bridge.sample_at = 100
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease, session.owned_until = bridge, LEASE, 120
+    session.lose_ownership = AsyncMock()
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=AsyncMock()),
+        patch("src.worker.remote.host.renew_remote_owner", new=AsyncMock(return_value=False)),
+    ):
+        await session._renew()
+
+    session.lose_ownership.assert_awaited_once_with("Remote API owner lease expired")
 
 
 @pytest.mark.asyncio

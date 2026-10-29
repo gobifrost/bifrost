@@ -54,6 +54,9 @@ from src.worker.remote.protocol import (
 )
 
 
+RENEW_RETRY_SECONDS = 2.0
+
+
 router = APIRouter()
 
 COMMAND_REPLY_SECONDS = 15
@@ -765,8 +768,10 @@ class RemoteSession:
 
     async def _renew(self) -> None:
         try:
+            renewal_delay = DEFAULT_OWNER_LEASE_SECONDS / 2
             while True:
-                await asyncio.sleep(DEFAULT_OWNER_LEASE_SECONDS / 2)
+                await asyncio.sleep(renewal_delay)
+                renewal_delay = DEFAULT_OWNER_LEASE_SECONDS / 2
                 # Admission's three-second freshness window pauses new claims
                 # during brief API event-loop delays. It must not also skip
                 # ownership renewal: repeated short delays could otherwise
@@ -789,11 +794,22 @@ class RemoteSession:
                 lease = self.lease
                 renewing_at = time.monotonic()
                 try:
-                    renewed = await renew_remote_owner(lease)
+                    renewed = await asyncio.wait_for(
+                        renew_remote_owner(lease),
+                        timeout=max(0.0, self.owned_until - time.monotonic()),
+                    )
                 except Exception:
                     if self.lease != lease:
                         continue
                     logging.getLogger(__name__).exception("Remote owner renewal failed")
+                    # A failed database call does not revoke this owner until
+                    # the current, conservatively tracked lease expires.
+                    if time.monotonic() + RENEW_RETRY_SECONDS < self.owned_until:
+                        logging.getLogger(__name__).warning(
+                            "Remote owner renewal failed; retrying before the lease expires"
+                        )
+                        renewal_delay = RENEW_RETRY_SECONDS
+                        continue
                     await self.lose_ownership("Remote API owner lease could not be renewed")
                     return
                 if self.lease != lease:
