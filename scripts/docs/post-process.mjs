@@ -29,6 +29,10 @@ import sharp from "sharp";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 
+// js-yaml v5 defaults to YAML 1.2 CORE_SCHEMA, which treats `<<` as a plain
+// key. Add the legacy merge tag without changing ordinary YAML 1.2 scalars.
+const manifestSchema = yaml.CORE_SCHEMA.withTags(yaml.mergeTag);
+
 function parseArgs(argv) {
   const out = { threshold: 0.001 };
   for (let i = 2; i < argv.length; i++) {
@@ -155,7 +159,7 @@ async function main() {
   }
 
   const results = JSON.parse(readFileSync(resultsPath, "utf8"));
-  const manifest = yaml.load(readFileSync(manifestPath, "utf8"));
+  const manifest = yaml.load(readFileSync(manifestPath, "utf8"), { schema: manifestSchema });
   const byId = new Map(manifest.entries.map((e) => [e.id, e]));
   const sha = bifrostHead(bifrostRepo);
 

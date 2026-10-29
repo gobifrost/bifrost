@@ -15,6 +15,10 @@ import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 import * as yaml from "js-yaml";
 
+// js-yaml v5 defaults to YAML 1.2 CORE_SCHEMA, which treats `<<` as a plain
+// key. Add the legacy merge tag without changing ordinary YAML 1.2 scalars.
+const manifestSchema = yaml.CORE_SCHEMA.withTags(yaml.mergeTag);
+
 function parseArgs(argv) {
   const out = { full: false };
   for (let i = 2; i < argv.length; i++) {
@@ -64,7 +68,7 @@ function main() {
     console.error(`manifest not found at ${manifestPath}`);
     process.exit(1);
   }
-  const manifest = yaml.load(readFileSync(manifestPath, "utf8"));
+  const manifest = yaml.load(readFileSync(manifestPath, "utf8"), { schema: manifestSchema });
 
   // External entries (Azure portal, VSCode, etc.) are never candidates.
   const captureable = manifest.entries.filter((e) => !e.external);
