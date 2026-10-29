@@ -93,6 +93,7 @@ class CapacityReportTest(unittest.TestCase):
         text = report.render({**RESULT, "kind": "capacity", "profile": profile, "mix_name": "sdk-heavy", "bracket": [None, None], "steps": [step]})
         self.assertIn("| 2.000 | 240 | invalid | 0.9980 | 0.0004 | 1.20 | 1 | external CPU above 1.5 cores in 5/48 intervals |", text)
         self.assertNotIn("## Execution times", text)
+        self.assertIn("**Sustainable rate (confirmed): none confirmed**", text)
 
 
 if __name__ == "__main__":

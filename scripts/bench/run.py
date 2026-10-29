@@ -284,10 +284,15 @@ def run_capacity(profile_name: str, mix_name: str, out: Path | None) -> Path:
     out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-capacity-{mix_name}")
     current = Run(cluster, "capacity", profile_name, profile, "fake", out)
     current.result["mix_name"] = mix_name
-    print(f"Deploying and seeding '{profile_name}' ...", flush=True)
-    ids = _prepare(cluster, current, profile, "fake")
-    current.result["ids"] = ids
     current.result["steps"] = []
+    current.result["confirmations"] = []
+
+    def fresh() -> dict:
+        print(f"Resetting and seeding '{profile_name}' ...", flush=True)
+        deploy.reset(cluster)
+        ids = _prepare(cluster, current, profile, "fake")
+        current.result["ids"] = ids
+        return ids
 
     def on_step(step: dict) -> None:
         current.result["steps"].append(step)
@@ -295,11 +300,23 @@ def run_capacity(profile_name: str, mix_name: str, out: Path | None) -> Path:
         print(f"  {step['rate']:.3f}/s for {step['window_s']:.0f} s: {step['overall']}"
               + (f" ({'; '.join(step['validity']['invalid'])})" if step["validity"]["invalid"] else ""), flush=True)
 
-    result = search.search(cluster, ids, plan, profile["capacity"]["disk"], on_step)
+    result = search.search(cluster, fresh(), plan, profile["capacity"]["disk"], on_step)
     current.result["bracket"] = result["bracket"]
     current.result["stopped"] = result["stopped"]
     current.save()
-    print(f"Bracket {result['bracket']}; done: {out}/report.md", flush=True)
+    passed = sorted({step["rate"] for step in result["steps"] if step["overall"] == "pass"}, reverse=True)
+    current.result["sustainable_rate"] = None
+    for rate in passed:
+        print(f"Confirming {rate:.3f}/s from a reset state ...", flush=True)
+        step = search.confirm(cluster, fresh(), rate, plan, profile["capacity"]["disk"])
+        current.result["confirmations"].append(step)
+        current.save()
+        print(f"  confirmation {rate:.3f}/s for {step['window_s']:.0f} s: {step['overall']}", flush=True)
+        if step["overall"] == "pass":
+            current.result["sustainable_rate"] = rate
+            break
+    current.save()
+    print(f"Bracket {result['bracket']}; sustainable {current.result['sustainable_rate']}; done: {out}/report.md", flush=True)
     return out
 
 

@@ -322,6 +322,16 @@ def apply(cluster: Cluster, profile: dict) -> dict:
     return {"envelope": envelope_check, "egress": isolation, "admitted": reconcile_admitted(cluster)}
 
 
+def reset(cluster: Cluster) -> None:
+    """Delete both benchmark namespaces (database, Redis, object store, workers) so the next ``apply`` starts clean."""
+    for namespace in (guard.TENANT_NS, guard.INFRA_NS):
+        cluster.kubectl("delete", "namespace", namespace, "--ignore-not-found", "--wait=false", namespaced=False)
+    for namespace in (guard.TENANT_NS, guard.INFRA_NS):
+        cluster.kubectl("wait", "--for=delete", f"namespace/{namespace}", "--timeout=900s", namespaced=False, check=False)
+        if cluster.kubectl("get", "namespace", namespace, "--ignore-not-found", "-o", "name", namespaced=False).strip():
+            raise SystemExit(f"namespace {namespace} did not finish deleting")
+
+
 def reconcile_admitted(cluster: Cluster) -> dict:
     """Every admitted tenant pod's effective request must equal the quota's recorded usage."""
     pods = json.loads(cluster.kubectl("get", "pods", "-o", "json"))["items"]

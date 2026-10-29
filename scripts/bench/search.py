@@ -184,3 +184,22 @@ def confirmation_seconds(rate: float, mix: dict[str, float]) -> tuple[float, boo
     """Window for the 0.1 % per-class failure bound, capped; returns (seconds, whether the cap bound it)."""
     needed = window_seconds(rate, mix, CONFIRM_MIN_S, capacity.observations_needed(0.001))
     return min(needed, CONFIRM_CAP_S), needed > CONFIRM_CAP_S
+
+
+def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str, str]) -> dict:
+    """A confirmation run: strict drift tolerance and a 0.1 % per-class failure bound.
+
+    When the 60 min cap leaves too few observations for that bound, a result
+    that would otherwise pass is inconclusive, never certified.
+    """
+    window_s, capped = confirmation_seconds(rate, plan["mix"])
+    strict = {**plan, "thresholds": {**plan["thresholds"], "failure_upper": 0.001}}
+    step = run_step(cluster, ids, rate, strict, plan["seed"] + 1000, disk, window_s=window_s, confirm=True)
+    step["capped"] = capped
+    if capped and step["overall"] == "fail":
+        verdict = step["verdict"]
+        others = [verdict["throughput"], verdict["drift"], verdict["tenant_faults"],
+                  *(gate for gates in verdict["latency"].values() for gate in gates.values())]
+        if all(gate["status"] != "fail" for gate in others):
+            step["overall"] = "inconclusive"
+    return step

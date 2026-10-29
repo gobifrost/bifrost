@@ -138,6 +138,9 @@ def _capacity(result: dict) -> list[str]:
     rows = [
         "## Capacity search",
         "",
+        f"**Sustainable rate (confirmed): {result.get('sustainable_rate') or 'none confirmed'}**"
+        + (" per second, within the strict drift tolerance and a 0.1 % per-class failure bound." if result.get("sustainable_rate") else "."),
+        "",
         f"Mix `{result['mix_name']}`: `{result['profile']['capacity']['mixes'][result['mix_name']]}`; "
         f"gate thresholds {result['profile']['capacity']['thresholds_source']}. "
         f"Bracket (last pass, first fail): {result.get('bracket')}" + (f"; stopped: {result['stopped']}" if result.get("stopped") else ""),
@@ -145,7 +148,7 @@ def _capacity(result: dict) -> list[str]:
         "| Offered /s | Window s | Result | Throughput | Drift upper /s | Worst class e2e p95 s | Failures | Invalid / warnings |",
         "|---:|---:|---|---:|---:|---:|---:|---|",
     ]
-    for step in result.get("steps", []):
+    for step in [*result.get("steps", []), *result.get("confirmations", [])]:
         verdict = step["verdict"]
         worst = max((gates["e2e_p95"]["value"] for gates in verdict["latency"].values()
                      if isinstance(gates["e2e_p95"]["value"], (int, float))), default=None)
@@ -153,8 +156,9 @@ def _capacity(result: dict) -> list[str]:
         notes = "; ".join(step["validity"]["invalid"] + step["validity"]["warnings"]) or ""
         throughput = verdict["throughput"]["value"]
         drift = verdict["drift"]["value"]
+        kind = " (confirmation)" if step.get("confirm") else ""
         rows.append(
-            f"| {step['rate']:.3f} | {step['window_s']:.0f} | {step['overall']} | "
+            f"| {step['rate']:.3f}{kind} | {step['window_s']:.0f} | {step['overall']} | "
             f"{'' if throughput is None else f'{throughput:.4f}'} | {'' if drift is None else f'{drift:.4f}'} | "
             f"{'' if worst is None else f'{worst:.2f}'} | {failures} | {notes} |"
         )
