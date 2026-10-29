@@ -48,9 +48,14 @@ const mockUseAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
+const mockUseOrganizations = vi.fn();
 vi.mock("@/hooks/useOrganizations", () => ({
-	useOrganizations: () => ({ data: [] }),
+	useOrganizations: () => mockUseOrganizations(),
 }));
 
 // Keep the icon contract observable without loading image resources in happy-dom.
@@ -111,6 +116,12 @@ function makeApp(overrides: Partial<Record<string, unknown>> = {}) {
 
 beforeEach(() => {
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAuthorization.mockReturnValue({
+		authorization: undefined,
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
+	mockUseOrganizations.mockReturnValue({ data: [] });
 	mockUseDeleteApplication.mockReturnValue({
 		mutateAsync: vi.fn(),
 		isPending: false,
@@ -378,6 +389,28 @@ function LocationProbe() {
 }
 
 describe("Applications — app launch behavior", () => {
+	it("shows the home organization name when the directory cannot disclose it", async () => {
+		mockUseAuthorization.mockReturnValue({
+			authorization: {
+				home_organization_id: "home-org",
+				home_organization_name: "Covi",
+			},
+			canAnywhere: () => true,
+			canAt: () => true,
+		});
+		mockUseApplications.mockReturnValue({
+			data: {
+				applications: [makeApp({ organization_id: "home-org" })],
+			},
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+
+		await renderPage();
+
+		expect(screen.getByText("Covi")).toBeVisible();
+	});
+
 	it("shows a loading indicator while the list loads", async () => {
 		mockUseApplications.mockReturnValue({
 			data: undefined,

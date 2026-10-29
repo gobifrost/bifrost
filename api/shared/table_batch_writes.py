@@ -14,7 +14,7 @@ from shared.policies.probe import evaluate_action
 from src.core.principal import UserPrincipal
 from src.models.contracts.policies import TablePolicies
 from src.models.orm.tables import Document, Table
-from src.services.access_check_policies import check_table_rule
+from src.services.access_check_policies import record_table_policy
 
 BatchWriteMode = Literal["insert", "merge_upsert", "replace_upsert"]
 
@@ -264,21 +264,16 @@ async def write_table_batch(
             now=now,
         )
 
-    def model_allows(principal: UserPrincipal) -> dict[str, Any]:
-        try:
-            check(principal)
-        except BatchPolicyDenied:
-            return {"model": False}
-        return {"model": True}
-
     try:
         previous_rows_by_index = check(user)
     except BatchPolicyDenied:
-        await check_table_rule(
-            session, table, policies, action=f"batch:{mode}", allowed_today=False, model_allows=model_allows
+        await record_table_policy(
+            session, table, policies, user, action=f"batch:{mode}", allowed=False
         )
         raise
-    await check_table_rule(session, table, policies, action=f"batch:{mode}", allowed_today=True, model_allows=model_allows)
+    await record_table_policy(
+        session, table, policies, user, action=f"batch:{mode}", allowed=True
+    )
 
     if _after_preflight is not None:
         await _after_preflight()

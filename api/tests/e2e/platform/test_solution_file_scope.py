@@ -48,9 +48,7 @@ def _seed_solutions_policy(e2e_client, headers, *, org_id: str | None) -> None:
 
     PUT /api/files/policies/{path}?location=<loc>&scope=<scope>
     """
-    params: dict = {"location": "solutions"}
-    if org_id is not None:
-        params["scope"] = org_id
+    params: dict = {"location": "solutions", "scope": org_id or "global"}
     r = e2e_client.put(
         "/api/files/policies/",
         headers=headers,
@@ -470,8 +468,8 @@ async def test_solution_app_files_resolve_to_install_scope(
             "mode": "cloud",
         },
     )
-    assert forged_r.status_code == 403, (
-        f"foreign org user should not use another org's app scope: "
+    assert forged_r.status_code == 404, (
+        f"foreign org user must not discover another org's app scope: "
         f"{forged_r.status_code} {forged_r.text}"
     )
 

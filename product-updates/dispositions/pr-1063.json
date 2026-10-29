@@ -1,0 +1,13 @@
+{
+  "key": "pr:1063",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Refreshes verified inventory to activate the already-approved Scaling and Isolation note from #1061; metadata only, no runtime behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1063",
+      "Activation step from docs/product-updates-authoring.md after #1061 landed; the note's copy and prompt were approved with #1061."
+    ]
+  }
+}

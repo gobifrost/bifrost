@@ -4,12 +4,17 @@ import { ConfigDialog } from "./ConfigDialog";
 
 const update = vi.fn();
 const create = vi.fn();
+const mockUseAuth = vi.fn();
+const mockAuthorization = vi.fn();
 vi.mock("@/hooks/useConfig", () => ({
 	useSetConfig: () => ({ mutateAsync: create, isPending: false }),
 	useUpdateConfig: () => ({ mutateAsync: update, isPending: false }),
 }));
 vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: false, user: { organizationId: null } }),
+	useAuth: () => mockUseAuth(),
+}));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockAuthorization(),
 }));
 const base = {
 	id: "11111111-1111-4111-8111-111111111111",
@@ -23,6 +28,14 @@ const base = {
 };
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockUseAuth.mockReturnValue({
+		isPlatformAdmin: false,
+		user: { organizationId: "org-home" },
+	});
+	mockAuthorization.mockReturnValue({
+		canAnywhere: () => false,
+		canAt: () => true,
+	});
 	update.mockReset();
 	create.mockReset();
 });
@@ -84,5 +97,40 @@ describe("ConfigDialog value and save contract", () => {
 		expect(await screen.findByText("Key is required")).toBeVisible();
 		expect(screen.getByText("Value is required")).toBeVisible();
 		expect(create).not.toHaveBeenCalled();
+	});
+
+	it("does not treat a persisted global config as the home organization", async () => {
+		mockAuthorization.mockReturnValue({
+			canAnywhere: () => false,
+			canAt: (_permission: string, target: { kind: string }) =>
+				target.kind === "org",
+		});
+		const { user } = renderWithProviders(
+			<ConfigDialog
+				config={{ ...base, type: "string", value: "existing" }}
+				open
+				onClose={vi.fn()}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: "Update" }));
+		expect(update).not.toHaveBeenCalled();
+	});
+
+	it("allows a global config writer to update a persisted global config", async () => {
+		update.mockResolvedValue({});
+		mockAuthorization.mockReturnValue({
+			canAnywhere: () => true,
+			canAt: (_permission: string, target: { kind: string }) =>
+				target.kind === "global",
+		});
+		const { user } = renderWithProviders(
+			<ConfigDialog
+				config={{ ...base, type: "string", value: "existing" }}
+				open
+				onClose={vi.fn()}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: "Update" }));
+		await waitFor(() => expect(update).toHaveBeenCalledOnce());
 	});
 });

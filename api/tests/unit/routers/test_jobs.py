@@ -1,11 +1,14 @@
 """Tests for job status endpoint with preview data."""
 from uuid import uuid4
 
+from shared.builtin_roles import USER_ROLE_ID
 from src.core.principal import UserPrincipal
 
 import pytest
 
+from src.models.orm.organizations import Organization
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.users import User
 from src.routers.jobs import JobStatusResponse, get_job_status
 
 
@@ -49,10 +52,22 @@ async def test_platform_jobs_use_safe_legacy_statuses(
     platform_status: str,
     legacy_status: str,
 ) -> None:
+    organization = Organization(name="Contoso", created_by="test")
+    db_session.add(organization)
+    await db_session.flush()
+    owner = User(
+        id=uuid4(),
+        email=f"job-owner-{uuid4().hex}@example.test",
+        name="Job Owner",
+        organization_id=organization.id,
+        base_role_id=USER_ROLE_ID,
+    )
+    db_session.add(owner)
+    await db_session.flush()
     job = PlatformJob(
         job_type="workspace.sync",
         payload={},
-        requested_by_user_id=str(uuid4()),
+        requested_by_user_id=str(owner.id),
         requested_by_email="operator@example.com",
         requested_by_name="Operator",
         title="Workspace sync",
@@ -63,10 +78,10 @@ async def test_platform_jobs_use_safe_legacy_statuses(
     db_session.add(job)
     await db_session.flush()
 
-    admin = UserPrincipal(
-        user_id=uuid4(), email="admin@example.com", organization_id=None, is_superuser=True
+    principal = UserPrincipal(
+        user_id=owner.id, email=owner.email, organization_id=organization.id, is_superuser=False
     )
-    response = await get_job_status(str(job.id), db_session, _user=admin)
+    response = await get_job_status(str(job.id), db_session, user=principal)
 
     assert response.status == legacy_status
     assert response.message == job.phase

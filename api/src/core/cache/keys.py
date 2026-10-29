@@ -193,6 +193,11 @@ def embed_execution_key(jti: str, execution_id: str) -> str:
     return f"bifrost:embed:exec:{jti}:{execution_id}"
 
 
+def browser_impersonation_session_key(session_id: str) -> str:
+    """Key for one short-lived, bearer-only browser impersonation session."""
+    return f"bifrost:auth:browser-impersonation:{session_id}"
+
+
 # =============================================================================
 # Execution-Scoped Keys (Process Isolation)
 # =============================================================================
@@ -243,21 +248,6 @@ def execution_cancel_key(execution_id: str) -> str:
     return f"bifrost:exec:{execution_id}:cancel"
 
 
-# =============================================================================
-# Execution-Scoped Keys (Write Buffer)
-# =============================================================================
-
-
-def pending_changes_key(execution_id: str) -> str:
-    """
-    Key for the hash containing pending changes for an execution.
-
-    Structure: HASH where field = change identifier, value = JSON change record
-    Used by write buffer, cleared after flush.
-    """
-    return f"bifrost:pending:{execution_id}"
-
-
 def execution_logs_stream_key(execution_id: str) -> str:
     """
     Key for the Redis Stream containing logs for an execution.
@@ -265,6 +255,16 @@ def execution_logs_stream_key(execution_id: str) -> str:
     Structure: STREAM with log entries
     """
     return f"bifrost:logs:{execution_id}"
+
+
+def execution_log_recovery_cursor_key() -> str:
+    """Cursor for bounded scans of retained execution-log streams."""
+    return "bifrost:execution-log-recovery:cursor"
+
+
+def execution_log_retention_cursor_key() -> str:
+    """Cursor for bounded orphaned execution-log stream reclamation."""
+    return "bifrost:execution-log-retention:cursor"
 
 
 def service_logs_stream_key(attempt_id: str) -> str:
@@ -398,7 +398,6 @@ TTL_CONFIG = 300  # 5 minutes
 TTL_FORMS = 600  # 10 minutes
 TTL_ROLES = 600  # 10 minutes
 TTL_ORGS = 3600  # 1 hour
-TTL_PENDING = 3600  # 1 hour (safety for orphaned changes)
 TTL_PENDING_EXECUTION = 3600  # 1 hour (safety for orphaned pending executions)
 TTL_ACTIVE_EXECUTION = 3600  # 1 hour (recreated while the child is active)
 

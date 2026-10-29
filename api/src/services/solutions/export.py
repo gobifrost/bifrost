@@ -49,6 +49,9 @@ _APP_TRANSPORT_FIELDS = (
     "bin_files",
     "dist_files",
     "bin_dist_files",
+    # CLI-local build provenance is deployment transport, not portable source
+    # metadata. It identifies the exact target-instance SDK used for one dist.
+    "prebuilt_sdk_metadata",
     "logo_b64",
     "logo_content_type",
 )
@@ -67,6 +70,35 @@ def _put_zip_member(zf: zipfile.ZipFile, path: str, data: bytes | str) -> None:
     info = zipfile.ZipInfo(path, date_time=_ZIP_EPOCH)
     info.compress_type = zipfile.ZIP_DEFLATED
     zf.writestr(info, data)
+
+
+def _source_file_bytes(
+    path: str, src_files: dict[str, str], bin_files: dict[str, str]
+) -> bytes | None:
+    """Read one app source path in the same order it is emitted."""
+    if path in bin_files:
+        return base64.b64decode(bin_files[path])
+    if path in src_files:
+        return src_files[path].encode("utf-8")
+    return None
+
+
+def _metadata_logo_target(
+    logo_rel: str,
+    logo: bytes,
+    src_files: dict[str, str],
+    bin_files: dict[str, str],
+) -> tuple[str, bool]:
+    """Find a stable metadata-logo path without replacing source content."""
+    stem, suffix = logo_rel.rsplit(".", maxsplit=1)
+    candidate = f"{stem}-metadata.{suffix}"
+    suffix_number = 2
+    while (source_file := _source_file_bytes(candidate, src_files, bin_files)) is not None:
+        if source_file == logo:
+            return candidate, False
+        candidate = f"{stem}-metadata-{suffix_number}.{suffix}"
+        suffix_number += 1
+    return candidate, True
 
 
 def _file_payload_member(sf: Any) -> str:
@@ -205,17 +237,28 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                 body = {k: v for k, v in app.items() if k not in _APP_TRANSPORT_FIELDS}
                 app_dir = f"apps/{_safe_dir(str(app.get('slug') or app['id']))}"
                 body["path"] = app_dir
-                has_src = bool(app.get("src_files") or app.get("bin_files"))
-                for rel, text in sorted((app.get("src_files") or {}).items()):
+                src_files = app.get("src_files") or {}
+                bin_files = app.get("bin_files") or {}
+                has_src = bool(src_files or bin_files)
+                for rel, text in sorted(src_files.items()):
                     put(f"{app_dir}/{rel}", text)
-                for rel, b64 in sorted((app.get("bin_files") or {}).items()):
+                for rel, b64 in sorted(bin_files.items()):
                     put(f"{app_dir}/{rel}", base64.b64decode(b64))
                 logo_b64 = app.get("logo_b64")
                 logo_ct = app.get("logo_content_type")
                 if logo_b64 and logo_ct in _LOGO_EXTENSIONS:
                     logo_rel = f"app-logo{_LOGO_EXTENSIONS[logo_ct]}"
+                    logo = base64.b64decode(logo_b64)
+                    source_logo = _source_file_bytes(logo_rel, src_files, bin_files)
+                    if source_logo is None:
+                        put(f"{app_dir}/{logo_rel}", logo)
+                    elif source_logo != logo:
+                        logo_rel, write_logo = _metadata_logo_target(
+                            logo_rel, logo, src_files, bin_files
+                        )
+                        if write_logo:
+                            put(f"{app_dir}/{logo_rel}", logo)
                     body["logo"] = logo_rel
-                    put(f"{app_dir}/{logo_rel}", base64.b64decode(logo_b64))
                 # Prebuilt-only apps (no src or bin files) were deployed via the
                 # dist_files fast-path. The standard export strips dist_files (build
                 # output) from the manifest, but when there is no source the dist IS

@@ -13,9 +13,8 @@ from typing import Literal
 from uuid import UUID
 
 import click
-from botocore.exceptions import ClientError
-
 from src.models.orm.applications import Application
+from src.core.s3_transport import S3Error
 from src.services.application_source_archive import (
     APP_SOURCE_MAX_EXPANDED_BYTES,
     SOLUTION_SOURCE_MAX_EXPANDED_BYTES,
@@ -138,37 +137,50 @@ async def _resolve_solution_source(application: Application) -> ResolvedApplicat
                 f"Retained Solution source artifact is invalid: {exc}",
             ) from exc
 
+    matching_entries: list[dict] = []
     for manifest_app in preview.apps:
         manifest_id = _parse_manifest_id(manifest_app)
         if manifest_id is None:
             continue
-        if solution_entity_id(solution_id, manifest_id) != application.id:
+        # Captured Apps retain their manifest identity within the same Solution;
+        # installed Apps use the Solution-scoped identity derived at install time.
+        if (
+            manifest_id != application.id
+            and solution_entity_id(solution_id, manifest_id) != application.id
+        ):
             continue
 
-        files = _solution_app_files(manifest_app)
-        if "package.json" not in files or "index.html" not in files:
-            raise ApplicationSourceUnavailable(
-                "source_unavailable",
-                "Solution App source is missing package.json or index.html.",
-            )
-        try:
-            require_vite_source_files(files)
-            enforce_application_source_budget(
-                files, max_expanded_bytes=APP_SOURCE_MAX_EXPANDED_BYTES
-            )
-        except InvalidApplicationSource as exc:
-            raise ApplicationSourceUnavailable(
-                _resolver_code(exc.code), exc.message
-            ) from exc
-        return ResolvedApplicationSource(
-            files=files,
-            dependencies=dict(manifest_app.get("dependencies") or {}),
-            source_kind="solution",
+        matching_entries.append(manifest_app)
+
+    if not matching_entries:
+        raise ApplicationSourceUnavailable(
+            "source_unavailable",
+            "No retained Solution manifest entry maps to this App.",
+        )
+    if len(matching_entries) > 1:
+        raise ApplicationSourceUnavailable(
+            "invalid_source",
+            "Multiple retained Solution manifest entries map to this App.",
         )
 
-    raise ApplicationSourceUnavailable(
-        "source_unavailable",
-        "No retained Solution manifest entry maps to this App.",
+    manifest_app = matching_entries[0]
+    files = _solution_app_files(manifest_app)
+    if "package.json" not in files or "index.html" not in files:
+        raise ApplicationSourceUnavailable(
+            "source_unavailable",
+            "Solution App source is missing package.json or index.html.",
+        )
+    try:
+        require_vite_source_files(files)
+        enforce_application_source_budget(
+            files, max_expanded_bytes=APP_SOURCE_MAX_EXPANDED_BYTES
+        )
+    except InvalidApplicationSource as exc:
+        raise ApplicationSourceUnavailable(_resolver_code(exc.code), exc.message) from exc
+    return ResolvedApplicationSource(
+        files=files,
+        dependencies=dict(manifest_app.get("dependencies") or {}),
+        source_kind="solution",
     )
 
 
@@ -203,7 +215,7 @@ def _resolver_code(code: str) -> str:
 
 
 def _is_missing_object_error(exc: Exception) -> bool:
-    if isinstance(exc, ClientError):
+    if isinstance(exc, S3Error):
         error = exc.response.get("Error", {})
         return error.get("Code") in {"NoSuchKey", "404", "NotFound", "Not Found"}
     text = f"{type(exc).__name__}: {exc}"

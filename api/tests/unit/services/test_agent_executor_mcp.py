@@ -18,12 +18,16 @@ DB read; for the unit test we patch dispatch.invoke directly.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
+from src.core.principal import UserPrincipal
 from src.models.contracts.agents import ToolResult
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.agent_executor import AgentExecutor
 from src.services.execution.agent_helpers import MCP_TOOL_PREFIX
 from src.services.llm.base import ToolCallRequest
@@ -32,6 +36,14 @@ from src.services.mcp_client.errors import (
     NeedsReauthError,
     ToolDispatchError,
 )
+
+
+def _caller(organization_id=None):
+    user_id = uuid4()
+    return Caller(
+        UserPrincipal(user_id=user_id, email="chat@contoso.example", organization_id=organization_id),
+        AuthorizationContext(user_id=user_id, home_organization_id=organization_id, base_role_id=uuid4(), is_external=False, base_permissions=frozenset()),
+    )
 
 
 @pytest.fixture
@@ -288,12 +300,13 @@ async def test_execute_tool_routes_mcp_prefix_to_mcp_dispatch(
 ):
     """The tool-name dispatcher in _execute_tool routes the
     ``mcp__<uuid>__<tool>`` pattern to _execute_mcp_tool BEFORE falling
-    through to the workflow lookup. We assert this by patching
-    dispatch.invoke and confirming it ran for an agent with no MCP tools
-    in its workflow id_map."""
+    through to workflow dispatch. The exact live MCP catalog entry is present
+    in the id map, and the assertion confirms dispatch invokes the remote
+    tool rather than the workflow runner."""
     executor = AgentExecutor(mock_session_factory)
     connection_id = uuid4()
-    caller_user_id = uuid4()
+    caller = _caller()
+    caller_user_id = caller.principal.user_id
 
     # Build a minimal mock agent — _execute_tool checks
     # ``agent.system_tools`` and uses ``startswith('delegate_to_')`` so a
@@ -302,13 +315,25 @@ async def test_execute_tool_routes_mcp_prefix_to_mcp_dispatch(
     agent.system_tools = []
     agent.knowledge_sources = []
     agent.delegated_agents = []
+    agent.id = uuid4()
+    agent.mcp_connections = [SimpleNamespace(id=connection_id)]
+    executor._tool_workflow_id_map = {
+        f"{MCP_TOOL_PREFIX}{connection_id}__graph_search": connection_id,
+    }
 
     fake_envelope = {"content": [], "is_error": False}
 
-    with patch(
-        "src.services.agent_executor.mcp_dispatch.invoke",
-        new=AsyncMock(return_value=fake_envelope),
-    ) as mock_invoke:
+    async def authorize(_db, caller, agent_id):
+        assert agent_id == agent.id
+        return caller, agent
+
+    with (
+        patch("src.services.agent_executor.authorize_agent_execution", new=AsyncMock(side_effect=authorize)),
+        patch(
+            "src.services.agent_executor.mcp_dispatch.invoke",
+            new=AsyncMock(return_value=fake_envelope),
+        ) as mock_invoke,
+    ):
         await executor._execute_tool(
             ToolCallRequest(
                 id="tc-7",
@@ -318,7 +343,7 @@ async def test_execute_tool_routes_mcp_prefix_to_mcp_dispatch(
             agent=agent,
             conversation=None,
             execution_id=None,
-            caller_user_id=caller_user_id,
+            caller=caller,
         )
 
     assert mock_invoke.await_count == 1

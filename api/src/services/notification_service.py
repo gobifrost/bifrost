@@ -228,17 +228,43 @@ class NotificationService:
 
         return NotificationPublic.model_validate_json(data)
 
+    async def can_access_notification(
+        self,
+        *,
+        notification_id: str,
+        notification: NotificationPublic | dict,
+        user_id: str,
+        is_admin: bool,
+    ) -> bool:
+        """Whether a caller may access a notification's detail or dismiss it.
+
+        Personal notifications remain visible only to their owner. Admin status
+        expands access solely to notifications explicitly placed in the admin
+        notification set.
+        """
+        owner_id = (
+            notification.user_id
+            if isinstance(notification, NotificationPublic)
+            else notification.get("user_id")
+        )
+        return owner_id == user_id or (
+            is_admin and await self._is_admin_notification(notification_id)
+        )
+
     async def dismiss_notification(
         self,
         notification_id: str,
         user_id: str,
+        is_admin: bool = False,
     ) -> bool:
         """
         Dismiss (delete) a notification.
 
         Args:
             notification_id: Notification to dismiss
-            user_id: User requesting dismissal (must own or be admin for admin notifications)
+            user_id: User requesting dismissal
+            is_admin: Whether the caller can read admin notifications; only
+                such callers may dismiss an admin notification they don't own
 
         Returns:
             True if dismissed, False if not found or unauthorized
@@ -254,10 +280,12 @@ class NotificationService:
         notification_dict = json.loads(data)
         owner_id = notification_dict.get("user_id")
 
-        # Allow dismissal if user owns it OR if it's an admin notification
-        # (platform admins can dismiss any admin notification they can see)
-        is_admin_notif = await self._is_admin_notification(notification_id)
-        if owner_id != user_id and not is_admin_notif:
+        if not await self.can_access_notification(
+            notification_id=notification_id,
+            notification=notification_dict,
+            user_id=user_id,
+            is_admin=is_admin,
+        ):
             logger.warning(
                 f"User {user_id} attempted to dismiss notification owned by {owner_id}"
             )

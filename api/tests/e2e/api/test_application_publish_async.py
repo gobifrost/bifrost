@@ -112,13 +112,13 @@ def test_publish_success_deduplication_and_requester_visibility(
     )
     assert accepted["notification_id"]
     # A different platform admin (not the one who enqueued the job) hits the
-    # same dedupe path. Publishing is platform-admin only: a provider-org
-    # member is refused (404) before reaching the in-progress check.
+    # same dedupe path. A provider-org member without apps.readwrite is
+    # refused before reaching the in-progress check.
     refused = e2e_client.post(
         f"/api/applications/{app['id']}/publish",
         headers=provider_org_user.headers,
     )
-    assert refused.status_code == 404, refused.text
+    assert refused.status_code == 403, refused.text
     duplicate = e2e_client.post(
         f"/api/applications/{app['id']}/publish",
         headers=second_platform_admin.headers,

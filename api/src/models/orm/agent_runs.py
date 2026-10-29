@@ -36,6 +36,17 @@ class AgentRun(Base):
     run_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
+    # Whose identity tools use when it isn't the caller's; see run_as.
+    run_as_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    # The actor selected at launch. NULL cannot be rebound after deletion.
+    acting_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    # Audit provenance retained independently of the effective actor.
+    impersonated_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
+    impersonation_session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     iterations_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     budget_max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -72,6 +83,17 @@ class AgentRun(Base):
         server_default=text("'pending'"),
     )
     summary_error: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # The summary backfill this run's pending summary belongs to, so its
+    # outcome is counted however the summary is delivered or recovered.
+    summary_backfill_job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "summary_backfill_jobs.id",
+            name="fk_agent_runs_summary_backfill_job_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        default=None,
+    )
     # Version of SUMMARIZE_SYSTEM_PROMPT that produced the current asked/did/
     # metadata. NULL for unsummarized/failed runs. Bumped manually in
     # src/services/execution/run_summarizer.py when the prompt changes; the
@@ -114,6 +136,7 @@ class AgentRun(Base):
         foreign_keys="AIUsage.agent_run_id",
     )
     conversation = relationship("Conversation", lazy="select")
+    run_as_user = relationship("User", foreign_keys=[run_as_user_id], lazy="select")
     child_runs: Mapped[list["AgentRun"]] = relationship(
         back_populates="parent_run",
         foreign_keys="AgentRun.parent_run_id",
@@ -134,6 +157,12 @@ class AgentRun(Base):
         Index("ix_agent_runs_parent_run_id", "parent_run_id"),
         Index("ix_agent_runs_agent_verdict_status", "agent_id", "verdict", "status"),
         Index("ix_agent_runs_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),
+        Index("ix_agent_runs_acting_user_id", "acting_user_id", postgresql_where=acting_user_id.isnot(None)),
+        Index(
+            "ix_agent_runs_summary_backfill_job_id",
+            "summary_backfill_job_id",
+            postgresql_where=summary_backfill_job_id.isnot(None),
+        ),
     )
 
 

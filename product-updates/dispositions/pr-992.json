@@ -1,0 +1,14 @@
+{
+  "key": "pr:992",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/992",
+      "Release review: verified active-human administrator safeguards, privileged-role protections, delete-time cancellation semantics, and passing focused coverage. Maintainer authorized merge and rollout on 2026-10-17."
+    ]
+  },
+  "summary": "Keep an active human Platform Admin and prevent external accounts from holding privileged roles. Deleting a user cancels their unstarted workflow runs.",
+  "category": "hardening"
+}

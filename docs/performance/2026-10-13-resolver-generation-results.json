@@ -1,0 +1,14 @@
+{
+  "baseline_commit": "5e77242c06b1a2eab288b6ff40be89f195a620ab",
+  "baseline": "PR 983 one COUNT-1000 scan per source update",
+  "followup": "Draft per-name generation implementation",
+  "unrelated_keys": 90000,
+  "python_files": 75,
+  "resolver_keys": 324,
+  "completed_runs": [
+    {"version": "generation", "round": 1, "seconds": 0.0411, "scan_calls": 0, "scan_seconds": 0, "correctness": "passed"},
+    {"version": "pr_983", "round": 1, "seconds": 3.0699, "scan_calls": 6825, "scan_seconds": 3.0091, "correctness": "passed"}
+  ],
+  "cleanup_remaining_keys": 0,
+  "note": "One paired sample against the worktree's isolated Compose Redis DB 15. Counts and timings exclude fixture setup, verification and cleanup. This measures cache publication only, not full deployment or production latency. Correctness uses scoped cache-reader visibility because invalidated v2 values expire naturally."
+}

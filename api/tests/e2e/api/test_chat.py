@@ -5,17 +5,34 @@ Tests chat conversation and message operations.
 Requires LLM configuration to be set for message sending tests.
 """
 
+import asyncio
 import logging
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
 import pytest
 
+from shared.chat_context import store_chat_context_usage
+from src.models.contracts.agents import ChatContextUsage
 from src.models.enums import MessageRole
 from src.models.orm import Conversation, Message
 from src.services.chat_attachments import ChatAttachmentService
 
 logger = logging.getLogger(__name__)
+
+
+async def _set_role_permissions(
+    session_factory, role_id: str, permissions: frozenset[str]
+) -> None:
+    from src.services.role_permissions import set_role_permissions
+
+    async with session_factory() as session:
+        await set_role_permissions(
+            session,
+            role_id=UUID(role_id),
+            permissions=permissions,
+        )
+        await session.commit()
 
 
 # =============================================================================
@@ -675,8 +692,23 @@ class TestConversationsAccessControl:
         platform_admin,
         provider_org_user,
         org1,
+        async_session_factory,
     ):
-        """An explicit chat agent selection activates provider impersonation."""
+        """A provider user needs a scoped role grant before cross-org chat works."""
+        role_resp = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={"name": f"Contoso Cross-Org Chat {uuid4().hex[:8]}"},
+        )
+        assert role_resp.status_code == 201, role_resp.text
+        role = role_resp.json()
+        asyncio.run(
+            _set_role_permissions(
+                async_session_factory,
+                role["id"],
+                frozenset({"agents.readbasic", "agents.execute"}),
+            )
+        )
         agent_resp = e2e_client.post(
             "/api/agents",
             json={
@@ -685,6 +717,7 @@ class TestConversationsAccessControl:
                 "channels": ["chat"],
                 "access_level": "role_based",
                 "organization_id": org1["id"],
+                "role_ids": [role["id"]],
             },
             headers=platform_admin.headers,
         )
@@ -692,12 +725,59 @@ class TestConversationsAccessControl:
         agent = agent_resp.json()
 
         try:
+            refused = e2e_client.post(
+                "/api/chat/conversations",
+                json={
+                    "agent_id": agent["id"],
+                    "channel": "chat",
+                    "title": "Cross-org chat without grant",
+                },
+                headers=provider_org_user.headers,
+            )
+            assert refused.status_code == 403, refused.text
+
+            assignments = e2e_client.get(
+                f"/api/users/{provider_org_user.user_id}/role-assignments",
+                headers=platform_admin.headers,
+            )
+            assert assignments.status_code == 200, assignments.text
+            current = assignments.json()
+            replacement = e2e_client.put(
+                f"/api/users/{provider_org_user.user_id}/role-assignments",
+                headers=platform_admin.headers,
+                json={
+                    "base_role_id": current["base_role"]["id"],
+                    "additional": [
+                        {
+                            "role_id": assignment["role_id"],
+                            "boundaries": [
+                                {
+                                    "kind": boundary["kind"],
+                                    "organization_id": boundary["organization_id"],
+                                }
+                                for boundary in assignment["boundaries"]
+                            ],
+                        }
+                        for assignment in current["additional"]
+                    ]
+                    + [
+                        {
+                            "role_id": role["id"],
+                            "boundaries": [
+                                {"kind": "organization", "organization_id": org1["id"]}
+                            ],
+                        }
+                    ],
+                },
+            )
+            assert replacement.status_code == 200, replacement.text
+
             response = e2e_client.post(
                 "/api/chat/conversations",
                 json={
                     "agent_id": agent["id"],
                     "channel": "chat",
-                    "title": "Explicit provider test",
+                    "title": "Cross-org chat with grant",
                 },
                 headers=provider_org_user.headers,
             )
@@ -706,6 +786,10 @@ class TestConversationsAccessControl:
         finally:
             e2e_client.delete(
                 f"/api/agents/{agent['id']}",
+                headers=platform_admin.headers,
+            )
+            e2e_client.delete(
+                f"/api/roles/{role['id']}",
                 headers=platform_admin.headers,
             )
 
@@ -717,6 +801,47 @@ class TestConversationsAccessControl:
 
 class TestDurableChatRuns:
     """Test the request/replay boundary used by the realtime chat client."""
+
+    @pytest.mark.asyncio
+    async def test_state_restores_latest_request_context_without_accumulating(
+        self,
+        e2e_client,
+        platform_admin,
+        test_conversation,
+        db_session,
+    ):
+        conversation_id = UUID(test_conversation["id"])
+        conversation = await db_session.get(Conversation, conversation_id)
+        assert conversation is not None
+        conversation.extra_data = {"channel_marker": "preserved"}
+        await db_session.commit()
+        profile_id = uuid4()
+        for input_tokens, cache_read_tokens in [(105_000, 78_750), (60_000, 45_000)]:
+            await store_chat_context_usage(
+                db_session,
+                conversation_id,
+                ChatContextUsage(
+                    input_tokens=input_tokens,
+                    context_window=475_000,
+                    cache_read_tokens=cache_read_tokens,
+                    model_profile_id=profile_id,
+                ),
+            )
+            await db_session.commit()
+
+        state = e2e_client.get(
+            f"/api/chat/conversations/{conversation_id}/state",
+            headers=platform_admin.headers,
+        )
+        assert state.status_code == 200, state.text
+        assert state.json()["context_usage"] == {
+            "input_tokens": 60_000,
+            "context_window": 475_000,
+            "cache_read_tokens": 45_000,
+            "model_profile_id": str(profile_id),
+        }
+        await db_session.refresh(conversation)
+        assert conversation.extra_data["channel_marker"] == "preserved"
 
     def test_submission_is_idempotent_and_state_replays_the_persisted_turn(
         self,

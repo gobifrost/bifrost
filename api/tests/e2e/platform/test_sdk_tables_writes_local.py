@@ -4,12 +4,9 @@ Exercises the full path — workflow code in a forked worker child calling
 the fixed table operations — against tables the external HTTP endpoints
 serve, proving write parity end to end:
 
-- the workflow records that the engine injected the worker's private
-  socket, so the migrated operations rode the shared client transport
-  rather than the network API — including the auto-create-on-insert retry,
-  which rides the engine-local ``tables.create`` operation, never HTTP
-  (the zero-HTTP proof lives in the unit and forked-child socket tests,
-  where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated operations use scoped shared API HTTP, including the
+  auto-create-on-insert retry;
 - at least one metadata mutation (``create``), one single document
   write (``insert``), and one batch write (``insert_batch``) commit
   state verified over external HTTP, alongside upsert/update/delete
@@ -135,10 +132,8 @@ class TestSdkTableWritesLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["one_id"] == "w-1"
         assert out["up_v"] == 2
         assert out["batch_count"] == 2

@@ -145,28 +145,21 @@ class integrations:
         scope: str | None = None,
     ) -> list[IntegrationMappingResponse] | None:
         """
-        List mappings for an integration in the resolved scope.
+        List the mappings for an integration that you may read.
 
         Sends the ordinary HTTP request through the shared ``BifrostClient``:
         over the worker's private Unix socket when the engine injected one,
         and over the network API otherwise. A local failure raises and never
         falls back to the network API.
 
-        Under the workflow execution model the API authenticates the engine
-        sentinel (``is_superuser=True``), so the API-side C2 gate never
-        fires on its own — the SDK-side ``resolve_scope`` is the security
-        boundary for workflow callers. This method resolves ``scope``
-        locally before posting; non-bypass workflow callers asking for a
-        scope other than their own raise ``PermissionError`` here, not
-        downstream.
+        The result is every mapping whose organization the run user may read
+        with Integrations Read, the same set the REST mapping list returns.
+        Use ``get_mapping`` for one organization's mapping.
 
         Args:
             name: Integration name
-            scope: Organization scope to list. Defaults to the execution
-                context's default scope. When that resolves to a provider org,
-                all mappings are returned. Pass ``"global"`` (only valid for
-                bypass callers — platform admin or provider-org member) to
-                list across all orgs explicitly.
+            scope: Accepted for existing callers and ignored; any value lists
+                every mapping you may read.
 
         Returns:
             list[IntegrationMappingResponse] | None: List of mappings.
@@ -180,12 +173,11 @@ class integrations:
             ...         org_id = mapping.organization_id
             ...         tenant_id = mapping.entity_id
         """
-        effective_scope = resolve_scope(scope)
         client = get_client()
         response = await client.engine_request(
             "POST",
             "/api/sdk/integrations/list_mappings",
-            json={"name": name, "scope": effective_scope},
+            json={"name": name},
             retry_transient=True,
         )
 

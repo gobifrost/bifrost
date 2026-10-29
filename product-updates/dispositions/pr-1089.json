@@ -1,0 +1,14 @@
+{
+  "key": "pr:1089",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Keep a replacement worker warm before a worker reaches its lifetime limit.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1089",
+      "Codex and Astra reviewed this routine reliability repair under the user\u2019s authorization to fix and deploy production issues. Existing limits and graceful draining are preserved; no customer upgrade action is required."
+    ]
+  }
+}

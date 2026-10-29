@@ -1,0 +1,16 @@
+{
+  "key": "pr:975",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/975",
+      "Jack authorized merging this tested OAuth ownership and historical cleanup follow-up after #974 on 2026-10-12.",
+      "Breaking API review: MCP create/update rejects oauth_provider_id with 422; use inline oauth_provider configuration. Independent provider IDs remain supported in manifest round trips.",
+      "Migration review: deleted integration credentials are removed irreversibly; existing MCP sharing is identified before mutations and requires independent MCP OAuth configuration and reconnection."
+    ]
+  },
+  "summary": "MCP OAuth setup creates independent providers, and a migration removes credentials left behind by deleted integrations. API clients must use inline OAuth configuration instead of an existing provider ID; installations with shared MCP credentials must reconnect before upgrading.",
+  "category": "fix"
+}

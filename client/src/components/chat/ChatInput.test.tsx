@@ -11,6 +11,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen, fireEvent } from "@/test-utils";
 import { act, waitFor } from "@testing-library/react";
+import type { ChatModelProfileOption } from "@/services/chatModels";
 
 const agentsRef: { data: Array<Record<string, unknown>> } = { data: [] };
 
@@ -205,6 +206,109 @@ describe("ChatInput — @ mentions", () => {
 });
 
 describe("ChatInput — attachments and model profile", () => {
+	it("shows the latest matching model context in a compact popout", async () => {
+		const { user } = renderWithProviders(
+			<ChatInput
+				onSend={vi.fn()}
+				modelProfiles={[
+					{
+						id: "profile-balanced",
+						name: "Balanced",
+						label: "Balanced",
+						capabilities: {
+							image_input: false,
+							pdf_input: false,
+							tool_calling: false,
+							source: "unknown",
+							fingerprint: "",
+						},
+					},
+				]}
+				modelProfileId="profile-balanced"
+				contextUsage={{
+					input_tokens: 105_000,
+					context_window: 475_000,
+					cache_read_tokens: 78_750,
+					model_profile_id: "profile-balanced",
+				}}
+			/>,
+		);
+
+		const contextTrigger = screen.getByRole("button", {
+			name: "Context window",
+		});
+		await user.hover(contextTrigger);
+		await user.click(contextTrigger);
+
+		expect(screen.getByText("22% used (78% left)")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				(_, element) =>
+					element?.textContent === "105k / 475k tokens (75% cached)",
+			),
+		).toBeInTheDocument();
+	});
+
+	it("hides context from a previously selected response model", () => {
+		const modelProfiles: ChatModelProfileOption[] = [
+			{
+				id: "profile-balanced",
+				name: "Balanced",
+				label: "Balanced",
+				capabilities: {
+					image_input: false,
+					pdf_input: false,
+					tool_calling: false,
+						source: "unknown",
+					fingerprint: "",
+				},
+			},
+			{
+				id: "profile-pro",
+				name: "Pro",
+				label: "Pro",
+				capabilities: {
+					image_input: false,
+					pdf_input: false,
+					tool_calling: false,
+					source: "unknown",
+					fingerprint: "",
+				},
+			},
+		];
+		const contextUsage = {
+			input_tokens: 1_000,
+			context_window: 10_000,
+			cache_read_tokens: 0,
+			model_profile_id: "profile-balanced",
+		};
+		const { rerender } = renderWithProviders(
+			<ChatInput
+				onSend={vi.fn()}
+				modelProfiles={modelProfiles}
+				modelProfileId="profile-balanced"
+				contextUsage={contextUsage}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("button", { name: "Context window" }),
+		).toBeInTheDocument();
+
+		rerender(
+			<ChatInput
+				onSend={vi.fn()}
+				modelProfiles={modelProfiles}
+				modelProfileId="profile-pro"
+				contextUsage={contextUsage}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("button", { name: "Context window" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("matches the conversation column width", () => {
 		const { container } = renderWithProviders(
 			<ChatInput onSend={vi.fn()} />,

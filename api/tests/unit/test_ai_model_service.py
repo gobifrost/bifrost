@@ -486,6 +486,7 @@ async def test_merge_profiles_reassigns_agents_assignments_and_chat(db_session):
     assert result.profile.enabled_for_chat is True
     assert set(result.merged_profile_ids) == {source.id, second_source.id}
     assert result.reassigned_agent_count == 1
+    assert result.profile.referenced_agent_count == 1
     assert set(result.reassigned_assignment_keys) == {
         "primary",
         "summarization",
@@ -1010,3 +1011,80 @@ async def test_connection_without_profiles_falls_back_to_listing_and_says_so(db_
     assert result.message == (
         "Connected. Listed 3 model(s). Add a model profile to test a real request."
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lookup", "query_count"),
+    [("runtime_config", 1), ("agent_record", 1), ("profile_counts", 2), ("connection_counts", 1)],
+)
+async def test_profile_reads_load_only_the_requested_graph(db_session, async_engine, lookup, query_count):
+    """Runtime reads and management counts must not hydrate reverse graphs."""
+    from sqlalchemy import event, select
+
+    from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
+    from src.services.model_catalog import get_model_catalog
+
+    # Catalog freshness is independent of relationship loading. Warm that
+    # process cache so this assertion measures only the requested ORM graph.
+    await get_model_catalog(db_session)
+
+    connection = AIProviderConnection(
+        name=f"Graph {uuid4().hex}",
+        provider="openai_compatible",
+        endpoint="http://scheduler-fixtures:8080/v1",
+        encrypted_api_key=AIModelService(db_session).encrypt_api_key("fixture-key"),
+    )
+    db_session.add(connection)
+    await db_session.flush()
+    profiles = [
+        AIModelProfile(
+            name=f"Graph profile {uuid4().hex}",
+            connection_id=connection.id,
+            model="fixture-chat",
+            openai_transport="chat_completions",
+        )
+        for _ in range(3)
+    ]
+    db_session.add_all(profiles)
+    await db_session.flush()
+    agents = [
+        Agent(
+            name=f"Graph agent {uuid4().hex}",
+            system_prompt="Local loading fixture",
+            created_by="loading-fixture",
+            llm_profile_id=profile.id,
+        )
+        for profile in profiles
+    ]
+    db_session.add_all(agents)
+    await db_session.flush()
+    profile_id, agent_id = profiles[0].id, agents[0].id
+    db_session.expunge_all()
+    statements: list[str] = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    event.listen(async_engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        if lookup == "runtime_config":
+            config = await AIModelService(db_session).resolve_config(profile_id=profile_id)
+            assert config.model == "fixture-chat"
+            assert config.api_key == "fixture-key"
+        elif lookup == "agent_record":
+            agent = (await db_session.execute(select(Agent).where(Agent.id == agent_id))).scalar_one()
+            assert agent.llm_profile_id == profile_id
+        elif lookup == "profile_counts":
+            listed_profiles = await AIModelService(db_session).list_profiles()
+            assert [profile.referenced_agent_count for profile in listed_profiles] == [1, 1, 1]
+            assert not any(isinstance(row, Agent) for row in db_session.identity_map.values())
+        else:
+            listed_connections = await AIModelService(db_session).list_connections()
+            assert [connection.profile_count for connection in listed_connections] == [3]
+            assert not any(isinstance(row, AIModelProfile) for row in db_session.identity_map.values())
+    finally:
+        event.remove(async_engine.sync_engine, "before_cursor_execute", capture)
+
+    print(f"PROFILE_GRAPH_QUERY_EVIDENCE {lookup}: {len(statements)} statements")
+    assert len(statements) == query_count, "Reads must not hydrate reverse profile/agent collections"

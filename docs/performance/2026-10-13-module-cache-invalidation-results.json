@@ -1,0 +1,46 @@
+{
+  "baseline_commit": "602c58813",
+  "fixed_core_commit": "16ef4f770",
+  "unrelated_keys": 90000,
+  "python_files": 75,
+  "resolver_keys": 324,
+  "completed_runs": [
+    {
+      "event": "result",
+      "version": "new",
+      "round": 1,
+      "seconds": 3.1572,
+      "scan_calls": 6825,
+      "scan_seconds": 3.0892,
+      "correctness": "passed"
+    },
+    {
+      "event": "result",
+      "version": "old",
+      "round": 1,
+      "seconds": 257.0327,
+      "scan_calls": 1824465,
+      "scan_seconds": 252.4829,
+      "correctness": "passed"
+    },
+    {
+      "event": "result",
+      "version": "new",
+      "round": 1,
+      "seconds": 4.3896,
+      "scan_calls": 6825,
+      "scan_seconds": 4.297,
+      "correctness": "passed"
+    },
+    {
+      "event": "result",
+      "version": "new",
+      "round": 2,
+      "seconds": 5.0835,
+      "scan_calls": 6825,
+      "scan_seconds": 4.9841,
+      "correctness": "passed"
+    }
+  ],
+  "note": "One paired run completed. Extra baseline repetitions were intentionally stopped after the first completed pair; cleanup left zero keys. Two fixed-only repetitions then completed normally and cleaned up."
+}

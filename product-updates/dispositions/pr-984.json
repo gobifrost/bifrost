@@ -1,0 +1,14 @@
+{
+  "key": "pr:984",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Solution deployments refresh source caches faster and report publication progress.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/984",
+      "Jack authorized queueing this follow-up after PR #983 merges on 2026-10-13."
+    ]
+  }
+}

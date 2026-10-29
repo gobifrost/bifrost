@@ -18,12 +18,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import delete, update
 
 from src.core.auth import UserPrincipal
 from src.models.contracts.policies import TablePolicies
+
 from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
+from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.routers import websocket as ws_mod
 
 pytestmark = pytest.mark.e2e
@@ -76,13 +79,42 @@ def _table(name: str, *, org_id, solution_id=None, access=None) -> Table:
     )
 
 
-def _org_user(org_id) -> UserPrincipal:
+def _principal(user: User) -> UserPrincipal:
     return UserPrincipal(
-        user_id=uuid.uuid4(),
-        email="user@x",
-        organization_id=org_id,
+        user_id=user.id,
+        email=user.email,
+        organization_id=user.organization_id,
         is_superuser=False,
     )
+
+
+async def _org_user(db, org_id) -> UserPrincipal:
+    user = User(
+        email=f"ws-{uuid.uuid4().hex}@example.test",
+        name="WebSocket user",
+        organization_id=org_id,
+    )
+    db.add(user)
+    await db.flush()
+    return _principal(user)
+
+
+async def _grant_at(db, user_id: uuid.UUID, org_id: uuid.UUID, permission: str) -> Role:
+    role = Role(name=f"ws-role-{uuid.uuid4().hex[:8]}", created_by="websocket-test")
+    db.add(role)
+    await db.flush()
+    db.add_all((
+        RolePermission(role_id=role.id, permission=permission),
+        UserRole(user_id=user_id, role_id=role.id, assigned_by="websocket-test"),
+        UserRoleBoundary(
+            user_id=user_id,
+            role_id=role.id,
+            kind="organization",
+            organization_id=org_id,
+        ),
+    ))
+    await db.flush()
+    return role
 
 
 class TestResolveTableIdByName:
@@ -99,7 +131,7 @@ class TestResolveTableIdByName:
         db.add(live)
         await db.flush()
 
-        assert await ws_mod._resolve_table_id(name, _org_user(org)) == str(live.id)
+        assert await ws_mod._resolve_table_id(name, await _org_user(db, org)) == str(live.id)
 
     async def test_repo_row_wins_over_same_name_solution_row(self, patched_db) -> None:
         """A live `_repo/` table and a solution table share (org, name): the
@@ -116,7 +148,7 @@ class TestResolveTableIdByName:
         db.add_all([live, managed])
         await db.flush()
 
-        resolved = await ws_mod._resolve_table_id(name, _org_user(org))
+        resolved = await ws_mod._resolve_table_id(name, await _org_user(db, org))
         assert resolved == str(live.id)
 
 class TestResolveTableIdById:
@@ -132,21 +164,21 @@ class TestResolveTableIdById:
         table = await self._foreign_table(patched_db)
         other_org = await _make_org(patched_db)
 
-        assert await ws_mod._resolve_table_id(str(table.id), _org_user(other_org)) is None
+        assert await ws_mod._resolve_table_id(str(table.id), await _org_user(patched_db, other_org)) is None
 
-    async def test_provider_org_member_resolves_customer_table(self, patched_db) -> None:
+    async def test_org_bounded_role_reaches_customer_table(self, patched_db) -> None:
         table = await self._foreign_table(patched_db)
-        staff = _org_user(await _make_org(patched_db))
-        staff.is_provider_org = True
+        staff = await _org_user(patched_db, await _make_org(patched_db))
+        await _grant_at(patched_db, staff.user_id, table.organization_id, "tables.read")
 
         assert await ws_mod._resolve_table_id(str(table.id), staff) == str(table.id)
 
-    async def test_superuser_resolves_customer_table(self, patched_db) -> None:
+    async def test_serialized_superuser_flag_cannot_widen_reach(self, patched_db) -> None:
         table = await self._foreign_table(patched_db)
-        admin = _org_user(await _make_org(patched_db))
-        admin.is_superuser = True
+        user = await _org_user(patched_db, await _make_org(patched_db))
+        user.is_superuser = True
 
-        assert await ws_mod._resolve_table_id(str(table.id), admin) == str(table.id)
+        assert await ws_mod._resolve_table_id(str(table.id), user) is None
 
 
 class TestLoadPoliciesForTableByName:
@@ -170,7 +202,7 @@ class TestLoadPoliciesForTableByName:
         db.add_all([live, managed])
         await db.flush()
 
-        policies = await ws_mod._load_policies_for_table(name, _org_user(org))
+        policies = await ws_mod._load_policies_for_table(name, await _org_user(db, org))
         assert policies == TablePolicies()
 
 
@@ -185,7 +217,7 @@ class TestFreshTablePolicyClaims:
 
     def test_fresh_copy_drops_stale_claims_without_touching_principal(self) -> None:
         org = uuid.uuid4()
-        user = _org_user(org)
+        user = _principal(User(id=uuid.uuid4(), email="claims@example.test", organization_id=org))
         user.claims = {"allowed_campus_ids": ["north"]}  # type: ignore[attr-defined]
 
         fresh = ws_mod._fresh_table_policy_user(user)
@@ -199,14 +231,21 @@ class TestFreshTablePolicyClaims:
     ) -> None:
         """Mutating claims between two evaluations must not leak values."""
         org = uuid.uuid4()
-        user = _org_user(org)
+        user = _principal(User(id=uuid.uuid4(), email="claims@example.test", organization_id=org))
         user.claims = {"allowed_campus_ids": ["north"]}  # type: ignore[attr-defined]
         seen: list = []
 
-        async def fake_load(table_id: str, policy_user) -> None:
+        async def fake_current(principal: UserPrincipal, table_id: str) -> UserPrincipal:
+            policy_user = ws_mod._fresh_table_policy_user(principal)
             seen.append(policy_user)
-            return None
+            return policy_user
 
+        async def fake_load(table_id: str, policy_user) -> TablePolicies:
+            return TablePolicies.model_validate({
+                "policies": [{"name": "open-read", "actions": ["read"]}],
+            })
+
+        monkeypatch.setattr(ws_mod, "_current_table_policy_user", fake_current)
         monkeypatch.setattr(ws_mod, "_load_policies_for_table", fake_load)
         websocket = SimpleNamespace(
             state=SimpleNamespace(table_subscriptions={"t1": {"filter": None}}),
@@ -228,6 +267,55 @@ class TestFreshTablePolicyClaims:
         assert len(seen) == 2
         assert seen[1] is not user
         assert seen[1].claims == {}
+
+
+class TestCurrentTableDeliveryAuthority:
+    async def test_role_and_reach_revocation_unsubscribes_live_delivery(self, patched_db) -> None:
+        """A connected socket must not retain a cached role or foreign-org reach."""
+        db = patched_db
+        home = await _make_org(db)
+        target = await _make_org(db)
+        user = await _org_user(db, home)
+        role = await _grant_at(db, user.user_id, target, "tables.read")
+        table = _table(
+            f"restricted_{uuid.uuid4().hex[:8]}",
+            org_id=target,
+            access={
+                "policies": [{
+                    "name": "role-read",
+                    "actions": ["read"],
+                    "when": {"call": "has_role", "args": [str(role.id)]},
+                }]
+            },
+        )
+        db.add(table)
+        await db.flush()
+
+        websocket = SimpleNamespace(
+            state=SimpleNamespace(table_subscriptions={str(table.id): {"filter": None}}),
+            send_json=AsyncMock(),
+        )
+        payload = {"type": "document_change", "old_row": None, "new_row": {"id": "row-1"}}
+
+        await ws_mod._handle_table_message(websocket, user, f"table:{table.id}", payload)
+        assert websocket.send_json.await_args.args[0]["type"] == "document_change"
+
+        await db.execute(
+            delete(UserRole).where(
+                UserRole.user_id == user.user_id,
+                UserRole.role_id == role.id,
+            )
+        )
+        await db.flush()
+        websocket.send_json.reset_mock()
+
+        await ws_mod._handle_table_message(websocket, user, f"table:{table.id}", payload)
+
+        assert str(table.id) not in websocket.state.table_subscriptions
+        websocket.send_json.assert_awaited_once_with({
+            "type": "subscription_revoked",
+            "channel": f"table:{table.id}",
+        })
 
 
 class TestClaimGatedSubscriptionVisibility:
@@ -259,7 +347,10 @@ class TestClaimGatedSubscriptionVisibility:
         db.add(source)
         await db.flush()
         member_email = f"member-{suffix}@x.test"
-        user = _org_user(org)
+        user = await _org_user(db, org)
+        await db.execute(
+            update(User).where(User.id == user.user_id).values(email=member_email)
+        )
         user.email = member_email
         db.add(
             Document(

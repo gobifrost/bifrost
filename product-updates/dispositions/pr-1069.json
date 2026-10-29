@@ -1,0 +1,14 @@
+{
+  "key": "pr:1069",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflow control and notifications reuse the API Redis pool, avoiding repeated TLS setup on each operation.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1069",
+      "Jack authorized local iteration, merge, and production repair until workflow latency and API CPU return to a reasonable baseline. Matched local TLS/load benchmarks, focused ownership/lifecycle tests, all 23 live job types with controlled upstreams, and independent final review support this repair."
+    ]
+  }
+}

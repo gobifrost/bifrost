@@ -1,6 +1,7 @@
-import { useEffect, useCallback } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useCallback, useEffect } from "react";
 import { authFetch } from "@/lib/api-client";
+import { GLOBAL_TARGET } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import { webSocketService } from "@/services/websocket";
 import { useFileActivityStore } from "@/stores/fileActivityStore";
 
@@ -11,47 +12,84 @@ interface WatcherData {
 	started_at: string;
 }
 
-const POLL_INTERVAL_MS = 15_000; // 15 seconds
-
+/**
+ * Maintains Global file activity from its server-authorized WebSocket stream.
+ *
+ * ``platform.read`` controls the stream. The watcher snapshot is separately
+ * gated by the existing Global ``repository.read`` operation, so an observer
+ * who can receive activity but cannot inspect current watchers never makes a
+ * request the server will refuse.
+ */
 export function useFileActivity() {
-	const { isPlatformAdmin } = useAuth();
-	const addEvent = useFileActivityStore((s) => s.addEvent);
-	const setWatchers = useFileActivityStore((s) => s.setWatchers);
+	const authorization = useAuthorization();
+	const addEvent = useFileActivityStore((state) => state.addEvent);
+	const setWatchers = useFileActivityStore((state) => state.setWatchers);
+	const canReadActivity = authorization.canAt("platform.read", GLOBAL_TARGET);
+	const canListWatchers = authorization.canAt(
+		"repository.read",
+		GLOBAL_TARGET,
+	);
 
-	const fetchWatchers = useCallback(() => {
-		authFetch("/api/files/watchers")
-			.then((res) => res.json())
-			.then((data: { watchers: WatcherData[] }) => {
-				setWatchers(
-					data.watchers.map((w) => ({
-						type: "watch_start" as const,
-						user_id: w.user_id,
-						user_name: w.user_name,
-						prefix: w.prefix,
-						file_count: 0,
-						is_watch: true,
-						timestamp: w.started_at,
-					})),
-				);
-			})
-			.catch(() => {});
-	}, [setWatchers]);
+	const clearActivity = useCallback(() => {
+		useFileActivityStore.setState({ recentPushes: [], activeWatchers: [] });
+	}, []);
+
+	const fetchWatchers = useCallback(async (isCurrent: () => boolean) => {
+		if (!canListWatchers) {
+			if (isCurrent()) setWatchers([]);
+			return;
+		}
+		try {
+			const response = await authFetch("/api/files/watchers");
+			if (!response.ok) return;
+			const data = (await response.json()) as { watchers: WatcherData[] };
+			if (!isCurrent()) return;
+			setWatchers(
+				data.watchers.map((watcher) => ({
+					type: "watch_start" as const,
+					user_id: watcher.user_id,
+					user_name: watcher.user_name,
+					prefix: watcher.prefix,
+					file_count: 0,
+					is_watch: true,
+					timestamp: watcher.started_at,
+				})),
+			);
+		} catch {
+			// Live events remain authoritative while a best-effort snapshot fails.
+		}
+	}, [canListWatchers, setWatchers]);
 
 	useEffect(() => {
-		if (!isPlatformAdmin) return;
+		if (!canReadActivity) {
+			clearActivity();
+			return;
+		}
 
-		// Seed immediately + poll to catch start/stop changes
-		fetchWatchers();
-		const interval = setInterval(fetchWatchers, POLL_INTERVAL_MS);
-
-		// Subscribe to the file-activity channel for real-time updates
-		webSocketService.subscribe("file-activity");
-		const unsubscribe = webSocketService.onFileActivity(addEvent);
+		let active = true;
+		const synchronize = async () => {
+			if (!webSocketService.isConnected()) return;
+			await webSocketService.subscribe("file-activity");
+			if (active) await fetchWatchers(() => active);
+		};
+		const unsubscribeEvents = webSocketService.onFileActivity(addEvent);
+		const unsubscribeConnection = webSocketService.onConnectionStatusChange(
+			(connected) => {
+				if (!connected) {
+					setWatchers([]);
+					return;
+				}
+				void synchronize();
+			},
+		);
+		void synchronize();
 
 		return () => {
-			clearInterval(interval);
-			unsubscribe();
-			webSocketService.unsubscribe("file-activity");
+			active = false;
+			unsubscribeEvents();
+			unsubscribeConnection();
+			void webSocketService.unsubscribe("file-activity");
+			clearActivity();
 		};
-	}, [isPlatformAdmin, addEvent, fetchWatchers]);
+	}, [addEvent, canReadActivity, clearActivity, fetchWatchers, setWatchers]);
 }

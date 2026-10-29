@@ -15,6 +15,7 @@ from src.services.oauth_provider import (
     get_token_for_org,
     refresh_oauth_token_http,
 )
+from src.services.authorization.enforce import Caller, require_permission, user_reach
 from src.services.webhooks.protocol import WebhookIntegrationAuth
 
 
@@ -32,10 +33,35 @@ class WebhookIntegrationCredentials:
 
 async def build_webhook_integration_credentials(
     db: AsyncSession,
+    caller: Caller,
     integration_id: UUID,
     organization_id: UUID | None,
 ) -> WebhookIntegrationCredentials:
-    """Load an integration's effective tenant and OAuth refresh material."""
+    """Load credentials after original-user integration and Secrets checks."""
+    if organization_id is None:
+        raise ValueError("Select an organization to authenticate this webhook")
+    if not user_reach(caller).covers(organization_id):
+        raise ValueError("Selected organization is outside your reach")
+    require_permission(caller, "integrations.read", organization_id)
+    require_permission(caller, "secrets.read", organization_id)
+    return await _load_webhook_integration_credentials(db, integration_id, organization_id)
+
+
+async def build_trusted_renewal_webhook_credentials(
+    db: AsyncSession,
+    integration_id: UUID,
+    organization_id: UUID | None,
+) -> WebhookIntegrationCredentials:
+    """Scheduler-only credential loading for a persisted webhook renewal."""
+    return await _load_webhook_integration_credentials(db, integration_id, organization_id)
+
+
+async def _load_webhook_integration_credentials(
+    db: AsyncSession,
+    integration_id: UUID,
+    organization_id: UUID | None,
+) -> WebhookIntegrationCredentials:
+    """Shared credential loader after a human or trusted-job admission."""
     if organization_id is None:
         raise ValueError("Select an organization to authenticate this webhook")
 

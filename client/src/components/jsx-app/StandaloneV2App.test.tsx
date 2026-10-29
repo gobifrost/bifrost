@@ -15,14 +15,24 @@ const orgScopeState = vi.hoisted(() => ({
 	},
 }));
 
+const authState = vi.hoisted(() => ({ isPlatformAdmin: false }));
+
 const { mockAuthFetch } = vi.hoisted(() => ({ mockAuthFetch: vi.fn() }));
 
 vi.mock("@/lib/api-client", () => ({
 	authFetch: (...args: unknown[]) => mockAuthFetch(...args),
 }));
 
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => ({ isPlatformAdmin: authState.isPlatformAdmin }),
+}));
+
 vi.mock("@/hooks/useOrgScope", () => ({
 	useOrgScope: () => ({ scope: orgScopeState.scope }),
+}));
+
+vi.mock("@/components/layout/ImpersonationBanner", () => ({
+	ImpersonationBanner: () => null,
 }));
 
 function props(entry: string) {
@@ -90,6 +100,7 @@ beforeEach(() => {
 	localStorage.clear();
 	sessionStorage.clear();
 	orgScopeState.scope = { type: "global", orgId: null };
+	authState.isPlatformAdmin = false;
 	delete window.__BIFROST_APP__;
 	delete window.__BIFROST_APP_MODULES__;
 	mockAuthFetch.mockReset();
@@ -234,6 +245,31 @@ describe("StandaloneV2App", () => {
 		});
 	});
 
+	it("runs a platform admin against the App's own organization", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		authState.isPlatformAdmin = true;
+		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
+
+		render(<StandaloneV2App {...props("admin-app-org")} appOrgId="client-org" />);
+		await finishModuleLoad("admin-app-org", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+
+		expect(mount.mock.calls[0][1]).toMatchObject({ orgScope: "client-org" });
+	});
+
+	it("runs a platform admin against the selection when the App has no organization", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		authState.isPlatformAdmin = true;
+		orgScopeState.scope = { type: "organization", orgId: "selected-org" };
+		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
+
+		render(<StandaloneV2App {...props("admin-global-app")} />);
+		await finishModuleLoad("admin-global-app", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+
+		expect(mount.mock.calls[0][1]).toMatchObject({ orgScope: "selected-org" });
+	});
+
 	it("remounts when the parent supplies a newer manifest", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
 		const firstTeardown = vi.fn();
@@ -345,6 +381,29 @@ describe("StandaloneV2App", () => {
 			screen.getByRole("button", { name: "Reload app" }),
 		).toBeInTheDocument();
 		expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows a safe permission message when refreshing stale assets is forbidden", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		mockAuthFetch.mockResolvedValueOnce({
+			ok: false,
+			status: 403,
+			text: async () => '{"detail":"internal deployment metadata"}',
+		});
+		render(<StandaloneV2App {...props("forbidden-refresh")} />);
+
+		let script!: HTMLScriptElement;
+		await waitFor(() => {
+			script = moduleScript("forbidden-refresh");
+		});
+		act(() => script.dispatchEvent(new Event("error")));
+
+		const details = await screen.findByLabelText("Bundle error details");
+		expect(details).toHaveTextContent(
+			"You do not have permission to open this app.",
+		);
+		expect(details).not.toHaveTextContent("403");
+		expect(details).not.toHaveTextContent("internal deployment metadata");
 	});
 
 	it("uses the preview basename when requested", async () => {

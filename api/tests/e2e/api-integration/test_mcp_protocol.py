@@ -10,18 +10,16 @@ import os
 import pytest
 import requests
 
-from tests.fixtures.auth import create_test_jwt
-
 TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
 
 # MCP Streamable HTTP transport requires this Accept header
 MCP_ACCEPT_HEADER = "application/json, text/event-stream"
 
 
-def mcp_headers(token: str) -> dict[str, str]:
+def mcp_headers(headers: dict[str, str]) -> dict[str, str]:
     """Create headers for MCP requests with proper Accept header."""
     return {
-        "Authorization": f"Bearer {token}",
+        **headers,
         "Content-Type": "application/json",
         "Accept": MCP_ACCEPT_HEADER,
     }
@@ -32,13 +30,9 @@ class TestMCPProtocol:
     """Test MCP JSON-RPC 2.0 protocol endpoint."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def _ensure_agent_with_tools(self):
+    def _ensure_agent_with_tools(self, platform_admin):
         """Create an agent with system tools so MCP tools/list returns results."""
-        token = create_test_jwt(is_superuser=True)
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
+        headers = platform_admin.headers
 
         resp = requests.post(
             f"{TEST_API_URL}/api/agents",
@@ -87,11 +81,18 @@ class TestMCPProtocol:
             },
         )
         assert response.status_code == 401
+        challenge = response.headers["WWW-Authenticate"]
+        assert 'resource_metadata="' in challenge
+        assert "/.well-known/oauth-protected-resource/mcp" in challenge
 
-    def test_mcp_initialize_success(self):
+    def test_stateless_mcp_does_not_open_a_notification_stream(self):
+        response = requests.get(f"{TEST_API_URL}/mcp")
+
+        assert response.status_code == 405
+
+    def test_mcp_initialize_success(self, platform_admin):
         """POST /mcp with valid admin token should return initialize response."""
-        token = create_test_jwt(is_superuser=True)
-        headers = mcp_headers(token)
+        headers = mcp_headers(platform_admin.headers)
 
         response = requests.post(
             f"{TEST_API_URL}/mcp",
@@ -119,15 +120,14 @@ class TestMCPProtocol:
         assert "protocolVersion" in result
         assert "bifrost_search_capabilities" in result["instructions"]
 
-    def test_mcp_list_tools(self):
+    def test_mcp_list_tools(self, platform_admin):
         """Should be able to list available tools.
 
         Note: The MCP server uses stateless_http=True mode, which means each request
         is independent and no session ID is needed. We can call tools/list directly
         after initialize without needing to track session state.
         """
-        token = create_test_jwt(is_superuser=True)
-        headers = mcp_headers(token)
+        headers = mcp_headers(platform_admin.headers)
 
         # First initialize (required by MCP protocol before other methods)
         init_response = requests.post(
@@ -176,12 +176,11 @@ class TestMCPProtocol:
             "bifrost_remove_memory",
         }
 
-    def test_mcp_non_admin_allowed(self):
+    def test_mcp_non_admin_allowed(self, org1_user):
         """Non-admin users can initialize MCP — per-user tool access is
         role-scoped downstream, so they connect successfully and simply see
         the tools their roles grant them (possibly none)."""
-        token = create_test_jwt(is_superuser=False)
-        headers = mcp_headers(token)
+        headers = mcp_headers(org1_user.headers)
 
         response = requests.post(
             f"{TEST_API_URL}/mcp",

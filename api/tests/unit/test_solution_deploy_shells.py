@@ -13,7 +13,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from src.models.orm.integrations import Integration, IntegrationConfigSchema
+from src.models.orm.config import Config
+from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
 from src.models.orm.oauth import OAuthProvider
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solutions import Solution
@@ -72,7 +73,26 @@ class TestSolutionDeployShells:
     async def test_noop_when_integration_exists(self, db_session) -> None:
         db = db_session
         name = f"Existing-{uuid4().hex[:8]}"
-        db.add(Integration(name=name))
+        existing = Integration(name=name)
+        db.add(existing)
+        await db.flush()
+        schema = IntegrationConfigSchema(
+            integration_id=existing.id,
+            key="configured_endpoint",
+            type="string",
+        )
+        db.add(schema)
+        await db.flush()
+        db.add_all([
+            Config(
+                key="configured_endpoint",
+                value={"value": "https://configured.example"},
+                integration_id=existing.id,
+                config_schema_id=schema.id,
+                updated_by="test",
+            ),
+            IntegrationMapping(integration_id=existing.id, entity_id="configured-tenant"),
+        ])
         await db.flush()
         created = await SolutionDeployer(db)._upsert_integration_shells(
             [{"integration_name": name, "template": {
@@ -81,7 +101,7 @@ class TestSolutionDeployShells:
         await db.flush()
         assert created == 0  # never clobber
 
-        # No config schema or oauth provider was attached to the existing row.
+        # The declared shell leaves configured values and mappings intact.
         integ = (await db.execute(
             select(Integration).where(Integration.name == name)
         )).scalar_one()
@@ -90,11 +110,59 @@ class TestSolutionDeployShells:
                 IntegrationConfigSchema.integration_id == integ.id
             )
         )).scalars().all()
-        assert schema == []
+        assert [item.key for item in schema] == ["configured_endpoint"]
+        configs = (await db.execute(
+            select(Config).where(Config.integration_id == integ.id)
+        )).scalars().all()
+        assert [item.value for item in configs] == [{"value": "https://configured.example"}]
+        mappings = (await db.execute(
+            select(IntegrationMapping).where(IntegrationMapping.integration_id == integ.id)
+        )).scalars().all()
+        assert [item.entity_id for item in mappings] == ["configured-tenant"]
         provider = (await db.execute(
             select(OAuthProvider).where(OAuthProvider.integration_id == integ.id)
         )).scalar_one_or_none()
         assert provider is None
+
+    async def test_creates_clean_shell_when_only_deleted_name_exists(self, db_session) -> None:
+        db = db_session
+        name = f"Deleted-{uuid4().hex[:8]}"
+        deleted = Integration(name=name, is_deleted=True)
+        db.add(deleted)
+        await db.flush()
+        db.add(
+            IntegrationConfigSchema(
+                integration_id=deleted.id,
+                key="retired_endpoint",
+                type="string",
+            )
+        )
+        await db.flush()
+
+        created = await SolutionDeployer(db)._upsert_integration_shells(
+            [{"integration_name": name, "template": {
+                "name": name,
+                "config_schema": [{
+                    "key": "new_endpoint", "type": "string", "required": True,
+                }],
+                "oauth": None,
+            }}]
+        )
+        await db.flush()
+        assert created == 1
+
+        rows = (await db.execute(
+            select(Integration).where(Integration.name == name)
+        )).scalars().all()
+        assert len(rows) == 2
+        fresh = next(row for row in rows if not row.is_deleted)
+        assert fresh.id != deleted.id
+        schema = (await db.execute(
+            select(IntegrationConfigSchema).where(
+                IntegrationConfigSchema.integration_id == fresh.id
+            )
+        )).scalars().all()
+        assert [item.key for item in schema] == ["new_endpoint"]
 
     async def test_intra_bundle_duplicate_name_creates_one(self, db_session) -> None:
         # The same declaration twice in one bundle dedups to a single shell —

@@ -110,3 +110,40 @@ Or via input_mapping template:
 ```yaml
 registration_url: "{{ _event.body.registration_url }}"
 ```
+
+---
+
+## workflow.completed
+
+**Topic:** `workflow.completed`
+**Emitted by:** Workflow executor
+
+This event is emitted only after a workflow result is durably recorded with
+status `Success`. It is emitted after a synchronous caller has been notified.
+`CompletedWithErrors`, failed, timed-out, cancelled, and fenced stale results
+do not emit it.
+
+The payload contains the workflow and execution identifiers, `Success` status,
+the workflow attempt (`1` of `1` because workflow execution has no retry
+loop), persisted execution timing, and trigger metadata. It never includes
+workflow inputs, results, or variables.
+
+Direct self-subscriptions are recorded as skipped: a `workflow.completed`
+event for workflow A cannot trigger A again. Completion chains such as A → B →
+C remain valid. Configure subscription filters to bound cycles spanning
+multiple workflows.
+
+Built-in event emission is best effort, like `workflow.failed`. A process crash
+after the execution commit and before emission can leave a successful run
+without a corresponding completion event.
+
+## Workflow Failure Topics
+
+`workflow.failed` reports a failed workflow execution attempt.
+`workflow.retry_exhausted` reports a failure with no attempts remaining. They
+share the common event envelope, workflow and execution identifiers, trigger
+metadata, and an `error` object with `type`, `code`, `message`, and `retryable`.
+
+Subscribe to `workflow.completed` for successful runs and `workflow.failed`
+for failures. Fetch an execution's result by its ID through the execution API;
+the completion event carries no result data or additional result access.

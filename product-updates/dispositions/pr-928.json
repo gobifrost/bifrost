@@ -1,0 +1,13 @@
+{
+  "key": "pr:928",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal dependency-advisory automation repair; no customer-facing functionality change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/928",
+      "User authorized verified security-maintenance repairs; merge remains held until the required GitHub App permission is installed."
+    ]
+  }
+}

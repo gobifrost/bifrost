@@ -226,10 +226,10 @@ describe("FilePolicyEditor", () => {
 		mockListRules.mockResolvedValue([
 			{
 				...RULE,
-				description: "Platform admins can do anything.",
+				description: "Platform Admin Access can do anything.",
 				body: {
 					actions: ["read", "write", "delete", "list"],
-					when: { user: "is_platform_admin" },
+					when: { authority: "platform_admin" },
 				},
 			},
 		]);
@@ -246,7 +246,10 @@ describe("FilePolicyEditor", () => {
 			screen.getByRole("list", { name: "Policy rules" }),
 		).toBeInTheDocument();
 		expect(screen.getByText("Own Files")).toBeInTheDocument();
-		expect(screen.getByText("Administrator Access")).toBeInTheDocument();
+		expect(screen.getByText("Platform Admin Access")).toBeInTheDocument();
+		expect(
+			await screen.findByText("Requires Platform Admin Access."),
+		).toBeInTheDocument();
 		expect(
 			screen.queryByLabelText("file-policies.yaml"),
 		).not.toBeInTheDocument();
@@ -379,6 +382,27 @@ describe("FilePolicyEditor", () => {
 });
 
 describe("FilePolicyEditor — reference mode", () => {
+	it("documents Platform Admin Access separately from the Platform Admin role", () => {
+		renderWithProviders(
+			<FilePolicyEditor
+				path="reports/"
+				value={BASE}
+				onSave={vi.fn()}
+				onDelete={vi.fn()}
+			/>,
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: /file policy reference/i }),
+		);
+		expect(
+			screen.getByText(
+				"Boolean. True when the user holds the Platform Admin role.",
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText("Platform Admin Access")).toBeInTheDocument();
+		expect(screen.getByText(/^Expression.*Full workflow executions/)).toBeInTheDocument();
+	});
+
 	it("does not render Add Shared Rule when no rules are available", () => {
 		mockListRules.mockResolvedValue([]);
 		renderWithProviders(

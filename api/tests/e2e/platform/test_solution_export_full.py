@@ -94,7 +94,8 @@ def make_solution_with_set_config(e2e_client, platform_admin, db_session):
 
 
 async def test_full_export_includes_encrypted_secrets_blob(
-    e2e_client, platform_admin, make_solution_with_set_config
+    e2e_client, platform_admin, make_solution_with_set_config,
+    secrets_reader_platform_admin,
 ):
     sol = await make_solution_with_set_config(key="api_key", value="xyz")
     headers = platform_admin.headers
@@ -130,7 +131,8 @@ async def test_full_export_includes_encrypted_secrets_blob(
 
 
 async def test_full_export_decrypts_secret_typed_config(
-    e2e_client, platform_admin, make_solution_with_set_config
+    e2e_client, platform_admin, make_solution_with_set_config,
+    secrets_reader_platform_admin,
 ):
     """Security-critical path: a SECRET-typed config is stored encrypted-at-rest
     (encrypt_secret); the full export must decrypt it so the blob carries the

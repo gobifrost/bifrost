@@ -6,6 +6,7 @@ import pytest
 
 from src.models import IntegrationCreate
 from src.routers.integrations import create_integration
+from tests.helpers.authorization import admin_caller
 
 
 @pytest.mark.asyncio
@@ -31,6 +32,10 @@ async def test_create_integration_commits_before_returning_response() -> None:
 
     with (
         patch("src.routers.integrations.IntegrationsRepository") as repo_type,
+        patch(
+            "src.routers.integrations._global_definition_writer",
+            new=AsyncMock(return_value=admin_caller()),
+        ),
         patch(
             "src.routers.integrations.IntegrationResponse.model_validate",
             side_effect=serialize,

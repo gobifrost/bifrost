@@ -64,11 +64,17 @@ def _parse_requirements(content: str) -> tuple[list[str], list[str]]:
 
 
 def _pip_install(args: list[str]) -> "subprocess.CompletedProcess[str]":
+    # Imported here, not at module level: forked execution children import this
+    # module after the workspace import hook is installed, and only the
+    # requirements setup helper process installs packages.
+    from shared.subprocess_env import package_tool_env
+
     return subprocess.run(
         [sys.executable, "-m", "pip", "install", *args, "--quiet"],
         capture_output=True,
         text=True,
         timeout=300,  # 5 minute timeout
+        env=package_tool_env(),
     )
 
 
@@ -216,6 +222,9 @@ async def _execute_async(
     # execution. Failed executions are often the highest-memory samples, so
     # they must not go unrecorded.
     baseline_pss = _get_pss_bytes()
+    # The fork reset this process's peak RSS to its RSS at the fork, so peak
+    # minus this reading is the most memory the run itself added.
+    start_rss = _get_process_rss()
 
     # Run the execution using the shared core, which owns Solution context and
     # workspace-module freshness.
@@ -239,6 +248,7 @@ async def _execute_async(
         end_pss = _get_pss_bytes()
         if baseline_pss > 0 and end_pss > 0:
             metrics["peak_memory_bytes"] = max(0, end_pss - baseline_pss)
+        metrics["peak_memory_growth_bytes"] = _peak_memory_growth(start_rss)
 
         envelope: dict[str, Any] = {
             "execution_id": execution_id,
@@ -277,7 +287,7 @@ async def _execute_async(
             # A failure snapshot, not a peak: PSS growth from before the
             # execution started to the failure point. Absent (None) values
             # mean "unknown", never zero usage.
-            "metrics": _capture_failure_metrics(baseline_pss),
+            "metrics": _capture_failure_metrics(baseline_pss, start_rss),
         }
 
 
@@ -317,7 +327,15 @@ def _get_process_rss() -> int:
     return 0
 
 
-def _capture_failure_metrics(baseline_pss: int) -> dict[str, Any]:
+def _peak_memory_growth(start_rss: int) -> int | None:
+    """Peak RSS since the fork minus ``start_rss``; None when either is unknown."""
+    if start_rss <= 0 or sys.platform == 'darwin':
+        return None
+    peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+    return max(0, peak_rss - start_rss)
+
+
+def _capture_failure_metrics(baseline_pss: int, start_rss: int) -> dict[str, Any]:
     """Capture a best-effort resource snapshot for a failed execution.
 
     Returns PSS growth since ``baseline_pss`` when both readings are
@@ -337,6 +355,7 @@ def _capture_failure_metrics(baseline_pss: int) -> dict[str, Any]:
     return {
         "peak_memory_bytes": peak_memory_bytes,
         "peak_process_rss_bytes": peak_process_rss_bytes,
+        "peak_memory_growth_bytes": _peak_memory_growth(start_rss),
         "cpu_user_seconds": round(usage.ru_utime, 4),
         "cpu_system_seconds": round(usage.ru_stime, 4),
         "cpu_total_seconds": round(usage.ru_utime + usage.ru_stime, 4),

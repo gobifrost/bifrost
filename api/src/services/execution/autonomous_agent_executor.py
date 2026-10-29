@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -30,19 +31,25 @@ from pydantic_ai.usage import RunUsage
 
 from src.models.orm.agents import Agent, AgentDelegation
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
-from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
+from src.services.authorization.enforce import Caller, load_caller
+from src.services.authorization.agent_runtime import (
+    AgentRuntimeAuthorizationError,
+    authorize_agent_execution,
+)
+from src.services.authorization.runtime_auth import load_runtime_principal
+from src.services.durable_impersonation import principal_durable_impersonation
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
+from src.services.agent_run_step_streams import append_agent_run_step
+from src.services.capabilities.catalog import resolve_capability_route
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
     find_delegated_agent,
-    parse_mcp_tool_name,
     resolve_agent_tools,
 )
-from shared.run_lineage import run_user_lineage
 from src.services.execution.agent_workflow_tools import (
-    AgentWorkflowCaller,
     execute_agent_workflow_tool,
+    workflow_failure_receipt,
 )
 from src.services.agent_runtime import (
     AgentRunBudget,
@@ -57,6 +64,15 @@ from src.services.agent_runtime import (
     reasoning_tokens,
 )
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
+from src.services.agent_runtime.composition import build_agent_composition
+from src.services.agent_runtime.tool_policy import build_automatic_code_mode_capabilities
+from src.services.agent_runtime.toolset import code_mode_safe_name_map
+from src.services.ai_behavior_service import (
+    AGENT_EXECUTION_MODE_METADATA_KEY,
+    AgentExecutionMode,
+    AIBehaviorService,
+    DEFAULT_AGENT_EXECUTION_MODE,
+)
 from src.services.llm import ToolCallRequest
 from src.services.llm.factory import get_llm_configs
 from src.services.model_pricing import chain_context_window
@@ -107,6 +123,25 @@ def _parse_structured_output(content: str) -> Any:
 class ToolError(Exception):
     """Raised when a tool call fails in an expected way (unknown tool, delegation failure, etc.)."""
     pass
+
+
+@dataclass(frozen=True)
+class ActingUser:
+    """Whose identity a run's tool calls and delegated children use.
+
+    For a Run As run it is the target user, loaded from the database by the
+    consumer. Otherwise it is the run's caller, or the system account when
+    nobody started the run. It never changes the run user (lineage).
+    """
+
+    user_id: str
+    email: str
+    name: str
+    organization_id: UUID | None
+    is_platform_admin: bool
+    is_external: bool
+    is_provider_org: bool
+
 
 
 @dataclass(frozen=True)
@@ -320,12 +355,15 @@ class AutonomousAgentExecutor:
         self._last_delegation_run_id: str | None = None
         self._last_workflow_execution_id: str | None = None
         self._last_workflow_execution_is_error = False
-        # Caller_user_id for the active run, threaded into MCP dispatch.
-        # ``None`` means the run is autonomous (scheduled / webhook /
-        # event-trigger), in which case dispatch resolves to the
-        # service token only.
-        self._caller_user_id: UUID | None = None
-        self._caller: dict[str, Any] | None = None
+        # Whose identity tool calls use; run() sets it (see ActingUser).
+        self._acting: ActingUser | None = None
+        # The Run As user, handed unchanged to delegated children.
+        self._run_as: ActingUser | None = None
+        # The acting person MCP connections authenticate as. ``None`` means
+        # the run is autonomous (scheduled / webhook / event-trigger), in
+        # which case dispatch resolves to the service token only.
+        self._acting_user_id: UUID | None = None
+        self._caller: Caller | None = None
         self._run_user_id: UUID | None = None
         # Buffers for Redis-first pattern (flushed to DB after run completes)
         self._pending_steps: list[dict[str, Any]] = []
@@ -346,6 +384,14 @@ class AutonomousAgentExecutor:
         # timeout or cancellation because it is updated per response.
         self._own_tokens = 0
         self._delegated_tokens = 0
+        self._agent_execution_mode: AgentExecutionMode = DEFAULT_AGENT_EXECUTION_MODE
+
+    @property
+    def acting_user(self) -> ActingUser:
+        """The active run's acting user; run() sets it before any tool call."""
+        if self._acting is None:
+            raise RuntimeError("run() sets the acting user before any tool call")
+        return self._acting
 
     @property
     def subtree_tokens(self) -> int:
@@ -359,10 +405,13 @@ class AutonomousAgentExecutor:
         input_data: dict | None = None,
         output_schema: dict | None = None,
         run_id: str | None = None,
-        _caller: dict | None = None,
+        caller: Caller,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
         run_user_id: UUID | None,
+        run_as: ActingUser | None,
+        acting: ActingUser | None = None,
+        agent_execution_mode: AgentExecutionMode | None = None,
     ) -> dict:
         """Execute an autonomous agent run.
 
@@ -371,12 +420,16 @@ class AutonomousAgentExecutor:
             input_data: Input payload (serialized as JSON in the user message).
             output_schema: Optional JSON Schema the agent should conform its output to.
             run_id: External run ID (generates one if not provided).
-            _caller: Optional caller metadata for context.
+            caller: Canonical caller for authorization and effect attribution.
             _shared_usage: Internal cumulative usage ledger inherited from a
                 parent run during delegation.
             _shared_budget: Internal hard ceiling inherited from a parent run.
             run_user_id: The run's run user (AgentRun.run_user_id); its tool
                 calls and delegations run for the same user.
+            run_as: The Run As user, loaded from the database; None means the
+                caller acts. Delegated children get the same value.
+            acting: The persisted actor loaded by the consumer. When supplied,
+                it takes precedence over queued caller metadata.
 
         Returns:
             Dict with keys: output, iterations_used, tokens_used, status, llm_model
@@ -389,26 +442,44 @@ class AutonomousAgentExecutor:
         self._delegated_tokens = 0
         self._finalized_delegation_outcomes = []
 
-        # Resolve caller_user_id from _caller metadata. If a webhook ran
-        # without a signed user claim, _caller is either absent or has no
-        # ``user_id`` and the run is treated as autonomous (None) — auth
-        # resolution will then route to the service token, gated by the
-        # connection's ``available_to_autonomous`` flag.
-        caller_user_id: UUID | None = None
-        if _caller and _caller.get("user_id"):
-            try:
-                caller_user_id = UUID(str(_caller["user_id"]))
-            except (ValueError, TypeError):
-                logger.warning(
-                    "Autonomous run %s: _caller.user_id %r is not a valid UUID; "
-                    "treating run as fully autonomous",
-                    run_id,
-                    _caller.get("user_id"),
-                )
-                caller_user_id = None
-        self._caller_user_id = caller_user_id
-        self._caller = dict(_caller) if _caller else None
+        try:
+            async with self._session_factory() as db:
+                caller, agent = await authorize_agent_execution(db, caller, agent.id)
+        except AgentRuntimeAuthorizationError as exc:
+            return {
+                "output": None,
+                "iterations_used": 0,
+                "tokens_used": 0,
+                "status": "failed",
+                "error": str(exc),
+                "llm_model": None,
+            }
+
+        self._caller = caller
+        if agent_execution_mode is None:
+            async with self._session_factory() as db:
+                agent_execution_mode = await AIBehaviorService(db).get_agent_execution_mode()
+        self._agent_execution_mode = agent_execution_mode
         self._run_user_id = run_user_id
+        self._run_as = run_as
+        if acting is not None:
+            self._acting = acting
+            self._acting_user_id = UUID(acting.user_id)
+        elif run_as is not None:
+            self._acting = run_as
+            self._acting_user_id = UUID(run_as.user_id)
+        else:
+            principal = caller.principal
+            self._acting = ActingUser(
+                user_id=str(principal.user_id),
+                email=principal.email,
+                name=principal.name or principal.email,
+                organization_id=principal.organization_id,
+                is_platform_admin=principal.is_superuser,
+                is_external=principal.is_external,
+                is_provider_org=principal.is_provider_org,
+            )
+            self._acting_user_id = principal.user_id
 
         async with self._session_factory() as db:
             llm_configs = await get_llm_configs(db, profile_id=agent.llm_profile_id)
@@ -463,8 +534,29 @@ class AutonomousAgentExecutor:
             tool_definitions, self._tool_workflow_id_map = await resolve_agent_tools(
                 agent,
                 db,
-                caller_user_id=caller_user_id,
+                caller_user_id=self._acting_user_id,
             )
+        composition = None
+        if self._agent_execution_mode == "automatic" and agent.delegated_agents:
+            try:
+                composition = await build_agent_composition(
+                    agent,
+                    caller=caller,
+                    session_factory=self._session_factory,
+                    caller_user_id=self._acting_user_id,
+                    entry_definitions=tool_definitions,
+                    entry_workflow_ids=self._tool_workflow_id_map,
+                )
+            except AgentRuntimeAuthorizationError as exc:
+                return {
+                    "output": None,
+                    "iterations_used": 0,
+                    "tokens_used": 0,
+                    "status": "failed",
+                    "error": str(exc),
+                    "llm_model": None,
+                }
+            tool_definitions = list(composition.entry_definitions)
         last_response_content = ""
 
         async def record_model_event(event: ModelCallEvent) -> None:
@@ -553,28 +645,47 @@ class AutonomousAgentExecutor:
                 raise AgentRunCancelled("Cancelled by user during tool execution")
             self._last_workflow_execution_id = None
             self._last_workflow_execution_is_error = False
-            if name.startswith("delegate_to_"):
+            if name.startswith("delegate_to_") or name == "delegate_task":
                 self._last_delegation_run_id = None
+            owner = agent
+            workflow_ids = None
+            if composition is not None:
+                binding = await composition.resolve_call(name, arguments)
+                owner = binding.owner
+                name = binding.original_name
+                arguments = binding.arguments
+                workflow_ids = binding.workflow_ids
             return await self._execute_tool(
                 ToolCallRequest(id=tool_call_id, name=name, arguments=arguments),
-                agent,
+                owner,
+                workflow_ids=workflow_ids,
             )
 
         async def record_tool_event(event: ToolEvent) -> None:
             nonlocal step_number
             step_number += 1
             if event.type == "tool_call":
+                self._last_workflow_execution_id = None
+                self._last_workflow_execution_is_error = False
+                self._last_delegation_run_id = None
                 await self._record_step(
                     run_id,
                     step_number,
                     "tool_call",
-                    {"tool_name": event.tool_name, "arguments": event.arguments},
+                    {
+                        "tool_name": event.tool_name,
+                        "arguments": event.arguments,
+                        **((composition.provenance_for(event.tool_name, event.arguments) or {})
+                           if composition is not None else {}),
+                    },
                 )
                 return
 
             content: dict[str, Any] = {
                 "tool_name": event.tool_name,
                 "is_error": event.type == "tool_error" or self._last_workflow_execution_is_error,
+                **((composition.provenance_for(event.tool_name, event.arguments) or {})
+                   if composition is not None else {}),
             }
             if event.type == "tool_error":
                 content["error"] = event.error
@@ -585,7 +696,9 @@ class AutonomousAgentExecutor:
                 content["result"] = result
                 if result_truncated:
                     content["result_truncated"] = True
-            if event.tool_name.startswith("delegate_to_") and self._last_delegation_run_id:
+            if self._last_delegation_run_id and (
+                event.tool_name.startswith("delegate_to_") or event.tool_name == "delegate_task"
+            ):
                 content["child_run_id"] = self._last_delegation_run_id
             if self._last_workflow_execution_id:
                 content["execution_id"] = self._last_workflow_execution_id
@@ -609,12 +722,28 @@ class AutonomousAgentExecutor:
         # default_max_tokens; agent.llm_max_tokens wins when set,
         # otherwise the profile default (or provider default) applies.
         # Fallbacks resolve from their own profile defaults.
-        toolset = BifrostToolset(
-            tool_definitions,
-            execute_tool,
-            event_handler=record_tool_event,
-            toolset_id=f"bifrost-{agent.id}",
+        automatic_code_mode = (
+            self._agent_execution_mode == "automatic"
+            and (tool_definitions or composition is not None)
         )
+        toolset = (
+            composition.entry_toolset(
+                execute_tool,
+                event_handler=record_tool_event,
+                toolset_id=f"bifrost-{agent.id}",
+            )
+            if composition is not None
+            else BifrostToolset(
+                tool_definitions,
+                execute_tool,
+                event_handler=record_tool_event,
+                toolset_id=f"bifrost-{agent.id}",
+            )
+        )
+        if automatic_code_mode and composition is None:
+            toolset = toolset.renamed(
+                code_mode_safe_name_map(tuple(definition.name for definition in tool_definitions))
+            )
         # Blank / repetitive no-tool completions are billed like real output
         # (observed: 131072 output tokens with zero visible content and zero
         # tool calls). Pydantic AI treats them as valid final output, so the
@@ -623,16 +752,26 @@ class AutonomousAgentExecutor:
         # Usage for every attempt — including rejected ones — is already
         # charged to the shared UsageLimits ledger by ObservedModel.
         empty_output_guard = EmptyOutputCircuitBreaker()
+        automatic_code_mode_capabilities = (
+            build_automatic_code_mode_capabilities()
+                if automatic_code_mode
+            else []
+        )
         runtime = PydanticAgent(
             chain.model,
             system_prompt=build_agent_system_prompt(
                 agent,
                 execution_context={"mode": "autonomous"},
-            ),
+            ) + (composition.instructions if composition is not None else ""),
             toolsets=[toolset] if tool_definitions else [],
             capabilities=[
                 *build_runtime_capabilities(budget, context_window=context_window),
                 empty_output_guard,
+                *(composition.capabilities(
+                    execute_tool,
+                    record_tool_event,
+                ) if composition is not None else []),
+                *automatic_code_mode_capabilities,
             ],
             model_settings=chain.primary_settings,
             # One bounded correction for malformed tool names/arguments. The
@@ -783,94 +922,86 @@ class AutonomousAgentExecutor:
     # Tool dispatch
     # ------------------------------------------------------------------
 
-    def _execution_org_id(self, agent: Agent) -> UUID | None:
-        """Use authenticated caller scope, or agent scope for autonomous runs."""
-        if self._caller_user_id is not None:
-            raw_org_id = self._caller.get("organization_id") if self._caller else None
-            if raw_org_id is None:
-                return None
-            return UUID(str(raw_org_id))
-        return agent.organization_id
-
-    async def _execute_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
+    async def _execute_tool(
+        self,
+        tool_call: ToolCallRequest,
+        agent: Agent,
+        *,
+        workflow_ids: Mapping[str, UUID] | None = None,
+    ) -> str:
         """Execute a tool call, mirroring AgentExecutor's dispatch logic."""
+        if self._caller is None:
+            raise ToolError("Agent run caller is unavailable")
+        try:
+            async with self._session_factory() as db:
+                self._caller, agent = await authorize_agent_execution(
+                    db, self._caller, agent.id
+                )
+        except AgentRuntimeAuthorizationError as exc:
+            raise ToolError(str(exc)) from exc
+
+        active_workflow_ids = (
+            self._tool_workflow_id_map if workflow_ids is None else workflow_ids
+        )
+        route = resolve_capability_route(agent, tool_call.name, active_workflow_ids)
+
         # Knowledge search
-        if tool_call.name == "search_knowledge" and agent.knowledge_sources:
+        if route is not None and route.source == "knowledge" and agent.knowledge_sources:
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Delegation
-        if tool_call.name.startswith("delegate_to_"):
+        if route is not None and route.source == "delegation":
             return await self._execute_delegation(tool_call, agent)
 
         # System tools
-        if tool_call.name in (agent.system_tools or []):
+        if route is not None and (
+            route.source == "system"
+            or (
+                route.source == "knowledge"
+                and tool_call.name in (agent.system_tools or [])
+            )
+        ):
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
         # Routed BEFORE workflow tools because the workflow id_map maps
         # MCP qualified names to ``MCPConnection.id`` and dispatch needs
         # to go through ``mcp_dispatch.invoke`` rather than the workflow
-        # execution service. The threaded ``self._caller_user_id`` is
-        # what differentiates a chat-claim webhook (per-user OAuth) from
-        # a fully autonomous run (service token only).
-        mcp_route = parse_mcp_tool_name(tool_call.name)
-        if mcp_route is not None:
-            connection_id, remote_tool_name = mcp_route
+        # execution service. The threaded ``self._acting_user_id`` is
+        # what differentiates a chat-claim webhook or Run As (per-user
+        # OAuth) from a fully autonomous run (service token only).
+        if route is not None and route.source == "external_mcp":
+            assert route.source_id is not None
+            assert route.remote_tool_name is not None
             return await self._execute_mcp_tool(
                 tool_call,
-                connection_id=connection_id,
-                remote_tool_name=remote_tool_name,
+                connection_id=route.source_id,
+                remote_tool_name=route.remote_tool_name,
             )
 
         # Workflow tools
-        workflow_id = self._tool_workflow_id_map.get(tool_call.name)
-        if not workflow_id:
+        if route is None or route.source != "workflow" or route.source_id is None:
             raise ToolError(f"Unknown tool: {tool_call.name}")
+        workflow_id = route.source_id
 
+        if self._caller is None:
+            raise ToolError("Agent run caller is unavailable")
         response = await execute_agent_workflow_tool(
+            agent_id=agent.id,
             workflow_id=workflow_id,
-            workflow_name=tool_call.name,
             parameters=tool_call.arguments or {},
-            caller=AgentWorkflowCaller(
-                user_id=(
-                    str(self._caller_user_id)
-                    if self._caller_user_id
-                    else SYSTEM_USER_ID
-                ),
-                email=(
-                    str(self._caller.get("email"))
-                    if self._caller_user_id
-                    and self._caller
-                    and self._caller.get("email")
-                    else SYSTEM_USER_EMAIL
-                ),
-                name=(
-                    str(self._caller.get("name"))
-                    if self._caller_user_id
-                    and self._caller
-                    and self._caller.get("name")
-                    else agent.name
-                ),
-                organization_id=self._execution_org_id(agent),
-                is_platform_admin=(
-                    bool(self._caller.get("is_platform_admin", False))
-                    if self._caller_user_id and self._caller
-                    else False
-                ),
-            ),
+            caller=self._caller,
             artifact_workspace_id=(
                 self._ancestor_run_ids[0]
                 if self._ancestor_run_ids
                 else self._current_run_id or None
             ),
-            lineage=run_user_lineage(self._run_user_id),
         )
         self._last_workflow_execution_id = response.execution_id
         self._last_workflow_execution_is_error = response.status.value != "Success"
 
         if self._last_workflow_execution_is_error:
-            error_msg = response.error or f"Tool execution failed with status: {response.status.value}"
-            return f"Error: {error_msg}"
+            return "Error: " + json.dumps(workflow_failure_receipt(response), default=str)
 
         if not response.result:
             return "Tool executed successfully"
@@ -891,11 +1022,11 @@ class AutonomousAgentExecutor:
         plain-string envelope the autonomous loop expects rather than
         the chat-surface ``ToolResult``.
 
-        For autonomous runs ``self._caller_user_id`` is typically
+        For autonomous runs ``self._acting_user_id`` is typically
         ``None`` — auth resolution then routes to the connection's
         service token, gated by ``available_to_autonomous``. Webhook
-        deliveries that pass a user_id (signed claim) get user-token
-        resolution.
+        deliveries that pass a user_id (signed claim) and Run As runs
+        get user-token resolution for the acting user.
 
         ``NeedsReauthError`` and ``MisconfigError`` cannot be remediated
         by an autonomous run, so they're raised as ``ToolError`` and
@@ -926,7 +1057,7 @@ class AutonomousAgentExecutor:
                     connection=connection,
                     tool_name=remote_tool_name,
                     arguments=tool_call.arguments or {},
-                    caller_user_id=self._caller_user_id,
+                    caller_user_id=self._acting_user_id,
                     db=db,
                 )
         except NeedsReauthError as exc:
@@ -972,7 +1103,11 @@ class AutonomousAgentExecutor:
 
             if doc_id:
                 cached = self._knowledge_search_budget.cached_document(doc_id)
-                if cached is None:
+                if (
+                    cached is None
+                    or cached["namespace"] not in namespaces
+                    or cached["organization_id"] not in {None, str(agent.organization_id)}
+                ):
                     return json.dumps({
                         "documents": [],
                         "count": 0,
@@ -1047,7 +1182,7 @@ class AutonomousAgentExecutor:
                 query_embedding = await embedding_client.embed_single(query)
 
                 repo = KnowledgeRepository(
-                    db, org_id=agent.organization_id, is_superuser=True
+                    db, org_id=agent.organization_id
                 )
                 results = await repo.search(
                     query_embedding=query_embedding,
@@ -1068,6 +1203,7 @@ class AutonomousAgentExecutor:
                 self._knowledge_search_budget.cache_document(doc.id, {
                     "content": doc.content,
                     "namespace": doc.namespace,
+                    "organization_id": doc.organization_id,
                     "score": score,
                     "key": doc.key,
                     "metadata": metadata,
@@ -1114,14 +1250,18 @@ class AutonomousAgentExecutor:
         tool_call: ToolCallRequest,
         parent_run_id: str | None = None,
         conversation_id: UUID | None = None,
-        caller: dict[str, Any] | None = None,
+        caller: Caller,
+        acting_user_id: UUID,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
         run_user_id: UUID | None,
+        run_as: ActingUser | None,
+        agent_execution_mode: AgentExecutionMode | None = None,
     ) -> DelegationOutcome:
         """Run one delegated child with a durable, caller-neutral lifecycle.
 
-        The child keeps the delegating run's user (``run_user_id``).
+        The child keeps the delegating run's user (``run_user_id``), Run As
+        user (``run_as``), and explicit persisted acting identity.
         """
         if parent_run_id and await self._check_cancelled(parent_run_id):
             raise ToolError("Agent run was cancelled")
@@ -1156,21 +1296,13 @@ class AutonomousAgentExecutor:
         )
 
         sub_run_id = uuid4()
+        effective_execution_mode = agent_execution_mode or self._agent_execution_mode
         delegation_org_id = parent_agent.organization_id
-        if (
-            delegation_org_id is None
-            and caller
-            and caller.get("organization_id")
-        ):
-            try:
-                delegation_org_id = UUID(str(caller["organization_id"]))
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Delegation from agent %s received invalid caller "
-                    "organization_id %r; retaining global run scope",
-                    parent_agent.id,
-                    caller.get("organization_id"),
-                )
+        if delegation_org_id is None and run_as is not None:
+            # A Run As run's children stay in the organization its tools use.
+            delegation_org_id = run_as.organization_id
+        elif delegation_org_id is None:
+            delegation_org_id = caller.principal.organization_id
 
         async with self._session_factory() as db:
             result = await db.execute(
@@ -1214,17 +1346,36 @@ class AutonomousAgentExecutor:
                 input={"task": task, "_delegated_from": parent_agent.name},
                 status="running",
                 org_id=delegation_org_id,
-                caller_user_id=caller.get("user_id") if caller else None,
-                caller_email=caller.get("email") if caller else None,
-                caller_name=caller.get("name") if caller else None,
+                caller_user_id=str(caller.principal.user_id),
+                caller_email=caller.principal.email,
+                caller_name=caller.principal.name,
                 run_user_id=run_user_id,
+                run_as_user_id=UUID(run_as.user_id) if run_as else None,
+                acting_user_id=acting_user_id,
+                **principal_durable_impersonation(caller.principal).columns(),
                 parent_run_id=UUID(parent_run_id) if parent_run_id else None,
                 budget_max_iterations=target_agent.max_iterations,
                 budget_max_tokens=target_agent.max_token_budget,
                 started_at=datetime.now(timezone.utc),
+                run_metadata={
+                    AGENT_EXECUTION_MODE_METADATA_KEY: effective_execution_mode,
+                },
             )
             db.add(sub_run)
             await db.commit()
+
+            child_principal = await load_runtime_principal(
+                db,
+                {
+                    "credential_kind": "agent_run",
+                    "sub": str(sub_run_id),
+                },
+            )
+            if child_principal is None:
+                raise ToolError("Delegated agent run has no current runtime authority")
+            child_caller = await load_caller(db, child_principal)
+            if child_caller.ctx is None:
+                raise ToolError("Delegated agent run has no current caller")
 
         self._last_delegation_run_id = str(sub_run_id)
 
@@ -1254,10 +1405,13 @@ class AutonomousAgentExecutor:
                         "_delegated_from": parent_agent.name,
                     },
                     run_id=str(sub_run_id),
-                    _caller=caller,
+                    caller=child_caller,
                     _shared_usage=shared_usage,
                     _shared_budget=shared_budget,
                     run_user_id=run_user_id,
+                    run_as=run_as,
+                    acting=self._acting,
+                    agent_execution_mode=effective_execution_mode,
                 ),
                 timeout=DELEGATION_TIMEOUT_SECONDS,
             )
@@ -1346,6 +1500,8 @@ class AutonomousAgentExecutor:
             evidence=evidence,
         )
 
+        from src.services.execution.summary_dispatch import hand_off_summary, stage_summary
+
         async with self._session_factory() as db:
             sub_run_obj = await db.get(AgentRun, sub_run_id)
             if sub_run_obj is None:
@@ -1371,18 +1527,12 @@ class AutonomousAgentExecutor:
                 }
 
             await sub_executor.flush_to_db(db)
+            summary = (
+                await stage_summary(db, sub_run_id) if status == "completed" else None
+            )
             await db.commit()
 
-        if status == "completed":
-            try:
-                from src.services.execution.run_summarizer import enqueue_summarize
-
-                await enqueue_summarize(sub_run_id)
-            except Exception:
-                logger.exception(
-                    "Failed to enqueue summarizer for delegated run %s",
-                    sub_run_id,
-                )
+        await hand_off_summary(summary)
 
         if self.redis_client:
             try:
@@ -1433,27 +1583,45 @@ class AutonomousAgentExecutor:
         agent: Agent,
     ) -> str:
         """Execute delegation for an autonomous parent run."""
+        if self._caller is None:
+            raise ToolError("Agent run caller is unavailable")
+        if self._acting_user_id is None:
+            raise ToolError("Agent run acting user is unavailable")
         outcome = await self.run_delegation(
             parent_agent=agent,
             tool_call=tool_call,
             parent_run_id=self._current_run_id,
             caller=self._caller,
+            acting_user_id=self._acting_user_id,
             run_user_id=self._run_user_id,
+            run_as=self._run_as,
+            agent_execution_mode=self._agent_execution_mode,
         )
         if not outcome.succeeded:
-            raise ToolError(
-                outcome.error or f"Delegation ended with status {outcome.status}"
-            )
+            raise ToolError(json.dumps({
+                "error": outcome.error or f"Delegation ended with status {outcome.status}",
+                "child_run_id": str(outcome.child_run_id),
+                "status": outcome.status,
+                "partial_output": outcome.output,
+                "evidence": outcome.evidence,
+            }, default=str))
         if isinstance(outcome.output, dict):
             return json.dumps(outcome.output)
         if outcome.output is None:
             return "Delegation completed with no output."
         return str(outcome.output)
 
-    async def _execute_system_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
+    async def _execute_system_tool(
+        self, tool_call: ToolCallRequest, agent: Agent
+    ) -> str:
         """Execute a system tool."""
-        from src.services.mcp_server.server import MCPContext, get_system_tool_function
+        from src.services.mcp_server.server import (
+            context_from_principal,
+            get_system_tool_function,
+        )
 
+        if self._caller is None:
+            raise ToolError("Agent run caller is unavailable")
         func = get_system_tool_function(tool_call.name)
         if not func:
             raise ToolError(f"System tool '{tool_call.name}' not found")
@@ -1461,50 +1629,23 @@ class AutonomousAgentExecutor:
         try:
             # Brief DB session scoped to the tool call
             async with self._session_factory() as db:
-                context = MCPContext(
-                    user_id=(
-                        str(self._caller_user_id)
-                        if self._caller_user_id
-                        else SYSTEM_USER_ID
-                    ),
-                    org_id=(
-                        str(execution_org_id)
-                        if (execution_org_id := self._execution_org_id(agent))
-                        else None
-                    ),
-                    is_platform_admin=(
-                        bool(self._caller.get("is_platform_admin", False))
-                        if self._caller_user_id and self._caller
-                        else False
-                    ),
-                    user_email=(
-                        str(self._caller.get("email"))
-                        if self._caller_user_id
-                        and self._caller
-                        and self._caller.get("email")
-                        else SYSTEM_USER_EMAIL
-                    ),
-                    user_name=(
-                        str(self._caller.get("name"))
-                        if self._caller_user_id
-                        and self._caller
-                        and self._caller.get("name")
-                        else agent.name
-                    ),
-                    run_user_id=self._run_user_id,
-                    session=db,
-                )
+                context = context_from_principal(self._caller.principal)
+                context.session = db
+                context.accessible_namespaces = list(agent.knowledge_sources or [])
 
                 result = await func(context, **tool_call.arguments)
                 await db.commit()
 
-            # Extract result from FastMCP ToolResult format
+            # Preserve the MCP wire representation for Bifrost-owned tool
+            # results when the autonomous executor invokes a tool directly.
             import pydantic_core
+            from src.services.mcp_server.tool_result import ToolResult as MCPToolResult
 
-            if hasattr(result, "content") and hasattr(result, "structured_content"):
+            if isinstance(result, MCPToolResult):
+                wire_result = result.to_call_tool_result()
                 result_data = {
-                    "content": pydantic_core.to_jsonable_python(result.content),
-                    "structured_content": result.structured_content,
+                    "content": pydantic_core.to_jsonable_python(wire_result.content),
+                    "structured_content": wire_result.structuredContent,
                 }
             elif hasattr(result, "content"):
                 result_data = pydantic_core.to_jsonable_python(result.content)
@@ -1619,10 +1760,10 @@ class AutonomousAgentExecutor:
         # Write to Redis Stream for dual-read (API reads from Redis when run is in-progress)
         if self.redis_client:
             try:
-                stream_key = agent_run_steps_stream_key(str(run_id))
-                await self.redis_client.xadd(
-                    stream_key,
-                    {
+                await append_agent_run_step(
+                    self.redis_client,
+                    run_id=run_id,
+                    fields={
                         "id": step_id,
                         "run_id": str(run_id),
                         "step_number": str(step_number),
@@ -1632,7 +1773,6 @@ class AutonomousAgentExecutor:
                         "duration_ms": str(duration_ms) if duration_ms is not None else "",
                         "created_at": datetime.now(timezone.utc).isoformat(),
                     },
-                    maxlen=1000,
                 )
             except Exception:
                 pass  # Don't fail the run if Redis write fails

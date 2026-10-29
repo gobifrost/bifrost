@@ -75,7 +75,8 @@ class ServiceDefinition(Base):
     # attempt. Terminal policy outcomes (clean return under on_failure/never,
     # crash-loop entry) set blocked_reason; manual restart or source/config
     # change clears it.
-    # blocked_reason: NULL | 'policy' | 'crash_loop' | 'disabled'
+    # blocked_reason: NULL | 'policy' | 'crash_loop' | 'disabled' | 'too_large'
+    # ('too_large': no executor can hold its memory request; cleared once one can)
     blocked_reason: Mapped[str | None] = mapped_column(String(20), default=None)
     restart_eligible_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
@@ -145,6 +146,12 @@ class ServiceAttempt(Base):
     )
     revision: Mapped[str | None] = mapped_column(String(64), default=None)
     worker_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Immutable unattended identity selected when this attempt is claimed.
+    # A deleted identity remains absent so callers fail closed rather than
+    # resolving the workflow's then-current default identity.
+    run_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
 
     # Fencing + liveness.
     lease_token: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -177,6 +184,7 @@ class ServiceAttempt(Base):
 
     __table_args__ = (
         Index("ix_service_attempts_service_id", "service_id"),
+        Index("ix_service_attempts_run_user_id", "run_user_id", postgresql_where=run_user_id.isnot(None)),
         Index("ix_service_attempts_state", "state"),
         # Singleton enforcement: at most one live attempt per service.
         Index(

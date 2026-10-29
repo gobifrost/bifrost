@@ -6,6 +6,7 @@ import {
 	useState,
 	type ChangeEvent,
 	type ClipboardEvent,
+	type CSSProperties,
 	type DragEvent,
 	type KeyboardEvent,
 } from "react";
@@ -14,6 +15,11 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -21,6 +27,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { formatContextTokens } from "@/lib/run-usage";
 import type { components } from "@/lib/v1";
 import {
 	MAX_ATTACHMENTS_PER_MESSAGE,
@@ -34,6 +41,7 @@ import type {
 import { MentionPicker } from "./MentionPicker";
 
 type AgentSummary = components["schemas"]["AgentSummary"];
+type ChatContextUsage = components["schemas"]["ChatContextUsage"];
 interface MentionChip {
 	name: string;
 }
@@ -56,6 +64,7 @@ interface ChatInputProps {
 	modelProfiles?: ChatModelProfileOption[];
 	modelProfileId?: ChatModelProfileId | null;
 	onModelProfileChange?: (profileId: ChatModelProfileId) => void;
+	contextUsage?: ChatContextUsage | null;
 }
 
 export function ChatInput({
@@ -67,6 +76,7 @@ export function ChatInput({
 	modelProfiles = [],
 	modelProfileId = null,
 	onModelProfileChange,
+	contextUsage = null,
 }: ChatInputProps) {
 	const [message, setMessage] = useState("");
 	const [mentions, setMentions] = useState<MentionChip[]>([]);
@@ -81,6 +91,9 @@ export function ChatInput({
 		(profile) => profile.id === modelProfileId,
 	);
 	const selectedCapabilities = selectedProfile?.capabilities;
+	const matchingContextUsage =
+		contextUsage?.model_profile_id === modelProfileId ? contextUsage : null;
+	const [contextOpen, setContextOpen] = useState(false);
 
 	const [mentionOpen, setMentionOpen] = useState(false);
 	const [mentionSearch, setMentionSearch] = useState("");
@@ -316,6 +329,27 @@ export function ChatInput({
 			mentions.length > 0 ||
 			attachments.length > 0) &&
 		!busy;
+	const contextWindow = matchingContextUsage?.context_window ?? null;
+	const contextUsedPercent = contextWindow
+		? Math.min(
+				100,
+				Math.round(
+					(matchingContextUsage!.input_tokens / contextWindow) * 100,
+				),
+			)
+		: null;
+	const cacheReadPercent = matchingContextUsage
+		? matchingContextUsage.input_tokens > 0
+			? Math.min(
+					100,
+					Math.round(
+						(matchingContextUsage.cache_read_tokens /
+							matchingContextUsage.input_tokens) *
+							100,
+					),
+				)
+			: 0
+		: null;
 
 	return (
 		<div className="flex max-h-[65%] min-h-0 shrink-0 flex-col px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-4">
@@ -487,6 +521,80 @@ export function ChatInput({
 										))}
 									</SelectContent>
 								</Select>
+							)}
+							{matchingContextUsage && (
+								<Popover
+									open={contextOpen}
+									onOpenChange={setContextOpen}
+								>
+									<PopoverTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon-sm"
+											className="size-11 shrink-0 rounded-full p-2"
+											aria-label="Context window"
+											onFocus={() => setContextOpen(true)}
+											onMouseEnter={() => setContextOpen(true)}
+											onMouseLeave={() => setContextOpen(false)}
+											onBlur={() => setContextOpen(false)}
+											onClick={(event) => {
+												event.preventDefault();
+												setContextOpen(true);
+											}}
+										>
+											<span
+												aria-hidden="true"
+												className="grid size-5 place-items-center rounded-full bg-[conic-gradient(var(--primary)_calc(var(--context-used)*1%),var(--muted)_0)]"
+												style={
+													{
+														"--context-used": contextUsedPercent ?? 0,
+											} as CSSProperties
+												}
+											>
+												<span className="size-3 rounded-full bg-card" />
+											</span>
+										</Button>
+									</PopoverTrigger>
+									<PopoverContent
+										side="top"
+										align="center"
+										collisionPadding={16}
+										aria-label="Context window"
+										className="w-64 max-w-[calc(100vw-2rem)] gap-1.5 p-3 text-center"
+										onOpenAutoFocus={(event) => event.preventDefault()}
+										onCloseAutoFocus={(event) => event.preventDefault()}
+									>
+										<p className="text-xs text-muted-foreground">
+											Context window
+										</p>
+										{contextWindow && contextUsedPercent !== null ? (
+											<>
+												<p className="text-sm font-medium">
+													{contextUsedPercent}% used ({100 - contextUsedPercent}% left)
+												</p>
+												<p className="whitespace-nowrap text-xs">
+													{formatContextTokens(matchingContextUsage.input_tokens)} / {formatContextTokens(contextWindow)} tokens{" "}
+													<span className="text-muted-foreground">
+														({cacheReadPercent}% cached)
+													</span>
+												</p>
+											</>
+										) : (
+											<>
+												<p className="text-sm font-medium">
+													Capacity unavailable.
+												</p>
+												<p className="whitespace-nowrap text-xs">
+													{formatContextTokens(matchingContextUsage.input_tokens)} tokens
+													{" "}<span className="text-muted-foreground">
+														({cacheReadPercent}% cached)
+													</span>
+												</p>
+											</>
+										)}
+									</PopoverContent>
+								</Popover>
 							)}
 						</div>
 

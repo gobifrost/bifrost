@@ -114,18 +114,12 @@ async def test_effective_mode_prefers_the_workflows_own(db_session):
     )
 
 
-async def test_list_workflow_grants_returns_boundaries(db_session):
+async def test_list_workflow_grants_returns_permissions(db_session):
     wf = await _workflow(db_session)
-    db_session.add(
-        WorkflowPermissionGrant(
-            workflow_id=wf.id, permission="tables.read", boundary_kind="platform"
-        )
-    )
+    db_session.add(WorkflowPermissionGrant(workflow_id=wf.id, permission="tables.read"))
     await db_session.flush()
     grants = await list_workflow_grants(db_session, wf.id)
-    assert [(g.permission, g.boundary, g.organization_id) for g in grants] == [
-        ("tables.read", "platform", None)
-    ]
+    assert [grant.permission for grant in grants] == ["tables.read"]
 
 
 async def test_sync_inserts_new_request_as_pending(db_session):
@@ -139,7 +133,7 @@ async def test_sync_inserts_new_request_as_pending(db_session):
     assert (row.status, row.requested_mode, row.request_digest) == (
         "pending", "restricted", request_digest(requested)
     )
-    assert row.requested_grants == [{"permission": "tables.read", "boundary": None}]
+    assert row.requested_grants == [{"permission": "tables.read"}]
 
 
 async def test_sync_unchanged_request_keeps_approval(db_session):

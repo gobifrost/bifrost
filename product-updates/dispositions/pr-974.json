@@ -1,0 +1,15 @@
+{
+  "key": "pr:974",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Deleting an integration now stops its OAuth token refreshes and the repeated refresh-failed alerts.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/974",
+      "Fixes #973: verified by E2E tests that fail without the fix (delete removes OAuth credentials; refresh job skips deleted integrations).",
+      "Jack approved PR #974 and authorized its merge on 2026-10-12 after review of the deletion cleanup and scheduler filter. MCP ownership restrictions and historical credential cleanup are handled separately in #975."
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "key": "pr:990",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "Open the Bifrost YouTube channel from the header Help menu.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/990",
+      "Verified the YouTube destination and new-tab behavior in the Help menu component test. Jack authorized shipping this change."
+    ]
+  }
+}

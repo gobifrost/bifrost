@@ -49,8 +49,8 @@ def _jwt_claims(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(payload))
 
 
-@pytest.fixture(scope="module")
-def embed_session(e2e_client, platform_admin):
+@pytest.fixture
+def embed_session(e2e_client, platform_admin, secrets_reader_platform_admin):
     """An app with an embed secret + a minted embed token."""
     r = e2e_client.post(
         "/api/applications",

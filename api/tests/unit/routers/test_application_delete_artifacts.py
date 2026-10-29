@@ -38,17 +38,18 @@ async def test_delete_application_removes_all_retained_application_artifacts() -
     with (
         patch("src.routers.applications.assert_entity_id_not_solution_managed", new=AsyncMock()),
         patch(
-            "src.routers.applications.get_application_by_id_or_404",
+            "src.routers.applications.get_application_for_write_or_404",
             new=AsyncMock(return_value=application),
         ),
-        patch("src.routers.applications.ApplicationRepository") as repo_type,
+        patch("src.routers.applications.load_caller", new=AsyncMock()),
+        patch("src.routers.applications._application_repository", new=AsyncMock()) as repo_factory,
         patch(
             "src.routers.applications.ApplicationSourceArtifactStorage",
             return_value=source_storage,
         ),
         patch("src.services.solutions.app_build.SolutionAppBuilder", return_value=builder),
     ):
-        repo_type.return_value.delete_application = AsyncMock(return_value=True)
+        repo_factory.return_value.delete_application = AsyncMock(return_value=True)
 
         await delete_application(app_id, ctx, user)
 

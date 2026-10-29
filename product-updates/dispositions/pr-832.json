@@ -1,0 +1,14 @@
+{
+  "key": "pr:832",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/832",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "summary": "Restrict system-account roles and unavailable agent tools.",
+  "category": "hardening"
+}

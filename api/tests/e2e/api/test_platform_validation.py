@@ -148,7 +148,7 @@ class TestAgentReferenceValidation:
     """Test agent reference validation."""
 
     def test_agent_create_with_invalid_tool_id(self, e2e_client, platform_admin):
-        """Creating an agent with non-existent tool_id returns 422."""
+        """An unknown tool is denied before structural reference validation."""
         fake_tool_id = str(uuid4())
         response = e2e_client.post(
             "/api/agents",
@@ -161,10 +161,8 @@ class TestAgentReferenceValidation:
                 "tool_ids": [fake_tool_id],
             },
         )
-        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
-        data = response.json()
-        assert "errors" in data.get("detail", {}), f"Expected errors in response: {data}"
-        assert any(fake_tool_id in err for err in data["detail"]["errors"])
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
+        assert response.json()["detail"] == f"You do not have role access to tool '{fake_tool_id}'"
 
     def test_agent_create_with_invalid_delegated_agent_id(self, e2e_client, platform_admin):
         """Creating an agent with non-existent delegated_agent_id returns 422."""
@@ -186,7 +184,7 @@ class TestAgentReferenceValidation:
         assert any(fake_agent_id in err for err in data["detail"]["errors"])
 
     def test_agent_update_with_invalid_tool_id(self, e2e_client, platform_admin):
-        """Updating an agent with non-existent tool_id returns 422."""
+        """Updating with an unknown tool is denied before structural validation."""
         # Create a valid agent first
         create_response = e2e_client.post(
             "/api/agents",
@@ -208,7 +206,8 @@ class TestAgentReferenceValidation:
             headers=platform_admin.headers,
             json={"tool_ids": [fake_tool_id]},
         )
-        assert update_response.status_code == 422, f"Expected 422, got {update_response.status_code}"
+        assert update_response.status_code == 403, f"Expected 403, got {update_response.status_code}"
+        assert update_response.json()["detail"] == f"You do not have role access to tool '{fake_tool_id}'"
 
         # Cleanup
         e2e_client.delete(f"/api/agents/{agent_id}", headers=platform_admin.headers)
@@ -272,7 +271,7 @@ class TestAgentReferenceValidation:
         e2e_client.delete(f"/api/agents/{agent_id}", headers=platform_admin.headers)
 
     def test_assign_invalid_tool_to_agent(self, e2e_client, platform_admin):
-        """Assigning non-existent tool to agent returns 422 via PUT /api/agents/{id}."""
+        """Assigning an unknown tool is denied before structural validation."""
         # Create a valid agent first
         create_response = e2e_client.post(
             "/api/agents",
@@ -294,7 +293,8 @@ class TestAgentReferenceValidation:
             headers=platform_admin.headers,
             json={"tool_ids": [fake_tool_id]},
         )
-        assert assign_response.status_code == 422, f"Expected 422, got {assign_response.status_code}"
+        assert assign_response.status_code == 403, f"Expected 403, got {assign_response.status_code}"
+        assert assign_response.json()["detail"] == f"You do not have role access to tool '{fake_tool_id}'"
 
         # Cleanup
         e2e_client.delete(f"/api/agents/{agent_id}", headers=platform_admin.headers)
@@ -445,10 +445,7 @@ async def validation_test_workflow(input: str) -> str:
             },
         )
         assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
-        data = response.json()
-        assert "errors" in data.get("detail", {}), f"Expected errors: {data}"
-        # Should mention that it's a workflow, not a tool
-        assert any("workflow" in err.lower() and "tool" in err.lower() for err in data["detail"]["errors"])
+        assert response.json()["detail"] == "Workflow 'validation_test_workflow' is not a tool"
 
         # Cleanup
         e2e_client.delete(
@@ -498,8 +495,8 @@ class TestMultipleValidationErrors:
         assert any(fake_launch_id in err for err in errors)
         assert any(fake_dp_id in err for err in errors)
 
-    def test_agent_multiple_invalid_references(self, e2e_client, platform_admin):
-        """Agent with multiple invalid references returns all errors."""
+    def test_agent_unknown_tool_is_denied_before_other_reference_validation(self, e2e_client, platform_admin):
+        """Tool authorization runs before delegated-agent structural validation."""
         fake_tool_id = str(uuid4())
         fake_delegate_id = str(uuid4())
 
@@ -515,11 +512,5 @@ class TestMultipleValidationErrors:
                 "delegated_agent_ids": [fake_delegate_id],
             },
         )
-        assert response.status_code == 422, f"Expected 422, got {response.status_code}"
-        data = response.json()
-        errors = data.get("detail", {}).get("errors", [])
-
-        # Should have at least 2 errors
-        assert len(errors) >= 2, f"Expected at least 2 errors, got {len(errors)}: {errors}"
-        assert any(fake_tool_id in err for err in errors)
-        assert any(fake_delegate_id in err for err in errors)
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}"
+        assert response.json()["detail"] == f"You do not have role access to tool '{fake_tool_id}'"

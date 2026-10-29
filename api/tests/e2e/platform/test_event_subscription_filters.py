@@ -51,7 +51,7 @@ async def test_topic_filter_non_match_persists_skipped_delivery(db_session) -> N
         topic=topic,
         data={"priority": "low"},
     )
-    queued = await processor.queue_event_deliveries(event_id)
+    queued = (await processor.queue_event_deliveries(event_id)).count
 
     event = await db_session.get(Event, event_id)
     delivery = (

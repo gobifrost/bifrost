@@ -76,6 +76,45 @@ class TestMCPServersCRUD:
         )
         assert response.status_code == 403, response.text
 
+    def test_create_server_rejects_oauth_provider_id(
+        self, e2e_client, platform_admin
+    ):
+        """OAuth providers must be created inline with the MCP server."""
+        owner = e2e_client.post(
+            "/api/mcp-servers",
+            headers=platform_admin.headers,
+            json={
+                "name": f"e2e_provider_owner_{uuid4().hex[:8]}",
+                "server_url": "https://example.com/mcp",
+                "oauth_provider": {
+                    "oauth_flow_type": "client_credentials",
+                    "token_url": "https://example.com/oauth/token",
+                },
+            },
+        )
+        assert owner.status_code == 201, owner.text
+        try:
+            response = e2e_client.post(
+                "/api/mcp-servers",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"e2e_reject_provider_id_{uuid4().hex[:8]}",
+                    "server_url": "https://example.com/mcp",
+                    "oauth_provider_id": owner.json()["oauth_provider_id"],
+                },
+            )
+            if response.status_code == 201:
+                e2e_client.delete(
+                    f"/api/mcp-servers/{response.json()['id']}?hard=true",
+                    headers=platform_admin.headers,
+                )
+            assert response.status_code == 422, response.text
+        finally:
+            e2e_client.delete(
+                f"/api/mcp-servers/{owner.json()['id']}?hard=true",
+                headers=platform_admin.headers,
+            )
+
     def test_list_servers_admin_sees_all(self, e2e_client, platform_admin, server):
         response = e2e_client.get(
             "/api/mcp-servers",
@@ -200,6 +239,36 @@ class TestMCPServersCRUD:
             json={"server_url": "https://hax.example.com/mcp"},
         )
         assert response.status_code == 403
+
+    def test_update_server_rejects_oauth_provider_id(
+        self, e2e_client, platform_admin, server
+    ):
+        """OAuth provider ownership cannot be reassigned after creation."""
+        owner = e2e_client.post(
+            "/api/mcp-servers",
+            headers=platform_admin.headers,
+            json={
+                "name": f"e2e_provider_owner_{uuid4().hex[:8]}",
+                "server_url": "https://example.com/mcp",
+                "oauth_provider": {
+                    "oauth_flow_type": "client_credentials",
+                    "token_url": "https://example.com/oauth/token",
+                },
+            },
+        )
+        assert owner.status_code == 201, owner.text
+        try:
+            response = e2e_client.patch(
+                f"/api/mcp-servers/{server['id']}",
+                headers=platform_admin.headers,
+                json={"oauth_provider_id": owner.json()["oauth_provider_id"]},
+            )
+            assert response.status_code == 422, response.text
+        finally:
+            e2e_client.delete(
+                f"/api/mcp-servers/{owner.json()['id']}?hard=true",
+                headers=platform_admin.headers,
+            )
 
     def test_soft_delete_marks_inactive(self, e2e_client, platform_admin):
         # Create then soft-delete

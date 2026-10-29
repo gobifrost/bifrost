@@ -13,8 +13,8 @@
 
 .PARAMETER Force
     Overwrite an existing .env without prompting. Note: this regenerates all
-    secrets (POSTGRES_PASSWORD, RABBITMQ_PASSWORD, SEAWEEDFS_SECRET_KEY,
-    BIFROST_SECRET_KEY), so an existing deployment's credentials will rotate.
+    secrets (POSTGRES_PASSWORD, SEAWEEDFS_SECRET_KEY, BIFROST_SECRET_KEY), so
+    an existing deployment's credentials will rotate.
 
 .PARAMETER NoStart
     Generate .env but do not run `docker compose up -d`.
@@ -180,14 +180,12 @@ function Initialize-Bifrost {
 
     # --- Secrets ---
     $postgresPass = New-BifrostSecret -Length 24
-    $rabbitmqPass = New-BifrostSecret -Length 24
     $seaweedfsSecret = New-BifrostSecret -Length 24
     $secretKey = New-BifrostSecret -Length 48
 
     # --- Assemble .env from .env.example ---
     $lines = Get-Content $envExample
     $lines = Set-BifrostEnvLine -Lines $lines -Key 'POSTGRES_PASSWORD'       -Value $postgresPass
-    $lines = Set-BifrostEnvLine -Lines $lines -Key 'RABBITMQ_PASSWORD'       -Value $rabbitmqPass
     $lines = Set-BifrostEnvLine -Lines $lines -Key 'SEAWEEDFS_SECRET_KEY'    -Value $seaweedfsSecret
     $lines = Set-BifrostEnvLine -Lines $lines -Key 'BIFROST_SECRET_KEY'      -Value $secretKey
     $lines = Set-BifrostEnvLine -Lines $lines -Key 'BIFROST_WEBAUTHN_RP_ID'  -Value $Domain
@@ -203,7 +201,6 @@ function Initialize-Bifrost {
     Write-Host ''
     Write-Host 'Generated:'
     Write-Host '  - POSTGRES_PASSWORD (24 chars)'
-    Write-Host '  - RABBITMQ_PASSWORD (24 chars)'
     Write-Host '  - SEAWEEDFS_SECRET_KEY (24 chars)'
     Write-Host '  - BIFROST_SECRET_KEY (48 chars)'
     Write-Host ''

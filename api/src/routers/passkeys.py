@@ -17,6 +17,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response, status
 
+from shared.browser_impersonation import is_browser_impersonation
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
@@ -42,6 +43,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/passkeys", tags=["passkeys"])
 
 
+def _refuse_impersonation_enrollment(user: CurrentActiveUser) -> None:
+    """Keep temporary support sessions from enrolling a durable passkey."""
+    if is_browser_impersonation(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Exit impersonation before managing passkeys",
+        )
+
+
 # =============================================================================
 # Registration Endpoints (Authenticated users adding passkeys)
 # =============================================================================
@@ -60,6 +70,7 @@ async def get_registration_options(
     db: DbSession,
 ) -> PasskeyRegistrationOptionsResponse:
     """Generate WebAuthn registration options for the current user."""
+    _refuse_impersonation_enrollment(user)
     service = PasskeyService(db)
 
     try:
@@ -91,6 +102,7 @@ async def verify_registration(
     db: DbSession,
 ) -> PasskeyRegistrationVerifyResponse:
     """Verify and complete passkey registration."""
+    _refuse_impersonation_enrollment(user)
     service = PasskeyService(db)
 
     try:

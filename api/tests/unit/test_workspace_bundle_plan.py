@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+
+from src.models.orm.integrations import Integration
 
 
 def test_solution_config_declaration_fields_have_workspace_projection_review() -> None:
@@ -281,6 +283,74 @@ def test_planner_lists_integration_shells() -> None:
     shell_known = next(item for item in planned_known.preview.items if item.kind == "integration")
     assert shell_known.classification == "unchanged"
     assert shell_known.target_id == _UUID(int=9)
+
+
+async def test_planner_prefetch_ignores_deleted_integration_names(db_session) -> None:
+    from src.services.solutions.workspace_bundle_plan import WorkspaceBundlePlanner
+
+    name = f"retired-{UUID(int=8)}"
+    deleted = Integration(name=name, is_deleted=True)
+    active = Integration(name=name)
+    db_session.add_all([deleted, active])
+    await db_session.flush()
+
+    existing = await WorkspaceBundlePlanner(
+        db_session, preview_id=UUID(int=7)
+    )._prefetch_existing_integrations()
+
+    assert existing[name] == active.id
+    assert deleted.id not in existing.values()
+
+
+async def test_planner_prefetch_serializes_a_queried_agent_model_profile(db_session) -> None:
+    """Conflict snapshots load the profile name used by ManifestAgent.from_row."""
+    from src.models.orm.agents import Agent
+    from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
+    from src.services.solutions.workspace_bundle_plan import (
+        SolutionPackageWorkspaceProjection,
+        WorkspaceBundlePlanner,
+    )
+    from src.services.solutions.zip_install import PreviewResult
+
+    connection = AIProviderConnection(
+        id=uuid4(),
+        name=f"planner-provider-{uuid4().hex[:8]}",
+        provider="openai",
+        encrypted_api_key="encrypted-fixture-key",
+    )
+    profile = AIModelProfile(
+        id=uuid4(),
+        name=f"planner-profile-{uuid4().hex[:8]}",
+        connection_id=connection.id,
+        model="gpt-4o-mini",
+    )
+    agent = Agent(
+        id=uuid4(),
+        name=f"planner-agent-{uuid4().hex[:8]}",
+        system_prompt="Preview my configured model profile.",
+        created_by="test",
+        llm_profile_id=profile.id,
+    )
+    db_session.add_all([connection, profile, agent])
+    await db_session.flush()
+    agent_id = agent.id
+    agent_name = agent.name
+    profile_name = profile.name
+    db_session.expunge_all()
+
+    preview_id = uuid4()
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(agents=[{"id": str(uuid4()), "name": agent_name}]),
+        preview_id=preview_id,
+    )
+    existing = await WorkspaceBundlePlanner(db_session, preview_id=preview_id)._prefetch_existing(
+        projection.manifest
+    )
+
+    existing_id, snapshot, has_value = existing[("agent", (agent_name,))]
+    assert existing_id == agent_id
+    assert has_value is False
+    assert snapshot["llm_profile"] == profile_name
 
 
 def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) -> None:

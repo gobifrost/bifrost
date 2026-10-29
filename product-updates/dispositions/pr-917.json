@@ -1,0 +1,13 @@
+{
+  "key": "pr:917",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Trusted validation bootstrap; internal release tooling has no standalone customer-facing announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/917",
+      "Product Updates implementation scope approved for merge."
+    ]
+  }
+}

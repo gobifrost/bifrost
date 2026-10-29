@@ -11,9 +11,8 @@ Semantics under test, for an EXTERNAL, NON-BYPASS principal
    ("Everyone except external users") does NOT grant — externals need the
    ``everyone`` tier, role_based + an assigned role, or ownership.
 3. ``everyone`` grants to externals (and everyone else) in scope.
-4. Bypass unaffected: ``is_superuser=True`` neutralizes the external rule
-   (the provider-org half of bypass is neutralized upstream, at token
-   mint — see shared/external_access.py).
+4. The existing repository superuser branch remains in place until cutover;
+   token mint preserves the account's external flag.
 """
 
 from unittest.mock import AsyncMock, MagicMock

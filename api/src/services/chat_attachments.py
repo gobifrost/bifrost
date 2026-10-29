@@ -166,7 +166,7 @@ class ChatAttachmentService:
         await self._ensure_conversation_capacity(conversation_id, len(content))
 
         user_id, organization_id = await self._artifact_owner(conversation_id)
-        artifact = await ArtifactService(self.db).store(
+        artifact = await ArtifactService(self.db).store_conversation_attachment(
             filename=filename,
             content_type=content_type,
             content=content,
@@ -220,7 +220,7 @@ class ChatAttachmentService:
         await self._ensure_conversation_capacity(conversation_id, len(content))
 
         user_id, organization_id = await self._artifact_owner(conversation_id)
-        artifact = await ArtifactService(self.db).store(
+        artifact = await ArtifactService(self.db).store_conversation_attachment(
             filename=filename,
             content_type=content_type,
             content=content,

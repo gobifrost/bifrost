@@ -14,12 +14,14 @@ access token for MCP requests.
 """
 
 import hashlib
+import hmac
 import json
 import logging
+import re
 import secrets
 from typing import Any
 
-from fastmcp.server.auth.auth import AccessToken
+from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from starlette.middleware import Middleware as StarletteMiddleware
@@ -29,7 +31,6 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from shared.external_access import (
-    resolve_external_claim,
     resolve_provider_org_claim,
 )
 from shared.identities import is_identity
@@ -40,10 +41,59 @@ logger = logging.getLogger(__name__)
 TTL_MCP_AUTH_CODE = 300  # 5 minutes for authorization code
 TTL_MCP_CLIENT = 86400 * 30  # 30 days for registered clients
 
+# Shape of the hex HMAC-SHA256 tags produced by _secret_hmac.
+_AUTH_CODE_TAG = re.compile(r"[0-9a-f]{64}")
+
+
+class MCPAccessToken(AccessToken):
+    """SDK token with Bifrost identity claims for tool execution."""
+
+    claims: dict[str, Any]
+
+
+def _secret_hmac(message: str) -> str:
+    """Hex HMAC-SHA256 of ``message`` under the platform secret key."""
+    from src.config import get_settings
+
+    return hmac.new(
+        get_settings().secret_key.encode(), message.encode(), hashlib.sha256
+    ).hexdigest()
+
 
 def _mcp_auth_code_key(code: str) -> str:
-    """Key for MCP authorization code storage."""
-    return f"bifrost:mcp:auth_code:{code}"
+    """Key for MCP authorization code storage, derived from the code with the server secret."""
+    return f"bifrost:mcp:auth_code:{_secret_hmac(code)}"
+
+
+def _auth_code_tag(code: str, record: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        {"code": code, "record": record}, sort_keys=True, separators=(",", ":")
+    )
+    return _secret_hmac(canonical)
+
+
+def _seal_auth_code_record(code: str, record: dict[str, Any]) -> str:
+    """Serialize an authorization code record with its server-secret tag."""
+    return json.dumps({"record": record, "tag": _auth_code_tag(code, record)})
+
+
+def _open_auth_code_record(code: str, stored_json: str) -> dict[str, Any] | None:
+    """Return the stored record for ``code`` if its tag verifies, else None."""
+    try:
+        stored = json.loads(stored_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(stored, dict):
+        return None
+    record = stored.get("record")
+    tag = stored.get("tag")
+    if not isinstance(record, dict) or not isinstance(tag, str):
+        return None
+    if not _AUTH_CODE_TAG.fullmatch(tag):
+        return None
+    if not hmac.compare_digest(_auth_code_tag(code, record), tag):
+        return None
+    return record
 
 
 def _mcp_client_key(client_id: str) -> str:
@@ -259,8 +309,15 @@ class BifrostAuthProvider:
         3. Generate authorization code
         4. Redirect to client's redirect_uri with code
         """
+        from shared.browser_impersonation import IMPERSONATION_COOKIE_NAME
         from src.core.cache import get_shared_redis
         from src.core.security import decode_token
+
+        if request.cookies.get(IMPERSONATION_COOKIE_NAME):
+            return JSONResponse(
+                {"error": "access_denied", "error_description": "Exit impersonation before connecting an MCP client"},
+                status_code=403,
+            )
 
         internal_state = request.query_params.get("internal_state")
         if not internal_state:
@@ -301,6 +358,12 @@ class BifrostAuthProvider:
                 status_code=401
             )
 
+        if payload.get("impersonated_by_user_id") or payload.get("impersonation_session_id"):
+            return JSONResponse(
+                {"error": "access_denied", "error_description": "Exit impersonation before connecting an MCP client"},
+                status_code=403,
+            )
+
         # Check MCP access permissions (only gates on the master enabled switch)
         if not await self._check_mcp_access(payload):
             return JSONResponse(
@@ -327,7 +390,7 @@ class BifrostAuthProvider:
         await r.setex(
             _mcp_auth_code_key(auth_code),
             TTL_MCP_AUTH_CODE,
-            json.dumps(auth_code_data)
+            _seal_auth_code_record(auth_code, auth_code_data),
         )
 
         # Redirect to client with authorization code
@@ -376,7 +439,8 @@ class BifrostAuthProvider:
 
             # Get auth code data from Redis
             r = await get_shared_redis()
-            auth_code_data_json = await r.get(_mcp_auth_code_key(code))
+            code_key = _mcp_auth_code_key(code)
+            auth_code_data_json = await r.get(code_key)
 
             if not auth_code_data_json:
                 return JSONResponse(
@@ -384,10 +448,15 @@ class BifrostAuthProvider:
                     status_code=400
                 )
 
-            auth_code_data = json.loads(auth_code_data_json)
-
             # Delete auth code (one-time use)
-            await r.delete(_mcp_auth_code_key(code))
+            await r.delete(code_key)
+
+            auth_code_data = _open_auth_code_record(code, auth_code_data_json)
+            if auth_code_data is None:
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "Invalid or expired authorization code"},
+                    status_code=400
+                )
 
             # Validate redirect_uri matches
             if redirect_uri != auth_code_data["redirect_uri"]:
@@ -431,7 +500,7 @@ class BifrostAuthProvider:
                     "email": user.email,
                     "name": user.name,
                     "is_superuser": user.is_superuser,
-                    "is_external": await resolve_external_claim(db, user),
+                    "is_external": bool(user.is_external),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
                     "type": "access",
@@ -486,7 +555,7 @@ class BifrostAuthProvider:
                     "email": user.email,
                     "name": user.name,
                     "is_superuser": user.is_superuser,
-                    "is_external": await resolve_external_claim(db, user),
+                    "is_external": bool(user.is_external),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
                     "type": "access",
@@ -600,14 +669,28 @@ class BifrostAuthProvider:
         Returns:
             AccessToken if valid, None otherwise
         """
+        from src.core.database import get_db_context
         from src.core.security import decode_token
-
-        logger.info(f"MCP auth: verify_token called with token prefix: {token[:20]}...")
+        from src.services.authorization.runtime_auth import (
+            is_runtime_credential_payload,
+            load_runtime_principal,
+        )
 
         payload = decode_token(token, expected_type="access")
         if payload is None:
             logger.info("MCP auth: decode_token returned None (invalid/expired JWT)")
             return None
+        if payload.get("impersonated_by_user_id") or payload.get("impersonation_session_id"):
+            # A browser support credential cannot establish an independent
+            # MCP session with a different lifetime or revocation boundary.
+            return None
+
+        runtime_principal = None
+        if is_runtime_credential_payload(payload):
+            async with get_db_context() as db:
+                runtime_principal = await load_runtime_principal(db, payload)
+            if runtime_principal is None:
+                return None
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")
 
@@ -616,25 +699,47 @@ class BifrostAuthProvider:
             logger.info(f"MCP auth: _check_mcp_access returned False for user {payload.get('email')}")
             return None
 
-        # Fetch user's role names from database for tool filtering
-        role_names = await self._get_user_roles(payload.get("sub"))
+        principal = runtime_principal
+        role_user_id = (
+            str(principal.runtime_authority.run_user.user_id)
+            if principal is not None and principal.runtime_authority is not None
+            else payload.get("sub")
+        )
+        # Runtime tool filtering follows the original run user's current
+        # roles, while effects keep the separately resolved acting identity.
+        role_names = await self._get_user_roles(role_user_id)
 
         logger.info(f"MCP auth: Token valid for user {payload.get('email')}, roles={role_names}")
 
-        return AccessToken(
-            token=token,  # FastMCP requires this field
-            client_id=str(payload.get("sub")),
+        return MCPAccessToken(
+            token=token,
+            client_id=str(principal.user_id if principal is not None else payload.get("sub")),
             scopes=["mcp:access"],
             expires_at=payload.get("exp"),
             claims={
-                "user_id": payload.get("sub"),
-                "email": payload.get("email"),
-                "name": payload.get("name"),
-                "is_superuser": payload.get("is_superuser", False),
-                "is_provider_org": payload.get("is_provider_org", False),
-                "is_external": payload.get("is_external", False),
-                "org_id": payload.get("org_id"),
+                "user_id": str(principal.user_id) if principal is not None else payload.get("sub"),
+                "email": principal.email if principal is not None else payload.get("email"),
+                "name": principal.name if principal is not None else payload.get("name"),
+                "is_superuser": principal.is_superuser if principal is not None else payload.get("is_superuser", False),
+                "is_provider_org": principal.is_provider_org if principal is not None else payload.get("is_provider_org", False),
+                "is_external": principal.is_external if principal is not None else payload.get("is_external", False),
+                "org_id": str(principal.organization_id) if principal is not None and principal.organization_id else payload.get("org_id"),
                 "roles": role_names,  # Role names for MCP tool filtering
+                "runtime_credential_kind": (
+                    principal.runtime_authority.kind
+                    if principal is not None and principal.runtime_authority is not None
+                    else None
+                ),
+                "runtime_credential_id": (
+                    str(principal.runtime_authority.credential_id)
+                    if principal is not None and principal.runtime_authority is not None
+                    else None
+                ),
+                "runtime_service_id": (
+                    str(principal.runtime_authority.service_id)
+                    if principal is not None and principal.runtime_authority is not None and principal.runtime_authority.service_id
+                    else None
+                ),
             },
         )
 
@@ -674,7 +779,7 @@ class BifrostAuthProvider:
         """
         Return HTTP middleware for the auth provider.
 
-        FastMCP requires AuthenticationMiddleware with BearerAuthBackend
+        The MCP SDK requires AuthenticationMiddleware with BearerAuthBackend
         to validate tokens and set scope["user"]. Without this, all
         requests fail with 401 because the RequireAuthMiddleware can't
         find an authenticated user.

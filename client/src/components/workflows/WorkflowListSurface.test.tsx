@@ -16,6 +16,33 @@ function LocationProbe() {
 }
 
 describe("workflow recovery actions", () => {
+	it("does not offer scoped edits for a workflow outside the named grant", async () => {
+		const workflow = {
+			id: "fabrikam-workflow",
+			name: "fabrikam_workflow",
+			type: "workflow",
+			organization_id: "fabrikam",
+		} as WorkflowListItem;
+		const { user } = renderWithProviders(
+			<WorkflowListSurface
+				workflows={[workflow]}
+				viewMode="grid"
+				isPlatformAdmin={false}
+				canManageWorkflows
+				canManageWorkflow={() => false}
+				getOrgName={() => "Fabrikam"}
+				onEditScope={vi.fn()}
+				onExecute={vi.fn()}
+			/>,
+		);
+		await user.click(
+			screen.getByRole("button", { name: "fabrikam_workflow actions" }),
+		);
+		expect(
+			screen.queryByRole("menuitem", { name: "Edit" }),
+		).not.toBeInTheDocument();
+	});
+
 	it.each(["grid", "table"] as const)(
 		"keeps endpoint and missing-file actions keyboard accessible in %s",
 		async (viewMode) => {

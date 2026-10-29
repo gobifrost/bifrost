@@ -3,11 +3,10 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - configmap.yaml
+  - api/rbac.yaml
   - api/deployment.yaml
   - api/service.yaml
   - client/deployment.yaml
   - client/service.yaml
   - worker/deployment.yaml
   - scheduler/deployment.yaml
-  - rabbitmq/deployment.yaml
-  - rabbitmq/service.yaml

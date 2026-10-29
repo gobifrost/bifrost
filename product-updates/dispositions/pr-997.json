@@ -1,0 +1,13 @@
+{
+  "key": "pr:997",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Refresh verified eligibility metadata for existing approved notices and classify a historical dependency source; no separate announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/997",
+      "Verified the cumulative source inventory, preserved the reviewed entry UUIDs and prose, retained dependency security-review requirements, and confirmed image preparation includes all three approved access and automation notices."
+    ]
+  }
+}

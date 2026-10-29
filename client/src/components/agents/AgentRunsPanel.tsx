@@ -21,6 +21,7 @@ import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
 import { useAgents } from "@/hooks/useAgents";
 import { AgentRunRecord, RunStatusBadge, VerdictGlyph } from "./AgentRunRecord";
 import { ListToolbar } from "@/components/layout/ListToolbar";
@@ -112,7 +113,15 @@ export function AgentRunsPanel() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const [searchParams, setSearchParams] = useSearchParams();
-	const { isPlatformAdmin } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
+	const canFilterOrganizations =
+		authorization.canAnywhere("agentruns.read.all");
+	const canReadOrganizations =
+		authorization.canAnywhere("organizations.read");
+	const knownOrganizations = user?.organizationId
+		? [{ id: user.organizationId, name: "Your organization" }]
+		: [];
 	const agentIdFilter = searchParams.get("agent") || "";
 	const statusFilter = searchParams.get("status") || "";
 	const searchTerm = searchParams.get("q") || "";
@@ -120,14 +129,17 @@ export function AgentRunsPanel() {
 	const filterOrgId = orgParam === "global" ? null : orgParam || undefined;
 	const from = parseDateParam(searchParams.get("from"));
 	const to = parseDateParam(searchParams.get("to"));
-	const dateRange = from ? { from, to } : undefined;
+	const dateRange = useMemo(
+		() => (from ? { from, to } : undefined),
+		[from, to],
+	);
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const pageIndex = parsePageIndex(searchParams.get("page"));
 	const panelScrollRef = useRef<HTMLDivElement>(null);
 	const pendingScrollRestoreRef = useRef<number | null>(null);
 	const historyHref = getLocationHref(location);
 	const { data: agents } = useAgents(
-		isPlatformAdmin ? filterOrgId : undefined,
+		canFilterOrganizations ? filterOrgId : undefined,
 		{ includeInactive: true },
 	);
 	const runNavigationState = createAgentRunNavigationState({
@@ -140,7 +152,7 @@ export function AgentRunsPanel() {
 		};
 		if (agentIdFilter) params.agentId = agentIdFilter;
 		if (statusFilter) params.status = statusFilter;
-		if (isPlatformAdmin && filterOrgId) params.orgId = filterOrgId;
+		if (canFilterOrganizations && filterOrgId) params.orgId = filterOrgId;
 		if (searchTerm) params.q = searchTerm;
 		if (dateRange?.from) {
 			const startDate = new Date(dateRange.from);
@@ -155,7 +167,7 @@ export function AgentRunsPanel() {
 		agentIdFilter,
 		dateRange,
 		filterOrgId,
-		isPlatformAdmin,
+		canFilterOrganizations,
 		searchTerm,
 		statusFilter,
 	]);
@@ -212,12 +224,12 @@ export function AgentRunsPanel() {
 			typeof ResizeObserver === "undefined"
 				? null
 				: new ResizeObserver(() => {
-					restoreScrollPosition();
-					if (pendingScrollRestoreRef.current === null) {
-						resizeObserver?.disconnect();
-						mutationObserver?.disconnect();
-					}
-				});
+						restoreScrollPosition();
+						if (pendingScrollRestoreRef.current === null) {
+							resizeObserver?.disconnect();
+							mutationObserver?.disconnect();
+						}
+					});
 		const observeLayout = () => {
 			resizeObserver?.disconnect();
 			resizeObserver?.observe(panel);
@@ -253,7 +265,17 @@ export function AgentRunsPanel() {
 			void fetchNextPage();
 			return;
 		}
-		if (loadedPageCount > 0) setPageIndex(loadedPageCount - 1);
+		if (loadedPageCount > 0) {
+			setSearchParams(
+				(previous) => {
+					const next = new URLSearchParams(previous);
+					if (loadedPageCount === 1) next.delete("page");
+					else next.set("page", String(loadedPageCount));
+					return next;
+				},
+				{ replace: true },
+			);
+		}
 	}, [
 		fetchNextPage,
 		hasNextPage,
@@ -262,6 +284,7 @@ export function AgentRunsPanel() {
 		isLoading,
 		loadedPageCount,
 		pageIndex,
+		setSearchParams,
 	]);
 	const rerun = useRerunAgentRun();
 	const [pendingRunId, setPendingRunId] = useState<string | null>(null);
@@ -288,7 +311,7 @@ export function AgentRunsPanel() {
 		statusFilter !== "" ||
 		searchTerm !== "" ||
 		dateRange !== undefined ||
-		(isPlatformAdmin && filterOrgId !== undefined);
+		(canFilterOrganizations && filterOrgId !== undefined);
 	const hasPreviousPage = pageIndex > 0;
 	const hasFollowingPage = (pageIndex + 1) * PAGE_SIZE < total;
 	const agentRunsPaginationFooter = (className?: string) => (
@@ -496,13 +519,15 @@ export function AgentRunsPanel() {
 							)}
 						</SelectContent>
 					</Select>
-					{isPlatformAdmin && (
+					{canFilterOrganizations && (
 						<div className="w-full min-w-0 lg:w-48">
 							<OrganizationSelect
 								value={filterOrgId}
 								onChange={setFilterOrgId}
 								showAll={true}
 								showGlobal={false}
+								loadOrganizations={canReadOrganizations}
+								knownOrganizations={knownOrganizations}
 								placeholder="All organizations"
 							/>
 						</div>

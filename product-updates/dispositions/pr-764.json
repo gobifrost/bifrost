@@ -1,0 +1,14 @@
+{
+  "key": "pr:764",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/764",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "summary": "Avoid duplicate sign-in redirects when a session expires.",
+  "category": "fix"
+}

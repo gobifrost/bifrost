@@ -7,7 +7,8 @@ the single place that enforces that rule for the Agent write surface
 
 Two independent gates:
 
-* **Privileged / budget fields** — a non-admin caller may not set
+* **Privileged / budget fields** — only a caller holding
+  ``agents.readwrite`` at the Agent's actual organization may set
   ``system_tools``, ``knowledge_sources``, ``delegated_agent_ids``,
   ``role_ids``, ``mcp_connection_ids`` (create and update), ``clear_roles``
   (update), or the budget fields ``llm_max_tokens`` / ``max_iterations`` /
@@ -22,16 +23,72 @@ Two independent gates:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.scope_resolver import UNSET, RequestedScope
+from shared.resource_access import ResourceAccessResolver, ResourceKind, can_write_resource
 from src.core.db_deps import DbSession
 from src.models.contracts.agents import AgentCreate, AgentUpdate
 from src.models.orm import Agent, MCPConnection, Role, Workflow
+from src.repositories.workflows import WorkflowRepository
+from src.services.authorization.enforce import Caller
 
-#: Fields a non-admin caller may never set to a non-empty/non-null value.
+
+def caller_user_id(caller: Caller) -> UUID | None:
+    """The original user for a direct or verified runtime caller."""
+    return None if caller.ctx is None else caller.ctx.user_id
+
+
+def agent_query_in_reach(caller: Caller):
+    """Filter Agent candidates by original reach before loading or paging."""
+    from src.services.authorization.enforce import user_reach
+
+    query = select(Agent)
+    reach = user_reach(caller).where(Agent.organization_id)
+    return query if reach is None else query.where(reach)
+
+
+async def can_read_agent(
+    db: AsyncSession,
+    caller: Caller,
+    agent: Agent,
+    *,
+    selected_organization_id: RequestedScope = UNSET,
+) -> bool:
+    """Use the common resource resolver, including private Agent policy."""
+    return await ResourceAccessResolver(db, caller).can_read(
+        ResourceKind.AGENT,
+        agent,
+        selected_organization_id=selected_organization_id,
+    )
+
+
+def can_write_agent(caller: Caller, agent: Agent) -> bool:
+    """Use the common resolver at the Agent's persisted organization."""
+    return can_write_resource(ResourceKind.AGENT, caller, agent)
+
+
+def can_configure_agent(caller: Caller, agent: Agent) -> bool:
+    """Whether the caller may set an Agent's privileged configuration.
+
+    Owning a private Agent remains sufficient for ordinary personal edits.
+    Configuration that affects capabilities, role sharing, or execution
+    budgets requires ``agents.readwrite`` at the persisted organization.  A
+    different person's private Agent remains protected by its additional
+    ``agents.readwrite.all`` resource gate.
+    """
+    from src.services.authorization.enforce import allows_permission
+
+    return can_write_agent(caller, agent) and allows_permission(
+        caller, "agents.readwrite", agent.organization_id
+    )
+
+#: Fields an ordinary private-Agent owner may never set to a non-empty/non-null value.
 PRIVILEGED_LIST_FIELDS: tuple[str, ...] = (
     "system_tools",
     "knowledge_sources",
@@ -40,7 +97,7 @@ PRIVILEGED_LIST_FIELDS: tuple[str, ...] = (
     "mcp_connection_ids",
 )
 
-#: Fields a non-admin caller may never set (create or update).
+#: Fields an ordinary private-Agent owner may never set (create or update).
 BUDGET_FIELDS: tuple[str, ...] = (
     "llm_max_tokens",
     "max_iterations",
@@ -57,8 +114,8 @@ def _budget_fields_set(agent_data: AgentCreate | AgentUpdate) -> list[str]:
     ]
 
 
-def enforce_non_admin_create(agent_data: AgentCreate, *, caller_org_id: UUID | None) -> None:
-    """Enforce the non-admin ``create_agent`` gates (spec Part 2, create 1-4).
+def enforce_personal_agent_create(agent_data: AgentCreate, *, caller_org_id: UUID | None) -> None:
+    """Enforce the ordinary user's personal ``create_agent`` path.
 
     Raises ``HTTPException`` (403) and mutates nothing — callers apply the
     forced values (own org, empty privileged lists) themselves after this
@@ -70,7 +127,7 @@ def enforce_non_admin_create(agent_data: AgentCreate, *, caller_org_id: UUID | N
 
     # 1. access_level gate (checked first, as today).
     if agent_data.access_level != AgentAccessLevel.PRIVATE:
-        raise HTTPException(403, "Non-admin users can only create private agents")
+        raise HTTPException(403, "Personal users can only create private agents")
 
     # 2. Privileged list fields: non-empty is refused; empty/omitted is a
     # no-op (it already equals the forced value).
@@ -89,7 +146,7 @@ def enforce_non_admin_create(agent_data: AgentCreate, *, caller_org_id: UUID | N
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Only platform administrators can set Agent fields: "
+                "You need permission to manage agents to set Agent fields: "
                 + ", ".join(privileged_fields)
             ),
         )
@@ -103,16 +160,30 @@ def enforce_non_admin_create(agent_data: AgentCreate, *, caller_org_id: UUID | N
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Non-admin users can only create agents in their own organization",
+            detail="Personal agents can only be created in your own organization",
         )
 
 
-def enforce_non_admin_update(agent: Agent, agent_data: AgentUpdate) -> None:
-    """Enforce the non-admin ``update_agent`` gates (spec Part 2, update 5-6).
+def enforce_personal_agent_update(agent: Agent, agent_data: AgentUpdate) -> None:
+    """Enforce ordinary edits to a caller-owned private Agent.
 
-    Assumes the budget-fields gate, ownership gate, and access-level gate
-    (rules already in the router, unchanged in order) have already passed.
+    The router has checked ownership and access level. Privileged
+    configuration, including clearing a budget, requires management access.
     """
+
+    budget_fields = [
+        field_name
+        for field_name in BUDGET_FIELDS
+        if field_name in agent_data.model_fields_set
+    ]
+    if budget_fields:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You need permission to manage agents to change budget fields: "
+                + ", ".join(budget_fields)
+            ),
+        )
 
     # A non-null privileged field (including an explicit ``[]``) is refused
     # for update — unlike create, an explicit ``[]`` here is still a
@@ -129,12 +200,12 @@ def enforce_non_admin_update(agent: Agent, agent_data: AgentUpdate) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Only platform administrators can set Agent fields: "
+                "You need permission to manage agents to set Agent fields: "
                 + ", ".join(privileged_fields)
             ),
         )
 
-    # New gap fix: a non-admin may never move their private agent to
+    # An ordinary private-Agent owner may never move their Agent to
     # another org (or to global) — previously applied unguarded.
     if (
         "organization_id" in agent_data.model_fields_set
@@ -142,8 +213,82 @@ def enforce_non_admin_update(agent: Agent, agent_data: AgentUpdate) -> None:
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Non-admin users cannot move an agent to another organization",
+            detail="Personal agents cannot move to another organization",
         )
+
+
+async def validate_user_tool_access(
+    db: DbSession,
+    caller: Caller,
+    tool_ids: list[str],
+) -> None:
+    """Validate the original caller can attach every requested tool.
+
+    Tool attachment is configuration, never workflow execution.  Resolve
+    each tool through the canonical workflow resource policy using the
+    original caller with runtime powers removed, so a workflow's temporary
+    capability grant cannot configure a personal Agent.
+    """
+    if not tool_ids:
+        return
+    if caller.ctx is None or caller_user_id(caller) is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You do not have role access to tools")
+
+    configuration_caller = Caller(
+        replace(caller.principal, runtime_authority=None),
+        caller.ctx,
+    )
+    repository = WorkflowRepository(
+        db,
+        configuration_caller.ctx.home_organization_id,
+        caller=configuration_caller,
+    )
+
+    for tool_id in tool_ids:
+        try:
+            workflow_uuid = UUID(tool_id)
+        except ValueError:
+            raise HTTPException(422, f"Invalid tool ID: {tool_id}")
+
+        workflow = await repository.get(id=workflow_uuid)
+        if workflow is None:
+            raise HTTPException(403, f"You do not have role access to tool '{tool_id}'")
+        if not workflow.is_active:
+            raise HTTPException(422, f"Tool '{workflow.name}' is inactive")
+        if workflow.type != "tool":
+            raise HTTPException(422, f"Workflow '{workflow.name}' is not a tool")
+
+
+async def may_use_tools(db: AsyncSession, user_id: UUID, tool_ids: list[str]) -> bool:
+    """Re-evaluate a stored user-owned tool note from current DB authority.
+
+    Access-check replay has no request actor. It constructs the original
+    person's current authorization context, rather than accepting an actor
+    flag or bypass boolean.
+    """
+    from sqlalchemy.exc import NoResultFound
+
+    from src.core.principal import UserPrincipal
+    from src.services.authorization.context import build_authorization_context
+    from src.services.authorization.enforce import Caller
+
+    try:
+        ctx = await build_authorization_context(db, user_id)
+    except NoResultFound:
+        return False
+    caller = Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email="access-check-replay",
+            organization_id=ctx.home_organization_id,
+        ),
+        ctx,
+    )
+    try:
+        await validate_user_tool_access(db, caller, tool_ids)
+    except HTTPException:
+        return False
+    return True
 
 
 async def validate_agent_references(
@@ -276,7 +421,9 @@ async def validate_agent_references(
 __all__ = [
     "BUDGET_FIELDS",
     "PRIVILEGED_LIST_FIELDS",
-    "enforce_non_admin_create",
-    "enforce_non_admin_update",
+    "can_configure_agent",
+    "enforce_personal_agent_create",
+    "enforce_personal_agent_update",
     "validate_agent_references",
+    "validate_user_tool_access",
 ]

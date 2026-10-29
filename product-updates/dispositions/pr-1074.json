@@ -1,0 +1,14 @@
+{
+  "key": "pr:1074",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "App build memory failures now explain the cause and give local-build or container-memory recovery guidance.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1074",
+      "Jack requested explicit OOM errors and notifications with supported local build/deploy or increased container memory guidance. Review verified the supported local command, 201 focused unit tests, a safe subprocess-to-notification failure test, and API type/lint checks."
+    ]
+  }
+}

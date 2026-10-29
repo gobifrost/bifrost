@@ -3,6 +3,6 @@
   "private": true,
   "dependencies": {
     "@babel/standalone": "^7.26.0",
-    "@tailwindcss/node": "^4.0.0"
+    "@tailwindcss/node": "^4.3.3"
   }
 }

@@ -1,0 +1,14 @@
+{
+  "key": "pr:852",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/852",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "summary": "Show the actual error when OAuth renewal fails.",
+  "category": "fix"
+}

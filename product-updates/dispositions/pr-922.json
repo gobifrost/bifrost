@@ -1,0 +1,13 @@
+{
+  "key": "pr:922",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Verified metadata activation for the already approved Product Updates announcement; no separate customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/922",
+      "Required announcement activation within the user-approved production delivery scope."
+    ]
+  }
+}

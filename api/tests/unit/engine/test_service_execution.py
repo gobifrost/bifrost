@@ -1,24 +1,17 @@
 """Unit tests for engine service mode (Slice 3).
 
 Covers: clean return, exception, stop-request unwind, context injection,
-@service type enforcement, log capture, and the Redis-backed supervisor
-(ready drain, stop mirror, credential rotation) with faked Redis.
+@service type enforcement, log capture, and the authenticated runtime-control
+supervisor (ready drain, stop mirror, credential rotation) with scoped I/O.
 """
 
 import asyncio
 import json
+from io import StringIO
 import logging
-import os
-from contextlib import asynccontextmanager
-from unittest.mock import patch
 
 import pytest
 
-from src.core.cache.keys import (
-    service_ready_key,
-    service_stop_key,
-    service_token_key,
-)
 from src.models.enums import ExecutionStatus
 from src.sdk.context import Caller, ExecutionContext, Organization
 from src.sdk.decorators import service
@@ -29,35 +22,6 @@ from src.services.execution.engine import (
     _service_supervisor,
     execute,
 )
-
-_SERVICE_ENV_VARS = (
-    "BIFROST_API_URL",
-    "BIFROST_ACCESS_TOKEN",
-    "BIFROST_REFRESH_TOKEN",
-)
-
-
-@pytest.fixture(autouse=True)
-def _isolated_service_env():
-    """Contain install_service_credentials' process env (no teardown).
-
-    The supervisor installs service tokens as process-global env vars
-    (scoped to the child process in production); in-process that leaks
-    phantom credentials into every later suite (SDK "without context"
-    tests, URL assertions). Snapshot explicitly: monkeypatch.delenv on
-    an absent var records nothing, so writes made after the call are
-    never undone.
-    """
-    saved = {var: os.environ.get(var) for var in _SERVICE_ENV_VARS}
-    for var in _SERVICE_ENV_VARS:
-        os.environ.pop(var, None)
-    yield
-    for var in _SERVICE_ENV_VARS:
-        if saved[var] is None:
-            os.environ.pop(var, None)
-        else:
-            os.environ[var] = saved[var]
-
 
 def _caller():
     return Caller(
@@ -99,22 +63,62 @@ def _request(func, cfg=None):
     )
 
 
-class FakeRedis:
-    """Minimal async Redis double backed by a dict."""
+class _RuntimeControlResponse:
+    status_code = 200
 
-    def __init__(self, values=None):
-        self.values = dict(values or {})
+    def __init__(self, payload):
+        self._payload = payload
 
-    async def setex(self, key, ttl, value):
-        self.values[key] = value
-
-    async def get(self, key):
-        return self.values.get(key)
+    def json(self):
+        return self._payload
 
 
-@asynccontextmanager
-async def _fake_redis(values=None):
-    yield FakeRedis(values)
+class _RuntimeControlTransport:
+    """Attempt-scoped fake for the engine-local authenticated transport."""
+
+    def __init__(self):
+        self.calls = []
+        self.logs = []
+        self.responses = []
+        self.installed_tokens = []
+        self.stop_after_request = None
+
+    async def engine_request(self, method, path, **kwargs):
+        self.calls.append((method, path, kwargs))
+        payload = self.responses.pop(0) if self.responses else {
+            "stop_requested": False,
+            "access_token": None,
+            "token_expires_at": "",
+        }
+        if self.stop_after_request is not None:
+            self.stop_after_request.set()
+        return _RuntimeControlResponse(payload)
+
+    def write_log(self, level, message):
+        self.logs.append((level, message))
+        return "service-log"
+
+
+@pytest.fixture(autouse=True)
+def runtime_io(monkeypatch):
+    """Keep service execution/logging inside the authenticated runtime seam."""
+    transport = _RuntimeControlTransport()
+    monkeypatch.setattr("bifrost.client.get_client", lambda: transport)
+    monkeypatch.setattr(
+        "bifrost.client.raise_for_status_with_detail", lambda response: None
+    )
+    monkeypatch.setattr(
+        "bifrost._runtime_io.write_log", transport.write_log
+    )
+    monkeypatch.setattr(
+        "src.services.execution.engine.write_log",
+        transport.write_log,
+    )
+    monkeypatch.setattr(
+        "bifrost._service_runtime.install_service_credentials",
+        transport.installed_tokens.append,
+    )
+    return transport
 
 
 async def test_clean_return_is_success_without_variables():
@@ -180,7 +184,28 @@ async def test_exception_message_redacts_fetched_secrets():
     assert "s3cr3t-service-token-value" not in json.dumps(result.logs)
 
 
-async def test_stop_key_unwinds_to_success():
+async def test_exception_header_is_redacted_after_service_capture_closes():
+    @service
+    async def bridge():
+        raise RuntimeError("Set-Cookie: session=service-exception-secret; Path=/")
+
+    stream = StringIO()
+    console = logging.StreamHandler(stream)
+    console.setFormatter(logging.Formatter("[worker] %(levelname)s - %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(console)
+    try:
+        result = await execute(_request(bridge))
+    finally:
+        root.removeHandler(console)
+
+    assert result.status == ExecutionStatus.FAILED
+    assert "service-exception-secret" not in (result.error_message or "")
+    assert "service-exception-secret" not in stream.getvalue()
+    assert "[REDACTED]" in (result.error_message or "")
+
+
+async def test_stop_control_unwinds_to_success(runtime_io):
     cfg = _config()
 
     @service
@@ -190,23 +215,25 @@ async def test_stop_key_unwinds_to_success():
         await svc.wait_until_stopping()
         return "unreachable"
 
-    from src.core.cache import get_redis
+    runtime_io.responses.append(
+        {
+            "stop_requested": True,
+            "access_token": None,
+            "token_expires_at": cfg.token_expires_at,
+        }
+    )
+    result = await execute(_request(bridge, cfg))
 
-    task = asyncio.ensure_future(execute(_request(bridge, cfg)))
-    try:
-        async with get_redis() as r:
-            await r.set(service_stop_key(cfg.attempt_id), "1", ex=30)
-        result = await asyncio.wait_for(task, timeout=15.0)
-    finally:
-        if not task.done():
-            task.cancel()
-        async with get_redis() as r:
-            await r.delete(service_stop_key(cfg.attempt_id))
     assert result.status == ExecutionStatus.SUCCESS
     assert result.result is None
+    assert runtime_io.calls[0] == (
+        "POST",
+        "/api/sdk/runtime/service-control",
+        {"json": {"ready": False, "token_expires_at": cfg.token_expires_at}},
+    )
 
 
-async def test_service_logs_captured_locally():
+async def test_service_logs_captured_locally(runtime_io):
     @service
     async def bridge():
         logging.getLogger(__name__).info("bridged one message")
@@ -216,6 +243,7 @@ async def test_service_logs_captured_locally():
     assert any(
         entry["message"] == "bridged one message" for entry in result.logs
     )
+    assert ("INFO", "bridged one message") in runtime_io.logs
 
 
 def _bare_context(cfg):
@@ -255,7 +283,7 @@ async def test_trace_returns_clean_and_cancelled_runs():
     assert stopped is True
 
 
-async def test_supervisor_drains_ready_and_mirrors_stop():
+async def test_supervisor_drains_ready_and_mirrors_stop(runtime_io):
     from bifrost import service as svc
     from bifrost._service_runtime import (
         clear_service_runtime,
@@ -267,23 +295,27 @@ async def test_supervisor_drains_ready_and_mirrors_stop():
     install_service_runtime(stop)
     try:
         await svc.ready()
-        redis = FakeRedis({service_stop_key(cfg.attempt_id): "1"})
-        with patch(
-            "src.core.cache.get_redis", return_value=_fake_redis_values(redis)
-        ):
-            await _service_supervisor(cfg, stop)
+        runtime_io.responses.append(
+            {
+                "stop_requested": True,
+                "access_token": None,
+                "token_expires_at": cfg.token_expires_at,
+            }
+        )
+        await _service_supervisor(cfg, stop)
         assert stop.is_set()
-        assert redis.values.get(service_ready_key(cfg.attempt_id)) == "1"
+        assert runtime_io.calls == [
+            (
+                "POST",
+                "/api/sdk/runtime/service-control",
+                {"json": {"ready": True, "token_expires_at": cfg.token_expires_at}},
+            )
+        ]
     finally:
         clear_service_runtime()
 
 
-@asynccontextmanager
-async def _fake_redis_values(redis):
-    yield redis
-
-
-async def test_supervisor_installs_fresher_rotation_token():
+async def test_supervisor_installs_fresher_rotation_token(runtime_io):
     from bifrost._service_runtime import (
         clear_service_runtime,
         install_service_runtime,
@@ -292,47 +324,17 @@ async def test_supervisor_installs_fresher_rotation_token():
     cfg = _config()
     stop = asyncio.Event()
     install_service_runtime(stop)
-    installed = {}
-
-    def _record(token):
-        installed["token"] = token
-        os.environ["BIFROST_ACCESS_TOKEN"] = token
-        return True
-
-    async def _stop_soon():
-        await asyncio.sleep(0.2)
-        stop.set()
-
-    redis = FakeRedis(
+    runtime_io.responses.append(
         {
-            service_token_key(cfg.attempt_id): json.dumps(
-                {
-                    "token": "rotated-token",
-                    "expires_at": "2026-09-20T08:30:00+00:00",
-                }
-            )
+            "stop_requested": False,
+            "access_token": "rotated-token",
+            "token_expires_at": "2026-09-20T08:30:00+00:00",
         }
     )
-    stopper = asyncio.ensure_future(_stop_soon())
-    previous = os.environ.get("BIFROST_ACCESS_TOKEN")
+    runtime_io.stop_after_request = stop
     try:
-        with (
-            patch(
-                "src.core.cache.get_redis",
-                return_value=_fake_redis_values(redis),
-            ),
-            patch(
-                "bifrost._service_runtime.install_service_credentials",
-                side_effect=_record,
-            ),
-        ):
-            await _service_supervisor(cfg, stop)
+        await _service_supervisor(cfg, stop)
     finally:
-        stopper.cancel()
         clear_service_runtime()
-        if previous is None:
-            os.environ.pop("BIFROST_ACCESS_TOKEN", None)
-        else:
-            os.environ["BIFROST_ACCESS_TOKEN"] = previous
-    assert installed.get("token") == "rotated-token"
+    assert runtime_io.installed_tokens == ["rotated-token"]
     assert cfg.token_expires_at == "2026-09-20T08:30:00+00:00"

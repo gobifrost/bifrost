@@ -8,7 +8,6 @@
  * - Sending messages (non-streaming)
  */
 
-import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
@@ -170,7 +169,6 @@ export function useAgent(agentId: string | undefined) {
 		{ enabled: !!agentId },
 	);
 }
-
 /** Hook to fetch all conversations */
 export function useConversations() {
 	return $api.useQuery("get", "/api/chat/conversations", {});
@@ -268,7 +266,6 @@ export function useDeleteConversation() {
 		},
 	);
 }
-
 /** Hook to send a message (non-streaming) */
 export function useSendMessage() {
 	const queryClient = useQueryClient();
@@ -356,92 +353,4 @@ export function useSendMessage() {
 			},
 		},
 	);
-}
-
-// ==================== Stats Hooks ====================
-
-/** Pricing rates per million tokens (USD) */
-const PRICING_RATES: Record<string, { input: number; output: number }> = {
-	// Anthropic models
-	"claude-opus-4": { input: 15.0, output: 75.0 },
-	"claude-sonnet-4": { input: 3.0, output: 15.0 },
-	"claude-3-5-sonnet": { input: 3.0, output: 15.0 },
-	"claude-3-opus": { input: 15.0, output: 75.0 },
-	"claude-3-sonnet": { input: 3.0, output: 15.0 },
-	"claude-3-haiku": { input: 0.25, output: 1.25 },
-	// OpenAI models
-	"gpt-4o": { input: 2.5, output: 10.0 },
-	"gpt-4o-mini": { input: 0.15, output: 0.6 },
-	"gpt-4-turbo": { input: 10.0, output: 30.0 },
-	"gpt-4": { input: 30.0, output: 60.0 },
-	"gpt-3.5-turbo": { input: 0.5, output: 1.5 },
-};
-
-/** Get pricing for a model (matches by prefix) */
-function getPricing(
-	model: string | null | undefined,
-): { input: number; output: number } | null {
-	if (!model) return null;
-	const normalizedModel = model.toLowerCase();
-	for (const [key, rates] of Object.entries(PRICING_RATES)) {
-		if (normalizedModel.includes(key.toLowerCase())) {
-			return rates;
-		}
-	}
-	return null;
-}
-
-/** Conversation statistics including token counts and estimated cost */
-export interface ConversationStats {
-	model: string | null;
-	totalInputTokens: number;
-	totalOutputTokens: number;
-	totalTokens: number;
-	estimatedCostUsd: number | null;
-}
-
-/** Hook to compute conversation statistics from messages */
-export function useConversationStats(
-	conversationId: string | undefined,
-): ConversationStats | null {
-	const { data: messages } = useMessages(conversationId);
-
-	return useMemo(() => {
-		if (!messages || messages.length === 0) return null;
-
-		const assistantMessages = messages.filter(
-			(m) => m.role === "assistant",
-		);
-
-		// Find the model from the first message that has one
-		const model = assistantMessages.find((m) => m.model)?.model ?? null;
-
-		// Sum up token counts
-		const totalInputTokens = assistantMessages.reduce(
-			(sum, m) => sum + (m.token_count_input || 0),
-			0,
-		);
-		const totalOutputTokens = assistantMessages.reduce(
-			(sum, m) => sum + (m.token_count_output || 0),
-			0,
-		);
-		const totalTokens = totalInputTokens + totalOutputTokens;
-
-		// Calculate estimated cost
-		let estimatedCostUsd: number | null = null;
-		const pricing = getPricing(model);
-		if (pricing && totalTokens > 0) {
-			const inputCost = (totalInputTokens / 1_000_000) * pricing.input;
-			const outputCost = (totalOutputTokens / 1_000_000) * pricing.output;
-			estimatedCostUsd = inputCost + outputCost;
-		}
-
-		return {
-			model,
-			totalInputTokens,
-			totalOutputTokens,
-			totalTokens,
-			estimatedCostUsd,
-		};
-	}, [messages]);
 }

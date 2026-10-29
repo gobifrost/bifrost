@@ -20,10 +20,9 @@ import type { ConfigSchemaItem } from "@/services/integrations";
 const mockMutateAsync = vi.fn();
 
 vi.mock("@/services/integrations", async () => {
-	const actual =
-		await vi.importActual<typeof import("@/services/integrations")>(
-			"@/services/integrations",
-		);
+	const actual = await vi.importActual<
+		typeof import("@/services/integrations")
+	>("@/services/integrations");
 	return {
 		...actual,
 		useUpdateMapping: () => ({
@@ -81,6 +80,7 @@ describe("ConfigOverridesTab — empty states", () => {
 				orgsWithMappings={[makeOrg()]}
 				configSchema={[]}
 				integrationId="int-1"
+				canManageMapping={() => true}
 			/>,
 		);
 		expect(
@@ -101,6 +101,7 @@ describe("ConfigOverridesTab — empty states", () => {
 				]}
 				configSchema={makeSchema()}
 				integrationId="int-1"
+				canManageMapping={() => true}
 			/>,
 		);
 		expect(
@@ -116,6 +117,7 @@ describe("ConfigOverridesTab — rendering", () => {
 				orgsWithMappings={[makeOrg()]}
 				configSchema={makeSchema()}
 				integrationId="int-1"
+				canManageMapping={() => true}
 			/>,
 		);
 		expect(screen.getByText("Acme")).toBeInTheDocument();
@@ -132,6 +134,7 @@ describe("ConfigOverridesTab — inline edit save", () => {
 				orgsWithMappings={[makeOrg()]}
 				configSchema={makeSchema()}
 				integrationId="int-1"
+				canManageMapping={() => true}
 			/>,
 		);
 
@@ -166,6 +169,7 @@ describe("ConfigOverridesTab — delete flow", () => {
 				orgsWithMappings={[makeOrg()]}
 				configSchema={makeSchema()}
 				integrationId="int-1"
+				canManageMapping={() => true}
 			/>,
 		);
 
@@ -180,9 +184,7 @@ describe("ConfigOverridesTab — delete flow", () => {
 		);
 
 		// Confirm the destructive action
-		await user.click(
-			screen.getByRole("button", { name: /^delete$/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
 		await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1));
 		const payload = mockMutateAsync.mock.calls[0]![0];

@@ -9,7 +9,7 @@ name: bifrost-dev
 # - Hot reload with volume mounts for live code changes
 # - Development-specific Dockerfiles (dependencies only)
 # - Debug port for VS Code attachment
-# - Management UI ports for RabbitMQ and SeaweedFS
+# - SeaweedFS S3 port
 # - Development environment defaults
 
 services:
@@ -17,14 +17,6 @@ services:
   postgres:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bifrost_dev}
-
-  # RabbitMQ - development password + management UI port
-  rabbitmq:
-    environment:
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-bifrost_dev}
-    ports:
-      - "5672:5672"
-      - "15672:15672"  # Management UI for debugging
 
   # SeaweedFS - development password + S3 port
   seaweedfs:
@@ -73,7 +65,6 @@ services:
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD:-bifrost_dev}@rabbitmq:5672/
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY:-bifrost123}}
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-http://localhost:8000}
       BIFROST_S3_PUBLIC_ENDPOINT_URL: ${BIFROST_S3_PUBLIC_ENDPOINT_URL:-}
@@ -110,9 +101,9 @@ services:
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD:-bifrost_dev}@rabbitmq:5672/
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY:-bifrost123}}
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-http://localhost:8000}
+      BIFROST_API_URL: http://api:8000
     volumes:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
@@ -136,9 +127,9 @@ services:
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD:-bifrost_dev}@rabbitmq:5672/
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY:-bifrost123}}
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-http://localhost:8000}
+      BIFROST_API_URL: http://api:8000
       # Worker needs minimal DB connections — Redis-first pattern for agent runs
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"

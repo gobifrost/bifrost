@@ -1,0 +1,14 @@
+{
+  "key": "pr:987",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Chat shows current context usage and cached input beside the model selector.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/987",
+      "Controller reviewed the approved three-line popout against the real provider Chat journey, reload behavior, and rendered dark, light, and mobile screenshots for issue #986."
+    ]
+  }
+}

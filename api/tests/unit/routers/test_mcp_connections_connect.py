@@ -324,3 +324,37 @@ async def test_activate_client_credentials_400_when_no_access_token_returned(
 
     assert exc.value.status_code == 400
     assert "access_token" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_activate_client_credentials_rejects_invalid_existing_service_binding_before_decrypt(
+    db_session: AsyncSession,
+):
+    """A stale cross-org service FK must not be overwritten or decrypted."""
+    contoso = await _make_org(db_session)
+    fabrikam = await _make_org(db_session)
+    provider = await _make_provider(db_session, flow="client_credentials")
+    server = await _make_server(db_session, provider)
+    connection = await _make_connection(db_session, server, contoso)
+    foreign_token = OAuthToken(
+        id=uuid4(),
+        organization_id=fabrikam.id,
+        provider_id=provider.id,
+        user_id=None,
+        encrypted_access_token=encrypt_secret("foreign-access-token").encode(),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=["read"],
+    )
+    db_session.add(foreign_token)
+    await db_session.flush()
+    connection.service_oauth_token_id = foreign_token.id
+    await db_session.flush()
+    await db_session.refresh(connection, attribute_names=["service_oauth_token", "server"])
+
+    with patch("src.routers.mcp_connections.decrypt_secret") as decrypt:
+        with pytest.raises(HTTPException) as excinfo:
+            await _activate_client_credentials(_ctx(db_session), connection, provider)
+
+    assert excinfo.value.status_code == 400
+    assert excinfo.value.detail == "Existing service OAuth token is not valid for this connection"
+    decrypt.assert_not_called()

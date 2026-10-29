@@ -134,6 +134,7 @@ class SDKReferenceScanner:
             select(Integration.name)
             .distinct()
             .join(IntegrationMapping, Integration.id == IntegrationMapping.integration_id)
+            .where(Integration.is_deleted.is_(False))
         )
         result = await self.db.execute(stmt)
         return {row[0] for row in result.fetchall()}

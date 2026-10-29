@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient, authFetch, setRefusedChangeListener } from "./api-client";
-import { ACCESS_TOKEN_KEY } from "./auth-token";
+import {
+	ACCESS_TOKEN_KEY,
+	setImpersonationToken,
+} from "./auth-token";
 
 interface TestPlatformAuthBridge {
 	getAccessToken: () => string | null;
@@ -374,6 +377,31 @@ describe.each(["authFetch", "apiClient"] as const)(
 		});
 	},
 );
+
+describe("impersonation authentication failures", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		localStorage.clear();
+		sessionStorage.clear();
+	});
+
+	it("does not refresh or replay a rejected mutation as the operator", async () => {
+		const operator = buildFakeToken();
+		localStorage.setItem(ACCESS_TOKEN_KEY, operator);
+		setImpersonationToken(buildFakeToken());
+		const fetchMock = vi.fn().mockResolvedValue(mockResponse(401));
+		vi.stubGlobal("fetch", fetchMock);
+
+		const response = await authFetch("/api/users/user-1", {
+			method: "PATCH",
+			body: JSON.stringify({ name: "No replay" }),
+		});
+
+		expect(response.status).toBe(401);
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe(operator);
+	});
+});
 
 describe("apiClient refused changes", () => {
 	let fetchMock: ReturnType<typeof vi.fn>;

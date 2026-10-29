@@ -15,7 +15,7 @@ function LocationProbe() {
 	);
 }
 
-const mockUseAuth = vi.fn();
+const mockUseAuthorization = vi.fn();
 const mockUseOrganizations = vi.fn();
 const mockUseUsageReport = vi.fn();
 const mockUsageCharts = vi.fn();
@@ -25,8 +25,8 @@ const mockAgentTable = vi.fn();
 const mockOrganizationTable = vi.fn();
 const mockKnowledgeStorageTable = vi.fn();
 
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => mockUseAuth(),
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -248,7 +248,10 @@ function renderPage() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAuthorization.mockReturnValue({
+		canAnywhere: () => true,
+		canAt: () => true,
+	});
 	mockUseOrganizations.mockReturnValue({
 		data: [{ id: "org-1", name: "Acme Corp" }],
 	});

@@ -32,8 +32,9 @@ import type {
 } from "@/services/services";
 import { fileService } from "@/services/fileService";
 import { useEditorStore } from "@/stores/editorStore";
-import { useAuth } from "@/contexts/AuthContext";
 import { getErrorMessage } from "@/lib/api-error";
+import { orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import { toast } from "sonner";
 
 /**
@@ -48,7 +49,7 @@ import { toast } from "sonner";
 export function ServiceDetail() {
 	const { serviceId } = useParams<{ serviceId: string }>();
 	const navigate = useNavigate();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const openFileInTab = useEditorStore((state) => state.openFileInTab);
 	const openEditor = useEditorStore((state) => state.openEditor);
 	const setSidebarPanel = useEditorStore((state) => state.setSidebarPanel);
@@ -88,6 +89,16 @@ export function ServiceDetail() {
 		[logsData],
 	);
 	const logsTotal = logsData?.pages[0]?.total ?? 0;
+	const canReadService = service
+		? authorization.canAt("platform.read", orgTarget(service.organization_id))
+		: false;
+	const canManageService = service
+		? !service.solution_id &&
+			authorization.canAt(
+				"platform.readwrite",
+				orgTarget(service.organization_id),
+			)
+		: false;
 
 	// Live tail over service:{id} (platform admins only); merged with
 	// persisted rows in the view. No polling.
@@ -249,7 +260,8 @@ export function ServiceDetail() {
 					hasOlderLogs={hasOlderLogs ?? false}
 					isLoadingOlderLogs={isLoadingOlderLogs}
 					onLoadOlderLogs={() => void fetchOlderLogs()}
-					isPlatformAdmin={isPlatformAdmin}
+					canManageService={canManageService}
+					canReadService={canReadService}
 					onAction={handleAction}
 					onOpenInEditor={handleOpenInEditor}
 				onBack={() => navigate("/services")}

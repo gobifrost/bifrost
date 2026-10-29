@@ -94,6 +94,11 @@ async def run_refresh_job(
         #    cover these in practice, but the explicit subqueries are
         #    self-documenting and defend against future flow types
         #    being added without the scheduler being updated.
+        #
+        # Tokens whose provider belongs to a soft-deleted integration are
+        # excluded: nobody can see or disconnect them, so refreshing them
+        # only produces refresh_failed alerts nobody can act on. Providers
+        # with no integration (MCP, standalone connections) are kept.
         from src.models.orm.external_mcp import MCPConnection, UserMCPCredential
 
         async with get_db_context() as db:
@@ -105,6 +110,7 @@ async def run_refresh_job(
             query = (
                 select(OAuthToken)
                 .join(OAuthToken.provider)
+                .outerjoin(Integration, Integration.id == OAuthProvider.integration_id)
                 .options(selectinload(OAuthToken.provider))
                 .where(
                     or_(
@@ -112,7 +118,8 @@ async def run_refresh_job(
                         OAuthProvider.oauth_flow_type == "client_credentials",
                         OAuthToken.id.in_(mcp_service_token_ids),
                         OAuthToken.id.in_(user_mcp_token_ids),
-                    )
+                    ),
+                    or_(Integration.id.is_(None), Integration.is_deleted.is_(False)),
                 )
             )
             result = await db.execute(query)

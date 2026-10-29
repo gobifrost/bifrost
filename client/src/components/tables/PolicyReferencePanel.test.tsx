@@ -70,11 +70,14 @@ function renderAndOpen() {
 	return result;
 }
 
-describe("PolicyReferencePanel — legacy sections", () => {
-	it("renders USER fields, ROW fields, Functions, and Operators when open", () => {
+describe("PolicyReferencePanel — reference sections", () => {
+	it("renders USER fields, Authorities, ROW fields, Functions, and Operators when open", () => {
 		renderAndOpen();
 		expect(
 			screen.getByRole("heading", { name: /USER fields/i }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("heading", { name: /Authorities/i }),
 		).toBeInTheDocument();
 		expect(
 			screen.getByRole("heading", { name: /ROW fields/i }),
@@ -85,6 +88,17 @@ describe("PolicyReferencePanel — legacy sections", () => {
 		expect(
 			screen.getByRole("heading", { name: /Operators/i }),
 		).toBeInTheDocument();
+	});
+
+	it("distinguishes the Platform Admin role fact from Platform Admin Access", () => {
+		renderAndOpen();
+		expect(
+			screen.getByText(
+				"Boolean. True when the user holds the Platform Admin role.",
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText("Platform Admin Access")).toBeInTheDocument();
+		expect(screen.getByText(/^Expression.*Full workflow executions/)).toBeInTheDocument();
 	});
 
 	it("does not render body content until the trigger is clicked", () => {

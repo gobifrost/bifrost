@@ -23,6 +23,7 @@ across sync runs.
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -36,6 +37,7 @@ from src.services.mcp_client.auth_resolution import (
     _decode_access_token,
     _is_token_fresh,
     _refresh_token_in_place,
+    service_token_binding_error,
 )
 from src.services.mcp_client.errors import MisconfigError, ToolDispatchError
 
@@ -57,6 +59,11 @@ async def _resolve_service_token_for_sync(
         raise MisconfigError(
             connection_id=connection.id,
             reason="catalog sync requires a service OAuth token; none configured",
+        )
+    if service_token_binding_error(connection, token) is not None:
+        raise MisconfigError(
+            connection_id=connection.id,
+            reason="catalog sync requires a valid service OAuth token binding",
         )
 
     result = await db.execute(
@@ -128,14 +135,22 @@ async def sync_catalog(
 
     for tool in tools_result.tools:
         seen_names.add(tool.name)
-        # The MCP SDK exposes the JSON Schema as ``inputSchema`` on the
-        # Tool model. Persist it verbatim so the planner can re-emit it
-        # to the LLM without re-shaping.
-        schema = (
+        # Persist the external MCP descriptor in the same shape the resolver
+        # reads. ``outputSchema`` describes a successful structured-content
+        # payload and is optional; absent or non-dict values remain absent
+        # rather than being inferred.
+        input_schema = (
             tool.inputSchema
             if isinstance(tool.inputSchema, dict)
             else (tool.inputSchema.model_dump() if tool.inputSchema is not None else {})
         )
+        schema = {"inputSchema": deepcopy(input_schema)}
+        description = getattr(tool, "description", None)
+        if isinstance(description, str):
+            schema["description"] = description
+        output_schema = getattr(tool, "outputSchema", None)
+        if isinstance(output_schema, dict):
+            schema["outputSchema"] = deepcopy(output_schema)
 
         existing = existing_by_name.get(tool.name)
         if existing is not None:

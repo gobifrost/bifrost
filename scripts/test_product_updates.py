@@ -16,6 +16,11 @@ BASE = "a" * 40
 TARGET = "b" * 40
 COMMIT = "c" * 40
 ENTRY_ID = "11111111-1111-4111-8111-111111111111"
+# The single-file ledger as it stood before items moved to one file each. The
+# live ledger changes with every PR, so the round-trip pins this frozen copy.
+PRE_SPLIT_LEDGER = (
+    Path(__file__).parent / "testdata" / "product_updates_dispositions_pre_split.json"
+)
 
 
 class ProductUpdatesTests(unittest.TestCase):
@@ -33,7 +38,7 @@ class ProductUpdatesTests(unittest.TestCase):
         self.inventory = self.content / "inventory.json"
         self.dispositions = self.content / "dispositions.json"
         self._write_json(self.inventory, self.inventory_data())
-        self._write_json(self.dispositions, self.disposition_data())
+        self.write_dispositions(self.disposition_data())
         self.write_entry()
 
     def tearDown(self) -> None:
@@ -119,6 +124,34 @@ class ProductUpdatesTests(unittest.TestCase):
     def _write_json(path: Path, data: dict) -> None:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
+    def write_dispositions(self, data: dict) -> None:
+        """Write the canonical layout: a header plus one file per item."""
+        shutil.rmtree(self.content / "dispositions", ignore_errors=True)
+        self.write_item_files(data["items"])
+        self._write_json(
+            self.dispositions,
+            {name: value for name, value in data.items() if name != "items"},
+        )
+
+    def write_item_files(self, items: dict) -> Path:
+        """Write each disposition to its own file beside the ledger header."""
+        directory = self.content / "dispositions"
+        directory.mkdir(exist_ok=True)
+        for key, item in items.items():
+            self._write_json(
+                directory / product_updates.disposition_file_name(key),
+                {"key": key, **item},
+            )
+        return directory
+
+    def other_item(self) -> dict:
+        return {
+            "classification": "omit",
+            "entry_ids": [],
+            "reason": "Internal CI work",
+            "review": {"status": "approved", "evidence": ["review"]},
+        }
+
     def test_bundle_is_stable_eligible_and_uses_cached_verified_credits(self) -> None:
         first = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
@@ -182,13 +215,104 @@ class ProductUpdatesTests(unittest.TestCase):
     def test_coverage_reconciles_every_cached_landed_item_once(self) -> None:
         report = product_updates.coverage_report(
             product_updates.read_json(self.inventory),
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
             [self.entry_data()],
         )
 
         self.assertEqual([], report["unclassified"])
         self.assertEqual([], report["unrepresented_highlights"])
         self.assertEqual([], report["uncovered_commits"])
+
+    def test_each_pr_disposition_is_its_own_file(self) -> None:
+        data = self.disposition_data()
+        data["items"]["pr:11"] = self.other_item()
+        self.write_dispositions(data)
+        directory = self.content / "dispositions"
+
+        self.assertEqual(
+            ["pr-10.json", "pr-11.json"],
+            sorted(path.name for path in directory.iterdir()),
+        )
+        self.assertEqual(
+            {"key": "pr:11", **data["items"]["pr:11"]},
+            json.loads((directory / "pr-11.json").read_text(encoding="utf-8")),
+        )
+        self.assertNotIn("items", json.loads(self.dispositions.read_text()))
+        self.assertEqual(data, product_updates.load_dispositions(self.dispositions))
+
+    def test_per_item_layout_assembles_the_pre_split_ledger(self) -> None:
+        original = json.loads(PRE_SPLIT_LEDGER.read_text(encoding="utf-8"))
+        self.write_dispositions(original)
+
+        self.assertEqual(original, product_updates.load_dispositions(self.dispositions))
+
+    def test_ledger_header_rejects_inline_items(self) -> None:
+        self._write_json(self.dispositions, self.disposition_data())
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("items belong in", errors[0])
+
+    def test_disposition_keys_map_to_distinct_safe_file_names(self) -> None:
+        self.assertEqual(
+            f"commit-{COMMIT}.json",
+            product_updates.disposition_file_name(f"commit:{COMMIT}"),
+        )
+        for key in ("pr-10", "../pr:10", "pr:10/escape", "pr:", ""):
+            with self.assertRaises(ValueError):
+                product_updates.disposition_file_name(key)
+
+    def test_misnamed_item_file_fails(self) -> None:
+        directory = self.write_item_files({"pr:11": self.other_item()})
+        (directory / "pr-11.json").rename(directory / "pr-12.json")
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("pr-12.json: key must match the file name", errors[0])
+
+    def test_stray_entries_in_the_disposition_directory_fail(self) -> None:
+        strays = {
+            "orphan.txt": lambda path: path.write_text("{}\n"),
+            "PR-12.JSON": lambda path: path.write_text("{}\n"),
+            "pr-12.json.bak": lambda path: path.write_text("{}\n"),
+            ".gitkeep": lambda path: path.write_text(""),
+            "pr-12.json": lambda path: path.mkdir(),
+            "nested": lambda path: path.mkdir(),
+            "pr-13.json": lambda path: path.symlink_to(path.parent / "pr-11.json"),
+        }
+        for name, create in strays.items():
+            with self.subTest(name=name):
+                directory = self.content / "dispositions"
+                shutil.rmtree(directory, ignore_errors=True)
+                self.write_item_files({"pr:11": self.other_item()})
+                create(directory / name)
+                errors = product_updates.validate_content(
+                    self.content, self.inventory, self.dispositions, TARGET
+                )
+                self.assertEqual(1, len(errors))
+                self.assertIn(
+                    f"{name}: only <key>.json disposition files belong", errors[0]
+                )
+
+    def test_malformed_item_file_fails(self) -> None:
+        directory = self.write_item_files({"pr:11": self.other_item()})
+        (directory / "pr-11.json").write_text('{"key": "pr:11",\n')
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("pr-11.json: invalid JSON", errors[0])
+
+    def test_disposition_directory_must_be_a_directory(self) -> None:
+        shutil.rmtree(self.content / "dispositions")
+        (self.content / "dispositions").write_text("{}\n")
+        errors = product_updates.validate_content(
+            self.content, self.inventory, self.dispositions, TARGET
+        )
+        self.assertEqual(1, len(errors))
+        self.assertIn("must be a directory of disposition files", errors[0])
 
     def test_build_target_may_be_a_real_git_descendant_of_the_frozen_range(
         self,
@@ -226,7 +350,7 @@ class ProductUpdatesTests(unittest.TestCase):
         self._write_json(self.inventory, inventory)
         disposition = self.disposition_data()
         disposition["inventory"] = {"base_ref": refs[0], "target_ref": refs[1]}
-        self._write_json(self.dispositions, disposition)
+        self.write_dispositions(disposition)
         entry = self.entry_data()
         entry["sources"][0]["commit"] = refs[1]
         entry["eligibility"]["requires_commits"] = [refs[1]]
@@ -312,7 +436,7 @@ class ProductUpdatesTests(unittest.TestCase):
         data["items"]["pr:10"].update(
             classification="other", entry_ids=[], summary="Reviewed smaller change"
         )
-        self._write_json(self.dispositions, data)
+        self.write_dispositions(data)
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
         )
@@ -322,7 +446,7 @@ class ProductUpdatesTests(unittest.TestCase):
     def test_draft_source_review_withholds_approved_entry(self) -> None:
         data = self.disposition_data()
         data["items"]["pr:10"]["review"]["status"] = "draft"
-        self._write_json(self.dispositions, data)
+        self.write_dispositions(data)
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
         )
@@ -421,12 +545,12 @@ class ProductUpdatesTests(unittest.TestCase):
     def test_event_scope_requires_a_canonical_disposition_for_each_pr(self) -> None:
         errors = product_updates.validate_event(
             {"pull_request": {"number": 10}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
         )
         self.assertEqual([], errors)
         errors = product_updates.validate_event(
             {"merge_group": {"pull_requests": [{"number": 10}, {"number": 11}]}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
         )
         self.assertEqual(["missing canonical disposition for pr:11"], errors)
 
@@ -441,13 +565,13 @@ class ProductUpdatesTests(unittest.TestCase):
         ]
         errors = product_updates.validate_event(
             {"pull_request": {"number": 10, "user": {"login": "octocat"}}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
             [entry],
         )
         self.assertEqual([], errors)
         errors = product_updates.validate_event(
             {"pull_request": {"number": 10, "user": {"login": "wrong"}}},
-            product_updates.read_json(self.dispositions),
+            product_updates.load_dispositions(self.dispositions),
             [entry],
         )
         self.assertTrue(any("verified event author" in error for error in errors))
@@ -547,7 +671,7 @@ class ProductUpdatesTests(unittest.TestCase):
             "entry_ids": [],
             "review": {"status": "draft", "evidence": ["audit"]},
         }
-        self._write_json(self.dispositions, dispositions)
+        self.write_dispositions(dispositions)
 
         errors = product_updates.validate_content(
             self.content, self.inventory, self.dispositions, TARGET
@@ -569,7 +693,7 @@ class ProductUpdatesTests(unittest.TestCase):
                 "review": {"status": "approved", "evidence": ["review"]},
             }
         }
-        self._write_json(self.dispositions, disposition)
+        self.write_dispositions(disposition)
         (self.content / "entries" / f"{ENTRY_ID}.md").unlink()
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
@@ -613,7 +737,7 @@ class ProductUpdatesTests(unittest.TestCase):
             "category": "hardening",
             "review": {"status": "approved", "evidence": ["review"]},
         }
-        self._write_json(self.dispositions, dispositions)
+        self.write_dispositions(dispositions)
         bundle = product_updates.build_bundle(
             self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
         )
@@ -669,6 +793,90 @@ class ProductUpdatesTests(unittest.TestCase):
         )
 
         self.assertEqual([ENTRY_ID], [entry["id"] for entry in bundle["entries"]])
+
+    PROMPT = (
+        "You are helping me with this Bifrost change: one worker service.\n"
+        "1. Inspect my setup and report what applies.\n"
+        "2. Propose the exact changes, and wait for my confirmation.\n"
+        "See https://docs.gobifrost.com/install and "
+        "https://github.com/gobifrost/bifrost/pull/10."
+    )
+
+    def test_agent_prompt_is_bundled_and_rendered_collapsed_in_a_text_fence(
+        self,
+    ) -> None:
+        data = self.entry_data()
+        data["agent_prompt"] = self.PROMPT
+        self.write_entry(data, "Approved. [Open Settings](/settings)")
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        self.assertEqual(self.PROMPT, bundle["entries"][0]["agent_prompt"])
+
+        rendered = product_updates.render_release(
+            bundle, f"https://raw.githubusercontent.com/gobifrost/bifrost/{TARGET}/"
+        )
+
+        self.assertIn(
+            "#### Agent Prompt\n\n"
+            "Copy this prompt to have your coding agent help you with this change.\n\n"
+            "<details>\n<summary>Show Prompt</summary>\n\n```text\n"
+            + self.PROMPT
+            + "\n```\n\n</details>\n\nSources:",
+            rendered,
+        )
+
+    def test_agent_prompt_words_do_not_count_toward_the_entry_budget(self) -> None:
+        data = self.entry_data()
+        data["agent_prompt"] = self.PROMPT + " step" * 300
+        self.write_entry(data, "word " * 60)
+        self.assertEqual(
+            [],
+            product_updates.validate_content(
+                self.content, self.inventory, self.dispositions, TARGET
+            ),
+        )
+
+    def test_agent_prompt_rules(self) -> None:
+        cases = {
+            "exceeds 400 words": "wait for my confirmation " + "x " * 400,
+            "must not contain raw HTML": (
+                "Run <script>x</script>, then wait for my confirmation."
+            ),
+            "must not contain backticks": (
+                "Run `docker compose up`, then wait for my confirmation."
+            ),
+            "links only to the Bifrost docs": (
+                "Read https://example.com/x, then wait for my confirmation."
+            ),
+            "must tell the agent to 'wait for my confirmation'": (
+                "Apply the changes right away."
+            ),
+        }
+        for message, prompt in cases.items():
+            with self.subTest(message):
+                data = self.entry_data()
+                data["agent_prompt"] = prompt
+                self.write_entry(data)
+                errors = product_updates.validate_content(
+                    self.content, self.inventory, self.dispositions, TARGET
+                )
+                self.assertTrue(
+                    any(message in error for error in errors), (message, errors)
+                )
+
+    def test_agent_prompt_schema_requires_non_empty_text(self) -> None:
+        for agent_prompt in ("", {"prompt": "wait for my confirmation"}):
+            with self.subTest(agent_prompt):
+                data = self.entry_data()
+                data["agent_prompt"] = agent_prompt
+                self.write_entry(data)
+                self.assertNotEqual(
+                    [],
+                    product_updates.validate_content(
+                        self.content, self.inventory, self.dispositions, TARGET
+                    ),
+                )
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ import json
 from typing import Any
 from uuid import uuid4
 
+import click
 import httpx
 import pytest
 from click.testing import CliRunner, Result
@@ -138,6 +139,16 @@ class TestAuditList:
             ("GET", "/api/audit", {"user_id": user_id}),
         ]
 
+    def test_workflow_and_organization_filters(self, fake_client: _FakeClient) -> None:
+        workflow_id, organization_id = str(uuid4()), str(uuid4())
+        fake_client.respond("/api/audit", {"entries": [], "groups": None, "continuation_token": None})
+        assert _invoke(["list", "--workflow", workflow_id, "--org", organization_id]).exit_code == 0
+        assert _invoke(["list", "--org", "global"]).exit_code == 0
+        assert fake_client.calls == [
+            ("GET", "/api/audit", {"workflow_id": workflow_id, "organization_id": organization_id}),
+            ("GET", "/api/audit", {"organization_id": "none"}),
+        ]
+
     def test_renders_one_line_per_entry(self, fake_client: _FakeClient) -> None:
         fake_client.respond(
             "/api/audit",
@@ -179,6 +190,83 @@ class TestAuditList:
             ["12", "access.check", "2026-10-05T10:00:00+00:00"],
             ["3", "-", "2026-10-04T09:00:00+00:00"],
         ]
+
+    def test_aggregate_sends_the_param_and_renders_access_check_summary(self, fake_client: _FakeClient) -> None:
+        fake_client.respond(
+            "/api/audit",
+            {
+                "entries": [],
+                "groups": [
+                    {
+                        "key": "opaque-selector",
+                        "count": 12,
+                        "first_seen": "2026-10-05T10:02:00+00:00",
+                        "last_seen": "2026-10-05T10:59:00+00:00",
+                        "window_start": "2026-10-05T10:00:00+00:00",
+                        "window_end": "2026-10-05T11:00:00+00:00",
+                        "sample": _entry(operation_id="workflows.run"),
+                    }
+                ],
+                "continuation_token": None,
+            },
+        )
+
+        result = _invoke(["list", "--aggregate", "1h"])
+
+        assert fake_client.calls == [("GET", "/api/audit", {"aggregate": "1h"})]
+        assert "12" in result.output
+        assert "2026-10-05T10:02:00+00:00" in result.output
+        assert "ada@contoso.test" in result.output
+        assert "Contoso" in result.output
+        assert "workflows.run" in result.output
+        assert "opaque-selector" not in result.output
+
+    def test_rejects_group_by_with_aggregate(self, fake_client: _FakeClient) -> None:
+        result = CliRunner().invoke(
+            audit_group,
+            ["list", "--group-by", "action", "--aggregate", "1h"],
+            standalone_mode=False,
+        )
+
+        assert isinstance(result.exception, click.UsageError)
+        assert "cannot be used together" in str(result.exception)
+        assert fake_client.calls == []
+
+    def test_workflow_and_organization_groups_are_named(self, fake_client: _FakeClient) -> None:
+        workflow_id, deleted_id, contoso_id = str(uuid4()), str(uuid4()), str(uuid4())
+        fake_client.respond(
+            "/api/audit",
+            {
+                "entries": [],
+                "groups": [
+                    {
+                        "key": workflow_id,
+                        "count": 6,
+                        "last_seen": "2026-10-05T10:00:00+00:00",
+                        "sample": _entry(workflow_name="Fleet Invoice Report"),
+                    },
+                    {"key": None, "count": 2, "last_seen": "2026-10-04T09:00:00+00:00", "sample": _entry(workflow_name=None)},
+                    {"key": deleted_id, "count": 1, "last_seen": "2026-10-03T09:00:00+00:00", "sample": _entry(workflow_name=None)},
+                ],
+                "continuation_token": None,
+            },
+        )
+        lines = _invoke(["list", "--group-by", "workflow"]).output.splitlines()
+        assert [line.split("  ")[1].strip() for line in lines] == ["Fleet Invoice Report", "No Workflow", deleted_id]
+
+        fake_client.respond(
+            "/api/audit",
+            {
+                "entries": [],
+                "groups": [
+                    {"key": contoso_id, "count": 4, "last_seen": "2026-10-05T10:00:00+00:00", "sample": _entry()},
+                    {"key": None, "count": 1, "last_seen": "2026-10-04T09:00:00+00:00", "sample": _entry()},
+                ],
+                "continuation_token": None,
+            },
+        )
+        lines = _invoke(["list", "--group-by", "organization"]).output.splitlines()
+        assert [line.split("  ")[1].strip() for line in lines] == ["Contoso", "Global"]
 
     def test_says_so_when_there_are_no_entries(self, fake_client: _FakeClient) -> None:
         fake_client.respond("/api/audit", {"entries": [], "groups": None, "continuation_token": None})
@@ -264,6 +352,62 @@ class TestAuditExplain:
         ]
         assert output.rstrip().splitlines()[-1] == "Changed: yes"
 
+    def test_a_named_permission_check_names_its_permission(self, fake_client: _FakeClient) -> None:
+        event_id = str(uuid4())
+        then = _trace(
+            "failure",
+            [
+                ("run_user", "Run user", "passed", "person"),
+                ("target", "Target in reach", "stopped", "outside"),
+                ("permission", "Permission", "not_reached", ""),
+            ],
+        )
+        then["steps"][2]["facts"] = {"permission": "agents.read", "permission_display_name": "Read Agents"}
+        fake_client.respond(
+            f"/api/audit/{event_id}/explain",
+            _explanation(
+                event=_entry(resource_type="permission"),
+                then=then,
+                now=None,
+                now_unavailable="run_user_missing",
+                changed=None,
+            ),
+        )
+        output = _invoke(["explain", event_id]).output
+        assert _header(output)["Permission"] == "Read Agents (agents.read)"
+
+    def test_a_run_as_check_keeps_the_server_labels_and_reasons(self, fake_client: _FakeClient) -> None:
+        event_id = str(uuid4())
+        then = _trace(
+            "failure",
+            [
+                ("run_user", "Run user", "passed", "person"),
+                ("powers", "Workflow powers", "not_applicable", "no_workflow"),
+                ("run_as_user", "Run As User", "passed", "person"),
+                ("target", "Target in reach", "passed", "home"),
+                ("permission", "Permission", "passed", "role:contoso-impersonation:users.impersonate@organization"),
+                ("privileged_target", "Privileged User", "stopped", "denied:missing:privilegedaccess.readwrite"),
+            ],
+        )
+        fake_client.respond(
+            f"/api/audit/{event_id}/explain",
+            _explanation(
+                event=_entry(resource_type="run_as"),
+                then=then,
+                now=None,
+                now_unavailable="run_user_missing",
+                changed=None,
+            ),
+        )
+        output = _invoke(["explain", event_id]).output
+        rows = _table(output)
+        assert rows[3:] == [
+            ["Run As User", "passed (person)"],
+            ["Target in reach", "passed (home)"],
+            ["Permission", "passed (role:contoso-impersonation:users.impersonate@organization)"],
+            ["Privileged User", "stopped (denied:missing:privilegedaccess.readwrite)"],
+        ]
+
     def test_unchanged_explanation_says_no(self, fake_client: _FakeClient) -> None:
         event_id = str(uuid4())
         fake_client.respond(f"/api/audit/{event_id}/explain", _explanation(changed=False))
@@ -275,11 +419,13 @@ class TestAuditExplain:
         [
             ("rows_not_stored", "table row decisions can't be re-run: the rows aren't stored"),
             ("run_user_missing", "the run's user no longer exists"),
+            ("run_as_user_missing", "the user it acted as no longer exists"),
             ("workflow_missing", "the workflow no longer exists"),
             (
                 "solution_not_recorded",
                 "this file check was recorded before Solutions were stored with it",
             ),
+            ("inputs_not_stored", "this check was recorded before its inputs were stored with it"),
         ],
     )
     def test_unavailable_now_prints_the_reason_instead_of_the_column(
@@ -299,6 +445,32 @@ class TestAuditExplain:
         ]
         assert f"NOW: not available — {sentence}" in output.splitlines()
         assert "Changed" not in output
+
+    def test_no_stored_trace_shows_now_only(self, fake_client: _FakeClient) -> None:
+        event_id = str(uuid4())
+        fake_client.respond(f"/api/audit/{event_id}/explain", _explanation(then=None, changed=None))
+        output = _invoke(["explain", event_id]).output
+        assert _table(output) == [
+            ["STEP", "NOW"],
+            ["Run user", "passed"],
+            ["Permission", "passed (full)"],
+            ["Reach", "passed (home)"],
+        ]
+        assert "THEN: not stored — this check was recorded before its decision was stored with it" in output.splitlines()
+        assert "Changed" not in output
+
+    def test_neither_then_nor_now_prints_both_reasons(self, fake_client: _FakeClient) -> None:
+        event_id = str(uuid4())
+        fake_client.respond(
+            f"/api/audit/{event_id}/explain",
+            _explanation(then=None, now=None, now_unavailable="inputs_not_stored", changed=None),
+        )
+        output = _invoke(["explain", event_id]).output
+        assert _table(output) == []
+        assert output.rstrip().splitlines()[-2:] == [
+            "THEN: not stored — this check was recorded before its decision was stored with it",
+            "NOW: not available — this check was recorded before its inputs were stored with it",
+        ]
 
     def test_json_passes_the_explanation_through(self, fake_client: _FakeClient) -> None:
         event_id = str(uuid4())

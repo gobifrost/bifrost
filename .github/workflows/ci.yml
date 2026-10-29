@@ -96,7 +96,7 @@ jobs:
           python3 scripts/check_skill_mirrors.py
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -126,11 +126,14 @@ jobs:
         run: ../.venv/bin/pyright
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
           cache-dependency-path: client/package-lock.json
+
+      - name: Dependabot automation contracts
+        run: node --test scripts/test_dependabot_product_updates.cjs scripts/test_dependabot_alert_lookup.cjs
 
       - name: Install client deps
         working-directory: client
@@ -158,7 +161,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
@@ -207,7 +210,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -277,7 +280,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -403,7 +406,7 @@ jobs:
 
       - name: Upload browser diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: critical-browser-smoke-${{ github.run_attempt }}
           path: |
@@ -588,7 +591,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python for Product Updates validation
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -645,7 +648,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -700,187 +703,8 @@ jobs:
             "${{ steps.version.outputs.version }}" dev "sha-${{ steps.version.outputs.short_sha }}"
 
 
-  # =============================================================================
-  # Deploy Dry Run - Manual trigger only (workflow_dispatch from any branch).
-  # Validates the DO auth chain (token, cluster name, RBAC, label selector)
-  # WITHOUT touching any deployment. Used once before merging this PR to
-  # confirm the deploy job will succeed when it fires for real.
-  # =============================================================================
-  deploy-dry-run:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    name: Deploy Dry Run
-    steps:
-      - name: Install doctl
-        uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Save kubeconfig
-        run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER_NAME }}"
-
-      - name: Probe cluster reach + RBAC + label selector
-        run: |
-          set -e
-          echo "::group::cluster info"
-          kubectl cluster-info
-          echo "::endgroup::"
-
-          echo "::group::RBAC — can I patch deployments in the bifrost namespace?"
-          kubectl auth can-i patch deployment -n bifrost
-          echo "::endgroup::"
-
-          echo "::group::Deployments the real job would monitor"
-          kubectl -n bifrost get deployment \
-            -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
-            -o wide
-          echo "::endgroup::"
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "## Bifrost deploy dry run"
-            echo ""
-            echo "If the step above passed, the real \`deploy-dev\` job will work when this PR merges."
-            echo ""
-            echo "### Deployments that would be monitored"
-            echo ""
-            echo '```'
-            kubectl -n bifrost get deployment \
-              -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
-              -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas \
-              || echo "kubectl unavailable"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  # =============================================================================
-  # Deploy Dev - Push-to-main only. Waits for Keel to move the DigitalOcean
-  # deployments to the immutable version tags published alongside :dev.
-  # Targets anything labeled
-  # `app.kubernetes.io/part-of=bifrost` in the `bifrost` namespace so new
-  # services are picked up automatically. Failures page the maintainer via
-  # GitHub's built-in workflow-failure email (no extra wiring).
-  # =============================================================================
-  deploy-dev:
-    # Fires only after build-dev lands a new image on push: main.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-dev]
-    runs-on: ubuntu-latest
-    name: Deploy Dev to DigitalOcean
-    # Allow only one deploy at a time; if a newer commit lands mid-rollout we
-    # cancel the older deploy so the cluster always converges on HEAD of main.
-    concurrency:
-      group: deploy-dev
-      cancel-in-progress: true
-
-    steps:
-      - name: Install doctl
-        uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Save kubeconfig
-        run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER_NAME }}"
-
-      - name: Wait for image automation
-        env:
-          EXPECTED_VERSION: ${{ needs.build-dev.outputs.version }}
-        run: |
-          set -euo pipefail
-          expected_api="ghcr.io/${{ env.API_IMAGE }}:${EXPECTED_VERSION}"
-          expected_client="ghcr.io/${{ env.CLIENT_IMAGE }}:${EXPECTED_VERSION}"
-          deadline=$((SECONDS + 600))
-
-          while true; do
-            pending=0
-            DEPLOYMENTS=$(kubectl -n bifrost get deployment \
-              -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
-              -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
-            for d in $DEPLOYMENTS; do
-              component=$(kubectl -n bifrost get "deployment/$d" \
-                -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}')
-              case "$component" in
-                client) expected="$expected_client" ;;
-                api|scheduler|worker) expected="$expected_api" ;;
-                *) echo "Unsupported Bifrost deployment component: $d ($component)" >&2; exit 1 ;;
-              esac
-              images=$(kubectl -n bifrost get "deployment/$d" \
-                -o jsonpath='{range .spec.template.spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}')
-              if [ -z "$images" ] || [ "$(printf '%s\n' "$images" | sort -u)" != "$expected" ]; then
-                echo "Waiting for $d to use $expected (currently: $(printf '%s' "$images" | tr '\n' ' '))"
-                pending=1
-              fi
-            done
-            if [ "$pending" -eq 0 ]; then
-              break
-            fi
-            if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "Timed out waiting for image automation to deploy ${EXPECTED_VERSION}" >&2
-              exit 1
-            fi
-            sleep 10
-          done
-
-      - name: Wait for rollouts
-        run: |
-          set -e
-          # Query the same label selector watched above, so new services are
-          # picked up without editing this workflow.
-          DEPLOYMENTS=$(kubectl -n bifrost get deployment \
-            -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
-            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
-          for d in $DEPLOYMENTS; do
-            echo "::group::rollout status $d"
-            kubectl -n bifrost rollout status "deployment/$d" --timeout=5m
-            echo "::endgroup::"
-          done
-
-      - name: Smoke deployed API and client services
-        run: |
-          set -euo pipefail
-          kubectl -n bifrost port-forward service/api 18000:8000 > /tmp/bifrost-api-port-forward.log 2>&1 &
-          API_FORWARD_PID=$!
-          kubectl -n bifrost port-forward service/client 18080:80 > /tmp/bifrost-client-port-forward.log 2>&1 &
-          CLIENT_FORWARD_PID=$!
-          cleanup() {
-            kill "$API_FORWARD_PID" "$CLIENT_FORWARD_PID" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-          for log in /tmp/bifrost-api-port-forward.log /tmp/bifrost-client-port-forward.log; do
-            ready=0
-            for _ in {1..40}; do
-              if grep -q "Forwarding from" "$log"; then
-                ready=1
-                break
-              fi
-              sleep 0.25
-            done
-            if [ "$ready" -ne 1 ]; then
-              cat "$log"
-              exit 1
-            fi
-          done
-          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready > /dev/null
-          curl --fail --silent --show-error http://127.0.0.1:18080/ | grep -q '<div id="root">'
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "## Bifrost deploy"
-            echo ""
-            echo "- Commit: \`${GITHUB_SHA::7}\`"
-            echo "- Cluster: \`${{ secrets.DO_CLUSTER_NAME }}\`"
-            echo "- Namespace: \`bifrost\`"
-            echo ""
-            echo "### Deployment status"
-            echo ""
-            kubectl -n bifrost get deployment \
-              -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
-              -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas,UPDATED:.status.updatedReplicas \
-              || echo "kubectl unavailable"
-          } >> "$GITHUB_STEP_SUMMARY"
+  # Production image selection and rollout belong to the operator's deployment
+  # repository. CI publishes verified images without connecting to a cluster.
 
   # =============================================================================
   # Build API Image - Only on version tags, after tests pass
@@ -950,7 +774,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -1041,7 +865,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

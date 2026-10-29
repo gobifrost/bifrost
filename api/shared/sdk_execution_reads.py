@@ -10,7 +10,7 @@ Single implementation for both entry points:
   engine socket.
 
 Both paths share scope resolution input (an explicit trusted principal),
-the superuser/org-user query split, workflow filters, used-by counts,
+workflow filters, used-by counts,
 execution history keyset and legacy cursor behavior, the pending
 execution fallback, status mapping, and response shape — so HTTP and
 worker-local results are identical by construction.
@@ -33,6 +33,7 @@ import json
 import logging
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import and_, desc, func, or_, select, union_all
@@ -40,8 +41,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
 from src.core.log_safety import log_safe
-from src.core.org_filter import OrgFilterType, resolve_org_filter
 from src.core.principal import UserPrincipal
+from src.services.authorization.enforce import (
+    allows_permission,
+    load_caller,
+    user_reach,
+)
+from src.services.authorization.execution_access import (
+    current_execution_read_access,
+    execution_list_filter,
+)
+
+if TYPE_CHECKING:
+    from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+    from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +64,7 @@ class SdkExecutionReadError(Exception):
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
     and callers reached over the worker-local engine socket read the same status/detail. Missing entities are 404, denied
-    access is 403, malformed scope is 400 (workflows list) or 422
-    (executions list) — matching the historical handler responses
-    exactly.
+    access is 403, and malformed scope or status is 422.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:
@@ -104,14 +115,21 @@ def decode_history_cursor(token: str) -> tuple[datetime | None, UUID] | None:
 
 def convert_workflow_orm_to_schema(
     workflow,
+    default_permission_mode: WorkflowPermissionMode,
     used_by_count: int = 0,
     role_ids: list[UUID] | None = None,
+    permission_request: SolutionWorkflowPermissionRequest | None = None,
 ):
-    """Convert ORM model to Pydantic schema for API response."""
+    """Convert ORM model to Pydantic schema for API response.
+
+    ``default_permission_mode`` is the platform default a workflow with no
+    mode of its own takes (``get_default_workflow_permission_mode``).
+    """
     from typing import Literal
 
     from src.models import WorkflowMetadata, WorkflowParameter
     from src.models.contracts.workflows import ExecutableType
+    from src.services.workflow_permissions import resolve_workflow_permission_mode
     from src.services.workflow_validation import _extract_relative_path
 
     parameters = []
@@ -137,11 +155,14 @@ def convert_workflow_orm_to_schema(
         is_solution_managed=workflow.solution_id is not None,
         solution_id=workflow.solution_id,
         run_identity_id=workflow.run_identity_id,
+        permission_mode=resolve_workflow_permission_mode(workflow, default_permission_mode, permission_request),
         access_level=workflow.access_level or "role_based",
         role_ids=[str(role_id) for role_id in (role_ids or [])],
         parameters=parameters,
         execution_mode=execution_mode,
         timeout_seconds=workflow.timeout_seconds if workflow.timeout_seconds is not None else 1800,
+        memory_request_mib=workflow.memory_request_mib,
+        learned_memory_bytes=workflow.learned_memory_bytes,
         retry_policy=None,
         endpoint_enabled=workflow.endpoint_enabled or False,
         allowed_methods=workflow.allowed_methods or ["POST"],
@@ -332,42 +353,41 @@ async def list_sdk_workflows(
 ):
     """List all workflows visible to the principal.
 
-    Preserves the historical ``GET /api/workflows`` behavior exactly:
-    platform-admin only, org scope via ``resolve_org_filter``, type /
+    Resolves the selected scope from the verified caller's original-user reach,
+    then filters rows by ``workflows.read`` at the actual row organization (or
+    selected organization for a shared Global fallback) before dependency
+    counts and serialization. Type /
     legacy ``is_tool`` filters, entity filters (form wins over app wins
     over agent), batch used-by counts and role IDs, and per-row
     conversion failures skipped with an error log.
 
     Raises:
-        SdkExecutionReadError: 403 for non-superusers; 400 for a
-            malformed scope value.
+        SdkExecutionReadError: 403 for a scope outside original-user reach;
+            422 for malformed scope input.
     """
     from src.models import Workflow as WorkflowORM
     from src.models.orm.agents import AgentTool
+    from src.services.workflow_permissions import get_default_workflow_permission_mode, workflow_permission_requests
 
-    if not principal.is_superuser:
-        raise SdkExecutionReadError(403, "Superuser privileges required")
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from shared.scope_resolver import UNSET, shared_read_organization
 
+    caller = await load_caller(session, principal)
     try:
-        filter_type, filter_org = resolve_org_filter(principal, scope)
-    except ValueError as e:
-        raise SdkExecutionReadError(400, str(e)) from None
+        selected_org = await resolve_sdk_scope(scope, caller=caller)
+    except ScopeResolutionError as e:
+        raise SdkExecutionReadError(e.status_code, e.detail) from None
 
     query = select(WorkflowORM).where(WorkflowORM.is_active.is_(True))
+    reach_filter = user_reach(caller).where(WorkflowORM.organization_id)
+    if reach_filter is not None:
+        query = query.where(reach_filter)
 
-    if filter_type == OrgFilterType.ALL:
-        pass
-    elif filter_type == OrgFilterType.GLOBAL_ONLY:
+    scope_is_unset = scope is None or scope == ""
+    if scope == "global":
         query = query.where(WorkflowORM.organization_id.is_(None))
-    elif filter_type == OrgFilterType.ORG_ONLY:
-        query = query.where(WorkflowORM.organization_id == filter_org)
-    elif filter_type == OrgFilterType.ORG_PLUS_GLOBAL:
-        query = query.where(
-            or_(
-                WorkflowORM.organization_id == filter_org,
-                WorkflowORM.organization_id.is_(None),
-            )
-        )
+    elif not scope_is_unset:
+        query = query.where(WorkflowORM.organization_id == selected_org)
 
     if type is not None:
         query = query.where(WorkflowORM.type == type)
@@ -396,7 +416,21 @@ async def list_sdk_workflows(
         query = query.where(WorkflowORM.id.in_(workflow_ids_subquery))
 
     result = await session.execute(query)
-    workflows = result.scalars().all()
+    selected_permission_scope = UNSET if scope_is_unset else selected_org
+    workflows = [
+        workflow
+        for workflow in result.scalars().all()
+        if user_reach(caller).covers(workflow.organization_id)
+        and allows_permission(
+            caller,
+            "workflows.read",
+            shared_read_organization(
+                caller,
+                workflow.organization_id,
+                selected_organization_id=selected_permission_scope,
+            ),
+        )
+    ]
 
     workflow_ids = [w.id for w in workflows]
     used_by_counts: dict[UUID, int] = {}
@@ -405,14 +439,18 @@ async def list_sdk_workflows(
         used_by_counts = await compute_used_by_counts(session, workflow_ids)
         role_ids_by_workflow = await get_workflow_role_ids(session, workflow_ids)
 
+    default_permission_mode = await get_default_workflow_permission_mode(session)
+    permission_requests = await workflow_permission_requests(session, workflows)
     workflow_list = []
     for w in workflows:
         try:
             workflow_list.append(
                 convert_workflow_orm_to_schema(
                     w,
+                    default_permission_mode,
                     used_by_count=used_by_counts.get(w.id, 0),
                     role_ids=role_ids_by_workflow.get(w.id, []),
+                    permission_request=permission_requests.get(w.id),
                 )
             )
         except Exception as e:
@@ -483,10 +521,11 @@ async def list_sdk_executions(
 ) -> tuple[list, str | None]:
     """List executions with filtering and keyset pagination.
 
-    Preserves the historical ``GET /api/executions`` behavior exactly:
-    org scope via ``resolve_org_filter`` (org users pinned to their org,
-    superusers unfiltered unless scoped), non-superusers restricted to
-    their own rows, ``workflow_id`` winning over ``workflow_name``,
+    Explicit scope is validated and always restricts the query. Visibility is
+    applied before ordering, paging, and the ``limit + 1`` sample: own rows
+    require original-user reach, while other rows require scoped
+    ``executions.read.all`` within that same reach.
+    ``workflow_id`` winning over ``workflow_name``,
     comma-separated status match-any, silently-ignored malformed
     start/end dates, the
     ``started_at/scheduled_at/completed_at/created_at`` timeline anchor,
@@ -499,19 +538,35 @@ async def list_sdk_executions(
     validated values here.
 
     Raises:
-        SdkExecutionReadError: 422 for a malformed scope value.
+        SdkExecutionReadError: 422 for a malformed scope or execution status.
     """
     from src.models import Execution as ExecutionModel
+    from src.models.enums import ExecutionStatus
 
-    try:
-        filter_type, filter_org = resolve_org_filter(principal, scope)
-    except ValueError as e:
-        raise SdkExecutionReadError(422, str(e)) from None
+    statuses: list[ExecutionStatus] | None = None
+    if status_filter:
+        try:
+            statuses = [
+                ExecutionStatus(value.strip())
+                for value in status_filter.split(",")
+                if value.strip()
+            ]
+        except ValueError:
+            raise SdkExecutionReadError(
+                422, "status contains an invalid execution status"
+            ) from None
 
-    if filter_type in (OrgFilterType.ORG_ONLY, OrgFilterType.ORG_PLUS_GLOBAL):
-        org_filter = filter_org
-    else:
-        org_filter = None
+    scope_filter = None
+    if scope:
+        if scope == "global":
+            scope_filter = ExecutionModel.organization_id.is_(None)
+        else:
+            try:
+                scope_filter = ExecutionModel.organization_id == UUID(scope)
+            except ValueError:
+                raise SdkExecutionReadError(422, f"Invalid scope value: {scope}") from None
+
+    caller = await load_caller(session, principal)
 
     query = select(ExecutionModel).options(
         selectinload(ExecutionModel.organization),
@@ -522,19 +577,18 @@ async def list_sdk_executions(
         defer(ExecutionModel.execution_context, raiseload=True),
     )
 
-    if org_filter:
-        query = query.where(ExecutionModel.organization_id == org_filter)
-
-    if not principal.is_superuser:
-        query = query.where(ExecutionModel.executed_by == principal.user_id)
+    visibility_filter = execution_list_filter(caller, ExecutionModel)
+    if visibility_filter is not None:
+        query = query.where(visibility_filter)
+    if scope_filter is not None:
+        query = query.where(scope_filter)
 
     if workflow_id:
         query = query.where(ExecutionModel.workflow_id == workflow_id)
     elif workflow_name:
         query = query.where(ExecutionModel.workflow_name == workflow_name)
 
-    if status_filter:
-        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+    if statuses is not None:
         query = query.where(ExecutionModel.status.in_(statuses))
 
     if start_date:
@@ -621,18 +675,16 @@ async def get_sdk_execution(
     """Get execution details by ID with authorization.
 
     Preserves the historical ``GET /api/executions/{id}`` behavior
-    exactly: 404 when the row is missing (including a Redis-pending
-    fallback miss), 403 when a non-superuser views another user's row,
+    exactly: 404 when the row is missing, 403 when the original user cannot view the row,
     dual-read logs (Redis Stream when in-progress, Postgres when
     complete, DEBUG/TRACEBACK filtered for non-admins), AI usage rows
-    plus totals, admin-only variables/context/resource fields, and the
+    plus totals, permission-gated variables/context/resource fields, and the
     Global org display name.
 
     Raises:
         SdkExecutionReadError: 404 when missing; 403 when denied.
     """
     from bifrost._logging import read_logs_from_stream
-    from shared.pending_execution import get_pending_execution_fallback
     from src.models import Execution as ExecutionModel
     from src.models import ExecutionLog as ExecutionLogORM
     from src.models import ExecutionLogPublic, WorkflowExecution
@@ -643,6 +695,7 @@ async def get_sdk_execution(
     from src.models.enums import ExecutionStatus
     from src.models.orm.ai_usage import AIUsage
 
+    caller = await load_caller(session, principal)
     result = await session.execute(
         select(ExecutionModel)
         .options(selectinload(ExecutionModel.organization), selectinload(ExecutionModel.executed_by_user))
@@ -651,22 +704,10 @@ async def get_sdk_execution(
     execution = result.scalar_one_or_none()
 
     if not execution:
-        pending, pending_error = await get_pending_execution_fallback(
-            execution_id,
-            principal,
-            session,
-        )
-        if pending_error == "Forbidden":
-            raise SdkExecutionReadError(
-                403, "You do not have permission to view this execution"
-            )
-        if pending is None:
-            raise SdkExecutionReadError(
-                404, f"Execution {execution_id} not found"
-            )
-        return pending
+        raise SdkExecutionReadError(404, f"Execution {execution_id} not found")
 
-    if not principal.is_superuser and execution.executed_by != principal.user_id:
+    access = await current_execution_read_access(caller, execution)
+    if not access.visible:
         raise SdkExecutionReadError(
             403, "You do not have permission to view this execution"
         )
@@ -679,7 +720,7 @@ async def get_sdk_execution(
     if is_in_progress:
         try:
             stream_logs = await read_logs_from_stream(str(execution_id), count=10000)
-            hidden_levels = set() if principal.is_superuser else {"DEBUG", "TRACEBACK"}
+            hidden_levels = set() if access.diagnostics else {"DEBUG", "TRACEBACK"}
             for seq, slog in enumerate(stream_logs):
                 level = (slog.level or "INFO").upper()
                 if level in hidden_levels:
@@ -702,7 +743,7 @@ async def get_sdk_execution(
             .where(ExecutionLogORM.execution_id == execution_id)
             .order_by(ExecutionLogORM.sequence)
         )
-        if not principal.is_superuser:
+        if not access.diagnostics:
             logs_query = logs_query.where(
                 ExecutionLogORM.level.notin_(["DEBUG", "TRACEBACK"])
             )
@@ -798,11 +839,11 @@ async def get_sdk_execution(
         completed_at=execution.completed_at,
         scheduled_at=execution.scheduled_at,
         logs=[log.model_dump() for log in logs],
-        variables=execution.variables if principal.is_superuser else None,
-        execution_context=execution.execution_context if principal.is_superuser else None,
-        peak_memory_bytes=execution.peak_memory_bytes if principal.is_superuser else None,
-        process_rss_bytes=execution.process_rss_bytes if principal.is_superuser else None,
-        cpu_total_seconds=execution.cpu_total_seconds if principal.is_superuser else None,
+        variables=execution.variables if access.diagnostics else None,
+        execution_context=execution.execution_context if access.diagnostics else None,
+        peak_memory_bytes=execution.peak_memory_bytes if access.diagnostics else None,
+        process_rss_bytes=execution.process_rss_bytes if access.diagnostics else None,
+        cpu_total_seconds=execution.cpu_total_seconds if access.diagnostics else None,
         ai_usage=ai_usage_list if ai_usage_list else None,
         ai_totals=ai_totals,
     )

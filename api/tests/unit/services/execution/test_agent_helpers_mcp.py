@@ -18,7 +18,12 @@ into the agent toolset surfaced to the LLM. The new behavior we test:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -40,6 +45,7 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
+from src.services.mcp_client.catalog_sync import sync_catalog
 
 
 def _enc(value: str) -> bytes:
@@ -58,11 +64,13 @@ async def _make_org(db: AsyncSession) -> Organization:
     return org
 
 
-async def _make_provider(db: AsyncSession) -> OAuthProvider:
+async def _make_provider(
+    db: AsyncSession, *, flow: str = "client_credentials"
+) -> OAuthProvider:
     provider = OAuthProvider(
         id=uuid4(),
         provider_name=f"mcp-prov-{uuid4().hex[:8]}",
-        oauth_flow_type="client_credentials",
+        oauth_flow_type=flow,
         client_id="cid",
         encrypted_client_secret=encrypt_secret("csec").encode(),
         token_url="https://example.com/oauth/token",
@@ -72,11 +80,14 @@ async def _make_provider(db: AsyncSession) -> OAuthProvider:
     return provider
 
 
-async def _make_server(db: AsyncSession) -> MCPServer:
+async def _make_server(
+    db: AsyncSession, provider: OAuthProvider | None = None
+) -> MCPServer:
     server = MCPServer(
         id=uuid4(),
         name=f"mcp-srv-{uuid4().hex[:8]}",
         server_url="https://vendor.example.com/mcp",
+        oauth_provider_id=provider.id if provider is not None else None,
         is_active=True,
     )
     db.add(server)
@@ -114,6 +125,10 @@ async def _make_connection(
     available_to_autonomous: bool = False,
     service_oauth_token: OAuthToken | None = None,
 ) -> MCPConnection:
+    if service_oauth_token is not None:
+        assert server.oauth_provider_id == service_oauth_token.provider_id
+        service_oauth_token.organization_id = org.id
+
     conn = MCPConnection(
         id=uuid4(),
         server_id=server.id,
@@ -139,12 +154,15 @@ async def _make_tool(
     enabled: bool = True,
     description: str | None = None,
     input_schema: dict | None = None,
+    output_schema: dict | None = None,
 ) -> MCPConnectionTool:
     schema: dict = {}
     if description is not None:
         schema["description"] = description
     if input_schema is not None:
         schema["inputSchema"] = input_schema
+    if output_schema is not None:
+        schema["outputSchema"] = output_schema
 
     tool = MCPConnectionTool(
         id=uuid4(),
@@ -195,6 +213,13 @@ async def _make_agent(
         attribute_names=["tools", "delegated_agents", "mcp_connections"],
     )
     return agent
+
+
+@asynccontextmanager
+async def _catalog_session(tools: list[object]):
+    yield SimpleNamespace(
+        list_tools=AsyncMock(return_value=SimpleNamespace(tools=tools))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +281,10 @@ async def test_chat_includes_all_enabled_mcp_tools(
     ``mcp_connections`` — multiple connections per (server, org) is
     explicitly rejected by the schema."""
     org = await _make_org(db_session)
-    provider = await _make_provider(db_session)
-    server_chat = await _make_server(db_session)
-    server_both = await _make_server(db_session)
-    server_auto = await _make_server(db_session)
+    provider = await _make_provider(db_session, flow="authorization_code")
+    server_chat = await _make_server(db_session, provider)
+    server_both = await _make_server(db_session, provider)
+    server_auto = await _make_server(db_session, provider)
 
     # Connection 1: chat-flag only, no service token. Three tools — one
     # enabled-with-schema, one enabled-without-schema, one disabled.
@@ -276,6 +301,16 @@ async def test_chat_includes_all_enabled_mcp_tools(
         tool_name="chat_only_tool",
         description="A chat-only tool",
         input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+        output_schema={
+            "type": "object",
+            "properties": {
+                "matches": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                }
+            },
+            "required": ["matches"],
+        },
     )
     await _make_tool(
         db_session,
@@ -359,6 +394,19 @@ async def test_chat_includes_all_enabled_mcp_tools(
         "type": "object",
         "properties": {"q": {"type": "string"}},
     }
+    assert chat_only_def.structured_output_schema == {
+        "type": "object",
+        "properties": {
+            "matches": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["matches"],
+    }
+    assert chat_only_def.structured_output_schema is not conn_chat.tools[0].tool_schema[
+        "outputSchema"
+    ]
 
     # Default empty schema when tool_schema lacks inputSchema
     chat_only_no_schema_def = next(
@@ -367,6 +415,174 @@ async def test_chat_includes_all_enabled_mcp_tools(
     assert chat_only_no_schema_def.parameters == {
         "type": "object",
         "properties": {},
+    }
+    assert chat_only_no_schema_def.structured_output_schema is None
+
+
+@pytest.mark.asyncio
+async def test_catalog_sync_descriptor_reaches_agent_tool_definition(
+    db_session: AsyncSession, seed_user
+):
+    """A discovered MCP descriptor retains both input and output schemas."""
+    org = await _make_org(db_session)
+    provider = await _make_provider(db_session, flow="authorization_code")
+    server = await _make_server(db_session, provider)
+    connection = await _make_connection(
+        db_session, server, org, available_in_chat=True
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    }
+    output_schema = {
+        "type": "object",
+        "properties": {"records": {"type": "array"}},
+    }
+    discovered_tool = SimpleNamespace(
+        name="search_records",
+        description="Search approved records.",
+        inputSchema=input_schema,
+        outputSchema=output_schema,
+    )
+
+    with (
+        patch(
+            "src.services.mcp_client.catalog_sync._resolve_service_token_for_sync",
+            new=AsyncMock(return_value="service-token"),
+        ),
+        patch(
+            "src.services.mcp_client.catalog_sync.mcp_client_session.open_session",
+            return_value=_catalog_session([discovered_tool]),
+        ),
+    ):
+        await sync_catalog(connection, db_session)
+
+    agent = await _make_agent(
+        db_session, org, granted_connections=[connection]
+    )
+    tools, _ = await resolve_agent_tools(
+        agent, db_session, caller_user_id=seed_user.id
+    )
+
+    definition = next(
+        tool
+        for tool in tools
+        if tool.name == f"{MCP_TOOL_PREFIX}{connection.id}__search_records"
+    )
+    assert definition.description == "Search approved records."
+    assert definition.parameters == input_schema
+    assert definition.structured_output_schema == output_schema
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_schema_migration_normalizes_only_legacy_shapes(
+    db_session: AsyncSession,
+):
+    """Legacy schemas migrate without guessing descriptor metadata."""
+    org = await _make_org(db_session)
+    server = await _make_server(db_session)
+    connection = await _make_connection(
+        db_session, server, org, available_in_chat=True
+    )
+    output_schema = {
+        "type": "object",
+        "properties": {"records": {"type": "array"}},
+    }
+    flattened_input = {
+        "type": "object",
+        "description": "Query parameters.",
+        "properties": {"query": {"type": "string", "default": None}},
+    }
+    snake_input = {
+        "type": "object",
+        "properties": {"record_id": {"type": "string"}},
+    }
+    canonical_input = {
+        "type": "object",
+        "properties": {"limit": {"type": "integer"}},
+    }
+    flattened = MCPConnectionTool(
+        id=uuid4(),
+        connection_id=connection.id,
+        tool_name="flattened",
+        tool_schema={**flattened_input, "outputSchema": output_schema},
+        enabled=True,
+    )
+    snake_case = MCPConnectionTool(
+        id=uuid4(),
+        connection_id=connection.id,
+        tool_name="snake_case",
+        tool_schema={
+            "input_schema": snake_input,
+            "description": "Read one record.",
+            "outputSchema": output_schema,
+            "x-vendor": {"preserved": True},
+        },
+        enabled=True,
+    )
+    canonical = MCPConnectionTool(
+        id=uuid4(),
+        connection_id=connection.id,
+        tool_name="canonical",
+        tool_schema={
+            "inputSchema": canonical_input,
+            "description": "List records.",
+            "outputSchema": output_schema,
+        },
+        enabled=True,
+    )
+    unknown_descriptor = MCPConnectionTool(
+        id=uuid4(),
+        connection_id=connection.id,
+        tool_name="unknown_descriptor",
+        tool_schema={
+            "x-vendor": {"shape": "unrecognized"},
+            "outputSchema": output_schema,
+        },
+        enabled=True,
+    )
+    db_session.add_all([flattened, snake_case, canonical, unknown_descriptor])
+    await db_session.flush()
+
+    migration_path = (
+        Path(__file__).resolve().parents[4]
+        / "alembic/versions/20261023_mcp_tool_descriptors.py"
+    )
+    spec = spec_from_file_location("mcp_tool_descriptors", migration_path)
+    assert spec is not None and spec.loader is not None
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    connection_handle = await db_session.connection()
+    await connection_handle.run_sync(
+        migration.normalize_mcp_tool_schema_descriptors
+    )
+    db_session.expire_all()
+    await db_session.refresh(flattened)
+    await db_session.refresh(snake_case)
+    await db_session.refresh(canonical)
+    await db_session.refresh(unknown_descriptor)
+
+    assert flattened.tool_schema == {
+        "inputSchema": flattened_input,
+        "outputSchema": output_schema,
+        "description": flattened_input["description"],
+    }
+    assert snake_case.tool_schema == {
+        "inputSchema": snake_input,
+        "description": "Read one record.",
+        "outputSchema": output_schema,
+        "x-vendor": {"preserved": True},
+    }
+    assert canonical.tool_schema == {
+        "inputSchema": canonical_input,
+        "description": "List records.",
+        "outputSchema": output_schema,
+    }
+    assert unknown_descriptor.tool_schema == {
+        "x-vendor": {"shape": "unrecognized"},
+        "outputSchema": output_schema,
     }
 
 
@@ -390,10 +606,10 @@ async def test_autonomous_filters_to_flag_and_healthy_service_token(
     """
     org = await _make_org(db_session)
     provider = await _make_provider(db_session)
-    server_healthy = await _make_server(db_session)
-    server_no_token = await _make_server(db_session)
-    server_chat = await _make_server(db_session)
-    server_expired = await _make_server(db_session)
+    server_healthy = await _make_server(db_session, provider)
+    server_no_token = await _make_server(db_session, provider)
+    server_chat = await _make_server(db_session, provider)
+    server_expired = await _make_server(db_session, provider)
 
     # 1. Healthy autonomous connection
     healthy_token = await _make_oauth_token(db_session, provider)
@@ -486,7 +702,7 @@ async def test_autonomous_includes_tool_with_recently_expired_token(
     """
     org = await _make_org(db_session)
     provider = await _make_provider(db_session)
-    server = await _make_server(db_session)
+    server = await _make_server(db_session, provider)
 
     just_expired = await _make_oauth_token(
         db_session,

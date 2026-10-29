@@ -115,6 +115,11 @@ class TestOAuthRefreshClientCredentials:
         ctx.org_id = None
 
         with (
+            patch(
+                "src.routers.oauth_connections._connection_for_caller",
+                new=AsyncMock(return_value=(MagicMock(), provider, MagicMock())),
+            ),
+            patch("src.routers.oauth_connections.require_permission"),
             patch("src.repositories.oauth.OAuthProviderRepository.get_by_connection_name", new=AsyncMock(return_value=provider)),
             patch("src.repositories.oauth.OAuthProviderRepository.get_token", new=AsyncMock(return_value=token)),
             patch(
@@ -193,6 +198,10 @@ class TestOAuthRefreshClientCredentials:
         )
 
         with (
+            patch("src.routers.oauth_connections.load_caller", new=AsyncMock(return_value=MagicMock())),
+            patch("src.routers.oauth_connections.resolve_effective_scope", return_value=None),
+            patch("src.routers.oauth_connections.user_reach") as mock_reach,
+            patch("src.routers.oauth_connections.require_permission"),
             patch("src.repositories.oauth.OAuthProviderRepository.get_by_connection_name", new=AsyncMock(return_value=provider)),
             patch("src.repositories.oauth.OAuthProviderRepository.store_token", new=AsyncMock()),
             patch("src.routers.oauth_connections.get_url_resolution_defaults", new=AsyncMock(return_value={})),
@@ -209,6 +218,7 @@ class TestOAuthRefreshClientCredentials:
             patch("src.core.security.decrypt_secret", return_value="decrypted-secret"),
             patch("src.routers.oauth_connections.CACHE_INVALIDATION_AVAILABLE", False),
         ):
+            mock_reach.return_value.covers.return_value = True
             result = await oauth_callback(
                 connection_name="Microsoft CSP",
                 request=request,

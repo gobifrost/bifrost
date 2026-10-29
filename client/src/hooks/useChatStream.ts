@@ -87,6 +87,7 @@ function stateToProjectionSnapshot(
 				: undefined,
 		active_run_id: activeRunId,
 		last_sequence: state.latest_sequence,
+		context_usage: state.context_usage ?? null,
 	};
 }
 

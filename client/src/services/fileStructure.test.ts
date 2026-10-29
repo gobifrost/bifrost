@@ -16,7 +16,9 @@ describe("fileStructure service", () => {
 	it("listShares maps snake_case to camelCase", async () => {
 		vi.mocked(authFetch).mockResolvedValue(
 			jsonResponse({
-				shares: [{ location: "gallery", read_only: false, has_policy: true }],
+				shares: [
+					{ location: "gallery", read_only: false, has_policy: true },
+				],
 			}),
 		);
 		const shares = await listShares(null);
@@ -31,6 +33,19 @@ describe("fileStructure service", () => {
 		});
 	});
 
+	it("uses an explicit solution context without changing an ordinary scope", async () => {
+		vi.mocked(authFetch).mockResolvedValue(jsonResponse({ shares: [] }));
+
+		await listShares("org-1", "solution-1");
+
+		expect(authFetch).toHaveBeenCalledWith(
+			"/api/files/structure?solution=solution-1",
+			expect.objectContaining({
+				body: JSON.stringify({ scope: "org-1" }),
+			}),
+		);
+	});
+
 	it("listStructure sends location + prefix + scope", async () => {
 		vi.mocked(authFetch).mockResolvedValue(
 			jsonResponse({
@@ -38,7 +53,11 @@ describe("fileStructure service", () => {
 			}),
 		);
 		const entries = await listStructure("gallery", "sub", "org-1");
-		expect(entries[0]).toEqual({ name: "a.png", kind: "file", path: "a.png" });
+		expect(entries[0]).toEqual({
+			name: "a.png",
+			kind: "file",
+			path: "a.png",
+		});
 		const [, init] = vi.mocked(authFetch).mock.calls[0];
 		expect(JSON.parse((init as RequestInit).body as string)).toEqual({
 			location: "gallery",

@@ -1,11 +1,5 @@
-"""Tests for provider org scope override guard.
+"""SDK scope selection/reset independent of actor display facts."""
 
-Tests:
-- ExecutionContext.set_scope() — provider allows, non-provider denied, reset works
-- resolve_scope() in _context.py — shared scope resolution with provider guard
-"""
-
-import pytest
 from src.sdk.context import ExecutionContext, Organization
 
 
@@ -29,10 +23,10 @@ class TestSetScope:
         ctx.set_scope("org-2")
         assert ctx.org_id == "org-2"
 
-    def test_non_provider_cannot_override_scope(self):
+    def test_non_provider_selects_scope_for_server_admission(self):
         ctx = self._make_ctx(is_provider=False)
-        with pytest.raises(PermissionError, match="Scope override to 'org-2' denied"):
-            ctx.set_scope("org-2")
+        ctx.set_scope("org-2")
+        assert ctx.org_id == "org-2"
 
     def test_reset_scope_with_none(self):
         ctx = self._make_ctx(is_provider=True)
@@ -49,15 +43,6 @@ class TestSetScope:
         assert ctx._scope_override is None
 
     def test_platform_admin_no_org_can_override(self):
-        """Platform admin with no organization can override scope.
-
-        Pre-2026-05-26 the rule was provider-only, so this case was a
-        PermissionError — a system account with no org couldn't be in a
-        provider org, so the gate failed. Under the new C2 rule the
-        bypass is ``is_platform_admin OR is_provider``; a platform
-        admin alone is sufficient, organization absent or present.
-        See repositories/README.md ("Why two independent bypass flags?").
-        """
         ctx = ExecutionContext(
             user_id="u1",
             email="e@e.com",
@@ -71,12 +56,7 @@ class TestSetScope:
         ctx.set_scope("org-2")
         assert ctx.org_id == "org-2"
 
-    def test_no_org_no_admin_cannot_override(self):
-        """A caller with no organization AND no platform-admin flag has
-        no bypass path. Both flags are False -> denied. This is the
-        regression pin for the C2 rule: removing either flag from the
-        gate would let this pass.
-        """
+    def test_no_org_caller_selects_scope_for_server_admission(self):
         ctx = ExecutionContext(
             user_id="u1",
             email="e@e.com",
@@ -87,8 +67,8 @@ class TestSetScope:
             is_function_key=False,
             execution_id="exec-1",
         )
-        with pytest.raises(PermissionError):
-            ctx.set_scope("org-2")
+        ctx.set_scope("org-2")
+        assert ctx.org_id == "org-2"
 
     def test_org_id_reflects_override(self):
         ctx = self._make_ctx(is_provider=True)
@@ -149,14 +129,13 @@ class TestResolveScope:
         finally:
             clear_execution_context()
 
-    def test_different_scope_non_provider_denied(self):
+    def test_different_scope_non_provider_is_forwarded(self):
         from bifrost._context import resolve_scope, set_execution_context, clear_execution_context
 
         ctx = self._make_ctx(is_provider=False)
         set_execution_context(ctx)
         try:
-            with pytest.raises(PermissionError, match="Scope override to 'org-2' denied"):
-                resolve_scope("org-2")
+            assert resolve_scope("org-2") == "org-2"
         finally:
             clear_execution_context()
 

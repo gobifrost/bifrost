@@ -19,39 +19,6 @@ import pytest
 from bifrost.client import BifrostClient
 
 
-def _make_client(
-    handler: Callable[[httpx.Request], httpx.Response],
-) -> BifrostClient:
-    """Build a BifrostClient whose async + sync httpx clients use a mock transport.
-
-    Bypasses ``__init__`` so we don't open real httpx clients and so we can
-    inject the mock transport into both ``_http`` and ``_sync_http``.
-    """
-    client = BifrostClient.__new__(BifrostClient)
-    client.api_url = "http://test.local"
-    client._access_token = "test-token"
-    client._http = httpx.AsyncClient(
-        base_url=client.api_url,
-        headers={"Authorization": f"Bearer {client._access_token}"},
-        transport=httpx.MockTransport(handler),
-    )
-    client._http_loop = None
-    client._sync_http = httpx.Client(
-        base_url=client.api_url,
-        headers={"Authorization": f"Bearer {client._access_token}"},
-        transport=httpx.MockTransport(handler),
-    )
-    # Bypassing __init__ means the engine-local transport slots must be set
-    # explicitly: close() and install_access_token() read them.
-    client._engine_http = None
-    client._engine_http_loop = None
-    client._engine_http_path = None
-    client._engine_sync_http = None
-    client._engine_sync_http_path = None
-    client._context = None
-    return client
-
-
 def _seq_handler(statuses: list[int]) -> tuple[Callable[[httpx.Request], httpx.Response], list[int]]:
     """Return a handler that yields the given status codes in order, plus a call counter list."""
     counter: list[int] = []
@@ -111,28 +78,18 @@ class _FixedLoopClient(BifrostClient):
 def _make_fixed_client(
     handler: Callable[[httpx.Request], httpx.Response],
 ) -> BifrostClient:
-    client = _FixedLoopClient.__new__(_FixedLoopClient)
-    client.api_url = "http://test.local"
-    client._access_token = "test-token"
+    client = _FixedLoopClient("http://test.local", "test-token")
     client._http = httpx.AsyncClient(
         base_url=client.api_url,
         headers={"Authorization": f"Bearer {client._access_token}"},
         transport=httpx.MockTransport(handler),
     )
-    client._http_loop = None
+    client._sync_http.close()
     client._sync_http = httpx.Client(
         base_url=client.api_url,
         headers={"Authorization": f"Bearer {client._access_token}"},
         transport=httpx.MockTransport(handler),
     )
-    # Bypassing __init__ means the engine-local transport slots must be set
-    # explicitly: close() and install_access_token() read them.
-    client._engine_http = None
-    client._engine_http_loop = None
-    client._engine_http_path = None
-    client._engine_sync_http = None
-    client._engine_sync_http_path = None
-    client._context = None
     return client
 
 

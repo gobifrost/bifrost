@@ -2,10 +2,10 @@
 MCP (Model Context Protocol) Router
 
 Provides external access to Bifrost's MCP server for LLM clients like Claude Desktop.
-Uses FastMCP to expose tools via Streamable HTTP transport with Bearer token authentication.
+Uses the bundled MCP SDK to expose tools via Streamable HTTP with Bearer authentication.
 
 Architecture:
-    - FastMCP server is mounted as an ASGI sub-application at /mcp
+    - MCP SDK server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
     - /mcp exposes stable agent discovery, dispatch, instruction, and memory tools
     - /mcp/{agent_id} preserves the native agent-scoped tool surface
@@ -33,7 +33,13 @@ from typing import NoReturn
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import Response
+from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
+from mcp.server.auth.routes import build_resource_metadata_url
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from pydantic import AnyHttpUrl
+from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
+from starlette.routing import Route
 
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
@@ -55,6 +61,11 @@ from src.services.mcp_server.config_service import (
     MCPConfigService,
     invalidate_mcp_config_cache,
 )
+from src.services.authorization.enforce import (
+    allows_permission,
+    load_caller,
+    require_permission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,19 +77,9 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 def _gateway_service(current_user: CurrentActiveUser):
     """Create the canonical gateway service for an authenticated REST caller."""
     from src.services.mcp_server.gateway import MCPAgentGatewayService
-    from src.services.mcp_server.server import MCPContext
+    from src.services.mcp_server.server import context_from_principal
 
-    return MCPAgentGatewayService(
-        MCPContext(
-            user_id=current_user.user_id,
-            org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
-            is_provider_org=current_user.is_provider_org,
-            is_external=current_user.is_external,
-            user_email=current_user.email,
-            user_name=current_user.name,
-        )
-    )
+    return MCPAgentGatewayService(context_from_principal(current_user))
 
 
 async def _require_mcp_enabled(db: DbSession) -> None:
@@ -98,6 +99,8 @@ def _raise_gateway_http_error(exc: Exception) -> NoReturn:
     if not isinstance(exc, GatewayError):
         raise exc
     status_code = {
+        "AUTHENTICATION_REQUIRED": status.HTTP_401_UNAUTHORIZED,
+        "AUTHORIZATION_FORBIDDEN": status.HTTP_403_FORBIDDEN,
         "INVALID_ARGUMENTS": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "INVALID_CAPABILITY_SEARCH": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "IMPERSONATION_FORBIDDEN": status.HTTP_403_FORBIDDEN,
@@ -307,27 +310,19 @@ def get_mcp_asgi_app():
     """
     from contextlib import asynccontextmanager
 
-    from src.services.mcp_server.server import HAS_FASTMCP
-
-    if not HAS_FASTMCP:
-        logger.warning("FastMCP not installed - MCP HTTP endpoint will not be available")
-        return None
-
-    # Import here to avoid circular imports and only when FastMCP is available
+    # Import here to avoid the router/server cycle during application startup.
     from src.services.mcp_server.server import (
         BifrostMCPServer,
         MCPContext,
         _register_workflow_tools,
     )
 
-    # Create OAuth 2.1 auth provider for Bifrost
-    try:
-        from src.services.mcp_server.auth import create_bifrost_auth_provider
-        auth_provider = create_bifrost_auth_provider()
-        logger.info("Created Bifrost OAuth 2.1 auth provider for MCP")
-    except ImportError as e:
-        logger.warning(f"Could not create auth provider: {e}")
-        auth_provider = None
+    # Create OAuth 2.1 auth provider for Bifrost. MCP is never mounted without
+    # this verifier: an unavailable auth implementation is a startup failure.
+    from src.services.mcp_server.auth import create_bifrost_auth_provider
+
+    auth_provider = create_bifrost_auth_provider()
+    logger.info("Created Bifrost OAuth 2.1 auth provider for MCP")
 
     # Create a default context for tool schema generation
     # The actual user context is derived from the validated JWT token
@@ -339,25 +334,40 @@ def get_mcp_asgi_app():
     server = BifrostMCPServer(default_context)
     fastmcp_server = server.get_fastmcp_server(auth=auth_provider)
 
-    # Add tool filtering middleware to filter tools/list based on user permissions
-    try:
-        from src.services.mcp_server.middleware import ToolFilterMiddleware
-        fastmcp_server.add_middleware(ToolFilterMiddleware())
-        logger.info("Added ToolFilterMiddleware for per-user tool filtering")
-    except ImportError as e:
-        logger.warning(f"Could not add ToolFilterMiddleware: {e}")
+    # The SDK manager owns Streamable HTTP session and notification behavior.
+    # We deliberately retain stateless JSON responses to match the former
+    # FastMCP mount's wire contract.
+    session_manager = StreamableHTTPSessionManager(
+        app=fastmcp_server._mcp_server,
+        json_response=True,
+        stateless=True,
+    )
 
-    # Create ASGI app with default path="/mcp" - we mount at root so FastMCP
-    # handles /mcp directly without Starlette's trailing slash redirect
-    mcp_app = fastmcp_server.http_app(json_response=True, stateless_http=True)
+    async def mcp_endpoint(scope, receive, send):
+        await session_manager.handle_request(scope, receive, send)
 
-    # Store original lifespan before wrapping
-    original_lifespan = getattr(mcp_app, 'lifespan', None)
+    mcp_app = Starlette(
+        routes=[
+            Route(
+                "/mcp",
+                endpoint=RequireAuthMiddleware(
+                    mcp_endpoint,
+                    auth_provider.required_scopes,
+                    build_resource_metadata_url(
+                        AnyHttpUrl(f"{auth_provider.base_url}/mcp")
+                    ),
+                ),
+                methods=["POST", "DELETE"],
+            ),
+            *auth_provider.get_routes(mcp_path="/mcp"),
+        ],
+        middleware=auth_provider.get_middleware(),
+    )
 
     # Create combined lifespan that registers workflow tools on startup
     @asynccontextmanager
     async def combined_lifespan(app):
-        """Combined lifespan that registers workflow tools and runs FastMCP lifespan."""
+        """Register workflow tools and run the SDK session manager."""
         # Register workflow tools on startup
         try:
             count = await _register_workflow_tools(fastmcp_server)
@@ -365,11 +375,7 @@ def get_mcp_asgi_app():
         except Exception as e:
             logger.warning(f"Failed to register workflow tools: {e}")
 
-        # Run original FastMCP lifespan if present
-        if original_lifespan:
-            async with original_lifespan(app):
-                yield
-        else:
+        async with session_manager.run():
             yield
 
     # Wrap with agent-scoping middleware to handle /mcp/{agent_id} paths
@@ -390,7 +396,7 @@ def get_mcp_asgi_app():
     # Store combined lifespan on the wrapper for main.py to find
     cors_app.lifespan = combined_lifespan  # type: ignore[attr-defined]
 
-    logger.info("Created FastMCP ASGI application with OAuth 2.1 auth and CORS")
+    logger.info("Created MCP SDK ASGI application with OAuth 2.1 auth and CORS")
 
     return cors_app
 
@@ -411,12 +417,7 @@ async def get_mcp_config(
     Returns the current configuration for external MCP access,
     including whether it's enabled and what restrictions apply.
     """
-    # Only platform admins can view MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can view MCP configuration"
-        )
+    require_permission(await load_caller(db, current_user), "mcp.read", None)
 
     service = MCPConfigService(db)
     config = await service.get_config()
@@ -445,12 +446,7 @@ async def update_mcp_config(
     - Whether platform admin is required
     - Which tools are allowed/blocked
     """
-    # Only platform admins can update MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can update MCP configuration"
-        )
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
 
     service = MCPConfigService(db)
     config = await service.save_config(
@@ -488,12 +484,7 @@ async def delete_mcp_config(
     - enabled: True
     - all tools allowed
     """
-    # Only platform admins can delete MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can delete MCP configuration"
-        )
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
 
     service = MCPConfigService(db)
     deleted = await service.delete_config()
@@ -525,7 +516,13 @@ async def list_mcp_tools(
     config_service = MCPConfigService(db)
     config = await config_service.get_config()
 
-    if not config.enabled and not current_user.is_superuser:
+    caller = await load_caller(db, current_user)
+    for_configuration = allows_permission(caller, "mcp.read", None)
+    if not for_configuration:
+        from shared.scope_resolver import resolve_effective_scope
+
+        require_permission(caller, "mcp.readbasic", resolve_effective_scope(caller=caller))
+    if not config.enabled and not for_configuration:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="External MCP access is disabled",
@@ -534,14 +531,7 @@ async def list_mcp_tools(
     # This REST inventory backs the platform settings allow/block controls.
     # Normal MCP discovery remains role-scoped in the protocol gateway.
     tool_service = MCPToolAccessService(db)
-    result = await tool_service.get_accessible_tools(
-        user_roles=current_user.roles,
-        is_superuser=current_user.is_superuser,
-        user_id=current_user.user_id,
-        org_id=current_user.organization_id,
-        is_external=current_user.is_external,
-        for_configuration=current_user.is_superuser,
-    )
+    result = await tool_service.get_accessible_tools(caller, for_configuration=for_configuration)
 
     # Convert ToolInfo to MCPToolInfo for response
     tools = [

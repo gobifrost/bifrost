@@ -131,6 +131,12 @@ vi.mock("@/services/tables", () => ({
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAnywhere: () => mockAuth().isPlatformAdmin,
+		canAt: () => true,
+	}),
+}));
 
 vi.mock("@/hooks/useRoles", () => ({
 	useRoles: () => ({ data: [] }),

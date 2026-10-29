@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -59,6 +59,10 @@ class SolutionExportJob(Base):
     message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     encrypted_options: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # Authorization metadata stays outside the encrypted password/options.
+    contains_secrets: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )
     artifact_storage_key: Mapped[str | None] = mapped_column(
         String(1024),
         nullable=True,

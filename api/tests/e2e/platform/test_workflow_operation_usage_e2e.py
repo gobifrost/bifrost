@@ -2,9 +2,9 @@
 ``workflow_operation_usage`` row after a forced flush (R2a-2 Part 2).
 
 Mirrors the socket-audit-parity pattern in test_sdk_socket_audit_parity.py:
-mints a real engine token (this time carrying ``engine_workflow_id``), hits
-an SDK endpoint over the worker-local socket, then forces the 15-minute
-flush job instead of waiting for the scheduler.
+mints a real engine token backed by the test execution's workflow, hits an SDK
+endpoint over the worker-local socket, then forces the 15-minute flush job
+instead of waiting for the scheduler.
 """
 
 import uuid
@@ -27,41 +27,22 @@ class TestWorkflowOperationUsageE2E:
         from src.models.orm.audit import AuditLog
         from src.models.orm.users import Role as RoleModel
         from src.models.orm.workflow_operation_usage import WorkflowOperationUsage
-        from src.models.orm.workflows import Workflow
         from src.services.execution.worker_sdk_http import build_worker_sdk_app
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
-        caller_id = org1_user.user_id
         org_id = org1_user.organization_id
-        assert caller_id is not None and org_id is not None
+        assert org_id is not None
         execution_id = uuid.uuid4()
-        workflow_id = uuid.uuid4()
         role_name = f"wf-usage-{uuid.uuid4().hex[:8]}"
-
-        async with async_session_factory() as session:
-            session.add(
-                Workflow(
-                    id=workflow_id,
-                    name=f"wf-usage-test-{workflow_id.hex[:8]}",
-                    function_name="wf_usage_test",
-                    type="workflow",
-                    path=f"workflows/wf_usage_test_{workflow_id.hex[:8]}.py",
-                )
-            )
-            await session.commit()
 
         token, _ = mint_engine_token(
             execution_id=str(execution_id),
-            solution_id=None,
-            global_repo_access=True,
             timeout_seconds=300,
-            caller_user_id=str(caller_id),
-            caller_organization_id=str(org_id),
-            caller_email=org1_user.email,
-            caller_name=org1_user.name,
-            engine_workflow_id=str(workflow_id),
         )
-        await create_live_execution(async_session_factory, str(execution_id))
+        live_execution = await create_live_execution(
+            async_session_factory, str(execution_id), organization_id=org_id
+        )
+        workflow_id = live_execution.workflow_id
 
         app = build_worker_sdk_app()
         transport = httpx.ASGITransport(app=app)
@@ -110,6 +91,5 @@ class TestWorkflowOperationUsageE2E:
                         WorkflowOperationUsage.workflow_id == workflow_id
                     )
                 )
-                await cleanup.execute(delete(Workflow).where(Workflow.id == workflow_id))
                 await cleanup.commit()
             await delete_live_execution(async_session_factory, str(execution_id))

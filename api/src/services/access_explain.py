@@ -18,7 +18,8 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import ALL_ORGS, Note, NoteKind, NoteTarget
-from src.models.contracts.access_checks import NowUnavailable
+from shared.access_trace_storage import expand_access_check_details
+from src.models.contracts.access_checks import AccessTrace, NowUnavailable
 from src.models.contracts.access_list import AccessEntry
 from src.models.orm.audit import AuditLog
 from src.models.orm.workflows import Workflow
@@ -27,9 +28,15 @@ from src.repositories.org_scoped import OrgScopedRepository
 from src.repositories.workflows import WorkflowRepository
 from src.services.access_check_entry import run_user_may_open
 from src.services.access_check_policies import load_policy_principal
-from src.services.access_check_writer import judge
+from src.services.access_check_writer import judge, names_a_user_to_load
 from src.services.authorization.enforce import operation_key
-from src.services.authorization.explain import Trace, check_operation, load_powers, load_run_user
+from src.services.authorization.explain import (
+    Trace,
+    check_operation,
+    load_powers,
+    load_run_as_target,
+    load_run_user,
+)
 from src.services.file_policy_service import FilePolicyService
 
 _ENTRY_REPOSITORIES: dict[str, type[OrgScopedRepository[Any]]] = {
@@ -60,9 +67,13 @@ def _uuid(value: Any) -> UUID | None:
     return UUID(str(value)) if value else None
 
 
-def stored_note(row: AuditLog) -> Note:
-    """The note an ``access.check`` event was written from."""
-    details = cast("dict[str, Any]", row.details)
+def _stored_details(row: AuditLog) -> dict[str, Any]:
+    return expand_access_check_details(
+        cast("dict[str, Any]", row.details), outcome=row.outcome, operation_id=row.operation_id
+    )
+
+
+def _note_from_details(row: AuditLog, details: dict[str, Any]) -> Note:
     facts = dict(details["inputs"])
     facts.pop("operation")
     stored_target = facts.pop("target")
@@ -70,26 +81,45 @@ def stored_note(row: AuditLog) -> Note:
     return Note(cast(NoteKind, row.resource_type), target, facts)
 
 
+def stored_note(row: AuditLog) -> Note:
+    """The note an ``access.check`` event was written from."""
+    return _note_from_details(row, _stored_details(row))
+
+
+def stored_trace(row: AuditLog) -> AccessTrace | None:
+    """The trace an ``access.check`` event was decided with, or None for
+    events stored without one (older and worker-written checks)."""
+    trace = _stored_details(row).get("trace")
+    return None if trace is None else AccessTrace.model_validate(trace)
+
+
 async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnavailable | None]:
     """The stored event judged now, or why it cannot be."""
+    details = _stored_details(row)
+    if "inputs" not in details:
+        return None, "inputs_not_stored"
     if row.user_id is None:
         return None, "run_user_missing"
     run_user = await load_run_user(db, row.user_id)
     if run_user is None:
         return None, "run_user_missing"
-    details = cast("dict[str, Any]", row.details)
     workflow_id = _uuid(details.get("workflow_id"))
     if workflow_id is not None and await db.get(Workflow, workflow_id) is None:
         return None, "workflow_missing"
 
-    note = stored_note(row)
+    note = _note_from_details(row, details)
     facts = note.facts
-    if note.kind == "policy":
+    run_as = None
+    if names_a_user_to_load(note):
+        run_as = await load_run_as_target(db, UUID(str(facts["run_as_user_id"])))
+        if run_as is None:
+            return None, "run_as_user_missing"
+    elif note.kind == "policy":
         if "table" in facts:
             return None, "rows_not_stored"
         if "solution_id" not in facts:
             return None, "solution_not_recorded"
-        principal = await load_policy_principal(db, row.user_id, workflow_id)
+        principal = await load_policy_principal(db, row.user_id, row.execution_id)
         if principal is None:
             return None, "run_user_missing"
         organization_id = note.target if isinstance(note.target, UUID) else None
@@ -105,9 +135,9 @@ async def rerun(db: AsyncSession, row: AuditLog) -> tuple[Trace | None, NowUnava
         kind, _, entity_id = facts["subject"].partition(":")
         facts["allowed"] = await run_user_may_open(db, _ENTRY_REPOSITORIES[kind], row.user_id, UUID(entity_id))
 
-    powers = await load_powers(db, workflow_id)
+    powers = None if details.get("direct") or workflow_id is None else await load_powers(db, workflow_id)
     operation = cast("dict[str, Any]", details["inputs"])["operation"]
-    return judge(run_user, powers, note, entry_for_key(operation)), None
+    return judge(run_user, powers, note, entry_for_key(operation), run_as), None
 
 
 async def test_access(

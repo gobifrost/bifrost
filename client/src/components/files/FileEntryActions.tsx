@@ -6,11 +6,13 @@ import { ENTRY_ACTION_META, type EntryAction } from "./fileContextMenu";
 export function FileEntryActions({
 	entry,
 	readOnly,
+	policyReadOnly = false,
 	downloading,
 	onAction,
 }: {
 	entry: StructureEntry;
 	readOnly: boolean;
+	policyReadOnly?: boolean;
 	downloading: boolean;
 	onAction: (action: EntryAction, path: string) => void;
 }) {
@@ -19,12 +21,13 @@ export function FileEntryActions({
 		? [
 				"effective",
 				"test",
-				...(!readOnly ? (["upload", "newPolicy"] as const) : []),
+				...(!readOnly ? (["upload"] as const) : []),
+				...(!policyReadOnly ? (["newPolicy"] as const) : []),
 			]
 		: [
 				"preview",
 				"test",
-				...(!readOnly ? (["policy"] as const) : []),
+				...(!policyReadOnly ? (["policy"] as const) : []),
 				"download",
 				...(!readOnly ? (["delete"] as const) : []),
 			];

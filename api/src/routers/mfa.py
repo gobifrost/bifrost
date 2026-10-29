@@ -25,8 +25,8 @@ from src.core.security import (
 )
 from src.services.mfa_service import MFAService
 from src.services.user_provisioning import get_user_roles
+from shared.browser_impersonation import is_browser_impersonation
 from shared.external_access import (
-    resolve_external_claim,
     resolve_provider_org_claim,
 )
 from shared.identities import refuse_identity_sign_in
@@ -34,6 +34,15 @@ from shared.identities import refuse_identity_sign_in
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/mfa", tags=["mfa"])
+
+
+def _refuse_impersonation_enrollment(current_user: CurrentActiveUser) -> None:
+    """Keep temporary support sessions from creating durable MFA credentials."""
+    if is_browser_impersonation(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Exit impersonation before managing MFA credentials",
+        )
 
 
 # =============================================================================
@@ -167,6 +176,7 @@ async def setup_mfa(
     Returns:
         MFA setup data including secret and QR code URI
     """
+    _refuse_impersonation_enrollment(current_user)
     user = await get_current_user_from_db(current_user, db)
     mfa_service = MFAService(db)
 
@@ -207,6 +217,7 @@ async def verify_mfa(
     Raises:
         HTTPException: If verification fails
     """
+    _refuse_impersonation_enrollment(current_user)
     user = await get_current_user_from_db(current_user, db)
     mfa_service = MFAService(db)
 
@@ -234,7 +245,7 @@ async def verify_mfa(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
@@ -338,6 +349,7 @@ async def regenerate_recovery_codes(
     Raises:
         HTTPException: If MFA verification fails
     """
+    _refuse_impersonation_enrollment(current_user)
     user = await get_current_user_from_db(current_user, db)
     mfa_service = MFAService(db)
 

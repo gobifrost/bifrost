@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from bifrost.definition_validation import DefinitionValidationError
 from src.services.solutions.zip_install import (
     BadExportPassword,
     PreviewResult,
@@ -27,6 +28,103 @@ def test_safe_extract_rejects_compression_bomb(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="compression ratio"):
         _safe_extract(archive.getvalue(), str(tmp_path))
+
+
+def test_safe_extract_accepts_identical_duplicate_member_once_in_bounded_chunks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Identical legacy entries are one logical workspace file, not two writes."""
+    from src.services.solutions import zip_install
+
+    monkeypatch.setattr(zip_install, "_DUPLICATE_COMPARE_CHUNK_BYTES", 3)
+    archive = io.BytesIO()
+    content = b"same member read across several bounded chunks"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("bifrost.solution.yaml", "slug: duplicate\nname: Duplicate\n")
+        z.writestr("apps/dash/app-logo.png", content)
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            z.writestr("apps/dash/app-logo.png", content)
+
+    extractions: list[str] = []
+    original_extract = zipfile.ZipFile.extract
+
+    def record_extract(self, member, path=None, pwd=None):
+        extractions.append(member.filename if isinstance(member, zipfile.ZipInfo) else member)
+        return original_extract(self, member, path, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "extract", record_extract)
+    zip_install._safe_extract(archive.getvalue(), str(tmp_path))
+
+    assert (tmp_path / "apps/dash/app-logo.png").read_bytes() == content
+    assert extractions.count("apps/dash/app-logo.png") == 1
+
+
+def test_safe_extract_rejects_conflicting_duplicate_members(tmp_path: Path) -> None:
+    from src.services.solutions.zip_install import _safe_extract
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("bifrost.solution.yaml", "slug: duplicate\nname: Duplicate\n")
+        z.writestr("apps/dash/app-logo.png", b"first")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            z.writestr("apps/dash/app-logo.png", b"third")
+
+    with pytest.raises(ValueError, match="conflicting duplicate member"):
+        _safe_extract(archive.getvalue(), str(tmp_path))
+
+    assert not (tmp_path / "apps").exists()
+
+
+def test_duplicate_members_count_toward_archive_entry_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.services.solutions import zip_install
+
+    monkeypatch.setattr(zip_install, "MAX_SOLUTION_ARCHIVE_ENTRIES", 1)
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("duplicate.txt", b"same")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            z.writestr("duplicate.txt", b"same")
+
+    with zipfile.ZipFile(archive) as z:
+        with pytest.raises(ValueError, match="too many entries"):
+            zip_install._validate_zip_members(z)
+
+
+def test_duplicate_members_count_toward_expanded_budget_before_comparison(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.services.solutions import zip_install
+
+    monkeypatch.setattr(zip_install, "MAX_SOLUTION_UNCOMPRESSED_BYTES", 7)
+    monkeypatch.setattr(
+        zip_install,
+        "_zip_members_match",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not compare")),
+    )
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("duplicate.txt", b"four")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            z.writestr("duplicate.txt", b"four")
+
+    with zipfile.ZipFile(archive) as z:
+        with pytest.raises(ValueError, match="expands beyond"):
+            zip_install._validate_zip_members(z)
+
+
+def test_safe_extract_rejects_unsafe_duplicate_member_path(tmp_path: Path) -> None:
+    from src.services.solutions.zip_install import _safe_extract
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("../escape.txt", b"same")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            z.writestr("../escape.txt", b"same")
+
+    with pytest.raises(ValueError, match="unsafe path"):
+        _safe_extract(archive.getvalue(), str(tmp_path))
+
+    assert not (tmp_path.parent / "escape.txt").exists()
 
 
 def _make_workspace_zip(extra: dict[str, str] | None = None) -> bytes:
@@ -105,6 +203,48 @@ async def test_install_zip_rejects_missing_module_before_persisting(db_session) 
         )
 
     await db_session.rollback()
+    rows = (await db_session.execute(
+        select(Solution).where(Solution.slug == "zip-demo")
+    )).scalars().all()
+    assert rows == []
+
+
+def test_preview_rejects_invalid_decorator_in_unregistered_helper() -> None:
+    archive = _make_workspace_zip(extra={
+        "helpers/rejected.py": (
+            "from bifrost import workflow\n"
+            "@workflow(timeout_seconds=30)\n"
+            "def rejected(): pass\n"
+        ),
+    })
+
+    with pytest.raises(DefinitionValidationError, match="helpers/rejected.py.*timeout_seconds"):
+        preview_zip(archive)
+
+
+@pytest.mark.e2e
+async def test_install_zip_rejects_invalid_decorator_before_persisting(db_session) -> None:
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+
+    archive = _make_workspace_zip(extra={
+        "helpers/rejected.py": (
+            "from bifrost import workflow\n"
+            "@workflow(timeout_seconds=30)\n"
+            "def rejected(): pass\n"
+        ),
+    })
+
+    with pytest.raises(DefinitionValidationError, match="helpers/rejected.py.*timeout_seconds"):
+        await install_zip(
+            db_session,
+            archive,
+            organization_id=None,
+            config_values={},
+            deployer_email="dev@gobifrost.com",
+        )
+
     rows = (await db_session.execute(
         select(Solution).where(Solution.slug == "zip-demo")
     )).scalars().all()

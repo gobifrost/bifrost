@@ -66,6 +66,46 @@ class TestFacadeEngineRequest:
             clear_execution_context()
 
     @pytest.mark.asyncio
+    async def test_list_mappings_sends_no_scope(self):
+        """The list is every mapping the run user can read; a scope argument
+        is accepted for existing callers and never sent."""
+        from bifrost._context import (
+            clear_execution_context,
+            set_execution_context,
+        )
+        from bifrost.integrations import integrations
+        from src.sdk.context import ExecutionContext, Organization
+
+        set_execution_context(
+            ExecutionContext(
+                user_id="u1", email="e@e.com", name="T", scope="org-1",
+                organization=Organization(id="org-1", name="Org One"),
+                is_platform_admin=False, is_function_key=False,
+                execution_id="exec-1",
+            )
+        )
+        try:
+            client = AsyncMock()
+            client.engine_request = AsyncMock(
+                return_value=httpx.Response(
+                    200,
+                    json={"items": []},
+                    request=httpx.Request(
+                        "POST", "http://api/api/sdk/integrations/list_mappings"
+                    ),
+                )
+            )
+            with patch("bifrost.integrations.get_client", return_value=client):
+                await integrations.list_mappings("P")
+                await integrations.list_mappings("P", scope="org-2")
+
+            assert [
+                call.kwargs["json"] for call in client.engine_request.await_args_list
+            ] == [{"name": "P"}, {"name": "P"}]
+        finally:
+            clear_execution_context()
+
+    @pytest.mark.asyncio
     async def test_mapping_reads_use_engine_request(self):
         from bifrost.integrations import integrations
 

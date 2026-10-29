@@ -19,8 +19,8 @@ import {
 	useWorkflowsMetadata,
 } from "@/hooks/useWorkflows";
 import { useWorkflowKeys } from "@/hooks/useWorkflowKeys";
-import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { OrphanedWorkflowDialog } from "@/components/workflows/OrphanedWorkflowDialog";
 import { WorkflowEditDialog } from "@/components/workflows/WorkflowEditDialog";
 import { WorkflowSidebar } from "@/components/workflows/WorkflowSidebar";
@@ -40,6 +40,8 @@ import {
 } from "@/components/layout/PageWorkspace";
 import { toast } from "sonner";
 import type { components } from "@/lib/v1";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 // Extend WorkflowMetadata with fields that may not be in generated types yet
 type BaseWorkflow = components["schemas"]["WorkflowMetadata"];
@@ -47,11 +49,14 @@ type Workflow = BaseWorkflow & {
 	is_orphaned?: boolean;
 	access_level?: "authenticated" | "everyone" | "role_based";
 };
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function Workflows() {
 	const navigate = useNavigate();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
+	const canManageWorkflows = authorization.canAnywhere("workflows.readwrite");
+	const canEditWorkspace = authorization.canAt(
+		"repository.readwrite",
+		GLOBAL_TARGET,
+	);
 	const { data: apiKeys } = useWorkflowKeys({ includeRevoked: false });
 	const isDesktop = useIsDesktop();
 
@@ -135,20 +140,15 @@ export function Workflows() {
 
 	// Fetch organizations for org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	// Fetch workflows with entity filters and org scope
 	const { data, isLoading, isError, isFetching, refetch } =
 		useWorkflowsFiltered({
-			scope: isPlatformAdmin ? filterOrgId : undefined,
+			scope: filterOrgId,
 			type: typeFilter === "all" ? undefined : typeFilter,
 			filterByForm: selectedFormId ?? undefined,
 			filterByApp: selectedAppId ?? undefined,
@@ -283,7 +283,7 @@ export function Workflows() {
 	// against the live services list (admin-only endpoint — disabled
 	// for non-admins, who get no service links).
 	const { data: servicesData } = useServicesList({
-		enabled: isPlatformAdmin,
+		enabled: authorization.isPlatformAdmin,
 	});
 	const getServiceHref = (workflow: WorkflowListItem) => {
 		const match = servicesData?.items.find(
@@ -319,13 +319,23 @@ export function Workflows() {
 					workflows={filteredWorkflows as WorkflowListItem[]}
 					viewMode={isDesktop ? viewMode : "grid"}
 					isLoading={isLoading}
-					isPlatformAdmin={isPlatformAdmin}
-					canManageWorkflows={isPlatformAdmin}
+					isPlatformAdmin={authorization.canAnywhere(
+						"organizations.read",
+					)}
+					canManageWorkflows={canManageWorkflows}
+					canManageWorkflow={(workflow) =>
+						authorization.canAt(
+							"workflows.readwrite",
+							orgTarget(workflow.organization_id),
+						)
+					}
 					getOrgName={getOrgName}
 					hasGlobalKey={hasGlobalKey}
 					workflowsWithKeys={workflowsWithKeys}
 					openingWorkflowId={openingWorkflowId}
-					onOpenCode={handleOpenInEditor}
+					onOpenCode={
+						canEditWorkspace ? handleOpenInEditor : undefined
+					}
 					onEditScope={(workflow) => handleEditWorkflow(workflow)}
 					onEditEndpoint={(workflow) =>
 						handleEditWorkflow(workflow, "endpoint")
@@ -397,7 +407,7 @@ export function Workflows() {
 					placeholder="Search by name, description, or category..."
 					className="w-full min-w-0 sm:flex-1"
 				/>
-				{isPlatformAdmin && (
+				{authorization.canAnywhere("organizations.read") && (
 					<div className="w-full min-w-0 sm:w-64">
 						<OrganizationSelect
 							aria-label="Organization scope"
@@ -475,7 +485,7 @@ export function Workflows() {
 							orphanedFilter={orphanedFilter}
 							onOrphanedFilterChange={setOrphanedFilter}
 							scope={
-								isPlatformAdmin
+								authorization.canAnywhere("organizations.read")
 									? (filterOrgId ?? undefined)
 									: undefined
 							}
@@ -515,7 +525,7 @@ export function Workflows() {
 							orphanedFilter={orphanedFilter}
 							onOrphanedFilterChange={setOrphanedFilter}
 							scope={
-								isPlatformAdmin
+								authorization.canAnywhere("organizations.read")
 									? (filterOrgId ?? undefined)
 									: undefined
 							}

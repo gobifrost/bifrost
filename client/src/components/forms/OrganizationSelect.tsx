@@ -31,9 +31,12 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import type { components } from "@/lib/v1";
 
 type Organization = components["schemas"]["OrganizationPublic"];
+type OrganizationChoice = Pick<Organization, "id" | "name"> &
+	Partial<Pick<Organization, "is_provider" | "domain">>;
 
 export interface OrganizationSelectProps extends Pick<
 	ComponentProps<typeof Button>,
@@ -66,7 +69,10 @@ export interface OrganizationSelectProps extends Pick<
 	/** Custom className for the popover content (useful for z-index overrides) */
 	contentClassName?: string;
 	/** Offer only the organizations this returns true for */
-	filterOrganizations?: (organization: Organization) => boolean;
+	filterOrganizations?: (organization: OrganizationChoice) => boolean;
+	/** Known resource scopes remain selectable without organization discovery. */
+	knownOrganizations?: readonly OrganizationChoice[];
+	loadOrganizations?: boolean;
 }
 
 export const PERSONAL_SCOPE = "__PERSONAL__";
@@ -86,6 +92,8 @@ export function OrganizationSelect({
 	triggerClassName,
 	contentClassName,
 	filterOrganizations,
+	knownOrganizations = [],
+	loadOrganizations = true,
 	...triggerProps
 }: OrganizationSelectProps) {
 	const {
@@ -94,15 +102,22 @@ export function OrganizationSelect({
 		isFetching,
 		error,
 		refetch,
-	} = useOrganizations();
+	} = useOrganizations({ enabled: loadOrganizations });
+	const choices = [
+		...new Map(
+			[
+				...knownOrganizations,
+				...(loadOrganizations ? (allOrganizations ?? []) : []),
+			].map((organization) => [organization.id, organization]),
+		).values(),
+	];
 	const organizations = filterOrganizations
-		? allOrganizations?.filter(filterOrganizations)
-		: allOrganizations;
+		? choices.filter(filterOrganizations)
+		: choices;
+	const getOrgName = useOrganizationName(choices);
 	const [open, setOpen] = useState(false);
 
-	const selectedOrg = organizations?.find(
-		(org: Organization) => org.id === value,
-	);
+	const selectedOrg = organizations?.find((org) => org.id === value);
 
 	const handleSelect = (selected: string) => {
 		if (selected === ALL_VALUE) {
@@ -116,7 +131,7 @@ export function OrganizationSelect({
 	};
 
 	const renderTriggerContent = () => {
-		if (isLoading) {
+		if (loadOrganizations && isLoading) {
 			return <span className="text-muted-foreground">Loading...</span>;
 		}
 		if (value === PERSONAL_SCOPE && showPersonal) {
@@ -153,6 +168,17 @@ export function OrganizationSelect({
 			);
 		}
 		if (value) {
+			const homeOrganizationName = getOrgName(value);
+			if (homeOrganizationName !== value) {
+				return (
+					<div className="flex min-w-0 items-center gap-2">
+						<Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+						<span className="min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]">
+							{homeOrganizationName}
+						</span>
+					</div>
+				);
+			}
 			return (
 				<div className="flex min-w-0 items-center gap-2">
 					<Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -185,7 +211,7 @@ export function OrganizationSelect({
 						"h-auto min-h-11 w-full min-w-0 justify-between py-2 font-normal lg:min-h-10",
 						triggerClassName,
 					)}
-					disabled={disabled || isLoading}
+					disabled={disabled || (loadOrganizations && isLoading)}
 				>
 					{renderTriggerContent()}
 					<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -201,7 +227,7 @@ export function OrganizationSelect({
 						placeholder="Search organizations..."
 						aria-label="Search organizations"
 					/>
-					{error && (
+					{loadOrganizations && error && (
 						<div
 							role="alert"
 							className="space-y-2 border-b p-3 text-sm"
@@ -220,7 +246,7 @@ export function OrganizationSelect({
 						</div>
 					)}
 					<CommandList className="max-h-60 overflow-y-auto">
-						{!error && (
+						{(!loadOrganizations || !error) && (
 							<CommandEmpty>No organizations found.</CommandEmpty>
 						)}
 
@@ -303,7 +329,7 @@ export function OrganizationSelect({
 
 						<CommandGroup heading="Organizations">
 							{organizations && organizations.length > 0 ? (
-								organizations.map((org: Organization) => {
+								organizations.map((org) => {
 									const keywords = [org.name];
 									if (org.domain) keywords.push(org.domain);
 									if (org.is_provider)

@@ -1,5 +1,6 @@
 """Regression tests for exact webhook event-to-delivery queueing."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -8,6 +9,11 @@ import pytest
 
 from src.routers.hooks import receive_webhook
 from src.services.webhooks.protocol import Deliver
+
+
+@asynccontextmanager
+async def _savepoint():
+    yield
 
 
 @pytest.mark.asyncio
@@ -27,7 +33,10 @@ async def test_webhook_queues_the_exact_event_returned_by_the_processor():
     request.query_params = {}
     request.client = None
     request.body = AsyncMock(return_value=b"{}")
+    order: list[str] = []
     db = AsyncMock()
+    db.begin_nested = MagicMock(side_effect=_savepoint)
+    db.commit.side_effect = lambda: order.append("commit")
 
     with (
         patch(
@@ -44,11 +53,15 @@ async def test_webhook_queues_the_exact_event_returned_by_the_processor():
                 event_id=exact_event_id,
             )
         )
-        processor.queue_event_deliveries = AsyncMock(return_value=1)
+        queued = MagicMock(
+            count=1, hand_off=AsyncMock(side_effect=lambda: order.append("hand_off"))
+        )
+        processor.queue_event_deliveries = AsyncMock(return_value=queued)
 
         response = await receive_webhook(str(source_id), request, db)
 
     assert response.status_code == 202
     processor.queue_event_deliveries.assert_awaited_once_with(exact_event_id)
     db.execute.assert_not_awaited()
-    assert db.commit.await_count == 2
+    # The runs commit with the event's deliveries, then go to workers.
+    assert order == ["commit", "hand_off"]

@@ -1,8 +1,4 @@
-"""Privileged principals and the role-assignment grant ceiling.
-
-The identity routes (users, role assignments) use these through
-``src.services.authorization.enforce`` and
-``src.services.user_role_assignments``.
+"""Privileged principals and privileged role-assignment changes.
 
 A principal is privileged when anything they hold, at any boundary, is in
 ``PRIVILEGED_PERMISSIONS`` or is the Platform Admin wildcard. Boundaries do
@@ -14,9 +10,8 @@ takes over what they hold everywhere.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from uuid import UUID
 
-from shared.builtin_roles import WILDCARD_PERMISSION, is_builtin_role_id
+from shared.builtin_roles import WILDCARD_PERMISSION
 from src.models.contracts.permissions import PRIVILEGED_PERMISSIONS
 
 
@@ -30,51 +25,16 @@ def is_privileged_principal(held_permissions: Iterable[str]) -> bool:
     )
 
 
-def operator_assignable_role(
-    *,
-    role_id: UUID,
-    role_permissions: frozenset[str],
-    target_permissions: Iterable[str],
+def role_assignment_requires_privileged_access(
+    *, role_permissions: Iterable[str], target_permissions: Iterable[str]
 ) -> bool:
-    """Whether a Platform Operator may assign or remove ``role_id`` on a user
-    who holds ``target_permissions``.
+    """Whether changing this assignment needs ``privilegedaccess.readwrite``.
 
-    Operators hold ``roleassignments.readwrite`` only for sharing entities:
-    the role must carry no permissions at all (a pure app/form/workflow/agent
-    access role), must not be a builtin role (Platform Admin stores no
-    permission rows, so the permission check alone would admit it), and the
-    target must not be a privileged principal.
+    ``roleassignments.readwrite`` is sufficient for ordinary roles, including
+    roles that carry ordinary permissions. Assigning or removing a privileged
+    role, or changing an account that already holds one, additionally needs
+    privileged access at that account's organization.
     """
-    return (
-        not is_builtin_role_id(role_id)
-        and not role_permissions
-        and not is_privileged_principal(target_permissions)
-    )
-
-
-def may_change_role_assignment(
-    *,
-    actor_is_platform_admin: bool,
-    role_id: UUID,
-    role_permissions: frozenset[str],
-    target_permissions: Iterable[str],
-) -> bool:
-    """The grant ceiling: whether the actor may grant or remove ``role_id``
-    (as a base role or an additional role) on a user who holds
-    ``target_permissions``.
-
-    A Platform Admin may change any assignment (the callers still apply
-    their own rules about which builtin roles can be granted where). Every
-    other actor, whatever identity permissions their roles give them, is
-    held to the Platform Operator rule (``operator_assignable_role``): only
-    roles that carry no permissions and are not builtin, and never on a
-    privileged user. Until a reviewed design for delegating "manage
-    unprivileged roles" exists, no delegate can hand out a permission.
-    """
-    if actor_is_platform_admin:
-        return True
-    return operator_assignable_role(
-        role_id=role_id,
-        role_permissions=role_permissions,
-        target_permissions=target_permissions,
+    return is_privileged_principal(role_permissions) or is_privileged_principal(
+        target_permissions
     )

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.claims.preresolve import preresolve_for_policies
@@ -23,6 +24,36 @@ from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.repositories.policy_rule import PolicyRuleRepository
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FilePolicyDecision:
+    """The single policy evaluation used for enforcement and Access Checks."""
+
+    allowed: bool
+    principal: Any
+    policies: FilePolicies
+
+
+@dataclass
+class FilePolicyEvalCache:
+    """Request-scoped memo for evaluating many paths in one location.
+
+    Used by the ``files.move`` enqueue, which runs up to three policy checks
+    per item. It memoizes the enforced policy principal per caller, the policy
+    rows each cascade arm loads, each policy row's validated and ref-resolved
+    policies, claim pre-resolution per (principal, policy row), and metadata
+    rows per path. Decisions are identical to uncached evaluation: the
+    canonical cascade and evaluator still run.
+    """
+
+    principals: dict[int, tuple[Any, Any]] = field(default_factory=dict)
+    policy_rows: dict[tuple[Any, ...], list[FilePolicy]] = field(default_factory=dict)
+    resolved: dict[tuple[UUID | None, UUID], tuple[FilePolicies, bool]] = field(
+        default_factory=dict
+    )
+    preresolved: set[tuple[int, UUID]] = field(default_factory=set)
+    metadata: dict[tuple[Any, ...], FileMetadata | None] = field(default_factory=dict)
 
 
 class FilePolicyService:
@@ -152,6 +183,105 @@ class FilePolicyService:
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
+    def _scoped_row_filter(
+        self,
+        *,
+        organization_id: UUID | None,
+        solution_id: UUID | None,
+        location: str,
+        path: str,
+    ) -> list[Any]:
+        """Row key used by the write path (``record_file_write_metadata``)."""
+        if solution_id is not None:
+            return [
+                FileMetadata.solution_id == solution_id,
+                FileMetadata.location == location,
+                FileMetadata.path == path,
+            ]
+        return [
+            FileMetadata.organization_id == organization_id,
+            FileMetadata.location == location,
+            FileMetadata.path == path,
+            FileMetadata.solution_id.is_(None),
+        ]
+
+    async def get_scoped_metadata(
+        self,
+        *,
+        organization_id: UUID | None,
+        solution_id: UUID | None,
+        location: str,
+        path: str,
+    ) -> FileMetadata | None:
+        stmt = select(FileMetadata).where(
+            *self._scoped_row_filter(
+                organization_id=organization_id,
+                solution_id=solution_id,
+                location=location,
+                path=path,
+            )
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def move_metadata(
+        self,
+        *,
+        organization_id: UUID | None,
+        solution_id: UUID | None,
+        location: str,
+        source_row_id: UUID | None,
+        destination_path: str,
+        s3_key: str,
+        content_type: str | None,
+        size_bytes: int,
+        updated_by: UUID,
+    ) -> None:
+        """Re-key a moved file's row to its destination; executed, not committed.
+
+        Core statements only: the Solution write guard rejects ORM flushes of
+        Solution-owned rows, and every Solution file row is one. A stale row
+        already at the destination (its object is gone) is removed first so
+        the partial unique indexes hold. The source row keeps its id,
+        creator, creation time, size, sha256, and content type.
+        """
+        await self.db.execute(
+            delete(FileMetadata).where(
+                *self._scoped_row_filter(
+                    organization_id=organization_id,
+                    solution_id=solution_id,
+                    location=location,
+                    path=destination_path,
+                )
+            )
+        )
+        if source_row_id is not None:
+            await self.db.execute(
+                update(FileMetadata)
+                .where(FileMetadata.id == source_row_id)
+                .values(
+                    path=destination_path,
+                    s3_key=s3_key,
+                    updated_by=updated_by,
+                    updated_at=func.now(),
+                )
+            )
+            return
+        await self.db.execute(
+            insert(FileMetadata).values(
+                id=uuid4(),
+                organization_id=organization_id,
+                solution_id=solution_id,
+                location=location,
+                path=destination_path,
+                s3_key=s3_key,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                sha256=None,
+                created_by=updated_by,
+                updated_by=updated_by,
+            )
+        )
+
     async def upsert_policy(
         self,
         *,
@@ -266,6 +396,19 @@ class FilePolicyService:
         await self.db.flush()
         return True
 
+    async def _policy_rows(
+        self,
+        key: tuple[Any, ...],
+        stmt: Any,
+        cache: "FilePolicyEvalCache | None",
+    ) -> list[FilePolicy]:
+        if cache is not None and key in cache.policy_rows:
+            return cache.policy_rows[key]
+        rows = list((await self.db.execute(stmt)).scalars().all())
+        if cache is not None:
+            cache.policy_rows[key] = rows
+        return rows
+
     async def load_policy(
         self,
         *,
@@ -273,6 +416,7 @@ class FilePolicyService:
         location: str,
         path: str,
         solution_id: UUID | None = None,
+        cache: "FilePolicyEvalCache | None" = None,
     ) -> FilePolicy | None:
         """Resolve the governing policy with own-solution → org → global cascade.
 
@@ -283,49 +427,165 @@ class FilePolicyService:
         unchanged.
 
         For non-solution callers (``solution_id=None``) the original org →
-        global cascade applies with no change.
+        global cascade applies with no change. ``cache`` memoizes each arm's
+        rows for the rest of one request.
         """
-        # Step 0: solution-own arm — only when a solution context is active.
         if solution_id is not None:
-            solution_rows = (
-                await self.db.execute(
-                    select(FilePolicy).where(
-                        FilePolicy.solution_id == solution_id,
-                        FilePolicy.location == location,
-                    )
-                )
-            ).scalars().all()
+            solution_rows = await self._policy_rows(
+                ("solution", solution_id, location),
+                select(FilePolicy).where(
+                    FilePolicy.solution_id == solution_id,
+                    FilePolicy.location == location,
+                ),
+                cache,
+            )
             solution_match = select_longest_prefix(solution_rows, location, path)  # type: ignore[arg-type]
             if solution_match is not None:
                 return cast(FilePolicy, solution_match)
 
-        # Step 1: org-specific (override) — longest-prefix among the org's rows.
         if organization_id is not None:
-            org_rows = (
-                await self.db.execute(
-                    select(FilePolicy).where(
-                        FilePolicy.organization_id == organization_id,
-                        FilePolicy.location == location,
-                        FilePolicy.solution_id.is_(None),
-                    )
-                )
-            ).scalars().all()
+            org_rows = await self._policy_rows(
+                ("org", organization_id, location),
+                select(FilePolicy).where(
+                    FilePolicy.organization_id == organization_id,
+                    FilePolicy.location == location,
+                    FilePolicy.solution_id.is_(None),
+                ),
+                cache,
+            )
             org_match = select_longest_prefix(org_rows, location, path)  # type: ignore[arg-type]
             if org_match is not None:
                 return cast(FilePolicy, org_match)
 
-        # Step 2: fall back to global (org=NULL).
-        global_rows = (
-            await self.db.execute(
-                select(FilePolicy).where(
-                    FilePolicy.organization_id.is_(None),
-                    FilePolicy.location == location,
-                    FilePolicy.solution_id.is_(None),
-                )
-            )
-        ).scalars().all()
+        global_rows = await self._policy_rows(
+            ("global", location),
+            select(FilePolicy).where(
+                FilePolicy.organization_id.is_(None),
+                FilePolicy.location == location,
+                FilePolicy.solution_id.is_(None),
+            ),
+            cache,
+        )
         global_match = select_longest_prefix(global_rows, location, path)  # type: ignore[arg-type]
         return cast("FilePolicy | None", global_match)
+
+    async def evaluate(
+        self,
+        action: FileAction,
+        *,
+        organization_id: UUID | None,
+        location: str,
+        path: str,
+        user: Any,
+        solution_id: UUID | None = None,
+        cache: "FilePolicyEvalCache | None" = None,
+    ) -> FilePolicyDecision:
+        user = await self._enforced_principal(user, cache)
+        empty_policies = FilePolicies.model_validate({"policies": []})
+        policy_row = await self.load_policy(
+            organization_id=organization_id,
+            location=location,
+            path=path,
+            solution_id=solution_id,
+            cache=cache,
+        )
+        if policy_row is None:
+            return FilePolicyDecision(False, user, empty_policies)
+
+        resolved_key = (organization_id, policy_row.id)
+        if cache is not None and resolved_key in cache.resolved:
+            policies, usable = cache.resolved[resolved_key]
+        else:
+            policies, usable = await self._resolved_policies(policy_row, organization_id)
+            if cache is not None:
+                cache.resolved[resolved_key] = (policies, usable)
+        if not usable:
+            return FilePolicyDecision(False, user, policies)
+
+        # Keyed by object identity: the cache holds the principal (see
+        # ``_enforced_principal``), so the id cannot be reused while it lives.
+        preresolve_key = (id(user), policy_row.id)
+        if cache is None or preresolve_key not in cache.preresolved:
+            await preresolve_for_policies(
+                user,
+                policies,  # type: ignore[arg-type]
+                self.db,
+                organization_id,
+                solution_id,
+            )
+            if cache is not None:
+                cache.preresolved.add(preresolve_key)
+
+        metadata_key = (solution_id, organization_id, location, path)
+        if cache is not None and metadata_key in cache.metadata:
+            metadata = cache.metadata[metadata_key]
+        else:
+            if solution_id is not None:
+                metadata = await self._get_solution_metadata(
+                    solution_id=solution_id,
+                    location=location,
+                    path=path,
+                )
+            else:
+                metadata = await self.get_metadata(
+                    organization_id=organization_id,
+                    location=location,
+                    path=path,
+                )
+            if cache is not None:
+                cache.metadata[metadata_key] = metadata
+        context = FilePolicyContext(
+            location=location,
+            path=path,
+            created_by=metadata.created_by if metadata is not None else None,
+            created_at=metadata.created_at if metadata is not None else None,
+        )
+        return FilePolicyDecision(
+            evaluate_file_action(action, policies, context, user), user, policies
+        )
+
+    async def _enforced_principal(
+        self, user: Any, cache: "FilePolicyEvalCache | None"
+    ) -> Any:
+        """The policy principal for ``user``, built once per cache."""
+        from src.services.access_check_policies import enforced_policy_principal
+
+        if cache is None:
+            return await enforced_policy_principal(self.db, user)
+        entry = cache.principals.get(id(user))
+        if entry is not None and entry[0] is user:
+            return entry[1]
+        principal = await enforced_policy_principal(self.db, user)
+        cache.principals[id(user)] = (user, principal)
+        return principal
+
+    async def _resolved_policies(
+        self, policy_row: FilePolicy, organization_id: UUID | None
+    ) -> tuple[FilePolicies, bool]:
+        """Validated, ref-resolved policies for a row, and whether they can grant.
+
+        A malformed row yields empty policies; an unresolvable ref yields the
+        row's policies (for missing-role diagnostics). Both deny.
+        """
+        try:
+            policies = FilePolicies.model_validate(policy_row.policies)
+        except ValidationError as exc:
+            logger.warning(
+                "malformed file policies; denying file access: %s",
+                exc.__class__.__name__,
+            )
+            return FilePolicies.model_validate({"policies": []}), False
+
+        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id)
+        try:
+            await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
+        except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
+            logger.warning(
+                "unresolvable file policy ref; denying file access: %s",
+                exc.__class__.__name__,
+            )
+            return policies, False
+        return policies, True
 
     async def is_allowed(
         self,
@@ -337,63 +597,17 @@ class FilePolicyService:
         user: Any,
         solution_id: UUID | None = None,
     ) -> bool:
-        if not self._principal_matches_org(user, organization_id):
-            return False
-
-        policy_row = await self.load_policy(
-            organization_id=organization_id,
-            location=location,
-            path=path,
-            solution_id=solution_id,
-        )
-        if policy_row is None:
-            return False
-
-        try:
-            policies = FilePolicies.model_validate(policy_row.policies)
-        except ValidationError as exc:
-            logger.warning(
-                "malformed file policies; denying file access: %s",
-                exc.__class__.__name__,
-            )
-            return False
-
-        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id, is_superuser=True)
-        try:
-            await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
-        except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
-            logger.warning(
-                "unresolvable file policy ref; denying file access: %s",
-                exc.__class__.__name__,
-            )
-            return False
-
-        await preresolve_for_policies(
-            user,
-            policies,  # type: ignore[arg-type]
-            self.db,
-            organization_id,
-            solution_id,
-        )
-        if solution_id is not None:
-            metadata = await self._get_solution_metadata(
-                solution_id=solution_id,
-                location=location,
-                path=path,
-            )
-        else:
-            metadata = await self.get_metadata(
+        """Compatibility boolean view of :meth:`evaluate`."""
+        return (
+            await self.evaluate(
+                action,
                 organization_id=organization_id,
                 location=location,
                 path=path,
+                user=user,
+                solution_id=solution_id,
             )
-        context = FilePolicyContext(
-            location=location,
-            path=path,
-            created_by=metadata.created_by if metadata is not None else None,
-            created_at=metadata.created_at if metadata is not None else None,
-        )
-        return evaluate_file_action(action, policies, context, user)
+        ).allowed
 
     async def _get_policy_exact(
         self,
@@ -415,24 +629,6 @@ class FilePolicyService:
             FilePolicy.solution_id.is_(None),
         )
         return (await self.db.execute(stmt)).scalar_one_or_none()
-
-    def _principal_matches_org(
-        self,
-        user: Any,
-        organization_id: UUID | None,
-    ) -> bool:
-        if organization_id is None:
-            return True
-        # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
-        # provider-org members (portal-hopping platform staff) reach any org's
-        # files, same as platform admins.
-        if getattr(user, "is_platform_admin", False) or getattr(
-            user, "is_provider_org", False
-        ):
-            return True
-        user_org = getattr(user, "organization_id", None)
-        return user_org is not None and str(user_org) == str(organization_id)
-
 
 def _coerce_uuid(value: UUID | str | None) -> UUID | None:
     if value is None or isinstance(value, UUID):

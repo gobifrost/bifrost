@@ -35,6 +35,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSetConfig, useUpdateConfig } from "@/hooks/useConfig";
 import { useAuth } from "@/contexts/AuthContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useAuthorization } from "@/services/authorization";
+import { orgTarget } from "@/lib/authorization";
 import type { components } from "@/lib/v1";
 
 type Config = components["schemas"]["ConfigResponse"];
@@ -75,15 +77,13 @@ interface ConfigDialogProps {
 export function ConfigDialog({ config, open, onClose }: ConfigDialogProps) {
 	const setConfig = useSetConfig({ showErrorToast: false });
 	const updateConfig = useUpdateConfig({ showErrorToast: false });
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const authorization = useAuthorization();
 	const isEditing = !!config;
 	const submitBusy = useRef(false);
 	const saveErrorRef = useRef<HTMLDivElement>(null);
 
-	// Default organization_id for org users is their org, for platform admins it's null (global)
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId = user?.organizationId ?? null;
 
 	const form = useForm<FormValues>({
 		resolver: zodResolver(createFormSchema(isEditing)),
@@ -98,6 +98,28 @@ export function ConfigDialog({ config, open, onClose }: ConfigDialogProps) {
 
 	// Watch the type field to conditionally render input type
 	const selectedType = useWatch({ control: form.control, name: "type" });
+	const selectedOrganizationId = useWatch({
+		control: form.control,
+		name: "organization_id",
+	});
+	const currentOrganizationId = config ? config.org_id : defaultOrgId;
+	const canManageCurrentScope = authorization.canAt(
+		"configs.readwrite",
+		orgTarget(currentOrganizationId),
+	);
+	const canManageSelectedScope = authorization.canAt(
+		"configs.readwrite",
+		orgTarget(selectedOrganizationId),
+	);
+	const canChooseScope = authorization.canAnywhere("configs.readwrite");
+	const knownOrganizations = [
+		...(defaultOrgId
+			? [{ id: defaultOrgId, name: "Your organization" }]
+			: []),
+		...(config?.org_id
+			? [{ id: config.org_id, name: "Configuration organization" }]
+			: []),
+	];
 
 	useEffect(() => {
 		if (config) {
@@ -127,7 +149,13 @@ export function ConfigDialog({ config, open, onClose }: ConfigDialogProps) {
 	}, [config, form, open, defaultOrgId]);
 
 	const onSubmit = async (values: FormValues) => {
-		if (submitBusy.current || isSaving) return;
+		if (
+			submitBusy.current ||
+			isSaving ||
+			!canManageCurrentScope ||
+			!canManageSelectedScope
+		)
+			return;
 		submitBusy.current = true;
 		form.clearErrors("root.save");
 		try {
@@ -225,8 +253,7 @@ export function ConfigDialog({ config, open, onClose }: ConfigDialogProps) {
 								disabled={isSaving}
 								className="min-w-0 space-y-4"
 							>
-								{/* Organization Scope - Only show for platform admins */}
-								{isPlatformAdmin && (
+								{canChooseScope && (
 									<FormField
 										control={form.control}
 										name="organization_id"
@@ -242,6 +269,12 @@ export function ConfigDialog({ config, open, onClose }: ConfigDialogProps) {
 															field.onChange
 														}
 														showGlobal={true}
+														loadOrganizations={authorization.canAnywhere(
+															"organizations.read",
+														)}
+														knownOrganizations={
+															knownOrganizations
+														}
 													/>
 												</FormControl>
 												<FormDescription>
@@ -286,7 +319,11 @@ export function ConfigDialog({ config, open, onClose }: ConfigDialogProps) {
 											<Select
 												onValueChange={field.onChange}
 												value={field.value}
-												disabled={isSaving}
+												disabled={
+													isSaving ||
+													!canManageCurrentScope ||
+													!canManageSelectedScope
+												}
 											>
 												<FormControl>
 													<SelectTrigger className="min-h-11 lg:min-h-0">

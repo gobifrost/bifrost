@@ -246,23 +246,21 @@ class TestConfigAccess:
         deleted_config = next((c for c in configs if c["key"] == "e2e_delete_test"), None)
         assert deleted_config is None, "Config should be deleted"
 
-    def test_org_user_cannot_modify_config(self, e2e_client, platform_admin, org1_user):
-        """Org user cannot PUT/update config (403 or 405 if PUT not supported)."""
+    def test_malformed_config_update_path_is_rejected_before_authorization(self, e2e_client, platform_admin, org1_user):
+        """A config key is not a valid update resource identifier."""
         # Admin creates a config
         created = _create_config(
             e2e_client, platform_admin.headers,
             "e2e_modify_test", "original",
         )
 
-        # Org user tries to update it
+        # A config key in the ID path is invalid before the caller is authorized.
         response = e2e_client.put(
             "/api/config/e2e_modify_test",
             headers=org1_user.headers,
             json={"value": "hacked"},
         )
-        # 403 = forbidden, 404 = route doesn't exist (PUT not implemented), 405 = method not allowed
-        assert response.status_code in [403, 404, 405], \
-            f"Org user should not modify config: {response.status_code}"
+        assert response.status_code == 422, response.text
 
         # Cleanup
         _delete_config(e2e_client, platform_admin.headers, created["id"])
@@ -291,7 +289,9 @@ class TestConfigAccess:
 class TestConfigPartialUpdate:
     """Test partial update (PUT) for config entries, especially secrets."""
 
-    def test_update_secret_without_value_preserves_existing(self, e2e_client, platform_admin):
+    def test_update_secret_without_value_preserves_existing(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """Updating a secret config without providing a value keeps the existing encrypted value."""
         key = f"e2e_secret_partial_{uuid4().hex[:8]}"
         created = _create_config(
@@ -317,7 +317,9 @@ class TestConfigPartialUpdate:
         # Cleanup
         _delete_config(e2e_client, platform_admin.headers, config_id)
 
-    def test_update_secret_with_empty_string_preserves_existing(self, e2e_client, platform_admin):
+    def test_update_secret_with_empty_string_preserves_existing(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """Sending empty string for secret value keeps existing value."""
         key = f"e2e_secret_empty_{uuid4().hex[:8]}"
         created = _create_config(
@@ -339,7 +341,9 @@ class TestConfigPartialUpdate:
         # Cleanup
         _delete_config(e2e_client, platform_admin.headers, config_id)
 
-    def test_update_secret_with_new_value_re_encrypts(self, e2e_client, platform_admin):
+    def test_update_secret_with_new_value_re_encrypts(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """Providing a new value for a secret config re-encrypts it."""
         key = f"e2e_secret_reencrypt_{uuid4().hex[:8]}"
         created = _create_config(
@@ -361,7 +365,9 @@ class TestConfigPartialUpdate:
         # Cleanup
         _delete_config(e2e_client, platform_admin.headers, config_id)
 
-    def test_secret_write_echoes_are_redacted(self, e2e_client, platform_admin):
+    def test_secret_write_echoes_are_redacted(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
         """POST and PUT echo a masked value — neither plaintext nor ciphertext —
         while the engine-facing SDK read still decrypts the stored value.
 
@@ -548,10 +554,10 @@ class TestConfigScopeFiltering:
         assert scoped_configs["org1"]["key"] not in config_keys, "Should NOT see org1 config"
         assert scoped_configs["org2"]["key"] not in config_keys, "Should NOT see org2 config"
 
-    def test_platform_admin_scope_org_sees_only_that_org(
+    def test_platform_admin_scope_org_includes_shared_global_defaults(
         self, e2e_client, platform_admin, org1, scoped_configs
     ):
-        """Platform admin with scope={org1} sees ONLY org1 configs (NOT global)."""
+        """Platform admin with scope={org1} sees that org and shared global configs."""
         response = e2e_client.get(
             "/api/config",
             params={"scope": org1["id"]},
@@ -560,7 +566,6 @@ class TestConfigScopeFiltering:
         assert response.status_code == 200
         config_keys = [c["key"] for c in response.json()]
 
-        # KEY ASSERTION: Global should NOT be included when filtering by org
-        assert scoped_configs["global"]["key"] not in config_keys, "Should NOT see global config"
+        assert scoped_configs["global"]["key"] in config_keys, "Should see global config"
         assert scoped_configs["org1"]["key"] in config_keys, "Should see org1 config"
         assert scoped_configs["org2"]["key"] not in config_keys, "Should NOT see org2 config"

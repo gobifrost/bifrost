@@ -1,0 +1,14 @@
+{
+  "key": "pr:989",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Dashboard charts keep working after opening and closing the code editor.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/989",
+      "Controller reproduced issue #988 in the production client, verified the repair through the editor-to-dashboard browser journey and shared editor consumers, and reviewed this summary against that behavior. Jack authorized merging the tested fix on 2026-10-15."
+    ]
+  }
+}

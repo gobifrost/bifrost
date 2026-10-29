@@ -1,0 +1,14 @@
+{
+  "key": "pr:1029",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Platform admins can again refresh, deep-link and stay on an App that belongs to a client organization.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1029",
+      "New e2e test fails on main with the reported 404 and passes with the fix; adversarial review found no authorization widening."
+    ]
+  }
+}

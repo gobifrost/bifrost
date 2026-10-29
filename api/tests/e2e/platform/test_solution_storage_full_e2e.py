@@ -152,6 +152,7 @@ async def test_deployed_solution_storage_round_trips_through_full_export_install
     e2e_client,
     platform_admin,
     db_session,
+    secrets_reader_platform_admin,
 ):
     headers = platform_admin.headers
     src_org_id = _create_org(e2e_client, headers, "storage-src")

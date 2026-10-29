@@ -27,8 +27,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useForms, useDeleteForm, useUpdateForm } from "@/hooks/useForms";
-import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
@@ -36,10 +36,10 @@ import { FormShareDialog } from "@/components/forms/FormShareDialog";
 import { term, useTerminology } from "@/lib/terminology";
 import type { components } from "@/lib/v1";
 import { preloadRunFormPage } from "@/pages/run-form-route";
+import { orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 type FormPublic = components["schemas"]["FormPublic"];
-type Organization = components["schemas"]["OrganizationPublic"];
-
 export function Forms() {
 	const isDesktop = useIsDesktop();
 	const actionBusy = useRef(false);
@@ -47,7 +47,7 @@ export function Forms() {
 	const [actionError, setActionError] = useState(false);
 	const navigate = useNavigate();
 	const terminology = useTerminology();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
@@ -73,7 +73,7 @@ export function Forms() {
 		isError,
 		isFetching,
 		refetch,
-	} = useForms(isPlatformAdmin ? filterOrgId : undefined);
+	} = useForms(filterOrgId);
 	const deleteForm = useDeleteForm({ errorToast: false });
 	const updateForm = useUpdateForm({ errorToast: false });
 
@@ -85,18 +85,14 @@ export function Forms() {
 
 	// Fetch organizations for the org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
-	// For now, only platform admins can manage forms
-	const canManageForms = isPlatformAdmin;
+	const canManageForms = authorization.canAnywhere("forms.readwrite");
+	const canManageForm = (form: FormPublic) =>
+		authorization.canAt("forms.readwrite", orgTarget(form.organization_id));
 
 	// Build validation map from backend-provided missingRequiredParams
 	const formValidation = useMemo(() => {
@@ -206,7 +202,7 @@ export function Forms() {
 	const scopeFilteredForms =
 		forms?.filter((form) => {
 			// Hide invalid forms from regular users
-			if (!isPlatformAdmin) {
+			if (!canManageForm(form)) {
 				const validation = formValidation.get(form.id);
 				if (validation && !validation.valid) {
 					return false;
@@ -292,7 +288,7 @@ export function Forms() {
 					placeholder={`Search ${term(terminology, "form", "pluralLower")} by name, description, or workflow...`}
 					className="flex-1"
 				/>
-				{isPlatformAdmin && (
+				{authorization.canAnywhere("organizations.read") && (
 					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
@@ -331,8 +327,11 @@ export function Forms() {
 						forms={filteredForms as FormListItem[]}
 						viewMode={isDesktop ? viewMode : "grid"}
 						isLoading={isLoading}
-						isPlatformAdmin={isPlatformAdmin}
+						isPlatformAdmin={authorization.canAnywhere(
+							"organizations.read",
+						)}
 						canManageForms={canManageForms}
+						canManageForm={canManageForm}
 						getOrgName={getOrgName}
 						formValidation={
 							formValidation as Map<string, FormValidationState>

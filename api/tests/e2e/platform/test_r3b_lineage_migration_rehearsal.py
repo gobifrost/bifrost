@@ -3,7 +3,9 @@
 Builds a disposable database at the migration's ``down_revision``, seeds a
 person, two executions and an agent run, then upgrades and checks the new
 lineage columns: present, NULL on existing rows, foreign keys created
-without validating existing rows, and removed again by the downgrade.
+without validating existing rows, and removed again by the downgrade. At
+head, ``20261023_legacy_run_lineage`` gives only the run still waiting its
+recorded user's lineage.
 """
 
 from __future__ import annotations
@@ -147,6 +149,16 @@ async def _state(database_url: str) -> dict:
     return await _run_in_database(database_url, read)
 
 
+async def _execution_lineage(database_url: str) -> dict:
+    async def read(connection: AsyncConnection) -> dict:
+        rows = await connection.execute(
+            sa.text("SELECT id, run_user_id, started_by_user_id, root_execution_id FROM executions")
+        )
+        return {row[0]: tuple(row[1:]) for row in rows.all()}
+
+    return await _run_in_database(database_url, read)
+
+
 def test_lineage_columns_are_added_empty_with_unvalidated_foreign_keys() -> None:
     database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     _assert_safe_database_name(database_name)
@@ -172,7 +184,14 @@ def test_lineage_columns_are_added_empty_with_unvalidated_foreign_keys() -> None
         assert {name: definition.split(" ON public.")[1].replace(" USING btree", "") for name, definition in after["indexes"].items()} == _INDEXES
 
         _upgrade(database_url, "head")
-        assert asyncio.run(_state(database_url)) == after
+        at_head = asyncio.run(_state(database_url))
+        assert {key: value for key, value in at_head.items() if key != "values"} == {
+            key: value for key, value in after.items() if key != "values"
+        }
+        assert asyncio.run(_execution_lineage(database_url)) == {
+            UUID(ids["scheduled"]): (UUID(ids["person"]), UUID(ids["person"]), UUID(ids["scheduled"])),
+            UUID(ids["done"]): (None, None, None),
+        }
 
         _downgrade(database_url, PREVIOUS_REVISION)
         assert asyncio.run(_state(database_url)) == before

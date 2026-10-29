@@ -9,6 +9,7 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: vi.fn() }));
 vi.mock("@/hooks/useOrganizations", () => ({ useOrganizations: vi.fn() }));
 vi.mock("@/hooks/useMediaQuery", () => ({ useMediaQuery: vi.fn() }));
+vi.mock("@/services/authorization", () => ({ useAuthorization: vi.fn() }));
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: ({
 		onChange,
@@ -21,16 +22,22 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 	),
 }));
 const shareTreeScopes: Array<string | null> = [];
+const shareTreeSolutions: Array<string | undefined> = [];
 const shareTreeReadOnly: boolean[] = [];
+const shareTreePolicyReadOnly: boolean[] = [];
 vi.mock("./ShareTree", () => ({
 	ShareTree: ({
 		scope,
+		solution,
 		readOnly,
+		policyReadOnly,
 		onSelect,
 		onContextAction,
 	}: {
 		scope: string | null;
+		solution?: string;
 		readOnly?: boolean;
+		policyReadOnly?: boolean;
 		onSelect: (location: string, prefix: string) => void;
 		onContextAction: (
 			action: string,
@@ -39,7 +46,9 @@ vi.mock("./ShareTree", () => ({
 		) => void;
 	}) => {
 		shareTreeScopes.push(scope);
+		shareTreeSolutions.push(solution);
 		shareTreeReadOnly.push(Boolean(readOnly));
+		shareTreePolicyReadOnly.push(Boolean(policyReadOnly));
 		return (
 			<div data-testid="share-tree">
 				<button type="button" onClick={() => onSelect("gallery", "")}>
@@ -58,18 +67,22 @@ vi.mock("./ShareTree", () => ({
 }));
 const folderListingLocations: Array<string | null> = [];
 const folderListingReadOnly: boolean[] = [];
+const folderListingPolicyReadOnly: boolean[] = [];
 vi.mock("./FolderListing", () => ({
 	FolderListing: ({
 		location,
 		readOnly,
+		policyReadOnly,
 		onSelectFile,
 	}: {
 		location: string | null;
 		readOnly: boolean;
+		policyReadOnly?: boolean;
 		onSelectFile: (path: string) => void;
 	}) => {
 		folderListingLocations.push(location);
 		folderListingReadOnly.push(readOnly);
+		folderListingPolicyReadOnly.push(Boolean(policyReadOnly));
 		return (
 			<div data-testid="folder-listing">
 				<button onClick={() => onSelectFile("notes.txt")}>
@@ -117,14 +130,18 @@ vi.mock("./PoliciesView", () => ({
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useAuthorization } from "@/services/authorization";
 import { FilesExplorer } from "./FilesExplorer";
 
 describe("FilesExplorer", () => {
 	beforeEach(() => {
 		shareTreeScopes.length = 0;
+		shareTreeSolutions.length = 0;
 		shareTreeReadOnly.length = 0;
+		shareTreePolicyReadOnly.length = 0;
 		folderListingLocations.length = 0;
 		folderListingReadOnly.length = 0;
+		folderListingPolicyReadOnly.length = 0;
 		effectiveAccessReadOnly.length = 0;
 		vi.mocked(useAuth).mockReturnValue({
 			isPlatformAdmin: true,
@@ -132,6 +149,23 @@ describe("FilesExplorer", () => {
 		vi.mocked(useOrganizations).mockReturnValue({
 			data: [{ id: "org-1", name: "Acme" }],
 		} as ReturnType<typeof useOrganizations>);
+		vi.mocked(useAuthorization).mockReturnValue({
+			isLoading: false,
+			isError: false,
+			isFetching: false,
+			refetch: vi.fn(),
+			isPlatformAdmin: false,
+			meets: () => false,
+			authorization: {
+				is_platform_admin: false,
+				provider_organization_id: "provider",
+				base_role: { id: "base", name: "User" },
+				home_organization_id: "org-1",
+				grants: [],
+			},
+			canAt: () => true,
+			canAnywhere: () => true,
+		});
 	});
 
 	it("renders the desktop 3-pane shell with scope selector + new share", () => {
@@ -202,18 +236,14 @@ describe("FilesExplorer", () => {
 			screen.getByRole("button", { name: "Open gallery share" }),
 		);
 		await user.click(screen.getByRole("button", { name: "Open notes" }));
-		await user.click(
-			screen.getByRole("tab", { name: "Access" }),
-		);
+		await user.click(screen.getByRole("tab", { name: "Access" }));
 		expect(
 			screen.getByRole("region", { name: "Policy editor" }),
 		).toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: "Manage Policy" }),
 		).not.toBeInTheDocument();
-		await user.click(
-			screen.getByRole("tab", { name: "Test" }),
-		);
+		await user.click(screen.getByRole("tab", { name: "Test" }));
 		expect(
 			screen.getByRole("region", { name: "Access tester" }),
 		).toBeInTheDocument();
@@ -240,6 +270,69 @@ describe("FilesExplorer", () => {
 		// caller's own org on the write path).
 		expect(shareTreeScopes).toContain("global");
 		expect(shareTreeScopes).not.toContain(null);
+	});
+
+	it("keeps data actions available while a named read-only role cannot edit policies", () => {
+		vi.mocked(useMediaQuery).mockReturnValue(true);
+		vi.mocked(useAuthorization).mockReturnValue({
+			isLoading: false,
+			isError: false,
+			isFetching: false,
+			refetch: vi.fn(),
+			isPlatformAdmin: false,
+			meets: () => false,
+			authorization: {
+				is_platform_admin: false,
+				provider_organization_id: "provider",
+				base_role: { id: "base", name: "User" },
+				home_organization_id: "org-1",
+				grants: [],
+			},
+			canAt: (permission: string) => permission === "filepolicies.read",
+			canAnywhere: () => true,
+		});
+
+		render(<FilesExplorer />);
+
+		expect(
+			screen.queryByRole("button", { name: "New Share" }),
+		).not.toBeInTheDocument();
+		expect(shareTreePolicyReadOnly).toContain(true);
+		fireEvent.click(screen.getByText("select-gallery"));
+		expect(folderListingReadOnly).toContain(false);
+		expect(folderListingPolicyReadOnly).toContain(true);
+		expect(
+			screen.getByRole("button", { name: /upload/i }),
+		).toBeInTheDocument();
+	});
+
+	it("does not fetch a forbidden global scope before authorization selects an allowed organization", () => {
+		vi.mocked(useMediaQuery).mockReturnValue(true);
+		vi.mocked(useAuthorization).mockReturnValue({
+			isLoading: false,
+			isError: false,
+			isFetching: false,
+			refetch: vi.fn(),
+			isPlatformAdmin: false,
+			meets: () => false,
+			authorization: {
+				is_platform_admin: false,
+				provider_organization_id: "provider",
+				base_role: { id: "base", name: "User" },
+				home_organization_id: "org-1",
+				grants: [],
+			},
+			canAt: (
+				_permission: string,
+				target: { kind: string; id?: string },
+			) => target.kind === "org" && target.id === "org-1",
+			canAnywhere: () => true,
+		});
+
+		render(<FilesExplorer />);
+
+		expect(shareTreeScopes).toContain("org-1");
+		expect(shareTreeScopes).not.toContain("global");
 	});
 
 	it("attaches a new folder policy to its folder boundary rather than its parent", async () => {
@@ -310,15 +403,16 @@ describe("FilesExplorer", () => {
 	});
 
 	describe("install prop (solution-scoped mode)", () => {
-		it("pins scope to the install id and passes it to ShareTree", () => {
+		it("keeps ordinary scope grammar and passes the install as explicit solution context", () => {
 			vi.mocked(useMediaQuery).mockReturnValue(true);
 			render(
 				<MemoryRouter>
 					<FilesExplorer install="sol-abc" />
 				</MemoryRouter>,
 			);
-			// scope must be the install id, not "global" or an org id.
-			expect(shareTreeScopes).toContain("sol-abc");
+			// Solution IDs are never reinterpreted as organization scopes.
+			expect(shareTreeScopes).toContain("global");
+			expect(shareTreeSolutions).toContain("sol-abc");
 		});
 
 		it("makes the solution-scoped file browser read-only", () => {
@@ -412,7 +506,8 @@ describe("FilesExplorer", () => {
 				screen.queryByRole("link", { name: /back to solution/i }),
 			).not.toBeInTheDocument();
 			expect(screen.queryByText("Finance Ops")).not.toBeInTheDocument();
-			expect(shareTreeScopes).toContain("sol-abc");
+			expect(shareTreeSolutions).toContain("sol-abc");
+			expect(shareTreeScopes).not.toContain("sol-abc");
 			expect(shareTreeReadOnly).toContain(true);
 		});
 

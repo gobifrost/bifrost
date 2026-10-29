@@ -2,14 +2,34 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockUseAuditLog = vi.fn();
-const mockUseAuth = vi.fn();
+const mockCanReadAudit = vi.fn();
 
 vi.mock("@/hooks/useAuditLog", () => ({
 	useAuditLog: (...args: unknown[]) => mockUseAuditLog(...args),
+	useAuditExplain: () => ({
+		data: undefined,
+		error: null,
+		isFetching: false,
+	}),
 }));
 
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => mockUseAuth(),
+vi.mock("@/hooks/useTraceNames", () => ({
+	useTraceNames: () => ({
+		names: {
+			role: () => undefined,
+			organization: () => undefined,
+			permission: (permission: string) => permission,
+		},
+		organizationNames: new Map(),
+	}),
+}));
+
+vi.mock("@/hooks/useWorkflows", () => ({
+	useWorkflowsMetadata: () => ({ data: { workflows: [] } }),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({ canAnywhere: mockCanReadAudit }),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -27,7 +47,7 @@ import { AuditLogPage } from "./AuditLogPage";
 const filePath = "denied/quarterly-result.csv";
 
 beforeEach(() => {
-	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockCanReadAudit.mockReturnValue(true);
 	mockUseAuditLog.mockReturnValue({
 		data: {
 			entries: [
@@ -117,6 +137,7 @@ describe("AuditLogPage policy filters", () => {
 	it("shows denial context and searches it across the API result set", async () => {
 		const { user } = renderWithProviders(<AuditLogPage />);
 
+		expect(screen.getByRole("heading", { name: "Auditing" })).toBeVisible();
 		expect(screen.getByText(`reports / ${filePath}`)).toBeInTheDocument();
 		expect(
 			screen.getByText(
@@ -167,21 +188,24 @@ describe("AuditLogPage policy filters", () => {
 		).toBeVisible();
 	});
 
-	it("shows a platform-admin-only access denied state", () => {
-		mockUseAuth.mockReturnValueOnce({
-			isPlatformAdmin: false,
-		});
+	it("refuses and does not query without audit permission", () => {
+		mockCanReadAudit.mockReturnValue(false);
 
 		renderWithProviders(<AuditLogPage />);
 
 		expect(
 			screen.getByText(
-				"You do not have permission to view the audit log. Platform administrator access is required.",
+				"You do not have permission to view the audit log.",
 			),
 		).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: "Go to Home" }),
 		).toBeVisible();
+		expect(mockUseAuditLog).toHaveBeenLastCalledWith(
+			expect.anything(),
+			false,
+			{ preservePageData: true },
+		);
 	});
 
 	it("keeps the existing audit table visible and busy while a page fetch is pending", () => {
@@ -267,5 +291,43 @@ describe("AuditLogPage policy filters", () => {
 		expect(
 			screen.queryByRole("region", { name: "Audit retention" }),
 		).not.toBeInTheDocument();
+	});
+
+	it("opens an event from the keyboard and returns focus to its row on close", async () => {
+		const { user } = renderWithProviders(<AuditLogPage />);
+
+		const open = screen.getByRole("button", {
+			name: "organization.update",
+		});
+		open.focus();
+		await user.keyboard("{Enter}");
+
+		const dialog = await screen.findByRole("dialog", {
+			name: "Audit Event",
+		});
+		expect(dialog).toHaveTextContent("organization.update");
+		await user.keyboard("{Escape}");
+
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+		);
+		expect(open).toHaveFocus();
+	});
+
+	it("opens an event from a click anywhere on its row", async () => {
+		const { user } = renderWithProviders(<AuditLogPage />);
+
+		await user.click(screen.getByText("192.0.2.11"));
+
+		expect(
+			await screen.findByRole("dialog", { name: "Audit Event" }),
+		).toHaveTextContent("organization.update");
+		await user.keyboard("{Escape}");
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+		);
+		expect(
+			screen.getByRole("button", { name: "organization.update" }),
+		).toHaveFocus();
 	});
 });

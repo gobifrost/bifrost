@@ -1,0 +1,12 @@
+{
+  "key": "pr:1036",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Runtime reliability: agent-run summaries are requested durably with the run, claimed once, and recovered if a worker is lost; summary backfills no longer stall when several workers finish at once. No new product surface.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1036"
+    ]
+  }
+}

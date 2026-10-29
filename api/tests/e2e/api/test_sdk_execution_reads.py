@@ -105,7 +105,7 @@ def test_workflows_list_global_scope_and_bad_scope(
     bad = e2e_client.get(
         "/api/workflows", params={"scope": "nope"}, headers=platform_admin.headers
     )
-    assert bad.status_code == 400, bad.text
+    assert bad.status_code == 422, bad.text
 
 
 def test_executions_list_snake_case_filters(

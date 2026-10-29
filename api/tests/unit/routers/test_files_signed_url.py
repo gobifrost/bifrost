@@ -17,6 +17,8 @@ from pydantic import ValidationError
 from shared.file_access import FileServiceError
 from shared.sdk_files import SignedUrlResult
 from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
 from src.routers.files import (
     SignedUrlBatchRequest,
     SignedUrlRequest,
@@ -32,11 +34,11 @@ ORG_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
 def _ctx():
-    """A signed-url request ctx whose principal is a superuser with no context
-    org, so an explicit `scope=` on the request is honored verbatim (a regular
-    user would be pinned to their own org) and an omitted scope on a scoped
-    location falls back to 'global'. These path-resolution tests pin the
-    explicit-scope and global-fallback arms; cross-org pinning has e2e coverage."""
+    """A request with Global default scope and explicit reach to ORG_A.
+
+    These adapter tests isolate path resolution; current persisted role and
+    reach authorization has separate real-database coverage.
+    """
     ctx = MagicMock()
     ctx.org_id = None
     ctx.solution_id = None
@@ -48,7 +50,6 @@ def _ctx():
         user_id=UUID("11111111-1111-1111-1111-111111111111"),
         email="admin@example.com",
         organization_id=None,
-        is_superuser=True,
     )
     return ctx
 
@@ -61,6 +62,15 @@ def _allow_policy(monkeypatch):
     monkeypatch.setattr(
         "shared.sdk_files.require_file_policy", AsyncMock(return_value=None)
     )
+
+    async def caller(_db, principal):
+        return Caller(principal, AuthorizationContext(
+            user_id=principal.user_id, home_organization_id=None,
+            base_role_id=ORG_A, is_external=False, base_permissions=frozenset(),
+            role_grants=(RoleGrant(ORG_A, frozenset(), (Boundary(BoundaryKind.ORGANIZATION, ORG_A),)),),
+        ))
+
+    monkeypatch.setattr("src.services.authorization.enforce.load_caller", caller)
 
 
 @pytest.fixture

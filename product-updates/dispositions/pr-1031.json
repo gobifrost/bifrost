@@ -1,0 +1,12 @@
+{
+  "key": "pr:1031",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Opt-in deployment infrastructure: platform control can be hosted by API replicas; default installations keep control in the scheduler. Diagnostics now also lists the existing logo-thumbnail backfill schedule.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1031"
+    ]
+  }
+}

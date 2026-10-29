@@ -65,7 +65,7 @@ async def reset_user_mfa(session: AsyncSession, caller: Caller, user_id: UUID) -
     if user.is_system:
         raise UserServiceError(403, "System user cannot be modified")
     require_operation(caller, RESET_OPERATION, org_target(user.organization_id))
-    require_unprotected(caller, user.id in await privileged_user_ids(session, [user.id]))
+    require_unprotected(caller, user.id in await privileged_user_ids(session, [user.id]), user.organization_id)
 
     passkeys_removed = await _count(session, UserPasskey, UserPasskey.user_id == user.id)
     if (

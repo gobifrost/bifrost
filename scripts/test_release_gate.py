@@ -33,18 +33,18 @@ class ReleaseGateTests(unittest.TestCase):
                 "prs": [{"number": 1, "merge_commit": SHA}],
             },
         )
+        write_json(self.root / "dispositions.json", {})
+        self.disposition = self.root / "dispositions" / "pr-1.json"
+        self.disposition.parent.mkdir()
         write_json(
-            self.root / "dispositions.json",
+            self.disposition,
             {
-                "items": {
-                    "pr:1": {
-                        "classification": "highlight",
-                        "entry_ids": [ENTRY],
-                        "review": {"status": "approved"},
-                        "security_review": {"status": "required"},
-                        "action_required": True,
-                    }
-                }
+                "key": "pr:1",
+                "classification": "highlight",
+                "entry_ids": [ENTRY],
+                "review": {"status": "approved"},
+                "security_review": {"status": "required"},
+                "action_required": True,
             },
         )
         (self.root / "entries" / f"{ENTRY}.md").write_text(
@@ -80,14 +80,12 @@ class ReleaseGateTests(unittest.TestCase):
         )
 
     def test_dependency_advisory_omission_still_requires_a_release_notice(self) -> None:
-        path = self.root / "dispositions.json"
-        data = json.loads(path.read_text())
-        item = data["items"]["pr:1"]
+        item = json.loads(self.disposition.read_text())
         item["classification"] = "omit"
         item["entry_ids"] = []
         item.pop("action_required")
         item["security_review"]["review_ref"] = "https://github.com/gobifrost/bifrost/pull/1"
-        write_json(path, data)
+        write_json(self.disposition, item)
         result = release_gate.validate(self.root, SHA)
         self.assertIn(
             "pr:1: security or action-required source must use a canonical highlight entry",
@@ -110,9 +108,9 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertEqual([], result.errors)
 
     def test_draft_disposition_blocks_a_release(self) -> None:
-        data = json.loads((self.root / "dispositions.json").read_text())
-        data["items"]["pr:1"]["review"]["status"] = "draft"
-        write_json(self.root / "dispositions.json", data)
+        item = json.loads(self.disposition.read_text())
+        item["review"]["status"] = "draft"
+        write_json(self.disposition, item)
 
         result = release_gate.validate(self.root, SHA)
 
@@ -134,10 +132,10 @@ class ReleaseGateTests(unittest.TestCase):
         )
 
     def test_security_or_action_required_source_cannot_be_hidden_as_other(self) -> None:
-        data = json.loads((self.root / "dispositions.json").read_text())
-        data["items"]["pr:1"]["classification"] = "other"
-        data["items"]["pr:1"]["entry_ids"] = []
-        write_json(self.root / "dispositions.json", data)
+        item = json.loads(self.disposition.read_text())
+        item["classification"] = "other"
+        item["entry_ids"] = []
+        write_json(self.disposition, item)
 
         result = release_gate.validate(self.root, SHA)
 

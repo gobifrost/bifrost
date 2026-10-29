@@ -7,12 +7,11 @@ Covers the migrated surface that does not need a forked child:
   the public surface (``WorkflowMetadata`` list, ``ExecutionList`` with
   continuation token, ``ValueError``/``PermissionError`` on get), preserve
   the existing ``workflow_id``-wins and limit-clamp behavior, and keep
-  ``get_current_logs`` a direct Redis read.
+  ``get_current_logs`` on the authorized parent transport.
 """
 
 from __future__ import annotations
 
-import contextlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -22,6 +21,7 @@ import pytest
 
 def test_sdk_workflow_metadata_accepts_server_parameter_list():
     from bifrost.models import WorkflowMetadata as SdkWorkflowMetadata
+    from src.models.contracts.workflow_permissions import WorkflowPermissionMode
     from src.models.contracts.workflows import (
         WorkflowMetadata as ServerWorkflowMetadata,
         WorkflowParameter,
@@ -30,6 +30,7 @@ def test_sdk_workflow_metadata_accepts_server_parameter_list():
     server = ServerWorkflowMetadata(
         id=str(uuid4()),
         name="parameterized",
+        permission_mode=WorkflowPermissionMode.FULL,
         parameters=[WorkflowParameter(name="count", type="int", required=True)],
         created_at=datetime.now(timezone.utc),
     )
@@ -231,45 +232,28 @@ class TestEngineRequestFacade:
                 await executions.get(str(uuid4()))
 
 
-class TestCurrentLogsDirectPath:
-    """``get_current_logs`` stays a direct Redis read with no API transport."""
+class TestCurrentLogsParentTransport:
+    """Log reads use the same authorized parent transport as other SDK reads."""
 
     @pytest.mark.asyncio
-    async def test_reads_redis_without_engine_socket(self):
+    async def test_reads_logs_without_child_redis(self):
+        import httpx
+
         from bifrost.executions import executions
 
-        entries = [
-            (
-                "1-0",
-                {
-                    "execution_id": "exec-1",
-                    "level": "INFO",
-                    "message": "hello",
-                    "metadata": '{"a": 1}',
-                    "timestamp": "2026-01-01T00:00:00+00:00",
-                },
-            )
-        ]
-
-        class _FakeRedis:
-            async def xrange(self, key, min, count):
-                return entries
-
-        @contextlib.asynccontextmanager
-        async def _fake_get_redis():
-            yield _FakeRedis()
-
+        entries = [{
+            "id": "1-0", "execution_id": "exec-1", "level": "INFO",
+            "message": "hello", "metadata": {"a": 1},
+            "timestamp": "2026-01-01T00:00:00+00:00",
+        }]
         client = MagicMock()
-        client.engine_request = AsyncMock(
-            side_effect=AssertionError("get_current_logs must not call the API")
-        )
-        with (
-            patch("src.core.cache.get_redis", _fake_get_redis),
-            patch("bifrost.executions.get_client", return_value=client),
-        ):
-            logs = await executions.get_current_logs("exec-1")
+        client.engine_request = AsyncMock(return_value=httpx.Response(200, json=entries))
+        with patch("bifrost.executions.get_client", return_value=client):
+            logs = await executions.get_current_logs("exec-1", start="1-0", count=10)
 
         assert [log.message for log in logs] == ["hello"]
         assert logs[0].level == "INFO"
         assert logs[0].metadata == {"a": 1}
-        client.engine_request.assert_not_awaited()
+        client.engine_request.assert_awaited_once_with(
+            "GET", "/api/sdk/runtime/logs/exec-1", params={"start": "1-0", "count": 10},
+        )

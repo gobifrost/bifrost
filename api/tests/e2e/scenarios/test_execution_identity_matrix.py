@@ -1,10 +1,8 @@
 """Execution identity and scope changes, across every way a run starts.
 
 Each test checks one start's cells against the managed-identity rule
-(``rule.py``), except the cells listed in ``PRE_R3B`` (``pre_r3b.py``), which
-record today's value until R3b implements the rule for them. The invariant
-tests below check properties straight from the observations, so a mistake in
-the rule cannot hide a mistake in the product.
+(``rule.py``). The invariant tests below check properties straight from the
+observations, so a mistake in the rule cannot hide a mistake in the product.
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ from tests.e2e.scenarios.observe import (
     observed_cells,
     reported_vs_landed,
 )
-from tests.e2e.scenarios.pre_r3b import PRE_R3B
 
 RUN_STARTS = [s for s in rule.STARTS if s.entry not in ("org_override", "direct")]
 OVERRIDE_STARTS = [s for s in rule.STARTS if s.entry == "org_override"]
@@ -36,11 +33,10 @@ pytestmark = pytest.mark.e2e
 def _mismatches(observed: dict[str, Any], expected: dict[str, Any]) -> list[str]:
     out = []
     for cell in sorted(set(observed) | set(expected)):
-        want = PRE_R3B.get(cell, expected.get(cell))
+        want = expected.get(cell)
         got = observed.get(cell)
         if got != want:
-            note = " (pre_r3b)" if cell in PRE_R3B else ""
-            out.append(f"{cell}: observed {got!r}, expected {want!r}{note}")
+            out.append(f"{cell}: observed {got!r}, expected {want!r}")
     return out
 
 
@@ -82,22 +78,6 @@ def test_cells_follow_rule(start: rule.Start, matrix_runs: dict) -> None:
     assert not problems, "\n".join(problems)
 
 
-def test_pre_r3b_entries_are_live(matrix_runs: dict) -> None:
-    """Every PRE_R3B entry names an observed cell that differs from the rule."""
-    observed: dict[str, Any] = {}
-    expected: dict[str, Any] = {}
-    for start in rule.STARTS:
-        o, e = _start_cells(start, matrix_runs)
-        observed.update(o)
-        expected.update(e)
-    stale = [
-        cell
-        for cell in PRE_R3B
-        if cell not in observed or PRE_R3B[cell] == expected.get(cell)
-    ]
-    assert not stale, "PRE_R3B entries to delete:\n" + "\n".join(stale)
-
-
 def _tree_runs(start: rule.Start, runs: dict) -> list[tuple[str, dict]]:
     return [
         (key, run)
@@ -120,10 +100,6 @@ def _write_cells(
     return out
 
 
-def _unexplained(violations: list[str]) -> list[str]:
-    return [v for v in violations if v not in PRE_R3B]
-
-
 def test_customer_runs_stay_in_customer_reach(matrix_runs: dict) -> None:
     """No write from a run a customer started lands outside that customer's org."""
     violations = []
@@ -134,7 +110,7 @@ def test_customer_runs_stay_in_customer_reach(matrix_runs: dict) -> None:
         for cell, _run_key, _target, where in _write_cells(start, matrix_runs):
             if where is not None and not set(where.split("+")) <= home:
                 violations.append(cell)
-    assert not _unexplained(violations), "\n".join(_unexplained(violations))
+    assert not violations, "\n".join(violations)
 
 
 def test_unattended_customer_workflow_stays_in_its_identitys_reach(matrix_runs: dict) -> None:
@@ -147,7 +123,7 @@ def test_unattended_customer_workflow_stays_in_its_identitys_reach(matrix_runs: 
         for cell, _run_key, _target, where in _write_cells(start, matrix_runs):
             if where is not None and not set(where.split("+")) <= reach:
                 violations.append(cell)
-    assert not _unexplained(violations), "\n".join(_unexplained(violations))
+    assert not violations, "\n".join(violations)
 
 
 def test_refused_writes_leave_no_row(matrix_runs: dict) -> None:
@@ -173,7 +149,7 @@ def test_children_never_exceed_original_reach(matrix_runs: dict) -> None:
                 and not set(where.split("+")) <= reach
             ):
                 violations.append(cell)
-    assert not _unexplained(violations), "\n".join(_unexplained(violations))
+    assert not violations, "\n".join(violations)
 
 
 async def _lineage_rows(session_factory, execution_ids: list[str]) -> dict[str, tuple]:

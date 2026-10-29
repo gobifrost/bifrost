@@ -1,0 +1,10 @@
+{
+  "key": "pr:1043",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Removes internal work-dispatch columns no release ever wrote; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1043"]
+  }
+}

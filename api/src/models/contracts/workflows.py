@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.models.enums import FormAccessLevel
 from src.models.contracts.base import RetryPolicy
+from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 
 if TYPE_CHECKING:
     pass
@@ -83,6 +84,9 @@ class WorkflowMetadata(BaseModel):
     # Identity this workflow runs as when no person starts it
     run_identity_id: UUID | None = Field(default=None, description="Identity this workflow runs as when no person starts it. Null = its organization's default identity.")
 
+    # Powers a run of this workflow adds to its run user (effective: its own setting, else the platform default)
+    permission_mode: WorkflowPermissionMode = Field(description="Effective workflow permission mode: 'full' or 'restricted'")
+
     # Access control
     access_level: str = Field(default="role_based", description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)")
     role_ids: list[str] = Field(default_factory=list, description="List of role IDs assigned to this workflow")
@@ -95,6 +99,8 @@ class WorkflowMetadata(BaseModel):
     # Execution configuration
     execution_mode: Literal["sync", "async"] = Field(default="sync", description="Execution mode")
     timeout_seconds: int = Field(default=1800, ge=0, le=86400, description="Max execution time in seconds. 0 = no timeout. Default 1800 (30 min), max 86400 (24h).")
+    memory_request_mib: int | None = Field(default=None, description="Declared memory a run of this workflow requests from an executor; when unset, the learned value is used")
+    learned_memory_bytes: int | None = Field(default=None, description="Peak memory its recent runs added (learned per code version); None before a measured run")
 
     # Retry policy (for future use)
     retry_policy: RetryPolicy | None = Field(default=None, description="Retry configuration")
@@ -377,6 +383,14 @@ class WorkflowUpdateRequest(BaseModel):
         ge=0,
         le=86400,
         description="Cache TTL in seconds for data providers (0-86400, default 300)"
+    )
+
+    # Memory a run requests from an executor; null clears it (learned value).
+    memory_request_mib: int | None = Field(
+        default=None,
+        ge=1,
+        le=262144,
+        description="Declared memory (MiB) a run requests from an executor; null uses the learned value"
     )
 
     # Tags (editable in UI, code-defined tags are initial values)

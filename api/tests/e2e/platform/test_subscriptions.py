@@ -335,17 +335,19 @@ async def test_user_filter_narrows_messages(platform_admin, alice_user):
         try:
             assert ack.get("type") == "subscribed", f"subscribe failed: {ack}"
             # Insert a 'done' row → filter drops it
-            await client.post(
+            done = await client.post(
                 f"/api/tables/{table_id}/documents",
                 headers=platform_admin.headers,
                 json={"data": {"status": "done"}},
             )
+            assert done.status_code == 201, done.text
             # Insert an 'open' row → user sees it
-            await client.post(
+            open_row = await client.post(
                 f"/api/tables/{table_id}/documents",
                 headers=platform_admin.headers,
                 json={"data": {"status": "open"}},
             )
+            assert open_row.status_code == 201, open_row.text
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
             assert msg["type"] == "document_change", msg
             assert msg["action"] == "insert", msg

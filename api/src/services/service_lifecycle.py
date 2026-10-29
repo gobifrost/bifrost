@@ -30,8 +30,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from shared.run_lineage import unattended_lineage
+from src.services.memory_requests import workflow_request_sql
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
+from src.services.work_dispatch import wake_pool_workers_after_commit
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +118,7 @@ async def ensure_definition_for_workflow(
     )
     db.add(definition)
     await db.flush()
+    wake_pool_workers_after_commit(db)
     logger.info(
         "Created service definition for workflow %s (%s)",
         workflow.name,
@@ -276,6 +280,7 @@ async def set_enabled(
         if definition.blocked_reason == "disabled":
             definition.blocked_reason = None
             definition.restart_eligible_at = None
+        wake_pool_workers_after_commit(db)
     definition.updated_at = _now()
     await db.flush()
     return definition
@@ -292,6 +297,7 @@ async def start_service(db: AsyncSession, definition: ServiceDefinition) -> Serv
     definition.restart_eligible_at = None
     definition.updated_at = _now()
     await db.flush()
+    wake_pool_workers_after_commit(db)
     return definition
 
 
@@ -318,6 +324,7 @@ async def restart_service(db: AsyncSession, definition: ServiceDefinition) -> Se
     await _request_attempt_stop(db, definition.id)
     definition.updated_at = _now()
     await db.flush()
+    wake_pool_workers_after_commit(db)
     return definition
 
 
@@ -618,16 +625,23 @@ async def claim_eligible_service(
     db: AsyncSession,
     *,
     worker_id: str,
+    fits_bytes: int,
     lease_ttl_seconds: int = 60,
     now: datetime | None = None,
 ) -> ServiceAttempt | None:
     """Atomically claim one eligible service for this worker.
 
     Eligibility: enabled, desired running, no suppression, backoff elapsed,
-    and no live attempt. The definition row is locked SKIP LOCKED so workers
+    no live attempt, and a memory request (its workflow's learned peak, see
+    src.services.memory_requests) that fits ``fits_bytes``, the claiming
+    executor's free budget. The definition row is locked SKIP LOCKED so workers
     never block each other; the partial unique index backstops races.
     Returns None when nothing is eligible. The caller commits.
     """
+    from src.worker.remote.fencing import fence_remote_owner
+
+    if not await fence_remote_owner(db):
+        return None
     now = now or _now()
     live_exists = (
         select(ServiceAttempt.id)
@@ -652,6 +666,7 @@ async def claim_eligible_service(
             ServiceDefinition.organization_id.is_not(None),
             ServiceDefinition.desired_state == "running",
             ServiceDefinition.blocked_reason.is_(None),
+            workflow_request_sql(Workflow) <= fits_bytes,
             (
                 ServiceDefinition.restart_eligible_at.is_(None)
                 | (ServiceDefinition.restart_eligible_at <= now)
@@ -669,6 +684,10 @@ async def claim_eligible_service(
     if definition is None:
         return None
 
+    # Resolve the source workflow's unattended identity while claiming the
+    # attempt. The resolved ID belongs to this attempt permanently; later
+    # workflow edits cannot alter a live service's identity.
+    lineage = await unattended_lineage(db, definition.workflow_id)
     last_number = await db.scalar(
         select(func.max(ServiceAttempt.restart_number)).where(
             ServiceAttempt.service_id == definition.id
@@ -679,6 +698,7 @@ async def claim_eligible_service(
         service_id=definition.id,
         revision=definition.current_revision,
         worker_id=worker_id,
+        run_user_id=lineage.run_user_id,
         lease_token=_new_lease_token(),
         lease_expires_at=now + timedelta(seconds=lease_ttl_seconds),
         state="starting",
@@ -711,6 +731,10 @@ async def _locked_live_attempt(
     must not renew, report, or complete. Expiry is enforced here as well as
     in expire_leases so a stale owner can never resurrect its lease.
     """
+    from src.worker.remote.fencing import fence_remote_owner
+
+    if not await fence_remote_owner(db):
+        raise StaleLeaseError("The remote API owner is no longer current.")
     result = await db.execute(
         select(ServiceAttempt)
         .where(ServiceAttempt.id == attempt_id)
@@ -855,6 +879,20 @@ async def _apply_restart_decision(
             initial=definition.restart_backoff_initial_seconds,
             maximum=definition.restart_backoff_max_seconds,
             restarts_in_window=restarts,
+        )
+    )
+
+
+async def next_restart_at(db: AsyncSession, *, now: datetime | None = None) -> datetime | None:
+    """When the earliest backed-off restart becomes claimable, if any is due
+    later: an idle claim loop wakes for it instead of polling."""
+    now = now or _now()
+    return await db.scalar(
+        select(func.min(ServiceDefinition.restart_eligible_at)).where(
+            ServiceDefinition.enabled.is_(True),
+            ServiceDefinition.desired_state == "running",
+            ServiceDefinition.blocked_reason.is_(None),
+            ServiceDefinition.restart_eligible_at > now,
         )
     )
 

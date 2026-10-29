@@ -1,0 +1,86 @@
+# Benchmark helpers, applied by scripts/bench/run.py after local-kind.sh up.
+# BENCH_IMAGE is replaced with the Bifrost image under test. The bench-scripts
+# ConfigMap is created from scripts/bench/incluster/ by run.py.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bench-fake-llm
+  namespace: bifrost-local
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bench-fake-llm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bench-fake-llm
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: fake-llm
+          image: BENCH_IMAGE
+          imagePullPolicy: IfNotPresent
+          command: ["python", "/bench/fake_llm.py"]
+          env:
+            - name: FAKE_LLM_LATENCY_MS
+              value: "0"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: http
+            periodSeconds: 2
+          volumeMounts:
+            - name: scripts
+              mountPath: /bench
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: bench-scripts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-fake-llm
+  namespace: bifrost-local
+spec:
+  selector:
+    app.kubernetes.io/name: bench-fake-llm
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bench-driver
+  namespace: bifrost-local
+  labels:
+    app.kubernetes.io/name: bench-driver
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: driver
+      image: BENCH_IMAGE
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "infinity"]
+      envFrom:
+        - configMapRef:
+            name: bifrost-local-config
+        - secretRef:
+            name: bifrost-local-secrets
+        - secretRef:
+            name: bench-llm
+            optional: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi

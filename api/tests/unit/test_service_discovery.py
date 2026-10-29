@@ -407,10 +407,15 @@ async def test_indexer_ensures_definition_and_stamps_revision():
 
 
 @pytest.mark.asyncio
-async def test_indexer_creates_missing_definition():
-    """Files indexed outside registration still get a definition."""
+async def test_indexer_creates_missing_definition(monkeypatch):
+    """Files indexed outside registration still get a definition, and idle
+    executors are woken to launch it once it commits."""
     from src.models.orm.services import ServiceDefinition
+    from src.services import service_lifecycle
     from src.services.file_storage.indexers.workflow import WorkflowIndexer
+
+    wake = MagicMock()
+    monkeypatch.setattr(service_lifecycle, "wake_pool_workers_after_commit", wake)
 
     row = _service_row("service")
     mock_db = AsyncMock()
@@ -428,6 +433,7 @@ async def test_indexer_creates_missing_definition():
 
     added = [call[0][0] for call in mock_db.add.call_args_list]
     assert any(isinstance(a, ServiceDefinition) for a in added)
+    wake.assert_called_once_with(mock_db)
 
 
 @pytest.mark.asyncio

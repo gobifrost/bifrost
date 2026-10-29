@@ -8,44 +8,33 @@ import pytest
 
 from src.core.cache.data_provider_cache import (
     TTL_DATA_PROVIDER,
-    acquire_compute_lock,
     cache_result,
     compute_param_hash,
     data_provider_cache_key,
-    data_provider_lock_key,
     get_cached_result,
     invalidate_data_provider,
-    release_compute_lock,
 )
 
 
 class TestKeyGeneration:
     """Tests for cache key generation functions."""
 
-    def test_data_provider_cache_key_with_org(self):
-        """Key includes org scope when org_id provided."""
-        key = data_provider_cache_key("org-123", "get_users", "abc123")
-        assert key == "bifrost:org:org-123:dp:get_users:abc123"
+    def test_data_provider_cache_key_partitions_by_workflow_and_authority(self):
+        """A result is never shared across workflow or authority partitions."""
+        key = data_provider_cache_key("org-123", "workflow-123", "authority-a", "abc123")
+        assert key == "bifrost:v2:org:org-123:dp:workflow-123:authority-a:abc123"
+        assert key != data_provider_cache_key("org-123", "workflow-123", "authority-b", "abc123")
+        assert key != data_provider_cache_key("org-123", "workflow-456", "authority-a", "abc123")
 
     def test_data_provider_cache_key_global(self):
         """Key uses global scope when org_id is None."""
-        key = data_provider_cache_key(None, "get_users", "abc123")
-        assert key == "bifrost:global:dp:get_users:abc123"
+        key = data_provider_cache_key(None, "workflow-123", "authority-a", "abc123")
+        assert key == "bifrost:v2:global:dp:workflow-123:authority-a:abc123"
 
     def test_data_provider_cache_key_global_string(self):
         """Key uses global scope when org_id is 'GLOBAL'."""
-        key = data_provider_cache_key("GLOBAL", "get_users", "abc123")
-        assert key == "bifrost:global:dp:get_users:abc123"
-
-    def test_data_provider_lock_key_with_org(self):
-        """Lock key includes org scope."""
-        key = data_provider_lock_key("org-123", "get_users", "abc123")
-        assert key == "bifrost:org:org-123:dp:get_users:abc123:lock"
-
-    def test_data_provider_lock_key_global(self):
-        """Lock key uses global scope when org_id is None."""
-        key = data_provider_lock_key(None, "get_users", "abc123")
-        assert key == "bifrost:global:dp:get_users:abc123:lock"
+        key = data_provider_cache_key("GLOBAL", "workflow-123", "authority-a", "abc123")
+        assert key == "bifrost:v2:global:dp:workflow-123:authority-a:abc123"
 
 
 class TestComputeParamHash:
@@ -94,7 +83,7 @@ class TestGetCachedResult:
             mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
             mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await get_cached_result("org-123", "get_users", {"id": 1})
+            result = await get_cached_result("org-123", "workflow-123", "authority-a", {"id": 1})
             assert result is None
 
     @pytest.mark.asyncio
@@ -113,7 +102,7 @@ class TestGetCachedResult:
             mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
             mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await get_cached_result("org-123", "get_users", {"id": 1})
+            result = await get_cached_result("org-123", "workflow-123", "authority-a", {"id": 1})
             assert result is not None
             assert result["data"] == {"users": [1, 2, 3]}
 
@@ -134,7 +123,7 @@ class TestGetCachedResult:
             mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
             mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await get_cached_result("org-123", "get_users", {"id": 1})
+            result = await get_cached_result("org-123", "workflow-123", "authority-a", {"id": 1})
             assert result is None
             mock_redis.delete.assert_called_once()
 
@@ -153,7 +142,7 @@ class TestCacheResult:
             mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
 
             result = {"users": [1, 2, 3]}
-            expires_at = await cache_result("org-123", "get_users", {"id": 1}, result, 300)
+            expires_at = await cache_result("org-123", "workflow-123", "authority-a", {"id": 1}, result, 300)
 
             mock_redis.setex.assert_called_once()
             call_args = mock_redis.setex.call_args
@@ -172,7 +161,7 @@ class TestCacheResult:
             mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
             mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            await cache_result("org-123", "get_users", None, {"data": 1})
+            await cache_result("org-123", "workflow-123", "authority-a", None, {"data": 1})
 
             call_args = mock_redis.setex.call_args
             assert call_args[0][1] == TTL_DATA_PROVIDER
@@ -185,13 +174,16 @@ class TestInvalidateDataProvider:
     async def test_invalidate_specific_params(self):
         """Invalidates specific parameter combination."""
         mock_redis = AsyncMock()
+        mock_redis.scan = AsyncMock(return_value=(0, [
+            "bifrost:v2:org:org-123:dp:workflow-123:authority-a:abc123",
+        ]))
         mock_redis.delete = AsyncMock(return_value=1)
 
         with patch("src.core.cache.data_provider_cache.get_redis") as mock_get_redis:
             mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
             mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            await invalidate_data_provider("org-123", "get_users", {"id": 1})
+            await invalidate_data_provider("org-123", "workflow-123", {"id": 1})
             mock_redis.delete.assert_called_once()
 
     @pytest.mark.asyncio
@@ -199,8 +191,8 @@ class TestInvalidateDataProvider:
         """Invalidates all cached results for a data provider."""
         mock_redis = AsyncMock()
         mock_redis.scan = AsyncMock(return_value=(0, [
-            "bifrost:org:org-123:dp:get_users:abc123",
-            "bifrost:org:org-123:dp:get_users:def456",
+            "bifrost:v2:org:org-123:dp:workflow-123:authority-a:abc123",
+            "bifrost:v2:org:org-123:dp:workflow-123:authority-b:def456",
         ]))
         mock_redis.delete = AsyncMock(return_value=2)
 
@@ -208,53 +200,6 @@ class TestInvalidateDataProvider:
             mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
             mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            await invalidate_data_provider("org-123", "get_users", None)
+            await invalidate_data_provider("org-123", "workflow-123", None)
             mock_redis.scan.assert_called()
             mock_redis.delete.assert_called()
-
-
-class TestStampedeProtection:
-    """Tests for cache stampede protection."""
-
-    @pytest.mark.asyncio
-    async def test_acquire_lock_success(self):
-        """Successfully acquires lock when not held."""
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock(return_value=True)
-
-        with patch("src.core.cache.data_provider_cache.get_redis") as mock_get_redis:
-            mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
-            mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            acquired = await acquire_compute_lock("org-123", "get_users", {"id": 1})
-            assert acquired is True
-            mock_redis.set.assert_called_once()
-            # Verify nx=True (only set if not exists)
-            call_kwargs = mock_redis.set.call_args[1]
-            assert call_kwargs["nx"] is True
-
-    @pytest.mark.asyncio
-    async def test_acquire_lock_already_held(self):
-        """Returns False when lock already held."""
-        mock_redis = AsyncMock()
-        mock_redis.set = AsyncMock(return_value=False)
-
-        with patch("src.core.cache.data_provider_cache.get_redis") as mock_get_redis:
-            mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
-            mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            acquired = await acquire_compute_lock("org-123", "get_users", {"id": 1})
-            assert acquired is False
-
-    @pytest.mark.asyncio
-    async def test_release_lock(self):
-        """Releases lock by deleting key."""
-        mock_redis = AsyncMock()
-        mock_redis.delete = AsyncMock()
-
-        with patch("src.core.cache.data_provider_cache.get_redis") as mock_get_redis:
-            mock_get_redis.return_value.__aenter__ = AsyncMock(return_value=mock_redis)
-            mock_get_redis.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            await release_compute_lock("org-123", "get_users", {"id": 1})
-            mock_redis.delete.assert_called_once()

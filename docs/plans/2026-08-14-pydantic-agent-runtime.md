@@ -74,6 +74,29 @@ The active-request target is 24,000 tokens. This is a cost-control target, not t
 
 The system prompt and tool schemas are still present on every provider call because providers need them to follow instructions and call tools. The runtime reduces the avoidable growing-history component; shortening an unusually large agent prompt remains a separate, high-value prompt-design task.
 
+## Experimental execution setting
+
+Settings → AI → Behavior exposes **Automatic Agent Execution**, a platform-wide
+experiment. It is off by default. Delegated execution keeps the entry agent's
+own tools and reaches specialist tools through isolated child runs. Automatic
+execution lets the owner load approved specialist instructions, discover
+individual tools, and use them in the same conversation; isolated children
+remain optional. Both modes use the same Pydantic AI loop and Bifrost executors.
+Neither mode grants access beyond the caller's approved agent paths and tools.
+
+The selected mode is retained for an owning execution and its children. Changing
+the setting affects new executions rather than changing an active run's tool
+surface. Default instructions for agentless chat remain a separate setting.
+The MCP gateway's direct tool calls continue to be driven by the external
+client; a Bifrost agent run started through MCP uses the platform execution mode.
+
+Use Delegated as the comparison control and turn Automatic off to stop starting
+new Automatic runs. Instruction updates should describe specialist expertise
+without forcing a child execution when direct skills and tools are available.
+Keep approval gates, resource scope, business workflow boundaries, and final
+output contracts intact. A specialist finishing its subtask does not establish
+that the owning task is complete.
+
 ## Compatibility and coding-agent path
 
 The public `BaseLLMClient`, message, stream-chunk, tool, chat, run, and configuration DTOs remain intact. Provider selection adds Google but does not remove OpenAI-compatible endpoints, native OpenAI, or Anthropic. Embeddings and vector storage are untouched. MCP schemas and dispatch remain Bifrost-owned.

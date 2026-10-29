@@ -10,8 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.enforce import Caller
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig
+
+
+_AGENTS = {}
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +32,9 @@ def mock_runtime_config():
                 api_key="test-key",
             )
         ],
+    ), patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
     ):
         yield
 
@@ -56,6 +65,19 @@ def _make_mock_session_factory():
     return factory, mock_session, sessions_open
 
 
+def _make_mock_redis():
+    """Model Redis transaction commands as synchronous queued operations."""
+    redis = MagicMock()
+    pipeline = MagicMock()
+    pipeline.__aenter__ = AsyncMock(return_value=pipeline)
+    pipeline.__aexit__ = AsyncMock(return_value=False)
+    pipeline.execute = AsyncMock(return_value=["1-0", True])
+    redis.pipeline.return_value = pipeline
+    redis.get = AsyncMock(return_value=None)
+    redis.delete = AsyncMock()
+    return redis
+
+
 def _make_mock_agent():
     """Create a mock Agent ORM instance."""
     agent = MagicMock()
@@ -73,7 +95,27 @@ def _make_mock_agent():
     agent.system_tools = []
     agent.knowledge_sources = []
     agent.organization_id = uuid4()
+    _AGENTS[agent.id] = agent
     return agent
+
+
+def _caller(organization_id):
+    user_id = uuid4()
+    return Caller(
+        UserPrincipal(user_id=user_id, email="agent@contoso.example", organization_id=organization_id),
+        AuthorizationContext(user_id=user_id, home_organization_id=organization_id, base_role_id=uuid4(), is_external=False, base_permissions=frozenset()),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _authorize_agent(monkeypatch):
+    async def authorize(_db, caller, agent_id):
+        return caller, _AGENTS[agent_id]
+
+    monkeypatch.setattr(
+        "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+        AsyncMock(side_effect=authorize),
+    )
 
 
 def _make_mock_llm_response(content="Hello!", tool_calls=None):
@@ -110,9 +152,7 @@ class TestNoSessionDuringLLMCall:
         mock_llm_client.complete = mock_complete
         mock_llm_client.provider_name = "test"
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)  # Not cancelled
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         # Mock resolve_agent_tools to return empty (no tools)
         with patch(
@@ -127,7 +167,7 @@ class TestNoSessionDuringLLMCall:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None)
+            result = await executor.run(agent=agent, input_data={"task": "say hello"}, caller=_caller(agent.organization_id), run_user_id=None, run_as=None)
 
         assert result["status"] == "completed"
         # The LLM was called at least once
@@ -152,9 +192,7 @@ class TestStepsBufferedToRedis:
         mock_llm_client.complete = AsyncMock(return_value=llm_response)
         mock_llm_client.provider_name = "test"
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         with patch(
             "src.services.execution.autonomous_agent_executor.resolve_agent_tools",
@@ -168,7 +206,7 @@ class TestStepsBufferedToRedis:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            result = await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None)
+            result = await executor.run(agent=agent, input_data={"task": "say hello"}, caller=_caller(agent.organization_id), run_user_id=None, run_as=None)
 
         assert result["status"] == "completed"
 
@@ -176,8 +214,10 @@ class TestStepsBufferedToRedis:
         # (it's only called by flush_to_db() which hasn't been called yet)
         mock_session.add.assert_not_called()
 
-        # Redis xadd SHOULD have been called for steps
-        assert mock_redis.xadd.call_count > 0
+        # Every buffered step is appended through a committed Redis transaction.
+        pipeline = mock_redis.pipeline.return_value
+        assert pipeline.xadd.call_count == len(executor._pending_steps)
+        assert pipeline.execute.await_count == len(executor._pending_steps)
 
         # Steps should be buffered in the executor
         assert len(executor._pending_steps) > 0
@@ -197,9 +237,7 @@ class TestFlushToDb:
         mock_llm_client.complete = AsyncMock(return_value=llm_response)
         mock_llm_client.provider_name = "test"
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         with patch(
             "src.services.execution.autonomous_agent_executor.resolve_agent_tools",
@@ -213,7 +251,7 @@ class TestFlushToDb:
             new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
-            await executor.run(agent=agent, input_data={"task": "say hello"}, run_user_id=None)
+            await executor.run(agent=agent, input_data={"task": "say hello"}, caller=_caller(agent.organization_id), run_user_id=None, run_as=None)
 
         # Now flush to a fresh mock session
         flush_session = AsyncMock()
@@ -256,9 +294,7 @@ class TestDelegationUsesFactory:
         mock_result.scalar_one.return_value = child_agent
         mock_session.execute = AsyncMock(return_value=mock_result)
 
-        mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.xadd = AsyncMock()
+        mock_redis = _make_mock_redis()
 
         # The child executor's run() should be called
         child_run_result = {
@@ -269,16 +305,29 @@ class TestDelegationUsesFactory:
             "llm_model": "test",
         }
 
+        caller = _caller(agent.organization_id)
+
         with patch.object(
             AutonomousAgentExecutor,
             "run",
             new_callable=AsyncMock,
             return_value=child_run_result,
         ), patch(
-            "src.services.execution.run_summarizer.enqueue_summarize",
+            "src.services.execution.summary_dispatch.stage_summary",
             new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
+            "src.services.execution.autonomous_agent_executor.load_runtime_principal",
+            new=AsyncMock(return_value=caller.principal),
+        ), patch(
+            "src.services.execution.autonomous_agent_executor.load_caller",
+            new=AsyncMock(return_value=caller),
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
+            executor._caller = caller
+            executor._acting_user_id = caller.principal.user_id
+            executor._run_user_id = None
+            executor._run_as = None
             executor._current_run_id = str(uuid4())
 
             tool_call = MagicMock()

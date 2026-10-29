@@ -437,6 +437,224 @@ async def test_failed_refresh_logs_status_and_source_without_tokens(
 
 
 @pytest.mark.asyncio
+async def test_terminal_refresh_rejection_is_suppressed_until_credentials_change(
+    isolated_credentials, monkeypatch, caplog
+) -> None:
+    """A revoked generation must not make every caller hit /auth/refresh again."""
+    from bifrost import client as client_mod
+
+    api_url = "https://api.example.com"
+    isolated_credentials.save_credentials(
+        api_url,
+        "rejected-access",
+        "rejected-refresh",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    )
+    refresh_tokens_seen: list[str] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, base_url, timeout):
+            assert base_url == api_url
+            assert timeout == 30.0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, path, *, json):
+            assert path == "/auth/refresh"
+            refresh_tokens_seen.append(json["refresh_token"])
+            if json["refresh_token"] == "rejected-refresh":
+                return httpx.Response(
+                    401,
+                    request=httpx.Request("POST", f"{api_url}/auth/refresh"),
+                )
+            assert json["refresh_token"] == "replacement-refresh"
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "rotated-access",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 1800,
+                },
+                request=httpx.Request("POST", f"{api_url}/auth/refresh"),
+            )
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", FakeAsyncClient)
+    caplog.set_level("WARNING", logger="bifrost.client")
+
+    first, second = await asyncio.gather(
+        client_mod.refresh_connection_access_token(api_url, "rejected-access"),
+        client_mod.refresh_connection_access_token(api_url, "rejected-access"),
+    )
+    repeated = await client_mod.refresh_connection_access_token(
+        api_url, "rejected-access"
+    )
+    sync_repeated = await asyncio.to_thread(
+        client_mod._refresh_connection_access_token_sync,
+        api_url,
+        "rejected-access",
+    )
+
+    assert (first, second, repeated, sync_repeated) == (None, None, None, None)
+    assert refresh_tokens_seen == ["rejected-refresh"]
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert warnings[0].args == (api_url, "persistent", 401)
+
+    # A separate `bifrost login` replaces the persistent tuple. The next
+    # refresh uses that new generation and is not poisoned by the old 401.
+    isolated_credentials.save_credentials(
+        api_url,
+        "replacement-access",
+        "replacement-refresh",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    )
+
+    recovered = await client_mod.refresh_connection_access_token(
+        api_url, "replacement-access"
+    )
+
+    assert recovered == "rotated-access"
+    assert refresh_tokens_seen == ["rejected-refresh", "replacement-refresh"]
+
+    # Source is part of the rejected generation. A complete process tuple
+    # therefore replaces a rejected persistent tuple without another request.
+    monkeypatch.setenv("BIFROST_API_URL", api_url)
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "process-access")
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "process-refresh")
+
+    adopted_process_token = await client_mod.refresh_connection_access_token(
+        api_url, "rotated-access"
+    )
+
+    assert adopted_process_token == "process-access"
+    assert refresh_tokens_seen == ["rejected-refresh", "replacement-refresh"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_adopts_credential_rotation_observed_after_terminal_rejection(
+    isolated_credentials, monkeypatch
+) -> None:
+    """A concurrent process rotation is adopted without another refresh request."""
+    from bifrost import client as client_mod
+
+    api_url = "https://api.example.com"
+    isolated_credentials.save_credentials(
+        api_url,
+        "rejected-access",
+        "rejected-refresh",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    )
+    refresh_calls = 0
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _path, *, json):
+            nonlocal refresh_calls
+            assert json == {"refresh_token": "rejected-refresh"}
+            refresh_calls += 1
+            isolated_credentials.save_credentials(
+                api_url,
+                "other-process-access",
+                "other-process-refresh",
+                (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+            )
+            return httpx.Response(
+                401,
+                request=httpx.Request("POST", f"{api_url}/auth/refresh"),
+            )
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await client_mod.refresh_connection_access_token(
+        api_url, "rejected-access"
+    )
+
+    assert result == "other-process-access"
+    assert refresh_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_transient_refresh_failures_remain_recoverable(
+    isolated_credentials, monkeypatch
+) -> None:
+    from bifrost import client as client_mod
+
+    api_url = "https://api.example.com"
+    isolated_credentials.save_credentials(
+        api_url,
+        "stale-access",
+        "refresh-token",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    )
+    outcomes: list[int | Exception] = [429, 503, httpx.ConnectError("offline"), 200]
+    refresh_calls = 0
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _path, *, json):
+            nonlocal refresh_calls
+            assert json == {"refresh_token": "refresh-token"}
+            refresh_calls += 1
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            if outcome != 200:
+                return httpx.Response(
+                    outcome,
+                    request=httpx.Request("POST", f"{api_url}/auth/refresh"),
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "fresh-access",
+                    "refresh_token": "fresh-refresh",
+                    "expires_in": 1800,
+                },
+                request=httpx.Request("POST", f"{api_url}/auth/refresh"),
+            )
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", FakeAsyncClient)
+
+    assert (
+        await client_mod.refresh_connection_access_token(api_url, "stale-access")
+        is None
+    )
+    assert (
+        await client_mod.refresh_connection_access_token(api_url, "stale-access")
+        is None
+    )
+    assert (
+        await client_mod.refresh_connection_access_token(api_url, "stale-access")
+        is None
+    )
+    assert (
+        await client_mod.refresh_connection_access_token(api_url, "stale-access")
+        == "fresh-access"
+    )
+    assert refresh_calls == 4
+
+
+@pytest.mark.asyncio
 async def test_refresh_exception_logs_class_without_exception_message_or_tokens(
     isolated_credentials, monkeypatch, caplog
 ) -> None:

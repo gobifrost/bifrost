@@ -5,15 +5,13 @@ the three read operations — against the same seeded integration the
 external HTTP endpoint serves, proving parity (org mapping, merged
 config, entity-ID lookup, missing-entity nulls, denial) end to end:
 
-- the workflow records that the worker injected its engine socket, so the
-  fixed operations ride the shared client's worker-local HTTP transport;
+- the workflow confirms the default physical worker has no UDS, so the
+  fixed operations use scoped shared API HTTP;
 - the same values served over external HTTP ``/api/sdk/integrations/*``
   match, including the cross-org denial.
 
-The zero-HTTP proof for the migrated operations lives in the unit and
-forked-child socket tests (``test_worker_sdk_http.py``,
-``test_worker_sdk_http_fork.py``), where the child's network API is
-unreachable yet the integration calls succeed over the worker socket.
+The default physical worker has no UDS; these operations use scoped shared API
+HTTP while the test verifies their persisted state over external HTTP.
 """
 
 import uuid
@@ -152,9 +150,8 @@ class TestSdkIntegrationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its engine socket, so the fixed operations ran
-        # over the shared client's worker-local transport.
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["entity_id"] == live_integ_keys["entity"]
         assert out["region"] == "eu-live"
         assert out["oauth_none"] is True

@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.policies.compile import compile_to_sql
 from src.models.contracts.policies import Expr
 from src.models.orm.tables import Document
@@ -18,6 +19,7 @@ class FakeUser:
     is_platform_admin: bool = False
     role_ids: list[UUID] = field(default_factory=list)
     role_names: list[str] = field(default_factory=list)
+    policy_authorities: frozenset[str] = frozenset()
 
 
 def _compile(d: dict, user=None) -> str:
@@ -111,10 +113,34 @@ def test_call_has_role_resolves_at_compile_time_false():
 
 
 def test_user_is_platform_admin_resolves_at_compile_time():
-    sql_admin = _compile({"user": "is_platform_admin"}, user=FakeUser(is_platform_admin=True))
+    sql_flag_admin = _compile({"user": "is_platform_admin"}, user=FakeUser(is_platform_admin=True))
     sql_normal = _compile({"user": "is_platform_admin"}, user=FakeUser(is_platform_admin=False))
-    assert "TRUE" in sql_admin.upper() or "1 = 1" in sql_admin
+    sql_role_admin = _compile(
+        {"user": "is_platform_admin"},
+        user=FakeUser(is_platform_admin=False, role_ids=[PLATFORM_ADMIN_ROLE_ID]),
+    )
+    assert "FALSE" in sql_flag_admin.upper() or "1 = 0" in sql_flag_admin
     assert "FALSE" in sql_normal.upper() or "1 = 0" in sql_normal
+    assert "TRUE" in sql_role_admin.upper() or "1 = 1" in sql_role_admin
+
+
+def test_legacy_admin_term_holds_for_a_full_access_run_at_compile_time():
+    sql_full = _compile(
+        {"user": "is_platform_admin"},
+        user=FakeUser(policy_authorities=frozenset({"platform_admin"})),
+    )
+    assert "TRUE" in sql_full.upper() or "1 = 1" in sql_full
+
+
+def test_policy_authority_resolves_at_compile_time():
+    sql_full = _compile(
+        {"authority": "platform_admin"},
+        user=FakeUser(policy_authorities=frozenset({"platform_admin"})),
+    )
+    sql_restricted = _compile({"authority": "platform_admin"}, user=FakeUser())
+
+    assert "TRUE" in sql_full.upper() or "1 = 1" in sql_full
+    assert "FALSE" in sql_restricted.upper() or "1 = 0" in sql_restricted
 
 
 def test_compound_realistic_policy():

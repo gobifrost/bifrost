@@ -35,6 +35,7 @@ vi.mock("@/services/authorization", () => ({
 function summary(
 	isPlatformAdmin: boolean,
 	permissions: string[] = [],
+	globalPermissions: string[] = [],
 ): AuthorizationSummary {
 	return {
 		is_platform_admin: isPlatformAdmin,
@@ -44,10 +45,22 @@ function summary(
 			id: "r",
 			name: isPlatformAdmin ? "Platform Admin" : "User",
 		},
-		grants: permissions.map((permission) => ({
-			permission,
-			boundary: { kind: "managed_organizations", organization_id: null },
-		})),
+		grants: [
+			...permissions.map((permission) => ({
+				permission,
+				boundary: {
+					kind: "managed_organizations" as const,
+					organization_id: null,
+				},
+			})),
+			...globalPermissions.map((permission) => ({
+				permission,
+				boundary: {
+					kind: "platform" as const,
+					organization_id: null,
+				},
+			})),
+		],
 	};
 }
 
@@ -185,6 +198,53 @@ describe("Sidebar structure", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("shows Auditing to holders of roleassignments.read", () => {
+		state.isPlatformAdmin = false;
+		state.authorization = summary(false, ["users.read"]);
+		const { unmount } = renderWithProviders(
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
+		);
+		expect(
+			screen.queryByRole("link", { name: "Auditing" }),
+		).not.toBeInTheDocument();
+		unmount();
+
+		state.authorization = summary(false, ["roleassignments.read"]);
+		renderWithProviders(
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
+		);
+		expect(screen.getByRole("link", { name: "Auditing" })).toHaveAttribute(
+			"href",
+			"/audit",
+		);
+	});
+
+	it.each(["/audit", "/audit/access-checks"])(
+		"marks Auditing current on %s",
+		(route) => {
+			renderWithProviders(
+				<Sidebar
+					isMobileMenuOpen={false}
+					setIsMobileMenuOpen={vi.fn()}
+					isCollapsed={false}
+				/>,
+				{ initialEntries: [route] },
+			);
+
+			expect(
+				screen.getByRole("link", { name: "Auditing" }),
+			).toHaveAttribute("aria-current", "page");
+		},
+	);
+
 	it("shows a platform admin the whole Platform section", () => {
 		renderWithProviders(
 			<Sidebar
@@ -199,9 +259,21 @@ describe("Sidebar structure", () => {
 		}
 	});
 
-	it("keeps launch destinations visible for ordinary users and hides admin management", () => {
+	it("shows named domain destinations without requiring platform-admin membership", () => {
 		state.isPlatformAdmin = false;
-		state.authorization = summary(false);
+		state.authorization = summary(
+			false,
+			[
+				"apps.readbasic",
+				"forms.readbasic",
+				"agents.readbasic",
+				"workflows.read",
+				"filepolicies.read",
+				"platform.read",
+				"tables.read",
+			],
+			["settings.read", "repository.read"],
+		);
 
 		renderWithProviders(
 			<Sidebar
@@ -219,20 +291,64 @@ describe("Sidebar structure", () => {
 		expect(
 			screen.queryByRole("link", { name: "Operations" }),
 		).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("link", { name: "Apps" }),
-		).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("link", { name: "Forms" }),
-		).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("link", { name: "Agents" }),
-		).not.toBeInTheDocument();
+		for (const name of [
+			"Apps",
+			"Forms",
+			"Agents",
+			"Workflows",
+			"Services",
+			"Tables",
+			"Files",
+			"Settings",
+		]) {
+			expect(screen.getByRole("link", { name })).toBeInTheDocument();
+		}
 		expect(
 			screen.queryByRole("link", { name: "Dashboard" }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("heading", { name: "Platform" }),
+			screen.getByRole("heading", { name: "Platform" }),
+		).toBeInTheDocument();
+	});
+
+	it("requires an exact Global grant for Global navigation", () => {
+		state.isPlatformAdmin = false;
+		state.authorization = summary(false, [
+			"settings.read",
+			"repository.read",
+		]);
+
+		renderWithProviders(
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("link", { name: "Settings" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("link", { name: "Files" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("offers Files for scoped file policy readers", () => {
+		state.authorization = summary(false, ["filepolicies.read"]);
+		renderWithProviders(
+			<Sidebar
+				isMobileMenuOpen={false}
+				setIsMobileMenuOpen={vi.fn()}
+				isCollapsed={false}
+			/>,
+		);
+		expect(screen.getByRole("link", { name: "Files" })).toHaveAttribute(
+			"href",
+			"/files",
+		);
+		expect(
+			screen.queryByRole("link", { name: "Settings" }),
 		).not.toBeInTheDocument();
 	});
 

@@ -1,9 +1,10 @@
 """Identities: user accounts that run work no person started.
 
 Every organization has a default identity (`org_default`); one global identity
-(`global_default`) has no organization; admins may add more (`custom`). They
-are ordinary users — roles, reach and attribution work as for anyone — but
-never sign in. `users.identity_kind` marks them.
+(`global_default`) has no organization; admins may add more (`custom`). Every
+default is named "Default Identity" and can't be renamed: its organization
+tells them apart. They are ordinary users — roles, reach and attribution work
+as for anyone — but never sign in. `users.identity_kind` marks them.
 """
 
 from __future__ import annotations
@@ -21,6 +22,21 @@ from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 
 IDENTITY_EMAIL_DOMAIN = "identities.bifrost.internal"
+DEFAULT_IDENTITY_NAME = "Default Identity"
+
+
+def identity_label(identity: User, organization_name: str | None) -> str:
+    """How messages name an identity: with its place, since every default is
+    named Default Identity — ``Default Identity (Contoso)``, ``Nightly (Global)``.
+    Matches the CLI's ``bifrost.refs.identity_label``."""
+    return f"{identity.name} ({organization_name or 'Global'})"
+
+
+async def organization_name(session: AsyncSession, identity: User) -> str | None:
+    """The name of the organization ``identity`` belongs to; None for Global."""
+    if identity.organization_id is None:
+        return None
+    return await session.scalar(select(Organization.name).where(Organization.id == identity.organization_id))
 
 
 def is_identity(user: User) -> bool:
@@ -55,7 +71,7 @@ async def ensure_default_identity(session: AsyncSession, organization: Organizat
         return existing
     identity = User(
         email=f"identity-{organization.id}@{IDENTITY_EMAIL_DOMAIN}",
-        name=f"{organization.name} identity",
+        name=DEFAULT_IDENTITY_NAME,
         is_active=True,
         is_verified=True,
         is_registered=True,
@@ -78,7 +94,8 @@ async def validate_run_identity(
     if identity is None or not is_identity(identity):
         raise ValueError(f"{identity_id} is not an identity")
     if not run_identity_allowed(workflow_organization_id=workflow_organization_id, identity=identity):
-        raise ValueError(f"{identity.name} can't run workflows of this organization")
+        label = identity_label(identity, await organization_name(session, identity))
+        raise ValueError(f"{label} can't run workflows of this organization")
 
 
 def run_identity_allowed(*, workflow_organization_id: UUID | None, identity: User) -> bool:

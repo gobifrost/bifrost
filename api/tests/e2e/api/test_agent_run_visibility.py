@@ -13,13 +13,35 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.enums import AgentAccessLevel
+from src.core.principal import UserPrincipal
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    RoleGrant,
+)
+from src.services.authorization.enforce import Caller
+from src.services.execution.agent_run_access import agent_run_visibility_conditions
 
 pytestmark = pytest.mark.e2e
+
+
+def _principal(user) -> UserPrincipal:
+    """Adapt an E2E fixture user to the verified principal callers require."""
+    assert user.user_id is not None
+    return UserPrincipal(
+        user_id=user.user_id,
+        email=user.email,
+        name=user.name,
+        organization_id=user.organization_id,
+        is_superuser=user.is_superuser,
+    )
 
 
 @pytest_asyncio.fixture
@@ -124,3 +146,88 @@ def test_platform_admin_sees_both_runs(
     run_ids = {item["id"] for item in response.json()["items"]}
     assert str(alice_and_bob_runs["alice_run"].id) in run_ids
     assert str(alice_and_bob_runs["bob_run"].id) in run_ids
+
+
+@pytest.mark.asyncio
+async def test_unrestricted_read_all_sees_another_users_run(
+    db_session, alice_user, alice_and_bob_runs
+):
+    """An unrestricted Read All branch is SQL ``true``, not own-only."""
+    from shared.builtin_roles import (
+        PLATFORM_ADMIN_ROLE_ID,
+        USER_ROLE_ID,
+        WILDCARD_PERMISSION,
+    )
+
+    caller = Caller(
+        _principal(alice_user),
+        AuthorizationContext(
+            user_id=alice_user.user_id,
+            home_organization_id=alice_and_bob_runs["alice_run"].org_id,
+            base_role_id=USER_ROLE_ID,
+            is_external=False,
+            base_permissions=frozenset(),
+            role_grants=(
+                RoleGrant(
+                    PLATFORM_ADMIN_ROLE_ID,
+                    frozenset({WILDCARD_PERMISSION}),
+                    (Boundary(BoundaryKind.PLATFORM),),
+                ),
+            ),
+        ),
+    )
+    rows = (
+        await db_session.execute(
+            select(AgentRun.id).where(*agent_run_visibility_conditions(caller))
+        )
+    ).scalars().all()
+    assert alice_and_bob_runs["bob_run"].id in rows
+
+
+@pytest.mark.asyncio
+async def test_read_all_never_widens_original_user_reach(
+    db_session, org1, alice_user, bob_user, alice_and_bob_runs
+):
+    """A role's Read All grant remains confined to its original boundary."""
+    from shared.builtin_roles import USER_ROLE_ID
+    from src.models.orm.organizations import Organization
+
+    foreign_org = Organization(name=f"Fabrikam-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(foreign_org)
+    await db_session.flush()
+    foreign_run = AgentRun(
+        id=uuid4(),
+        agent_id=alice_and_bob_runs["agent"].id,
+        trigger_type="api",
+        status="completed",
+        org_id=foreign_org.id,
+        caller_user_id=str(bob_user.user_id),
+    )
+    db_session.add(foreign_run)
+    await db_session.flush()
+
+    org_id = UUID(org1["id"])
+    caller = Caller(
+        _principal(alice_user),
+        AuthorizationContext(
+            user_id=alice_user.user_id,
+            home_organization_id=org_id,
+            base_role_id=USER_ROLE_ID,
+            is_external=False,
+            base_permissions=frozenset(),
+            role_grants=(
+                RoleGrant(
+                    uuid4(),
+                    frozenset({"agentruns.read.all"}),
+                    (Boundary(BoundaryKind.ORGANIZATION, org_id),),
+                ),
+            ),
+        ),
+    )
+    rows = (
+        await db_session.execute(
+            select(AgentRun.id).where(*agent_run_visibility_conditions(caller))
+        )
+    ).scalars().all()
+    assert alice_and_bob_runs["bob_run"].id in rows
+    assert foreign_run.id not in rows

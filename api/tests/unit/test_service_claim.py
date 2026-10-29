@@ -6,7 +6,9 @@ ready drain, stop mirror, token rotation), completion mapping, fencing,
 capacity, the org gate, and shutdown handover.
 """
 
+import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -102,6 +104,7 @@ async def _cleanup_services(async_session_factory):
     from src.models.orm.services import ServiceAttempt, ServiceDefinition
     from src.models.orm.workflows import Workflow
     from src.models.orm.organizations import Organization
+    from src.models.orm.users import User
 
     async with async_session_factory() as session:
         if _created_definition_ids:
@@ -123,6 +126,12 @@ async def _cleanup_services(async_session_factory):
             )
         if _created_org_ids:
             await session.execute(
+                sa_delete(User).where(
+                    User.organization_id.in_(_created_org_ids),
+                    User.identity_kind.is_not(None),
+                )
+            )
+            await session.execute(
                 sa_delete(Organization).where(
                     Organization.id.in_(_created_org_ids)
                 )
@@ -131,21 +140,22 @@ async def _cleanup_services(async_session_factory):
 
 
 class StubPool:
-    def __init__(self, max_service_workers=2):
-        self.max_service_workers = max_service_workers
+    def __init__(self):
         self.service_processes = {}
         self.route_service = AsyncMock()
         self.stop_service_child = AsyncMock(return_value=True)
 
 
 async def _ensure_org(db_session):
+    from shared.identities import ensure_default_identity
     from src.models.orm.organizations import Organization
 
     org = Organization(
-        id=uuid4(), name=f"acme_{uuid4().hex[:8]}", created_by="tester"
+        id=uuid4(), name=f"Contoso {uuid4().hex[:8]}", created_by="tester"
     )
     db_session.add(org)
     await db_session.flush()
+    await ensure_default_identity(db_session, org)
     return org
 
 
@@ -178,6 +188,16 @@ async def _ensure_service(db_session, org=None, **overrides):
     return definition, wf, org
 
 
+def _fits(free_bytes):  # type: ignore[no-untyped-def]
+    """An executor gate that always offers ``free_bytes``."""
+
+    @asynccontextmanager
+    async def claiming():  # type: ignore[no-untyped-def]
+        yield free_bytes
+
+    return claiming
+
+
 def _loop(pool, **overrides):
     args = {
         "worker_id": "worker-1",
@@ -185,15 +205,30 @@ def _loop(pool, **overrides):
         "claim_interval_seconds": 0.01,
         "beat_interval_seconds": 0,
         "lease_ttl_seconds": 60,
+        "claiming": _fits(2**40),
+        "hold_memory": lambda attempt_id, request: None,
     }
     args.update(overrides)
     return ServiceClaimLoop(**args)
 
 
+@pytest.mark.parametrize("platform_role", [False, True])
 async def test_tick_claims_and_routes_with_service_context(
-    db_session, redis_holder
+    db_session, redis_holder, platform_role
 ):
     definition, wf, org = await _ensure_service(db_session)
+    if platform_role:
+        from sqlalchemy import select
+        from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
+        from src.models.orm.users import User, UserRole, UserRoleBoundary
+
+        identity_id = await db_session.scalar(select(User.id).where(
+            User.organization_id == org.id, User.identity_kind == "org_default",
+        ))
+        db_session.add_all([
+            UserRole(user_id=identity_id, role_id=PLATFORM_ADMIN_ROLE_ID, assigned_by="test"),
+            UserRoleBoundary(user_id=identity_id, role_id=PLATFORM_ADMIN_ROLE_ID, kind="platform"),
+        ])
     await db_session.commit()
     pool = StubPool()
     loop = _loop(pool)
@@ -206,7 +241,12 @@ async def test_tick_claims_and_routes_with_service_context(
     context = kwargs["context"]
     assert context["function_name"] == wf.function_name
     assert context["file_path"] == wf.path
-    assert context["caller"]["user_id"] == "00000000-0000-0000-0000-000000000001"
+    from src.models.orm.services import ServiceAttempt
+
+    attempt = await db_session.get(ServiceAttempt, kwargs["attempt_id"])
+    assert attempt.run_user_id is not None
+    assert context["caller"]["user_id"] == str(attempt.run_user_id)
+    assert context["is_platform_admin"] is platform_role
     assert context["organization"]["id"] == str(org.id)
     assert context["service"]["lease_token"]
     assert context["service"]["token"]
@@ -222,17 +262,66 @@ async def test_tick_claims_and_routes_with_service_context(
     pool.route_service.assert_not_awaited()
 
 
-async def test_tick_skips_when_pool_full(db_session):
+async def test_tick_skips_a_service_larger_than_the_free_budget(db_session):
     definition, _, _ = await _ensure_service(db_session)
     await db_session.commit()
-    pool = StubPool(max_service_workers=0)
-    loop = _loop(pool)
+    pool = StubPool()
+    loop = _loop(pool, claiming=_fits(1))
 
     await loop.tick()
 
     pool.route_service.assert_not_awaited()
     live = await service_lifecycle.get_live_attempt(db_session, definition.id)
     assert live is None
+
+
+async def test_a_supervised_service_holds_its_request_until_it_ends(db_session):
+    from src.services.memory_requests import DEFAULT_WORKFLOW_REQUEST_BYTES
+
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    holds: dict = {}
+
+    def hold(attempt_id, request):  # type: ignore[no-untyped-def]
+        if request is None:
+            holds.pop(attempt_id, None)
+        else:
+            holds[attempt_id] = request
+
+    pool = StubPool()
+    held_at_fork: list[dict] = []
+    pool.route_service.side_effect = lambda **kwargs: held_at_fork.append(dict(holds))
+    loop = _loop(pool, hold_memory=hold)
+    await loop.tick()
+
+    live = await service_lifecycle.get_live_attempt(db_session, definition.id)
+    assert live is not None
+    assert held_at_fork == [{str(live.id): DEFAULT_WORKFLOW_REQUEST_BYTES}], (
+        "held before the child forks, so no other claim spends the same bytes"
+    )
+    assert holds == {str(live.id): DEFAULT_WORKFLOW_REQUEST_BYTES}
+    await loop._release(loop._owned.pop(str(live.id)))
+    assert holds == {}
+
+
+async def test_a_service_that_fails_to_launch_gives_its_memory_back(db_session):
+    await _ensure_service(db_session)
+    await db_session.commit()
+    holds: dict = {}
+
+    def hold(attempt_id, request):  # type: ignore[no-untyped-def]
+        if request is None:
+            holds.pop(attempt_id, None)
+        else:
+            holds[attempt_id] = request
+
+    pool = StubPool()
+    pool.route_service.side_effect = RuntimeError("fork failed")
+    loop = _loop(pool, hold_memory=hold)
+    await loop.tick()
+
+    pool.route_service.assert_awaited_once()
+    assert holds == {}
 
 
 async def test_beat_renews_lease_and_rotates_token(db_session, redis_holder):
@@ -258,40 +347,24 @@ async def test_beat_renews_lease_and_rotates_token(db_session, redis_holder):
     assert after > before
 
 
-async def test_solution_service_rotation_keeps_current_workspace_scope(redis_holder):
+async def test_service_rotation_keeps_only_durable_credential_identifiers(redis_holder):
     from src.core.security import decode_token
-    from src.models.orm.solutions import Solution
 
-    service_id = uuid4()
-    attempt_id = uuid4()
-    solution_id = uuid4()
-    definition = SimpleNamespace(organization_id=uuid4(), solution_id=solution_id)
-    solution = SimpleNamespace(status="active", allow_outbound_access=True)
+    service_id, attempt_id = uuid4(), uuid4()
+    definition = SimpleNamespace(organization_id=uuid4(), solution_id=uuid4())
     db = AsyncMock()
-    db.get.return_value = solution
-    owned = OwnedAttempt(
-        attempt_id=attempt_id, service_id=service_id, lease_token="lease"
-    )
+    owned = OwnedAttempt(attempt_id=attempt_id, service_id=service_id, lease_token="lease")
     loop = _loop(StubPool())
 
     await loop._rotate_token(db, owned, definition)
-    token = json.loads(
-        redis_holder["redis"].values[service_token_key(str(attempt_id))]
-    )["token"]
+    token = json.loads(redis_holder["redis"].values[service_token_key(str(attempt_id))])["token"]
     claims = decode_token(token, expected_type="access")
-    assert claims["engine_solution_id"] == str(solution_id)
-    assert claims["engine_global_repo_access"] is True
-    db.get.assert_awaited_with(Solution, solution_id)
 
-    solution.allow_outbound_access = False
-    await loop._rotate_token(db, owned, definition)
-    token = json.loads(
-        redis_holder["redis"].values[service_token_key(str(attempt_id))]
-    )["token"]
-    assert (
-        decode_token(token, expected_type="access")["engine_global_repo_access"]
-        is False
-    )
+    assert claims["sub"] == str(attempt_id)
+    assert claims["credential_kind"] == "service_attempt"
+    assert claims["service_id"] == str(service_id)
+    assert not {"engine_solution_id", "engine_global_repo_access", "org_id", "is_superuser"} & claims.keys()
+    db.get.assert_not_awaited()
 
 
 async def test_ready_drain_marks_attempt_running(db_session, redis_holder):
@@ -330,6 +403,63 @@ async def test_stop_mirror_notifies_child_once(db_session, redis_holder):
 
     assert redis_holder["redis"].values.get(service_stop_key(attempt_id)) == "1"
     pool.stop_service_child.assert_awaited_once_with(attempt_id)
+
+
+async def test_stop_mirror_closes_tick_database_context_before_child_termination(
+    db_session, redis_holder, monkeypatch
+):
+    """A child result may acquire the DB while its stop is being awaited."""
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    loop = _loop(pool)
+    await loop.tick()
+    attempt_id = pool.route_service.await_args.kwargs["attempt_id"]
+
+    await service_lifecycle.stop_service(db_session, definition)
+    await db_session.commit()
+
+    from src.core import database
+
+    real_get_db_context = database.get_db_context
+    state = {"open_contexts": 0, "callback_completed": False}
+
+    @asynccontextmanager
+    async def tracked_db_context():
+        state["open_contexts"] += 1
+        try:
+            async with real_get_db_context() as db:
+                yield db
+        finally:
+            state["open_contexts"] -= 1
+
+    async def stop_child(_attempt_id):
+        assert state["open_contexts"] == 0
+        await loop.handle_service_result({
+            "success": True,
+            "status": "Success",
+            "service": {
+                "service_id": str(definition.id),
+                "attempt_id": attempt_id,
+                "lease_token": loop._owned[attempt_id].lease_token,
+            },
+        })
+        state["callback_completed"] = True
+        return True
+
+    monkeypatch.setattr(database, "get_db_context", tracked_db_context)
+    pool.stop_service_child.side_effect = stop_child
+    loop._last_beat = 0
+
+    await loop.tick()
+
+    assert state["callback_completed"] is True
+    pool.stop_service_child.assert_awaited_once_with(attempt_id)
+    from src.models.orm.services import ServiceAttempt
+
+    attempt = await db_session.get(ServiceAttempt, attempt_id)
+    await db_session.refresh(attempt)
+    assert attempt.state == "stopped"
 
 
 async def test_success_completes_clean_return(db_session):
@@ -548,3 +678,110 @@ async def test_startup_grace_breach_fails_unready_attempt(db_session):
     assert attempt.state == "failed"
     assert attempt.exit_reason == "startup_grace_exceeded"
     assert attempt_id not in loop._owned
+
+
+async def test_a_service_no_executor_can_hold_is_blocked_until_one_can(db_session):
+    from src.services.memory_requests import DEFAULT_WORKFLOW_REQUEST_BYTES, MIB
+    from src.services.worker_pool.unfit import TOO_LARGE, block_services_that_never_fit
+
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+
+    await block_services_that_never_fit(db_session, DEFAULT_WORKFLOW_REQUEST_BYTES - MIB)
+    await db_session.commit()
+    await db_session.refresh(definition)
+    assert definition.blocked_reason == TOO_LARGE
+
+    await block_services_that_never_fit(db_session, DEFAULT_WORKFLOW_REQUEST_BYTES)
+    await db_session.commit()
+    await db_session.refresh(definition)
+    assert definition.blocked_reason is None
+
+
+def _record_ticks(loop, then=None):  # type: ignore[no-untyped-def]
+    ticks: list[float] = []
+
+    async def tick() -> None:
+        ticks.append(time.monotonic())
+        if then is not None:
+            then()
+
+    loop.tick = tick
+    return ticks
+
+
+async def _until(condition, timeout: float = 2.0) -> None:  # type: ignore[no-untyped-def]
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "condition never held"
+        await asyncio.sleep(0.005)
+
+
+async def test_an_idle_loop_ticks_on_a_wake_up_not_every_claim_interval():
+    wake = asyncio.Event()
+    loop = _loop(StubPool(), wake=wake, sweep_seconds=30)
+    ticks = _record_ticks(loop)
+    await loop.start()
+    try:
+        await _until(lambda: len(ticks) == 1)
+        await asyncio.sleep(0.1)  # ten claim intervals
+        assert len(ticks) == 1
+
+        wake.set()
+        await _until(lambda: len(ticks) == 2)
+    finally:
+        await loop.stop()
+
+
+async def test_a_supervising_loop_ticks_every_claim_interval():
+    """Owned attempts need their leases renewed whether or not anything wakes."""
+    loop = _loop(StubPool(), wake=asyncio.Event(), sweep_seconds=30)
+    loop._owned["attempt"] = OwnedAttempt(
+        attempt_id=uuid4(), service_id=uuid4(), lease_token="lease"
+    )
+    ticks = _record_ticks(loop)
+    await loop.start()
+    try:
+        await _until(lambda: len(ticks) >= 3)
+    finally:
+        loop._owned.clear()
+        await loop.stop()
+
+
+async def test_an_idle_loop_ticks_when_the_next_restart_comes_due():
+    loop = _loop(StubPool(), wake=asyncio.Event(), sweep_seconds=30)
+
+    def restart_soon() -> None:
+        loop._next_restart = datetime.now(timezone.utc) + timedelta(seconds=0.05)
+
+    ticks = _record_ticks(loop, then=restart_soon)
+    await loop.start()
+    try:
+        await _until(lambda: len(ticks) >= 2)
+        assert ticks[1] - ticks[0] >= 0.04
+    finally:
+        await loop.stop()
+
+
+async def test_an_ended_attempt_wakes_its_loop(db_session):
+    """The loop reads the attempt's restart time (or claims its slot) at once."""
+    await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    wake = asyncio.Event()
+    loop = _loop(pool, wake=wake)
+    await loop.tick()
+    kwargs = pool.route_service.await_args.kwargs
+    assert not wake.is_set()
+
+    await loop.handle_service_result({
+        "success": True,
+        "status": "Success",
+        "service": {
+            "service_id": kwargs["service_id"],
+            "attempt_id": kwargs["attempt_id"],
+            "lease_token": kwargs["lease_token"],
+        },
+    })
+
+    assert wake.is_set()

@@ -3,8 +3,7 @@
 Covers ``shared.sdk_ai.complete_sdk_ai`` / ``get_sdk_model_info`` and
 the thin HTTP adapters in ``api/src/routers/cli.py``:
 
-- scope rule reuse (UNSET/global/UUID, 403/422 precedence, best-effort
-  usage attribution never fails the request);
+- resolved-scope forwarding and best-effort usage attribution;
 - file-input decoding and the user-message requirement;
 - response shaping and profile/model/max-tokens forwarding;
 - error mapping (401 provider auth, 503 ValueError, sanitized 500);
@@ -23,12 +22,25 @@ import pytest
 from shared.sdk_ai import SdkAIError
 
 
+@pytest.fixture(autouse=True)
+def _authorize_sdk_ai(monkeypatch):
+    """Keep AI transport tests focused while the caller gate is unit-tested elsewhere."""
+    from shared import sdk_ai
+    from shared import sdk_config
+
+    caller = SimpleNamespace(principal=SimpleNamespace(runtime_authority=None, embed=False), ctx=None)
+    monkeypatch.setattr(sdk_ai, "load_caller", AsyncMock(return_value=caller))
+    monkeypatch.setattr(sdk_ai, "require_permission", lambda *args: None)
+    monkeypatch.setattr(sdk_config, "resolve_sdk_scope", AsyncMock(return_value=None))
+
+
 def _principal(**kwargs):
     return SimpleNamespace(
         user_id=kwargs.get("user_id", uuid4()),
         organization_id=kwargs.get("organization_id", uuid4()),
         is_superuser=kwargs.get("is_superuser", False),
         email=kwargs.get("email", "ai-test@example.com"),
+        embed=kwargs.get("embed", False),
     )
 
 
@@ -310,7 +322,7 @@ async def test_complete_generic_error_is_sanitized_500():
 
 
 @pytest.mark.asyncio
-async def test_complete_usage_scope_422_never_fails_request():
+async def test_complete_rejects_an_invalid_scope_before_calling_the_provider():
     from shared import sdk_ai
     from shared.sdk_config import ScopeResolutionError
 
@@ -330,14 +342,15 @@ async def test_complete_usage_scope_422_never_fails_request():
             new=AsyncMock(side_effect=ScopeResolutionError(422, "bad scope")),
         ),
     ):
-        result = await sdk_ai.complete_sdk_ai(
-            session,
-            principal,
-            messages=[{"role": "user", "content": "hi"}],
-            scope="not-a-uuid",
-        )
+        with pytest.raises(SdkAIError) as exc_info:
+            await sdk_ai.complete_sdk_ai(
+                session,
+                principal,
+                messages=[{"role": "user", "content": "hi"}],
+                scope="not-a-uuid",
+            )
 
-    assert result["content"] == "Hello"
+    assert exc_info.value.status_code == 422
     assert record.await_count == 0
 
 
@@ -395,39 +408,6 @@ async def test_complete_malformed_execution_id_never_fails_request():
         )
 
     assert result["content"] == "Hello"
-
-
-@pytest.mark.asyncio
-async def test_resolve_sdk_org_id_preserves_422_and_403():
-    from fastapi import HTTPException
-
-    from src.routers.cli import _resolve_sdk_org_id
-
-    org_id = uuid4()
-
-    # 422 for a malformed scope.
-    caller = SimpleNamespace(organization_id=org_id, is_superuser=False)
-    with pytest.raises(HTTPException) as exc_info:
-        await _resolve_sdk_org_id(caller, "not-a-uuid", AsyncMock())
-    assert exc_info.value.status_code == 422
-
-    # 403 for a cross-org scope without bypass.
-    other = uuid4()
-    no_provider_db = AsyncMock()
-    no_provider_db.execute.return_value = SimpleNamespace(
-        scalar_one_or_none=lambda: None
-    )
-    with pytest.raises(HTTPException) as exc_info:
-        await _resolve_sdk_org_id(caller, str(other), no_provider_db)
-    assert exc_info.value.status_code == 403
-
-    # Own org resolves without any DB lookup.
-    resolved = await _resolve_sdk_org_id(caller, str(org_id), AsyncMock())
-    assert resolved == str(org_id)
-
-    # UNSET resolves to the caller's own org.
-    resolved = await _resolve_sdk_org_id(caller, None, AsyncMock())
-    assert resolved == str(org_id)
 
 
 @pytest.mark.asyncio

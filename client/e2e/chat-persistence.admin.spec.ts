@@ -8,6 +8,19 @@ const USER_PROMPT = `Persist this fixture chat turn ${UNIQUE}`;
 
 type CreatedRecord = { id: string };
 
+interface ChatContextUsage {
+	input_tokens: number;
+	context_window: number | null;
+	cache_read_tokens: number;
+	model_profile_id: string;
+}
+
+interface ChatRunState {
+	active_run: { id: string; status: string; error: string | null } | null;
+	messages: Array<{ role: string; content: string | null }>;
+	context_usage: ChatContextUsage | null;
+}
+
 async function expectOk(
 	response: Pick<Awaited<ReturnType<AuthedApi["get"]>>, "ok" | "text">,
 ) {
@@ -39,7 +52,7 @@ async function createFixtureProfile(api: AuthedApi) {
 			data: {
 				name: PROFILE_NAME,
 				connection_id: connection.id,
-				model: "fixture-chat",
+				model: "gpt-4o",
 				capabilities: {
 					tool_calling: false,
 					image_input: false,
@@ -63,6 +76,14 @@ async function createFixtureProfile(api: AuthedApi) {
 	}
 }
 
+async function getChatState(api: AuthedApi, conversationId: string) {
+	const response = await api.get(
+		`/api/chat/conversations/${conversationId}/state`,
+	);
+	await expectOk(response);
+	return (await response.json()) as ChatRunState;
+}
+
 async function waitForAssistantOrRunFailure(
 	api: AuthedApi,
 	page: import("@playwright/test").Page,
@@ -71,14 +92,7 @@ async function waitForAssistantOrRunFailure(
 ) {
 	await expect
 		.poll(async () => {
-			const response = await api.get(
-				`/api/chat/conversations/${conversationId}/state`,
-			);
-			await expectOk(response);
-			const state = (await response.json()) as {
-				active_run: { id: string; status: string; error: string | null } | null;
-				messages: Array<{ role: string; content: string | null }>;
-			};
+			const state = await getChatState(api, conversationId);
 			const assistantMessage = state.messages.find(
 				(message) =>
 					message.role === "assistant" && message.content === "ok",
@@ -96,6 +110,25 @@ async function waitForAssistantOrRunFailure(
 		})
 		.toBe("assistant:ok");
 	await expect(page.getByRole("article", { name: "Assistant message" }).getByText("ok", { exact: true })).toBeVisible();
+}
+
+async function waitForContextUsage(
+	api: AuthedApi,
+	conversationId: string,
+) {
+	let contextUsage: ChatContextUsage | null = null;
+	await expect
+		.poll(async () => {
+			contextUsage = (await getChatState(api, conversationId)).context_usage;
+			return contextUsage !== null;
+		})
+		.toBe(true);
+	if (!contextUsage) throw new Error("Chat context usage was not persisted");
+	return contextUsage;
+}
+
+function formatTokenCount(tokens: number) {
+	return tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : String(tokens);
 }
 
 async function createFixtureAgent(api: AuthedApi, profileId: string) {
@@ -159,6 +192,12 @@ test("[CHAT-PERSIST-01 desktop] admin sends chat through local provider and relo
 		await expect(page.getByText(`Chat with ${AGENT_NAME}`)).toBeVisible({
 			timeout: 10_000,
 		});
+		const responseModel = page.getByRole("combobox", {
+			name: "Response model",
+		});
+		await responseModel.click();
+		await page.getByRole("option", { name: PROFILE_NAME, exact: true }).click();
+		await expect(responseModel).toHaveText(PROFILE_NAME);
 
 		const runResponsePromise = page.waitForResponse(
 			(response) =>
@@ -171,6 +210,9 @@ test("[CHAT-PERSIST-01 desktop] admin sends chat through local provider and relo
 		await page.getByRole("button", { name: "Send message" }).click();
 		const runResponse = await runResponsePromise;
 		await expectOk(runResponse);
+		expect(runResponse.request().postDataJSON()).toMatchObject({
+			model_profile_id: profileId,
+		});
 		const run = (await runResponse.json()) as { run_id: string };
 
 		await expect(page.getByText(USER_PROMPT)).toBeVisible();
@@ -180,6 +222,36 @@ test("[CHAT-PERSIST-01 desktop] admin sends chat through local provider and relo
 			conversationId,
 			run.run_id,
 		);
+		const contextUsage = await waitForContextUsage(api, conversationId);
+		expect(contextUsage).toMatchObject({
+			input_tokens: 1,
+			cache_read_tokens: 0,
+			model_profile_id: profileId,
+		});
+		expect(contextUsage.context_window).toEqual(expect.any(Number));
+		const contextWindow = contextUsage.context_window;
+		if (!contextWindow) throw new Error("Fixture model has no context window");
+		const usedPercent = Math.round(
+			(contextUsage.input_tokens / contextWindow) * 100,
+		);
+		const cachedPercent = contextUsage.input_tokens
+			? Math.round(
+				(contextUsage.cache_read_tokens / contextUsage.input_tokens) * 100,
+			)
+			: 0;
+		const expectedUsageSummary = `${usedPercent}% used (${100 - usedPercent}% left)`;
+		const expectedTokenSummary = `${formatTokenCount(contextUsage.input_tokens)} / ${formatTokenCount(contextWindow)} tokens (${cachedPercent}% cached)`;
+		await expect(page.getByText(/^In: \d/)).toHaveCount(0);
+		await expect(page.getByText(/^Out: \d/)).toHaveCount(0);
+
+		await page.getByRole("button", { name: "Context window" }).click();
+		await expect(page.getByText(expectedUsageSummary, { exact: true })).toBeVisible();
+		await expect(page.getByText(expectedTokenSummary, { exact: true })).toBeVisible();
+		await page.screenshot({
+			path: "playwright-results/screenshots/chat-context-window.png",
+			fullPage: true,
+			animations: "disabled",
+		});
 
 		await expect
 			.poll(async () => {
@@ -207,6 +279,33 @@ test("[CHAT-PERSIST-01 desktop] admin sends chat through local provider and relo
 			timeout: 10_000,
 		});
 		await expect(page.getByRole("article", { name: "Assistant message" }).getByText("ok", { exact: true })).toBeVisible();
+		await expect(responseModel).toHaveText(PROFILE_NAME);
+		await page.getByRole("button", { name: "Context window" }).click();
+		await expect(page.getByText(expectedUsageSummary, { exact: true })).toBeVisible();
+		await expect(page.getByText(expectedTokenSummary, { exact: true })).toBeVisible();
+
+		await page.keyboard.press("Escape");
+		await page.getByRole("button", { name: "Toggle theme" }).click();
+		await page.getByRole("button", { name: "Context window" }).click();
+		await expect(page.getByText(expectedTokenSummary, { exact: true })).toBeVisible();
+		await page.screenshot({
+			path: "playwright-results/screenshots/chat-context-window-alternate-theme.png",
+			fullPage: true,
+			animations: "disabled",
+		});
+		await page.setViewportSize({ width: 390, height: 844 });
+		await page.getByRole("button", { name: "Context window" }).click();
+		await expect(page.getByText(expectedTokenSummary, { exact: true })).toBeVisible();
+		const popoutBounds = await page
+			.getByRole("dialog", { name: "Context window" })
+			.boundingBox();
+		expect(popoutBounds).not.toBeNull();
+		expect(popoutBounds!.x + popoutBounds!.width).toBeLessThanOrEqual(374);
+		await page.screenshot({
+			path: "playwright-results/screenshots/chat-context-window-mobile.png",
+			fullPage: true,
+			animations: "disabled",
+		});
 	} finally {
 		if (conversationId) {
 			await expectDeleted(

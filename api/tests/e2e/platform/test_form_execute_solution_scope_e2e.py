@@ -5,7 +5,6 @@ Also pins the RBAC contract: the handler resolves the workflow on the FORM's
 behalf (is_superuser=True), so a form user with no role on a ``role_based``
 workflow must still reach it — the form's own access gate is authoritative.
 """
-import contextlib
 from uuid import UUID, uuid4
 
 import pytest
@@ -128,7 +127,7 @@ class TestFormExecuteEndpointRbac:
     code (resolver constructed with the user's privileges) this 404s; with the
     fix it executes."""
 
-    def _register_workflow(self, e2e_client, admin, path, func) -> str:
+    def _register_workflow(self, e2e_client, admin, path, func, organization_id: str) -> str:
         content = (
             "from bifrost import workflow\n\n"
             f"@workflow(name='{func}')\n"
@@ -144,7 +143,12 @@ class TestFormExecuteEndpointRbac:
         r = e2e_client.post(
             "/api/workflows/register",
             headers=admin.headers,
-            json={"path": path, "function_name": func, "access_level": "role_based"},
+            json={
+                "path": path,
+                "function_name": func,
+                "organization_id": organization_id,
+                "access_level": "role_based",
+            },
         )
         assert r.status_code in (200, 201), r.text
         return r.json()["id"]
@@ -154,7 +158,9 @@ class TestFormExecuteEndpointRbac:
     ):
         path = f"workflows/e2e_form_rbac_{uuid4().hex[:8]}.py"
         func = f"e2e_form_rbac_{uuid4().hex[:8]}"
-        wf_id = self._register_workflow(e2e_client, platform_admin, path, func)
+        wf_id = self._register_workflow(
+            e2e_client, platform_admin, path, func, organization_id=org1["id"]
+        )
 
         # Role gates FORM access; the user is assigned to it. The workflow has
         # NO role assignment, so org1_user has no direct role on the workflow.
@@ -194,32 +200,28 @@ class TestFormExecuteEndpointRbac:
 
         try:
             # Execute as the NON-superuser form user. The user has form access
-            # but no role on the workflow. Must NOT be 403 (form gate) or 404
-            # (workflow RBAC filter) — the regression manifested as a 404 here.
+            # but no role on the workflow; the form's organization must anchor
+            # resolution and execution.
             r = e2e_client.post(
                 f"/api/forms/{form_id}/submissions",
                 headers=org1_user.headers,
                 json={"form_data": {"message": "hello"}},
             )
-            assert r.status_code not in (403, 404), (
-                f"role_based workflow unreachable through the form for a non-superuser "
-                f"user with form access: {r.status_code} {r.text}"
-            )
             assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text}"
             assert r.json().get("execution_id"), r.text
         finally:
-            # Best-effort cleanup: the assertions above have already run, so a
-            # transient transport blip (httpx connection-reset) or non-2xx while
-            # deleting a fixture must NOT fail an otherwise-passing test. Each
-            # delete is suppressed independently so one failure doesn't skip the
-            # rest. (This teardown flaking is what repeatedly red-ran the merge
-            # queue / release build / Dependabot on a role-DELETE reset.)
-            with contextlib.suppress(Exception):
-                e2e_client.delete(f"/api/forms/{form_id}", headers=platform_admin.headers)
-            with contextlib.suppress(Exception):
-                e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
-            with contextlib.suppress(Exception):
-                e2e_client.delete(f"/api/files/editor?path={path}", headers=platform_admin.headers)
+            form_delete = e2e_client.delete(
+                f"/api/forms/{form_id}", headers=platform_admin.headers
+            )
+            assert form_delete.status_code in (200, 204), form_delete.text
+            role_delete = e2e_client.delete(
+                f"/api/roles/{role_id}", headers=platform_admin.headers
+            )
+            assert role_delete.status_code in (200, 204), role_delete.text
+            file_delete = e2e_client.delete(
+                f"/api/files/editor?path={path}", headers=platform_admin.headers
+            )
+            assert file_delete.status_code in (200, 204), file_delete.text
 
 
 @pytest.mark.e2e

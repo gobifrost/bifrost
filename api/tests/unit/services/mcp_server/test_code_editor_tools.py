@@ -18,10 +18,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastmcp.tools import ToolResult
 from mcp.types import TextContent
 
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.enforce import Caller
 from src.services.mcp_server.server import MCPContext
+from src.services.mcp_server.tool_result import ToolResult
 
 
 def get_result_data(result: ToolResult) -> dict:
@@ -33,6 +36,8 @@ def get_result_text(result: ToolResult) -> str:
     """Extract display text from a ToolResult."""
     if not result.content:
         return ""
+    if isinstance(result.content, str):
+        return result.content
     texts = [block.text for block in result.content if isinstance(block, TextContent)]
     return "\n".join(texts)
 
@@ -46,28 +51,76 @@ def is_error_result(result: ToolResult) -> bool:
     return False
 
 
+def _caller(context: MCPContext, permissions: frozenset[str]) -> Caller:
+    principal = UserPrincipal(
+        user_id=context.user_id,
+        email=context.user_email,
+        name=context.user_name,
+        organization_id=context.org_id,
+        # MCP context identity flags remain actor facts. The explicit Global
+        # role grant is the only authority these tests give a caller.
+        is_superuser=context.is_platform_admin,
+        is_provider_org=context.is_provider_org,
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=principal.organization_id,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(),
+            role_grants=(
+                RoleGrant(
+                    role_id=uuid4(),
+                    permissions=permissions,
+                    boundaries=(Boundary(BoundaryKind.PLATFORM),),
+                ),
+            ) if permissions else (),
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _load_explicit_mcp_caller(monkeypatch):
+    async def load(_db, context: MCPContext) -> Caller:
+        return context.test_caller
+
+    monkeypatch.setattr("src.services.mcp_server.authorization.load_mcp_caller", load)
+    monkeypatch.setattr(
+        "src.services.mcp_server.tools.code_editor._has_workspace_permission",
+        AsyncMock(return_value=True),
+    )
+
+
 @pytest.fixture
 def platform_admin_context() -> MCPContext:
-    """Create an MCPContext for a platform admin user."""
-    return MCPContext(
+    """Create a caller with explicit Global repository read/write powers."""
+    context = MCPContext(
         user_id=uuid4(),
         org_id=None,
-        is_platform_admin=True,
         user_email="admin@platform.local",
         user_name="Platform Admin",
+        session=AsyncMock(),
     )
+    context.test_caller = _caller(
+        context, frozenset({"repository.read", "repository.readwrite"})
+    )
+    return context
 
 
 @pytest.fixture
 def org_user_context() -> MCPContext:
-    """Create an MCPContext for a regular org user."""
-    return MCPContext(
+    """Create a caller with no Global repository permission."""
+    context = MCPContext(
         user_id=uuid4(),
         org_id=uuid4(),
-        is_platform_admin=False,
         user_email="user@org.local",
         user_name="Org User",
+        session=AsyncMock(),
     )
+    context.test_caller = _caller(context, frozenset())
+    return context
 
 
 class TestListContent:
@@ -194,11 +247,14 @@ class TestListContent:
             mock_repo.list.assert_called_once_with("")
 
     @pytest.mark.asyncio
-    async def test_list_content_denied_for_org_user(self, org_user_context):
-        """`_repo/` listing requires scope bypass — a regular org user (no
-        platform-admin/provider-org flag) is denied, matching REST's
-        admin-only `/files/editor` route."""
+    async def test_list_content_denied_for_org_user(self, org_user_context, monkeypatch):
+        """Workspace listing requires the Global repository read grant."""
         from src.services.mcp_server.tools.code_editor import list_content
+
+        monkeypatch.setattr(
+            "src.services.mcp_server.tools.code_editor._has_workspace_permission",
+            AsyncMock(return_value=False),
+        )
 
         result = await list_content(
             context=org_user_context,
@@ -737,10 +793,11 @@ class TestDeleteContent:
         assert "path" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_delete_denied_for_org_user(self, org_user_context):
-        """Deleting a `_repo/` file requires scope bypass — a regular org
-        user is denied regardless of which org owns the underlying entity."""
+    async def test_delete_denied_for_org_user(self, org_user_context, monkeypatch):
+        """Deleting a `_repo/` file requires Global repository write."""
         from src.services.mcp_server.tools.code_editor import delete_content
+
+        monkeypatch.setattr("src.services.mcp_server.tools.code_editor._has_workspace_permission", AsyncMock(return_value=False))
 
         with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
             mock_repo = MagicMock()

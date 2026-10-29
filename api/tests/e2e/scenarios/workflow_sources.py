@@ -195,6 +195,8 @@ async def {names["reader"]}():
     }}
 """,
         "onboard": f"""{header}
+from bifrost.client import BifrostAPIError
+
 HR_ROLE_ID = {hr_role_id!r}
 
 
@@ -208,8 +210,10 @@ async def {names["onboard"]}(target: str, person: str):
     try:
         context.set_scope(org_id)
         await tables.insert(TABLE, {{"person": person}}, id=f"onboard-{{context.execution_id}}")
-    except PermissionError:
-        return {{"outcome": "refused"}}
+    except BifrostAPIError as error:
+        if error.response.status_code == 403:
+            return {{"outcome": "refused"}}
+        raise
     finally:
         context.set_scope(None)
     child = await workflows.execute({names["reader"]!r}, {{}}, org_id=org_id, run_as=str(context.user_id))

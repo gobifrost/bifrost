@@ -6,6 +6,7 @@ import { files } from "@/lib/app-sdk/files";
 interface FilePreviewProps {
 	location: string;
 	scope: string | null;
+	solution?: string;
 	path: string | null;
 }
 
@@ -54,8 +55,12 @@ async function downloadFile(
 	path: string,
 	location: string,
 	scope: string | null,
+	solution?: string,
 ) {
-	const blob = await files.download(path, { location, scope });
+	const blob = await files.download(
+		path,
+		solution ? { location, scope, solution } : { location, scope },
+	);
 	if (typeof URL.createObjectURL !== "function")
 		throw new Error("Downloads are unavailable in this browser.");
 	const url = URL.createObjectURL(blob);
@@ -69,7 +74,7 @@ async function downloadFile(
 	}
 }
 
-function PreviewSession({ location, scope, path }: FilePreviewProps) {
+function PreviewSession({ location, scope, solution, path }: FilePreviewProps) {
 	const [text, setText] = useState<string | null>(null);
 	const [imageUrl, setImageUrl] = useState<string | null>(null);
 	const [loading, setLoading] = useState(
@@ -84,7 +89,7 @@ function PreviewSession({ location, scope, path }: FilePreviewProps) {
 		setDownloading(true);
 		setDownloadError(false);
 		try {
-			await downloadFile(path, location, scope);
+			await downloadFile(path, location, scope, solution);
 		} catch {
 			setDownloadError(true);
 		} finally {
@@ -105,7 +110,12 @@ function PreviewSession({ location, scope, path }: FilePreviewProps) {
 			if (kind === "text") {
 				setLoading(true);
 				try {
-					const content = await files.read(path, { location, scope });
+					const content = await files.read(
+						path,
+						solution
+							? { location, scope, solution }
+							: { location, scope },
+					);
 					if (!cancelled) {
 						setText(content.slice(0, 6000));
 						setTruncated(content.length > 6000);
@@ -125,10 +135,12 @@ function PreviewSession({ location, scope, path }: FilePreviewProps) {
 					// presigned S3 URL), so previews work regardless of whether
 					// the S3 origin is browser-reachable. Render via a blob
 					// object URL with the right MIME type.
-					const bytes = await files.readBytes(path, {
-						location,
-						scope,
-					});
+					const bytes = await files.readBytes(
+						path,
+						solution
+							? { location, scope, solution }
+							: { location, scope },
+					);
 					if (cancelled) return;
 					const type =
 						IMAGE_MIME[extOf(path)] ?? "application/octet-stream";
@@ -152,7 +164,7 @@ function PreviewSession({ location, scope, path }: FilePreviewProps) {
 			cancelled = true;
 			if (objectUrl) URL.revokeObjectURL(objectUrl);
 		};
-	}, [path, location, scope, attempt]);
+	}, [path, location, scope, solution, attempt]);
 
 	if (!path) {
 		return (
@@ -169,7 +181,13 @@ function PreviewSession({ location, scope, path }: FilePreviewProps) {
 			className="flex h-full min-h-0 min-w-0 flex-col"
 		>
 			<div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 pt-3">
-				<span className="text-xs text-muted-foreground">{kind === "text" ? "Text Preview" : kind === "image" ? "Image Preview" : "File Download"}</span>
+				<span className="text-xs text-muted-foreground">
+					{kind === "text"
+						? "Text Preview"
+						: kind === "image"
+							? "Image Preview"
+							: "File Download"}
+				</span>
 				<Button
 					variant="outline"
 					className="min-h-11"

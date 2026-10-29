@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AlertCircle, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { IdentityName } from "@/components/identities/IdentityName";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import { SearchBox } from "@/components/search/SearchBox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -99,19 +100,37 @@ export function RolePeoplePanel({ roleId }: { roleId: string }) {
 								key={person.id}
 								className="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between"
 							>
-								<div className="min-w-0 space-y-0.5">
+								{person.identity_kind ? (
 									<Link
 										to={`/users/${person.id}`}
-										className="font-medium [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										className="min-w-0 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 									>
-										{person.name || person.email}
+										<IdentityName
+											identity={{
+												name:
+													person.name || person.email,
+												organization_name:
+													person.organization_name ??
+													null,
+											}}
+										/>
 									</Link>
-									<p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-										{person.email}
-										{" · "}
-										{person.organization_name ?? "Global"}
-									</p>
-								</div>
+								) : (
+									<div className="min-w-0 space-y-0.5">
+										<Link
+											to={`/users/${person.id}`}
+											className="font-medium [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										>
+											{person.name || person.email}
+										</Link>
+										<p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
+											{person.email}
+											{" · "}
+											{person.organization_name ??
+												"Global"}
+										</p>
+									</div>
+								)}
 								<ul
 									aria-label={`Where it applies for ${person.name || person.email}`}
 									className="flex flex-wrap gap-1.5 sm:justify-end"

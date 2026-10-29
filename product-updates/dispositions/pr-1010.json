@@ -1,0 +1,14 @@
+{
+  "key": "pr:1010",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "integrations.list_mappings lists every mapping you can see again, whatever scope it is passed, so callers using \"global\" or the provider organization see their customers.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1010",
+      "Claude drafted this routine-fix summary on 2026-10-19 after Jack confirmed the semantics (list ignores scope and returns everything in reach; single-entity reads honor scope). Reach still decides access. No customer upgrade action is required."
+    ]
+  }
+}

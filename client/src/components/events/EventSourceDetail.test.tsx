@@ -15,10 +15,13 @@ const mockUpdate = vi.fn();
 const mockResubscribe = vi.fn();
 const mockRotate = vi.fn();
 const mockRotateReset = vi.fn();
-let mockIsPlatformAdmin = true;
+let mockCanManage = true;
 
-vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: mockIsPlatformAdmin }),
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAt: () => mockCanManage,
+		canAnywhere: () => mockCanManage,
+	}),
 }));
 
 vi.mock("@/services/events", async () => {
@@ -91,7 +94,7 @@ beforeEach(() => {
 	mockRotate.mockReset();
 	mockRotateReset.mockReset();
 	useEventSourceMock.mockReset();
-	mockIsPlatformAdmin = true;
+	mockCanManage = true;
 });
 
 describe("EventSourceDetail — empty/error branches", () => {
@@ -143,6 +146,31 @@ describe("EventSourceDetail — populated", () => {
 		expect(screen.getByText(/2 subscriptions/i)).toBeInTheDocument();
 		expect(screen.getByText(/5 events \(24h\)/i)).toBeInTheDocument();
 		expect(screen.getByText(/global/i)).toBeInTheDocument();
+	});
+
+	it("copies the full webhook URL from a header button instead of showing it inline", async () => {
+		useEventSourceMock.mockReturnValue({
+			data: makeSource(),
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		const { user } = renderWithProviders(
+			<EventSourceDetail sourceId="src-1" onClose={() => {}} />,
+		);
+		const writeText = vi
+			.spyOn(navigator.clipboard, "writeText")
+			.mockResolvedValue(undefined);
+		const url = `${window.location.origin}/api/events/sources/src-1/webhook`;
+
+		expect(screen.queryByText(url)).not.toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", { name: /copy webhook url/i }),
+		);
+
+		expect(writeText).toHaveBeenCalledWith(url);
+		expect(
+			await screen.findByRole("button", { name: /copied/i }),
+		).toBeInTheDocument();
 	});
 
 	it("toggles active via the switch (platform admin)", async () => {
@@ -220,7 +248,9 @@ describe("EventSourceDetail — populated", () => {
 			screen.getByRole("region", { name: "New webhook signing secret" }),
 		).toHaveTextContent("synthetic-rotated-value");
 
-		await user.click(screen.getByRole("button", { name: "Dismiss secret" }));
+		await user.click(
+			screen.getByRole("button", { name: "Dismiss secret" }),
+		);
 		expect(
 			screen.queryByText("synthetic-rotated-value"),
 		).not.toBeInTheDocument();
@@ -243,7 +273,7 @@ describe("EventSourceDetail — populated", () => {
 	});
 
 	it("hides admin-only controls for non-admin viewers", () => {
-		mockIsPlatformAdmin = false;
+		mockCanManage = false;
 		useEventSourceMock.mockReturnValue({
 			data: makeSource(),
 			isLoading: false,

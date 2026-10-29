@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from fastmcp.tools import ToolResult
+from src.services.mcp_server.tool_result import ToolResult
 
 from src.services.mcp_server.tools.db import get_tool_db
 from src.services.file_storage import FileStorageService
@@ -35,30 +35,31 @@ from src.services.mcp_server.tool_result import (
     success_result,
 )
 from src.services.mcp_server.tools._http_bridge import call_rest
-from src.services.mcp_server.tools._org_scope import mcp_write_scope_bypass
 
 
-def _check_write_scope(context: Any, path: str) -> str | None:
-    """Return an error message if ``context`` may not write ``path``, else None.
+async def _has_workspace_permission(context: Any, permission: str) -> bool:
+    from src.services.authorization.enforce import PermissionDenied, require_named_permission
+    from src.services.mcp_server.authorization import MCPAuthorizationError, load_mcp_caller
 
-    Writing (or deleting) any `_repo/` path requires scope bypass (platform
-    admin or provider-org member) — matching REST, where `_repo/` file
-    writes have no non-admin path at all (files.py's editor routes are
-    CurrentSuperuser).
-    """
-    if mcp_write_scope_bypass(context):
+    async with get_tool_db(context) as db:
+        try:
+            caller = await load_mcp_caller(db, context)
+            require_named_permission(caller, permission, None)
+        except (MCPAuthorizationError, PermissionDenied):
+            return False
+    return True
+
+
+async def _check_write_scope(context: Any, path: str) -> str | None:
+    """Authorize Global workspace mutations without revealing denied paths."""
+    if await _has_workspace_permission(context, "repository.readwrite"):
         return None
     return f"File not found: {path}"
 
 
-def _check_read_scope(context: Any) -> str | None:
-    """Return an error message if ``context`` may not read `_repo/`, else None.
-
-    Reading `_repo/` content requires scope bypass — matching REST, where
-    `_repo/` reads (files.py's `/editor`, `/editor/content`) are
-    CurrentSuperuser-only.
-    """
-    if mcp_write_scope_bypass(context):
+async def _check_read_scope(context: Any) -> str | None:
+    """Authorize Global workspace reads from current original-user powers."""
+    if await _has_workspace_permission(context, "repository.read"):
         return None
     return "Not found"
 
@@ -226,7 +227,7 @@ async def _replace_workspace_file(
         # organization. Applied here so both patch_content and
         # replace_content — which both funnel through this helper — get the
         # same check.
-        denial = _check_write_scope(context, path)
+        denial = await _check_write_scope(context, path)
         if denial is not None:
             raise PermissionError(denial)
 
@@ -296,7 +297,7 @@ async def list_content(
     """List files in the workspace. Optionally filter by path prefix."""
     logger.info(f"MCP list_content: path_prefix={path_prefix}")
 
-    denial = _check_read_scope(context)
+    denial = await _check_read_scope(context)
     if denial is not None:
         return error_result(denial)
 
@@ -405,7 +406,7 @@ async def read_content_lines(
         f"MCP read_content_lines: path={path}, lines={start_line}-{end_line}"
     )
 
-    denial = _check_read_scope(context)
+    denial = await _check_read_scope(context)
     if denial is not None:
         return error_result(denial)
 
@@ -472,7 +473,7 @@ async def get_content(
     """Get the entire content of a file."""
     logger.info(f"MCP get_content: path={path}")
 
-    denial = _check_read_scope(context)
+    denial = await _check_read_scope(context)
     if denial is not None:
         return error_result(denial)
 
@@ -560,7 +561,7 @@ async def patch_content(
     """
     logger.info(f"MCP patch_content: path={path}")
 
-    denial = _check_write_scope(context, path)
+    denial = await _check_write_scope(context, path)
     if denial is not None:
         return error_result(denial)
 
@@ -739,7 +740,7 @@ async def delete_content(
             # Write scope: a non-bypass caller may only delete a path that
             # maps to an owning entity (Application or Workflow) in their
             # own organization.
-            denial = _check_write_scope(context, path)
+            denial = await _check_write_scope(context, path)
             if denial is not None:
                 return error_result(denial)
 

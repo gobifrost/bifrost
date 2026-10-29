@@ -1,23 +1,19 @@
-"""
-MCP Tool Access Service
-
-Computes which MCP tools a user can access based on their agent access permissions.
-Tools are sourced from agents the user has access to via role assignments.
-"""
+"""Compute MCP tool discovery with the same Agent and Workflow policies as REST."""
 
 import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from shared.scope_resolver import has_scope_bypass
+from src.core.log_safety import log_safe
 from src.models.contracts.agents import ToolInfo
-from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
 from src.routers.tools import get_system_tools
+from src.services.agent_write_policy import agent_query_in_reach, can_read_agent
+from shared.scope_resolver import shared_read_organization
+from src.services.authorization.enforce import Caller, require_permission, user_reach
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
 
 logger = logging.getLogger(__name__)
@@ -32,283 +28,85 @@ class MCPToolAccessResult:
 
 @dataclass
 class AgentScopedToolResult:
-    """Result of computing tools for a specific agent."""
+    """Tool inventory for an Agent the original caller may access."""
 
     tools: list[ToolInfo]
     accessible_namespaces: list[str]
 
 
 class MCPToolAccessService:
-    """
-    Service for computing which MCP tools a user can access.
+    """Discover only reachable Agents, preserving their resource ACLs.
 
-    Access flow:
-    1. Determine which agents the user can access via their roles
-    2. Collect system_tools and workflow tools from accessible agents
-    3. Apply global MCP config allowlist/blocklist
-    4. Return the final tool list
-
-    Tool sources per agent:
-    - System tools: agent.system_tools array (e.g., ["execute_workflow", "list_workflows"])
-    - Workflow tools: agent.tools relationship (workflows assigned via agent_tools table)
+    Copied role names and identity flags are never authorization inputs.
+    Every caller supplies current database-backed authority. Configuration
+    reads separately require the Global MCP read permission.
     """
 
-    # Map system tool IDs to their metadata from get_system_tools()
     _SYSTEM_TOOL_MAP: dict[str, ToolInfo] = {tool.id: tool for tool in get_system_tools()}
 
     def __init__(self, session: AsyncSession):
         self.session = session
 
     async def get_accessible_tools(
-        self,
-        user_roles: list[str],
-        is_superuser: bool = False,
-        user_id: UUID | str | None = None,
-        org_id: UUID | str | None = None,
-        is_external: bool = False,
-        for_configuration: bool = False,
+        self, caller: Caller, *, for_configuration: bool = False
     ) -> MCPToolAccessResult:
-        """
-        Get all MCP tools accessible to the user.
-
-        Per-workflow visibility is enforced through ``WorkflowRepository`` —
-        the same gate the executor uses. This means tools/list and tools/call
-        cannot drift: if the user can list a workflow, they can execute it,
-        and vice versa.
-
-        Args:
-            user_roles: List of role names the user has (from JWT claims)
-            is_superuser: Whether the caller is a platform administrator. This
-                is used by the REST settings inventory, not ordinary MCP
-                discovery, so administrators can configure the global MCP
-                allow/block lists without changing their normal tool surface.
-            user_id: User UUID for per-workflow role check (from JWT claims).
-                Required for non-superusers — without it, role-based workflows
-                fall back to "deny" because role membership cannot be checked.
-            org_id: User's organization UUID for per-workflow org scope check
-                (from JWT claims). Required for non-superusers — without it,
-                org-scoped workflows fall back to "deny" because the in-scope
-                check cannot evaluate.
-
-        Returns:
-            MCPToolAccessResult containing the filtered tool inventory
-        """
-        # Step 1: Get accessible agents
-        accessible_agents = await self._get_accessible_agents(
-            user_roles=user_roles,
-            is_superuser=is_superuser,
-            is_external=is_external,
-            org_id=org_id,
-        )
-
-        # Step 2: Collect tools from accessible agents, enforcing per-workflow
-        # access via WorkflowRepository (same gate the executor uses).
+        if for_configuration:
+            require_permission(caller, "mcp.read", None)
+        agents = await self._get_accessible_agents(caller)
         tools: list[ToolInfo] = []
-        seen_tool_ids: set[str] = set()  # Deduplicate across agents
-        workflow_repo = self._build_workflow_repo(
-            user_id=user_id, org_id=org_id, is_superuser=is_superuser,
-            is_external=is_external,
-        )
-
-        for agent in accessible_agents:
-            # Add system tools from agent.system_tools, plus search_knowledge
-            # auto-injected when the agent has knowledge_sources. Mirrors the
-            # native chat path in agent_helpers.py so MCP listing matches.
-            for system_tool_id in self._effective_system_tool_ids(agent):
-                if system_tool_id in seen_tool_ids:
-                    continue
-                seen_tool_ids.add(system_tool_id)
-
-                # Get metadata from SYSTEM_TOOLS registry
-                if system_tool_id in self._SYSTEM_TOOL_MAP:
-                    tool_info = self._SYSTEM_TOOL_MAP[system_tool_id]
-                    tools.append(tool_info)
-                else:
-                    # Unknown system tool - create basic info
-                    logger.warning(f"Unknown system tool '{system_tool_id}' in agent '{agent.name}'")
-                    tools.append(
-                        ToolInfo(
-                            id=system_tool_id,
-                            name=system_tool_id.replace("_", " ").title(),
-                            description=f"System tool: {system_tool_id}",
-                            type="system",
-                        )
-                    )
-
-            # Add workflow tools — gated per-workflow through the repo.
-            for workflow_info in await self._visible_workflows_for_agent(
-                agent, workflow_repo, seen_tool_ids
-            ):
-                tools.append(workflow_info)
-
-        # The admin settings inventory must include blocked tools so they can
-        # be inspected and restored. Runtime callers retain config filtering.
-        if for_configuration and is_superuser:
-            return MCPToolAccessResult(tools=tools)
-
-        # Step 3: Apply global MCP config allowlist/blocklist
-        config_service = MCPConfigService(self.session)
-        config = await config_service.get_config()
-        tools = self._apply_config_filters(tools, config)
-
+        seen: set[str] = set()
+        for agent in agents:
+            for tool in self._system_tools(agent):
+                if tool.id not in seen:
+                    seen.add(tool.id)
+                    tools.append(tool)
+            tools.extend(self._visible_workflows_for_agent(agent, caller, seen))
+        if not for_configuration:
+            config = await MCPConfigService(self.session).get_config()
+            tools = self._apply_config_filters(tools, config)
         return MCPToolAccessResult(tools=tools)
 
     async def get_tools_for_agent(
-        self,
-        agent_id: UUID | str,
-        user_roles: list[str],
-        is_superuser: bool,
-        is_provider_org: bool = False,
-        user_id: UUID | str | None = None,
-        org_id: UUID | str | None = None,
-        is_external: bool = False,
+        self, agent_id: UUID | str, caller: Caller, *, for_execution: bool = False
     ) -> AgentScopedToolResult | None:
-        """
-        Get MCP tools for a specific agent, verifying user access.
-
-        Per-workflow visibility is enforced through ``WorkflowRepository`` —
-        the same gate the executor uses. See ``get_accessible_tools`` for
-        the reasoning on user_id/org_id requirements.
-
-        Args:
-            agent_id: The agent UUID to scope to
-            user_roles: List of role names the user has (from JWT claims)
-            is_superuser: Whether user is platform admin
-            is_provider_org: Whether the caller belongs to the platform/provider org
-            user_id: User UUID for per-workflow role check (from JWT claims).
-            org_id: User's org UUID for per-workflow org scope check (from claims).
-
-        Returns:
-            AgentScopedToolResult if agent exists and user has access, None otherwise
-        """
-        scope_bypass = has_scope_bypass(
-            is_platform_admin=is_superuser,
-            is_provider_org=is_provider_org,
-        )
-
-        # Query the specific agent with tools and roles eagerly loaded.
-        # Org-scope IN THE DATABASE (LEAK #2): a by-id fetch must not reach an
-        # agent outside the caller's org cascade — otherwise a role_based agent
-        # in another org with a same-named role would pass _check_agent_access.
-        query = (
-            select(Agent)
-            .options(
-                selectinload(Agent.tools),
-                selectinload(Agent.roles),
+        try:
+            identity = UUID(str(agent_id))
+        except (TypeError, ValueError):
+            return None
+        query = self._agent_query(caller).where(Agent.id == identity)
+        agent = (await self.session.execute(query)).scalars().unique().first()
+        if agent is None or not await can_read_agent(self.session, caller, agent):
+            return None
+        if for_execution:
+            require_permission(
+                caller, "agents.execute",
+                shared_read_organization(caller, agent.organization_id),
             )
-            .where(Agent.id == str(agent_id))
-            .where(Agent.is_active.is_(True))
+        tools = self._system_tools(agent)
+        tools.extend(
+            self._visible_workflows_for_agent(
+                agent, caller, {tool.id for tool in tools}
+            )
         )
-
-        if not scope_bypass:
-            scope_org = UUID(org_id) if isinstance(org_id, str) and org_id else org_id
-            if scope_org is not None:
-                query = query.where(
-                    or_(
-                        Agent.organization_id == scope_org,
-                        Agent.organization_id.is_(None),
-                    )
-                )
-            else:
-                query = query.where(Agent.organization_id.is_(None))
-
-        result = await self.session.execute(query)
-        agent = result.scalars().unique().first()
-
-        if not agent:
-            logger.warning(f"Agent {agent_id} not found or inactive")
-            return None
-
-        # Check access using same rules as _get_accessible_agents
-        if not self._check_agent_access(
-            agent, user_roles, scope_bypass, is_external
-        ):
-            logger.warning(f"User denied access to agent {agent_id}")
-            return None
-
-        # Collect tools from this agent
-        tools: list[ToolInfo] = []
-
-        for system_tool_id in self._effective_system_tool_ids(agent):
-            if system_tool_id in self._SYSTEM_TOOL_MAP:
-                tools.append(self._SYSTEM_TOOL_MAP[system_tool_id])
-            else:
-                logger.warning(f"Unknown system tool '{system_tool_id}' in agent '{agent.name}'")
-                tools.append(
-                    ToolInfo(
-                        id=system_tool_id,
-                        name=system_tool_id.replace("_", " ").title(),
-                        description=f"System tool: {system_tool_id}",
-                        type="system",
-                    )
-                )
-
-        # Workflow tools — gated per-workflow through the repo (same gate as
-        # the executor). seen_tool_ids is fresh because this is an
-        # agent-scoped call: no cross-agent dedup needed.
-        workflow_repo = self._build_workflow_repo(
-            user_id=user_id, org_id=org_id, is_superuser=scope_bypass,
-            is_external=is_external,
-        )
-        for workflow_info in await self._visible_workflows_for_agent(
-            agent, workflow_repo, seen_tool_ids=set()
-        ):
-            tools.append(workflow_info)
-
-        # Apply global config filters
-        config_service = MCPConfigService(self.session)
-        config = await config_service.get_config()
-        tools = self._apply_config_filters(tools, config)
-
-        # Collect knowledge namespaces
-        namespaces = list(agent.knowledge_sources or [])
-
+        config = await MCPConfigService(self.session).get_config()
         return AgentScopedToolResult(
-            tools=tools,
-            accessible_namespaces=namespaces,
+            tools=self._apply_config_filters(tools, config),
+            accessible_namespaces=list(agent.knowledge_sources or []),
         )
 
-    def _build_workflow_repo(
-        self,
-        user_id: UUID | str | None,
-        org_id: UUID | str | None,
-        is_superuser: bool,
-        is_external: bool = False,
-    ):
-        """Construct a WorkflowRepository pinned to the caller's identity.
+    @staticmethod
+    def _agent_query(caller: Caller):
+        return agent_query_in_reach(caller).options(
+            selectinload(Agent.tools), selectinload(Agent.roles)
+        ).where(Agent.is_active.is_(True))
 
-        OrgScopedRepository coerces string UUIDs internally (see commit
-        9e892957), so passing JWT-claim strings here is safe.
-        """
-        # Local import — WorkflowRepository imports from models.orm at module
-        # scope and we want to avoid pulling that into MCPToolAccessService's
-        # import path.
-        from src.repositories.workflows import WorkflowRepository
+    async def _get_accessible_agents(self, caller: Caller) -> list[Agent]:
+        candidates = (await self.session.execute(self._agent_query(caller))).scalars().unique().all()
+        return [agent for agent in candidates if await can_read_agent(self.session, caller, agent)]
 
-        return WorkflowRepository(
-            self.session,
-            org_id=org_id,
-            user_id=user_id,
-            is_superuser=is_superuser,
-            is_external=is_external,
-        )
-
-    async def _visible_workflows_for_agent(
-        self,
-        agent: Agent,
-        workflow_repo,
-        seen_tool_ids: set[str],
+    def _visible_workflows_for_agent(
+        self, agent: Agent, caller: Caller, seen_tool_ids: set[str]
     ) -> list[ToolInfo]:
-        """Return ToolInfo for workflow tools the caller can access on this agent.
-
-        For each workflow attached to ``agent.tools``, runs the same
-        ``WorkflowRepository.get(id=...)`` gate the executor uses. Workflows
-        the caller can't access (cross-org, role-gated without role,
-        role_based-with-no-roles for non-superusers, etc.) are omitted —
-        which means their names/descriptions/parameter schemas don't leak
-        through ``tools/list`` either.
-        """
-        # Local import — see _build_workflow_repo for rationale.
         from src.services.mcp_server.server import get_registered_tool_name
 
         infos: list[ToolInfo] = []
@@ -316,148 +114,46 @@ class MCPToolAccessService:
             workflow_id = str(workflow.id)
             if workflow_id in seen_tool_ids:
                 continue
-
-            # Same gate the executor uses: returns None if cross-org, missing
-            # role, or any other access denial.
-            accessible_workflow = await workflow_repo.get(id=workflow.id)
-            if accessible_workflow is None:
+            # Agent sharing is the resource gate for its explicitly bound
+            # tools. A tool does not add the direct workflow role ACL.
+            if (
+                not workflow.is_active or workflow.type != "tool"
+                or not user_reach(caller).covers(workflow.organization_id)
+            ):
                 continue
-
             seen_tool_ids.add(workflow_id)
-            registered_name = get_registered_tool_name(workflow_id)
-            tool_id = registered_name if registered_name else workflow_id
-            infos.append(
-                ToolInfo(
-                    id=tool_id,
-                    name=accessible_workflow.name,
-                    description=(
-                        accessible_workflow.tool_description
-                        or accessible_workflow.description
-                        or ""
-                    ),
-                    type="workflow",
-                    category=accessible_workflow.category,
-                    default_enabled_for_coding_agent=False,
-                )
-            )
+            infos.append(ToolInfo(
+                id=get_registered_tool_name(workflow_id) or workflow_id,
+                name=workflow.name,
+                description=workflow.tool_description or workflow.description or "",
+                type="workflow",
+                category=workflow.category,
+                default_enabled_for_coding_agent=False,
+            ))
         return infos
+
+    def _system_tools(self, agent: Agent) -> list[ToolInfo]:
+        tools: list[ToolInfo] = []
+        for tool_id in self._effective_system_tool_ids(agent):
+            if tool_id in self._SYSTEM_TOOL_MAP:
+                tools.append(self._SYSTEM_TOOL_MAP[tool_id])
+            else:
+                logger.warning("Unknown system tool %s on Agent %s", log_safe(tool_id), log_safe(agent.name))
+                tools.append(ToolInfo(
+                    id=tool_id,
+                    name=tool_id.replace("_", " ").title(),
+                    description=f"System tool: {tool_id}",
+                    type="system",
+                ))
+        return tools
 
     @staticmethod
     def _effective_system_tool_ids(agent: Agent) -> list[str]:
-        """Return ``agent.system_tools`` with ``search_knowledge`` auto-appended
-        when the agent has knowledge sources.
-
-        Mirrors the native chat path in
-        ``api/src/services/execution/agent_helpers.py`` so that MCP listing
-        and the agent executor agree on what an agent's tools are.
-        """
+        """Match the native executor's automatic knowledge-search tool."""
         ids = list(agent.system_tools or [])
         if agent.knowledge_sources and "search_knowledge" not in ids:
             ids.append("search_knowledge")
         return ids
-
-    @staticmethod
-    def _check_agent_access(
-        agent: Agent,
-        user_roles: list[str],
-        is_superuser: bool,
-        is_external: bool = False,
-    ) -> bool:
-        """Check if user has access to a specific agent (same rules as _get_accessible_agents)."""
-        if agent.access_level == AgentAccessLevel.AUTHENTICATED:
-            # "Everyone except external users": no authenticated-tier
-            # entitlement for externals.
-            return is_superuser or not is_external
-
-        if agent.access_level == AgentAccessLevel.EVERYONE:
-            return True
-
-        if agent.access_level == AgentAccessLevel.ROLE_BASED:
-            agent_role_names = {role.name for role in agent.roles}
-            if not agent_role_names:
-                return is_superuser
-            return is_superuser or bool(set(user_roles) & agent_role_names)
-
-        return False
-
-    async def _get_accessible_agents(
-        self,
-        user_roles: list[str],
-        is_superuser: bool,
-        is_external: bool = False,
-        org_id: UUID | str | None = None,
-    ) -> list[Agent]:
-        """
-        Get agents accessible to the user based on access_level and roles.
-
-        Rules:
-        - AUTHENTICATED: Any authenticated user can access
-        - ROLE_BASED with roles: User must share at least one role with the agent,
-          OR be a platform admin (superuser)
-        - ROLE_BASED with no roles: Only superusers can access
-        - Platform admins (superusers) bypass ROLE_BASED role checks (issue #244)
-
-        Org scoping (LEAK #2): the query is org-scoped IN THE DATABASE so a
-        role_based agent in another org with a same-named role can NEVER leak.
-        A regular user sees their org + global; a superuser sees all orgs.
-        """
-        # Query active agents, scoped to the caller's org cascade.
-        query = (
-            select(Agent)
-            .options(
-                selectinload(Agent.tools),
-                selectinload(Agent.roles),
-            )
-            .where(Agent.is_active.is_(True))
-        )
-
-        if not is_superuser:
-            scope_org = UUID(org_id) if isinstance(org_id, str) and org_id else org_id
-            if scope_org is not None:
-                query = query.where(
-                    or_(
-                        Agent.organization_id == scope_org,
-                        Agent.organization_id.is_(None),
-                    )
-                )
-            else:
-                # Non-admin with no org: global only.
-                query = query.where(Agent.organization_id.is_(None))
-
-        result = await self.session.execute(query)
-        all_agents = result.scalars().unique().all()
-
-        # Filter by access level
-        accessible_agents: list[Agent] = []
-        user_role_set = set(user_roles)
-
-        for agent in all_agents:
-            if agent.access_level == AgentAccessLevel.AUTHENTICATED:
-                # "Everyone except external users": no authenticated-tier
-                # entitlement for externals.
-                if is_superuser or not is_external:
-                    accessible_agents.append(agent)
-
-            elif agent.access_level == AgentAccessLevel.EVERYONE:
-                accessible_agents.append(agent)
-
-            elif agent.access_level == AgentAccessLevel.ROLE_BASED:
-                # Get role names from agent's roles
-                agent_role_names = {role.name for role in agent.roles}
-
-                if not agent_role_names:
-                    # ROLE_BASED with no roles = only superusers can access
-                    if is_superuser:
-                        accessible_agents.append(agent)
-                elif is_superuser or (user_role_set & agent_role_names):
-                    # User has at least one matching role, or is a platform
-                    # admin (superuser bypass — issue #244)
-                    accessible_agents.append(agent)
-
-            # Note: PUBLIC agents are not included for MCP access
-            # as MCP requires authentication
-
-        return accessible_agents
 
     def _apply_config_filters(
         self,

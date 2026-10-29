@@ -30,7 +30,6 @@ from src.core.security import create_access_token, create_refresh_token, generat
 from src.services.oauth_sso import OAuthError, OAuthService
 from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
 from shared.external_access import (
-    resolve_external_claim,
     resolve_provider_org_claim,
 )
 from shared.identities import refuse_identity_sign_in
@@ -338,12 +337,6 @@ async def oauth_callback(
             tokens=tokens,
         )
 
-        if not user_info.email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OAuth provider did not return email address",
-            )
-
     except OAuthError as e:
         logger.error(f"OAuth callback error: {log_safe(e)}")
         raise HTTPException(
@@ -369,7 +362,17 @@ async def oauth_callback(
         await db.commit()
 
     else:
-        # New user or linking new OAuth account - provision user
+        # New user or linking new OAuth account. Existing mappings authenticate
+        # by stable provider ID; email authority is only required to create one.
+        try:
+            oauth_service.validate_email_for_linking(user_info, tokens)
+        except OAuthError as e:
+            logger.error(f"OAuth callback linking error: {log_safe(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
         try:
             result = await ensure_user_provisioned(
                 db=db,
@@ -409,7 +412,7 @@ async def oauth_callback(
         "email": user.email,
         "name": user.name or user.email.split("@")[0],
         "is_superuser": user.is_superuser,
-        "is_external": await resolve_external_claim(db, user),
+        "is_external": bool(user.is_external),
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,

@@ -36,6 +36,7 @@ interface EventsTableProps {
 	sourceId: string;
 	source?: EventSource;
 	initialEventId?: string;
+	canManage?: boolean;
 }
 type StatusFilter = "all" | EventStatus;
 type DateRangeFilter = "1h" | "24h" | "7d" | "30d" | "all";
@@ -116,6 +117,7 @@ export function EventsTable({
 	sourceId,
 	source,
 	initialEventId,
+	canManage = false,
 }: EventsTableProps) {
 	const navigate = useNavigate();
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -248,7 +250,7 @@ export function EventsTable({
 					</Button>
 				</div>
 			)}
-			<div className="min-h-0 min-w-0 flex-1">
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 				{isLoading && !data ? (
 					<div className="space-y-2">
 						{Array.from({ length: 5 }, (_, i) => (
@@ -288,7 +290,7 @@ export function EventsTable({
 					</div>
 				) : (
 					<>
-						<ul className="space-y-3 @[60rem]/events:hidden">
+						<ul className="space-y-3 lg:min-h-0 lg:overflow-auto @[60rem]/events:hidden">
 							{filteredEvents.map((event) => (
 								<EventRecord
 									key={event.id}
@@ -297,7 +299,7 @@ export function EventsTable({
 								/>
 							))}
 						</ul>
-						<div className="hidden min-h-0 flex-1 @[60rem]/events:block">
+						<div className="hidden min-h-0 flex-1 flex-col @[60rem]/events:flex">
 							<DataTable className="max-h-full">
 								<DataTableHeader>
 									<DataTableRow>
@@ -369,6 +371,7 @@ export function EventsTable({
 			<EventDetailDialog
 				event={selectedEvent}
 				eventId={initialEventId}
+				canManage={canManage}
 				onClose={() => navigate(`/event-sources/${sourceId}`)}
 			/>
 		</div>

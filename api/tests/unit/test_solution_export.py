@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, DECRYPTION_ROLE_ID
+from src.models.orm.users import UserRole, UserRoleBoundary
 from src.core.auth import ExecutionContext
 from src.core.principal import UserPrincipal
 from src.models.orm.solutions import Solution
@@ -57,8 +59,13 @@ def _bundle() -> SolutionBundle:
                 "name": "main",
                 "function_name": "run",
                 "path": "workflows/main.py",
+                "source": "def run(sdk):\n    return 'ok'\n",
                 "endpoint_enabled": True,
                 "timeout_seconds": 60,
+                "requested_permissions": {
+                    "mode": "restricted",
+                    "grants": [{"permission": "tables.read"}],
+                },
             }
         ],
         tables=[
@@ -67,7 +74,7 @@ def _bundle() -> SolutionBundle:
                 "name": "things",
                 "description": "demo rows",
                 "schema": {"fields": [{"name": "title", "type": "string"}]},
-                "policies": [{"role": "member", "action": "read"}],
+                "policies": [{"name": "member_read", "actions": ["read"]}],
             }
         ],
         apps=[
@@ -87,7 +94,11 @@ def _bundle() -> SolutionBundle:
                 "bin_files": {"public/font.woff2": base64.b64encode(b"\x00\x01binary").decode("ascii")},
             }
         ],
-        forms=[{"id": FORM_ID, "name": "Intake", "fields": [{"key": "email"}]}],
+        forms=[{
+            "id": FORM_ID,
+            "name": "Intake",
+            "form_schema": {"fields": [{"key": "email"}]},
+        }],
         agents=[{"id": AGENT_ID, "name": "Helper", "system_prompt": "be helpful"}],
         config_schemas=[
             {
@@ -104,12 +115,16 @@ def _bundle() -> SolutionBundle:
     )
 
 
-def _admin(db) -> tuple[ExecutionContext, UserPrincipal]:
+async def _admin(db, seeded_user, *, secrets=False) -> tuple[ExecutionContext, UserPrincipal]:
+    for role_id in [PLATFORM_ADMIN_ROLE_ID, *([DECRYPTION_ROLE_ID] if secrets else [])]:
+        db.add_all([
+            UserRole(user_id=seeded_user.id, role_id=role_id, assigned_by="test"),
+            UserRoleBoundary(user_id=seeded_user.id, role_id=role_id, kind="platform"),
+        ])
+    await db.flush()
     user = UserPrincipal(
-        user_id=uuid.uuid4(),
-        email="admin@example.com",
-        organization_id=None,
-        is_superuser=True,
+        user_id=seeded_user.id, email=seeded_user.email,
+        organization_id=seeded_user.organization_id,
     )
     return ExecutionContext(user=user, org_id=None, db=db), user
 
@@ -139,14 +154,19 @@ def test_export_round_trips_through_preview() -> None:
     assert wf["function_name"] == "run"
     assert wf["endpoint_enabled"] is True  # full body passthrough, not a subset
     assert wf["timeout_seconds"] == 60
+    assert wf["source"] == "def run(sdk):\n    return 'ok'\n"
+    assert wf["requested_permissions"] == {
+        "mode": "restricted",
+        "grants": [{"permission": "tables.read"}],
+    }
 
     assert [t["id"] for t in result.tables] == [TBL_ID]
     tbl = result.tables[0]
     assert tbl["schema"] == {"fields": [{"name": "title", "type": "string"}]}
-    assert tbl["policies"] == [{"role": "member", "action": "read"}]
+    assert tbl["policies"] == [{"name": "member_read", "actions": ["read"]}]
 
     assert [f["id"] for f in result.forms] == [FORM_ID]
-    assert result.forms[0]["fields"] == [{"key": "email"}]
+    assert result.forms[0]["form_schema"] == {"fields": [{"key": "email"}]}
     assert [a["id"] for a in result.agents] == [AGENT_ID]
     assert result.agents[0]["system_prompt"] == "be helpful"
 
@@ -156,12 +176,19 @@ def test_export_round_trips_through_preview() -> None:
 
 
 def test_export_apps_round_trip_source_and_logo() -> None:
-    data = build_workspace_zip(_bundle())
+    bundle = _bundle()
+    bundle.apps[0]["prebuilt_sdk_metadata"] = {
+        "package_version": "9.9.9",
+        "fingerprint": "sdk-built-by-cli",
+        "contract_version": 42,
+    }
+    data = build_workspace_zip(bundle)
     result = preview_zip(data)
 
     assert [a["id"] for a in result.apps] == [APP_ID]
     app = result.apps[0]
     assert app["slug"] == "dash"
+    assert app["path"] == "apps/dash"  # exporter normalizes captured repo_path
     assert app["app_model"] == "standalone_v2"
     assert app["dependencies"] == {"react": "^18.0.0"}
     assert app["role_names"] == ["Staff"]
@@ -172,6 +199,77 @@ def test_export_apps_round_trip_source_and_logo() -> None:
     # The app logo came back as a real file referenced by the manifest.
     assert app["logo_b64"] == _PNG
     assert app["logo_content_type"] == "image/png"
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+    assert "prebuilt_sdk_metadata" not in manifest
+
+
+def test_export_uses_source_logo_member_when_it_matches_metadata_logo() -> None:
+    bundle = _bundle()
+    logo = base64.b64decode(_PNG)
+    bundle.apps[0]["bin_files"]["app-logo.png"] = base64.b64encode(logo).decode()
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as archive:
+        logo_path = "apps/dash/app-logo.png"
+        assert archive.namelist().count(logo_path) == 1
+        assert archive.read(logo_path) == logo
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo.png" in manifest
+
+
+def test_export_preserves_different_source_logo_at_unique_metadata_path() -> None:
+    bundle = _bundle()
+    source_logo = b"user-authored logo bytes"
+    metadata_logo = base64.b64decode(_PNG)
+    bundle.apps[0]["bin_files"]["app-logo.png"] = base64.b64encode(source_logo).decode()
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as archive:
+        names = archive.namelist()
+        assert len(names) == len(set(names))
+        assert archive.read("apps/dash/app-logo.png") == source_logo
+        assert archive.read("apps/dash/app-logo-metadata.png") == metadata_logo
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo-metadata.png" in manifest
+
+
+def test_export_uses_next_metadata_logo_path_when_first_is_user_source() -> None:
+    bundle = _bundle()
+    bundle.apps[0]["bin_files"].update({
+        "app-logo.png": base64.b64encode(b"user app logo").decode(),
+        "app-logo-metadata.png": base64.b64encode(b"user metadata logo").decode(),
+    })
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as archive:
+        assert archive.read("apps/dash/app-logo.png") == b"user app logo"
+        assert archive.read("apps/dash/app-logo-metadata.png") == b"user metadata logo"
+        assert archive.read("apps/dash/app-logo-metadata-2.png") == base64.b64decode(_PNG)
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo-metadata-2.png" in manifest
+
+
+def test_export_reuses_identical_metadata_logo_path_after_preview_round_trip() -> None:
+    bundle = _bundle()
+    metadata_logo = base64.b64decode(_PNG)
+    bundle.apps[0]["bin_files"].update({
+        "app-logo.png": base64.b64encode(b"user app logo").decode(),
+        "app-logo-metadata.png": base64.b64encode(metadata_logo).decode(),
+    })
+    first = build_workspace_zip(bundle)
+    round_trip = _bundle()
+    round_trip.apps = preview_zip(first).apps
+
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(round_trip))) as archive:
+        names = archive.namelist()
+        assert len(names) == len(set(names))
+        assert archive.read("apps/dash/app-logo.png") == b"user app logo"
+        assert archive.read("apps/dash/app-logo-metadata.png") == metadata_logo
+        assert "apps/dash/app-logo-metadata-2.png" not in names
+        manifest = archive.read(".bifrost/apps.yaml").decode()
+
+    assert "logo: app-logo-metadata.png" in manifest
 
 
 def test_export_python_source_verbatim() -> None:
@@ -299,7 +397,7 @@ async def test_full_stored_source_export_overlays_readme_and_runtime(tmp_path: P
 
 
 @pytest.mark.e2e
-async def test_shareable_export_returns_stored_source_artifact(db_session) -> None:
+async def test_shareable_export_returns_stored_source_artifact(db_session, seed_user) -> None:
     sol = Solution(
         id=uuid.uuid4(),
         slug=f"stored-{uuid.uuid4().hex[:8]}",
@@ -313,7 +411,7 @@ async def test_shareable_export_returns_stored_source_artifact(db_session) -> No
     source_zip = build_workspace_zip(source_bundle)
     await SolutionSourceArtifactStorage(sol.id).write(source_zip)
 
-    ctx, user = _admin(db_session)
+    ctx, user = await _admin(db_session, seed_user)
     response = await export_solution(sol.id, ctx, user, mode="shareable")
 
     assert _response_bytes(response) == source_zip
@@ -323,6 +421,7 @@ async def test_shareable_export_returns_stored_source_artifact(db_session) -> No
 async def test_full_export_overlays_live_payload_on_stored_source(
     db_session,
     monkeypatch,
+    seed_user,
 ) -> None:
     from src.services.solutions.capture import SolutionCaptureService
 
@@ -347,7 +446,7 @@ async def test_full_export_overlays_live_payload_on_stored_source(
 
     monkeypatch.setattr(SolutionCaptureService, "bundle_for", _fake_bundle_for)
 
-    ctx, user = _admin(db_session)
+    ctx, user = await _admin(db_session, seed_user, secrets=True)
     response = await export_solution(
         sol.id,
         ctx,

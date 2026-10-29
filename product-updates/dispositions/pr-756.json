@@ -1,0 +1,14 @@
+{
+  "key": "pr:756",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/756",
+      "Product review: approved curated backfill for merge on 2026-10-06."
+    ]
+  },
+  "summary": "Keep streaming responses visible when a new conversation is saved.",
+  "category": "fix"
+}

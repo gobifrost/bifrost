@@ -21,6 +21,8 @@ import {
 	isNotFoundError,
 } from "@/hooks/useExecutions";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { executeWorkflowWithContext } from "@/hooks/useWorkflows";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { useEditorStore } from "@/stores/editorStore";
@@ -135,7 +137,8 @@ export function ExecutionDetails({
 			return null;
 		}
 	});
-	const { isPlatformAdmin, hasRole } = useAuth();
+	const { hasRole, user } = useAuth();
+	const authorization = useAuthorization();
 	const isEmbed = hasRole("EmbedUser");
 	const queryClient = useQueryClient();
 	const executionQueryKey = useMemo(
@@ -254,12 +257,6 @@ export function ExecutionDetails({
 	const setSidebarPanel = useEditorStore((state) => state.setSidebarPanel);
 	const minimizeEditor = useEditorStore((state) => state.minimizeEditor);
 
-	// Workflow metadata is only needed for admin-only editor/rerun actions.
-	const { data: metadataData } = useWorkflowsMetadata({
-		enabled: isPlatformAdmin,
-	});
-	const metadata = metadataData as WorkflowsMetadataResponse | undefined;
-
 	// Wrap onComplete in useCallback to prevent infinite loop
 	const handleStreamComplete = useCallback(() => {
 		// Refetch full execution data when complete
@@ -290,6 +287,30 @@ export function ExecutionDetails({
 
 	// Cast execution data to the correct type
 	const execution = executionData as WorkflowExecution | undefined;
+	const executionTarget = orgTarget(execution?.org_id);
+	const isOwnExecution = execution?.executed_by === user?.id;
+	const canReadDiagnostics =
+		!!execution &&
+		(authorization.canAt("executions.read.all", executionTarget) ||
+			(isOwnExecution &&
+				authorization.canAt("executions.read", executionTarget)));
+	const canCancelExecution =
+		!!execution &&
+		(isOwnExecution ||
+			authorization.canAt("executions.readwrite.all", executionTarget));
+	const canRerunExecution =
+		!!execution &&
+		authorization.canAt("workflows.execute", executionTarget);
+	const canOpenSource =
+		!!execution &&
+		authorization.canAt("repository.readwrite", GLOBAL_TARGET);
+
+	// Source navigation needs metadata; rerunning uses the persisted workflow ID
+	// from the execution so it requires no repository-discovery permission.
+	const { data: metadataData } = useWorkflowsMetadata({
+		enabled: canOpenSource,
+	});
+	const metadata = metadataData as WorkflowsMetadataResponse | undefined;
 
 	// Execution status and completion check
 	const executionStatus = execution?.status as ExecutionStatus | undefined;
@@ -395,12 +416,7 @@ export function ExecutionDetails({
 		if (!execution || rerunBusy.current) return;
 		setRerunError(undefined);
 
-		// Look up the workflow ID from metadata
-		const workflow = metadata?.workflows?.find(
-			(w: WorkflowMetadata) => w.name === execution.workflow_name,
-		);
-
-		if (!workflow?.id) {
+		if (!execution.workflow_id) {
 			setRerunError(
 				"The workflow is unavailable. Close this dialog and refresh before trying again.",
 			);
@@ -411,7 +427,7 @@ export function ExecutionDetails({
 		setIsRerunning(true);
 		try {
 			const result = (await executeWorkflowWithContext(
-				workflow.id,
+				execution.workflow_id,
 				execution.input_data as Record<string, unknown>,
 			)) as WorkflowExecutionResponse;
 
@@ -427,7 +443,7 @@ export function ExecutionDetails({
 					navigate(`/history/${result.execution_id}`, {
 						state: {
 							workflow_name: execution.workflow_name,
-							workflow_id: workflow.id,
+							workflow_id: execution.workflow_id,
 							input_data: execution.input_data,
 						},
 					});
@@ -664,7 +680,7 @@ export function ExecutionDetails({
 			status={executionStatus}
 			isConnected={isConnected}
 			isLoading={isLoadingLogs}
-			isPlatformAdmin={isPlatformAdmin}
+			canReadDiagnostics={canReadDiagnostics}
 			maxHeight="min(60vh, 42rem)"
 			variant="primary"
 		/>
@@ -682,15 +698,16 @@ export function ExecutionDetails({
 			| undefined;
 		const hasAiUsage = aiUsageList && aiUsageList.length > 0;
 		const hasMetrics =
-			isPlatformAdmin &&
+			canReadDiagnostics &&
 			(execution.peak_memory_bytes != null ||
 				execution.cpu_total_seconds != null);
 		const hasVariables =
-			isPlatformAdmin &&
+			canReadDiagnostics &&
 			isComplete &&
 			variablesData &&
 			Object.keys(variablesData).length > 0;
-		const hasExecutionContext = !!execution.execution_context;
+		const hasExecutionContext =
+			canReadDiagnostics && !!execution.execution_context;
 		const hasExtras =
 			hasAiUsage || hasMetrics || hasVariables || hasExecutionContext;
 
@@ -716,7 +733,7 @@ export function ExecutionDetails({
 						completedAt={execution.completed_at}
 						inputData={execution.input_data}
 						isComplete={isComplete}
-						isPlatformAdmin={isPlatformAdmin}
+						canReadDiagnostics={canReadDiagnostics}
 						isLoading={isLoading}
 						variablesData={variablesData}
 						peakMemoryBytes={execution.peak_memory_bytes}
@@ -736,7 +753,7 @@ export function ExecutionDetails({
 	if (embedded) {
 		const actionButtons = (
 			<>
-				{isPlatformAdmin && isComplete && (
+				{canRerunExecution && isComplete && (
 					<Button
 						variant="outline"
 						size="sm"
@@ -753,18 +770,19 @@ export function ExecutionDetails({
 						Rerun
 					</Button>
 				)}
-				{(execution.status === "Running" ||
-					execution.status === "Pending") && (
-					<Button
-						variant="ghost"
-						size="icon-lg"
-						onClick={() => setShowCancelDialog(true)}
-						title="Cancel"
-						aria-label="Cancel execution"
-					>
-						<XCircle className="h-3.5 w-3.5" />
-					</Button>
-				)}
+				{canCancelExecution &&
+					(execution.status === "Running" ||
+						execution.status === "Pending") && (
+						<Button
+							variant="ghost"
+							size="icon-lg"
+							onClick={() => setShowCancelDialog(true)}
+							title="Cancel"
+							aria-label="Cancel execution"
+						>
+							<XCircle className="h-3.5 w-3.5" />
+						</Button>
+					)}
 			</>
 		);
 
@@ -905,6 +923,7 @@ export function ExecutionDetails({
 						)
 					}
 					onOpenEditor={
+						canOpenSource &&
 						metadata?.workflows?.find(
 							(workflow: WorkflowMetadata) =>
 								workflow.name === execution.workflow_name,
@@ -913,13 +932,14 @@ export function ExecutionDetails({
 							: undefined
 					}
 					onRerun={
-						isPlatformAdmin && isComplete
+						canRerunExecution && isComplete
 							? () => setShowRerunDialog(true)
 							: undefined
 					}
 					onCancel={
-						execution.status === "Running" ||
-						execution.status === "Pending"
+						canCancelExecution &&
+						(execution.status === "Running" ||
+							execution.status === "Pending")
 							? () => setShowCancelDialog(true)
 							: undefined
 					}

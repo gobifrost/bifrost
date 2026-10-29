@@ -17,8 +17,6 @@ from src.models.orm.executions import Execution, ExecutionLog
 import httpx
 import pytest
 
-from tests.fixtures.auth import create_test_jwt, auth_headers
-
 
 # API URL (from docker-compose.test.yml)
 TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
@@ -31,55 +29,35 @@ def http_client():
         yield client
 
 
-@pytest.fixture
-def admin_token():
-    """JWT token for a platform admin (superuser)."""
-    return create_test_jwt(
-        email="admin@test.com",
-        name="Test Admin",
-        is_superuser=True,
-    )
-
-
-@pytest.fixture
-def regular_user_token():
-    """JWT token for a regular org user (non-superuser)."""
-    return create_test_jwt(
-        email="user@test.com",
-        name="Test User",
-        is_superuser=False,
-    )
-
-
 @pytest.mark.e2e
 class TestLogsListEndpoint:
     """Integration tests for GET /api/executions/logs endpoint."""
 
+    @pytest.fixture(autouse=True)
+    def _persisted_callers(self, platform_admin, org1_user):
+        """Use users whose persisted roles and reach the API can resolve."""
+        self.admin_headers = platform_admin.headers
+        self.org_user_headers = org1_user.headers
+
     def test_list_logs_requires_admin(
         self,
         http_client: httpx.Client,
-        regular_user_token: str,
     ):
-        """Non-admin users should get 403 Forbidden."""
+        """Users without execution-log reach should get 403 Forbidden."""
         response = http_client.get(
             "/api/executions/logs",
-            headers=auth_headers(regular_user_token),
+            headers=self.org_user_headers,
         )
         assert response.status_code == 403
-        # Gated by the declarative RequirePlatformAdmin dependency, which
-        # returns the canonical "Superuser privileges required" detail.
-        detail = response.json().get("detail", "").lower()
-        assert "superuser" in detail or "admin" in detail
 
     def test_list_logs_returns_paginated_results(
         self,
         http_client: httpx.Client,
-        admin_token: str,
     ):
         """Admin can list logs with pagination."""
         response = http_client.get(
             "/api/executions/logs",
-            headers=auth_headers(admin_token),
+            headers=self.admin_headers,
             params={"limit": 10},
         )
         assert response.status_code == 200
@@ -94,12 +72,11 @@ class TestLogsListEndpoint:
     def test_list_logs_filters_by_level(
         self,
         http_client: httpx.Client,
-        admin_token: str,
     ):
         """Admin can filter logs by level."""
         response = http_client.get(
             "/api/executions/logs",
-            headers=auth_headers(admin_token),
+            headers=self.admin_headers,
             params={"levels": "ERROR,WARNING", "limit": 50},
         )
         assert response.status_code == 200
@@ -114,12 +91,11 @@ class TestLogsListEndpoint:
     def test_list_logs_filters_by_workflow_name(
         self,
         http_client: httpx.Client,
-        admin_token: str,
     ):
         """Admin can filter logs by workflow name (partial match)."""
         response = http_client.get(
             "/api/executions/logs",
-            headers=auth_headers(admin_token),
+            headers=self.admin_headers,
             params={"workflow_name": "test", "limit": 50},
         )
         assert response.status_code == 200
@@ -134,12 +110,11 @@ class TestLogsListEndpoint:
     def test_list_logs_message_search(
         self,
         http_client: httpx.Client,
-        admin_token: str,
     ):
         """Admin can search in log message content."""
         response = http_client.get(
             "/api/executions/logs",
-            headers=auth_headers(admin_token),
+            headers=self.admin_headers,
             params={"message_search": "error", "limit": 50},
         )
         assert response.status_code == 200
@@ -155,7 +130,6 @@ class TestLogsListEndpoint:
     async def test_list_logs_pagination_with_token(
         self,
         http_client: httpx.Client,
-        admin_token: str,
         db_session,
     ):
         """Equal timestamps and arriving logs cannot duplicate or omit older rows."""
@@ -175,7 +149,7 @@ class TestLogsListEndpoint:
         db_session.add_all(seeded)
         await db_session.commit()
         expected_ids = sorted((log.id for log in seeded), reverse=True)
-        headers = auth_headers(admin_token)
+        headers = self.admin_headers
         params = {"limit": 2, "workflow_name": workflow_name}
 
         try:
@@ -224,12 +198,11 @@ class TestLogsListEndpoint:
     def test_list_logs_date_range_filter(
         self,
         http_client: httpx.Client,
-        admin_token: str,
     ):
         """Admin can filter logs by date range."""
         response = http_client.get(
             "/api/executions/logs",
-            headers=auth_headers(admin_token),
+            headers=self.admin_headers,
             params={
                 "start_date": "2020-01-01T00:00:00Z",
                 "end_date": "2030-12-31T23:59:59Z",
@@ -244,12 +217,11 @@ class TestLogsListEndpoint:
     def test_list_logs_response_structure(
         self,
         http_client: httpx.Client,
-        admin_token: str,
     ):
         """Verify log entries have the expected structure."""
         response = http_client.get(
             "/api/executions/logs",
-            headers=auth_headers(admin_token),
+            headers=self.admin_headers,
             params={"limit": 10},
         )
         assert response.status_code == 200

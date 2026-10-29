@@ -1,0 +1,14 @@
+{
+  "key": "pr:1092",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Scoped SDK operations read only the Solution metadata needed to check access.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1092",
+      "Codex and Astra reviewed the shared scope-check consumers under the user’s authorization to fix, merge, and deploy. Current status, organization reach and outbound checks remain fresh; artwork, README and relationship collections are excluded from runtime scope reads. No customer configuration change is required."
+    ]
+  }
+}

@@ -443,10 +443,10 @@ class TestFormScopeFiltering:
         assert scoped_forms["org1"]["id"] not in form_ids, "Should NOT see org1 form"
         assert scoped_forms["org2"]["id"] not in form_ids, "Should NOT see org2 form"
 
-    def test_platform_admin_scope_org_sees_only_that_org(
+    def test_platform_admin_scope_org_includes_shared_global_defaults(
         self, e2e_client, platform_admin, org1, scoped_forms
     ):
-        """Platform admin with scope={org1} sees ONLY org1 forms (NOT global)."""
+        """Platform admin with scope={org1} sees that org and shared global forms."""
         response = e2e_client.get(
             "/api/forms",
             params={"scope": org1["id"]},
@@ -455,8 +455,7 @@ class TestFormScopeFiltering:
         assert response.status_code == 200
         form_ids = [f["id"] for f in response.json()]
 
-        # KEY ASSERTION: Global should NOT be included when filtering by org
-        assert scoped_forms["global"]["id"] not in form_ids, "Should NOT see global form"
+        assert scoped_forms["global"]["id"] in form_ids, "Should see shared global form"
         assert scoped_forms["org1"]["id"] in form_ids, "Should see org1 form"
         assert scoped_forms["org2"]["id"] not in form_ids, "Should NOT see org2 form"
 

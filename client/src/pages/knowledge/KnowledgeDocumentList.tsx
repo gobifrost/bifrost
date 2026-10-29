@@ -59,6 +59,7 @@ function KnowledgeDocumentRow({
 	selectionMode,
 	isChecked,
 	getOrgName,
+	canManage,
 	disabled,
 	onOpen,
 	onToggleSelect,
@@ -69,6 +70,7 @@ function KnowledgeDocumentRow({
 	selectionMode: boolean;
 	isChecked: boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
+	canManage: boolean;
 	disabled: boolean;
 	onOpen: (doc: DocumentSummary) => void;
 	onToggleSelect: (id: string) => void;
@@ -155,20 +157,22 @@ function KnowledgeDocumentRow({
 					</span>
 				</button>
 			</article>
-			<RecordActionsMenu label={`More actions for ${identity}`}>
-				<DropdownMenuItem
-					variant="destructive"
-					className="min-h-11 whitespace-nowrap px-3"
-					disabled={disabled}
-					onClick={(event) => {
-						event.stopPropagation();
-						onDelete(doc);
-					}}
-				>
-					<Trash2 className="mr-2 size-4" />
-					Delete
-				</DropdownMenuItem>
-			</RecordActionsMenu>
+			{canManage && (
+				<RecordActionsMenu label={`More actions for ${identity}`}>
+					<DropdownMenuItem
+						variant="destructive"
+						className="min-h-11 whitespace-nowrap px-3"
+						disabled={disabled}
+						onClick={(event) => {
+							event.stopPropagation();
+							onDelete(doc);
+						}}
+					>
+						<Trash2 className="mr-2 size-4" />
+						Delete
+					</DropdownMenuItem>
+				</RecordActionsMenu>
+			)}
 		</li>
 	);
 }
@@ -177,7 +181,7 @@ export function KnowledgeDocumentList({
 	documents,
 	selectedDocId,
 	selectionMode,
-	isPlatformAdmin,
+	canManageDocument,
 	selectedIds,
 	allVisibleSelected,
 	getOrgName,
@@ -190,7 +194,7 @@ export function KnowledgeDocumentList({
 	documents: DocumentSummary[];
 	selectedDocId: string | null;
 	selectionMode: boolean;
-	isPlatformAdmin: boolean;
+	canManageDocument: (doc: DocumentSummary) => boolean;
 	selectedIds: Set<string>;
 	allVisibleSelected: boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
@@ -205,7 +209,7 @@ export function KnowledgeDocumentList({
 			className="flex min-h-0 flex-1 flex-col"
 			aria-label="Knowledge documents"
 		>
-			{isPlatformAdmin && selectionMode && (
+			{selectionMode && (
 				<div className="flex min-h-11 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/20 px-3 py-2">
 					<span className="text-sm text-muted-foreground">
 						{selectedIds.size} selected
@@ -233,7 +237,10 @@ export function KnowledgeDocumentList({
 						selectionMode={selectionMode}
 						isChecked={selectedIds.has(doc.id)}
 						getOrgName={getOrgName}
-						disabled={busy}
+						canManage={canManageDocument(doc)}
+						disabled={
+							busy || (selectionMode && !canManageDocument(doc))
+						}
 						onToggleSelect={onToggleSelect}
 						onOpen={onOpen}
 						onDelete={onDelete}

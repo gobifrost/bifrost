@@ -67,6 +67,7 @@ import {
 } from "@/components/solutions/CreateEditSolution";
 import { useSearch } from "@/hooks/useSearch";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import {
 	listSolutions,
 	type Solution,
@@ -154,11 +155,7 @@ export function Solutions() {
 	const solutions = solutionsData?.solutions ?? [];
 	const sdkUpdateJobs = useApplicationSdkUpdateJobs();
 
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o) => o.id === orgId);
-		return org?.name ?? orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	const scopeFiltered =
 		filterOrgId === undefined
@@ -854,10 +851,10 @@ export function Solutions() {
 										/>
 									</DataTableHead>
 								)}
+								<DataTableHead>Organization</DataTableHead>
 								<DataTableHead>Name</DataTableHead>
 								<DataTableHead>Slug</DataTableHead>
 								<DataTableHead>Status</DataTableHead>
-								<DataTableHead>Organization</DataTableHead>
 								<DataTableHead>Source</DataTableHead>
 								<DataTableHead>Version</DataTableHead>
 							</DataTableRow>
@@ -909,6 +906,9 @@ export function Solutions() {
 											/>
 										</DataTableCell>
 									)}
+									<DataTableCell>
+										{orgBadge(sol)}
+									</DataTableCell>
 									<DataTableCell className="font-medium">
 										<Link
 											to={`/solutions/${sol.id}`}
@@ -938,9 +938,6 @@ export function Solutions() {
 									</DataTableCell>
 									<DataTableCell>
 										{statusBadge(sol)}
-									</DataTableCell>
-									<DataTableCell>
-										{orgBadge(sol)}
 									</DataTableCell>
 									<DataTableCell>
 										{sourceBadge(sol)}

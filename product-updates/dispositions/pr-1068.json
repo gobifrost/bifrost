@@ -1,0 +1,14 @@
+{
+  "key": "pr:1068",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflows continue through queue-display outages, and event delivery status follows the actual workflow or agent run.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1068",
+      "Jack authorized fixing the reliability gaps uncovered during production rollout and preserving existing functionality. Focused tests cover queue-tracking errors, live workflow and agent owners, terminal reconciliation, callback idempotence, and retry ownership."
+    ]
+  }
+}

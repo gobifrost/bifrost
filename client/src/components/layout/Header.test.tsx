@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
 
-const authState = vi.hoisted(() => ({ isPlatformAdmin: true }));
+const authorizationState = vi.hoisted(() => ({
+	settingsRead: false,
+	settingsReadWrite: false,
+	repositoryReadWrite: false,
+}));
+const mockCanAt = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.fn();
 const mockLogout = vi.fn();
 const mockOpenEditor = vi.fn();
@@ -17,7 +22,12 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({
 		user: { email: "admin@example.com", name: "Admin User" },
 		logout: mockLogout,
-		isPlatformAdmin: authState.isPlatformAdmin,
+	}),
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		canAt: mockCanAt,
 	}),
 }));
 
@@ -78,7 +88,18 @@ import { Header } from "./Header";
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	authState.isPlatformAdmin = true;
+	authorizationState.settingsRead = true;
+	authorizationState.settingsReadWrite = false;
+	authorizationState.repositoryReadWrite = false;
+	mockCanAt.mockImplementation(
+		(permission: string) =>
+			(permission === "settings.read" &&
+				authorizationState.settingsRead) ||
+			(permission === "settings.readwrite" &&
+				authorizationState.settingsReadWrite) ||
+			(permission === "repository.readwrite" &&
+				authorizationState.repositoryReadWrite),
+	);
 	mockUseMediaQuery.mockImplementation((query: string) =>
 		query.includes("1279px"),
 	);
@@ -107,16 +128,28 @@ describe("Header", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("places Help beside the account menu for admins and omits it for ordinary users", () => {
+	it("shows Help for an exact Global settings.read holder", () => {
 		const view = renderWithProviders(<Header />);
-		expect(
-			screen.getByRole("button", { name: "Help" }),
-		).toBeVisible();
-		authState.isPlatformAdmin = false;
+		expect(screen.getByRole("button", { name: "Help" })).toBeVisible();
+		expect(mockCanAt).toHaveBeenCalledWith("settings.read", {
+			kind: "global",
+		});
+		authorizationState.settingsRead = false;
 		view.rerender(<Header />);
 		expect(
 			screen.queryByRole("button", { name: "Help" }),
 		).not.toBeInTheDocument();
+	});
+
+	it("shows the shell only to an exact Global repository writer", () => {
+		const view = renderWithProviders(<Header />);
+		expect(
+			screen.queryByRole("button", { name: /shell/i }),
+		).not.toBeInTheDocument();
+
+		authorizationState.repositoryReadWrite = true;
+		view.rerender(<Header />);
+		expect(screen.getByRole("button", { name: /shell/i })).toBeVisible();
 	});
 
 	it("retains secondary header content outside the mobile breakpoint", () => {

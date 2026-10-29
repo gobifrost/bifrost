@@ -66,6 +66,34 @@ describe("RolePeoplePanel", () => {
 		]);
 	});
 
+	it("shows an identity by glyph, name and organization, without its email", () => {
+		const identity = {
+			id: "i-1",
+			name: "Default Identity",
+			email: "identity-i-1@identities.bifrost.internal",
+			organization_id: "org-a",
+			organization_name: "Contoso",
+			organization_is_provider: false,
+			identity_kind: "org_default",
+			boundaries: [],
+		};
+		state.result = {
+			...state.result,
+			data: { user_ids: ["i-1"], users: [identity], total: 1 },
+		};
+		renderWithProviders(<RolePeoplePanel roleId="operator" />);
+
+		const link = screen.getByRole("link", { name: /Default Identity/ });
+		expect(link).toHaveAttribute("href", "/users/i-1");
+		expect(
+			within(link).getByRole("img", { name: "Identity" }),
+		).toBeInTheDocument();
+		expect(within(link).getByLabelText("Organization")).toHaveTextContent(
+			"Contoso",
+		);
+		expect(screen.queryByText(/identities\.bifrost\.internal/)).toBeNull();
+	});
+
 	it("says when no one holds the role", () => {
 		state.result = {
 			...state.result,

@@ -79,7 +79,10 @@ import {
 import { webSocketService } from "@/services/websocket";
 import { useChatStream } from "./useChatStream";
 
-function makeState(status: string | null = null) {
+function makeState(
+	status: string | null = null,
+	contextUsage: Record<string, unknown> | null = null,
+) {
 	return {
 		conversation: {
 			id: "conversation-1",
@@ -100,6 +103,7 @@ function makeState(status: string | null = null) {
 		messages: [],
 		events: [],
 		latest_sequence: status ? 1 : 0,
+		context_usage: contextUsage,
 	};
 }
 
@@ -157,6 +161,30 @@ describe("useChatStream", () => {
 		);
 	});
 
+	it("hydrates the latest context usage from the durable snapshot", async () => {
+		const contextUsage = {
+			input_tokens: 1_000,
+			context_window: 10_000,
+			cache_read_tokens: 0,
+			model_profile_id: "profile-balanced",
+		};
+		vi.mocked(getChatRunState).mockResolvedValue(
+			makeState(null, contextUsage) as never,
+		);
+
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper: wrapper(),
+		});
+
+		await waitFor(() =>
+			expect(mocks.store.hydrateConversationProjection).toHaveBeenCalledWith(
+				"conversation-1",
+				expect.objectContaining({ context_usage: contextUsage }),
+				expect.any(Array),
+			),
+		);
+	});
+
 	it("does not probe the server while a first-turn command is still pending", async () => {
 		mocks.store.projectionsByConversation = {
 			"conversation-1": {
@@ -179,6 +207,8 @@ describe("useChatStream", () => {
 				run_order: ["run-1"],
 				active_run_id: "run-1",
 				last_sequence: 0,
+				context_usage: null,
+				context_usage_sequence: 0,
 			},
 		};
 
@@ -403,6 +433,8 @@ describe("useChatStream", () => {
 				run_order: ["run-1"],
 				active_run_id: "run-1",
 				last_sequence: 1,
+				context_usage: null,
+				context_usage_sequence: 0,
 			},
 		};
 		vi.mocked(getChatRunState).mockResolvedValue(

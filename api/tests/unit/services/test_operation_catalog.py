@@ -1045,6 +1045,20 @@ WORKSPACE_FILE_OPERATIONS = {
         ("files", "delete"),
         "bifrost_file_delete",
     ),
+    "workspace.files.move": (
+        "POST",
+        "/api/files/move",
+        ("files", "move"),
+        None,
+        True,
+    ),
+    "workspace.files.move_many": (
+        "POST",
+        "/api/files/move-many",
+        None,
+        None,
+        True,
+    ),
     "workspace.files.pull": (
         "POST",
         "/api/files/pull",

@@ -4,14 +4,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { paths } from "@/lib/v1";
 
-const { useQueryMock } = vi.hoisted(() => ({ useQueryMock: vi.fn() }));
+const { useQueryMock, useMutationMock } = vi.hoisted(() => ({
+	useQueryMock: vi.fn(),
+	useMutationMock: vi.fn(),
+}));
 
 vi.mock("@/lib/api-client", () => ({
-	$api: { useQuery: (...args: unknown[]) => useQueryMock(...args) },
+	$api: {
+		useQuery: (...args: unknown[]) => useQueryMock(...args),
+		useMutation: (...args: unknown[]) => useMutationMock(...args),
+	},
 }));
 
 import {
 	USER_ACCESS_QUERY_KEY,
+	useCheckUserAccess,
 	usePermissionCatalog,
 	useUserAccessMap,
 } from "./access";
@@ -19,6 +26,16 @@ import {
 describe("access service", () => {
 	beforeEach(() => {
 		useQueryMock.mockReset();
+		useMutationMock.mockReset();
+	});
+
+	it("tests a user's access through the access-check endpoint", () => {
+		useCheckUserAccess();
+
+		expect(useMutationMock).toHaveBeenCalledWith(
+			"post",
+			"/api/users/{user_id}/access/check",
+		);
 	});
 
 	it("reads the permission catalog from its endpoint", () => {

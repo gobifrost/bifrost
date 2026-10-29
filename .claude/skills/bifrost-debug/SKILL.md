@@ -52,7 +52,7 @@ Mode A stores a strong generated admin password per worktree under the user's lo
 
 3. **Tell the user the credentials.** Login is `dev@gobifrost.com` / `password`. MFA is off. No setup wizard. Mention this once with the URL.
 
-4. **Point at logs if they ask.** `./debug.sh logs <service>` — services include `api`, `client`, `worker`, `scheduler`, `postgres`, `rabbitmq`, `redis`, `minio`.
+4. **Point at logs if they ask.** `./debug.sh logs <service>` — services include `api`, `client`, `worker`, `scheduler`, `postgres`, `redis`, `seaweedfs`.
 
 ## Connect the CLI
 

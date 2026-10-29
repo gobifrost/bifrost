@@ -10,12 +10,10 @@ callers:
 The same service serves workflow children over the worker-local engine
 socket (``api/src/services/execution/worker_sdk_http.py``).
 
-All inputs are already-authoritative scalars: the HTTP edge resolves
-scope through the shared ``resolve_sdk_scope`` semantics, the Solution
-presence signal, and the caller identity (org, admin flag, external
-flag, actor email) from the auth-verified principal — never from child
-frame claims. Worker-local calls resolve the same scalars from the same
-authenticated execution context.
+All inputs are already-authoritative scalars: the HTTP edge resolves scope
+through the shared ``resolve_sdk_scope`` semantics and supplies the verified
+caller. Worker-local calls resolve the same values from the authenticated
+execution context, never child-frame claims.
 
 All failures raise :class:`SDKTableMetadataError` (transport-neutral);
 the HTTP adapter maps them to ``HTTPException`` preserving the exact
@@ -35,6 +33,7 @@ from shared.policies.probe import make_seed_admin_bypass
 from src.core.log_safety import log_safe
 from src.models.orm.tables import Table
 from src.services.solutions.guard import SOLUTION_MANAGED_MESSAGE
+from src.services.authorization.enforce import Caller, require_permission
 
 import src.repositories.tables as tables_repo_module
 
@@ -84,7 +83,7 @@ async def create_sdk_table(
     table_schema: dict[str, Any] | None,
     description: str | None,
     org_id: UUID | None,
-    actor_email: str,
+    caller: Caller,
     solution_present: bool,
 ) -> dict[str, Any]:
     """Create one table in the exact resolved scope.
@@ -95,8 +94,8 @@ async def create_sdk_table(
         table_schema: Optional schema hints.
         description: Optional table description.
         org_id: Already-resolved effective scope (None for global).
-        actor_email: Parent-derived actor email for the ``created_by``
-            audit column.
+        caller: Verified caller, used for both the named permission and the
+            ``created_by`` audit column.
         solution_present: True when the caller runs in a Solution
             execution context (``?solution=`` or ``X-Bifrost-App``,
             resolved by auth onto the request context). Such callers may
@@ -113,6 +112,8 @@ async def create_sdk_table(
             exists in the exact scope.
     """
     ensure_sdk_table_create_allowed(solution_present)
+    require_permission(caller, "tables.readwrite", org_id)
+    actor_email = caller.principal.email
 
     # Exact-scope uniqueness check (not a cascade): "is there already a
     # table named X in MY scope?" Cascade would mask collisions when a
@@ -154,32 +155,29 @@ async def list_sdk_tables(
     session: AsyncSession,
     *,
     org_id: UUID | None,
-    external: bool,
+    caller: Caller,
 ) -> list[dict[str, Any]]:
     """List tables visible in the resolved scope, sorted by name.
 
     Args:
         session: Short-lived parent/HTTP database session.
         org_id: Already-resolved effective scope (None for global).
-        external: True for a direct EXTERNAL portal caller — drops the
-            sentinel ``is_superuser`` trust so externals get the regular
-            user cascade instead. Engine executions always pass False.
+        caller: Verified caller whose reach and named permission were
+            resolved before repository cascade.
 
     Returns:
         The ``SDKTableInfo`` shapes as plain dicts (the caller builds
         the DTOs), sorted by table name.
     """
-    # Principal-derived sentinel trust (OPEN-B): the sentinel/admins keep
-    # is_superuser=True (their is_external claim is neutralized at mint); an
-    # EXTERNAL principal must not inherit it — they get the regular-user
-    # cascade instead. NOTE: attribute access at call time (not a top-level
-    # from-import) keeps the ``TableRepository`` seam patchable for both
-    # entry points.
+    # Reach and named permission are checked above. The repository receives
+    # only an already-authorized target so it can apply its org→Global
+    # cascade without reintroducing provider or actor privilege.
+    require_permission(caller, "tables.read", org_id)
     repo = tables_repo_module.TableRepository(
         session,
         org_id=org_id,
-        is_superuser=not external,
-        is_external=external,
+        is_superuser=True,
+        is_external=caller.principal.is_external,
     )
     tables = await repo.list()
     tables = sorted(tables, key=lambda t: t.name)
@@ -192,6 +190,7 @@ async def delete_sdk_table(
     *,
     table_id: UUID,
     org_id: UUID | None,
+    caller: Caller,
 ) -> bool:
     """Delete one table by ID.
 
@@ -211,6 +210,7 @@ async def delete_sdk_table(
             (deploy owns schema + policies; the raw lookup preserves the
             specific read-only error instead of a misleading 404).
     """
+    require_permission(caller, "tables.readwrite", org_id)
     solution_id = (
         await session.execute(select(Table.solution_id).where(Table.id == table_id))
     ).scalar_one_or_none()

@@ -62,6 +62,27 @@ def _catalog_entry(
     )
 
 
+def config_context_window(
+    catalog: ModelCatalog,
+    config: LLMConfig,
+    *,
+    model: str | None = None,
+) -> int | None:
+    """Known context capacity of one configured model, without chain minimization."""
+
+    model = model or config.model
+    entry = (
+        catalog.model(config.catalog_provider_id, model)
+        if config.catalog_provider_id
+        else None
+    )
+    if entry is None:
+        entry = _catalog_entry(
+            catalog, canonical_provider(config.provider, config.endpoint), model
+        )
+    return entry.context_window if entry is not None and entry.context_window else None
+
+
 async def chain_context_window(
     session: AsyncSession,
     configs: list[LLMConfig],
@@ -80,17 +101,9 @@ async def chain_context_window(
     windows: list[int] = []
     for index, config in enumerate(configs):
         model = primary_model if index == 0 and primary_model else config.model
-        entry = (
-            catalog.model(config.catalog_provider_id, model)
-            if config.catalog_provider_id
-            else None
-        )
-        if entry is None:
-            entry = _catalog_entry(
-                catalog, canonical_provider(config.provider, config.endpoint), model
-            )
-        if entry is not None and entry.context_window:
-            windows.append(entry.context_window)
+        window = config_context_window(catalog, config, model=model)
+        if window:
+            windows.append(window)
     return min(windows) if windows else None
 
 

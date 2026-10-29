@@ -21,9 +21,9 @@ const users: PermissionCatalogEntry = {
 };
 
 describe("permissionParts", () => {
-	it("splits a dotted domain from its action", () => {
-		expect(permissionParts("users.lifecycle.readwrite")).toEqual({
-			domain: "users.lifecycle",
+	it("splits the resource from its action", () => {
+		expect(permissionParts("userlifecycle.readwrite")).toEqual({
+			domain: "userlifecycle",
 			action: "readwrite",
 			all: false,
 		});

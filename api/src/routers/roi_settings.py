@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, status
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.roi import (
@@ -12,13 +12,25 @@ from src.models.contracts.roi import (
     ROISettingsResponse,
 )
 from src.services.roi_settings_service import ROISettingsService
+from src.services.authorization.enforce import authorize_operation
+from src.services.authorization.evaluator import GLOBAL
 
 logger = logging.getLogger(__name__)
+
+ROI_SETTINGS_GET_OPERATION = "GET /api/admin/roi/settings"
+ROI_SETTINGS_UPDATE_OPERATION = "POST /api/admin/roi/settings"
+
+async def _authorize_platform_setting(
+    db: DbSession,
+    user: CurrentActiveUser,
+    operation: str,
+) -> None:
+    await authorize_operation(db, user, operation, GLOBAL)
+
 
 router = APIRouter(
     prefix="/api/admin/roi",
     tags=["ROI Settings"],
-    dependencies=[RequirePlatformAdmin],  # All endpoints require platform admin
 )
 
 
@@ -31,8 +43,9 @@ async def get_roi_settings(
     Get current ROI settings.
 
     Returns current settings or defaults if not configured.
-    Requires platform admin access.
+    Requires Reports Read at Global.
     """
+    await _authorize_platform_setting(db, user, ROI_SETTINGS_GET_OPERATION)
     service = ROISettingsService(db)
     settings = await service.get_settings()
 
@@ -51,8 +64,9 @@ async def update_roi_settings(
     """
     Update ROI settings.
 
-    Requires platform admin access.
+    Requires Reports Read and Write at Global.
     """
+    await _authorize_platform_setting(db, user, ROI_SETTINGS_UPDATE_OPERATION)
     service = ROISettingsService(db)
 
     settings = await service.save_settings(

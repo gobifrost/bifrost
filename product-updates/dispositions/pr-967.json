@@ -1,0 +1,14 @@
+{
+  "key": "pr:967",
+  "classification": "highlight",
+  "entry_ids": [
+    "a9042643-be28-46ff-9e58-2c6b9e5eb02a"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/967",
+      "Product review: the controller approved the copy on 2026-10-09 under Jack's 2026-10-09 scopes decision."
+    ]
+  }
+}

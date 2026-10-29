@@ -52,6 +52,12 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 	),
 }));
 
+vi.mock("@/components/workflows/WorkflowAccessPanel", () => ({
+	WorkflowAccessPanel: ({ workflow }: { workflow: { id: string } }) => (
+		<section aria-label="Workflow Access Panel">{workflow.id}</section>
+	),
+}));
+
 import { WorkflowEditDialog } from "./WorkflowEditDialog";
 import type { components } from "@/lib/v1";
 
@@ -142,6 +148,27 @@ describe("WorkflowEditDialog", () => {
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 
+	it("shows learned memory and sends a declared request or null for learned", async () => {
+		const { user } = renderWithProviders(
+			<WorkflowEditDialog
+				workflow={makeWorkflow({ learned_memory_bytes: 120 * 1024 * 1024, memory_request_mib: null })}
+				open
+				initialTab="execution"
+				onOpenChange={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByText(/learned from recent runs/i)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1));
+		expect(mockUpdateWorkflow.mock.calls[0][1]).toMatchObject({ memory_request_mib: null });
+
+		await user.type(screen.getByLabelText(/memory request/i), "512");
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		await waitFor(() => expect(mockUpdateWorkflow).toHaveBeenCalledTimes(2));
+		expect(mockUpdateWorkflow.mock.calls[1][1]).toMatchObject({ memory_request_mib: 512 });
+	});
+
 	it("requires a successful role read before saving and supports retry", async () => {
 		mockWorkflowRolesRefetch.mockResolvedValueOnce({ data: undefined }).mockResolvedValueOnce({ data: { role_ids: ["role-1"] } });
 		const { user } = renderWithProviders(<WorkflowEditDialog workflow={makeWorkflow({ access_level: "role_based" })} open initialTab="access" onOpenChange={vi.fn()} />);
@@ -152,6 +179,13 @@ describe("WorkflowEditDialog", () => {
 		await user.click(screen.getByRole("button", { name: "Remove role-1 role" }));
 		await user.click(screen.getByRole("button", { name: "Save Changes" }));
 		await waitFor(() => expect(mockRemoveRole).toHaveBeenCalledWith("workflow-1", "role-1"));
+	});
+
+	it("shows who the workflow runs as below who may start it", () => {
+		renderWithProviders(<WorkflowEditDialog workflow={makeWorkflow()} open initialTab="access" onOpenChange={vi.fn()} />);
+		const panel = screen.getByRole("region", { name: "Workflow Access Panel" });
+		expect(panel).toHaveTextContent("workflow-1");
+		expect(screen.getByText("Access Level").compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("keeps the dialog open and prevents duplicate save while a request is pending", async () => {

@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen, within } from "@/test-utils";
+import {
+	fireEvent,
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+} from "@/test-utils";
 import type { ProductUpdateEntry } from "@/services/productUpdates";
 import {
 	CommunityFooter,
@@ -7,7 +13,7 @@ import {
 	UpdateGroups,
 } from "./ProductUpdateContent";
 vi.mock("@/components/branding/Logo", () => ({
-	Logo: () => <svg aria-hidden="true" />,
+	Logo: () => <img src="/covi-logo.svg" alt="" />,
 }));
 const entry: ProductUpdateEntry = {
 	id: "one",
@@ -140,6 +146,87 @@ describe("shared product update content", () => {
 		fireEvent.error(screen.getByRole("img", { name: "Roles" }));
 		expect(screen.getByText("Screenshot unavailable: Roles")).toBeVisible();
 	});
+	describe("agent prompt", () => {
+		const prompt = "Inspect my setup, then wait for my confirmation.";
+		const prompted: ProductUpdateEntry = {
+			...entry,
+			type: "Improved",
+			agent_prompt: prompt,
+		};
+
+		// renderWithProviders installs userEvent's clipboard, so stub after rendering.
+		function stubClipboard(writeText: (text: string) => Promise<void>) {
+			Object.defineProperty(navigator, "clipboard", {
+				value: { writeText },
+				configurable: true,
+			});
+		}
+
+		it("copies the collapsed prompt verbatim and announces it", async () => {
+			renderWithProviders(<UpdateEntry entry={prompted} />);
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			stubClipboard(writeText);
+			const callout = screen.getByRole("region", {
+				name: "Agent Prompt",
+			});
+			expect(
+				within(callout).getByText(
+					"Copy this prompt to have your coding agent help you with this change.",
+				),
+			).toBeVisible();
+			expect(within(callout).queryByText(prompt)).not.toBeVisible();
+
+			fireEvent.click(
+				within(callout).getByRole("button", { name: "Copy Prompt" }),
+			);
+
+			await waitFor(() =>
+				expect(screen.getByRole("status")).toHaveTextContent(
+					"Prompt copied to clipboard.",
+				),
+			);
+			expect(writeText).toHaveBeenCalledWith(prompt);
+			expect(
+				within(callout).getByRole("button", { name: "Copied" }),
+			).toBeVisible();
+		});
+
+		it("expands to show the prompt and collapses again", () => {
+			renderWithProviders(<UpdateEntry entry={prompted} />);
+			const toggle = screen.getByRole("button", { name: "Show Prompt" });
+			expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+			fireEvent.click(toggle);
+
+			expect(toggle).toHaveAttribute("aria-expanded", "true");
+			expect(screen.getByText(prompt)).toBeVisible();
+			fireEvent.click(
+				screen.getByRole("button", { name: "Hide Prompt" }),
+			);
+			expect(screen.queryByText(prompt)).not.toBeVisible();
+		});
+
+		it("tells the admin to copy by hand when the clipboard fails", async () => {
+			renderWithProviders(<UpdateEntry entry={prompted} />);
+			stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+
+			fireEvent.click(
+				screen.getByRole("button", { name: "Copy Prompt" }),
+			);
+
+			expect(await screen.findByRole("alert")).toHaveTextContent(
+				"Could not copy. Show the prompt and copy its text, or try again.",
+			);
+		});
+
+		it("is left out of compact correction entries", () => {
+			renderWithProviders(<UpdateEntry entry={prompted} compact />);
+			expect(
+				screen.queryByRole("button", { name: "Copy Prompt" }),
+			).not.toBeInTheDocument();
+		});
+	});
+
 	it("keeps the three branded community destinations in the same order", () => {
 		renderWithProviders(<CommunityFooter />);
 		const links = screen.getAllByRole("link");
@@ -148,6 +235,13 @@ describe("shared product update content", () => {
 			"Discord",
 			"Website",
 		]);
+		const website = screen.getByRole("link", { name: "Website" });
+		expect(website).toHaveAttribute("href", "https://gobifrost.com");
+		expect(website).toHaveAttribute("target", "_blank");
+		expect(within(website).getByRole("presentation")).toHaveAttribute(
+			"src",
+			"/logo.svg",
+		);
 		expect(links[1]).toHaveAttribute(
 			"href",
 			"https://discord.gg/x84pft2YDa",

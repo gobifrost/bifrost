@@ -10,7 +10,8 @@ import {
 	AlertTriangle,
 } from "lucide-react";
 import { useEditorStore } from "@/stores/editorStore";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorization } from "@/services/authorization";
+import { GLOBAL_TARGET } from "@/lib/authorization";
 import { useForms } from "@/hooks/useForms";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { fileService } from "@/services/fileService";
@@ -47,7 +48,12 @@ interface QuickAccessProps {
  */
 export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 	const navigate = useNavigate();
-	const { isPlatformAdmin } = useAuth();
+	const authorization = useAuthorization();
+	const canUseEditor = authorization.canAt(
+		"repository.readwrite",
+		GLOBAL_TARGET,
+	);
+	const canReadWorkflows = authorization.canAnywhere("workflows.read");
 	const openFileInTab = useEditorStore((state) => state.openFileInTab);
 	const openEditor = useEditorStore((state) => state.openEditor);
 	const setSidebarPanel = useEditorStore((state) => state.setSidebarPanel);
@@ -62,9 +68,9 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 
 	// Defer data fetching until QuickAccess is actually opened
 	const { data: formsData } = useForms(undefined, { enabled: isOpen });
-	// Only fetch workflows for platform admins (endpoint requires superuser)
+	// The server filters workflow metadata to the caller’s current reach.
 	const { data: workflowsData } = useWorkflowsMetadata({
-		enabled: isOpen && isPlatformAdmin,
+		enabled: isOpen && canReadWorkflows,
 	});
 
 	// Search function
@@ -121,38 +127,42 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 			}
 
 			// Search scripts by filename and content
-			try {
-				const scriptsResponse = await searchService.searchFiles({
-					query: searchQuery,
-					case_sensitive: false,
-					is_regex: false,
-					source: "workspace",
-					output_mode: "files",
-					context_lines: 0,
-					limit: 20,
-				});
+			if (canUseEditor)
+				try {
+					const scriptsResponse = await searchService.searchFiles({
+						query: searchQuery,
+						case_sensitive: false,
+						is_regex: false,
+						source: "workspace",
+						output_mode: "files",
+						context_lines: 0,
+						limit: 20,
+					});
 
-				const scriptResults = scriptsResponse.files.map(
-					(hit: SearchFileHit) => ({
-						type: "script" as const,
-						name: hit.file_path.split("/").pop() || hit.file_path,
-						description: `${hit.match_count} match${hit.match_count === 1 ? "" : "es"}, first at line ${hit.first_line}`,
-						path: hit.file_path,
-					}),
-				);
-				allResults.push(...scriptResults);
-			} catch {
-				if (runId === searchRunIdRef.current) {
-					setSearchError("File search is temporarily unavailable");
+					const scriptResults = scriptsResponse.files.map(
+						(hit: SearchFileHit) => ({
+							type: "script" as const,
+							name:
+								hit.file_path.split("/").pop() || hit.file_path,
+							description: `${hit.match_count} match${hit.match_count === 1 ? "" : "es"}, first at line ${hit.first_line}`,
+							path: hit.file_path,
+						}),
+					);
+					allResults.push(...scriptResults);
+				} catch {
+					if (runId === searchRunIdRef.current) {
+						setSearchError(
+							"File search is temporarily unavailable",
+						);
+					}
 				}
-			}
 
 			if (runId === searchRunIdRef.current) {
 				setResults(allResults);
 				setIsSearching(false);
 			}
 		},
-		[formsData, workflowsData],
+		[formsData, workflowsData, canUseEditor],
 	);
 
 	// Debounced search

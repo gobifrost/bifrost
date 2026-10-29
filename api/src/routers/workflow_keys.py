@@ -16,7 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select, or_
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models import Workflow
@@ -24,10 +24,23 @@ from src.models import WorkflowKeyCreateRequest, WorkflowKeyResponse
 from src.models.orm.solutions import Solution
 from src.services.solutions.setup_status import recompute_and_persist_setup_complete
 from src.services.workflow_keys import generate_workflow_key
+from src.services.authorization.enforce import (
+    load_caller,
+    permitted_organizations,
+    require_permission,
+    user_reach,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workflow-keys", tags=["Workflow Keys"])
+
+
+async def _require_key_permission(db: DbSession, user, workflow: Workflow, permission: str) -> None:
+    caller = await load_caller(db, user)
+    if not user_reach(caller).covers(workflow.organization_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    require_permission(caller, permission, workflow.organization_id)
 
 
 # =============================================================================
@@ -65,11 +78,12 @@ def mask_key(hashed_key: str) -> str:
 )
 async def list_keys(
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     workflow_id: str | None = None,
 ) -> list[WorkflowKeyResponse]:
     """List all workflows with API keys enabled."""
+    caller = await load_caller(db, user)
     query = select(Workflow).where(
         Workflow.api_key_hash.isnot(None),  # Has an API key
         Workflow.api_key_enabled == True,  # noqa: E712
@@ -82,8 +96,15 @@ async def list_keys(
         except ValueError:
             return []
 
-    result = await db.execute(query)
-    workflows = result.scalars().all()
+    reach_filter = user_reach(caller).where(Workflow.organization_id)
+    if reach_filter is not None:
+        query = query.where(reach_filter)
+    permission_filter = permitted_organizations(caller, "settings.read").where(
+        Workflow.organization_id
+    )
+    if permission_filter is not None:
+        query = query.where(permission_filter)
+    workflows = (await db.execute(query)).scalars().all()
 
     return [
         WorkflowKeyResponse(
@@ -113,7 +134,7 @@ async def list_keys(
 async def create_key(
     request: WorkflowKeyCreateRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> WorkflowKeyCreatedResponse:
     """Create a new workflow API key. Each workflow can have one API key."""
@@ -147,6 +168,7 @@ async def create_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow '{request.workflow_id}' not found"
         )
+    await _require_key_permission(db, user, workflow, "settings.readwrite")
 
     # Check if workflow already has a key
     if workflow.api_key_hash and workflow.api_key_enabled:
@@ -203,7 +225,7 @@ async def create_key(
 async def revoke_key(
     workflow_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Revoke (disable) a workflow API key."""
@@ -217,6 +239,7 @@ async def revoke_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workflow not found",
         )
+    await _require_key_permission(db, user, workflow, "settings.readwrite")
 
     if not workflow.api_key_hash:
         raise HTTPException(

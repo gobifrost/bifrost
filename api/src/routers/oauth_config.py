@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models.contracts.oauth_config import (
@@ -29,10 +29,18 @@ from src.services.oauth_config_service import (
     OAuthLoginPreferenceError,
     OAuthProviderPreferenceConflict,
 )
+from src.services.authorization.enforce import load_caller, require_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings/oauth", tags=["OAuth SSO Config"])
+
+
+async def _authorize_oauth_settings(
+    ctx: Context, user: CurrentActiveUser, *, write: bool
+) -> None:
+    caller = await load_caller(ctx.db, user)
+    require_permission(caller, "settings.readwrite" if write else "settings.read", None)
 
 
 def _get_callback_url(request: Request) -> str:
@@ -52,7 +60,7 @@ def _get_callback_url(request: Request) -> str:
 async def list_oauth_configs(
     request: Request,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthConfigListResponse:
     """
@@ -61,6 +69,7 @@ async def list_oauth_configs(
     Returns configuration details for Microsoft, Google, and OIDC providers.
     Client secrets are never exposed - only a flag indicating if they are set.
     """
+    await _authorize_oauth_settings(ctx, user, write=False)
     service = OAuthConfigService(db)
     providers = await service.get_all_provider_configs()
     login_preference = await service.get_login_preference()
@@ -82,10 +91,11 @@ async def list_oauth_configs(
 async def set_oauth_login_preference(
     preference: OAuthLoginPreference,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthLoginPreference:
     """Update the platform-wide preferred SSO behavior."""
+    await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
     try:
         result = await service.set_login_preference(
@@ -111,10 +121,11 @@ async def set_oauth_login_preference(
 async def get_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """Get configuration for a specific OAuth provider."""
+    await _authorize_oauth_settings(ctx, user, write=False)
     service = OAuthConfigService(db)
     config = await service.get_provider_config(provider)
 
@@ -144,7 +155,7 @@ async def get_oauth_config(
 async def set_microsoft_config(
     config: MicrosoftOAuthConfigRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """
@@ -170,6 +181,7 @@ async def set_microsoft_config(
     - Microsoft Graph: openid (delegated)
     - Microsoft Graph: profile (delegated)
     """
+    await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
     await service.set_microsoft_config(config, updated_by=user.email)
     await db.commit()
@@ -192,7 +204,7 @@ async def set_microsoft_config(
 async def set_google_config(
     config: GoogleOAuthConfigRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """
@@ -210,6 +222,7 @@ async def set_google_config(
     - Add scopes: email, profile, openid
     - Set user type (Internal for G Suite, External for any Google account)
     """
+    await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
     await service.set_google_config(config, updated_by=user.email)
     await db.commit()
@@ -231,7 +244,7 @@ async def set_google_config(
 async def set_oidc_config(
     config: OIDCConfigRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """
@@ -252,6 +265,7 @@ async def set_oidc_config(
     **Required Scopes:**
     Most OIDC providers should support: openid, email, profile
     """
+    await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
     await service.set_oidc_config(config, updated_by=user.email)
     await db.commit()
@@ -275,10 +289,11 @@ async def set_oidc_config(
 async def delete_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Delete all configuration for a specific OAuth provider."""
+    await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
     try:
         deleted = await service.delete_provider_config(
@@ -310,7 +325,7 @@ async def delete_oauth_config(
 async def test_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     test_data: OAuthConfigTestRequest | None = None,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthConfigTestResponse:
@@ -324,6 +339,7 @@ async def test_oauth_config(
     The test validates that the discovery endpoint is reachable and returns
     valid OIDC configuration. It does NOT test the actual OAuth flow.
     """
+    await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
 
     test_dict = test_data.model_dump(exclude_none=True) if test_data else None

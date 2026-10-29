@@ -74,6 +74,34 @@ async def test_wind_down_keeps_text_and_discards_stale_tool_intent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wind_down_discards_stale_tool_intent_on_final_allowed_request() -> None:
+    """The response that reaches the request budget is the final handoff."""
+    capability = BudgetWindDown(AgentRunBudget(max_requests=2, max_total_tokens=None))
+    ctx = MagicMock(usage=RunUsage(requests=1))
+    response = ModelResponse(
+        parts=[
+            ToolCallPart(
+                tool_name="update_ticket",
+                args={"ticket_id": 42},
+                tool_call_id="stale-call",
+            )
+        ],
+        finish_reason="tool_call",
+    )
+
+    result = await capability.after_model_request(
+        ctx,
+        request_context=MagicMock(messages=[]),
+        response=response,
+    )
+
+    assert result.finish_reason == "stop"
+    assert len(result.parts) == 1
+    assert isinstance(result.parts[0], TextPart)
+    assert "Not completed: Update Ticket." in result.parts[0].content
+
+
+@pytest.mark.asyncio
 async def test_wind_down_uses_fallback_when_provider_returns_only_a_tool_call() -> None:
     capability = BudgetWindDown(
         AgentRunBudget(max_requests=10, max_total_tokens=20_000)

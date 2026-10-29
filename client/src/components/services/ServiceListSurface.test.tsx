@@ -93,7 +93,9 @@ const services = [
 
 const surfaceProps = {
 	viewMode: "table" as const,
-	isPlatformAdmin: true,
+	showOrganization: true,
+	canManageAnyServices: true,
+	canManageService: () => true,
 	getOrgName: () => "Acme",
 };
 

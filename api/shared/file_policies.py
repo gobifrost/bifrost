@@ -49,7 +49,7 @@ def make_seed_admin_bypass() -> dict:
                     "to enforce stricter audit."
                 ),
                 "actions": ["read", "write", "delete", "list"],
-                "when": {"user": "is_platform_admin"},
+                "when": {"authority": "platform_admin"},
             }
         ]
     }

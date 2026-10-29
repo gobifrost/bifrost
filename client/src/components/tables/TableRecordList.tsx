@@ -8,7 +8,7 @@ import type { TablePublic } from "@/services/tables";
 
 interface TableRecordListProps {
 	tables: TablePublic[];
-	isPlatformAdmin: boolean;
+	showOrganizationName: boolean;
 	selectionMode: boolean;
 	selectedIds: Set<string>;
 	allVisibleSelected: boolean;
@@ -23,11 +23,11 @@ interface TableRecordListProps {
 
 function TableScopeMeta({
 	table,
-	isPlatformAdmin,
+	showOrganizationName,
 	scopeName,
 }: {
 	table: TablePublic;
-	isPlatformAdmin: boolean;
+	showOrganizationName: boolean;
 	scopeName: (id: string | null | undefined) => string;
 }) {
 	const Icon = table.organization_id ? Building2 : Globe;
@@ -36,7 +36,7 @@ function TableScopeMeta({
 			<Icon aria-hidden="true" className="size-3.5 shrink-0" />
 			<span className="min-w-0 [overflow-wrap:anywhere]">
 				{table.organization_id
-					? isPlatformAdmin
+					? showOrganizationName
 						? scopeName(table.organization_id)
 						: "Organization"
 					: "Global"}
@@ -47,7 +47,7 @@ function TableScopeMeta({
 
 export function TableRecordList({
 	tables,
-	isPlatformAdmin,
+	showOrganizationName,
 	selectionMode,
 	selectedIds,
 	allVisibleSelected,
@@ -64,7 +64,7 @@ export function TableRecordList({
 			className="flex min-h-0 flex-1 flex-col"
 			aria-label="Data tables"
 		>
-			{isPlatformAdmin && selectionMode && (
+			{selectionMode && (
 				<div className="flex min-h-11 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/20 px-3 py-2">
 					<span className="text-sm text-muted-foreground">
 						{selectedIds.size} selected
@@ -168,8 +168,8 @@ export function TableRecordList({
 										<span className="grid min-w-0 grid-cols-1 @[260px]:grid-cols-[8rem_7rem] items-start gap-x-3 gap-y-1 pt-1 ">
 											<TableScopeMeta
 												table={table}
-												isPlatformAdmin={
-													isPlatformAdmin
+												showOrganizationName={
+													showOrganizationName
 												}
 												scopeName={scopeName}
 											/>
