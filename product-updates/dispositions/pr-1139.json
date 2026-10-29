@@ -1,0 +1,13 @@
+{
+  "key": "pr:1139",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal database-efficiency change: pooled connections are no longer pre-pinged on every checkout; no customer-facing workflow.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1139",
+      "Program authorization: Jack (2026-10-29) approved removing pool_pre_ping after fixing the lease loops (#1138)."
+    ]
+  }
+}
