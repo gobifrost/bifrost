@@ -625,7 +625,52 @@ describe("UserRoleAssignmentsPanel", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("never lets people change their own roles", () => {
+	it("lets a Platform Admin explicitly assign themselves Secrets Reader", async () => {
+		state.assignments!.is_protected = true;
+		state.assignments!.additional = [
+			{
+				role_id: ADMIN_ROLE,
+				name: "Platform Admin",
+				is_builtin: true,
+				permissions: ["*"],
+				boundaries: [{ kind: "platform", organization_id: null }],
+			},
+		];
+		const { user } = render(makeUser({ is_superuser: true }), true);
+
+		await chooseRole(user, /Secrets Reader/);
+		await user.click(screen.getByRole("button", { name: "Save Roles" }));
+
+		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalledOnce());
+		expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([
+			{
+				role_id: ADMIN_ROLE,
+				boundaries: [{ kind: "platform", organization_id: null }],
+			},
+			{
+				role_id: SECRETS_ROLE,
+				boundaries: [
+					{ kind: "platform", organization_id: null },
+					{ kind: "managed_organizations", organization_id: null },
+					{ kind: "organization", organization_id: PROVIDER },
+				],
+			},
+		]);
+	});
+
+	it("keeps non-admin self-edits read-only even with delegated assignment permissions", () => {
+		state.assignments!.is_protected = true;
+		state.summary = summary(
+			false,
+			[
+				"roleassignments.read",
+				"roleassignments.readwrite",
+				"privilegedaccess.readwrite",
+			].map((permission) => ({
+				permission,
+				boundary: { kind: "organization", organization_id: PROVIDER },
+			})),
+		);
 		render(makeUser(), true);
 
 		expect(
