@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     git \
     awscli \
+    libjemalloc2 \
     libatomic1 \
     libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
@@ -64,6 +65,7 @@ RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
+RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
 
 # Install `bifrost` CLI shim. The bifrost Python package is mounted at
 # /app/bifrost/ via PYTHONPATH=/app, so `python -m bifrost` works. The shim
@@ -142,9 +144,12 @@ RUN useradd -m -u 1000 bifrost && \
 RUN mkdir -p /workspace /tmp/bifrost && \
     chown -R bifrost:bifrost /workspace /tmp/bifrost
 
-# Copy entrypoint script
+# Copy shared API startup scripts. The Uvicorn shim keeps Kubernetes command
+# overrides on the API allocator path without invoking the root entrypoint.
 COPY api/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY api/scripts/api-allocator.sh /usr/local/bin/api-allocator.sh
+COPY api/scripts/uvicorn-shim.sh /usr/local/bin/uvicorn
+RUN chmod 755 /entrypoint.sh /usr/local/bin/api-allocator.sh /usr/local/bin/uvicorn
 
 # Don't switch to bifrost here - entrypoint handles user switching
 # This allows the entrypoint to fix volume permissions when needed

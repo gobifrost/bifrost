@@ -62,6 +62,7 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_DEBUG: ${BIFROST_DEBUG:-true}
+      BIFROST_API_PROCESS: "1"
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD:-bifrost_dev}@pgbouncer:5432/bifrost
