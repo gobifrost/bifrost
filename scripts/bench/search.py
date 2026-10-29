@@ -194,14 +194,28 @@ def confirmation_seconds(rate: float, mix: dict[str, float], observations: int) 
     return min(needed, CONFIRM_CAP_S), needed > CONFIRM_CAP_S
 
 
+def confirmation_decision(overall: str, evidence: dict[str, tuple[str, int]], observations: int, ran_capped: bool) -> tuple[str, int]:
+    """The outcome of one confirmation segment: ("pass" | "fail" | "inconclusive" | "extend", next observation target).
+
+    Extension continues until a segment has actually run at the cap; a
+    zero-failure shortfall raises the target so the next segment is longer.
+    """
+    if overall in ("fail", "invalid") or any(status == "fail" for status, _ in evidence.values()):
+        return ("invalid" if overall == "invalid" else "fail"), observations
+    if overall == "pass" and all(status == "pass" for status, _ in evidence.values()):
+        return "pass", observations
+    insufficient = [n for status, n in evidence.values() if status == "insufficient"]
+    if not insufficient or ran_capped:
+        return "inconclusive", observations
+    return "extend", max(max(insufficient), math.ceil(observations * CONFIRM_HEADROOM))
+
+
 def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str, str]) -> dict:
     """Confirmation at ``rate``: strict drift tolerance and a 0.1 % per-class failure bound.
 
-    Runs until the evidence settles: any other gate failing, or a class whose
-    observed failure rate exceeds the bound, fails; every class proving the
-    bound passes; otherwise the window is lengthened to the observations the
-    observed failures require and run again, until the 60 min cap, after which
-    the result is inconclusive, never certified.
+    Segments run (state continuing) until ``confirmation_decision`` settles;
+    a segment needing more than 60 min runs at 60 min, and only a capped
+    segment that still cannot prove the bound is inconclusive.
     """
     observations = capacity.observations_needed(CONFIRM_FAILURE_UPPER)
     segments: list[dict] = []
@@ -210,27 +224,15 @@ def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str
         loose = {**plan, "thresholds": {**plan["thresholds"], "failure_upper": 1.0}}
         step = run_step(cluster, ids, rate, loose, plan["seed"] + 1000 + len(segments), disk, window_s=window_s, confirm=True)
         segments.append(step)
-        verdict = step["verdict"]
-        if step["overall"] in ("fail", "invalid"):
-            outcome = step["overall"]
-            break
         evidence = {}
-        for name, gate in verdict["reliability"].items():
+        for name in step["verdict"]["reliability"]:
             records = [r for r in step["records"] if r["class"] == name and step["window"][0] <= r["scheduled_s"] < step["window"][1]]
             failures = sum(1 for r in records if r["outcome"] != "correct")
             evidence[name] = capacity.reliability_evidence(failures, len(records), CONFIRM_FAILURE_UPPER)
         step["reliability_evidence"] = evidence
-        if any(status == "fail" for status, _ in evidence.values()):
-            outcome = "fail"
+        outcome, observations = confirmation_decision(step["overall"], evidence, observations, capped)
+        if outcome != "extend":
             break
-        if step["overall"] == "pass" and all(status == "pass" for status, _ in evidence.values()):
-            outcome = "pass"
-            break
-        needed = max((n for status, n in evidence.values() if status == "insufficient"), default=observations)
-        if capped or confirmation_seconds(rate, plan["mix"], needed)[1] or needed <= observations:
-            outcome = "inconclusive"
-            break
-        observations = needed
     final = dict(segments[-1])
     final.update({"overall": outcome, "segments": len(segments), "capped": capped})
     return final
