@@ -22,6 +22,11 @@ HOST_INTERVAL_S = 5.0
 # Expected arrivals per gated class: 20 % above the 400 the gates require, so a
 # Poisson window rarely falls short of them.
 OBSERVATION_TARGET = 480
+# Ramp steps: at most this many seconds of offered work may accumulate as
+# unfinished across the measured window. The strict per-second fraction is
+# only resolvable over confirmation-length windows (methodology §6, R10).
+RAMP_DRIFT_SECONDS = 2.0
+EXTEND_CAP_S = 1800
 CONFIRM_MIN_S = 900
 CONFIRM_CAP_S = 3600
 INFRA_LABELS = ("bench-driver", "bench-fake-llm", "bench-fake-api", "seaweedfs")
@@ -106,10 +111,13 @@ def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict
     return records
 
 
-def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, disk: dict[str, str]) -> dict:
+def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, disk: dict[str, str],
+             window_s: float | None = None, confirm: bool = False) -> dict:
     """One open-loop step: warm-up, measured window, drain; returns gates, validity and raw evidence."""
     mix = plan["mix"]
-    window_s = window_seconds(rate, mix, plan["window_min_s"], OBSERVATION_TARGET)
+    window_s = window_s or window_seconds(rate, mix, plan["window_min_s"], OBSERVATION_TARGET)
+    thresholds = plan["thresholds"]
+    drift_limit = thresholds["drift_fraction"] * rate if confirm else rate * RAMP_DRIFT_SECONDS / window_s
     duration = plan["warmup_s"] + window_s
     faults_before = cluster.tenant_faults()
     with HostSampler(cluster, disk) as host:
@@ -126,14 +134,15 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
     faults["duplicate_executions"] = len(outcomes["duplicates"])
     records = to_records(sent["requests"], outcomes, started, plan["deadlines_s"])
     backlog = [(sample["t"] - started, float(sample["unfinished"])) for sample in sent["backlog"]]
-    verdict = capacity.step_verdict(records, backlog, window, rate, {**plan["thresholds"], "faults": faults}, seed, mix)
+    verdict = capacity.step_verdict(records, backlog, window, rate,
+                                    {**thresholds, "drift_limit_per_s": drift_limit, "faults": faults}, seed, mix)
     validity = hostmetrics.assess(host.intervals(started + window[0], started + window[1]),
                                   {name for name in host.snapshots[-1]["pods"] if name.split("/")[1].startswith(INFRA_LABELS)} if host.snapshots else set())
     if sent["driver_lag_p99_s"] is not None and sent["driver_lag_p99_s"] > 0.25:
         validity["invalid"].append(f"driver lag p99 {sent['driver_lag_p99_s']:.3f} s")
     overall = "invalid" if validity["invalid"] else verdict["overall"]
     return {
-        "rate": rate, "seed": seed, "window_s": window_s, "overall": overall, "verdict": verdict, "validity": validity,
+        "rate": rate, "seed": seed, "window_s": window_s, "confirm": confirm, "drift_limit_per_s": drift_limit, "overall": overall, "verdict": verdict, "validity": validity,
         "faults": faults, "driver_lag_p99_s": sent["driver_lag_p99_s"], "missing": outcomes["missing"],
         "records": records, "backlog": backlog,
         "host": host.intervals(started, started + duration + plan["drain_s"]),
@@ -141,18 +150,29 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
 
 
 def search(cluster: Cluster, ids: dict, plan: dict, disk: dict[str, str], on_step) -> dict:
-    """Geometric ramp, two bisections; invalid steps rerun once with the same seed, then stop the search."""
+    """Geometric ramp and two bisections.
+
+    An inconclusive step is rerun at the same rate with its window doubled
+    (cap ``EXTEND_CAP_S``); an invalid step is rerun once with the same seed;
+    a second invalid result stops the search.
+    """
     history: list[tuple[float, str]] = []
     steps: list[dict] = []
     rate = plan["start_rate"]
+    window_s: float | None = None
     while rate is not None:
-        step = run_step(cluster, ids, rate, plan, plan["seed"] + len(history), disk)
+        step = run_step(cluster, ids, rate, plan, plan["seed"] + len(history), disk, window_s=window_s)
         steps.append(step)
         on_step(step)
         if step["overall"] == "invalid":
             if any(previous["rate"] == rate and previous["overall"] == "invalid" for previous in steps[:-1]):
                 return {"steps": steps, "bracket": None, "stopped": f"step at {rate}/s invalid twice"}
+            window_s = step["window_s"]
             continue
+        if step["overall"] == "inconclusive" and step["window_s"] * 2 <= EXTEND_CAP_S:
+            window_s = step["window_s"] * 2
+            continue
+        window_s = None
         history.append((rate, step["overall"]))
         rate = capacity.search_next(history, plan.get("factor", 1.25), plan.get("bisections", 2))
     passed = [r for r, status in history if status == "pass"]

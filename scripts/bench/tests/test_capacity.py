@@ -119,6 +119,7 @@ class VerdictTest(unittest.TestCase):
         thresholds = {
             "queue_p95_s": {"wf": 2.0},
             "e2e_p95_s": {"wf": 3.0},
+            "drift_limit_per_s": 0.01,
         }
         backlog = [(float(index), 1.0) for index in range(120)]
         before = capacity.step_verdict(records, backlog, (0.0, 500.0), 10.0, thresholds, seed=3, mix={"wf": 1.0})
@@ -143,7 +144,7 @@ class VerdictTest(unittest.TestCase):
             [(float(index), 1.0) for index in range(20)],
             (0.0, 500.0),
             1.0,
-            {"queue_p95_s": {"wf": 2.0}, "e2e_p95_s": {"wf": 2.0}},
+            {"queue_p95_s": {"wf": 2.0}, "e2e_p95_s": {"wf": 2.0}, "drift_limit_per_s": 0.001},
             seed=1,
             mix={"wf": 1.0},
         )
@@ -154,7 +155,7 @@ class VerdictTest(unittest.TestCase):
     def test_classes_are_gated_by_configured_weight_and_need_minimum_observations(self) -> None:
         records = [_record(str(index), "correct", float(index), float(index) + 1.0) for index in range(400)]
         backlog = [(float(index) * 2, 1.0) for index in range(250)]
-        thresholds = {"queue_p95_s": {"wf": 2.0, "rare": 2.0}, "e2e_p95_s": {"wf": 2.0, "rare": 2.0}}
+        thresholds = {"queue_p95_s": {"wf": 2.0, "rare": 2.0}, "e2e_p95_s": {"wf": 2.0, "rare": 2.0}, "drift_limit_per_s": 0.01}
         result = capacity.step_verdict(records, backlog, (0.0, 500.0), 1.0, thresholds, seed=1, mix={"wf": 0.9, "rare": 0.1})
         self.assertEqual(result["reliability"]["rare"]["status"], "inconclusive")
         self.assertEqual(result["reliability"]["rare"]["observations"], 0)

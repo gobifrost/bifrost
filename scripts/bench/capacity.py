@@ -316,7 +316,8 @@ def step_verdict(
     else:
         throughput = _gate("inconclusive", None, throughput_limit)
 
-    drift_limit = thresholds.get("drift_fraction", 0.001) * offered_rate
+    # Unfinished items per second; the caller sets it for the phase (§6).
+    drift_limit = thresholds["drift_limit_per_s"]
     backlog_window = [(timestamp, count) for timestamp, count in backlog if start <= timestamp < end]
     if len(backlog_window) < 2:
         drift = _gate("inconclusive", None, drift_limit)
