@@ -6,7 +6,9 @@ ready drain, stop mirror, token rotation), completion mapping, fencing,
 capacity, the org gate, and shutdown handover.
 """
 
+import asyncio
 import json
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -694,3 +696,92 @@ async def test_a_service_no_executor_can_hold_is_blocked_until_one_can(db_sessio
     await db_session.commit()
     await db_session.refresh(definition)
     assert definition.blocked_reason is None
+
+
+def _record_ticks(loop, then=None):  # type: ignore[no-untyped-def]
+    ticks: list[float] = []
+
+    async def tick() -> None:
+        ticks.append(time.monotonic())
+        if then is not None:
+            then()
+
+    loop.tick = tick
+    return ticks
+
+
+async def _until(condition, timeout: float = 2.0) -> None:  # type: ignore[no-untyped-def]
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "condition never held"
+        await asyncio.sleep(0.005)
+
+
+async def test_an_idle_loop_ticks_on_a_wake_up_not_every_claim_interval():
+    wake = asyncio.Event()
+    loop = _loop(StubPool(), wake=wake, sweep_seconds=30)
+    ticks = _record_ticks(loop)
+    await loop.start()
+    try:
+        await _until(lambda: len(ticks) == 1)
+        await asyncio.sleep(0.1)  # ten claim intervals
+        assert len(ticks) == 1
+
+        wake.set()
+        await _until(lambda: len(ticks) == 2)
+    finally:
+        await loop.stop()
+
+
+async def test_a_supervising_loop_ticks_every_claim_interval():
+    """Owned attempts need their leases renewed whether or not anything wakes."""
+    loop = _loop(StubPool(), wake=asyncio.Event(), sweep_seconds=30)
+    loop._owned["attempt"] = OwnedAttempt(
+        attempt_id=uuid4(), service_id=uuid4(), lease_token="lease"
+    )
+    ticks = _record_ticks(loop)
+    await loop.start()
+    try:
+        await _until(lambda: len(ticks) >= 3)
+    finally:
+        loop._owned.clear()
+        await loop.stop()
+
+
+async def test_an_idle_loop_ticks_when_the_next_restart_comes_due():
+    loop = _loop(StubPool(), wake=asyncio.Event(), sweep_seconds=30)
+
+    def restart_soon() -> None:
+        loop._next_restart = datetime.now(timezone.utc) + timedelta(seconds=0.05)
+
+    ticks = _record_ticks(loop, then=restart_soon)
+    await loop.start()
+    try:
+        await _until(lambda: len(ticks) >= 2)
+        assert ticks[1] - ticks[0] >= 0.04
+    finally:
+        await loop.stop()
+
+
+async def test_an_ended_attempt_wakes_its_loop(db_session):
+    """The loop reads the attempt's restart time (or claims its slot) at once."""
+    await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    wake = asyncio.Event()
+    loop = _loop(pool, wake=wake)
+    await loop.tick()
+    kwargs = pool.route_service.await_args.kwargs
+    assert not wake.is_set()
+
+    await loop.handle_service_result({
+        "success": True,
+        "status": "Success",
+        "service": {
+            "service_id": kwargs["service_id"],
+            "attempt_id": kwargs["attempt_id"],
+            "lease_token": kwargs["lease_token"],
+        },
+    })
+
+    assert wake.is_set()

@@ -157,6 +157,7 @@ class PoolWorker:
         self._terminating = asyncio.Event()
         self._wake = asyncio.Event()
         self._platform_wake = asyncio.Event()
+        self._service_wake = asyncio.Event()
         # Whether the last claim attempt was held back by admission.
         self._admission_blocked = False
         # In-flight consumer calls by handler. A workflow call returns once its
@@ -699,7 +700,9 @@ class PoolWorker:
         """Turn acceptance hints into an immediate claim attempt."""
         from src.services.work_dispatch import listen_for_pool_wake
 
-        await listen_for_pool_wake(self.settings.redis_url, self._wake, self._platform_wake)
+        await listen_for_pool_wake(
+            self.settings.redis_url, self._wake, self._platform_wake, self._service_wake
+        )
 
     async def _package_loop(self) -> None:
         """Apply every recorded package change newer than this executor's.
@@ -772,6 +775,7 @@ class PoolWorker:
             token_lifetime_seconds=self.settings.service_token_lifetime_seconds,
             claiming=self.admission.claiming,
             hold_memory=self._hold_service_memory,
+            wake=self._service_wake,
         )
         pool.on_service_result = self._service_claim_loop.handle_service_result
         await self._service_claim_loop.start()
