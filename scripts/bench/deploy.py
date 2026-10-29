@@ -27,6 +27,7 @@ CNPG_VERSION = "1.30.1"
 CNPG_URL = f"https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v{CNPG_VERSION}/cnpg-{CNPG_VERSION}.yaml"
 CNPG_SHA256 = "37237f145d8138256ea25ae830f87759255665ff08f8d552fdd8224a5ec032fb"
 EGRESS_TARGET = ("1.1.1.1", 443)
+EGRESS_ENFORCEMENT_S = 60
 BENCH_USER_EMAIL = "bench@gobifrost.com"
 PROBE_SCRIPT = (
     "import socket, sys\n"
@@ -260,9 +261,18 @@ def prove_egress_isolation(cluster: Cluster, node_ip: str) -> dict:
         cluster.kubectl("delete", "namespace", "bench-probe", "--wait=false", namespaced=False, check=False)
     result: dict[str, object] = {"unpoliced_external": unpoliced}
     for namespace, extra in ((guard.TENANT_NS, [f"{node_ip}:6443"]), (guard.INFRA_NS, [])):
-        reached = _probe(cluster, namespace, [external, dns, *extra])
+        # The CNI programs a new policy asynchronously: probe until the denial
+        # is observed, and fail closed if it never is.
+        deadline = time.monotonic() + EGRESS_ENFORCEMENT_S
+        attempts = 0
+        while True:
+            attempts += 1
+            reached = _probe(cluster, namespace, [external, dns, *extra])
+            if not reached[0] or time.monotonic() >= deadline:
+                break
+            time.sleep(2)
         guard.check_egress_probe(unpoliced, reached[0], all(reached[1:]))
-        result[namespace] = dict(zip(["external", "dns", *extra], reached))
+        result[namespace] = {**dict(zip(["external", "dns", *extra], reached)), "attempts": attempts}
     return result
 
 

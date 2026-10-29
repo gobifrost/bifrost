@@ -1,0 +1,71 @@
+{
+  "extends": "m-capacity",
+  "description": "One short capacity step to check the pipeline end to end; never a capacity result.",
+  "seed": {
+    "workflow": 50,
+    "tool": 10,
+    "data_provider": 5
+  },
+  "table_docs": 50,
+  "settle_s": 5,
+  "capacity": {
+    "seed": 20261029,
+    "start_rates": {
+      "sdk-heavy": 2.0,
+      "mixed": 2.0
+    },
+    "factor": 2.0,
+    "bisections": 0,
+    "warmup_s": 15,
+    "window_min_s": 60,
+    "drain_s": 30,
+    "deadlines_s": {
+      "wf-noop": 60,
+      "wf-sdk": 60,
+      "wf-io": 60,
+      "agent-chat": 180,
+      "agent-tools": 180
+    },
+    "io": {
+      "calls": 3,
+      "latency_ms": 200,
+      "response_bytes": 2000
+    },
+    "disk": {
+      "name": "nvme0n1",
+      "id": "259:0"
+    },
+    "thresholds_source": "provisional",
+    "thresholds": {
+      "throughput_ratio": 0.995,
+      "drift_fraction": 0.001,
+      "failure_upper": 0.01,
+      "queue_p95_s": {
+        "wf-noop": 2.0,
+        "wf-sdk": 2.0,
+        "wf-io": 2.0,
+        "agent-chat": 5.0,
+        "agent-tools": 5.0
+      },
+      "e2e_p95_s": {
+        "wf-noop": 2.5,
+        "wf-sdk": 3.0,
+        "wf-io": 3.5,
+        "agent-chat": 6.0,
+        "agent-tools": 10.0
+      }
+    },
+    "mixes": {
+      "sdk-heavy": {
+        "wf-sdk": 100
+      },
+      "mixed": {
+        "wf-io": 45,
+        "wf-sdk": 20,
+        "wf-noop": 10,
+        "agent-tools": 15,
+        "agent-chat": 10
+      }
+    }
+  }
+}
