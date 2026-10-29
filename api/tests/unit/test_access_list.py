@@ -2010,12 +2010,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.user_access_map._place_for": (1, "current_role_derivation"),
     "src.services.user_access_map.build_access_map": (2, "current_role_derivation"),
     "src.services.user_provisioning.ensure_user_provisioned": (4, "internal_authorized_resource"),
-    # Temporary Platform Admin self-edit bridge; target and role checks below
-    # retain ordinary assignment and protected-account permission enforcement.
-    "src.services.user_role_assignments.replace_role_assignments": (
-        1,
-        ("roleassignments.readwrite", "privilegedaccess.readwrite"),
-    ),
+    # Temporary Platform Admin self-edit bridge. The ordinary
+    # roleassignments.readwrite gate remains downstream; protected-account
+    # changes additionally require this non-everyday permission.
+    "src.services.user_role_assignments.replace_role_assignments": (1, "privilegedaccess.readwrite"),
     "src.services.user_role_assignments.authorization_summary": (2, "current_role_derivation"),
 }
 
