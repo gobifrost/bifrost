@@ -299,7 +299,7 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         _collect_tables,
         _collect_workflows,
     )
-    from bifrost.solution_descriptor import is_solution_workspace, load_descriptor
+    from bifrost.solution_definition import read_solution_definition
 
     slug: str | None = None
     name: str | None = None
@@ -309,8 +309,9 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
     scope: str | None = None
     version: str | None = None
     logo: str | None = None
-    if is_solution_workspace(workspace):
-        descriptor = load_descriptor(workspace)
+    definition = read_solution_definition(workspace)
+    if definition.descriptor is not None:
+        descriptor = definition.descriptor
         slug, name = descriptor.slug, descriptor.name
         version = descriptor.version
         logo = descriptor.logo
@@ -325,17 +326,17 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         scope=scope,
         version=version,
         logo=logo,
-        workflows=_collect_workflows(workspace),
-        tables=_collect_tables(workspace),
-        apps=_collect_apps(workspace),
-        forms=_collect_forms(workspace),
-        agents=_collect_agents(workspace),
-        claims=_collect_claims(workspace),
-        config_schemas=_collect_config_schemas(workspace),
-        file_locations=_collect_file_locations(workspace),
-        file_policies=_collect_file_policies(workspace),
-        connection_schemas=_collect_connection_schemas(workspace),
-        events=_collect_events(workspace),
+        workflows=_collect_workflows(workspace, definition=definition),
+        tables=_collect_tables(workspace, definition=definition),
+        apps=_collect_apps(workspace, definition=definition),
+        forms=_collect_forms(workspace, definition=definition),
+        agents=_collect_agents(workspace, definition=definition),
+        claims=_collect_claims(workspace, definition=definition),
+        config_schemas=_collect_config_schemas(workspace, definition=definition),
+        file_locations=_collect_file_locations(workspace, definition=definition),
+        file_policies=_collect_file_policies(workspace, definition=definition),
+        connection_schemas=_collect_connection_schemas(workspace, definition=definition),
+        events=_collect_events(workspace, definition=definition),
         readme=_read_readme(workspace),
         requires_password=requires_password,
     )
@@ -447,6 +448,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
     import base64
 
     from bifrost.commands.solution import _LOGO_CONTENT_TYPES, _collect_python_files
+    from bifrost.solution_definition import read_solution_definition
 
     logo_b64: str | None = None
     logo_content_type: str | None = None
@@ -459,7 +461,9 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
 
     return SolutionBundle(
         solution=solution,
-        python_files=_collect_python_files(workspace),
+        python_files=_collect_python_files(
+            workspace, definition=read_solution_definition(workspace)
+        ),
         workflows=preview.workflows,
         tables=preview.tables,
         apps=preview.apps,

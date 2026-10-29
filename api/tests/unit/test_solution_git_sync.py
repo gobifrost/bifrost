@@ -158,7 +158,8 @@ class TestConnectedBundleCompleteness:
         )
         form_id = str(uuid.uuid4())
         (tmp_path / ".bifrost" / "forms.yaml").write_text(
-            f"forms:\n  {form_id}:\n    id: {form_id}\n    name: intake\n    fields: []\n"
+            f"forms:\n  {form_id}:\n    id: {form_id}\n    name: intake\n"
+            "    form_schema:\n      fields: []\n"
         )
         agent_id = str(uuid.uuid4())
         (tmp_path / ".bifrost" / "agents.yaml").write_text(

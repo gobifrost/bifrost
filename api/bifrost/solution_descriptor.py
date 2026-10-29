@@ -18,7 +18,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 DESCRIPTOR_FILENAME = "bifrost.solution.yaml"
@@ -118,5 +117,11 @@ def load_descriptor(path: Path | str) -> SolutionDescriptor:
     resolved = os.path.realpath(os.path.join(root, DESCRIPTOR_FILENAME))
     if not resolved.startswith(root + os.sep) or not os.path.isfile(resolved):
         raise FileNotFoundError(f"No {DESCRIPTOR_FILENAME} at {Path(root) / DESCRIPTOR_FILENAME}")
-    data = yaml.safe_load(Path(resolved).read_text()) or {}
-    return SolutionDescriptor.model_validate(data)
+    from bifrost.definition_validation import read_yaml_mapping, validate_definition
+
+    data = read_yaml_mapping(Path(resolved).read_text(encoding="utf-8"), path=DESCRIPTOR_FILENAME)
+    # ``scope`` was removed from the portable descriptor. Old descriptors may
+    # carry any historic value, so retain its documented ignore behavior while
+    # rejecting every other unsupported fixed key.
+    data.pop("scope", None)
+    return validate_definition(SolutionDescriptor, data, path=DESCRIPTOR_FILENAME)

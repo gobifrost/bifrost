@@ -1,0 +1,172 @@
+"""Shared Solution/workspace manifest acceptance contracts."""
+from __future__ import annotations
+
+import pytest
+
+
+def _solution_workspace(tmp_path, manifest_name: str, content: str) -> None:
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: demo\nname: Demo\nscope: tenant\n")
+    (tmp_path / ".bifrost").mkdir()
+    (tmp_path / ".bifrost" / manifest_name).write_text(content)
+
+
+def test_solution_and_workspace_reject_the_same_unknown_workflow_field(tmp_path) -> None:
+    from bifrost.definition_validation import DefinitionValidationError, read_workspace_manifest
+    from bifrost.solution_definition import read_solution_definition
+
+    content = """workflows:
+  workflow-id:
+    id: workflow-id
+    name: daily
+    path: workflows/daily.py
+    function_name: run
+    timeout_second: 30
+"""
+    with pytest.raises(DefinitionValidationError) as workspace_error:
+        read_workspace_manifest("workflows.yaml", content)
+
+    _solution_workspace(tmp_path, "workflows.yaml", content)
+    with pytest.raises(DefinitionValidationError) as solution_error:
+        read_solution_definition(tmp_path)
+
+    assert workspace_error.value.issues[0].location == solution_error.value.issues[0].location
+    assert solution_error.value.issues[0].path == ".bifrost/workflows.yaml"
+
+
+def test_solution_reader_preserves_map_key_defaults_and_table_schema_alias(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "tables.yaml",
+        """tables:
+  inventory:
+    table_schema:
+      serial: {type: string}
+    policies:
+      - ref: inventory_readers
+""",
+    )
+
+    definition = read_solution_definition(tmp_path)
+    assert definition.entries("tables") == [{
+        "id": "inventory",
+        "name": "inventory",
+        "schema": {"serial": {"type": "string"}},
+        "policies": [{"$ref": "inventory_readers"}],
+    }]
+
+
+def test_solution_reader_keeps_typed_package_app_transport(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "apps.yaml",
+        """apps:
+  dashboard:
+    path: apps/dashboard
+    app_model: standalone_v2
+    dist_files: {index.html: '<main></main>'}
+    bin_dist_files: {logo.png: iVBORw0KGgo=}
+    prebuilt_sdk_metadata:
+      package_version: 1.0.0
+      fingerprint: abc
+      contract_version: 1
+""",
+    )
+
+    app = read_solution_definition(tmp_path).entries("apps")[0]
+    assert app["id"] == "dashboard"
+    assert app["path"] == "apps/dashboard"
+    assert app["dist_files"] == {"index.html": "<main></main>"}
+    assert app["bin_dist_files"] == {"logo.png": "iVBORw0KGgo="}
+    assert app["prebuilt_sdk_metadata"]["contract_version"] == 1
+
+
+def test_solution_reader_keeps_workflow_source_transport(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "workflows.yaml",
+        """workflows:
+  daily:
+    path: workflows/daily.py
+    function_name: run
+    source: 'def run(): return 1'
+""",
+    )
+
+    workflow = read_solution_definition(tmp_path).entries("workflows")[0]
+    assert workflow["id"] == "daily"
+    assert workflow["name"] == "daily"
+    assert workflow["source"] == "def run(): return 1"
+
+
+def test_solution_reader_keeps_form_and_agent_transport(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "forms.yaml",
+        """forms:
+  intake:
+    workflow_path: workflows/intake.py
+    workflow_function_name: submit
+    form_schema: {fields: []}
+""",
+    )
+    (tmp_path / ".bifrost" / "agents.yaml").write_text(
+        """agents:
+  helper:
+    system_prompt: help
+    max_run_timeout: 120
+"""
+    )
+
+    definition = read_solution_definition(tmp_path)
+    assert definition.entries("forms")[0]["workflow_path"] == "workflows/intake.py"
+    assert definition.entries("forms")[0]["workflow_function_name"] == "submit"
+    assert definition.entries("agents")[0]["max_run_timeout"] == 120
+
+
+def test_solution_reader_retains_declaration_defaults(tmp_path) -> None:
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "configs.yaml",
+        "configs:\n  API_KEY: {}\n",
+    )
+    (tmp_path / ".bifrost" / "connections.yaml").write_text(
+        "connections:\n  crm: {}\n"
+    )
+
+    definition = read_solution_definition(tmp_path)
+    assert definition.config_entries() == [{
+        "id": "API_KEY",
+        "key": "API_KEY",
+        "type": "string",
+        "required": False,
+        "description": None,
+        "default": None,
+        "position": 0,
+    }]
+    assert definition.connection_entries() == [{
+        "integration_name": "crm",
+        "template": {},
+        "position": 0,
+    }]
+
+
+def test_solution_reader_rejects_malformed_entity_instead_of_skipping_it(tmp_path) -> None:
+    from bifrost.definition_validation import DefinitionValidationError
+    from bifrost.solution_definition import read_solution_definition
+
+    _solution_workspace(tmp_path, "forms.yaml", "forms:\n  broken: [not, a, mapping]\n")
+
+    with pytest.raises(DefinitionValidationError) as error:
+        read_solution_definition(tmp_path)
+
+    assert error.value.issues[0].path == ".bifrost/forms.yaml"
