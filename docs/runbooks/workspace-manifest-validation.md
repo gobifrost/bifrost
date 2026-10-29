@@ -25,13 +25,38 @@ not apply manifest edits.
 
 The shared reader is used by Git preflight, sync/connect and explicit reimport.
 Reimport still generates its manifest from the current database. Validation
-does not run when workers import already deployed Python, and this change does
-not alter workflow decorators.
+does not run when workers import already deployed Python.
 
-This is the workspace-manifest slice of
+## Python Decorator Acceptance
+
+New Python source is checked before a workspace write, Git candidate import,
+explicit reimport, CLI push, or watch batch can persist it. The check parses
+source without importing or executing it. It recognizes Bifrost
+`workflow`, `tool`, `data_provider`, and `service` imports, aliases, and
+module-qualified calls; unrelated decorators with the same name are left alone.
+
+The accepted decorator settings are `id`, `name`, `description`, `category`,
+and `tags`; `workflow` also accepts `is_tool`. `id` remains accepted because
+the platform injects a stable identity into source. Literal `**{...}` mappings
+are accepted when every key is statically visible. Dynamic `**options` is
+rejected because the platform cannot validate its keys without executing source.
+For example, `@workflow(timeout_seconds=30)` is refused: execution settings do
+not belong in a decorator. `retry_policy` is removed and has no current workflow
+API setting; remove it. Existing deployed Python keeps its runtime compatibility
+behavior until it is next submitted through an acceptance boundary.
+
+Direct presigned PUTs are refused for workspace Python and `.bifrost/`
+definition paths because their bytes bypass server-side validation. Use
+`/api/files/write` instead. Presigned URLs remain available for ordinary runtime
+data uploads and custom data locations.
+
+The CLI performs its local AST precheck with the Python interpreter that runs
+the CLI. Use a CLI interpreter that supports the source grammar being pushed;
+otherwise newer Python syntax can be rejected locally before the server sees it.
+
+This is the workspace-manifest and Python-decorator slice of
 [#1098](https://github.com/gobifrost/bifrost/issues/1098). Solution package and
-descriptor validation, explicit migration diagnostics for removed settings, and
-Python decorator validation at write/deploy acceptance remain separate work.
+descriptor validation remain separate work.
 Solution declarations and transport payloads require their own schemas; a
 workspace schema must not be applied to them unchanged.
 

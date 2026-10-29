@@ -155,6 +155,20 @@ async def validate_workflow_file(path: str, content: str | None = None):
             return WorkflowValidationResponse(valid=False, issues=issues, metadata=None)
 
     # Create a temporary file with the content for validation
+    # The source acceptance gate must run before this validator imports a
+    # temporary module.  Inspection is AST-only, so malformed decorator
+    # settings cannot execute merely because a user requested validation.
+    from bifrost.decorator_validation import validate_python_decorators
+    from bifrost.definition_validation import DefinitionValidationError
+    try:
+        validate_python_decorators(content, path=path)
+    except DefinitionValidationError as error:
+        issues.extend(
+            ValidationIssue(line=issue.line, message=issue.message, severity="error")
+            for issue in error.issues
+        )
+        return WorkflowValidationResponse(valid=False, issues=issues, metadata=None)
+
     temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False)
     try:
         temp_file.write(content)
