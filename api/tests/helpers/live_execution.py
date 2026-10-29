@@ -84,13 +84,19 @@ async def create_live_execution(
 
 
 async def delete_live_execution(async_session_factory, execution_id: str) -> None:
-    """Delete the durable test rows created by `create_live_execution`."""
+    """Delete the durable test rows created by `create_live_execution`, and the
+    audit and access-check rows the engine token wrote under its execution."""
+    from src.models.orm.audit import AuditLog
     from src.models.orm.users import User
     from src.models.orm.workflows import Workflow
 
     async with async_session_factory() as session:
+        # Keyed by execution: user_id is set to NULL when the actor is deleted,
+        # and organization_id is NULL for global targets.
+        await session.execute(delete(AuditLog).where(AuditLog.execution_id == UUID(execution_id)))
         execution = await session.get(Execution, UUID(execution_id))
         if execution is None:
+            await session.commit()
             return
         workflow_id = execution.workflow_id
         actor_id = execution.run_user_id
