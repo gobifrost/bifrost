@@ -533,6 +533,25 @@ async def test_a_database_error_while_claiming_does_not_end_the_executor(monkeyp
     release.assert_awaited_once()
 
 
+async def test_an_executor_that_lost_ownership_leaves_its_row_for_the_successor(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A remote launcher whose telemetry expired reconnects to a new owner.
+    The old owner, stopping, must not drain the shared durable row: the new
+    owner would read ``draining`` on its first heartbeat and stop too."""
+    worker = _worker_with_pool()
+    worker._agent_consumer = object()  # type: ignore[assignment]
+
+    async def claim_next(incarnation_id, handlers, *, fits_bytes, budget_bytes, **kwargs):  # type: ignore[no-untyped-def]
+        worker._lost = True
+        worker._stop.set()
+
+    monkeypatch.setattr(pool_main, "claim_next", claim_next)
+    monkeypatch.setattr(pool_main, "begin_drain", AsyncMock())
+
+    await asyncio.wait_for(worker._claim_loop(), timeout=5)
+
+    pool_main.begin_drain.assert_not_awaited()
+
+
 async def test_a_hung_heartbeat_does_not_stop_the_next_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     worker = _worker_with_pool()
     attempts: list[int] = []

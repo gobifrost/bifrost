@@ -504,6 +504,12 @@ class PoolWorker:
             )
             stop.cancel()
             wake.cancel()
+        if self._lost:
+            # Lost or released ownership: the durable row belongs to whoever
+            # holds it next (a reconnecting launcher's new owner, or the
+            # control plane), exactly as in _retire. Draining it here would
+            # stop that successor as soon as it reads the row.
+            return
         try:
             await begin_drain(self.incarnation_id, "stopped")
         except Exception:
