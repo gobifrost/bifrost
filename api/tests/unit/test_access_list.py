@@ -1915,8 +1915,8 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 # function holds (``_elevated_site_nodes``), so a new elevated branch in a
 # registered function fails until it is counted and its replacement named.
 _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
-    # Every current site is a verified fact copy, role/reach derivation, or a
-    # post-gate internal load. None grants caller-selected authority.
+    # Every current site is a verified fact copy, role/reach derivation, a
+    # post-gate internal load, or the reviewed Platform Admin self-edit bridge.
     "bifrost.cli._run_direct": (2, "actor_facts"),
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "actor_facts"),
     "shared.claims.preresolve._load_source_policies": (1, "internal_authorized_resource"),
@@ -1974,6 +1974,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.access_check_policies.load_policy_principal": (1, "actor_facts"),
     "src.services.access_check_policies.load_policy_user_principal": (1, "actor_facts"),
     "src.services.authorization.callers.load_human_caller": (2, "current_role_derivation"),
+    "src.services.authorization.enforce.Caller.is_platform_admin": (1, "current_role_derivation"),
     "src.services.authorization.enforce.permitted_organizations": (1, "current_role_derivation"),
     "src.services.authorization.enforce.user_reach": (1, "current_role_derivation"),
     "src.services.authorization.evaluator.decide": (1, "current_role_derivation"),
@@ -2009,6 +2010,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.user_access_map._place_for": (1, "current_role_derivation"),
     "src.services.user_access_map.build_access_map": (2, "current_role_derivation"),
     "src.services.user_provisioning.ensure_user_provisioned": (4, "internal_authorized_resource"),
+    # Temporary Platform Admin self-edit bridge. The ordinary
+    # roleassignments.readwrite gate remains downstream; protected-account
+    # changes additionally require this non-everyday permission.
+    "src.services.user_role_assignments.replace_role_assignments": (1, "privilegedaccess.readwrite"),
     "src.services.user_role_assignments.authorization_summary": (2, "current_role_derivation"),
 }
 
