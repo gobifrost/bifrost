@@ -32,6 +32,7 @@ sys.path.insert(0, str(HERE))
 
 import ab  # noqa: E402
 import deploy  # noqa: E402
+import drills  # noqa: E402
 import guard  # noqa: E402
 import report  # noqa: E402
 import search  # noqa: E402
@@ -344,6 +345,26 @@ def run_ab(profile_name: str, mix_name: str, rate: float, image_a: str, image_b:
     return out
 
 
+def run_drill(profile_name: str, mix_name: str, rate: float, kind: str, api_image: str | None, out: Path | None) -> Path:
+    profile = load_profile(profile_name)
+    plan = {**profile["capacity"], "mix": profile["capacity"]["mixes"][mix_name]}
+    cluster = Cluster()
+    cluster.verify()
+    out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-drill-{kind}")
+    current = Run(cluster, "drill", profile_name, profile, "fake", out)
+    current.result.update({"mix_name": mix_name, "api_image": api_image or deploy.images(cluster.identity)["api"]})
+    print(f"Resetting and seeding '{profile_name}' ...", flush=True)
+    deploy.reset(cluster)
+    ids = _prepare(cluster, current, profile, "fake", api_image)
+    print(f"Drill {kind} at {rate}/s ...", flush=True)
+    current.result["drill"] = drills.drill(cluster, ids, plan, kind, rate, profile["capacity"]["disk"])
+    current.save()
+    result = current.result["drill"]
+    print(f"  failures {result['failures']} of {result['requests']}; first success {result['first_success_after_ready_s']} s after ready; "
+          f"checks {result['checks']}; passed {result['passed']}", flush=True)
+    return out
+
+
 def down() -> None:
     cluster = Cluster()
     cluster.verify()
@@ -377,6 +398,13 @@ def main() -> None:
     ab_parser.add_argument("--b", required=True, help="API image tag for variant B")
     ab_parser.add_argument("--order", default="ABBAAB")
     ab_parser.add_argument("--out", type=Path)
+    drill_parser = sub.add_parser("drill")
+    drill_parser.add_argument("--profile", default="m-capacity")
+    drill_parser.add_argument("--mix", default="mixed")
+    drill_parser.add_argument("--rate", type=float, required=True)
+    drill_parser.add_argument("--kind", choices=["pooler-delete", "pgbouncer-kill"], required=True)
+    drill_parser.add_argument("--api-image")
+    drill_parser.add_argument("--out", type=Path)
     sub.add_parser("down")
     args = parser.parse_args()
 
@@ -392,6 +420,8 @@ def main() -> None:
         print(json.dumps(deploy.build_variant(cluster.identity, args.source.resolve(), args.label)), flush=True)
     elif args.command == "ab":
         run_ab(args.profile, args.mix, args.rate, args.a, args.b, args.order, args.out)
+    elif args.command == "drill":
+        run_drill(args.profile, args.mix, args.rate, args.kind, args.api_image, args.out)
     elif args.command == "down":
         down()
 

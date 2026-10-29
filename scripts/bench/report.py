@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 
 def _ms(dist: dict) -> str:
     return f"{dist['p50']:.0f} / {dist['p95']:.0f}"
@@ -205,6 +207,10 @@ def render(result: dict) -> str:
         return "\n".join([*lines, *_capacity(result)])
     if result["kind"] == "ab":
         return "\n".join([*lines, *_ab(result)])
+    if result["kind"] == "drill":
+        found = result.get("drill") or {}
+        return "\n".join([*lines, "## Drill", "", f"API image `{result['api_image']}`.", "", "```json",
+                          json.dumps({k: v for k, v in found.items() if k != "step"}, indent=2, default=str), "```", ""])
     lines += [
         f"Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes.",
         "",
