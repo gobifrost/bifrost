@@ -5893,6 +5893,65 @@ class TestSyncPublicationOrdering:
             await storage.delete(source_path)
             await module_cache.invalidate_module(source_path)
 
+    async def test_invalid_decorator_in_unregistered_python_preserves_active_workspace(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+        working_clone,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Every publishable Python file is checked before Git publication."""
+        import hashlib
+
+        from src.core import module_cache
+        from src.services.repo_storage import RepoStorage
+
+        source_path = "helpers/decorator_candidate.py"
+        active_source = b"def current_helper(): return 'active'\n"
+        active_hash = hashlib.sha256(active_source).hexdigest()
+        db_session.add(FileIndex(
+            path=source_path, content=active_source.decode(), content_hash=active_hash,
+        ))
+        await db_session.commit()
+        storage = RepoStorage()
+        await storage.write(source_path, active_source)
+        await module_cache.set_module(source_path, active_source.decode(), active_hash)
+        active_module = await module_cache.get_module(source_path)
+
+        remote_dir = Path(working_clone.working_dir)
+        write_entity_to_repo(
+            remote_dir,
+            source_path,
+            "from bifrost import workflow\n"
+            "@workflow(timeout_seconds=30)\n"
+            "def rejected_helper(): pass\n",
+        )
+        working_clone.index.add([source_path])
+        working_clone.index.commit("invalid unregistered Python candidate")
+        working_clone.remotes.origin.push()
+        before_remote = Repo(str(bare_repo)).commit("main").hexsha
+        refresh_modules = AsyncMock()
+        monkeypatch.setattr(module_cache, "refresh_modules_from_directory", refresh_modules)
+
+        try:
+            result = await sync_service.desktop_sync(confirm_deletes=True)
+
+            assert result.success is False
+            assert source_path in (result.error or "")
+            assert "timeout_seconds" in (result.error or "")
+            refresh_modules.assert_not_awaited()
+            assert sync_service._sync_up_calls == []
+            assert Repo(str(bare_repo)).commit("main").hexsha == before_remote
+            db_session.expire_all()
+            indexed = await db_session.get(FileIndex, source_path)
+            assert indexed is not None and indexed.content_hash == active_hash
+            assert await storage.read(source_path) == active_source
+            assert await module_cache.get_module(source_path) == active_module
+        finally:
+            await storage.delete(source_path)
+            await module_cache.invalidate_module(source_path)
+
     async def test_import_failure_does_not_push_or_sync_storage(
         self,
         sync_service,

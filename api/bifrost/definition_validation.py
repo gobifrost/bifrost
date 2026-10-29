@@ -49,6 +49,14 @@ class DefinitionValidationError(ValueError):
         ))
 
 
+@dataclass(frozen=True)
+class DefinitionDocument:
+    """One safely decoded definition document before model projection."""
+
+    path: str
+    data: dict
+
+
 class _DuplicateYamlKeyError(Exception):
     def __init__(self, line: int):
         self.line = line
@@ -138,37 +146,24 @@ def read_yaml_mapping(content: str, *, path: str) -> dict:
     return data
 
 
-def read_workspace_manifest(filename: str, content: str) -> "Manifest":
-    """Decode one legacy or split workspace manifest file strictly."""
-    # Local imports keep this low-level decoder independent from manifest models.
-    from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE, Manifest
+def read_definition_section(
+    content: str,
+    *,
+    path: str,
+    section: str,
+    direct: bool = False,
+) -> DefinitionDocument:
+    """Decode a blank-tolerant definition document and verify its wrapper.
 
+    Workspace manifests and Solution-only declaration documents use this same
+    boundary. ``direct`` is for documents like ``files.yaml`` whose fields are
+    the payload rather than nested below a top-level section name.
+    """
     if not content or not content.strip():
-        return Manifest()
-
-    path = f".bifrost/{filename}"
+        return DefinitionDocument(path=path, data={})
     data = read_yaml_mapping(content, path=path)
-    if filename == MANIFEST_LEGACY_FILE:
-        return validate_definition(Manifest, data, path=path)
-
-    sections = {
-        manifest_filename: section
-        for section, manifest_filename in MANIFEST_FILES.items()
-    }
-    section = sections.get(filename)
-    if section is None:
-        raise DefinitionValidationError([
-            DefinitionIssue(
-                path,
-                (),
-                "unknown_manifest",
-                "Unknown workspace manifest file",
-            )
-        ])
-
-    if section == "files":
-        return validate_definition(Manifest, {section: data}, path=path)
-
+    if direct:
+        return DefinitionDocument(path=path, data=data)
     unexpected = set(data) - {section}
     if unexpected:
         raise DefinitionValidationError([
@@ -183,5 +178,53 @@ def read_workspace_manifest(filename: str, content: str) -> "Manifest":
                 key=lambda value: (type(value).__name__, str(value)),
             )
         ])
+    return DefinitionDocument(path=path, data=data)
+
+
+def read_manifest_document(filename: str, content: str) -> DefinitionDocument:
+    """Decode one legacy or split workspace manifest before entity validation."""
+    from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE
+
+    path = f".bifrost/{filename}"
+    if filename == MANIFEST_LEGACY_FILE:
+        if not content or not content.strip():
+            return DefinitionDocument(path=path, data={})
+        return DefinitionDocument(path=path, data=read_yaml_mapping(content, path=path))
+
+    sections = {
+        manifest_filename: section
+        for section, manifest_filename in MANIFEST_FILES.items()
+    }
+    section = sections.get(filename)
+    if section is None:
+        raise DefinitionValidationError([
+            DefinitionIssue(path, (), "unknown_manifest", "Unknown workspace manifest file")
+        ])
+    return read_definition_section(
+        content,
+        path=path,
+        section=section,
+        direct=section == "files",
+    )
+
+
+def read_workspace_manifest(filename: str, content: str) -> "Manifest":
+    """Decode one legacy or split workspace manifest file strictly."""
+    # Local imports keep this low-level decoder independent from manifest models.
+    from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE, Manifest
+
+    document = read_manifest_document(filename, content)
+    path = document.path
+    data = document.data
+    if filename == MANIFEST_LEGACY_FILE:
+        return validate_definition(Manifest, data, path=path)
+
+    sections = {
+        manifest_filename: section
+        for section, manifest_filename in MANIFEST_FILES.items()
+    }
+    section = sections.get(filename)
+    if section == "files":
+        return validate_definition(Manifest, {section: data}, path=path)
     payload = {section: data[section]} if section in data else {}
     return validate_definition(Manifest, payload, path=path)
