@@ -19,6 +19,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +29,12 @@ from src.services.oauth_config_service import OAuthConfigService
 from src.services.oauth_provider import append_query_params
 
 logger = logging.getLogger(__name__)
+
+# The tenant id Entra gives personal Microsoft accounts (outlook.com, live.com, and
+# personal accounts created on a work address). Bifrost signs in work accounts only.
+MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
+# Google addresses that are not Workspace accounts, so carry no `hd` claim.
+GOOGLE_CONSUMER_DOMAINS = {"gmail.com", "googlemail.com"}
 
 
 @dataclass
@@ -312,33 +319,58 @@ class OAuthService:
 
             user_data = response.json()
 
-        return self._parse_user_info(provider, user_data)
+        return self._parse_user_info(provider, user_data, tokens.id_token)
 
-    def _parse_user_info(self, provider: str, data: dict) -> OAuthUserInfo:
-        """Parse provider-specific user info into standard format."""
+    def _parse_user_info(self, provider: str, data: dict, id_token: str | None = None) -> OAuthUserInfo:
+        """Parse provider-specific user info into standard format.
+
+        ``email`` is only ever an address the provider has proven the user owns, because
+        sign-in links to (and auto-provisions) Bifrost users by email. Raises OAuthError
+        when the provider can't vouch for one.
+        """
         if provider == "microsoft":
+            # The Graph `mail` attribute is free text any tenant admin can set to any
+            # address, so it never identifies a user. The UPN's domain must be one the
+            # user's tenant has verified, so it does, unless the account is a guest
+            # (whose UPN is a rewritten external address) or a personal account.
+            tenant_id = _microsoft_tenant_id(id_token)
+            if tenant_id == MICROSOFT_CONSUMER_TENANT_ID:
+                raise OAuthError("Personal Microsoft accounts can't sign in. Use your work or school account.")
+            upn = (data.get("userPrincipalName") or "").lower()
+            if "#ext#" in upn:
+                raise OAuthError("Guest accounts can't sign in. Sign in with your own organization's account.")
             return OAuthUserInfo(
                 provider=provider,
                 provider_user_id=data.get("id", ""),
-                email=data.get("mail") or data.get("userPrincipalName", ""),
+                email=upn,
                 name=data.get("displayName"),
                 picture=None,  # Microsoft requires separate Graph API call for photo
-                email_verified=True,  # Microsoft always verifies emails
+                email_verified=True,
                 raw_data=data,
             )
 
-        else:
-            # Google and any other standard OIDC provider both use the
-            # canonical sub/email/name/picture/email_verified claims.
-            return OAuthUserInfo(
-                provider=provider,
-                provider_user_id=data.get("sub", ""),
-                email=data.get("email", ""),
-                name=data.get("name"),
-                picture=data.get("picture"),
-                email_verified=data.get("email_verified", False),
-                raw_data=data,
-            )
+        email = (data.get("email") or "").lower()
+        if provider == "google":
+            if data.get("email_verified") is not True:
+                raise OAuthError("Google hasn't verified this account's email address.")
+            # Anyone can create a personal Google account on an address at any domain, so
+            # only a Workspace account for that domain can claim one.
+            domain = email.rpartition("@")[2]
+            if domain not in GOOGLE_CONSUMER_DOMAINS and (data.get("hd") or "").lower() != domain:
+                raise OAuthError(f"Sign in with your {domain} Google Workspace account.")
+        elif data.get("email_verified") is False:
+            # A configured OIDC provider is the organization's own identity provider and is
+            # trusted for its addresses, unless it says it hasn't verified one.
+            raise OAuthError("Your identity provider hasn't verified this account's email address.")
+        return OAuthUserInfo(
+            provider=provider,
+            provider_user_id=data.get("sub", ""),
+            email=email,
+            name=data.get("name"),
+            picture=data.get("picture"),
+            email_verified=True,
+            raw_data=data,
+        )
 
     # ========================================================================
     # OAuth Account Management
@@ -466,3 +498,21 @@ class OAuthService:
             )
         )
         return result.scalar_one_or_none()
+
+
+def _microsoft_tenant_id(id_token: str | None) -> str:
+    """The `tid` claim of a Microsoft ID token.
+
+    The token comes straight from Microsoft's token endpoint over TLS in the code exchange,
+    so its signature isn't checked (OpenID Connect Core 3.1.3.7).
+    """
+    if not id_token:
+        raise OAuthError("Microsoft didn't return an ID token")
+    try:
+        claims = jwt.decode(id_token, options={"verify_signature": False})
+    except jwt.PyJWTError as e:
+        raise OAuthError("Microsoft returned an unreadable ID token") from e
+    tenant_id = claims.get("tid")
+    if not tenant_id:
+        raise OAuthError("Microsoft's ID token has no tenant")
+    return str(tenant_id).lower()
