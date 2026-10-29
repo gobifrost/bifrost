@@ -16,6 +16,10 @@ import { resolve, relative, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as yaml from "js-yaml";
 
+// js-yaml v5 defaults to YAML 1.2 CORE_SCHEMA, which treats `<<` as a plain
+// key. Add the legacy merge tag without changing ordinary YAML 1.2 scalars.
+const manifestSchema = yaml.CORE_SCHEMA.withTags(yaml.mergeTag);
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -69,7 +73,7 @@ function inventoryMdx(docsRepo) {
     let body = raw;
     if (fmMatch) {
       try {
-        frontmatter = yaml.load(fmMatch[1]) ?? {};
+        frontmatter = yaml.load(fmMatch[1], { schema: manifestSchema }) ?? {};
       } catch {
         frontmatter = {};
       }
