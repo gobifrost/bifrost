@@ -17,7 +17,12 @@ from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflows import Workflow
-from src.services.authorization.explain import load_powers, load_run_as_target, load_run_user
+from src.services.authorization.explain import (
+    load_powers,
+    load_powers_for_workflow,
+    load_run_as_target,
+    load_run_user,
+)
 
 
 @pytest_asyncio.fixture
@@ -75,6 +80,8 @@ async def test_powers_follow_the_workflow_mode_and_grants(db_session: AsyncSessi
     powers = await load_powers(db_session, restricted.id)
     assert powers.mode is WorkflowPermissionMode.RESTRICTED
     assert [grant.permission for grant in powers.grants] == ["secrets.read"]
+    loaded = await load_powers_for_workflow(db_session, restricted)
+    assert loaded == powers
     assert (await load_powers(db_session, None)).mode is WorkflowPermissionMode.FULL
 
 

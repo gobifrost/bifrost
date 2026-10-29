@@ -434,7 +434,10 @@ test.describe("Apps v2 code splitting", () => {
 				)
 				.toBe("rgb(219, 234, 254)");
 
-			expect(staleEntryFailures).toBe(1);
+			// The shell's modulepreload and the module script each request the
+			// stale entry once (a failed preload is not cached). Recovery then
+			// reads the manifest once and never requests the stale entry again.
+			expect(staleEntryFailures).toBe(2);
 			expect(manifestRequests).toBe(2);
 			expect(documentLoads).toBe(1);
 			await page.screenshot({

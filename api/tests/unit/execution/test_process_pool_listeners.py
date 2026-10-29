@@ -15,12 +15,17 @@ that unsubscribe failures release checked-out connections.
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import redis.asyncio as redis
 
-from src.services.execution.process_pool import ProcessPoolManager
+from src.services.execution.process_pool import (
+    PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
+    ProcessPoolManager,
+)
 from tests.conftest import TEST_REDIS_URL
 
 
@@ -77,6 +82,74 @@ def _make_pool() -> ProcessPoolManager:
     pool.worker_id = "test-worker"
     pool._shutdown = False
     return pool
+
+
+@pytest.mark.asyncio
+async def test_pool_redis_configures_pubsub_health_checks() -> None:
+    """The pool client must ping idle Pub/Sub connections before proxy idle expiry."""
+    pool = ProcessPoolManager(worker_id="test-worker")
+    created_client = object()
+
+    with (
+        patch(
+            "src.services.execution.process_pool.get_settings",
+            return_value=SimpleNamespace(redis_url=TEST_REDIS_URL),
+        ),
+        patch(
+            "src.services.execution.process_pool.redis.from_url",
+            return_value=created_client,
+        ) as from_url,
+    ):
+        assert await pool._get_redis() is created_client
+        # The client is process-owned, so both listeners share this configured client.
+        assert await pool._get_redis() is created_client
+
+    from_url.assert_called_once_with(
+        TEST_REDIS_URL,
+        decode_responses=True,
+        health_check_interval=PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_pubsub_health_ping_is_filtered_and_command_still_delivers() -> None:
+    """An idle health PING keeps a listener connection usable for a later command."""
+    client = redis.from_url(
+        TEST_REDIS_URL,
+        decode_responses=True,
+        health_check_interval=PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
+    )
+    channel = "test:pool:health-check"
+    pubsub = client.pubsub()
+    try:
+        await pubsub.subscribe(channel)
+        # Consume the subscription acknowledgement before forcing an idle-health check.
+        assert await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0) is None
+        connection = pubsub.connection
+        assert connection is not None
+        connection.next_health_check = 0
+
+        # redis-py emits PING and consumes its PONG internally; listeners do not see it.
+        with patch.object(connection, "send_command", wraps=connection.send_command) as send_command:
+            assert await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0) is None
+        send_command.assert_awaited_once_with(
+            "PING", pubsub.HEALTH_CHECK_MESSAGE, check_health=False,
+        )
+        assert pubsub.connection is connection
+        assert connection.is_connected
+
+        command = {"action": "recycle_all"}
+        await client.publish(channel, json.dumps(command))
+        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+        assert message == {
+            "type": "message",
+            "pattern": None,
+            "channel": channel,
+            "data": json.dumps(command),
+        }
+    finally:
+        await pubsub.aclose()
+        await client.aclose()
 
 
 @pytest.mark.asyncio

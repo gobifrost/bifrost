@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import copy
 import time
 from contextlib import asynccontextmanager
@@ -85,6 +86,7 @@ class FakeCluster:
         self.created: list[str] = []
         self.started: list[str] = []
         self.deleted: list[str] = []
+        self.annotated: list[tuple[str, dict[str, str]]] = []
 
     async def get_job(self, name: str) -> dict[str, Any] | None:
         await asyncio.sleep(0)
@@ -116,6 +118,10 @@ class FakeCluster:
         assert self.jobs[name]["metadata"]["uid"] == uid
         del self.jobs[name]
         self.deleted.append(name)
+
+    async def annotate_pod(self, name: str, annotations: dict[str, str]) -> None:
+        await asyncio.sleep(0)
+        self.annotated.append((name, dict(annotations)))
 
 
 async def _delete_policy(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -160,7 +166,7 @@ async def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatc
     wake = AsyncMock()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", AsyncMock)
-    monkeypatch.setattr("src.services.execution.queue_tracker.add_to_queue", AsyncMock())
+    monkeypatch.setattr("src.services.execution.queue_tracker.publish_queue_positions", AsyncMock())
     await _delete_policy(async_session_factory)
     await _store_policy(async_session_factory, POLICY)
     yield SimpleNamespace(sessions=async_session_factory, wake=wake, context=context)
@@ -274,9 +280,18 @@ async def test_accepted_runs_are_claimable_and_wake_the_executors(db) -> None:
 async def test_only_the_first_pod_of_the_bound_job_is_admitted(db) -> None:
     worker = await _job_worker(db.sessions)
 
-    assert await claims.admit_worker(worker.id, job_uid="other-job", pod_uid="p0") is None
-    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1") == 2
-    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p2") is None
+    assert await claims.admit_worker(worker.id, job_uid="other-job", pod_uid="p0", version=claims.get_version()) is None
+    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version=claims.get_version()) == 2
+    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p2", version=claims.get_version()) is None
+
+
+async def test_an_admitted_worker_records_the_build_its_pod_reports(db) -> None:
+    worker = await _job_worker(db.sessions)
+
+    await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version="1.0.0-old")
+
+    async with db.sessions() as session:
+        assert (await session.get(ExecutionWorker, worker.id)).version == "1.0.0-old"
 
 
 async def test_a_ready_worker_claims_each_dispatch_once(db) -> None:
@@ -539,6 +554,13 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
         ).scalars().all()
     assert (execution.status, execution.started_at) == (ExecutionStatus.PENDING, None)
     assert held == []
+    from src.services.execution.queue_tracker import get_queued_executions
+
+    async with db.sessions() as session:
+        queued = await get_queued_executions(session)
+    assert [(entry.execution_id, entry.queued_at) for entry in queued] == [
+        (UUID(execution_id), claim.queued_at)
+    ]
     db.wake.assert_awaited_once()
     second = await _static_executor("second")
     again = await _claim(second)
@@ -559,6 +581,7 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     worker_id = await claims.register_static_worker(
         hostname="api-agent", supported_handlers=["agent.run"]
     )
+    wake = AsyncMock()
     assert await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)
     claim = await _claim(worker_id)
     assert claim is not None and claim.handler == "agent.run"
@@ -575,7 +598,9 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
         )
         await session.commit()
     await liveness.end_silent_static_executors()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     await work_dispatch.reconcile_work_dispatches()
+    wake.assert_awaited_once_with()  # the released run is offered to idle executors at once
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -682,6 +707,166 @@ async def test_a_silent_static_executor_is_lost_and_its_runs_end(db) -> None:
     assert (execution.status, execution.error_message) == (ExecutionStatus.FAILED, EXECUTOR_LOST)
 
 
+async def test_a_lost_executor_s_agent_runs_end_and_their_callers_hear(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Its children cannot report: each started run fails at once and its
+    sync caller, chat stream and run subscribers are woken
+    (announce_ended_agent_run). A run it claimed but never started stays
+    queued for another worker."""
+    from src.models.orm.agent_runs import AgentRun
+    from src.models.orm.agents import Conversation
+    from src.models.orm.users import User
+    from src.services.execution import agent_run_service
+    from src.services.execution.agent_run_service import enqueue_agent_run
+
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
+    monkeypatch.setattr(agent_run_service, "get_db_context", claims.get_db_context)
+    update_published, chat_published = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(agent_run_service, "publish_agent_run_update", update_published)
+    monkeypatch.setattr(agent_run_service, "publish_chat_run_event", chat_published)
+    user = User(
+        id=uuid4(), email=f"lost-{uuid4().hex[:8]}@example.com", name="Lost",
+        is_active=True, is_superuser=True, is_verified=True, is_registered=True,
+    )
+    conversation = Conversation(id=uuid4(), user_id=user.id, title="Lost worker")
+    async with db.sessions() as session:
+        session.add(user)
+        await session.flush()
+        session.add(conversation)
+        await session.commit()
+    silent = await _static_executor("gone")
+    sdk_run, chat_run, unstarted_run = [
+        UUID(await enqueue_agent_run(agent_id=None, trigger_type="sdk", lineage=None, sync=True))
+        for _ in range(3)
+    ]
+    for _ in range(3):
+        claim = await _claim(silent)
+        assert claim is not None and claim.handler == "agent.run"
+    try:
+        async with db.sessions() as session:
+            await session.execute(
+                update(AgentRun).where(AgentRun.id.in_([sdk_run, chat_run])).values(status="running")
+            )
+            await session.execute(
+                update(AgentRun)
+                .where(AgentRun.id == chat_run)
+                .values(trigger_type="chat", conversation_id=conversation.id)
+            )
+            await session.execute(
+                update(ExecutionWorker)
+                .where(ExecutionWorker.id == silent)
+                .values(heartbeat_at=datetime.now(timezone.utc) - timedelta(seconds=45))
+            )
+            await session.commit()
+
+        await liveness.end_silent_static_executors()
+
+        async with db.sessions() as session:
+            for run_id in (sdk_run, chat_run):
+                run = await session.get(AgentRun, run_id)
+                assert (run.status, run.error) == ("failed", recovery.EXECUTOR_LOST)
+            assert (await session.get(AgentRun, unstarted_run)).status == "queued"
+        async with get_redis() as redis:
+            for run_id in (sdk_run, chat_run):
+                pushed = await redis.lpop(f"bifrost:agent_run:{run_id}:result")  # pyright: ignore[reportGeneralTypeIssues]
+                assert pushed is not None and json.loads(pushed)["status"] == "failed"
+            assert await redis.lpop(f"bifrost:agent_run:{unstarted_run}:result") is None  # pyright: ignore[reportGeneralTypeIssues]
+        assert update_published.await_count == 2
+        chat_published.assert_awaited_once()
+        chat = chat_published.await_args.kwargs
+        assert (chat["conversation_id"], chat["run_id"], chat["kind"]) == (
+            conversation.id, chat_run, "error",
+        )
+        assert chat["payload"].error == recovery.EXECUTOR_LOST
+    finally:
+        async with db.sessions() as session:
+            await session.execute(
+                delete(AgentRun).where(AgentRun.id.in_([sdk_run, chat_run, unstarted_run]))
+            )
+            await session.execute(delete(Conversation).where(Conversation.id == conversation.id))
+            await session.execute(delete(User).where(User.id == user.id))
+            await session.commit()
+
+
+async def test_a_requeued_agent_run_claimed_twice_executes_once(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """release_unstarted_claims can hand back a dispatch whose child has not
+    started yet, and a second worker claims it: both children deliver the
+    run. The AgentRun row lock and its queued-status guard let one execute."""
+    from src.jobs.consumers.agent_run import AgentRunConsumer
+    from src.models.orm.agent_runs import AgentRun
+    from src.models.orm.agents import Agent
+    from src.services.execution import agent_run_service
+    from src.services.execution.agent_run_service import enqueue_agent_run
+    from src.services.execution.autonomous_agent_executor import ActingUser
+
+    executed: list[str] = []
+
+    class Executor:
+        subtree_tokens = 0
+
+        def __init__(self, *_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        async def run(self, *, run_id, **_kwargs):  # type: ignore[no-untyped-def]
+            executed.append(run_id)
+            await asyncio.sleep(0.05)
+            return {"output": "ok", "status": "completed", "iterations_used": 1, "tokens_used": 1}
+
+        async def flush_to_db(self, _db) -> None:  # type: ignore[no-untyped-def]
+            return None
+
+    actor = ActingUser(
+        user_id=str(uuid4()), email="actor@example.com", name="Actor", organization_id=None,
+        is_platform_admin=True, is_external=False, is_provider_org=False,
+    )
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", claims.get_db_context)
+    monkeypatch.setattr("src.jobs.consumers.agent_run._load_acting_user", AsyncMock(return_value=actor))
+    monkeypatch.setattr(
+        "src.services.authorization.runtime_auth.load_runtime_principal", AsyncMock(return_value=object())
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.load_caller",
+        AsyncMock(return_value=SimpleNamespace(ctx=object())),
+    )
+    monkeypatch.setattr(
+        "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor", Executor
+    )
+    for name in ("publish_agent_run_update", "publish_chat_run_event"):
+        monkeypatch.setattr(f"src.jobs.consumers.agent_run.{name}", AsyncMock())
+    agent_id = uuid4()
+    async with db.sessions() as session:
+        session.add(Agent(
+            id=agent_id, name=f"requeue-{agent_id.hex}", system_prompt="ok", created_by="test",
+        ))
+        await session.commit()
+    try:
+        run_id = await enqueue_agent_run(agent_id=str(agent_id), trigger_type="sdk", lineage=None)
+        first_worker = await _static_executor("first")
+        first = await _claim(first_worker)
+        assert first is not None
+        # Its reply was lost and the child had not started: handed back.
+        await recovery.release_unstarted_claims(first_worker, set())
+        second = await _claim(await _static_executor("second"))
+        assert second is not None and second.dispatch_id == first.dispatch_id
+
+        consumers = [AgentRunConsumer(), AgentRunConsumer()]
+        for consumer in consumers:
+            consumer._session_factory = db.sessions
+        await asyncio.gather(
+            consumers[0].process_message(first.message),
+            consumers[1].process_message(second.message),
+        )
+
+        assert executed == [run_id]
+        async with db.sessions() as session:
+            run = await session.get(AgentRun, UUID(run_id))
+            assert run.status == "completed"
+            assert await session.get(WorkDispatch, first.dispatch_id) is None
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(Agent).where(Agent.id == agent_id))
+            await session.commit()
+
+
 async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(db) -> None:
     """After a database outage every heartbeat looks old at once; the
     controller waits until executors have had time to heartbeat again."""
@@ -692,7 +877,7 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
     async with db.sessions() as session:
         await session.execute(
             update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
@@ -704,6 +889,48 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
 
     async with db.sessions() as session:
         assert (await session.get(ExecutionWorker, worker_id)).state == "ready"
+
+
+async def test_a_ready_worker_is_evictable_only_while_idle(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The cluster autoscaler may move a worker only while it holds no work;
+    the pod is patched only when that answer changes."""
+    monkeypatch.setattr(controller, "EVICTABLE_AFTER_IDLE_SECONDS", 0.0)
+    cluster = FakeCluster()
+    pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
+    await _accept_pool_run()
+    [worker_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
+    async with db.sessions() as session:
+        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
+    cluster.pods[job_uid] = [{"metadata": {"name": "worker-pod"}}]
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
+    safe = controller.SAFE_TO_EVICT
+
+    async def reserved(memory: int) -> None:
+        async with db.sessions() as session:
+            await session.execute(
+                update(ExecutionWorker)
+                .where(ExecutionWorker.id == worker_id)
+                .values(memory_reserved_bytes=memory, heartbeat_at=datetime.now(timezone.utc))
+            )
+            await session.commit()
+
+    await reserved(0)
+    await pool.reconcile_worker(worker_id, POLICY)
+    await pool.reconcile_worker(worker_id, POLICY)
+    assert cluster.annotated == [("worker-pod", {safe: "true"})]
+
+    await reserved(64 * 2**20)
+    await pool.reconcile_worker(worker_id, POLICY)
+    assert cluster.annotated[-1] == ("worker-pod", {safe: "false"})
+    assert len(cluster.annotated) == 2
+
+
+def test_a_new_worker_pod_starts_not_evictable() -> None:
+    manifest = build_worker_job_manifest(uuid4(), SETTINGS, SPEC, memory_limit_bytes=GIB, sized=False)
+    assert manifest["spec"]["template"]["metadata"]["annotations"] == {
+        controller.SAFE_TO_EVICT: "false"
+    }
 
 
 async def test_reachability_is_measured_by_reaching_the_database(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -812,7 +1039,7 @@ async def test_warm_minimum_is_kept_ready_until_settings_lower_it(db) -> None:
     await pool.reconcile_worker(worker_id, warm)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
 
     assert not await claims.begin_idle_drain(worker_id)
     # An admin lowers Warm workers: the running idle worker drains.
@@ -845,7 +1072,7 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
     claim = await _claim(worker_id)
     assert claim is not None
     async with db.sessions() as session:
@@ -1085,7 +1312,7 @@ async def test_stale_remote_owner_cannot_admit_a_starting_worker(db) -> None:
         )
     )
     with remote_owner_context(stale):
-        assert await claims.admit_worker(worker_id, job_uid="job", pod_uid="pod") is None
+        assert await claims.admit_worker(worker_id, job_uid="job", pod_uid="pod", version=claims.get_version()) is None
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -1121,7 +1348,7 @@ async def _lose_running_job_worker(db, *, oom: bool) -> tuple[UUID, UUID]:  # ty
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod")
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
     await _report_budget(worker_id, 546 * MIB)
     claim = await _claim(worker_id)
     assert claim is not None
@@ -1213,6 +1440,8 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
     assert lost_claim and started_claim and agent_claim
     assert agent_claim.handler == "agent.run"
 
+    wake = AsyncMock()
+    monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     ended = await recovery.release_unstarted_claims(
         worker, {str(started_claim.subject_id), str(started_claim.dispatch_id)}
     )
@@ -1225,6 +1454,7 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
     assert (lost.status, lost.error_message) == (ExecutionStatus.FAILED, recovery.CLAIM_NOT_STARTED)
     assert started.status == ExecutionStatus.RUNNING
     assert agent_dispatch.assigned_worker_id is None
+    wake.assert_awaited_once_with()  # idle executors look for the released run now
 
 
 # --- sizing by memory -----------------------------------------------------------
@@ -1232,8 +1462,8 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
 
 def _plan(waiting: list[int], free: list[int]) -> controller.LaunchPlan:
     return controller._plan_launches(
-        [(uuid4(), request) for request in waiting],
-        free,
+        [controller.Request(uuid4(), request, "workflow.execute") for request in waiting],
+        [controller.FreeBudget(room, frozenset(claims.REMOTE_WORKER_HANDLER_NAMES)) for room in free],
         standard_budget=1000,
         largest_budget=4000,
     )
@@ -1250,13 +1480,31 @@ def test_overflow_is_packed_first_fit_into_new_standard_workers() -> None:
 def test_work_a_standard_worker_cannot_hold_gets_a_sized_worker() -> None:
     large = uuid4()
     plan = controller._plan_launches(
-        [(large, 1500)], [], standard_budget=1000, largest_budget=4000
+        [controller.Request(large, 1500, "workflow.execute")], [],
+        standard_budget=1000, largest_budget=4000,
     )
     assert plan == controller.LaunchPlan(standard=0, sized=[(large, 1500)])
 
 
 def test_work_larger_than_any_launchable_worker_is_left_out() -> None:
     assert _plan([5000], []) == controller.LaunchPlan(standard=0, sized=[])
+
+
+def test_agent_work_fits_only_free_budgets_of_workers_that_claim_agent_runs() -> None:
+    """A worker from an older build claims workflows only: its room does not
+    hold an agent run, so a new worker is planned for it."""
+    workflow_only = controller.FreeBudget(500, frozenset({"workflow.execute"}))
+    agent = controller.Request(uuid4(), 300, "agent.run")
+    workflow = controller.Request(uuid4(), 300, "workflow.execute")
+    platform_job = controller.Request(uuid4(), 100)
+
+    def plan(*waiting: controller.Request) -> controller.LaunchPlan:
+        return controller._plan_launches(
+            list(waiting), [workflow_only], standard_budget=1000, largest_budget=4000
+        )
+
+    assert plan(agent) == controller.LaunchPlan(standard=1, sized=[])
+    assert plan(workflow, platform_job) == controller.LaunchPlan(standard=0, sized=[])
 
 
 async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:
@@ -1781,7 +2029,7 @@ async def _admit(sessions, worker_id: UUID, *, pool_up: bool = True) -> None:  #
     """Admit a launched Job's pod; ``pool_up``: its pool started and it reported its budget."""
     async with sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}") is not None
+    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}", version=claims.get_version()) is not None
     if pool_up:
         await _report_budget(worker_id, GIB)
 
@@ -1790,6 +2038,129 @@ async def _state(sessions, worker_id: UUID) -> tuple[str, str | None]:  # type: 
     async with sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
     return worker.state, worker.end_reason
+
+
+async def _set_ready_at(sessions, worker_id: UUID, ready_at: datetime | None) -> None:  # type: ignore[no-untyped-def]
+    async with sessions() as session:
+        await session.execute(
+            update(ExecutionWorker).where(ExecutionWorker.id == worker_id).values(ready_at=ready_at)
+        )
+        await session.commit()
+
+
+async def test_an_imminent_lifetime_warm_worker_prelaunches_one_handoff(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Keep a logical warm worker available while its lifetime replacement starts."""
+    policy = replace(WARM, max_workers=2, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    warm = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+    monkeypatch.setattr(controller, "_now", lambda: now)
+    await _set_ready_at(
+        db.sessions,
+        warm,
+        now
+        - timedelta(seconds=SETTINGS.pool_max_lifetime_seconds - SETTINGS.pool_start_timeout_seconds),
+    )
+
+    [handoff] = await _pass(pool, policy)
+    assert await _state(db.sessions, warm) == ("ready", None), "keeps claiming until its lifetime"
+    assert await _state(db.sessions, handoff) == ("starting", None)
+    assert await _pass(pool, policy) == [], "the starting handoff suppresses duplicate launches"
+
+    await _admit(db.sessions, handoff)
+    assert await _pass(pool, policy) == [], "the ready handoff suppresses duplicate launches"
+
+
+async def test_a_lifetime_handoff_waits_until_its_lead_window(db, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    policy = replace(WARM, max_workers=2, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    warm = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+    monkeypatch.setattr(controller, "_now", lambda: now)
+    await _set_ready_at(
+        db.sessions,
+        warm,
+        now
+        - timedelta(seconds=SETTINGS.pool_max_lifetime_seconds - SETTINGS.pool_start_timeout_seconds)
+        + timedelta(microseconds=1),
+    )
+
+    assert await _pass(pool, policy) == []
+
+
+async def test_a_full_warm_pool_does_not_exceed_max_for_a_lifetime_handoff(db) -> None:
+    policy = replace(WARM, max_workers=1, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0")
+    warm = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+    await _set_ready_at(
+        db.sessions,
+        warm,
+        datetime.now(timezone.utc)
+        - timedelta(
+            seconds=SETTINGS.pool_max_lifetime_seconds - SETTINGS.pool_start_timeout_seconds + 1
+        ),
+    )
+
+    assert await _pass(pool, policy) == []
+
+
+async def test_short_lifetimes_prelaunch_only_the_warm_shortfall(db) -> None:
+    settings = SimpleNamespace(
+        **{
+            **vars(SETTINGS),
+            "pool_max_lifetime_seconds": 60,
+            "pool_start_timeout_seconds": 300,
+        }
+    )
+    policy = replace(WARM, max_workers=6, warm_workers=1)
+    pool = _controller(FakeCluster(), "2.0", settings)
+    workers = [
+        await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
+        for _ in range(4)
+    ]
+    for worker_id in workers:
+        await _set_ready_at(db.sessions, worker_id, datetime.now(timezone.utc) - timedelta(seconds=31))
+
+    [handoff] = await _pass(pool, policy)
+    await _admit(db.sessions, handoff)
+    assert await _pass(pool, policy) == []
+
+
+def test_lifetime_handoff_targets_only_ready_standard_jobs() -> None:
+    pool = _controller(FakeCluster(), "2.0")
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+
+    def worker(
+        *, form: str, resource_class: str, state: str = "ready", ready_at: datetime | None
+    ) -> ExecutionWorker:
+        return ExecutionWorker(
+            id=uuid4(),
+            form=form,
+            state=state,
+            resource_class=resource_class,
+            slots=1,
+            ready_at=ready_at,
+        )
+
+    due = now - timedelta(seconds=SETTINGS.pool_max_lifetime_seconds)
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="static", resource_class="standard", ready_at=due), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="sized", ready_at=due), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", ready_at=None), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", ready_at=now + timedelta(seconds=1)), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", state="starting", ready_at=due), now
+    )
+    assert not pool._lifetime_handoff_imminent(
+        worker(form="job", resource_class="standard", state="draining", ready_at=due), now
+    )
 
 
 def test_a_job_is_outdated_only_when_its_build_and_its_launcher_are_gone() -> None:

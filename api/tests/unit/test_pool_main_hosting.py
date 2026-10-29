@@ -47,6 +47,29 @@ def _worker_with_pool(
     return worker
 
 
+async def test_an_idle_platform_job_loop_waits_for_a_wake_up(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Idle, the loop claims on a wake-up (an enqueue or a finished job) or a
+    ``SWEEP_SECONDS`` sweep, which is also when it recovers expired leases."""
+    claims = AsyncMock(return_value=None)
+    recover = AsyncMock(return_value=(0, 0))
+    monkeypatch.setattr(pool_main, "recover_expired_platform_jobs", recover)
+    monkeypatch.setattr(pool_main, "claim_platform_job", claims)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 30.0)
+    worker = _worker_with_pool()
+
+    loop = asyncio.create_task(worker._platform_job_loop())
+    try:
+        await asyncio.sleep(0.2)
+        assert (claims.await_count, recover.await_count) == (1, 1)
+
+        worker._platform_wake.set()
+        await asyncio.sleep(0.05)
+        assert (claims.await_count, recover.await_count) == (2, 1), "claims at once, recovers on the sweep"
+    finally:
+        worker._platform_stop.set()
+        await asyncio.wait_for(loop, timeout=3)
+
+
 def test_services_and_platform_jobs_keep_an_executor_busy_but_free_no_run_slots() -> None:
     idle = _worker_with_pool()
     assert not idle.busy()
@@ -109,7 +132,7 @@ async def test_a_job_worker_idles_out_on_the_idle_time_in_settings(monkeypatch) 
     monkeypatch.setattr(pool_main, "load_kubernetes_policy", load_kubernetes_policy)
     monkeypatch.setattr(pool_main, "claim_next", AsyncMock(return_value=None))
     monkeypatch.setattr(pool_main, "begin_idle_drain", drain)
-    monkeypatch.setattr(pool_main, "POLL_SECONDS", 0.01)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 0.01)
     worker = _worker_with_pool(incarnation_id=uuid4())
 
     loop = asyncio.create_task(worker._claim_loop())
@@ -124,6 +147,39 @@ async def test_a_job_worker_idles_out_on_the_idle_time_in_settings(monkeypatch) 
 
     assert len(reads) == 2
     drain.assert_awaited_once_with(worker.incarnation_id)
+
+
+async def test_an_idle_worker_waits_for_a_wake_up_and_sweeps_slowly(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Idle with nothing to claim, a worker looks again on a wake-up or after
+    ``SWEEP_SECONDS``, not every ``POLL_SECONDS``; held back by admission it
+    keeps polling."""
+    claims = AsyncMock(return_value=None)
+    monkeypatch.setattr(pool_main, "claim_next", claims)
+    monkeypatch.setattr(pool_main, "POLL_SECONDS", 0.01)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 30.0)
+    worker = _worker_with_pool(incarnation_id=uuid4())
+    worker._idle_seconds = AsyncMock(return_value=3600)  # type: ignore[method-assign]
+
+    loop = asyncio.create_task(worker._claim_loop())
+    try:
+        await asyncio.sleep(0.2)
+        assert claims.await_count == 1, "one look, then wait for a wake-up"
+
+        worker._wake.set()
+        await asyncio.sleep(0.05)
+        assert claims.await_count == 2, "a wake-up looks again at once"
+
+        worker.admission._under_pressure = lambda: True  # type: ignore[union-attr]
+        worker._wake.set()
+        await asyncio.sleep(0.2)
+        attempts = claims.await_count
+        assert worker._admission_blocked and attempts == 2, "held back: no claim query"
+        worker.admission._under_pressure = lambda: False  # type: ignore[union-attr]
+        await asyncio.sleep(0.1)
+        assert claims.await_count > attempts, "pressure easing is noticed by polling"
+    finally:
+        worker.request_stop()
+        await asyncio.wait_for(loop, timeout=3)
 
 
 async def test_draining_hands_services_over_first_and_waits_for_platform_jobs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -390,6 +446,65 @@ async def test_an_executor_declared_lost_stops_its_runs_without_a_grace(monkeypa
     pool.drain_active_executions.assert_awaited_once_with(0.0)
 
 
+async def test_heartbeat_withholds_a_measured_budget_until_executor_startup_finishes(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A remote inventory reconcile may await after measuring the budget.
+
+    The controller treats a non-null heartbeat budget as replacement capacity,
+    so liveness must continue without publishing that capacity until startup
+    has finished and the claim loop can actually begin.
+    """
+    worker = PoolWorker(incarnation_id=uuid4(), hosts_remote_work=False)
+    measured = asyncio.Event()
+    release_startup = asyncio.Event()
+    first_heartbeat = asyncio.Event()
+    published_ready_budget = asyncio.Event()
+    heartbeats: list[int | None] = []
+
+    async def start_executor() -> None:
+        worker.budget = MemoryBudget(limit_bytes=4 * GIB, baseline_bytes=0, threshold=0.5)
+        measured.set()
+        await release_startup.wait()
+
+    async def heartbeat_worker(*args, **kwargs):  # type: ignore[no-untyped-def]
+        budget = kwargs["memory_budget_bytes"]
+        heartbeats.append(budget)
+        first_heartbeat.set()
+        if budget is not None:
+            published_ready_budget.set()
+        return "starting"
+
+    async def claim_loop() -> None:
+        await published_ready_budget.wait()
+        worker._stop.set()
+
+    monkeypatch.setattr(worker, "_initialize_runtime", AsyncMock(return_value=True))
+    monkeypatch.setattr(worker, "_start_executor", start_executor)
+    monkeypatch.setattr(worker, "_claim_loop", claim_loop)
+    monkeypatch.setattr(worker, "_wake_listener", AsyncMock())
+    monkeypatch.setattr(worker, "_drain", AsyncMock())
+    monkeypatch.setattr(worker, "_retire", AsyncMock())
+    monkeypatch.setattr(worker, "_close_runtime", AsyncMock())
+    monkeypatch.setattr(pool_main, "heartbeat_worker", heartbeat_worker)
+    monkeypatch.setattr(pool_main, "remove_scheduler_replica", AsyncMock())
+    monkeypatch.setattr(pool_main, "replica_heartbeat_loop", AsyncMock())
+    monkeypatch.setattr(pool_main, "HEARTBEAT_SECONDS", 0.01)
+
+    running = asyncio.create_task(worker.run())
+    try:
+        await asyncio.wait_for(measured.wait(), timeout=1)
+        await asyncio.wait_for(first_heartbeat.wait(), timeout=1)
+        assert heartbeats and all(budget is None for budget in heartbeats)
+
+        release_startup.set()
+        await asyncio.wait_for(running, timeout=1)
+        assert published_ready_budget.is_set()
+        assert heartbeats[-1] == worker.budget.budget_bytes  # type: ignore[union-attr]
+    finally:
+        if not running.done():
+            running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+
+
 async def test_a_database_error_while_claiming_does_not_end_the_executor(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """A failover or dropped connection must not crash the executor and fail
     its runs: the claim loop backs off and looks again."""
@@ -416,6 +531,25 @@ async def test_a_database_error_while_claiming_does_not_end_the_executor(monkeyp
     pool_main.begin_drain.assert_awaited_once()
     # Its claim may have committed though the reply was lost.
     release.assert_awaited_once()
+
+
+async def test_an_executor_that_lost_ownership_leaves_its_row_for_the_successor(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A remote launcher whose telemetry expired reconnects to a new owner.
+    The old owner, stopping, must not drain the shared durable row: the new
+    owner would read ``draining`` on its first heartbeat and stop too."""
+    worker = _worker_with_pool()
+    worker._agent_consumer = object()  # type: ignore[assignment]
+
+    async def claim_next(incarnation_id, handlers, *, fits_bytes, budget_bytes, **kwargs):  # type: ignore[no-untyped-def]
+        worker._lost = True
+        worker._stop.set()
+
+    monkeypatch.setattr(pool_main, "claim_next", claim_next)
+    monkeypatch.setattr(pool_main, "begin_drain", AsyncMock())
+
+    await asyncio.wait_for(worker._claim_loop(), timeout=5)
+
+    pool_main.begin_drain.assert_not_awaited()
 
 
 async def test_a_hung_heartbeat_does_not_stop_the_next_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]

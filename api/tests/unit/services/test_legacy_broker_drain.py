@@ -52,7 +52,7 @@ def world(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch: 
     monkeypatch.setattr(drain, "get_redis", get_redis)
     wake = AsyncMock()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
-    monkeypatch.setattr("src.services.execution.queue_tracker.add_to_queue", AsyncMock())
+    monkeypatch.setattr("src.services.execution.queue_tracker.publish_queue_positions", AsyncMock())
 
     class World:
         sessions = async_session_factory

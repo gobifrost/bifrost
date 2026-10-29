@@ -35,6 +35,7 @@ def test_build_cli_artifact_stamps_and_filters_package(tmp_path: Path) -> None:
             requirement.startswith("packaging")
             for requirement in metadata["project"]["dependencies"]
         )
+        assert "pydantic>=2.12.0" in metadata["project"]["dependencies"]
         assert '__version__ = "v1.2.3"' in init.read().decode()
 
     assert "bifrost/lucide_icon_names.json" in names

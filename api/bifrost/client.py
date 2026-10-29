@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import httpx
 
+from bifrost._device_auth import device_login_prompt
+
 from .credentials import (
     clear_credentials,
     get_credentials,
@@ -498,9 +500,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             interval = data.get("interval", 5)
 
             # Step 2: Display instructions
-            full_url = f"{api_url}{verification_url}"
-            print(f"\nOpening browser to {full_url}")
-            print(f"Enter this code: {user_code}\n")
+            full_url = device_login_prompt(api_url, verification_url, user_code)
 
             # Step 3: Open browser
             if auto_open:

@@ -25,9 +25,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Awaitable, cast
 from uuid import UUID
 
@@ -38,6 +40,13 @@ from src.core.cache.keys import (
 )
 
 logger = logging.getLogger(__name__)
+
+# While it supervises attempts, the loop ticks every claim interval (leases
+# need renewing). Idle, it ticks on a pool wake-up (a service started, enabled
+# or created, or one of its attempts ended), when the earliest backed-off
+# restart comes due, and otherwise sweeps every SERVICE_SWEEP_SECONDS, which
+# also bounds how late it notices another worker's expired lease.
+SERVICE_SWEEP_SECONDS = 15.0
 
 
 @dataclass
@@ -74,9 +83,15 @@ class ServiceClaimLoop:
     # how it holds (bytes) or releases (None) one attempt's request.
     claiming: Callable[[], AbstractAsyncContextManager[int | None]] | None = None
     hold_memory: Callable[[str, int | None], None] | None = None
+    # Set on every pool wake-up; None ticks every claim interval regardless.
+    wake: asyncio.Event | None = None
+    sweep_seconds: float = SERVICE_SWEEP_SECONDS
 
     _owned: dict[str, OwnedAttempt] = field(default_factory=dict)
     _running: bool = False
+    _stop: asyncio.Event = field(default_factory=asyncio.Event)
+    # Earliest backed-off restart due later, read while idle.
+    _next_restart: datetime | None = None
     _task: asyncio.Task[None] | None = None
     _last_beat: float = 0.0
     # Staged flush cursors (attempt_id -> last stream ID), written to Redis
@@ -110,6 +125,7 @@ class ServiceClaimLoop:
         expires and restarts elsewhere.
         """
         self._running = False
+        self._stop.set()
         if self._task is not None:
             try:
                 await self._task
@@ -122,12 +138,27 @@ class ServiceClaimLoop:
     # -- tick ----------------------------------------------------------
 
     async def _run(self) -> None:
+        from src.services.work_dispatch import wait_for_next_pass
+
         while self._running:
+            started = time.monotonic()
             try:
                 await self.tick()
             except Exception as e:
                 logger.exception("service claim tick failed: %s", e)
-            await asyncio.sleep(self.claim_interval_seconds)
+            if self._owned or self.wake is None:
+                # The interval elapsing is the normal case; stop ends it early.
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(self._stop.wait(), self.claim_interval_seconds)
+                continue
+            sweep = self.sweep_seconds
+            if self._next_restart is not None:
+                due = (self._next_restart - datetime.now(timezone.utc)).total_seconds()
+                sweep = min(sweep, time.monotonic() - started + max(0.0, due))
+            await wait_for_next_pass(
+                self._stop, self.wake, since=started,
+                spacing=self.claim_interval_seconds, sweep=sweep,
+            )
 
     async def tick(self) -> None:
         """One claim-loop iteration: expire, beat owned, claim fill."""
@@ -140,6 +171,8 @@ class ServiceClaimLoop:
             expired = await lifecycle.expire_leases(db)
             if expired:
                 logger.warning("expired %d service lease(s)", expired)
+            if not self._owned:
+                self._next_restart = await lifecycle.next_restart_at(db)
             await db.commit()
 
             await self._beat_owned(db, stops)
@@ -841,6 +874,9 @@ class ServiceClaimLoop:
                     # expire via TTL and carry no authority without the
                     # DB lease.
                     pass
+            if self.wake is not None:
+                # Read the attempt's restart time (or claim its slot) now.
+                self.wake.set()
 
     @staticmethod
     def _completion_for(envelope: dict, attempt) -> tuple[str, str | None, str | None]:

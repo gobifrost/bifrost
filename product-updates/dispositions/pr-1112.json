@@ -1,0 +1,15 @@
+{
+  "key": "pr:1112",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Git sync rejects unknown manifest fields and duplicate keys before changing workspace entities or publishing source.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1112",
+      "https://github.com/gobifrost/bifrost/issues/1098",
+      "Astra reviewed the production workspace-manifest slice with no blocking findings on 2026-10-28. General Writing and Humanizer applied to this routine-fix summary. Jack authorized merge when tested and ready; 248 focused tests and API quality passed. Solution packages and Python decorator writes remain follow-up work."
+    ]
+  }
+}

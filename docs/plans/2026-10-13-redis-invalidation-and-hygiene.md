@@ -83,7 +83,7 @@ WebSocket contracts remain unchanged.
 | Module source | 24-hour values; persistent path SET; explicit deletes remove membership (`module_cache.py`, `module_cache_sync.py`) | SET can retain expired path history; track cardinality separately, then consider a scored expiry index if material |
 | Agent steps | MAXLEN streams; previously no expiry | Repair in this PR; historical orphans require separately approved cleanup |
 | Pending/active execution state | One-hour TTLs refreshed while live; terminal delete (`redis_client.py`, `process_pool.py`) | No missing-expiry repair identified |
-| Pending execution queue | Persistent sorted set; dispatch removes members; periodic score-based cleanup (`queue_tracker.py`) | Intentional shared queue index; do not give it a blanket TTL |
+| Pending execution queue | PostgreSQL `WorkDispatch` joined to Pending executions; queue positions are published from committed rows (`queue_tracker.py`) | Replaced the Redis sorted-set index after a claim/publication race left completed executions in the queue; no separate expiry or cleanup loop |
 | Auth | Refresh JTIs seven days / delete on use; OAuth state ten minutes / single-use; device pairs five minutes (`routers/auth.py`, `oauth_sso.py`) | No values inspected; no changes to authorization or revocation |
 | Data-provider results / locks | Five minutes / ten seconds (`cache/data_provider_cache.py`) | Broad invalidation still scans; separate optimization if cardinality warrants |
 | User roles / forms | Role payloads one hour; form/user caches use shared bounded TTLs (`shared/role_cache.py`, `cache/invalidation.py`) | Role and form mutation paths still scan; monitor mutation cost before a separate algorithm change |

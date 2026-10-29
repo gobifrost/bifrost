@@ -64,7 +64,7 @@ class SdkExecutionReadError(Exception):
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
     and callers reached over the worker-local engine socket read the same status/detail. Missing entities are 404, denied
-    access is 403, and malformed scope is 422, matching the shared scope grammar.
+    access is 403, and malformed scope or status is 422.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:
@@ -538,9 +538,23 @@ async def list_sdk_executions(
     validated values here.
 
     Raises:
-        SdkExecutionReadError: 422 for a malformed scope value.
+        SdkExecutionReadError: 422 for a malformed scope or execution status.
     """
     from src.models import Execution as ExecutionModel
+    from src.models.enums import ExecutionStatus
+
+    statuses: list[ExecutionStatus] | None = None
+    if status_filter:
+        try:
+            statuses = [
+                ExecutionStatus(value.strip())
+                for value in status_filter.split(",")
+                if value.strip()
+            ]
+        except ValueError:
+            raise SdkExecutionReadError(
+                422, "status contains an invalid execution status"
+            ) from None
 
     scope_filter = None
     if scope:
@@ -574,8 +588,7 @@ async def list_sdk_executions(
     elif workflow_name:
         query = query.where(ExecutionModel.workflow_name == workflow_name)
 
-    if status_filter:
-        statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
+    if statuses is not None:
         query = query.where(ExecutionModel.status.in_(statuses))
 
     if start_date:

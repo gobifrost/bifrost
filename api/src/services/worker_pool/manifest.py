@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 WORKER_LABEL = "bifrost-pool-worker"
 INCARNATION_LABEL = "bifrost.gobifrost.com/worker-incarnation"
+# The cluster autoscaler may evict a worker only while the controller marks it
+# idle (``WorkerPoolController._mark_evictable``); a new worker starts unmarked.
+SAFE_TO_EVICT = "cluster-autoscaler.kubernetes.io/safe-to-evict"
 # Finished worker Jobs are history only; the incarnation row keeps the record.
 WORKER_JOB_TTL_SECONDS = 600
 # Backoff between attempts to read the Job identity when the Kubernetes API
@@ -172,7 +175,7 @@ def build_worker_job_manifest(
             "completions": 1,
             "ttlSecondsAfterFinished": WORKER_JOB_TTL_SECONDS,
             "template": {
-                "metadata": {"labels": labels},
+                "metadata": {"labels": labels, "annotations": {SAFE_TO_EVICT: "false"}},
                 "spec": {
                     "restartPolicy": "Never",
                     "serviceAccountName": service_account,

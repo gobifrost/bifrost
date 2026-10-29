@@ -934,3 +934,46 @@ async def test_batch_list_embedding_matches_single_lookups(db_session):
         {},
         {},
     )
+
+
+@pytest.mark.asyncio
+async def test_every_change_that_makes_a_service_claimable_wakes_executors(
+    db_session, monkeypatch
+):
+    """Creating, enabling, starting and restarting a service wake idle
+    executors once committed, so it launches without waiting for a sweep."""
+    from unittest.mock import Mock
+
+    wake = Mock()
+    monkeypatch.setattr(service_lifecycle, "wake_pool_workers_after_commit", wake)
+
+    definition, _ = await _ensure(db_session)
+    await service_lifecycle.set_enabled(db_session, definition, False)
+    assert wake.call_count == 1  # created; disabling claims nothing
+
+    await service_lifecycle.set_enabled(db_session, definition, True)
+    await service_lifecycle.start_service(db_session, definition)
+    await service_lifecycle.restart_service(db_session, definition)
+    assert wake.call_count == 4
+    wake.assert_called_with(db_session)
+
+
+@pytest.mark.asyncio
+async def test_next_restart_is_the_earliest_backed_off_restart(db_session):
+    """Only a later restart a claim loop would launch counts."""
+    now = datetime.now(timezone.utc) + timedelta(days=100)
+    soon, later = now + timedelta(minutes=5), now + timedelta(hours=1)
+    for restart_at, overrides in (
+        (later, {}),
+        (soon, {"enabled": False}),
+        (soon, {"blocked_reason": "crash_loop"}),
+        (soon, {"desired_state": "stopped"}),
+    ):
+        definition, _ = await _ensure(db_session)
+        definition.restart_eligible_at = restart_at
+        for key, value in overrides.items():
+            setattr(definition, key, value)
+    await db_session.flush()
+
+    assert await service_lifecycle.next_restart_at(db_session, now=now) == later
+    assert await service_lifecycle.next_restart_at(db_session, now=later) is None

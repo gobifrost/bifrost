@@ -80,3 +80,9 @@ class ProviderCacheWriteRequest(BaseModel):
 
 class ProviderCacheWriteResponse(BaseModel):
     expires_at: datetime | None = None
+
+
+class DeviceAuthorizeRequest(BaseModel):
+    """The code for a CLI device login being approved or denied."""
+
+    user_code: str

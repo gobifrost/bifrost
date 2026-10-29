@@ -225,6 +225,29 @@ async def test_callback_does_not_start_without_a_current_lease(
 
 
 @pytest.mark.asyncio
+async def test_a_finished_run_records_only_its_own_next_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published = AsyncMock()
+    monkeypatch.setattr(control_module, "publish_task_states", published)
+    monkeypatch.setattr(control_module, "start_scheduler_run", AsyncMock())
+    monkeypatch.setattr(control_module, "finish_scheduler_run", AsyncMock())
+    control = _control(FakeLease())
+    await control._start_leader_services()
+    try:
+        assert len(published.await_args.args[0]) == len(SCHEDULED_TASKS)
+        control.lease.is_leader = True  # type: ignore[attr-defined]
+
+        await control._run_scheduled_task("schedule_processor", AsyncMock())
+
+        [(definition, next_run_at)] = published.await_args.args[0]
+        assert definition.task_id == "schedule_processor"
+        assert next_run_at == control._scheduler.get_job("schedule_processor").next_run_time  # type: ignore[union-attr]
+    finally:
+        await control._stop_leader_services()
+
+
+@pytest.mark.asyncio
 async def test_recurring_callbacks_are_not_throttled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

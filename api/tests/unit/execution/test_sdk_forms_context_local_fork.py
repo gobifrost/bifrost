@@ -80,6 +80,7 @@ class TestForkedFormsContextTransport:
         from src.core.principal import UserPrincipal
         from src.core.security import mint_engine_token
         from src.models.enums import ExecutionStatus, FormAccessLevel
+        from src.models.orm.audit import AuditLog
         from src.models.orm.executions import Execution
         from src.models.orm.forms import Form as FormModel
         from src.models.orm.organizations import Organization as OrganizationModel
@@ -298,7 +299,18 @@ class TestForkedFormsContextTransport:
             await server.stop()
             async with async_session_factory() as session:
                 await session.execute(
+                    delete(AuditLog).where(AuditLog.execution_id == engine_execution_id)
+                )
+                await session.execute(
+                    delete(FormModel).where(
+                        FormModel.name.in_([global_name, org_name, inactive_name])
+                    )
+                )
+                await session.execute(
                     delete(Execution).where(Execution.id == engine_execution_id)
                 )
                 await session.execute(delete(User).where(User.id == runtime_user.id))
+                await session.execute(
+                    delete(OrganizationModel).where(OrganizationModel.id == org.id)
+                )
                 await session.commit()

@@ -1,4 +1,4 @@
-"""The API-resident executor owns agent and summary admission only."""
+"""The API-resident executor owns summary admission only; agent runs run on workers."""
 
 from __future__ import annotations
 
@@ -18,11 +18,10 @@ def _admission(*, budget: int = 256 * MIB) -> Admission:
     )
 
 
-def test_api_agent_executor_advertises_only_api_hosted_handlers() -> None:
+def test_api_agent_executor_advertises_only_summaries() -> None:
     executor = ApiAgentExecutor(_admission())
 
     assert executor._claimable() == (
-        ("agent.run", 1),
         ("agent.summarize", 1),
         ("agent.summarize_backfill", 1),
     )

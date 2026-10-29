@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bifrost.cli import _WatchChangeHandler, _WatchState
+from bifrost.cli import _WatchChangeHandler, _WatchState, _process_watch_batch
 
 
 def test_read_only_events_are_ignored():
@@ -84,6 +84,35 @@ def test_moved_event_does_not_delete_source():
     assert src not in pending_deletes
     assert src not in pending_changes
     assert dest in pending_changes
+
+
+@pytest.mark.asyncio
+async def test_invalid_python_watch_change_does_not_delete_other_file(tmp_path):
+    changed = tmp_path / "changed.py"
+    changed.write_text(
+        "from bifrost import workflow\n@workflow(timeout_seconds=1)\ndef run(): pass\n"
+    )
+    deleted = tmp_path / "deleted.txt"
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            raise AssertionError("invalid source must stop this watch batch before mutations")
+
+    client = Client()
+    await _process_watch_batch(
+        client,
+        {str(changed)},
+        {str(deleted)},
+        tmp_path,
+        "",
+        _WatchState(tmp_path),
+    )
+
+    assert client.calls == []
 
 
 # =============================================================================

@@ -8994,6 +8994,20 @@
     "reason": "Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook)."
   },
   {
+    "access_class": "personal",
+    "boundary": null,
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
+    "path": "/auth/device/deny",
+    "permission": null,
+    "reason": "User's own account/profile/security state."
+  },
+  {
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",

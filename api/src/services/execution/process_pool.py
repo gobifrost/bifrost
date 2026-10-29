@@ -70,6 +70,10 @@ _CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
 # that the dangerous-memory stop beats most growth to the kernel.
 MONITOR_INTERVAL_SECONDS = 0.25
 _ACTIVE_EXECUTION_REFRESH_SECONDS = 10 * 60
+# Managed Redis proxies close idle Pub/Sub connections after five minutes.
+# Listener loops call get_message() every second; redis-py emits and filters a
+# health PING before that deadline when this interval has elapsed.
+PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS = 60
 
 # Context fields that must never reach the diagnostic Redis copy of an
 # execution context. The child still receives these over its private work
@@ -475,6 +479,7 @@ class ProcessPoolManager:
             self._redis = redis.from_url(
                 settings.redis_url,
                 decode_responses=True,
+                health_check_interval=PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS,
             )
         return self._redis
 
@@ -1207,12 +1212,9 @@ class ProcessPoolManager:
         Runs every MONITOR_INTERVAL_SECONDS to:
         1. Check for timed-out executions and kill processes
         2. Check for crashed processes
-        3. Periodically clean stale queue entries (every 60s)
+        3. Sample resource pressure for running children
         """
-        import time as _time
-
         logger.info("Monitor loop started")
-        last_queue_cleanup = 0.0
 
         while not self._shutdown:
             try:
@@ -1236,15 +1238,6 @@ class ProcessPoolManager:
                 self._sample_resources()
                 await self._stop_largest_when_dangerous()
 
-                # Periodic stale queue cleanup
-                now = _time.monotonic()
-                if now - last_queue_cleanup > 60:
-                    last_queue_cleanup = now
-                    try:
-                        from src.services.execution.queue_tracker import cleanup_stale_entries
-                        await cleanup_stale_entries()
-                    except Exception as e:
-                        logger.warning(f"Queue cleanup error: {e}")
             except Exception as e:
                 logger.exception(f"Monitor loop error: {e}")
 

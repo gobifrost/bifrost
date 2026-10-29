@@ -12,9 +12,12 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from redis.asyncio import Redis
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.cache import get_redis
+from src.core.cache.keys import execution_log_retention_cursor_key, execution_logs_stream_key
 from src.models.enums import AgentAccessLevel, EventSourceType, ExecutionStatus
 from src.models.orm import (
     Agent,
@@ -38,6 +41,7 @@ from src.services.run_retention.deleter import (
     delete_event_batch,
     delete_workflow_run_batch,
     plan_run_retention,
+    reclaim_orphaned_execution_log_streams,
 )
 
 CUTOFF = datetime(2002, 1, 1, tzinfo=UTC)
@@ -377,3 +381,117 @@ async def test_plan_counts_without_writing(db_session, seeded):
     assert plan["oldest_agent_run"] <= datetime(2001, 1, 1, 12, 0, tzinfo=UTC).isoformat()
     assert plan["oldest_event"] <= datetime(2001, 1, 1, 12, 0, tzinfo=UTC).isoformat()
     await _assert_all_present(db_session, seeded)
+
+
+async def test_execution_stream_cleanup_follows_a_committed_retention_delete(
+    db_session, seeded, run_retention_lease,
+):
+    """Selected streams go away only with their committed execution rows."""
+    keys = {
+        "old_ok": execution_logs_stream_key(str(seeded.old_ok)),
+        "old_failed": execution_logs_stream_key(str(seeded.old_failed)),
+        "running": execution_logs_stream_key(str(seeded.old_running)),
+        "recent": execution_logs_stream_key(str(seeded.recent_ok)),
+    }
+    async with get_redis() as redis:
+        try:
+            for name, key in keys.items():
+                await redis.xadd(key, {"message": name})
+
+            deleted = await delete_workflow_run_batch(
+                cutoff=CUTOFF,
+                job_id=run_retention_lease.job_id,
+                lease_token=run_retention_lease.token,
+            )
+
+            assert deleted == 2
+            assert await _executions(db_session, seeded) == {
+                seeded.old_running, seeded.old_scheduled, seeded.recent_ok,
+            }
+            assert await redis.exists(keys["old_ok"], keys["old_failed"]) == 0
+            assert await redis.exists(keys["running"], keys["recent"]) == 2
+        finally:
+            await redis.delete(*keys.values())
+
+
+async def test_retention_rollback_keeps_selected_execution_stream(
+    db_session, seeded, run_retention_lease, monkeypatch,
+):
+    """A failed authoritative commit cannot trigger Redis stream deletion."""
+    key = execution_logs_stream_key(str(seeded.old_ok))
+
+    async def fail_commit(self):
+        raise RuntimeError("commit failed")
+
+    async with get_redis() as redis:
+        try:
+            await redis.xadd(key, {"message": "old"})
+            with monkeypatch.context() as patch:
+                patch.setattr(AsyncSession, "commit", fail_commit)
+                with pytest.raises(RuntimeError, match="commit failed"):
+                    await delete_workflow_run_batch(
+                        cutoff=CUTOFF,
+                        job_id=run_retention_lease.job_id,
+                        lease_token=run_retention_lease.token,
+                    )
+            assert seeded.old_ok in await _executions(db_session, seeded)
+            assert await redis.exists(key) == 1
+        finally:
+            await redis.delete(key)
+
+
+async def test_orphan_recovery_after_redis_cleanup_failure_keeps_retained_streams(
+    db_session, seeded, run_retention_lease, monkeypatch,
+):
+    """A missed post-commit deletion is reclaimed without touching extant rows."""
+    orphan_key = execution_logs_stream_key(str(seeded.old_ok))
+    retained_key = execution_logs_stream_key(str(seeded.recent_ok))
+    running_key = execution_logs_stream_key(str(seeded.old_running))
+    malformed_key = "bifrost:logs:not-a-uuid"
+    real_delete = Redis.delete
+
+    async def fail_orphan_cleanup(client, *keys):
+        if orphan_key in keys:
+            raise ConnectionError("redis cleanup unavailable")
+        return await real_delete(client, *keys)
+
+    async with get_redis() as redis:
+        try:
+            await redis.xadd(orphan_key, {"message": "old"})
+            await redis.xadd(retained_key, {"message": "retained"})
+            await redis.xadd(running_key, {"message": "running"})
+            await redis.xadd(malformed_key, {"message": "malformed"})
+            await redis.delete(execution_log_retention_cursor_key())
+
+            with monkeypatch.context() as patch:
+                patch.setattr(Redis, "delete", fail_orphan_cleanup)
+                assert await delete_workflow_run_batch(
+                    cutoff=CUTOFF,
+                    job_id=run_retention_lease.job_id,
+                    lease_token=run_retention_lease.token,
+                ) == 2
+
+            assert await redis.exists(orphan_key) == 1
+            # Each pass scans one bounded step from the saved cursor, so a
+            # full cycle (the cursor back at 0) reaches every key, however many
+            # Redis holds. Other tests' leftovers can be orphans too.
+            orphaned = 0
+            while True:
+                result = await reclaim_orphaned_execution_log_streams(limit=100)
+                orphaned += result["orphaned"]
+                if int(await redis.get(execution_log_retention_cursor_key()) or 0) == 0:
+                    break
+
+            assert orphaned >= 1
+            assert await redis.exists(orphan_key) == 0
+            # Both existing executions retain their live Redis identity. The
+            # recent row models Keep Forever; the running row has a live reader.
+            assert await redis.exists(retained_key, running_key, malformed_key) == 3
+        finally:
+            await redis.delete(
+                orphan_key,
+                retained_key,
+                running_key,
+                malformed_key,
+                execution_log_retention_cursor_key(),
+            )

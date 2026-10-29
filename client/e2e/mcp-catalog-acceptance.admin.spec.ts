@@ -55,10 +55,14 @@ const SERVER_NAME = `E2E MCP Catalog ${UNIQUE}`;
 const FIXTURE_ORIGIN = "http://scheduler-fixtures:8080";
 const FIXTURE_SCOPE = "fixture.read";
 const FIXTURE_TOOL_NAME = "scheduler_fixture_echo";
+// The catalog stores the vendor's tool descriptor, not the bare input schema.
 const FIXTURE_TOOL_SCHEMA = {
-	type: "object",
-	properties: { message: { type: "string" } },
-	required: ["message"],
+	description: "Echoes deterministic scheduler fixture input.",
+	inputSchema: {
+		type: "object",
+		properties: { message: { type: "string" } },
+		required: ["message"],
+	},
 };
 
 function readCredentials(): Credentials {

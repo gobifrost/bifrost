@@ -49,7 +49,7 @@ def changes(monkeypatch):  # type: ignore[no-untyped-def]
         return [c for c in recorded if c.id > generation]
 
     monkeypatch.setattr(pool_main, "package_changes_after", after)
-    monkeypatch.setattr(pool_main, "HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 0.01)
     return recorded
 
 
@@ -87,3 +87,36 @@ async def test_an_unexpected_error_retries_the_same_change(changes) -> None:  # 
     await _run_loop(worker, lambda: worker.package_generation == 5)
 
     assert [m["run_id"] for m in consumer.applied] == ["r4", "r5"]
+
+
+async def test_an_idle_package_loop_reads_again_on_a_wake_up(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Between changes the loop does not poll; a recorded change's wake-up
+    starts the next read."""
+    reads: list[int] = []
+
+    async def after(generation: int) -> list[SimpleNamespace]:
+        reads.append(generation)
+        return []
+
+    async def until(count: int) -> None:
+        for _ in range(200):
+            if len(reads) == count:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"expected {count} reads, saw {len(reads)}")
+
+    monkeypatch.setattr(pool_main, "package_changes_after", after)
+    monkeypatch.setattr(pool_main, "SWEEP_SECONDS", 30)
+    worker = PoolWorker()
+    worker._package_consumer = _Consumer()  # type: ignore[assignment]
+    task = asyncio.create_task(worker._package_loop())
+    try:
+        await until(1)
+        await asyncio.sleep(0.1)
+        assert len(reads) == 1  # nothing read while idle
+
+        worker._package_wake.set()
+        await until(2)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

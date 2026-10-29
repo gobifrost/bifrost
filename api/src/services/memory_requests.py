@@ -26,9 +26,12 @@ MIB = 1024 * 1024
 DEFAULT_WORKFLOW_REQUEST_BYTES = 64 * MIB
 # Added to a workflow's learned peak growth.
 WORKFLOW_REQUEST_MARGIN_BYTES = 16 * MIB
-# Agent runs and summaries run in the executor's own process; their heavy
-# work (tool calls) is workflow runs, admitted on their own.
-AGENT_RUN_REQUEST_BYTES = 32 * MIB
+# An agent run adds what its child forked from the warm agent template
+# allocates (the template's shared pages are not counted). Its heavy work
+# (tool calls) is workflow runs, admitted on their own. A summary runs in
+# the API process. Measured peak child private memory was 62-85 MiB
+# (docs/benchmarks/2026-10-28-agent-runs-on-workers.md).
+AGENT_RUN_REQUEST_BYTES = 96 * MIB
 SUMMARY_REQUEST_BYTES = 16 * MIB
 # Each smaller run moves the learned peak this fraction of the way down.
 LEARNED_DECAY = 10

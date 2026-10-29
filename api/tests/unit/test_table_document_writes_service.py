@@ -206,7 +206,7 @@ async def test_insert_legacy_upsert_merges_and_publishes_update(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        async def get(self, doc_id):
+        async def get_for_update(self, doc_id):
             assert doc_id == "doc-1"
             return existing
 
@@ -358,7 +358,7 @@ async def test_update_missing_document_404s(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        async def get(self, doc_id):
+        async def get_for_update(self, doc_id):
             return None
 
     monkeypatch.setattr(writes, "DocumentRepository", FakeRepo)
@@ -371,7 +371,9 @@ async def test_update_missing_document_404s(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_update_policy_deny_audits_commits_and_403s(monkeypatch):
+@pytest.mark.parametrize("legacy_upsert", [False, True], ids=["partial", "legacy-upsert"])
+@pytest.mark.parametrize("deny_post_image", [False, True], ids=["deny-pre", "deny-post"])
+async def test_update_policy_deny_audits_commits_and_403s(monkeypatch, legacy_upsert, deny_post_image):
     table = _table()
     user = _user()
     db = _FakeDb()
@@ -381,7 +383,7 @@ async def test_update_policy_deny_audits_commits_and_403s(monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        async def get(self, doc_id):
+        async def get_for_update(self, doc_id):
             return existing
 
         async def update(self, *args, **kwargs):
@@ -392,22 +394,36 @@ async def test_update_policy_deny_audits_commits_and_403s(monkeypatch):
         writes, "load_resolved_table_policies", AsyncMock(return_value=TablePolicies())
     )
     monkeypatch.setattr(writes, "preresolve_for_policies", AsyncMock())
-    monkeypatch.setattr(writes, "evaluate_action", lambda *args: False)
+    evaluated = []
+
+    def evaluate(action, policies, row, user):
+        evaluated.append(dict(row))
+        return deny_post_image and "a" not in row
+
+    monkeypatch.setattr(writes, "evaluate_action", evaluate)
     emit = AsyncMock()
     monkeypatch.setattr(writes, "emit_table_policy_deny", emit)
     publish = AsyncMock()
     monkeypatch.setattr(writes, "publish_document_change", publish)
 
     with pytest.raises(writes.TableWriteForbidden) as exc_info:
-        await writes.update_table_document(
-            db, table, user, doc_id="doc-1", data={"a": 1}, updated_by=None
-        )
+        if legacy_upsert:
+            await writes.insert_table_document(
+                db, table, user, doc_id="doc-1", data={"a": 1},
+                created_by=None, updated_by=None, upsert=True,
+            )
+        else:
+            await writes.update_table_document(
+                db, table, user, doc_id="doc-1", data={"a": 1}, updated_by=None
+            )
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Access denied"
     emit.assert_awaited_once()
     assert db.calls == ["commit"]
     publish.assert_not_awaited()
+    assert len(evaluated) == (2 if deny_post_image else 1)
+    assert existing.data == {"status": "active"}
 
 
 @pytest.mark.asyncio

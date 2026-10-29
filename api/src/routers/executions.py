@@ -221,7 +221,7 @@ class ExecutionReadAdapter:
         logs_query = (
             select(ExecutionLogORM)
             .where(ExecutionLogORM.execution_id == execution_id)
-            .order_by(ExecutionLogORM.sequence)
+            .order_by(ExecutionLogORM.sequence, ExecutionLogORM.id)
         )
         if not access.diagnostics:
             logs_query = logs_query.where(ExecutionLogORM.level.notin_(["DEBUG", "TRACEBACK"]))
@@ -281,6 +281,7 @@ class ExecutionReadAdapter:
             select(ExecutionModel)
             .options(selectinload(ExecutionModel.organization), selectinload(ExecutionModel.executed_by_user))
             .where(ExecutionModel.id == execution_id)
+            .with_for_update()
         )
         execution = result.scalar_one_or_none()
 
@@ -309,9 +310,20 @@ class ExecutionReadAdapter:
         execution.status = new_status  # type: ignore[assignment]
 
         await self.db.flush()
-        await self.db.refresh(execution)
+        # Persist the status before readers receive a canonical queue snapshot.
+        await self.db.commit()
 
-        # Publish update
+        if new_status == ExecutionStatus.CANCELLED.value:
+            from src.services.execution.queue_tracker import publish_queue_positions
+
+            try:
+                await publish_queue_positions()
+            except Exception:
+                logger.warning(
+                    "Could not publish queue positions after cancellation",
+                    exc_info=True,
+                )
+
         await publish_execution_update(
             execution_id=execution_id,
             status=new_status,

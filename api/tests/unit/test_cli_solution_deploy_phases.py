@@ -19,10 +19,12 @@ from __future__ import annotations
 import pathlib
 from unittest import mock
 
+import pytest
 import yaml
 from click.testing import CliRunner
 
 from bifrost.commands.solution import solution_group
+from bifrost.definition_validation import DefinitionValidationError
 from bifrost.solution_descriptor import DESCRIPTOR_FILENAME
 
 INSTALL_ID = "33333333-3333-3333-3333-333333333333"
@@ -170,6 +172,38 @@ def test_deploy_reports_when_nothing_to_vendor(tmp_path) -> None:
     assert result.exit_code == 0, result.output
     # The vendoring announcement always resolves to a result line, even at zero.
     assert "no shared dependencies to vendor." in result.output
+
+
+def test_deploy_rejects_invalid_vendored_source_before_prebuild_or_upload(tmp_path) -> None:
+    captured: dict = {}
+
+    async def invalid_vendor(_python_files, _read_source):
+        return {
+            "shared/rejected.py": (
+                "from bifrost import workflow\n"
+                "@workflow(timeout_seconds=30)\n"
+                "def rejected(): pass\n"
+            ),
+        }
+
+    with (
+        mock.patch(
+            "bifrost.client.BifrostClient.get_instance",
+            return_value=_client(captured),
+        ),
+        mock.patch(
+            "bifrost.solution_vendoring.vendor_shared_deps",
+            side_effect=invalid_vendor,
+        ),
+        mock.patch("bifrost.commands.solution._prebuild_apps") as prebuild,
+    ):
+        with pytest.raises(DefinitionValidationError, match="shared/rejected.py.*timeout_seconds"):
+            CliRunner().invoke(
+                solution_group, ["deploy", str(_scaffold(tmp_path))], catch_exceptions=False
+            )
+
+    prebuild.assert_not_called()
+    assert not any(path.endswith("/deploy") for path, _kwargs in captured.get("posts", []))
 
 
 def test_deploy_uploads_workspace_zip_not_json_bundle(tmp_path) -> None:

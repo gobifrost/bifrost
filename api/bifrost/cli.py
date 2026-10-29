@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 from uuid import uuid4
 
 import httpx
+
+from bifrost._device_auth import device_login_prompt
 from packaging.version import InvalidVersion, Version
 
 # Import credentials module directly (it's standalone)
@@ -371,9 +373,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             deadline = time.monotonic() + data["expires_in"]
 
             # Step 2: Display instructions
-            full_url = f"{api_url}{verification_url}"
-            print(f"\nOpening browser to {full_url}")
-            print(f"Enter this code: {user_code}\n")
+            full_url = device_login_prompt(api_url, verification_url, user_code)
 
             # Step 3: Open browser
             if auto_open:
@@ -2475,10 +2475,6 @@ async def _process_watch_batch(
     watch_app: "WatchApp | None" = None,
 ) -> None:
     """Process a batch of file changes and deletions."""
-    deleted_count, deleted_rels = await _process_watch_deletes(
-        client, deletes, base_path, repo_prefix, state,
-    )
-
     # Build files dict from changed paths. Observer events fire for our own
     # pull writes, too — gate each file on the known-server-hash cache so we
     # don't round-trip content the server already has.
@@ -2505,6 +2501,18 @@ async def _process_watch_batch(
                 push_hashes[repo_path] = file_hash
             except OSError:
                 continue
+
+    validation_error = _validate_python_push_files(push_files)
+    if validation_error:
+        if watch_app:
+            watch_app.log_error(validation_error)
+        else:
+            print(f"Error: {validation_error}", file=sys.stderr, flush=True)
+        return
+
+    deleted_count, deleted_rels = await _process_watch_deletes(
+        client, deletes, base_path, repo_prefix, state,
+    )
 
     ts = datetime.now().strftime('%H:%M:%S')
     if not watch_app:
@@ -3171,6 +3179,24 @@ def _collect_push_files(
     return files, skipped
 
 
+def _validate_python_push_files(files: dict[str, str]) -> str | None:
+    """Validate every selected Python source before this client writes any file."""
+    from bifrost.decorator_validation import validate_python_decorators
+    from bifrost.definition_validation import DefinitionValidationError
+
+    for path, encoded in sorted(files.items()):
+        if not path.endswith(".py"):
+            continue
+        try:
+            source = base64.b64decode(encoded).decode("utf-8")
+            validate_python_decorators(source, path=path)
+        except UnicodeDecodeError:
+            return f"{path}: Python source must be valid UTF-8."
+        except DefinitionValidationError as error:
+            return str(error)
+    return None
+
+
 async def _sync_files(
     local_path: str,
     repo_prefix: str = "",
@@ -3453,6 +3479,16 @@ async def _sync_files(
     if not (result.push or result.pull or result.delete):
         print("Nothing selected.")
         return 0
+
+    selected_sources = {
+        item["repo_path"]: item["_content"]
+        for item in result.push
+        if item["repo_path"].endswith(".py")
+    }
+    validation_error = _validate_python_push_files(selected_sources)
+    if validation_error:
+        print(f"Error: {validation_error}", file=sys.stderr)
+        return 1
 
     progress_items: list[tuple[str, dict[str, Any]]] = []
     for item in result.push:

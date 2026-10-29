@@ -196,6 +196,34 @@ async def test_enqueue_workflow_execution_binds_lineage_to_the_execution():
     }
 
 
+@pytest.mark.asyncio
+async def test_enqueue_workflow_execution_allocates_a_fresh_uuid_when_unset():
+    from src.services.execution.async_executor import enqueue_workflow_execution
+
+    context = _context()
+    context.event = None
+    with patch(
+        "src.services.execution.async_executor._publish_pending", new=AsyncMock()
+    ) as publish:
+        first = await enqueue_workflow_execution(
+            context=context,
+            workflow_id="wf",
+            parameters={},
+            lineage=None,
+        )
+        second = await enqueue_workflow_execution(
+            context=context,
+            workflow_id="wf",
+            parameters={},
+            lineage=None,
+        )
+
+    UUID(first)
+    UUID(second)
+    assert first != second
+    assert [call.kwargs["execution_id"] for call in publish.await_args_list] == [first, second]
+
+
 def test_sync_callers_never_wait_forever() -> None:
     from src.services.execution.service import (
         SYNC_RESULT_MARGIN_SECONDS,

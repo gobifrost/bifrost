@@ -5,7 +5,6 @@ Single source of truth for all code execution (workflows, scripts, data provider
 
 import asyncio
 import copy
-import dis
 import inspect
 import json
 import logging
@@ -18,7 +17,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Iterator, get_type_hints, get_origin, get_args, Union
+from types import CodeType
+from typing import Any, Callable, Iterator, Mapping, get_type_hints, get_origin, get_args, Union
 
 from pydantic import BaseModel
 
@@ -183,6 +183,52 @@ def _human_size(num_bytes: int) -> str:
             return f"{num_bytes:.1f}{unit}" if unit != "B" else f"{num_bytes}{unit}"
         num_bytes /= 1024  # type: ignore[assignment]
     return f"{num_bytes:.1f}TB"
+
+
+# Attribute naming the code object whose locals are captured when it returns,
+# for callables that run user code in an inner function (inline scripts).
+_CAPTURE_CODE_ATTR = "_bifrost_capture_code"
+
+# sys.monitoring tool ids CPython leaves unassigned (0, 1, 2 and 5 are the
+# conventional debugger, coverage, profiler and optimizer ids).
+_CAPTURE_TOOL_IDS = (3, 4)
+
+
+@contextmanager
+def _capture_locals_on_return(
+    code: CodeType, capture: Callable[[Mapping[str, Any]], None]
+) -> Iterator[None]:
+    """Call ``capture`` with the frame's locals whenever ``code`` returns.
+
+    A PEP 669 ``PY_RETURN`` event scoped to ``code`` alone fires once per
+    return; no other code is instrumented and no per-line or per-call Python
+    callback runs. An await suspension raises ``PY_YIELD`` and an exception
+    raises ``PY_UNWIND``, so neither reaches ``capture``. ``sys.settrace`` is
+    left alone, so an attached debugger keeps its tracer.
+    """
+    monitoring = sys.monitoring
+    tool_id = next(
+        (t for t in _CAPTURE_TOOL_IDS if monitoring.get_tool(t) is None), None
+    )
+    if tool_id is None:
+        raise RuntimeError(
+            "Workflow variable capture could not get a sys.monitoring tool id: "
+            f"ids {_CAPTURE_TOOL_IDS} are all in use"
+        )
+
+    def on_return(returning_code: CodeType, instruction_offset: int, retval: object) -> None:
+        # The returning frame is the caller of this callback.
+        capture(sys._getframe(1).f_locals)
+
+    monitoring.use_tool_id(tool_id, "bifrost-variable-capture")
+    try:
+        monitoring.register_callback(tool_id, monitoring.events.PY_RETURN, on_return)
+        monitoring.set_local_events(tool_id, code, monitoring.events.PY_RETURN)
+        yield
+    finally:
+        monitoring.set_local_events(tool_id, code, monitoring.events.NO_EVENTS)
+        monitoring.register_callback(tool_id, monitoring.events.PY_RETURN, None)
+        monitoring.free_tool_id(tool_id)
 
 
 # Import bifrost context management for SDK support
@@ -844,7 +890,7 @@ async def execute_service(
 
     Service-mode semantics (vs one-shot workflows):
     - the service coroutine runs indefinitely until it returns, raises, or
-      a stop is requested — no timeout kill, no ``sys.settrace`` variable
+      a stop is requested — no timeout kill, no variable
       capture, no completion Postgres flush;
     - stop arrives cooperatively: SIGTERM/SIGINT sets the supervision event
       (installed on the loop, overriding the pool's loop-top flag handler)
@@ -1192,7 +1238,7 @@ def _script_to_callable(code: str, name: str):
     streaming.
 
     The script code is wrapped in an async main() function to enable:
-    - Proper variable capture via sys.settrace()
+    - Variable capture when main() returns
     - Function-level logging that can be filtered
     - Support for both sync and async code
 
@@ -1209,8 +1255,8 @@ def _script_to_callable(code: str, name: str):
     # Decode base64 code
     script_code = base64.b64decode(code).decode('utf-8')
 
-    # Wrap script code in an async main() function
-    # This allows sys.settrace() to capture variables properly
+    # Wrap script code in an async main() function whose locals are captured
+    # when it returns
     # Add return statement to capture 'result' variable if set
     wrapped_code = f"""async def main():
 {textwrap.indent(script_code, '    ')}
@@ -1219,13 +1265,17 @@ def _script_to_callable(code: str, name: str):
 
     # Compile wrapped script
     compiled_code = compile(wrapped_code, f'<script:{name}>', 'exec')
+    main_code = next(
+        const for const in compiled_code.co_consts
+        if isinstance(const, CodeType) and const.co_name == 'main'
+    )
 
     async def script_wrapper(context: ExecutionContext, **parameters):
         """
         Async wrapper that executes the script code.
 
         The script code runs inside an async main() function, allowing:
-        - sys.settrace() to capture variables from main's frame
+        - variable capture from main's frame when it returns
         - await to work in user scripts
         - Proper logging with script-specific logger
         """
@@ -1297,9 +1347,10 @@ def _script_to_callable(code: str, name: str):
             # Clear exec namespace to release references to context, params, user objects
             exec_globals.clear()
 
-    # Set function metadata for trace filtering
+    # Set function metadata for logging and error messages
     script_wrapper.__name__ = name
     script_wrapper.__module__ = f'<script:{name}>'
+    setattr(script_wrapper, _CAPTURE_CODE_ATTR, main_code)
 
     return script_wrapper
 
@@ -1312,10 +1363,11 @@ async def _execute_workflow_with_trace(
     broadcaster: Any = None
 ) -> tuple[Any, dict[str, Any], list[str]]:
     """
-    Execute a workflow function with variable capture using sys.settrace().
+    Execute a workflow function, capturing its local variables.
 
     This is the same approach used for scripts, ensuring consistency.
-    Captures all local variables from the function as it executes.
+    Captures the function's local variables when it returns, or from the
+    traceback when it raises.
     Streams logs in real-time via SignalR if broadcaster is provided.
 
     Args:
@@ -1495,38 +1547,11 @@ async def _execute_workflow_with_trace(
 
     exception_to_raise = None
 
-    # A coroutine emits a trace "return" whenever an await suspends it, and
-    # normal await completion can emit a StopIteration "exception". Capturing
-    # locals at either point repeatedly serializes large SDK request values.
-    # The outer exception handler captures locals from the traceback on real
-    # failures, so this trace only needs the final return instruction.
-    def trace_func(frame, event, arg):
-        # Trace the workflow function OR script's main() function
-        # Scripts wrap their code in an async main() function
-        if frame.f_code.co_name not in (func_name, 'main'):
-            return None
-
-        if (
-            event == 'return'
-            and frame.f_lasti >= 0
-            and dis.opname[frame.f_code.co_code[frame.f_lasti]]
-            in ('RETURN_VALUE', 'RETURN_CONST')
-        ):
-            capture_variables_from_locals(frame.f_locals)
-
-        return trace_func
-
-    # Build trace function chain (with existing trace if present, e.g., debugpy)
-    existing_trace = sys.gettrace()
-
-    def chained_trace_func(frame, event, arg):
-        # Call our trace function first
-        trace_func(frame, event, arg)
-
-        # Then call the existing trace function (e.g., debugpy)
-        if existing_trace:
-            return existing_trace(frame, event, arg)
-        return chained_trace_func
+    # Successful runs capture locals when the workflow (or a script's main())
+    # returns. The outer exception handler captures them from the traceback on
+    # failures. Unwrap functools.wraps decorators so the user's function, not
+    # a wrapper such as a retry decorator, is the one observed.
+    capture_code = getattr(func, _CAPTURE_CODE_ATTR, None) or inspect.unwrap(func).__code__
 
     try:
         # Inspect function signature to determine if it expects context parameter
@@ -1590,14 +1615,11 @@ async def _execute_workflow_with_trace(
         if BIFROST_CONTEXT_AVAILABLE:
             set_execution_context(context)
 
-        # Set up trace function for variable capture
-        sys.settrace(chained_trace_func if existing_trace else trace_func)
         try:
-            # Run the workflow directly - isolation is provided by subprocess
-            result = await _run_workflow_async()
+            with _capture_locals_on_return(capture_code, capture_variables_from_locals):
+                # Run the workflow directly - isolation is provided by subprocess
+                result = await _run_workflow_async()
         finally:
-            # Clear trace function
-            sys.settrace(None)
             # Clear context
             if BIFROST_CONTEXT_AVAILABLE:
                 clear_execution_context()
@@ -1661,7 +1683,6 @@ async def _execute_workflow_with_trace(
         # has already been formatted and logged above, so the chain is no longer needed.
         e.__traceback__ = None
     finally:
-        # Note: trace function cleanup is handled in _run_workflow_in_thread
         # Clean up the logging handler
         root_logger.removeHandler(handler)
         logging_scope.close()

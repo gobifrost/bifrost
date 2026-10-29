@@ -23,7 +23,11 @@ from sqlalchemy import func, select, text
 
 from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
-from src.services.worker_pool.recovery import announce_ended_runs, end_runs_of_lost_worker
+from src.services.worker_pool.recovery import (
+    LostRuns,
+    announce_lost_runs,
+    end_runs_of_lost_worker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +82,7 @@ def silent_executor():  # type: ignore[no-untyped-def]
 async def end_silent_static_executors() -> list[UUID]:
     """Mark silent static executors lost and end their runs; return the
     workflow runs ended. Safe on every control replica (SKIP LOCKED)."""
-    ended: list[UUID] = []
+    ended = LostRuns()
     async with get_db_context() as db:
         workers = (
             await db.scalars(
@@ -102,8 +106,8 @@ async def end_silent_static_executors() -> list[UUID]:
             await db.flush()
             ended.extend(await end_runs_of_lost_worker(db, worker.id))
         await db.commit()
-    await announce_ended_runs(ended)
-    return ended
+    await announce_lost_runs(ended)
+    return ended.workflow_runs
 
 
 __all__ = [

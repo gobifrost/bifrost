@@ -14,11 +14,13 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.cache.redis_client import get_redis
+from src.core.database import get_db_context
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.execution_workers import ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.memory_requests import AGENT_RUN_REQUEST_BYTES
 from src.services.work_dispatch import hand_off, stage_dispatch
@@ -74,6 +76,30 @@ async def fail_unclaimed_agent_run(db: AsyncSession, run_id: UUID, reason: str) 
     )
 
 
+async def release_agent_run(*, worker_id: UUID, run_id: UUID, dispatch_id: UUID) -> None:
+    """Hand a claimed run back before its child started: another worker takes it.
+
+    For a launcher that refused the fork (memory rose after the claim). The
+    dispatch keeps its place in line; the claim record goes, as if this
+    worker had never taken it.
+    """
+    async with get_db_context() as db:
+        await db.execute(
+            update(WorkDispatch)
+            .where(WorkDispatch.id == dispatch_id, WorkDispatch.assigned_worker_id == worker_id)
+            .values(assigned_worker_id=None)
+        )
+        await db.execute(
+            delete(ExecutionWorkerClaim).where(
+                ExecutionWorkerClaim.worker_id == worker_id,
+                ExecutionWorkerClaim.family == FAMILY,
+                ExecutionWorkerClaim.subject_id == run_id,
+            )
+        )
+        await db.commit()
+    await hand_off()
+
+
 async def report_unclaimed_agent_run(
     run_id: UUID, payload: dict[str, Any], reason: str
 ) -> None:
@@ -101,6 +127,7 @@ __all__ = [
     "fail_unclaimed_agent_run",
     "hand_off_agent_run",
     "lock_waiting_agent_run",
+    "release_agent_run",
     "report_unclaimed_agent_run",
     "stage_agent_run",
 ]

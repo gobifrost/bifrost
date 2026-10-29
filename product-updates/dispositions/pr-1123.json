@@ -1,0 +1,15 @@
+{
+  "key": "pr:1123",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Execution logs survive completion races and database rollbacks.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1123",
+      "https://github.com/gobifrost/bifrost/issues/1113",
+      "Reviewed transaction and acknowledgement ordering, terminal recovery, retention, and this concise Fixed summary against the final implementation. The focused run passed 63 tests with no failures, errors, or skips; API lint and type checks passed."
+    ]
+  }
+}

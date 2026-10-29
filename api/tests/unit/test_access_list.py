@@ -1915,8 +1915,8 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 # function holds (``_elevated_site_nodes``), so a new elevated branch in a
 # registered function fails until it is counted and its replacement named.
 _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
-    # Every current site is a verified fact copy, role/reach derivation, or a
-    # post-gate internal load. None grants caller-selected authority.
+    # Every current site is a verified fact copy, role/reach derivation, a
+    # post-gate internal load, or the reviewed Platform Admin self-edit bridge.
     "bifrost.cli._run_direct": (2, "actor_facts"),
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "actor_facts"),
     "shared.claims.preresolve._load_source_policies": (1, "internal_authorized_resource"),
@@ -1974,6 +1974,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.access_check_policies.load_policy_principal": (1, "actor_facts"),
     "src.services.access_check_policies.load_policy_user_principal": (1, "actor_facts"),
     "src.services.authorization.callers.load_human_caller": (2, "current_role_derivation"),
+    "src.services.authorization.enforce.Caller.is_platform_admin": (1, "current_role_derivation"),
     "src.services.authorization.enforce.permitted_organizations": (1, "current_role_derivation"),
     "src.services.authorization.enforce.user_reach": (1, "current_role_derivation"),
     "src.services.authorization.evaluator.decide": (1, "current_role_derivation"),
@@ -2009,6 +2010,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.user_access_map._place_for": (1, "current_role_derivation"),
     "src.services.user_access_map.build_access_map": (2, "current_role_derivation"),
     "src.services.user_provisioning.ensure_user_provisioned": (4, "internal_authorized_resource"),
+    # Temporary Platform Admin self-edit bridge. The ordinary
+    # roleassignments.readwrite gate remains downstream; protected-account
+    # changes additionally require this non-everyday permission.
+    "src.services.user_role_assignments.replace_role_assignments": (1, "privilegedaccess.readwrite"),
     "src.services.user_role_assignments.authorization_summary": (2, "current_role_derivation"),
 }
 
@@ -2080,6 +2085,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
     "shared.browser_impersonation.validate_browser_impersonation": (2, "cutover"),
+    "shared.device_auth.decide_device_login": (2, "cutover"),  # Index GET and atomic decision EVAL.
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
     "shared.role_cache.get_user_roles": (1, "cutover"),
@@ -2101,7 +2107,6 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.requirements_cache.get_requirements": (2, "cutover"),
     "src.core.requirements_cache.get_requirements_sync": (1, "cutover"),
     "src.repositories.organizations.OrganizationRepository._get_from_cache": (1, "cutover"),
-    "src.routers.auth.authorize_device": (2, "cutover"),
     "src.routers.auth.exchange_device_token": (1, "cutover"),
     "src.routers.auth.has_live_refresh_token_jti": (1, "cutover"),
     "src.routers.oauth_sso.oauth_callback": (1, "cutover"),
@@ -2125,7 +2130,12 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
 # Redis reads whose value never reaches a principal, a token, an
 # authorization decision or code loading: (count, reason).
 _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
-    "bifrost._logging.flush_logs_to_postgres": (1, "Moves a finished run's log lines into the database."),
+    "bifrost._logging.recover_terminal_execution_logs": (
+        1, "Bounded maintenance scan for terminal execution-log streams.",
+    ),
+    "bifrost._logging.stage_logs_to_postgres": (
+        1, "Reads the Redis source stream before staging durable log rows.",
+    ),
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
@@ -2173,6 +2183,9 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1,
         "Audit-write marker: whether a report-only row is committed or still being inserted.",
     ),
+    "src.services.run_retention.deleter.reclaim_orphaned_execution_log_streams": (
+        1, "Bounded retention scan for execution-log streams without a durable row.",
+    ),
     "src.services.agent_run_step_streams.inspect_orphaned_agent_run_step_streams": (
         1, "Reads the newest step timestamp for an aggregate-only orphan preview; never grants access or loads code.",
     ),
@@ -2186,7 +2199,6 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         "Cancel flag; only stops a run.",
     ),
     "src.services.execution.install_progress.report_phase": (1, "Package install progress."),
-    "src.services.execution.queue_tracker.get_all_pending_executions": (1, "Queue positions for display."),
     "src.services.notification_service.NotificationService.find_admin_notification_by_title": (
         2,
         "De-duplicates an admin notification before creating one.",
@@ -2999,6 +3011,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/auth/impersonation/end"): "Own browser-session marker; revocation is restricted to its original authenticated operator.",
     ("POST", "/auth/revoke-all"): "Own sessions.",
     ("POST", "/auth/device/authorize"): "Own device-code authorization.",
+    ("POST", "/auth/device/deny"): "Own device-code denial.",
     ("POST", "/auth/mfa/totp/setup"): "Own MFA enrollment.",
     ("POST", "/auth/mfa/totp/verify"): "Own MFA enrollment.",
     ("DELETE", "/auth/mfa"): "Own MFA enrollment.",

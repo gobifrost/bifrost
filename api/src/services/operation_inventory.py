@@ -67,6 +67,14 @@ _DOCUMENTATION_MCP_TOOL_IDS = frozenset({"get_docs"})
 
 
 def _rest_disposition(method: str, path: str) -> dict[str, str]:
+    if method == "POST" and path in {"/auth/device/authorize", "/auth/device/deny"}:
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "Records the user's decision for CLI authentication; "
+                "owns no entity state."
+            ),
+        }
     if (method, path) == ("POST", "/auth/impersonate/{user_id}"):
         return {
             "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
