@@ -59,6 +59,20 @@ claims require matched repeated runs; each change's ledger entry names both
 run IDs, absolute and percentage differences, uncertainty, and any latency,
 recovery or headroom cost. Retain the earlier entries and raw artifacts.
 
+The workload set must also cover interactive integration actions with a
+representative workflow/shared-module import graph and no AI calls. Recent
+user-reported Halo portal timings are retained, with their unmatched-run limits,
+in the hosting ledger. For a new controlled baseline, correlate browser action
+through result render with admission, dispatch/queue, child startup, dependency
+loading, function body, external HTTP and result delivery. Report cold-template,
+first-use and repeated-action distributions. An engine-reported duration alone
+cannot stand in for user-visible latency. Evaluate stable-library preloading
+against memory/CPU and concurrency costs while preserving caller/tenant
+isolation, fresh authorization and token handling. Use a local fake integration
+for reproducible platform attribution; actual provider variability is separate.
+The implementation and measurement boundaries are in
+[the interactive integration benchmark plan](2026-10-30-interactive-integration-benchmark.md).
+
 The hosting model must distinguish measured consumption, hard allocation and
 safe operating capacity. Price compute/RAM, database/storage/IOPS, retained data,
 backups, object storage/requests/egress, amortized shared cluster infrastructure,

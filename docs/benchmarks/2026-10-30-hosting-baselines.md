@@ -181,6 +181,41 @@ sustainable-rate evidence.
 
 ## Required comparison and cost inputs
 
+### Reported interactive Halo workload — controlled baseline pending
+
+On 2026-10-30, the user supplied observations from recent portal runs. These
+are separate measurements from different runs, without raw traces, execution
+IDs or frozen runtime/source attribution in this ledger. Preserve them as a
+reported workload requirement; do not add the rows into a synthetic total or
+treat them as a reproduced current-runtime baseline.
+
+| Reported part | Observation |
+|---|---:|
+| Workflow and shared-dependency loading | 1.2–3.4 seconds across probes |
+| Authorization and client mapping | 0.24 seconds |
+| Fetch sites from Halo | 0.48 seconds |
+| Read existing main contacts | 2.13 seconds |
+| Browser submission, queue and result delivery | About 2 additional seconds in a different captured browser run |
+| Contact picker with dependencies already loaded | About 1 second |
+
+There were no AI calls. The requirement is a representative interactive
+integration workload alongside SDK-heavy throughput and agent mixes. Record
+complete action-to-render latency, admission/queue, child startup, workflow and
+shared-module loading, authorization/mapping, external HTTP and result delivery
+as correlated spans from the same request. Preserve cold-template, first-use
+and repeated-action distributions rather than calling every warm-worker child
+a warm-import run.
+
+Stable third-party import preloading is a candidate to measure, not an assumed
+improvement. Compare its latency, CPU per correct action, warm-template/private
+memory, child peak, copy-on-write behavior and safe worker concurrency. Do not
+cache caller context, credentials, connections or mutable tenant modules in a
+shared template. Preserve fresh authorization and integration-token behavior.
+Use synthetic data and the benchmark's local fake service for the reproducible
+case; a later authorized live validation measures actual Halo variability
+separately. No customer code, identifiers or credentials belong in the public
+benchmark fixture.
+
 Each accepted run records idle/settled per-container memory, worker process
 inventory, simultaneous loaded memory samples, CPU/throttling, latency and its
 uncertainty, successful throughput, failures, backlog, DB idle activity and
