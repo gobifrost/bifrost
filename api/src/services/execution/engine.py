@@ -317,11 +317,13 @@ class ExecutionRequest:
     # no variable tracing) and attempt-scoped log streaming.
     service: ServiceRunConfig | None = None
 
-    # The pre-minted engine token this process installed as its SDK
-    # credentials (see worker.py::_set_process_engine_credentials).
-    # Registered as a dynamic secret so _scrub_outputs redacts it from
-    # results, logs, variables and error messages.
+    # The pre-minted engine credentials this process installed for the SDK
+    # (see worker.py::_set_process_engine_credentials). Registered as dynamic
+    # secrets so _scrub_outputs redacts them from results, logs, variables
+    # and error messages; access tokens refreshed later are registered when
+    # the SDK installs them.
     engine_token: str | None = None
+    engine_refresh_token: str | None = None
 
 
 @dataclass
@@ -521,10 +523,11 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         artifact_workspace_id=request.artifact_workspace_id,
     )
 
-    # The engine token this process installed as its SDK credentials is a
-    # secret like any other: register it so _scrub_outputs redacts it from
-    # the result, logs, variables and error message.
+    # The engine credentials this process installed for the SDK are secrets
+    # like any other: register them so _scrub_outputs redacts them from the
+    # result, logs, variables and error message.
     context._register_dynamic_secret(request.engine_token)
+    context._register_dynamic_secret(request.engine_refresh_token)
 
     # Set bifrost SDK context if available
     if BIFROST_CONTEXT_AVAILABLE:

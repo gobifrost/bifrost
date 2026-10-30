@@ -158,11 +158,11 @@ class TestForkedExecutionReadsSocket:
         # every read operation.
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
         engine_execution_id = str(uuid4())
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=engine_execution_id,
             timeout_seconds=120,
         )

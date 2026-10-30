@@ -101,7 +101,7 @@ class TestForkedUsersSocket:
         self, async_session_factory, monkeypatch
     ):
         """A real forked child runs the users facade on the worker socket."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.orm.organizations import Organization as OrganizationModel
 
         stem = f"fork-users-{uuid4().hex[:8]}"
@@ -159,7 +159,7 @@ class TestForkedUsersSocket:
         )
 
         engine_execution_id = str(uuid4())
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=engine_execution_id,
             timeout_seconds=120,
         )
@@ -229,7 +229,7 @@ class TestForkedUsersSocket:
         self, async_session_factory, monkeypatch
     ):
         """The socket authority is the engine token, not the child's claims."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
 
         lines = [
             "from bifrost import users",
@@ -244,7 +244,7 @@ class TestForkedUsersSocket:
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
         engine_execution_id = str(uuid4())
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=engine_execution_id,
             timeout_seconds=120,
         )

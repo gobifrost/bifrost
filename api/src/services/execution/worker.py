@@ -35,7 +35,13 @@ logger = logging.getLogger(__name__)
 
 
 def _set_process_engine_credentials(context_data: dict[str, Any]) -> bool:
-    """Install the handed-down engine token for this one-shot process."""
+    """Install the handed-down engine credentials for this one-shot process.
+
+    A claims-format run receives an access token and a run refresh token; a
+    legacy-format run's refresh slot holds its access token, which
+    ``/auth/refresh`` refuses (it never needs refreshing: the API never
+    challenges a legacy token).
+    """
     engine_token = context_data.get("engine_token")
     if not engine_token:
         return False
@@ -44,12 +50,13 @@ def _set_process_engine_credentials(context_data: dict[str, Any]) -> bool:
 
     api_url = os.getenv("BIFROST_API_URL", "http://api:8000")
     # The SDK's process backend takes precedence over keyring or JSON
-    # persistence and supports refresh-on-401 by updating this tuple. Avoiding
-    # persistence also prevents headless keyring probes from importing optional
-    # DBus/desktop modules through the virtual importer on every execution.
+    # persistence and supports challenge-driven refresh by updating this
+    # tuple. Avoiding persistence also prevents headless keyring probes from
+    # importing optional DBus/desktop modules through the virtual importer on
+    # every execution.
     os.environ["BIFROST_API_URL"] = api_url
     os.environ["BIFROST_ACCESS_TOKEN"] = engine_token
-    os.environ["BIFROST_REFRESH_TOKEN"] = engine_token
+    os.environ["BIFROST_REFRESH_TOKEN"] = context_data.get("engine_refresh_token") or engine_token
     return True
 
 
@@ -291,10 +298,11 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
             event=event_ctx,
             solution_id=context_data.get("solution_id"),  # install scope for SDK
             artifact_workspace_id=context_data.get("artifact_workspace_id"),
-            # The token this process just installed as its SDK credentials
-            # (see _set_process_engine_credentials above) - registered as a
-            # secret so it is redacted from this execution's output.
+            # The credentials this process just installed for the SDK (see
+            # _set_process_engine_credentials above) - registered as secrets
+            # so they are redacted from this execution's output.
             engine_token=context_data.get("engine_token"),
+            engine_refresh_token=context_data.get("engine_refresh_token"),
         )
 
         # Execute

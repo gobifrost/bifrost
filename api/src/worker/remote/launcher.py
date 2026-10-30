@@ -24,6 +24,7 @@ from src.services.execution.memory_monitor import effective_memory_sample, memor
 from src.services.execution.template_process import TemplateProcess
 from src.worker.remote.identity import LauncherIdentity, load_launcher_identity
 from src.worker.remote.protocol import (
+    CREDENTIAL_PROTOCOL,
     ControlEnvelope,
     FragmentAssembler,
     Hello,
@@ -297,6 +298,7 @@ class Launcher:
             },
             "requirements": requirements,
             "version": get_version(),
+            "credential_protocol": CREDENTIAL_PROTOCOL,
         }, separators=(",", ":")))
         welcome = json.loads(await self.socket.recv())
         if welcome.get("event") != "welcome" or not isinstance(welcome.get("session_generation"), int):

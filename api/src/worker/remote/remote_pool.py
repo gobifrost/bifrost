@@ -25,6 +25,7 @@ from src.core.cache.keys import active_execution_key
 from src.core.redis_client import ActiveExecution
 from src.services.execution.process_pool import (
     DANGEROUS_MEMORY_RATIO,
+    CredentialRoute,
     ExecutionInfo,
     ProcessHandle,
     ProcessPoolManager,
@@ -45,9 +46,15 @@ class ThinRemoteTransport(Protocol):
 
     connected: bool
     hostname: str
+    # The current launcher session (RemoteOwnerLease): its generation and
+    # the credential protocol the launcher reported.
+    lease: Any
 
-    async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Send an acknowledged physical-runner command."""
+    async def request(
+        self, action: str, payload: dict[str, Any], *, expected_generation: int | None = None
+    ) -> dict[str, Any]:
+        """Send an acknowledged physical-runner command, refused when
+        ``expected_generation`` is no longer the session's."""
         raise NotImplementedError
 
     def memory(self) -> tuple[int, int]:
@@ -465,13 +472,25 @@ class ThinRemoteProcessPool(ProcessPoolManager):
     def _request_bytes(self, key: str) -> int:
         return self.transport.memory_request_bytes(key) or 0
 
+    def credential_route(self) -> CredentialRoute:
+        """The launcher's reported credential protocol, read with the session
+        generation it was persisted under."""
+        lease = self.transport.lease
+        return CredentialRoute(lease.credential_protocol, lease.session_generation)
+
     async def route_execution(
         self,
         execution_id: str,
         context: dict[str, Any],
         active_execution: ActiveExecution,
+        *,
+        credential_route: CredentialRoute | None = None,
     ) -> None:
-        """Write canonical API ownership records, then await launcher ACK."""
+        """Write canonical API ownership records, then await launcher ACK.
+
+        With ``credential_route``, the context's credentials were minted for
+        that launcher session; they are never sent to a replacement session.
+        """
         validate_execution_context(context)
         await self._write_context_to_redis(execution_id, context)
         self._ensure_remote_capacity()
@@ -524,6 +543,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                         "timeout_seconds": timeout,
                         "memory_request_bytes": self._request_bytes(execution_id),
                     },
+                    expected_generation=None if credential_route is None else credential_route.generation,
                 )
                 handle.process.remote_pid = self._remote_pid_from_ack(response)
             except (ConnectionError, TimeoutError):
@@ -553,8 +573,13 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         lease_token: str,
         context: dict[str, Any],
         graceful_shutdown_seconds: int = 30,
+        credential_route: CredentialRoute | None = None,
     ) -> None:
-        """Dispatch a canonical claimed service attempt to the launcher."""
+        """Dispatch a canonical claimed service attempt to the launcher.
+
+        ``credential_route`` fences the context's credentials to the launcher
+        session they were minted for, as in ``route_execution``.
+        """
         validate_execution_context(context)
         self._ensure_remote_capacity()
         route_id = self._service_route_id(attempt_id)
@@ -593,6 +618,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                             "lease_token": lease_token,
                         },
                     },
+                    expected_generation=None if credential_route is None else credential_route.generation,
                 )
                 handle.process.remote_pid = self._remote_pid_from_ack(response)
             except (ConnectionError, TimeoutError):

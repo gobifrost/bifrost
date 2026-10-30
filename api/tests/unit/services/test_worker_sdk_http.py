@@ -142,9 +142,9 @@ def _no_cache():
 
 
 def _engine_token() -> str:
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
-    token, _ = mint_engine_token(
+    token, _ = legacy_engine_token(
         execution_id=_ENGINE_TOKEN_EXECUTION_ID,
         timeout_seconds=300,
     )
@@ -163,13 +163,13 @@ async def _delete_owned_test_orgs(session, organization_ids):
 
 async def _scoped_engine_token(session_factory, organization_id):
     from tests.helpers.live_execution import create_live_execution
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     execution_id = str(uuid4())
     await create_live_execution(
         session_factory, execution_id, organization_id=organization_id, platform_admin=False,
     )
-    token, _ = mint_engine_token(execution_id=execution_id, timeout_seconds=300)
+    token, _ = legacy_engine_token(execution_id=execution_id, timeout_seconds=300)
     return token, execution_id
 
 
@@ -3434,14 +3434,14 @@ class TestSocketErrorParityAndActorContext:
 
     @pytest.mark.asyncio
     async def test_request_context_attributes_engine_caller(self, async_session_factory):
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.orm.executions import Execution
         from src.models.orm.users import User
         from src.services.audit_context import current_actor
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
         execution_id = uuid4()
-        token, _ = mint_engine_token(
+        token, _ = legacy_engine_token(
             execution_id=str(execution_id),
             timeout_seconds=300,
         )

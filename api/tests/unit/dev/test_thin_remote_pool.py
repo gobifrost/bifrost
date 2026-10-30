@@ -20,7 +20,7 @@ class _Transport:
         self.requests: list[tuple[str, dict]] = []
         self.inventory: list[dict[str, str]] = []
 
-    async def request(self, action: str, payload: dict) -> dict:
+    async def request(self, action: str, payload: dict, *, expected_generation: int | None = None) -> dict:
         self.requests.append((action, payload))
         if action == "package_tool" and payload == {"operation": "inventory"}:
             return {"packages": self.inventory}

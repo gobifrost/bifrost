@@ -453,16 +453,15 @@ class ServiceClaimLoop:
     async def _rotate_token(self, db, owned: OwnedAttempt, definition=None) -> None:
         """Mint a fresh service credential and hand it to the child."""
         from src.core.cache import get_redis
-        from src.core.security import mint_service_token
         from src.models.orm.services import ServiceDefinition
+        from src.services.authorization.tokens import RuntimeSubject, _legacy_runtime_token
 
         if definition is None:
             definition = await db.get(ServiceDefinition, owned.service_id)
         if definition is None or not definition.organization_id:
             return
-        token, expires_at = mint_service_token(
-            service_id=str(owned.service_id),
-            attempt_id=str(owned.attempt_id),
+        token, expires_at = _legacy_runtime_token(
+            RuntimeSubject("service_attempt", owned.attempt_id, owned.service_id),
             lifetime_seconds=self.token_lifetime_seconds,
         )
         try:
@@ -470,7 +469,7 @@ class ServiceClaimLoop:
                 await r.setex(
                     service_token_key(str(owned.attempt_id)),
                     self.token_lifetime_seconds + 300,
-                    json.dumps({"token": token, "expires_at": expires_at}),
+                    json.dumps({"token": token, "expires_at": expires_at.isoformat()}),
                 )
         except Exception as e:
             logger.debug(
@@ -637,9 +636,9 @@ class ServiceClaimLoop:
     async def _launch_claimed(self, db, attempt) -> None:
         """Route one claimed attempt to a service child (savepoint scope)."""
         from src.core.cache import get_redis
-        from src.core.security import mint_service_token
         from src.models.orm.services import ServiceDefinition
         from src.repositories.organizations import OrganizationRepository
+        from src.services.authorization.tokens import RuntimeSubject, _legacy_runtime_token
         from src.services.execution.service import (
             WorkflowNotFoundError,
             get_workflow_for_execution,
@@ -688,11 +687,11 @@ class ServiceClaimLoop:
         actor = await db.get(User, authority.acting_user_id)
         if actor is None:
             raise RuntimeError("Service attempt has no current acting user")
-        token, expires_at = mint_service_token(
-            service_id=str(definition.id),
-            attempt_id=str(attempt.id),
+        token, token_expires_at = _legacy_runtime_token(
+            RuntimeSubject("service_attempt", attempt.id, definition.id),
             lifetime_seconds=self.token_lifetime_seconds,
         )
+        expires_at = token_expires_at.isoformat()
         context = {
             "execution_id": str(attempt.id),
             "name": workflow_data["name"],

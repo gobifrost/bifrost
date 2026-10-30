@@ -14,10 +14,13 @@ which refuses any token the database does not back, cover it.
   module's reviewed attributes, and ``jwt.encode`` only in its reviewed
   functions, matched by exact qualified name;
 - only the tokens module may name ``_encode_claims`` at all, and only inside
-  the two token issuers (exact qualified names);
+  the two token issuers (exact qualified names); likewise ``_encode_legacy``,
+  only inside the legacy runtime minter (token PR1c deletes both);
+- the legacy runtime minter ``_legacy_runtime_token`` is named only by the
+  run-credential issuer and the legacy service rotation;
 - ``create_access_token`` is used only by reviewed functions, and never
   imported under another name. Those are embed tokens and impersonation
-  markers (which keep their own formats), the runtime minters PR1b replaces,
+  markers (which keep their own formats), the MCP bridge's people branch,
   and the people sites PR2 moves to ``issue_access_token``.
 """
 
@@ -37,8 +40,8 @@ _JWT_MODULES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"encode", "decode", "ExpiredSignatureError", "InvalidTokenError"}),
         frozenset({"create_access_token", "create_refresh_token", "create_mfa_token"}),
     ),
-    # The run-token minter.
-    _TOKENS_MODULE: (frozenset({"encode"}), frozenset({"_encode_claims"})),
+    # The run-token minter, and the legacy runtime format until token PR1c.
+    _TOKENS_MODULE: (frozenset({"encode"}), frozenset({"_encode_claims", "_encode_legacy"})),
     # Local Solution development context tokens.
     "shared.solution_dev": (frozenset({"encode"}), frozenset({"_mint_solution_dev_token"})),
     # OAuth state parameters.
@@ -56,15 +59,19 @@ _JWT_MODULES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
 }
 
 _ENCODE_CLAIMS_USERS = frozenset({"issue_access_token", "issue_run_refresh_token"})
+_ENCODE_LEGACY_USERS = frozenset({"_legacy_runtime_token"})
+_LEGACY_MINTER_SITES = {
+    f"{_TOKENS_MODULE}:issue_run_credentials",
+    "src.services.service_claim:ServiceClaimLoop._rotate_token",
+    "src.services.service_claim:ServiceClaimLoop._launch_claimed",
+}
 
 _CREATE_ACCESS_TOKEN_SITES = {
     # Their own formats, unchanged by the token program.
     "src.core.security:create_embed_access_token",
     "shared.browser_impersonation:create_browser_impersonation",
-    # Runtime minters: PR1b switches them to issue_access_token.
-    "src.core.security:mint_engine_token",
-    "src.core.security:mint_service_token",
-    # PR1b (runtime branch) and PR2 (people branch).
+    # The MCP bridge's people branch (PR2); its runtime branch uses
+    # issue_access_token.
     "src.services.mcp_server.tools._http_bridge:_token_from_context",
     # People: PR2 moves these to issue_access_token.
     "src.routers.auth:_generate_login_tokens",
@@ -122,17 +129,29 @@ def _jwt_violations(module: str, source: str) -> list[str]:
     return problems
 
 
+def _names(node: ast.AST, name: str) -> bool:
+    return (
+        (isinstance(node, ast.Name) and node.id == name)
+        or (isinstance(node, ast.Attribute) and node.attr == name)
+        or (isinstance(node, ast.alias) and name in (node.name, node.asname))
+    )
+
+
 def _encode_claims_violations(module: str, source: str) -> list[str]:
     problems: list[str] = []
     for node, scope in _scopes(ast.parse(source)):
-        named = (
-            (isinstance(node, ast.Name) and node.id == "_encode_claims")
-            or (isinstance(node, ast.Attribute) and node.attr == "_encode_claims")
-            or (isinstance(node, ast.alias) and "_encode_claims" in (node.name, node.asname))
-        )
-        if named and (module != _TOKENS_MODULE or scope not in _ENCODE_CLAIMS_USERS):
-            problems.append(f"{module}:{scope} names _encode_claims")
+        for signer, users in (("_encode_claims", _ENCODE_CLAIMS_USERS), ("_encode_legacy", _ENCODE_LEGACY_USERS)):
+            if _names(node, signer) and (module != _TOKENS_MODULE or scope not in users):
+                problems.append(f"{module}:{scope} names {signer}")
     return problems
+
+
+def _legacy_minter_sites(module: str, source: str) -> set[str]:
+    return {
+        f"{module}:{scope}"
+        for node, scope in _scopes(ast.parse(source))
+        if _names(node, "_legacy_runtime_token") and not (module == _TOKENS_MODULE and scope == "_legacy_runtime_token")
+    }
 
 
 def _create_access_token_sites(module: str, source: str) -> tuple[set[str], list[str]]:
@@ -177,6 +196,11 @@ def test_only_reviewed_modules_use_pyjwt() -> None:
 
 def test_only_the_token_issuers_name_the_run_token_signer() -> None:
     assert [problem for module, source in _modules() for problem in _encode_claims_violations(module, source)] == []
+
+
+def test_only_reviewed_functions_mint_legacy_runtime_tokens() -> None:
+    sites = {site for module, source in _modules() for site in _legacy_minter_sites(module, source)}
+    assert sites == _LEGACY_MINTER_SITES
 
 
 def test_only_reviewed_functions_mint_access_tokens_outside_the_minter() -> None:
@@ -228,6 +252,8 @@ def test_each_known_bypass_is_flagged() -> None:
         (_TOKENS_MODULE, "def another(c):\n    return _encode_claims(c)\n"),
         (_TOKENS_MODULE, "sign = _encode_claims\n"),
         (_TOKENS_MODULE, "class Other:\n    def issue_access_token(self, c):\n        return _encode_claims(c)\n"),
+        (_TOKENS_MODULE, "def issue_access_token(c):\n    return _encode_legacy(c, 60)\n"),
+        (outside, "from src.services.authorization.tokens import _encode_legacy\n"),
     }
     for module, source in encode_claims_cases:
         assert _encode_claims_violations(module, source), (module, source)

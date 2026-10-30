@@ -103,7 +103,7 @@ class TestForkedRolesSocket:
         self, async_session_factory, monkeypatch
     ):
         """A real forked child runs the roles facade on the worker socket."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.enums import FormAccessLevel
         from src.models.orm.forms import Form as FormModel
         from src.models.orm.users import User as UserModel
@@ -177,7 +177,7 @@ class TestForkedRolesSocket:
         )
 
         engine_execution_id = str(uuid4())
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=engine_execution_id,
             timeout_seconds=120,
         )
@@ -280,7 +280,7 @@ class TestForkedRolesSocket:
         self, async_session_factory, monkeypatch
     ):
         """The socket authority is the engine token, not the child's claims."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
 
         lines = [
             "from bifrost import roles",
@@ -295,7 +295,7 @@ class TestForkedRolesSocket:
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
         engine_execution_id = str(uuid4())
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=engine_execution_id,
             timeout_seconds=120,
         )

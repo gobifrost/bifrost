@@ -33,7 +33,7 @@ import secrets
 import time
 import zlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -71,6 +71,16 @@ TOKEN_SIZE_WARNING_BYTES = 6144
 # issued together do not all expire and refresh together.
 ACCESS_TOKEN_MIN_SECONDS = 3600
 ACCESS_TOKEN_SPREAD_SECONDS = 1800
+
+# A run's credential format, recorded on its row (``executions`` /
+# ``service_attempts.credential_version``): NULL is the legacy format; this
+# value is a claims access token with a run refresh token.
+CLAIMS_CREDENTIAL_VERSION = 2
+
+# The lowest route credential protocol (a launcher's, or this build's local
+# children's) that accepts claims credentials and refreshes them. Older
+# routes receive legacy tokens.
+CLAIMS_CREDENTIAL_PROTOCOL = 2
 
 
 class _Claims(BaseModel):
@@ -627,3 +637,88 @@ async def _snapshot_claims(db: AsyncSession, subject: RuntimeSubject) -> AccessT
             else ImpersonationClaims(by=authority.impersonated_by_user_id, sid=authority.impersonation_session_id)
         ),
     )
+
+
+# --- Run credentials ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RunCredentials:
+    """The credentials a run's process starts with.
+
+    ``refresh_token`` is None for the legacy format, whose refresh slot holds
+    the access token itself; ``credential_version`` is what the run's row
+    records.
+    """
+
+    access_token: str
+    refresh_token: str | None
+    expires_at: datetime
+    credential_version: int | None
+
+
+def credential_version_for(protocol: int) -> int | None:
+    """The credential format a route of this protocol receives."""
+    return CLAIMS_CREDENTIAL_VERSION if protocol >= CLAIMS_CREDENTIAL_PROTOCOL else None
+
+
+async def issue_run_credentials(
+    subject: RuntimeSubject, *, protocol: int, legacy_lifetime_seconds: int
+) -> RunCredentials:
+    """Credentials for a run about to start on a route of ``protocol``.
+
+    Routes that speak the claims protocol get a claims access token and a run
+    refresh token. Older routes (remote launchers that do not report it) get
+    exactly today's legacy token, valid for ``legacy_lifetime_seconds`` and
+    accepted through the bridge while the run is live.
+    """
+    if credential_version_for(protocol) is None:
+        token, expires_at = _legacy_runtime_token(subject, lifetime_seconds=legacy_lifetime_seconds)
+        return RunCredentials(token, None, expires_at, None)
+    issued = await issue_access_token(subject)
+    return RunCredentials(
+        issued.token, issue_run_refresh_token(subject), issued.expires_at, CLAIMS_CREDENTIAL_VERSION
+    )
+
+
+# --- Legacy runtime tokens (the bridge; token PR1c deletes this section) ------------
+
+# Lifetimes of the legacy format, unchanged: an execution's timeout plus five
+# minutes (a day for workflows without a timeout); services are re-minted on
+# every lease heartbeat.
+LEGACY_NO_TIMEOUT_TOKEN_SECONDS = 86_400
+LEGACY_SERVICE_TOKEN_SECONDS = 900
+
+
+def legacy_engine_token_lifetime(timeout_seconds: int) -> int:
+    """A legacy execution token's lifetime for a workflow timeout (0 = none)."""
+    effective = timeout_seconds if timeout_seconds > 0 else LEGACY_NO_TIMEOUT_TOKEN_SECONDS
+    return effective + 300
+
+
+def _legacy_runtime_token(subject: RuntimeSubject, *, lifetime_seconds: int) -> tuple[str, datetime]:
+    """A runtime token in the legacy format: the credential's identity only.
+
+    Only for routes that do not speak the claims protocol, and for the
+    rotation of legacy-format service attempts. The API validates it from
+    the database on every request (the bridge), so it authorizes only while
+    its run is live.
+    """
+    claims: dict[str, Any] = {"sub": str(subject.credential_id), "credential_kind": subject.kind}
+    if subject.service_id is not None:
+        claims["service_id"] = str(subject.service_id)
+    return _encode_legacy(claims, lifetime_seconds)
+
+
+def _encode_legacy(claims: dict[str, Any], lifetime_seconds: int) -> tuple[str, datetime]:
+    """Sign a legacy runtime token exactly as ``create_access_token`` did."""
+    settings = get_settings()
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=lifetime_seconds)
+    payload = {
+        **claims,
+        "exp": expires_at,
+        "type": "access",
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm), expires_at

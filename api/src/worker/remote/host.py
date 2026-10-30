@@ -45,9 +45,11 @@ from src.worker.remote.ownership import (
 from src.worker.remote.protocol import (
     AuthenticationError,
     ControlEnvelope,
+    CredentialRouteChanged,
     FragmentAssembler,
     ProtocolError,
     SignedHello,
+    hello_credential_protocol,
     nonce_digest,
     fragment,
     verify_hello,
@@ -128,7 +130,16 @@ class Bridge:
             return -1, self.limit
         return self.current, self.limit
 
-    async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def request(
+        self, action: str, payload: dict[str, Any], *, expected_generation: int | None = None
+    ) -> dict[str, Any]:
+        """Send one acknowledged command to the launcher.
+
+        ``expected_generation`` fences a command that carries credentials
+        minted for one session: if the session was replaced since, the
+        command is refused with ``CredentialRouteChanged`` before anything is
+        sent.
+        """
         if not self.connected:
             raise ConnectionError("Launcher disconnected")
         request_id = str(uuid4())
@@ -137,6 +148,11 @@ class Bridge:
         try:
             try:
                 async with self.lock:
+                    if expected_generation is not None and self.lease.session_generation != expected_generation:
+                        raise CredentialRouteChanged(
+                            f"launcher session {expected_generation} was replaced by "
+                            f"{self.lease.session_generation} before {action} dispatch"
+                        )
                     message = ControlEnvelope(
                         session_generation=self.lease.session_generation,
                         sequence=self._sequence + 1,
@@ -931,6 +947,7 @@ class RemoteControlHost:
                 "requirements": initial.get("requirements", {}),
                 "hostname": hello.hostname,
             }
+            credential_protocol = hello_credential_protocol(initial)
         except (AuthenticationError, ProtocolError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             await socket.close(code=1008)
             raise
@@ -980,6 +997,7 @@ class RemoteControlHost:
             launcher_id=hello.launcher_id,
             nonce_digest=nonce_digest(hello.nonce),
             hello_sequence=hello.hello_sequence,
+            credential_protocol=credential_protocol,
         )
         if lease is None:
             await socket.close(code=1008)

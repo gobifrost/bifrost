@@ -70,8 +70,6 @@ _GATE_FUNCS = {
 _NOISE_FUNC_NAMES = {
     "create_access_token",
     "create_embed_access_token",
-    "mint_service_token",
-    "mint_engine_token",
     "decode_token",
 }
 
@@ -2046,8 +2044,6 @@ _TOKEN_MINTING_SITES: dict[str, str] = {
     "shared.sdk_workflow_execution.insert_scheduled_execution": "cutover",
     "src.core.redis_client.pending_execution_record": "cutover",
     "src.core.security.create_embed_access_token": "route",
-    "src.core.security.mint_engine_token": "cutover",
-    "src.core.security.mint_service_token": "route",
     "src.jobs.consumers.workflow_execution.WorkflowExecutionConsumer.process_message": "cutover",
     "src.routers.auth._generate_login_tokens": "cutover",
     "src.routers.auth.mfa_initial_verify": "cutover",
