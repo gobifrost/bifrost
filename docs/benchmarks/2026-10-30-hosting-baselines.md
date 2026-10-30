@@ -206,6 +206,25 @@ as correlated spans from the same request. Preserve cold-template, first-use
 and repeated-action distributions rather than calling every warm-worker child
 a warm-import run.
 
+The user then supplied three execution links. Read-only execution records
+confirm the following **started-to-completed** intervals on 2026-10-30:
+
+| Observed operation | Worker wall seconds | Reported engine seconds | Outside engine seconds |
+|---|---:|---:|---:|
+| Contact candidate page | 11.037 | 5.299 | 5.738 |
+| Site list without address details | 7.600 | 1.692 | 5.908 |
+| Site list with address details | 32.856 | 17.993 | 14.863 |
+
+All three succeeded. The detail and shallow list are different workloads, not
+an optimization A/B: the detail path performs bounded concurrent per-site
+reads. Outside-engine time is the residual of worker wall time minus engine
+duration; it is not an isolated import span. The execution tool returned no
+creation timestamp or logs, so queue, retries and browser delivery remain
+unmeasured. Runtime image and historical workflow source hashes were not
+returned. Selected private evidence, without customer records or credentials,
+is `notes/portal-executions-20261030.json` outside git. Retain these as live
+observations pending a controlled, fully attributed reproduction.
+
 Stable third-party import preloading is a candidate to measure, not an assumed
 improvement. Compare its latency, CPU per correct action, warm-template/private
 memory, child peak, copy-on-write behavior and safe worker concurrency. Do not
