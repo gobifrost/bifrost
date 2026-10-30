@@ -73,6 +73,16 @@ class RuntimeProfileTest(unittest.TestCase):
         self.assertEqual((profile["sequential"], profile["burst"], profile["burst_rounds"]), (10, 3, 5))
         deploy.check_profile(profile)
 
+    def test_import_worker_cpu_comparison_changes_only_cpu_and_required_quota(self) -> None:
+        baseline = run.load_profile("m-import-overlap")
+        profile = run.load_profile("m-import-overlap-worker-2cpu")
+        self.assertEqual(profile.keys(), baseline.keys())
+        for key in profile.keys() - {"description", "worker_cpu", "quota"}:
+            self.assertEqual(profile[key], baseline[key], key)
+        self.assertEqual(profile["worker_cpu"], "2")
+        self.assertEqual(profile["quota"], {**baseline["quota"], "cpu": "5"})
+        deploy.check_profile(profile)
+
 
 if __name__ == "__main__":
     unittest.main()

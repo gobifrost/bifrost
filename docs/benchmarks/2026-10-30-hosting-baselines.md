@@ -467,6 +467,35 @@ production's 2 CPU. This establishes local import-specific concurrency
 sensitivity, not exponential scaling or the cause of the original 14.86-second
 residual. The matched newer-runtime repetition remains separate.
 
+That newer-runtime repetition is now verified in
+`runs/import-portal-overlap-current-r1`: 100 unique correct and traced
+executions, one worker pod/UID, no API replacement and both namespaces removed
+at 21:41:10 UTC. Graph sequential p50/p95 were 520.61/675.79 and
+535.47/654.13 ms; burst p50/p95 were 1504.38/1761.52 and
+1614.50/1657.65 ms. Control sequential p50/p95 were 51.82/91.23 and
+52.43/58.29 ms; burst values were 50.53/58.87 and 59.41/71.20 ms.
+This runtime improves the sequential graph baseline but retains substantial
+concurrency sensitivity; it does not reproduce the original 33-second action.
+
+The deployed/current source audit also rules out normal completion bookkeeping
+retaining a finished workflow's memory admission reservation: the process pool
+removes the child before awaiting its result callback, and admission discards
+the hold on its next active-process evaluation. There is no explicit completion
+wake of the claim loop; its busy/admission-blocked poll interval is one second.
+These are source facts, not measured explanations for the import slowdown.
+The private report is
+`private/portal-import-fixture-recon-20261030/portal-worker-capacity-completion-audit-20261030.md`.
+
+The next declared local CPU comparison uses the same deployed image and
+captured fixture with a 2-CPU worker instead of 650m. Only worker CPU and the
+namespace CPU quota needed to admit it change (`4` to `5`); API/database
+resources, worker memory and request shape stay fixed. The newer-runtime
+650m repetition remains an independent runtime comparison. None is a
+production CPU-throttling, full workflow, exponential-scaling or capacity claim.
+The added profile's five focused tests passed on each of Python 3.14 and 3.12,
+plus Ruff; the source receipt is
+`notes/import-worker-2cpu-profile-validation-20261030/receipt.json`.
+
 ### Initial Import Pipeline Diagnostic
 
 `runs/import-smoke-r1` completed with 40 unique successful executions and one

@@ -1,0 +1,12 @@
+{
+  "extends": "m-import-overlap",
+  "description": "Worker CPU comparison for the same single-worker import diagnostic. Only worker CPU changes; namespace CPU quota increases to admit it. This does not reproduce the rest of production topology.",
+  "quota": {
+    "cpu": "5",
+    "memory": "8Gi",
+    "storage": "50Gi",
+    "pods": 20,
+    "pvcs": 4
+  },
+  "worker_cpu": "2"
+}

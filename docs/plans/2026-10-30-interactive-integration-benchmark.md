@@ -1,7 +1,7 @@
 # Interactive Integration Benchmark
 
 Status: deployed/current private portal import diagnostics completed with
-40 correct, traced actions each. Reviewing app result delivery is the urgent
+40 sequential and 100 sequential/burst correct, traced actions each. Reviewing app result delivery is the urgent
 repair; hosting confirmation, soak and recovery work remain in the plan.
 The V2 browser/fake-integration fixture remains planned.
 
@@ -45,6 +45,29 @@ not guarantee three simultaneous running children. The worker's 650m CPU
 limit differs from production's 2 CPU; this tests local concurrency sensitivity,
 not a matched production CPU-throttling cause or capacity claim. Keep all
 previous sequential results unchanged.
+
+The deployed-build arm now establishes import-specific concurrency sensitivity:
+graph worker-wall medians rose from 674/686 ms sequentially to 1737/1743 ms
+in three-submission bursts, while the small control remained near 50–63 ms.
+This is not evidence of exponential growth. The next arm,
+`m-import-overlap-worker-2cpu`, changes only worker CPU from 650m to 2 and
+raises the namespace CPU quota from 4 to 5 so that the larger reservation
+can be admitted. Keep API/database limits, memory, workload and image fixed.
+This isolates the worker CPU allocation within the local diagnostic; it does
+not reproduce all production topology or establish CPU throttling without
+counter evidence. Preserve both original runtime arms before this comparison.
+The newer-runtime arm also completed all 100 correct, traced actions with
+verified cleanup. Its graph medians were 521/535 ms sequentially and
+1504/1615 ms in bursts; the control remained near 51–59 ms. The newer runtime
+improves the baseline while retaining import-heavy concurrency sensitivity.
+
+A source audit of deployed and newer completion paths found that the normal
+result handler removes the child from active processes before awaiting terminal
+bookkeeping. Byte-budget admission drops the workflow reservation on its next
+active-process evaluation. Follow-up metrics therefore do not retain normal
+workflow admission capacity. Completion does not explicitly wake the claim
+loop, which polls every second while busy or admission-blocked; this is a
+separate source observation, not a demonstrated cause or an additional fix.
 
 The hosting benchmark needs an interactive, non-AI integration workload as well
 as SDK-heavy throughput and agent mixes. Recent user-reported Halo portal
