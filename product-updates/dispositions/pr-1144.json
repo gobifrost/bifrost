@@ -1,0 +1,15 @@
+{
+  "key": "pr:1144",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "An agent run interrupted by a brief database restart now shows its real outcome instead of staying Running for about 35 minutes and then reporting a timeout.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1144",
+      "Fixes #1141: reproduced by the capacity-harness pooler drills; covered by unit tests that drive the consumer through refused database connections.",
+      "Product review: awaiting Jack's approval of the summary."
+    ]
+  }
+}
