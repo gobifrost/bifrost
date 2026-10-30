@@ -418,6 +418,19 @@ def issue_run_refresh_token(subject: RuntimeSubject) -> str:
     )
 
 
+async def redeem_run_refresh_token(payload: dict[str, Any]) -> IssuedAccessToken:
+    """A new access token for the run a verified run refresh payload names.
+
+    The run is re-evaluated exactly as at first mint; a run that is no longer
+    live, or a payload that is not an exact run refresh token, raises
+    ``TokenSubjectUnavailable``.
+    """
+    claims = parse_run_refresh_claims(payload)
+    if claims is None:
+        raise TokenSubjectUnavailable("Not a run refresh token.")
+    return await issue_access_token(RuntimeSubject(claims.credential_kind, claims.sub, claims.service_id))
+
+
 async def _snapshot_claims(db: AsyncSession, subject: RuntimeSubject) -> AccessTokenClaims:
     try:
         authority = await load_runtime_authority(
