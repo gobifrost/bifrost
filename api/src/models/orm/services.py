@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -174,6 +174,9 @@ class ServiceAttempt(Base):
     exit_reason: Mapped[str | None] = mapped_column(Text, default=None)
     error: Mapped[str | None] = mapped_column(Text, default=None)
     restart_number: Mapped[int] = mapped_column(Integer, default=0)
+    # Format of the credentials minted for this attempt: 2 = access token
+    # plus run refresh token; NULL = the legacy rotated service token.
+    credential_version: Mapped[int | None] = mapped_column(SmallInteger, default=None)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")

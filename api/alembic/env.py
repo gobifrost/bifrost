@@ -9,6 +9,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -93,6 +94,14 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection: Connection) -> None:
     """Run migrations using provided connection."""
     context.configure(connection=connection, target_metadata=target_metadata)
+    # The revision this upgrade run started from, recorded before any
+    # migration executes. None means the run began on an empty schema (a
+    # fresh install: no tokens, runs or pods can exist yet); migrations read
+    # it from config.attributes. Read after configure(), which must see the
+    # connection outside a transaction to own the migration transaction.
+    config.attributes["bifrost_starting_revision"] = MigrationContext.configure(
+        connection
+    ).get_current_revision()
 
     with context.begin_transaction():
         context.run_migrations()
