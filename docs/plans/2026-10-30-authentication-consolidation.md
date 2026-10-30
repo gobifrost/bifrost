@@ -1,6 +1,6 @@
 # Authentication Consolidation — PR2 Delivery
 
-Status: **PR2 source merged; Product Updates activation pending this content revision**
+Status: **PR2 source merged; verified feed activation is included in this revision**
 (2026-10-30). PR1c remains deferred to a later release.
 Owner: this authentication chat, branch `codex/auth-consolidation`, isolated
 worktree `/home/jack/.codex/worktrees/auth-consolidation/bifrost`.
@@ -134,15 +134,17 @@ leaving one serving would permit revocation bypass and break new sessions.
 - [x] Product Updates classification/prose, current-main clean candidate and PR #1149.
 - [x] Protected CI/merge lifecycle: PR #1149 merged as
   `05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2`; no production deployment.
-- [ ] Refresh verified Product Updates inventory after the source merge, prove the
-  required notice is in the prepared dev-image bundle, and merge the content PR.
+- [x] Refresh verified Product Updates inventory after the source merge and prove
+  the required notice is in the prepared dev-image bundle. This content revision
+  activates that notice when it merges through the protected queue.
 - [x] Benchmark comparison coordinated with the sibling, without editing its harness
       or claiming unavailable measurements. Performance benefit remains unmeasured.
 
 Final focused commands, results, timings and limits are in
 [Authentication Verification](2026-10-30-authentication-verification.md). All
 known diagnostic failures have concrete dispositions in the independent review
-record. No full-suite or performance success is claimed.
+record. Full backend/client queue results and targeted browser evidence are
+recorded explicitly; performance remains unmeasured.
 
 Initial diagnostic: **58 focused unit tests passed**, no failures/errors/skips;
 JUnit `/tmp/bifrost-auth-initial-unit.xml`. API pyright: zero errors/warnings.

@@ -397,3 +397,26 @@ were added. Per-shard counts changed because the repository balances source-file
 sizes, while the combined suite still covers 2,444 cases. The separate verified
 inventory activation remains necessary to deliver the approved in-app notice.
 No production deployment or performance improvement is claimed.
+
+## Verified Product Updates Activation Revision
+
+The canonical collector refreshed the retained ledger base through source merge
+05d1fbab, expanding 259 historical commits/PRs to 302. Every historical source
+record and the reviewed additional-credit record are retained unchanged. PR
+#1149 has its verified merge time, merge SHA and Jack attribution. The inventory
+and disposition headers use the same frozen applicability range.
+
+Manual canonical validation passed in [Product Updates run 41118855589](https://github.com/gobifrost/bifrost/actions/runs/41118855589).
+Local canonical validation and scratch image preparation then passed under the
+shared host lock on clean content commit bc9f323b14cd6fcc147b43cf371a57e68b21e29b.
+The prepared bundle contains entry 68314b62-0ea3-4d44-8779-6241f77275f3 with
+`action_required: true`, `in_app: true`, the approved agent prompt, and PR #1149
+as its source. The canonical notice SHA-256 remains
+`d76920de098cdaad77a6831d5865622b4f559b8cb3c9c8a0de47d5ccec9442b3`.
+Its UUID, revision, prose, prompt and source disposition are unchanged.
+
+Independent Astra content review found no P1/P2 findings and verified the
+append-only inventory, credit retention, matching headers and unchanged notice.
+The activation is delivered when this content revision passes the normal
+protected merge gate. No generated bundle/assets, runtime code, release
+publication or production deployment are included.
