@@ -49,6 +49,7 @@ from src.models.contracts.access_list import (
 from src.models.contracts.permissions import parse_permission
 from src.services.access_list import ACCESS_LIST
 from src.services.authorization import enforce
+from src.services.authorization import tokens as tokens_mod
 from src.services.mcp_server.server import get_system_tools
 from src.services.operation_catalog import OPERATION_CATALOG
 
@@ -1233,7 +1234,14 @@ def _extra_entry_roots() -> dict[str, list[object]]:
     }
     roots |= {f"SCHEDULE {func.__qualname__}": [func] for func in _scheduler_job_functions()}
     roots["STARTUP lifespan"] = [lifespan]
-    roots["AUTH resolvers"] = [*_GATE_FUNCS, auth_mod.get_current_user_optional, auth_mod.get_current_user_ws]
+    # principal_from_claims builds the runtime principal from a token's
+    # claims; the auth dependency adopts it in token PR1b.
+    roots["AUTH resolvers"] = [
+        *_GATE_FUNCS,
+        auth_mod.get_current_user_optional,
+        auth_mod.get_current_user_ws,
+        tokens_mod.principal_from_claims,
+    ]
     roots["WORKER process"] = [template_process._template_subprocess_entry]
     roots["SDK bifrost package"] = _sdk_package_functions()
     return roots
@@ -1982,6 +1990,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.authorization.explain.in_reach": (1, "current_role_derivation"),
     "src.services.authorization.explain.load_run_as_target": (3, "current_role_derivation"),
     "src.services.authorization.runtime_auth._principal_from_authority": (1, "actor_facts"),
+    "src.services.authorization.tokens.principal_from_claims": (1, "actor_facts"),
     "src.services.chat_runs.create_chat_run": (2, "actor_facts"),
     "src.services.docs_indexer.index_platform_docs": (2, "internal_authorized_resource"),
     "src.services.embeddings.reindex.run_reindex_for_group": (1, "internal_authorized_resource"),

@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from typing import Any
 from uuid import UUID, uuid4
 
 import jwt
@@ -171,13 +172,13 @@ def test_an_oversized_token_warns_and_is_still_minted(caplog: pytest.LogCaptureF
     assert parse_runtime_claims(payload) == huge
 
 
-def _payload(**changes: object) -> dict[str, object]:
+def _payload(**changes: object) -> dict[str, Any]:
     payload = _claims().to_payload()
     payload.update(changes)
     return payload
 
 
-_REFUSED: dict[str, Callable[[], dict[str, object]]] = {
+_REFUSED: dict[str, Callable[[], dict[str, Any]]] = {
     "extra claim": lambda: _payload(extra="claim"),
     "other version": lambda: _payload(ver=2),
     "not an access token": lambda: _payload(type="refresh"),
@@ -193,7 +194,7 @@ _REFUSED: dict[str, Callable[[], dict[str, object]]] = {
 
 
 @pytest.mark.parametrize("make_payload", list(_REFUSED.values()), ids=list(_REFUSED))
-def test_anything_but_an_exact_v1_run_payload_is_refused(make_payload: Callable[[], dict[str, object]]) -> None:
+def test_anything_but_an_exact_v1_run_payload_is_refused(make_payload: Callable[[], dict[str, Any]]) -> None:
     assert parse_runtime_claims(make_payload()) is None
 
 
