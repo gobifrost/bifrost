@@ -124,3 +124,18 @@ The live cases completed in 1.02 seconds; rotation/revocation and cancellation
 assertions remained intact. The stack was removed before releasing the lock.
 Full corrected CI remains required before requeueing; no unchanged CI retry was
 requested.
+
+## Protected Merge-Queue Result
+
+PR candidate `1a198c8eb` passed full CI: 10,976 backend units, 4,015 client tests,
+Product Updates, lint/types and both CodeQL checks. The subsequent exact merge
+candidate `ce0329121c8e4d5dd47fe2be462cfcc223c821c8`, run `41097807451`, failed
+live consumer tests and browser smoke (14 passed, 3 failed). Backend shard 1
+passed 752 with 21 failures; shard 2 passed 740 with 4 failures; shard 3 exposed
+static MCP/CLI credentials and three obsolete SDK-contract assertions. Failure
+summaries are retained at `/tmp/bifrost-auth-queue-shard-<job-id>-summary.log`
+for jobs `124208005800`, `124208005667` and `124208005569`. Browser trace and
+artifacts are retained at `/tmp/bifrost-auth-browser-smoke-ci/`.
+
+The independent review record documents the causal fixes being implemented.
+Fresh focused verification and final review are required before requeueing.

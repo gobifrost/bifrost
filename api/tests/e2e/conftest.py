@@ -240,6 +240,28 @@ def e2e_client():
         yield e2e
 
 
+@pytest.fixture(scope="session")
+def human_minter(e2e_client):
+    """Refresh an E2E fixture user's signed human credential pair.
+
+    WebSocket clients and ``requests`` callers do not pass through
+    :class:`RefreshingClient`, so they must obtain a current credential before
+    opening a connection or constructing their request headers.  This uses the
+    same single-use refresh endpoint as the production SDK and records both
+    replacement tokens on the fixture user for later challenge-driven callers.
+    """
+
+    def _mint(user: E2EUser) -> E2EUser:
+        previous_access_token = user.access_token
+        assert previous_access_token is not None, f"{user.email} has no access token"
+        access_token = e2e_client._refresh_fixture_user(previous_access_token)
+        assert access_token is not None, f"Failed to refresh signed human credential for {user.email}"
+        assert user.refresh_token is not None, f"Refresh did not return a replacement token for {user.email}"
+        return user
+
+    return _mint
+
+
 @pytest.fixture
 def private_client():
     """Client with its own cookie jar, for tests that deliberately log in.

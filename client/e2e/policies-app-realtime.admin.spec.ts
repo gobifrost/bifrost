@@ -15,23 +15,15 @@
 import {
 	test,
 	expect,
-	csrfHeader,
 	grantWorkspaceAppPolicy,
 	publishAppAndWait,
 } from "./fixtures/api-fixture";
-import type { BrowserContext, Page } from "@playwright/test";
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
+import type { APIRequestContext, BrowserContext, Page } from "./fixtures/api-fixture";
 import {
-	getAuthStatePath,
-	getCredentialsPath,
-	type UserCredentials,
-} from "./fixtures/users";
-
-// ESM equivalent of __dirname for resolving auth fixture files saved by global setup.
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+	createFreshApiContext,
+	createFreshBrowserContext,
+	knownUserCredentials,
+} from "./fixtures/human-auth";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const APP_SLUG = `e2e-policies-realtime-${UNIQUE}`;
@@ -41,27 +33,12 @@ const VIS_TABLE_NAME = `e2e_policies_visibility_${UNIQUE}`;
 const VIS_APP_SLUG = `e2e-policies-visibility-${UNIQUE}`;
 const VIS_APP_NAME = `E2E Policies Visibility ${UNIQUE}`;
 
-function loadCredentials(): Record<string, UserCredentials> {
-	const credPath = path.resolve(__dirname, getCredentialsPath());
-	if (!fs.existsSync(credPath)) {
-		throw new Error(
-			`Credentials file not found at ${credPath}. Run setup first.`,
-		);
-	}
-	return JSON.parse(fs.readFileSync(credPath, "utf-8"));
-}
-
 async function postAs(
-	ctx: BrowserContext,
+	api: APIRequestContext,
 	url: string,
 	body: unknown,
 ): Promise<{ ok: boolean; status: number; text: string; json: unknown }> {
-	const headers = await csrfHeader(ctx);
-	const res = await ctx.request.fetch(url, {
-		method: "POST",
-		headers,
-		data: body,
-	});
+	const res = await api.post(url, { data: body });
 	const text = await res.text();
 	let json: unknown = null;
 	try {
@@ -262,14 +239,14 @@ test.describe("Policies — Visibility-gain via reassignment", () => {
 	let aliceContext: BrowserContext;
 	let alicePage: Page;
 	let bobContext: BrowserContext;
+	let bobApi: APIRequestContext;
 
 	test.beforeAll(async ({ api, browser }) => {
-		// Pull non-admin userIds from the credentials saved by global setup.
+		// Pull non-admin userIds from the seeded credentials.
 		// We need both: bob authors a row keyed to himself, admin reassigns it
 		// to alice, and alice's page must show the row appear.
-		const creds = loadCredentials();
-		aliceUserId = creds.org1_user.userId;
-		bobUserId = creds.org2_user.userId;
+		aliceUserId = knownUserCredentials("org1_user").userId;
+		bobUserId = knownUserCredentials("org2_user").userId;
 		expect(aliceUserId, "org1_user (alice) userId").toBeTruthy();
 		expect(bobUserId, "org2_user (bob) userId").toBeTruthy();
 
@@ -345,20 +322,13 @@ test.describe("Policies — Visibility-gain via reassignment", () => {
 		// also triggers the bundle build so the live shell can load.
 		await publishAppAndWait(api, appId, "seed for visibility-gain test");
 
-		// 5. Build per-user browser contexts from the auth states global
-		//    setup persisted. Alice gets a Page (she renders the app);
-		//    Bob only needs an APIRequestContext (he just inserts via REST).
-		const aliceState = path.resolve(
-			__dirname,
-			getAuthStatePath("org1_user"),
-		);
-		const bobState = path.resolve(
-			__dirname,
-			getAuthStatePath("org2_user"),
-		);
-		aliceContext = await browser.newContext({ storageState: aliceState });
+		// 5. Give each actor its own current human session. Alice renders the
+		//    app; Bob only uses the challenge-aware API context for the insert.
+		aliceContext = await createFreshBrowserContext(browser, "org1_user");
 		alicePage = await aliceContext.newPage();
-		bobContext = await browser.newContext({ storageState: bobState });
+		const bob = await createFreshApiContext(browser, "org2_user");
+		bobContext = bob.context;
+		bobApi = bob.api;
 	});
 
 	test.afterAll(async ({ api }) => {
@@ -371,13 +341,14 @@ test.describe("Policies — Visibility-gain via reassignment", () => {
 
 	test("admin reassignment makes a hidden row appear in alice's useTable subscription", async ({
 		api,
+		baseURL,
 	}) => {
 		const { errors } = trackPageErrors(alicePage);
 
 		// 1) Bob inserts a row keyed to himself. Alice should never see it
 		//    via her snapshot or subscription as long as user_id stays bob.
 		const bobInsert = await postAs(
-			bobContext,
+			bobApi,
 			`/api/tables/${tableId}/documents`,
 			{ data: { value: "secret-row", user_id: bobUserId } },
 		);
@@ -392,7 +363,10 @@ test.describe("Policies — Visibility-gain via reassignment", () => {
 		//    server-side by `compile_read_filter`, so she sees zero rows.
 		//    She then subscribes via websocket.
 		await alicePage.goto(
-			`/apps/${VIS_APP_SLUG}?table=${encodeURIComponent(tableId)}`,
+			new URL(
+				`/apps/${VIS_APP_SLUG}?table=${encodeURIComponent(tableId)}`,
+				baseURL!,
+			).toString(),
 		);
 		await expect(alicePage.getByTestId("status")).toHaveText("ready", {
 			timeout: 30_000,

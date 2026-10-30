@@ -21,7 +21,7 @@
  */
 
 import { test, expect } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 // Unique suffix keeps workflow names distinct across parallel worktrees and
 // re-runs, so stale `Scheduled` rows from previous runs can't collide with a

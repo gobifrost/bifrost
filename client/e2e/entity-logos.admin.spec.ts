@@ -23,7 +23,7 @@ const FIXTURE_PNG = {
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-async function uploadLogo(page: import("@playwright/test").Page, name: string) {
+async function uploadLogo(page: import("./fixtures/api-fixture").Page, name: string) {
 	const uploadZone = page.getByRole("group", { name });
 	await expect(uploadZone).toBeVisible();
 	await uploadZone.locator('input[type="file"]').setInputFiles(FIXTURE_PNG);

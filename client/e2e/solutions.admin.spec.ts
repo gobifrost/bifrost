@@ -21,7 +21,7 @@
  * fixture: the list surface and its affordances.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 
 test.describe("Solutions management (admin)", () => {
 	test("solutions list renders with install affordance", async ({ page }) => {

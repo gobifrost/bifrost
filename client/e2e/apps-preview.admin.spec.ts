@@ -19,7 +19,7 @@ import {
 	grantWorkspaceAppPolicy,
 	publishAppAndWait,
 } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const APP_SLUG = `e2e-preview-${UNIQUE}`;

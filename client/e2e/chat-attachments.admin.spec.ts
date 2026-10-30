@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./fixtures/api-fixture";
 
 async function expectTouchTarget(locator: Locator) {
 	// Route and dialog reveals can scale the target while it is already visible.

@@ -9,7 +9,7 @@
  */
 
 import { expect, test, type AuthedApi } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
 const ORIGINAL_PROMPT = `Original tuning prompt ${UNIQUE}`;

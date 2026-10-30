@@ -86,7 +86,7 @@ async function getChatState(api: AuthedApi, conversationId: string) {
 
 async function waitForAssistantOrRunFailure(
 	api: AuthedApi,
-	page: import("@playwright/test").Page,
+	page: import("./fixtures/api-fixture").Page,
 	conversationId: string,
 	runId: string,
 ) {

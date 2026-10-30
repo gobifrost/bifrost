@@ -269,3 +269,31 @@ Independent Astra approved the correction through `6ea657ae2` after verifying
 77/77 client tests, client type/lint, 122/122 backend tests, 7/7 live session
 cases and clean API quality. No P1/P2 findings. This approves the corrected
 local candidate; full-unit and CodeQL CI remain required before requeueing.
+
+## Merge-Queue Consumer Findings
+
+Corrected PR preflight passed 10,976 backend unit tests, 4,015 client tests,
+Product Updates, type/lint and both CodeQL checks. All five CodeQL threads were
+resolved by the scanner. The protected merge candidate
+`ce0329121c8e4d5dd47fe2be462cfcc223c821c8` (run `41097807451`) then exposed
+remaining live test-consumer assumptions. The queue rejected it; no failed check
+was rerun unchanged and no merge gate was bypassed.
+
+Backend failures cluster around static credentials handed directly to CLI,
+MCP and WebSocket clients rather than the shared human challenge transport.
+Three SDK-update assertions also retain the old compatible-update expectation
+for a now-breaking SDK contract. The browser smoke passed 14 cases and failed
+three: two forms fixtures use static global-setup credentials after authority
+writes, and the private-agent test inspects `postDataJSON()` on a cloned Request
+stream. Its trace proves the server returned 201 with the expected name,
+description, prompt, private access, chat channel and owner; the body was not
+lost. The browser test now asserts the successful persisted server result;
+`AgentSettingsTab.test.tsx` retains exact payload-omission coverage.
+
+The harness repair gives each browser/API context a fresh real human session,
+removes project storage-state cloning of single-use refresh families, and keeps
+exact-challenge-only bounded refresh. Browser contexts must perform their own
+page/MFA login; API contexts retain server-issued cookies. Intentional raw and
+negative-auth tests remain explicit. Independent Astra approved this design
+with those safeguards. Implementation, focused reproduction and final delta
+review remain pending; source delivery is not complete.

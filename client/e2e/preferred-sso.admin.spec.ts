@@ -1,22 +1,14 @@
-import { expect, request as playwrightRequest, test } from "@playwright/test";
-import { readFileSync } from "fs";
-import { resolve } from "path";
-
-const API_URL = process.env.TEST_API_URL || "http://api:8000";
+import { expect, test, type APIRequestContext, type BrowserContext } from "./fixtures/api-fixture";
+import { createFreshApiContext } from "./fixtures/human-auth";
 
 test.describe.serial("Preferred SSO redirect", () => {
-	let api: Awaited<ReturnType<typeof playwrightRequest.newContext>>;
+	let api: APIRequestContext;
+	let apiContext: BrowserContext;
 
-	test.beforeAll(async () => {
-		const credentials = JSON.parse(
-			readFileSync(resolve("e2e/.auth/credentials.json"), "utf8"),
-		) as { platform_admin: { accessToken: string } };
-		api = await playwrightRequest.newContext({
-			baseURL: API_URL,
-			extraHTTPHeaders: {
-				Authorization: `Bearer ${credentials.platform_admin.accessToken}`,
-			},
-		});
+	test.beforeAll(async ({ browser }) => {
+		const fresh = await createFreshApiContext(browser, "platform_admin");
+		api = fresh.api;
+		apiContext = fresh.context;
 
 		const response = await api.put("/api/settings/oauth/microsoft", {
 			data: {
@@ -37,7 +29,7 @@ test.describe.serial("Preferred SSO redirect", () => {
 			},
 		});
 		await api.delete("/api/settings/oauth/microsoft");
-		await api.dispose();
+		await apiContext.close();
 	});
 
 	test("tries Microsoft once, then Back shows every login option", async ({

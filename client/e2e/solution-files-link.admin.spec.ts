@@ -9,7 +9,7 @@
  *
  */
 
-import { expect, type Page } from "@playwright/test";
+import { expect } from "./fixtures/api-fixture";
 import { Buffer } from "node:buffer";
 import { test, type AuthedApi } from "./fixtures/api-fixture";
 
@@ -89,22 +89,18 @@ function minimalSolutionZip(slug: string): Buffer {
 
 async function deployWithSolutionsLocation(
 	api: AuthedApi,
-	page: Page,
 	solId: string,
 	slug: string,
 ) {
-	const deployR = await page
-		.context()
-		.request.post(`/api/solutions/${solId}/deploy?force=true`, {
-			headers: await api.csrfHeader(),
-			multipart: {
-				file: {
-					name: "solution.zip",
-					mimeType: "application/zip",
-					buffer: minimalSolutionZip(slug),
-				},
+	const deployR = await api.post(`/api/solutions/${solId}/deploy?force=true`, {
+		multipart: {
+			file: {
+				name: "solution.zip",
+				mimeType: "application/zip",
+				buffer: minimalSolutionZip(slug),
 			},
-		});
+		},
+	});
 	if (deployR.status() !== 202) {
 		throw new Error(
 			`deploy solution: ${deployR.status()} ${await deployR.text()}`,
@@ -155,7 +151,7 @@ test.describe("Solution Files browser (admin)", () => {
 		const solId = sol.id as string;
 
 		try {
-			await deployWithSolutionsLocation(api, page, solId, slug);
+			await deployWithSolutionsLocation(api, solId, slug);
 
 			// Seed an allow-all policy on the 'solutions' location (global).
 			await api.put("/api/files/policies/", {

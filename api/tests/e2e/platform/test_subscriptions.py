@@ -22,7 +22,7 @@ TEST_API_URL = os.environ.get("TEST_API_URL", "http://api:8000")
 TEST_WS_URL = TEST_API_URL.replace("http://", "ws://").replace("https://", "wss://")
 
 
-async def _ws_subscribe(user_token: str, channels: list):
+async def _ws_subscribe(user, human_minter, channels: list):
     """Open a ws, drain the `connected` greeting, send subscribe, return (ws, ack).
 
     The server emits `{"type": "connected", ...}` immediately on open; the
@@ -30,9 +30,11 @@ async def _ws_subscribe(user_token: str, channels: list):
     `{"type": "subscribed", ...}` on success or `{"type": "error", ...}` on
     denial).
     """
+    human_minter(user)
+    assert user.access_token is not None
     ws = await connect(
         f"{TEST_WS_URL}/ws/connect",
-        additional_headers={"Authorization": f"Bearer {user_token}"},
+        additional_headers={"Authorization": f"Bearer {user.access_token}"},
     )
     # Drain the connected greeting first.
     greeting = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
@@ -64,7 +66,7 @@ async def _policy_deny_rows(
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_with_read_accepted(platform_admin, alice_user):
+async def test_subscribe_with_read_accepted(platform_admin, alice_user, human_minter):
     """Alice subscribes; everyone-read policy permits."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
@@ -90,7 +92,7 @@ async def test_subscribe_with_read_accepted(platform_admin, alice_user):
         assert r.status_code == 201, r.text
         table_id = r.json()["id"]
 
-    ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{table_id}"])
+    ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{table_id}"])
     try:
         assert ack.get("type") == "subscribed", f"expected subscribed, got {ack}"
         assert ack.get("channel") == f"table:{table_id}"
@@ -100,7 +102,7 @@ async def test_subscribe_with_read_accepted(platform_admin, alice_user):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_without_read_rejected(platform_admin, alice_user):
+async def test_subscribe_without_read_rejected(platform_admin, alice_user, human_minter):
     """Alice subscribes to a seeded-only table → rejected."""
     table_name = f"sub_deny_{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
@@ -123,7 +125,8 @@ async def test_subscribe_without_read_rejected(platform_admin, alice_user):
         )
 
         ws, ack = await _ws_subscribe(
-            alice_user.access_token,
+            alice_user,
+            human_minter,
             [f"table:{table_id}"],
         )
         try:
@@ -149,7 +152,7 @@ async def test_subscribe_without_read_rejected(platform_admin, alice_user):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_receive_insert(platform_admin, alice_user):
+async def test_receive_insert(platform_admin, alice_user, human_minter):
     """Alice subscribes, admin inserts → Alice sees insert."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
@@ -171,7 +174,7 @@ async def test_receive_insert(platform_admin, alice_user):
         assert r.status_code == 201, r.text
         table_id = r.json()["id"]
 
-        ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{table_id}"])
+        ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{table_id}"])
         try:
             assert ack.get("type") == "subscribed", f"subscribe failed: {ack}"
             await client.post(
@@ -191,7 +194,7 @@ async def test_receive_insert(platform_admin, alice_user):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, alice_user):
+async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, alice_user, human_minter):
     """`useTable(name)` subscribes via `table:<name>`; server resolves to UUID.
 
     The publisher only emits on `table:<uuid>` channels, so a subscription
@@ -222,7 +225,7 @@ async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, a
 
         # Subscribe by NAME, not UUID — the channel string the SDK builds
         # when callers do `useTable("ticket_table")`.
-        ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{table_name}"])
+        ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{table_name}"])
         try:
             assert ack.get("type") == "subscribed", f"subscribe failed: {ack}"
             # Server normalizes to canonical UUID channel in the ack so the
@@ -244,10 +247,10 @@ async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, a
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_by_unknown_name_rejected(platform_admin, alice_user):
+async def test_subscribe_by_unknown_name_rejected(platform_admin, alice_user, human_minter):
     """Subscribing to a non-existent table name returns an error ack."""
     bogus = f"nope_{uuid.uuid4().hex[:8]}"
-    ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{bogus}"])
+    ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{bogus}"])
     try:
         assert ack.get("type") == "error", f"expected error ack, got {ack}"
         assert ack.get("channel") == f"table:{bogus}"
@@ -257,7 +260,7 @@ async def test_subscribe_by_unknown_name_rejected(platform_admin, alice_user):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscription_revoked_on_policy_change(platform_admin, alice_user):
+async def test_subscription_revoked_on_policy_change(platform_admin, alice_user, human_minter):
     """Admin removes read access → Alice's ws gets subscription_revoked."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
@@ -279,7 +282,7 @@ async def test_subscription_revoked_on_policy_change(platform_admin, alice_user)
         assert r.status_code == 201, r.text
         table_id = r.json()["id"]
 
-        ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{table_id}"])
+        ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{table_id}"])
         try:
             assert ack.get("type") == "subscribed", f"subscribe failed: {ack}"
             # Remove the everyone_read rule
@@ -304,7 +307,7 @@ async def test_subscription_revoked_on_policy_change(platform_admin, alice_user)
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_user_filter_narrows_messages(platform_admin, alice_user):
+async def test_user_filter_narrows_messages(platform_admin, alice_user, human_minter):
     """Alice subscribes with status=open filter; messages for status=done are dropped."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
@@ -329,7 +332,8 @@ async def test_user_filter_narrows_messages(platform_admin, alice_user):
         # `_row_from_doc` flattens JSONB at top level, so {"row": "status"}
         # resolves to the same value the API stores under data.status.
         ws, ack = await _ws_subscribe(
-            alice_user.access_token,
+            alice_user,
+            human_minter,
             [{"name": f"table:{table_id}", "filter": {"eq": [{"row": "status"}, "open"]}}],
         )
         try:
@@ -360,7 +364,7 @@ async def test_user_filter_narrows_messages(platform_admin, alice_user):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_to_other_org_table_rejected(platform_admin, alice_user, org2):
+async def test_subscribe_to_other_org_table_rejected(platform_admin, alice_user, org2, human_minter):
     """Hard org gate: alice (org1) cannot subscribe to an org2-scoped table,
     by NAME or by UUID, even if its policies look permissive.
 
@@ -395,7 +399,7 @@ async def test_subscribe_to_other_org_table_rejected(platform_admin, alice_user,
         table_id = r.json()["id"]
 
     # Subscribe by NAME — should be rejected.
-    ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{name}"])
+    ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{name}"])
     try:
         assert ack.get("type") == "error", f"name leak: {ack}"
         assert "not found" in ack.get("message", "").lower()
@@ -403,7 +407,7 @@ async def test_subscribe_to_other_org_table_rejected(platform_admin, alice_user,
         await ws.close()
 
     # Subscribe by UUID — also rejected.
-    ws, ack = await _ws_subscribe(alice_user.access_token, [f"table:{table_id}"])
+    ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{table_id}"])
     try:
         assert ack.get("type") == "error", f"UUID leak: {ack}"
         assert "not found" in ack.get("message", "").lower()

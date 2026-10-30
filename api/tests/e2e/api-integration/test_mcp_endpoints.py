@@ -29,7 +29,9 @@ class _PersistedMCPCallers:
     """
 
     @pytest.fixture(autouse=True)
-    def _persisted_callers(self, platform_admin, org1_user):
+    def _persisted_callers(self, platform_admin, org1_user, human_minter):
+        human_minter(platform_admin)
+        human_minter(org1_user)
         self.admin_headers = platform_admin.headers
         self.org_user_headers = org1_user.headers
         self.platform_admin_email = platform_admin.email
@@ -42,7 +44,7 @@ class TestMCPConfigEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/config endpoint access control."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self, platform_admin):
+    def reset_config(self, platform_admin, human_minter):
         """Reset MCP config before and after each test.
 
         ``test_put_config_success_for_platform_admin`` PUTs ``enabled=True``
@@ -52,7 +54,9 @@ class TestMCPConfigEndpoint(_PersistedMCPCallers):
         DELETEs ensures a teardown failure surfaces as a teardown failure
         rather than as a flake two layers downstream.
         """
+        human_minter(platform_admin)
         headers = platform_admin.headers
+        self.admin_headers = headers
 
         # Reset before test — must succeed; failure leaves stale state.
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
@@ -184,8 +188,9 @@ class TestMCPToolsEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/tools endpoint access control."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def _ensure_agent_with_tools(self, platform_admin):
+    def _ensure_agent_with_tools(self, platform_admin, human_minter):
         """Create an agent with system tools so /api/mcp/tools returns results."""
+        human_minter(platform_admin)
         headers = platform_admin.headers
 
         resp = requests.post(
@@ -210,6 +215,8 @@ class TestMCPToolsEndpoint(_PersistedMCPCallers):
 
         yield
 
+        human_minter(platform_admin)
+        headers = platform_admin.headers
         requests.delete(
             f"{TEST_API_URL}/api/agents/{agent_id}",
             headers=headers,
@@ -368,8 +375,10 @@ class TestMCPRunEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/run and /api/mcp/run/plugin."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self, platform_admin):
+    def reset_config(self, platform_admin, human_minter):
+        human_minter(platform_admin)
         headers = platform_admin.headers
+        self.admin_headers = headers
 
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
         assert pre.status_code == 200, (
@@ -501,14 +510,16 @@ class TestMCPConfigToolFiltering(_PersistedMCPCallers):
     """Tests for MCP config tool whitelist/blacklist functionality."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self, platform_admin):
+    def reset_config(self, platform_admin, human_minter):
         """Reset MCP config before and after each test.
 
         Asserts the teardown DELETE actually returned 200 so that a silent
         teardown failure (e.g. transient API unavailability) cannot leak
         state into the next test and present as a stale-read flake.
         """
+        human_minter(platform_admin)
         headers = platform_admin.headers
+        self.admin_headers = headers
 
         # Reset before test — must succeed; failure leaves stale state.
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)

@@ -11,7 +11,7 @@
  * These tests run WITHOUT pre-authenticated state to test the login flow itself.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
