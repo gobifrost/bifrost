@@ -7,8 +7,8 @@ tests walk the real application's dependency graph and drive a mutation
 route with expired and valid tokens.
 """
 
-from __future__ import annotations
-
+# No ``from __future__ import annotations``: FastAPI must resolve these
+# routes' Annotated dependencies, which name functions local to each test.
 from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
 from typing import Annotated, Any
