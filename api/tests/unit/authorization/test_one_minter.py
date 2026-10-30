@@ -1,17 +1,19 @@
-"""One minter: no access token is signed outside a reviewed set of functions (plan §9.3).
+"""One minter: no access token is signed outside a reviewed set of places (plan §9.3).
 
 Run access tokens come from ``tokens.issue_access_token``, which signs
-through ``tokens._encode_claims``. The remaining ``create_access_token``
-callers are embed tokens and impersonation markers (which keep their own
-formats), the runtime minters PR1b replaces, and the people sites PR2 moves
-to ``issue_access_token``. A new signing site fails this test until it is
-reviewed here.
+through ``tokens._encode_claims``. These are blunt, file-level rules that
+fail closed; they catch accidental regressions, not a determined author:
 
-Names are resolved through each module's imports, so ``import jwt as x``,
-``from jwt import encode``, ``jwt.PyJWT().encode`` and an aliased
-``create_access_token`` are all seen, and a reference counts as well as a
-call (``sign = jwt.encode``). Dynamic lookups (``getattr(jwt, "encode")``)
-are out of reach of a static check.
+- only reviewed modules may import PyJWT, in any form and at any scope, and
+  only as a plain ``import jwt``; inside them ``jwt`` is used only as
+  ``jwt.<attribute>`` from the module's reviewed attributes, and
+  ``jwt.encode`` only in its reviewed functions;
+- only the tokens module may name ``_encode_claims`` at all, and only inside
+  the two token issuers;
+- ``create_access_token`` is used only by reviewed functions, and never
+  imported under another name. Those are embed tokens and impersonation
+  markers (which keep their own formats), the runtime minters PR1b replaces,
+  and the people sites PR2 moves to ``issue_access_token``.
 """
 
 from __future__ import annotations
@@ -21,30 +23,34 @@ from pathlib import Path
 
 _API_ROOT = Path(__file__).resolve().parents[3]
 _SCANNED = ("src", "shared", "bifrost")
+_TOKENS_MODULE = "src.services.authorization.tokens"
 
-# Every way the PyJWT package signs.
-_JWT_SIGNERS = frozenset(
-    {
-        "jwt.encode",
-        "jwt.api_jwt.encode",
-        "jwt.api_jws.encode",
-        "jwt.PyJWT().encode",
-        "jwt.PyJWS().encode",
-        "jwt.api_jwt.PyJWT().encode",
-        "jwt.api_jws.PyJWS().encode",
-    }
-)
-_CREATE_ACCESS_TOKEN = "src.core.security.create_access_token"
-_ENCODE_CLAIMS = "src.services.authorization.tokens._encode_claims"
-
-_JWT_SIGNING_SITES = {
-    "src.services.authorization.tokens:_encode_claims",
-    "src.core.security:create_access_token",
-    "src.core.security:create_refresh_token",
-    "src.core.security:create_mfa_token",
-    "shared.solution_dev:_mint_solution_dev_token",
-    "src.services.oauth_state_core:encode_state_jwt",
+# Module -> (jwt attributes it may use, functions that may call jwt.encode).
+_JWT_MODULES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    # Access, refresh and MFA tokens.
+    "src.core.security": (
+        frozenset({"encode", "decode", "ExpiredSignatureError", "InvalidTokenError"}),
+        frozenset({"create_access_token", "create_refresh_token", "create_mfa_token"}),
+    ),
+    # The run-token minter.
+    _TOKENS_MODULE: (frozenset({"encode"}), frozenset({"_encode_claims"})),
+    # Local Solution development context tokens.
+    "shared.solution_dev": (frozenset({"encode"}), frozenset({"_mint_solution_dev_token"})),
+    # OAuth state parameters.
+    "src.services.oauth_state_core": (
+        frozenset({"encode", "decode", "ExpiredSignatureError", "InvalidTokenError"}),
+        frozenset({"encode_state_jwt"}),
+    ),
+    # Decode only.
+    "shared.browser_impersonation": (frozenset({"decode", "InvalidTokenError"}), frozenset()),
+    "src.services.oauth_sso": (frozenset({"decode", "PyJWTError"}), frozenset()),
+    "src.services.webhooks.adapters.microsoft_bot_framework": (
+        frozenset({"decode", "get_unverified_header", "PyJWK", "PyJWTError"}),
+        frozenset(),
+    ),
 }
+
+_ENCODE_CLAIMS_USERS = frozenset({"issue_access_token", "issue_run_refresh_token"})
 
 _CREATE_ACCESS_TOKEN_SITES = {
     # Their own formats, unchanged by the token program.
@@ -65,154 +71,157 @@ _CREATE_ACCESS_TOKEN_SITES = {
     "src.services.mcp_server.auth:BifrostAuthProvider._token",
 }
 
-# The run-token signer is reached only through the two token issuers.
-_ENCODE_CLAIMS_SITES = {
-    "src.services.authorization.tokens:issue_access_token",
-    "src.services.authorization.tokens:issue_run_refresh_token",
-}
 
+def _scopes(tree: ast.AST) -> list[tuple[ast.AST, str]]:
+    """Every node with the qualified name of its enclosing function or class."""
+    found: list[tuple[ast.AST, str]] = []
 
-def _bindings(module: str, tree: ast.Module, is_package: bool) -> dict[str, str]:
-    """Local name -> fully qualified origin, from every import in the module
-    (function-level imports included) and the module's own top-level defs."""
-    names: dict[str, str] = {}
-    package = module if is_package else module.rpartition(".")[0]
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.asname:
-                    names[alias.asname] = alias.name
-                else:
-                    root = alias.name.split(".")[0]
-                    names[root] = root
-        elif isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            if node.level:
-                anchor = package.split(".")
-                anchor = anchor[: len(anchor) - (node.level - 1)]
-                base = ".".join([*anchor, base] if base else anchor)
-            for alias in node.names:
-                names[alias.asname or alias.name] = f"{base}.{alias.name}"
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.setdefault(node.name, f"{module}.{node.name}")
-    return names
+    def walk(node: ast.AST, scope: tuple[str, ...]) -> None:
+        for child in ast.iter_child_nodes(node):
+            found.append((child, ".".join(scope) or "<module>"))
+            inner = (*scope, child.name) if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else scope
+            walk(child, inner)
 
-
-def _origin(node: ast.AST, names: dict[str, str]) -> str | None:
-    if isinstance(node, ast.Name):
-        return names.get(node.id)
-    if isinstance(node, ast.Attribute):
-        base = _origin(node.value, names)
-        return None if base is None else f"{base}.{node.attr}"
-    if isinstance(node, ast.Call):
-        base = _origin(node.func, names)
-        return None if base is None else f"{base}()"
-    return None
-
-
-def _sites(module: str, source: str, targets: frozenset[str], *, is_package: bool = False) -> set[str]:
-    """``module:qualname`` of every function (or ``<module>``) that references
-    a target, whether it calls it or aliases it. Importing a PyJWT signer by
-    name is itself a site; importing a Bifrost helper by name is not (every
-    use of the bound name still is)."""
-    tree = ast.parse(source)
-    names = _bindings(module, tree, is_package)
-    found: set[str] = set()
-    scope: list[str] = []
-
-    class Visitor(ast.NodeVisitor):
-        def _enter(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> None:
-            scope.append(node.name)
-            self.generic_visit(node)
-            scope.pop()
-
-        visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _enter
-
-        def _record(self) -> None:
-            found.add(f"{module}:{'.'.join(scope) or '<module>'}")
-
-        def visit_Attribute(self, node: ast.Attribute) -> None:
-            if _origin(node, names) in targets:
-                self._record()
-            self.generic_visit(node)
-
-        def visit_Name(self, node: ast.Name) -> None:
-            # A module-level def resolves to itself: only references count.
-            if _origin(node, names) in targets:
-                self._record()
-
-        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-            # ``from jwt import encode`` binds a signer even before any use.
-            for alias in node.names:
-                origin = names.get(alias.asname or alias.name)
-                if origin in targets and origin is not None and origin.startswith("jwt."):
-                    self._record()
-
-    Visitor().visit(tree)
+    walk(tree, ())
     return found
 
 
-def _scan(targets: frozenset[str]) -> set[str]:
-    found: set[str] = set()
+def _jwt_violations(module: str, source: str) -> list[str]:
+    tree = ast.parse(source)
+    allowed = _JWT_MODULES.get(module)
+    problems: list[str] = []
+    jwt_attribute_bases: set[int] = set()
+    for node, scope in _scopes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "jwt" and (allowed is None or alias.name != "jwt" or alias.asname):
+                    problems.append(f"{module}:{scope} imports {alias.name} as {alias.asname or alias.name}")
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "jwt" and not node.level:
+            problems.append(f"{module}:{scope} imports from {node.module}")
+        elif allowed is not None and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "jwt":
+            jwt_attribute_bases.add(id(node.value))
+            attributes, encoders = allowed
+            if node.attr not in attributes:
+                problems.append(f"{module}:{scope} uses jwt.{node.attr}")
+            elif node.attr == "encode" and scope.split(".")[-1] not in encoders:
+                problems.append(f"{module}:{scope} signs with jwt.encode")
+    if allowed is not None:
+        for node, scope in _scopes(tree):
+            if isinstance(node, ast.Name) and node.id == "jwt" and id(node) not in jwt_attribute_bases:
+                problems.append(f"{module}:{scope} uses the jwt module as a value")
+    return problems
+
+
+def _encode_claims_violations(module: str, source: str) -> list[str]:
+    problems: list[str] = []
+    for node, scope in _scopes(ast.parse(source)):
+        named = (
+            (isinstance(node, ast.Name) and node.id == "_encode_claims")
+            or (isinstance(node, ast.Attribute) and node.attr == "_encode_claims")
+            or (isinstance(node, ast.alias) and "_encode_claims" in (node.name, node.asname))
+        )
+        if named and (module != _TOKENS_MODULE or scope.split(".")[-1] not in _ENCODE_CLAIMS_USERS):
+            problems.append(f"{module}:{scope} names _encode_claims")
+    return problems
+
+
+def _create_access_token_sites(module: str, source: str) -> tuple[set[str], list[str]]:
+    sites: set[str] = set()
+    problems: list[str] = []
+    for node, scope in _scopes(ast.parse(source)):
+        if isinstance(node, ast.alias) and node.name.split(".")[-1] == "create_access_token" and node.asname:
+            problems.append(f"{module}:{scope} imports create_access_token as {node.asname}")
+        elif (isinstance(node, ast.Name) and node.id == "create_access_token") or (
+            isinstance(node, ast.Attribute) and node.attr == "create_access_token"
+        ):
+            sites.add(f"{module}:{scope}")
+    return sites, problems
+
+
+def _modules() -> list[tuple[str, str]]:
+    found = []
     for package in _SCANNED:
         for path in sorted((_API_ROOT / package).rglob("*.py")):
             parts = path.relative_to(_API_ROOT).with_suffix("").parts
-            is_package = parts[-1] == "__init__"
-            module = ".".join(parts[:-1] if is_package else parts)
-            found |= _sites(module, path.read_text(), targets, is_package=is_package)
+            module = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+            found.append((module, path.read_text()))
     return found
 
 
-def test_only_reviewed_functions_sign_jwts() -> None:
-    assert _scan(_JWT_SIGNERS) == _JWT_SIGNING_SITES
+def _imports_jwt(source: str) -> bool:
+    return any(
+        alias.name.split(".")[0] == "jwt"
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    )
+
+
+def test_only_reviewed_modules_use_pyjwt() -> None:
+    modules = _modules()
+
+    assert [problem for module, source in modules for problem in _jwt_violations(module, source)] == []
+    # No stale entry: every reviewed module still imports PyJWT.
+    assert {module for module, source in modules if _imports_jwt(source)} == set(_JWT_MODULES)
+
+
+def test_only_the_token_issuers_name_the_run_token_signer() -> None:
+    assert [problem for module, source in _modules() for problem in _encode_claims_violations(module, source)] == []
 
 
 def test_only_reviewed_functions_mint_access_tokens_outside_the_minter() -> None:
-    assert _scan(frozenset({_CREATE_ACCESS_TOKEN})) == _CREATE_ACCESS_TOKEN_SITES
+    sites: set[str] = set()
+    problems: list[str] = []
+    for module, source in _modules():
+        found, wrong = _create_access_token_sites(module, source)
+        sites |= found
+        problems += wrong
 
-
-def test_only_the_token_issuers_use_the_run_token_signer() -> None:
-    assert _scan(frozenset({_ENCODE_CLAIMS})) == _ENCODE_CLAIMS_SITES
-
-
-_SIGNER = frozenset(_JWT_SIGNERS)
-_MINTER = frozenset({_CREATE_ACCESS_TOKEN})
-_RUN_SIGNER = frozenset({_ENCODE_CLAIMS})
+    assert problems == []
+    assert sites == _CREATE_ACCESS_TOKEN_SITES
 
 
 def test_each_known_bypass_is_flagged() -> None:
-    cases = {
-        "import jwt as signing\ndef f(c):\n    return signing.encode(c, 'k')\n": (_SIGNER, "m:f"),
-        "from jwt import encode\ndef f(c):\n    return encode(c, 'k')\n": (_SIGNER, "m:f"),
-        "from jwt import encode as e\ndef f(c):\n    return e(c, 'k')\n": (_SIGNER, "m:f"),
-        "import jwt\ndef f(c):\n    return jwt.PyJWT().encode(c, 'k')\n": (_SIGNER, "m:f"),
-        "from jwt.api_jwt import encode\ndef f(c):\n    return encode(c, 'k')\n": (_SIGNER, "m:f"),
-        "from jwt import encode as e\n": (_SIGNER, "m:<module>"),
-        "import jwt\nsign = None\ndef f():\n    global sign\n    sign = jwt.encode\n": (_SIGNER, "m:f"),
-        "from src.core.security import create_access_token as cat\nclass M:\n    def mint(self):\n"
-        "        return cat({'sub': 'x'})\n": (_MINTER, "m:M.mint"),
-        "import src.core.security as sec\ndef f():\n    return sec.create_access_token({})\n": (_MINTER, "m:f"),
-        "from src.core import security\ndef f():\n    return security.create_access_token({})\n": (_MINTER, "m:f"),
-        "from src.services.authorization.tokens import _encode_claims\ndef f(c):\n    return _encode_claims(c)\n": (
-            _RUN_SIGNER,
-            "m:f",
-        ),
-        "from src.services.authorization import tokens\ndef f(c):\n    return tokens._encode_claims(c)\n": (
-            _RUN_SIGNER,
-            "m:f",
-        ),
+    outside = "src.services.sneaky"
+    jwt_cases = {
+        # Outside the reviewed modules: any import, any form, any scope.
+        (outside, "import jwt\n"),
+        (outside, "import jwt as signing\n"),
+        (outside, "from jwt import encode\n"),
+        (outside, "from jwt.api_jwt import PyJWT\n"),
+        (outside, "def f():\n    import jwt\n    return jwt.encode({}, 'k')\n"),
+        # Shadowing elsewhere in the file does not hide the import.
+        (outside, "import jwt as signing\ndef g():\n    import json as signing\n    return signing\n"),
+        # Inside a reviewed module: aliases, value escapes, unreviewed
+        # attributes and unreviewed signing functions.
+        ("shared.browser_impersonation", "import jwt as signing\n"),
+        ("shared.browser_impersonation", "import jwt\ndef f(c):\n    signing = jwt\n    return signing.encode(c, 'k')\n"),
+        ("shared.browser_impersonation", "import jwt\ndef f(c):\n    signer = jwt.PyJWT()\n    return signer.encode(c, 'k')\n"),
+        ("shared.browser_impersonation", "import jwt\ndef f(c):\n    return jwt.encode(c, 'k')\n"),
+        ("src.core.security", "import jwt\ndef sneaky(c):\n    return jwt.encode(c, 'k')\n"),
     }
-    for source, (targets, site) in cases.items():
-        assert site in _sites("m", source, targets), source
+    for module, source in jwt_cases:
+        assert _jwt_violations(module, source), (module, source)
+
+    encode_claims_cases = {
+        (outside, "from src.services.authorization.tokens import _encode_claims\n"),
+        (outside, "from src.services.authorization import tokens\ndef f(c):\n    return tokens._encode_claims(c)\n"),
+        (outside, "from src.services.authorization import tokens\nt = tokens\ndef f(c):\n    return t._encode_claims(c)\n"),
+        (_TOKENS_MODULE, "def another(c):\n    return _encode_claims(c)\n"),
+        (_TOKENS_MODULE, "sign = _encode_claims\n"),
+    }
+    for module, source in encode_claims_cases:
+        assert _encode_claims_violations(module, source), (module, source)
+
+    aliased = "from src.core.security import create_access_token as cat\ndef f():\n    return cat({})\n"
+    assert _create_access_token_sites(outside, aliased)[1]
+    called = "from src.core import security\ndef f():\n    return security.create_access_token({})\n"
+    assert _create_access_token_sites(outside, called)[0] == {f"{outside}:f"}
 
 
-def test_unrelated_encodes_and_relative_imports_resolve_correctly() -> None:
-    source = (
-        "import base64\nimport json\n"
-        "def f(x):\n    return base64.b64encode(json.dumps(x).encode())\n"
-    )
-    assert _sites("m", source, _SIGNER) == set()
-    # A relative import inside the authorization package names tokens._encode_claims.
-    relative = "from .tokens import _encode_claims\ndef f(c):\n    return _encode_claims(c)\n"
-    assert "src.services.authorization.sneaky:f" in _sites("src.services.authorization.sneaky", relative, _RUN_SIGNER)
+def test_reviewed_uses_pass() -> None:
+    assert _jwt_violations("shared.browser_impersonation", "import jwt\ndef f(t):\n    return jwt.decode(t, 'k')\n") == []
+    assert _encode_claims_violations(_TOKENS_MODULE, "def issue_access_token(c):\n    return _encode_claims(c)\n") == []
+    assert _jwt_violations(
+        "src.services.sneaky", "import json as signing\ndef f(x):\n    return signing.dumps(x).encode()\n"
+    ) == []

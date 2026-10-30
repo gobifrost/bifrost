@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import ColumnClause, Select, TableClause, event, func, select, text
+from sqlalchemy import ColumnClause, Select, TableClause, TextClause, event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 from sqlalchemy.sql import visitors
 
@@ -62,8 +62,10 @@ def _statement_reads(context: Any) -> set[tuple[str, str]]:
 
     For an ORM statement this is the core SELECT the ORM compiled (so
     ``load_only`` and joined eager loads are exact). A table appears as
-    ``(table, _ROWS)``. A statement that is not a structured SELECT (textual
-    SQL, driver-level SQL), or a column with no table, is reported as
+    ``(table, _ROWS)``. Fail closed: a statement that is not a structured
+    SELECT (textual or driver-level SQL), or whose tree holds a textual
+    fragment anywhere (``text()`` in a column, FROM, WHERE or ORDER BY;
+    ``literal_column``), or a column with no table, is reported as
     ``(_UNSUPPORTED, ...)`` so the check fails instead of reading as empty.
     """
     compiled = getattr(context, "compiled", None)
@@ -74,8 +76,11 @@ def _statement_reads(context: Any) -> set[tuple[str, str]]:
     if not isinstance(statement, Select):
         return {(_UNSUPPORTED, str(getattr(context, "statement", "")).strip()[:120])}
     reads: set[tuple[str, str]] = set()
+    sql = str(getattr(context, "statement", "")).strip()[:120]
     for element in visitors.iterate(statement, {"column_collections": False}):
-        if isinstance(element, TableClause):
+        if isinstance(element, TextClause) or getattr(element, "is_literal", False):
+            reads.add((_UNSUPPORTED, f"textual fragment in {sql}"))
+        elif isinstance(element, TableClause):
             reads.add((element.name, _ROWS))
         elif isinstance(element, ColumnClause):
             if element.table is None:
@@ -234,6 +239,14 @@ async def _unregistered_table(db: AsyncSession) -> None:
     await db.execute(select(func.count()).select_from(Form))
 
 
+async def _embedded_text_column(db: AsyncSession) -> None:
+    await db.execute(select(text("(SELECT count(*) FROM forms)")))
+
+
+async def _embedded_text_from_table(db: AsyncSession) -> None:
+    await db.execute(select(text("last_login")).select_from(User).limit(1))
+
+
 @pytest.mark.parametrize(
     ("extra", "problem"),
     [
@@ -241,13 +254,30 @@ async def _unregistered_table(db: AsyncSession) -> None:
         (_driver_level, "unsupported statement: SELECT count(*) FROM users"),
         (_unversioned_column, "users.last_login is read but neither versioned nor read live"),
         (_unregistered_table, "forms.<rows> is read but no epoch trigger covers forms"),
+        (
+            _embedded_text_column,
+            "unsupported statement: textual fragment in SELECT (SELECT count(*) FROM forms)",
+        ),
+        (
+            _embedded_text_from_table,
+            "unsupported statement: textual fragment in SELECT last_login",
+        ),
     ],
-    ids=["textual SQL", "driver-level SQL", "unversioned column", "unregistered table"],
+    ids=[
+        "textual SQL",
+        "driver-level SQL",
+        "unversioned column",
+        "unregistered table",
+        "textual subquery column",
+        "textual column over a table",
+    ],
 )
 async def test_an_injected_read_fails_the_check_through_real_capture(
     async_engine: AsyncEngine, extra: Callable[[AsyncSession], Awaitable[None]], problem: str
 ) -> None:
-    assert problem in _read_side_mismatches(await _capture_minting(async_engine, extra))
+    problems = _read_side_mismatches(await _capture_minting(async_engine, extra))
+
+    assert any(problem in found for found in problems), problems
 
 
 def test_the_read_side_check_fails_for_an_unversioned_or_unregistered_read() -> None:
