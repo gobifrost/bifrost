@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
+from src.core.database_retry import run_with_database_retry
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
@@ -28,6 +29,7 @@ from src.services.ai_behavior_service import AgentExecutionMode, AIBehaviorServi
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from src.models.orm.work_dispatches import WorkDispatch
     from src.services.authorization.enforce import Caller
     from src.services.execution.autonomous_agent_executor import ActingUser
 
@@ -460,9 +462,10 @@ class AgentRunConsumer:
 
             # Update run record and flush buffered steps (brief DB session)
             duration_ms = int((time.time() - start_time) * 1000)
-            consumer_applied_result = False
-            summary = None
-            async with self._session_factory() as db:
+
+            async def _write_result(
+                db: AsyncSession,
+            ) -> tuple[AgentRun, WorkDispatch | None] | None:
                 # Re-fetch the AgentRun in this session to update it, but only
                 # if it is still live. A scheduler may have already terminalized
                 # the row; in that case we must not overwrite the final status.
@@ -472,8 +475,8 @@ class AgentRunConsumer:
                     with_for_update={"of": AgentRun},
                 )
                 if run_obj is None:
-                    logger.info(f"Agent run {run_id}: final update skipped because row disappeared")
-                    return
+                    return None
+                consumer_applied_result = False
                 if run_obj.status == "running":
                     run_obj.status = run_result.get("status", "completed")
                     run_obj.output = (
@@ -512,16 +515,24 @@ class AgentRunConsumer:
                 # A completed run's summary is requested with its result, so
                 # it is never stranded; failures and cancellations are not
                 # summarized (the UI offers regenerate from any state).
+                summary = None
                 if consumer_applied_result and run_obj.status == "completed":
                     from src.services.execution.summary_dispatch import stage_summary
 
                     summary = await stage_summary(db, run_obj.id)
 
                 await db.commit()
+                return run_obj, summary
 
-                # Re-read for publish (need agent relationship)
-                if run_obj:
-                    agent_run = run_obj
+            written = await run_with_database_retry(
+                self._session_factory,
+                _write_result,
+                description=f"agent run {run_id} final update",
+            )
+            if written is None:
+                logger.info(f"Agent run {run_id}: final update skipped because row disappeared")
+                return
+            agent_run, summary = written
 
             # Clean up Redis Stream now that steps are committed to DB. Its TTL
             # bounds the leak if this best-effort delete cannot reach Redis.
@@ -566,34 +577,43 @@ class AgentRunConsumer:
         except Exception as e:
             logger.exception(f"Agent run {run_id} failed: {e}")
             if agent_run is not None:
-                try:
-                    async with self._session_factory() as db:
-                        run_obj = await db.get(
-                            AgentRun,
-                            UUID(run_id),
-                            with_for_update={"of": AgentRun},
+                failure_error = str(e)
+
+                async def _write_failure(db: AsyncSession) -> AgentRun | None:
+                    run_obj = await db.get(
+                        AgentRun,
+                        UUID(run_id),
+                        with_for_update={"of": AgentRun},
+                    )
+                    if run_obj is None:
+                        return None
+                    if run_obj.status == "running":
+                        run_obj.status = "failed"
+                        run_obj.error = failure_error
+                        run_obj.duration_ms = int((time.time() - start_time) * 1000)
+                        run_obj.completed_at = datetime.now(timezone.utc)
+                    else:
+                        logger.info(
+                            "Agent run %s: failure update skipped because current status is %s",
+                            run_id,
+                            run_obj.status,
                         )
-                        if run_obj:
-                            if run_obj.status == "running":
-                                run_obj.status = "failed"
-                                run_obj.error = str(e)
-                                run_obj.duration_ms = int(
-                                    (time.time() - start_time) * 1000
-                                )
-                                run_obj.completed_at = datetime.now(timezone.utc)
-                            else:
-                                logger.info(
-                                    "Agent run %s: failure update skipped because current status is %s",
-                                    run_id,
-                                    run_obj.status,
-                                )
 
-                            # Still flush any buffered steps on failure
-                            if executor:
-                                await executor.flush_to_db(db)
+                    # Still flush any buffered steps on failure
+                    if executor:
+                        await executor.flush_to_db(db)
 
-                            await db.commit()
-                            agent_run = run_obj
+                    await db.commit()
+                    return run_obj
+
+                try:
+                    failed_run = await run_with_database_retry(
+                        self._session_factory,
+                        _write_failure,
+                        description=f"agent run {run_id} failure update",
+                    )
+                    if failed_run is not None:
+                        agent_run = failed_run
                 except Exception:
                     logger.exception(f"Failed to update agent_run {run_id} after error")
 
@@ -837,19 +857,15 @@ class AgentRunConsumer:
                 else:
                     output = {"text": final_content, "partial": True}
 
-                async with self._session_factory() as db:
+                async def _write_terminal(db: AsyncSession) -> AgentRun | None:
                     run_obj = await db.get(
                         AgentRun,
                         UUID(run_id),
                         with_for_update={"of": AgentRun},
                     )
                     if run_obj is None:
-                        logger.info(
-                            "Chat run %s: final update skipped because row disappeared",
-                            run_id,
-                        )
-                        return
-                    elif run_obj.status in {"running", "cancelling"}:
+                        return None
+                    if run_obj.status in {"running", "cancelling"}:
                         run_obj.status = terminal_status
                         run_obj.output = output
                         run_obj.iterations_used = iterations_used
@@ -871,7 +887,20 @@ class AgentRunConsumer:
                             run_id,
                             run_obj.status,
                         )
-                    agent_run_ref = run_obj
+                    return run_obj
+
+                written = await run_with_database_retry(
+                    self._session_factory,
+                    _write_terminal,
+                    description=f"chat run {run_id} final update",
+                )
+                if written is None:
+                    logger.info(
+                        "Chat run %s: final update skipped because row disappeared",
+                        run_id,
+                    )
+                    return
+                agent_run_ref = written
 
                 await publish_agent_run_update(
                     agent_run_ref,
@@ -960,18 +989,14 @@ class AgentRunConsumer:
                     payload=interrupted_payload,
                 )
 
-                async with self._session_factory() as db:
+                async def _write_interrupted(db: AsyncSession) -> AgentRun | None:
                     run_obj = await db.get(
                         AgentRun,
                         UUID(run_id),
                         with_for_update={"of": AgentRun},
                     )
                     if run_obj is None:
-                        logger.info(
-                            "Chat run %s: cancel update skipped because row disappeared",
-                            run_id,
-                        )
-                        return
+                        return None
                     if run_obj.status in {"running", "cancelling"}:
                         run_obj.status = interrupted_status
                         run_obj.output = {
@@ -990,7 +1015,20 @@ class AgentRunConsumer:
                                 "failover_path": json.dumps(executor._active_failover_path),
                             }
                         await db.commit()
-                    agent_run_ref = run_obj
+                    return run_obj
+
+                written = await run_with_database_retry(
+                    self._session_factory,
+                    _write_interrupted,
+                    description=f"chat run {run_id} interrupted update",
+                )
+                if written is None:
+                    logger.info(
+                        "Chat run %s: cancel update skipped because row disappeared",
+                        run_id,
+                    )
+                    return
+                agent_run_ref = written
 
                 await publish_agent_run_update(
                     agent_run_ref,

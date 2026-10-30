@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.core.principal import UserPrincipal
 from src.jobs.consumers.agent_run import (
@@ -1040,4 +1041,219 @@ async def test_run_without_run_as_passes_the_persisted_actor(
             is_provider_org=False,
         )
     finally:
+        await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
+
+
+class OutageSessionFactory:
+    """The test database, reached through a server that refuses while it is down.
+
+    ``down`` counts the sessions still to be handed a database that refuses
+    connections, as a pooler or PostgreSQL restart does.
+    """
+
+    def __init__(self, healthy: async_sessionmaker[AsyncSession]) -> None:
+        self._healthy = healthy
+        self._refusing_engine = create_async_engine(
+            "postgresql+asyncpg://bifrost:unused@127.0.0.1:1/bifrost"
+        )
+        self._refusing = async_sessionmaker(self._refusing_engine, expire_on_commit=False)
+        self.down = 0
+        self.refused = 0
+
+    def __call__(self) -> AsyncSession:
+        if self.down:
+            self.down -= 1
+            self.refused += 1
+            return self._refusing()
+        return self._healthy()
+
+    async def dispose(self) -> None:
+        await self._refusing_engine.dispose()
+
+
+REFUSED_ERROR = "[Errno 111] Connect call failed ('10.96.0.12', 5432)"
+
+
+def _executor_losing_the_database(*, outage_sessions: int, fail: bool):
+    """An executor whose run ends just as the database goes away.
+
+    With ``fail`` the run itself fails on the lost connection; otherwise it
+    completes and only the consumer's final write meets the outage.
+    """
+
+    class ExecutorLosingTheDatabase:
+        subtree_tokens = 0
+
+        def __init__(
+            self,
+            session_factory,
+            redis_client=None,
+            *,
+            _delegation_depth=0,
+            _ancestor_run_ids=(),
+        ):
+            self._session_factory = session_factory
+
+        async def run(
+            self,
+            agent,
+            *,
+            input_data=None,
+            output_schema=None,
+            run_id=None,
+            caller,
+            _shared_usage=None,
+            _shared_budget=None,
+            run_user_id,
+            run_as,
+            acting=None,
+            agent_execution_mode=None,
+        ):
+            self._session_factory.down = outage_sessions
+            if fail:
+                raise ConnectionRefusedError(
+                    111, "Connect call failed ('10.96.0.12', 5432)"
+                )
+            return {
+                "output": {"text": "done"},
+                "iterations_used": 1,
+                "tokens_used": 2,
+                "status": "completed",
+                "llm_model": "test-model",
+            }
+
+        async def flush_to_db(self, session):
+            return None
+
+    return ExecutorLosingTheDatabase
+
+
+async def _consume_through_outage(consumer, run, executor_cls, sleep):
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+    with (
+        _dispatched({"input": "hello"}),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            executor_cls,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        patch(
+            "src.services.execution.summary_dispatch.stage_summary",
+            AsyncMock(return_value=None),
+        ),
+        patch("src.core.database_retry.sleep", sleep),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": str(run.id),
+                "dispatch_id": str(uuid4()),
+                "agent_id": str(run.agent_id),
+                "trigger_type": "api",
+                "sync": True,
+            }
+        )
+    return sync_mock
+
+
+@pytest.mark.asyncio
+async def test_failure_is_recorded_once_the_database_is_back(
+    consumer, db_session, async_session_factory, seed_agent
+):
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
+    outage = OutageSessionFactory(async_session_factory)
+    consumer._session_factory = outage
+    sleep = AsyncMock()
+
+    try:
+        sync_mock = await _consume_through_outage(
+            consumer,
+            run,
+            _executor_losing_the_database(outage_sessions=3, fail=True),
+            sleep,
+        )
+
+        assert outage.refused == 3
+        assert sleep.await_count == 3
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "failed"
+        assert refreshed.error == REFUSED_ERROR
+        assert refreshed.completed_at is not None
+        sync_payload = sync_mock.await_args.args[1]
+        assert sync_payload["status"] == "failed"
+        assert sync_payload["error"] == REFUSED_ERROR
+    finally:
+        await outage.dispose()
+        await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
+
+
+@pytest.mark.asyncio
+async def test_a_run_the_sweep_terminalized_during_the_outage_keeps_its_status(
+    consumer, db_session, async_session_factory, seed_agent
+):
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
+    outage = OutageSessionFactory(async_session_factory)
+    consumer._session_factory = outage
+
+    async def _sweep_while_waiting(seconds: float) -> None:
+        async with async_session_factory() as db:
+            swept = await db.get(AgentRun, run.id)
+            assert swept is not None
+            if swept.status == "running":
+                swept.status = "timeout"
+                swept.error = "swept as stale"
+                swept.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+
+    try:
+        await _consume_through_outage(
+            consumer,
+            run,
+            _executor_losing_the_database(outage_sessions=1, fail=True),
+            _sweep_while_waiting,
+        )
+
+        assert outage.refused == 1
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "timeout"
+        assert refreshed.error == "swept as stale"
+    finally:
+        await outage.dispose()
+        await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
+
+
+@pytest.mark.asyncio
+async def test_result_is_recorded_once_the_database_is_back(
+    consumer, db_session, async_session_factory, seed_agent
+):
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
+    outage = OutageSessionFactory(async_session_factory)
+    consumer._session_factory = outage
+    sleep = AsyncMock()
+
+    try:
+        sync_mock = await _consume_through_outage(
+            consumer,
+            run,
+            _executor_losing_the_database(outage_sessions=2, fail=False),
+            sleep,
+        )
+
+        assert outage.refused == 2
+        assert sleep.await_count == 2
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "completed"
+        assert refreshed.output == {"text": "done"}
+        assert refreshed.error is None
+        assert sync_mock.await_args.args[1]["status"] == "completed"
+    finally:
+        await outage.dispose()
         await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
