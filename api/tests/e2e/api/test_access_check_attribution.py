@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import jwt
 import pytest
 
+from src.services.authorization.tokens import parse_human_claims
 from tests.e2e.conftest import poll_until
 from tests.e2e.fixtures.setup import PROVIDER_ORG_ID, _register_and_authenticate_user
 from tests.e2e.fixtures.users import E2EUser
@@ -82,9 +83,11 @@ def test_external_provider_claim_and_agent_access_checks(
             email=person["email"], password=f"Contoso-{tag}-Pass1!", name=person["name"],
             organization_id=PROVIDER_ORG_ID,
         ))
-        claims = jwt.decode(account.access_token, options={"verify_signature": False})
-        assert claims["is_external"] is True
-        assert claims["is_provider_org"] is True
+        payload = jwt.decode(account.access_token, options={"verify_signature": False})
+        claims = parse_human_claims(payload)
+        assert claims is not None
+        assert claims.usr.ext is True
+        assert claims.usr.prov is True
         form = _ok(e2e_client.post("/api/forms", headers=admin, json={
             "name": f"Contoso Form {tag}", "organization_id": str(PROVIDER_ORG_ID),
             "form_schema": {"fields": []}, "access_level": "everyone",

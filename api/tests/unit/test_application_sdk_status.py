@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 
 def _app(
     *,
@@ -104,6 +106,27 @@ def test_sdk_status_is_unknown_when_current_fingerprint_is_missing() -> None:
     )
 
     assert application_sdk_status(_app(sdk_fingerprint="app-fp"), current) == "unknown"
+
+
+@pytest.mark.parametrize("contract_version", [2, 4])
+@pytest.mark.parametrize("fingerprint", ["older-fp", "current-fp"])
+def test_incompatible_sdk_contract_requires_update_even_if_fingerprint_matches(
+    contract_version: int, fingerprint: str,
+) -> None:
+    from src.services.application_sdk_status import (
+        CurrentApplicationSdkMetadata,
+        application_sdk_status,
+    )
+
+    current = CurrentApplicationSdkMetadata(
+        package_version="1.2.3", fingerprint="current-fp", contract_version=3,
+    )
+    app = _app(
+        sdk_contract_version=contract_version, sdk_fingerprint=fingerprint,
+        sdk_built_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
+    )
+
+    assert application_sdk_status(app, current) == "update_required"
 
 
 async def test_load_current_sdk_metadata_degrades_when_build_toolchain_fails(monkeypatch) -> None:

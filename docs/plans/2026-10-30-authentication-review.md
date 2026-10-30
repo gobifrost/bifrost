@@ -1,6 +1,6 @@
 # PR2 Human Authentication — Independent Security Review Record
 
-Date: 2026-10-30  
+Date: 2026-10-30
 Status: architecture/source review complete; **final candidate and test approval pending**.
 
 This note preserves the independent architecture and source reviews of PR2 human
@@ -172,3 +172,30 @@ The maintenance runbook requires supported SDK rebuilds, or source redeployment
 when retained source is unavailable, before reopening those Apps. This follows
 the existing contract-2 precedent for incompatible realtime behavior; it does not
 raise the CLI contract or remove the runtime legacy bridge.
+
+## Exact candidate source review
+
+Independent Astra reviewed `2267af32b` against `origin/main`. It found one P1:
+App SDK status compared fingerprints but never contract versions, so a known
+contract-2 deployment was incorrectly labeled `update_available`. The shared
+status function now returns `update_required` for a contract mismatch before
+fingerprint equality, with older/newer and matching/different-fingerprint cases.
+Astra reviewed that correction and found no additional P1/P2 issues in the human
+session, cookie, HTTP, WebSocket, MCP or browser boundaries. A suspected issuer
+exception-mapping gap was retracted after inspecting the central exception handler
+and its passing regression. This is source review; the final delta checks remain
+required before delivery approval.
+
+The late consumer scan found legacy-token assumptions in worker-local HTTP
+permission tests, workspace requester binding, and external-actor attribution.
+They now use exact human credentials/current epochs, real fixture sessions, or
+parsed `usr` facts. The workflow-list test explicitly models a missing named
+permission rather than relying on a nonexistent legacy-token user.
+
+The first production-client login run received `/auth/me` HTTP 200 but failed its
+new assertion: Playwright's `toBeOK` matches APIResponse, not the browser Response.
+The assertion now checks its HTTP status directly. A separate instrumented
+AuthContext reproduction showed its remaining ordering failure was a local-storage
+spy on the wrong object; the corrected spy passed all 12 AuthContext tests. The
+speculative bootstrap edit was reverted. Neither failure was masked or retried
+without a concrete correction.

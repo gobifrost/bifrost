@@ -80,6 +80,8 @@ def application_sdk_status(
         or current.contract_version is None
     ):
         return "unknown"
+    if application.sdk_contract_version != current.contract_version:
+        return "update_required"
     if application.sdk_fingerprint == current.fingerprint:
         return "current"
     return "update_available"

@@ -124,7 +124,7 @@ test.describe("Login Flow", () => {
 			await page
 				.getByRole("button", { name: /verify|submit|continue/i })
 				.click();
-			await expect(await identity).toBeOK();
+			expect((await identity).status()).toBe(200);
 
 			// Should redirect to dashboard (wait for not being on login page)
 			await page.waitForURL((url) => !url.pathname.includes("/login"), {

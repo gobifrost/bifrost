@@ -51,7 +51,7 @@ def _preview(e2e_client, headers: dict[str, str], archive: bytes) -> dict:
 
 
 async def test_workspace_bundle_preview_enforces_auth_requester_expiry_and_active_dedupe(
-    e2e_client, platform_admin, org1_user,
+    e2e_client, platform_admin, second_platform_admin,
 ):
     """A staged preview belongs to its reviewer and one active decision job."""
     archive = _bundle_bytes()
@@ -66,13 +66,8 @@ async def test_workspace_bundle_preview_enforces_auth_requester_expiry_and_activ
 
     # A second valid platform-admin principal reaches the requester binding,
     # rather than stopping at the route's superuser dependency.
-    from tests.fixtures.auth import auth_headers, create_test_jwt
-    other_headers = auth_headers(create_test_jwt(
-        user_id=str(org1_user.user_id), email=org1_user.email, name=org1_user.name,
-        is_superuser=True,
-    ))
     other_request = e2e_client.post(
-        "/api/solutions/import-workspace", headers=other_headers,
+        "/api/solutions/import-workspace", headers=second_platform_admin.headers,
         json={"preview_token": preview["preview_token"], "decisions": []},
     )
     assert other_request.status_code == 404
