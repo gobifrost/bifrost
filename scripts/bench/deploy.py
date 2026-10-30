@@ -340,13 +340,32 @@ def reset(cluster: Cluster) -> None:
             raise SystemExit(f"namespace {namespace} did not finish deleting")
 
 
+class AdmittedEnvelopeError(envelope.EnvelopeError):
+    """An admission guard rejection with the raw pod and quota evidence that caused it."""
+
+    def __init__(self, reason: str, pods: list[dict], quota_status: dict) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.pods = pods
+        self.quota_status = quota_status
+
+    def evidence(self) -> dict:
+        return {"reason": self.reason, "pods": self.pods, "quota_status": self.quota_status}
+
+
 def reconcile_admitted(cluster: Cluster) -> dict:
     """Every admitted tenant pod's effective request must equal the quota's recorded usage."""
     pods = json.loads(cluster.kubectl("get", "pods", "-o", "json"))["items"]
     quota = json.loads(cluster.kubectl("get", "resourcequota", "tenant-envelope", "-o", "json"))
-    result = envelope.reconcile(pods, quota["status"])
-    if not result["match"]:
-        raise envelope.EnvelopeError(f"admitted pods {result['computed'].format()} disagree with quota usage {result['used'].format()}")
+    quota_status = quota["status"]
+    try:
+        result = envelope.reconcile(pods, quota_status)
+        if not result["match"]:
+            raise envelope.EnvelopeError(
+                f"admitted pods {result['computed'].format()} disagree with quota usage {result['used'].format()}",
+            )
+    except envelope.EnvelopeError as error:
+        raise AdmittedEnvelopeError(str(error), pods, quota_status) from error
     return {"admitted": result["computed"].format(), "pods": len(pods)}
 
 

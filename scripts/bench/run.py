@@ -305,7 +305,12 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     if fixture is not None:
         current.result["import_fixture"] = import_diagnostic.fixture_metadata(fixture)
     current.save()
-    current.result["deploy"] = deploy.apply(cluster, profile, selected_api_image)
+    try:
+        current.result["deploy"] = deploy.apply(cluster, profile, selected_api_image)
+    except deploy.AdmittedEnvelopeError as error:
+        current.result["admission_rejection"] = error.evidence()
+        current.save()
+        raise
     current.result["setup"] = current.driver("setup", {
         "seed": profile["seed"], "backend": backend, "policy": profile["worker_policy"], "table_docs": profile["table_docs"],
         "import_fixture": fixture,

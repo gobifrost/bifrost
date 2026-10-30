@@ -95,3 +95,22 @@ Host code is stdlib only. Tests: `python3 -m unittest discover -s scripts/bench/
 measurement or a claim about 50% of a sustainable rate.  It writes its initial
 and final durable-request reconciliation, including every matching execution
 or agent row, and records the Redis emptyDir/sentinel recovery proof.
+
+## Observational Soak
+
+`python3 scripts/bench/soak.py --campaign-manifest <passed-campaign.json>
+--out <new-directory>` runs a two-hour soak at exactly 70% of the confirmed
+mixed rate. It accepts only a fully passing immutable five-segment campaign,
+rechecks its frozen profile/image inputs, and rejects rate/profile overrides
+or existing output. The standalone command owns
+`/tmp/bifrost-capacity-host.lock` through cleanup; do not wrap it in another
+flock. Programmatic `soak.run()` callers must hold that same lock themselves.
+
+It checkpoints raw arrivals/outcomes before teardown and samples memory,
+PostgreSQL backend connection states and current S3 payload bytes/count once
+a minute. It reports post-30-minute memory slopes and signed database/object
+growth and generated WAL per 1,000 durably terminal executions, including
+failures in that denominator. Lifecycle gaps remain visible. PostgreSQL backend
+sessions are not application/pooler pool measurements; current S3 payloads
+are not physical allocation, retained versions, archives or billable storage.
+This is observational evidence, not another capacity certification.

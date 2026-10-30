@@ -476,7 +476,31 @@ class RunHarnessTest(unittest.TestCase):
         cluster.api_image_evidence.assert_called_once_with(provenance)
         self.assertEqual(current.result["api_image_provenance"]["api_pod"]["digest"], "sha256:config")
         self.assertEqual(current.save.call_count, 2)
+        self.assertNotIn("admission_rejection", current.result)
         self.assertIsNone(current.expected_api_uid)
+
+    def test_prepare_saves_admission_rejection_evidence_before_raising(self) -> None:
+        pods = [{"metadata": {"name": "bifrost-worker-rejected"}}]
+        quota_status = {"used": {"requests.cpu": "900m", "requests.memory": "1Gi"}}
+        rejection = run.deploy.AdmittedEnvelopeError("admitted resources disagree", pods, quota_status)
+        cluster = Mock()
+        cluster.identity = SimpleNamespace()
+        cluster.image_provenance.return_value = {"verified": True}
+        saved: list[dict] = []
+        current = SimpleNamespace(
+            result={},
+            save=lambda: saved.append(deepcopy(current.result)),
+            expected_api_uid=None,
+        )
+        with patch.object(run, "_image_record", return_value={"id": "sha256:selected"}), \
+             patch.object(run.deploy, "apply", side_effect=rejection):
+            with self.assertRaises(run.deploy.AdmittedEnvelopeError):
+                run._prepare(cluster, current, {"settle_s": 0}, "fake", self.selected)
+
+        evidence = {"reason": "admitted resources disagree", "pods": pods, "quota_status": quota_status}
+        self.assertEqual(current.result["admission_rejection"], evidence)
+        self.assertEqual(saved[-1]["admission_rejection"], evidence)
+        cluster.exec_python.assert_not_called()
 
     def test_confirmation_only_saves_before_setup_and_never_claims_a_failed_rate(self) -> None:
         cluster = FakeCluster()

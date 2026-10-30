@@ -426,6 +426,17 @@ Its expected benefit is post-commit app response, distinct from the original
 wall-minus-engine residual. Neither this source finding nor a local fix is
 proof of the full production regression's cause.
 
+The focused app-delivery repair is now [PR #1151](https://github.com/gobifrost/bifrost/pull/1151).
+One zero-job integration test uses the canonical consumer with real PostgreSQL,
+Redis, API WebSocket and result GET. On unmodified main it timed out waiting
+for the terminal frame while metrics were held; after moving the notification,
+the unchanged test receives terminal status and fetches the committed result
+while the same gate remains held. All 31 focused consumer/event/log-durability
+checks and API lint/type checks passed, and bounded final review found no
+actionable issue. Existing result-ready timing retains its boundary; notification
+timing is recorded separately. The protected queue remains pending, with no
+production deployment or claim that this explains the 33-second run.
+
 ### Initial Import Pipeline Diagnostic
 
 `runs/import-smoke-r1` completed with 40 unique successful executions and one
@@ -688,3 +699,15 @@ Python 3.12 and 3.14, plus Ruff. The private portal source snapshot comprises
 returns a constant; no captured workflow body or provider call executes.
 Its SHA-256 is
 `e4e59e45d8a23726666f285b4979bbc88e3a85deb5b73d8b34eb839e18263881`.
+
+Admission rejections now retain their raw pod/quota evidence before preparation
+fails and cleanup begins. The standalone observational soak also has source
+coverage for immutable passing-campaign proof, 70% rate, two-hour duration,
+raw checkpoints, terminal failures in its denominator, sampler/driver failures
+and cleanup. A first source check found one incorrect test expectation: fake
+database size decreased 100 to 90 bytes with one terminal outcome, so the
+per-1,000 delta is -10,000, not -50,000 bytes. Only that expectation changed;
+the original failure and disposition are retained. The corrected source passed
+all 293 benchmark tests on each of Python 3.14 and 3.12 plus Ruff, under the
+shared host lock. This verifies harness behavior, not live soak or capacity.
+No fully passing mixed campaign exists yet, so the soak remains unstarted.
