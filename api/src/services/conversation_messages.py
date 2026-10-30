@@ -18,8 +18,12 @@ async def add_conversation_message(session: AsyncSession, message: Message) -> M
     concurrent writers take turns: each sees the message committed before
     it, and no two share or invert a sequence.
 
-    Lock order: a transaction that also locks an agent run (a chat run's
-    terminal write) locks the run's row first, then the conversation's.
+    Lock order: a chat run's terminal write locks the run's row, then the
+    conversation's. A cascading delete (of a user or a conversation) takes
+    the conversation first and then sets its runs' ``conversation_id`` to
+    NULL, the opposite order, so the two can deadlock; PostgreSQL then
+    aborts one with deadlock_detected (40P01), which the terminal write's
+    retry runs again. Raises ``NoResultFound`` if the conversation is gone.
     """
     conversation = (
         await session.execute(

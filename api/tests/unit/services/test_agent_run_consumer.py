@@ -13,9 +13,10 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.util import EMPTY_DICT
 
 from src.core.database_retry import RetryBudget
 from src.core.principal import UserPrincipal
@@ -826,6 +827,84 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     assert publish_run.await_args.args[0].status == "failed"
 
 
+@pytest.mark.asyncio
+async def test_a_failure_that_cannot_be_stored_announces_nothing(consumer):
+    """A chat run whose interruption could not be stored within its budget
+    reaches the outer failure path with the budget spent: the failure
+    write makes no attempt, and nothing new is announced."""
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
+    mock_session.commit = AsyncMock()
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
+    context = {
+        "trigger_type": "chat",
+        "input": {"conversation_id": str(conversation_id), "content": "Hello"},
+        "caller": {"user_id": str(uuid4()), "email": "caller@example.com", "name": "Caller"},
+    }
+
+    async def interruption_not_stored(
+        *,
+        run_id: str,
+        context: dict[str, Any],
+        agent_run: AgentRun,
+        agent: Any,
+        caller: Caller,
+        sync: bool,
+        start_time: float,
+        terminal_budget: RetryBudget,
+        agent_execution_mode: str = "delegated",
+    ) -> None:
+        deadline = terminal_budget.deadline()
+        await asyncio.sleep(max(0.0, deadline - asyncio.get_running_loop().time()))
+        raise TimeoutError(f"Database retry budget spent before chat run {run_id} interrupted update")
+
+    publish_chat = AsyncMock()
+    publish_run = AsyncMock()
+
+    with (
+        _dispatched(context),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=_loaded_actor()),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.AIBehaviorService.resolve_agent_run_execution_mode",
+            new=AsyncMock(return_value="delegated"),
+        ),
+        patch("src.jobs.consumers.agent_run.RetryBudget", lambda: RetryBudget(0.05)),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        patch.object(
+            consumer, "_process_chat_run", AsyncMock(side_effect=interruption_not_stored)
+        ),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+                "sync": True,
+            }
+        )
+
+    # Only the claim's "running" announcements; no failure was stored.
+    assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == ["run_status"]
+    assert [call.args[0].status for call in publish_run.await_args_list] == ["running"]
+    sync_mock.assert_not_awaited()
+    mock_session.commit.assert_awaited_once()
+    assert queued_run.status == "running"
+
+
 def _recording_executor(runs: list[dict[str, Any]]):
     """An executor stand-in that records how the consumer starts the run."""
 
@@ -1634,6 +1713,114 @@ async def test_a_turn_sent_while_the_partial_answer_is_being_stored_comes_after_
         assert (await _load_run(async_session_factory, run.id)).status == "cancelled"
     finally:
         release.set()
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+async def _until_a_session_waits_for_a_lock(async_session_factory) -> None:
+    """Return once some session of this database waits for a row lock."""
+    async with async_session_factory() as probe:
+        for _ in range(100):
+            waiting = await probe.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                    " WHERE datname = current_database() AND wait_event_type = 'Lock')"
+                )
+            )
+            # pg_stat_activity is read once per transaction; end it to look again.
+            await probe.rollback()
+            if waiting:
+                return
+            await asyncio.sleep(0.05)
+    raise AssertionError("no session started waiting for a lock")
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_conversation_during_the_terminal_write_never_strands_the_run(
+    consumer, db_session, async_engine, async_session_factory
+):
+    """The terminal write locks the run, then the conversation; deleting the
+    conversation locks it, then (SET NULL) the run. PostgreSQL breaks the
+    deadlock by aborting one side; either way the run ends recorded."""
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
+    run_locked = asyncio.Event()
+    conversation_locked = asyncio.Event()
+
+    class LocksTheRunThenWaitsSession(AsyncSession):
+        async def get(
+            self,
+            entity,
+            ident,
+            *,
+            options=None,
+            populate_existing=False,
+            with_for_update=None,
+            identity_token=None,
+            execution_options=EMPTY_DICT,
+        ):
+            found = await super().get(
+                entity,
+                ident,
+                options=options,
+                populate_existing=populate_existing,
+                with_for_update=with_for_update,
+                identity_token=identity_token,
+                execution_options=execution_options,
+            )
+            if entity is AgentRun:
+                run_locked.set()
+                await conversation_locked.wait()
+            return found
+
+    async def delete_the_conversation() -> DBAPIError | None:
+        await run_locked.wait()
+        async with async_session_factory() as db:
+            try:
+                await db.execute(
+                    select(Conversation.id)
+                    .where(Conversation.id == conversation.id)
+                    .with_for_update()
+                )
+                conversation_locked.set()
+                # The terminal write now waits for the conversation; the
+                # delete's SET NULL on the run closes the cycle.
+                await _until_a_session_waits_for_a_lock(async_session_factory)
+                await db.execute(
+                    Conversation.__table__.delete().where(Conversation.id == conversation.id)
+                )
+                await db.commit()
+            except DBAPIError as aborted:
+                return aborted
+        return None
+
+    try:
+        deletion = asyncio.create_task(delete_the_conversation())
+        await _process_chat_through_outage(
+            consumer,
+            run,
+            conversation,
+            _interrupted_chat(assistant_message_id),
+            "delta",
+            [LocksTheRunThenWaitsSession],
+        )
+        aborted = await deletion
+
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "cancelled"
+        assert refreshed.output == {"text": "Partial answer", "partial": True}
+        if aborted is None:
+            # The terminal write was aborted and ran again after the delete.
+            assert factory.handed_out[-2:] == ["LocksTheRunThenWaitsSession", "healthy"]
+            assert refreshed.conversation_id is None
+        else:
+            assert getattr(aborted.orig, "sqlstate", None) == "40P01"
+            assert await _messages(async_session_factory, conversation.id) == [
+                (assistant_message_id, MessageRole.ASSISTANT, 1)
+            ]
+    finally:
+        conversation_locked.set()
         await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
 
 

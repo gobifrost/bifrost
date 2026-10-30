@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from src.core.cache.keys import agent_run_steps_stream_key
@@ -590,6 +591,11 @@ class AgentRunConsumer:
 
         except Exception as e:
             logger.exception(f"Agent run {run_id} failed: {e}")
+            # Callers hear of the failure only once it is stored. If it cannot
+            # be stored, nothing new is announced: the row is still live, and
+            # the stale-run sweep ends it and announces that. A failure before
+            # the run was claimed has no row to store.
+            failure_recorded = agent_run is None
             if agent_run is not None:
                 failure_error = str(e)
 
@@ -638,6 +644,7 @@ class AgentRunConsumer:
                     )
                     if failed_run is not None:
                         agent_run = failed_run
+                        failure_recorded = True
                 except Exception:
                     logger.exception(f"Failed to update agent_run {run_id} after error")
 
@@ -651,7 +658,9 @@ class AgentRunConsumer:
 
                 # The failure may precede the claim that loads the context.
                 known = context or {}
-                if trigger_type == "chat" or known.get("trigger_type") == "chat":
+                if failure_recorded and (
+                    trigger_type == "chat" or known.get("trigger_type") == "chat"
+                ):
                     chat_conversation_id = (
                         (known.get("input") or {}).get("conversation_id")
                         or known.get("conversation_id")
@@ -677,15 +686,16 @@ class AgentRunConsumer:
                                 pub_err,
                             )
 
-                try:
-                    await publish_agent_run_update(
-                        agent_run, agent.name if agent else "Unknown"
-                    )
-                except Exception as pub_err:
-                    # Pubsub notify is a UI hint; the DB row already reflects the failure
-                    logger.debug(f"failed to publish agent_run failure update for {run_id}: {pub_err}")
+                if failure_recorded:
+                    try:
+                        await publish_agent_run_update(
+                            agent_run, agent.name if agent else "Unknown"
+                        )
+                    except Exception as pub_err:
+                        # Pubsub notify is a UI hint; the DB row already reflects the failure
+                        logger.debug(f"failed to publish agent_run failure update for {run_id}: {pub_err}")
 
-            if sync:
+            if sync and failure_recorded:
                 await _publish_sync_result(
                     run_id,
                     {
@@ -1012,21 +1022,31 @@ class AgentRunConsumer:
                     # The partial answer commits with the terminal status, so
                     # it can never land after a later turn's messages. Its id
                     # tells a retry whether an earlier attempt committed it.
-                    # Locks: this run's row (above), then the conversation's.
+                    # Locks: this run's row (above), then the conversation's;
+                    # a cascading delete can take them in the opposite order,
+                    # and the retry handles the deadlock PostgreSQL reports.
                     if (
                         streamed_content
                         and assistant_message_id is not None
                         and await db.get(Message, UUID(assistant_message_id)) is None
                     ):
-                        await add_conversation_message(
-                            db,
-                            Message(
-                                id=UUID(assistant_message_id),
-                                conversation_id=conversation.id,
-                                role=MessageRole.ASSISTANT,
-                                content=streamed_content,
-                            ),
-                        )
+                        try:
+                            await add_conversation_message(
+                                db,
+                                Message(
+                                    id=UUID(assistant_message_id),
+                                    conversation_id=conversation.id,
+                                    role=MessageRole.ASSISTANT,
+                                    content=streamed_content,
+                                ),
+                            )
+                        except NoResultFound:
+                            # The conversation was deleted; there is nowhere to
+                            # keep the answer, and the run's output still has it.
+                            logger.info(
+                                "Chat run %s: partial answer dropped because its conversation is gone",
+                                run_id,
+                            )
                     if run_obj.status in {"running", "cancelling"}:
                         run_obj.status = interrupted_status
                         run_obj.output = {

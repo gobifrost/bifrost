@@ -4,6 +4,7 @@ A PostgreSQL or pooler restart makes every statement fail for a few seconds,
 and a CloudNativePG failover for about 30. A write whose result must not be
 lost (a run's terminal status) retries its whole unit of work, in a fresh
 session each time, until the database answers or its time budget is spent.
+A transaction PostgreSQL aborts to break a deadlock is retried the same way.
 """
 
 from __future__ import annotations
@@ -38,6 +39,10 @@ T = TypeVar("T")
 # statement, only that the server could not run it.
 _UNAVAILABLE_SQLSTATE_CLASS = "08"
 _UNAVAILABLE_SQLSTATES = frozenset({"57P01", "57P02", "57P03"})
+# deadlock_detected and serialization_failure: PostgreSQL aborted this
+# transaction to let a conflicting one finish. Its documented remedy is to
+# run the transaction again, which the retry does from the start.
+_CONFLICT_SQLSTATES = frozenset({"40P01", "40001"})
 
 # A connect that fails with one of these never reached a server: asyncio
 # raises a plain OSError for them ("Connect call failed").
@@ -79,13 +84,15 @@ class RetryBudget:
         return self._deadline
 
 
-def is_database_unavailable(exc: BaseException) -> bool:
-    """Whether ``exc`` means the database could not be reached.
+def is_retryable_database_error(exc: BaseException) -> bool:
+    """Whether running the same unit of work again can succeed.
 
-    True for a connection SQLAlchemy invalidated as disconnected, a network
-    failure while connecting (refused, reset, unreachable, timed out, name
-    resolution) and the SQLSTATEs a server returns while restarting. False
-    for everything that describes the work itself, such as constraint
+    True when the database could not be reached (a connection SQLAlchemy
+    invalidated as disconnected, a network failure while connecting:
+    refused, reset, unreachable, timed out, name resolution; the SQLSTATEs
+    a server returns while restarting) and when PostgreSQL aborted the
+    transaction to resolve a conflict (deadlock or serialization failure).
+    False for everything that describes the work itself, such as constraint
     violations or bad SQL, and for local failures such as file permissions
     or TLS certificate errors.
     """
@@ -107,6 +114,7 @@ def is_database_unavailable(exc: BaseException) -> bool:
     return isinstance(sqlstate, str) and (
         sqlstate.startswith(_UNAVAILABLE_SQLSTATE_CLASS)
         or sqlstate in _UNAVAILABLE_SQLSTATES
+        or sqlstate in _CONFLICT_SQLSTATES
     )
 
 
@@ -136,7 +144,8 @@ async def run_with_database_retry(
     description: str,
     budget: RetryBudget,
 ) -> T:
-    """Run ``unit`` in a fresh session, retrying while the database is away.
+    """Run ``unit`` in a fresh session, retrying while the database is away
+    or after PostgreSQL aborted it to resolve a conflict.
 
     ``unit`` must do its whole read-check-write and commit, and must be safe
     to run again after an attempt whose COMMIT reached the server but whose
@@ -144,7 +153,7 @@ async def run_with_database_retry(
     a session whose connection failed cannot be used again and the rows may
     have changed meanwhile.
 
-    Errors that are not :func:`is_database_unavailable` are raised at once.
+    Errors that are not :func:`is_retryable_database_error` are raised at once.
     Once ``budget`` is spent, the last attempt's error is raised (an attempt
     still in flight is cut off with ``TimeoutError``) and no write sharing
     the budget makes another attempt. Releasing each attempt's session is
@@ -167,11 +176,11 @@ async def run_with_database_retry(
             if not isinstance(exc, Exception):
                 raise
             remaining = deadline - loop.time()
-            if remaining <= 0 or not is_database_unavailable(exc):
+            if remaining <= 0 or not is_retryable_database_error(exc):
                 raise
             wait = min(delay, remaining)
             logger.warning(
-                "Database unavailable during %s (attempt %d); retrying in %.1fs: %s",
+                "Retryable database error during %s (attempt %d); retrying in %.1fs: %s",
                 description,
                 attempt,
                 wait,

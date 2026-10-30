@@ -14,7 +14,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from src.core.database_retry import (
     RetryBudget,
-    is_database_unavailable,
+    is_retryable_database_error,
     run_with_database_retry,
 )
 
@@ -71,7 +71,7 @@ def _unit_failing(errors: list[BaseException], result: str = "written"):
 
 
 @pytest.mark.parametrize(
-    ("exc", "unavailable"),
+    ("exc", "retryable"),
     [
         (REFUSED, True),
         (OSError(errno.EHOSTUNREACH, "Connect call failed ('10.96.0.12', 5432)"), True),
@@ -87,14 +87,17 @@ def _unit_failing(errors: list[BaseException], result: str = "written"):
         (DBAPIError("SELECT 1", {}, Exception("closed"), connection_invalidated=True), True),
         (DBAPIError("SELECT 1", {}, asyncpg.exceptions.AdminShutdownError("shutdown")), True),
         (DBAPIError("SELECT 1", {}, asyncpg.exceptions.ConnectionFailureError("lost")), True),
+        (DBAPIError("UPDATE", {}, asyncpg.exceptions.DeadlockDetectedError("deadlock detected")), True),
+        (DBAPIError("UPDATE", {}, asyncpg.exceptions.SerializationError("could not serialize")), True),
+        (asyncpg.exceptions.DeadlockDetectedError("deadlock detected"), True),
         (IntegrityError("INSERT", {}, asyncpg.exceptions.UniqueViolationError("dup")), False),
         (DBAPIError("SELECT 1", {}, asyncpg.exceptions.UndefinedColumnError("no col")), False),
         (asyncpg.exceptions.UniqueViolationError("dup"), False),
         (ValueError("bad"), False),
     ],
 )
-def test_only_an_unreachable_database_counts_as_unavailable(exc, unavailable):
-    assert is_database_unavailable(exc) is unavailable
+def test_only_an_unreachable_database_or_a_conflict_is_retried(exc, retryable):
+    assert is_retryable_database_error(exc) is retryable
 
 
 @pytest.mark.asyncio
