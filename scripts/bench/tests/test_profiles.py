@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -12,6 +13,24 @@ import run
 
 
 class RuntimeProfileTest(unittest.TestCase):
+    def test_startup_policy_matches_each_declared_envelope_before_first_warm_job(self) -> None:
+        for name in ("m", "4gb-capacity"):
+            with self.subTest(profile=name):
+                profile = run.load_profile(name)
+                patches = deploy.tenant_patches(profile, "127.0.0.1")
+                config_patch = next(patch for patch in patches if patch["target"] == {
+                    "kind": "ConfigMap", "name": "bifrost-config",
+                })
+                config = {operation["path"].removeprefix("/data/"): operation["value"]
+                          for operation in json.loads(config_patch["patch"])}
+                # These are the canonical import_kubernetes_policy_from_env
+                # inputs, consumed before the controller launches warm Jobs.
+                self.assertEqual(int(config["BIFROST_POOL_MIN_WORKERS"]), profile["worker_policy"]["warm_workers"])
+                self.assertEqual(int(config["BIFROST_POOL_MAX_WORKERS"]), profile["worker_policy"]["max_workers"])
+                self.assertEqual(int(config["BIFROST_POOL_WORKER_MAX_MEMORY_MIB"]), profile["worker_policy"]["largest_worker_mib"])
+                self.assertEqual(config["BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB"], config["BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB"])
+                self.assertEqual(int(config["BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB"]), profile["worker_policy"]["worker_memory_mib"])
+
     def test_import_profiles_are_opt_in_and_keep_the_m_envelope_and_full_catalog_seed(self) -> None:
         baseline = run.load_profile("m")
         profile = run.load_profile("m-import")

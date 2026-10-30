@@ -124,6 +124,60 @@ class RunHarnessTest(unittest.TestCase):
             run.main()
         classes.assert_called_once_with("m-import", "fake", None, self.selected)
 
+    def test_import_fixture_is_rejected_for_non_import_profile_before_cluster_creation(self) -> None:
+        fixture = run.import_diagnostic.fixture_manifest()
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "private-import-fixture.json"
+            manifest.write_text(json.dumps(fixture), encoding="utf-8")
+            with patch.object(run, "Cluster") as cluster:
+                with self.assertRaisesRegex(SystemExit, "only supported for imports_diagnostic"):
+                    run.run_classes("m", "fake", Path(temporary) / "classes", self.selected, manifest)
+            cluster.assert_not_called()
+
+    def test_invalid_import_fixture_is_rejected_before_cluster_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "private-import-fixture.json"
+            manifest.write_text("{not json", encoding="utf-8")
+            with patch.object(run, "Cluster") as cluster:
+                with self.assertRaisesRegex(SystemExit, "invalid import fixture manifest"):
+                    run.run_classes("m-import", "fake", Path(temporary) / "classes", self.selected, manifest)
+            cluster.assert_not_called()
+
+    def test_run_cli_passes_private_import_fixture_only_when_supplied(self) -> None:
+        manifest = Path("/private/import-fixture.json")
+        with patch.object(sys, "argv", [
+            "run.py", "run", "--profile", "m-import", "--api-image", self.selected,
+            "--import-fixture", str(manifest),
+        ]), patch.object(run, "run_classes") as classes:
+            run.main()
+        classes.assert_called_once_with("m-import", "fake", None, self.selected, import_fixture_path=manifest)
+
+    def test_prepare_preserves_private_fixture_metadata_without_sources(self) -> None:
+        fixture = run.import_diagnostic.fixture_manifest()
+        cluster = Mock()
+        cluster.identity = SimpleNamespace()
+        cluster.image_provenance.return_value = {"verified": True}
+        cluster.exec_python.return_value = {"connections": {}}
+        cluster.api_image_evidence.return_value = {"pod": "api"}
+        current = SimpleNamespace(
+            result={},
+            driver=Mock(return_value={"import_fixture": run.import_diagnostic.fixture_metadata(fixture)}),
+            save=Mock(),
+            expected_api_uid=None,
+        )
+        profile = {"imports_diagnostic": True, "seed": {}, "worker_policy": {}, "table_docs": 0, "settle_s": 0}
+        with patch.object(run, "_image_record", return_value={"id": "sha256:selected"}), \
+             patch.object(run.deploy, "apply", return_value={}), \
+             patch.object(run, "check_destinations"), \
+             patch.object(run.time, "sleep"):
+            run._prepare(cluster, current, profile, "fake", self.selected, import_fixture=fixture)
+
+        setup = current.driver.call_args.args[1]
+        self.assertEqual(setup["import_fixture"], fixture)
+        self.assertEqual(current.result["import_fixture"], run.import_diagnostic.fixture_metadata(fixture))
+        self.assertNotIn("files", current.result["import_fixture"])
+        self.assertEqual(current.result["setup"]["import_fixture"], run.import_diagnostic.fixture_metadata(fixture))
+
     def test_classes_refuses_nonempty_evidence_directory_before_cluster_access(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             out = Path(temporary) / "classes"
@@ -140,7 +194,7 @@ class RunHarnessTest(unittest.TestCase):
             "wal_generated_bytes": 0, "wal_stats_reset": "stable",
         }
         cluster.container_stats.return_value = []
-        prepared: list[str | None] = []
+        prepared: list[tuple[str | None, dict | None]] = []
         created: list[str | None] = []
         runs: list[object] = []
 
@@ -180,17 +234,26 @@ class RunHarnessTest(unittest.TestCase):
             def __exit__(self, *_args) -> None:
                 pass
 
-        with tempfile.TemporaryDirectory() as temporary, \
-             patch.object(run, "Cluster", return_value=cluster), \
-             patch.object(run, "Run", CapturingRun), \
-             patch.object(run, "WorkerSampler", Sampler), \
-             patch.object(run, "_prepare", side_effect=lambda *_args: prepared.append(_args[-1]) or {"connections": {}}), \
-             patch.object(run.import_diagnostic, "capture", side_effect=RuntimeError("worker logs unavailable")), \
-             patch.object(run.time, "sleep"):
-            run.run_classes("m-import", "fake", Path(temporary) / "classes", self.selected)
+        fixture = run.import_diagnostic.fixture_manifest()
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "private-import-fixture.json"
+            manifest.write_text(json.dumps(fixture), encoding="utf-8")
+            with patch.object(run, "Cluster", return_value=cluster), \
+                 patch.object(run, "Run", CapturingRun), \
+                 patch.object(run, "WorkerSampler", Sampler), \
+                 patch.object(
+                     run,
+                     "_prepare",
+                     side_effect=lambda *_args, **kwargs: prepared.append(
+                         (_args[-1], kwargs.get("import_fixture")),
+                     ) or {"connections": {}},
+                 ), \
+                 patch.object(run.import_diagnostic, "capture", side_effect=RuntimeError("worker logs unavailable")), \
+                 patch.object(run.time, "sleep"):
+                run.run_classes("m-import", "fake", Path(temporary) / "classes", self.selected, manifest)
 
         self.assertEqual(created, [self.selected])
-        self.assertEqual(prepared, [self.selected])
+        self.assertEqual(prepared, [(self.selected, fixture)])
         self.assertEqual(runs[0].result["imports_diagnostic"]["overall"], "invalid")
         self.assertIn("worker logs unavailable", runs[0].result["imports_diagnostic"]["groups"][0]["capture_error"])
 

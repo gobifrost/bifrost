@@ -54,6 +54,43 @@ class ImportDiagnosticTest(unittest.TestCase):
         self.assertIn("import requests", first["files"]["bench_import_fixture/graph/providers.py"])
         self.assertEqual(import_diagnostic.EXPECTED_OUTPUT["signature"], "import-fixture-v1")
 
+    def test_private_manifest_requires_exact_canonical_evidence(self) -> None:
+        manifest = import_diagnostic.fixture_manifest()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixture.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            loaded = import_diagnostic.load_fixture_manifest(path)
+
+        self.assertEqual(loaded, manifest)
+        self.assertEqual(import_diagnostic.fixture_metadata(loaded), {
+            "version": manifest["version"],
+            "file_count": manifest["file_count"],
+            "source_bytes": manifest["source_bytes"],
+            "source_sha256": manifest["source_sha256"],
+        })
+        self.assertNotIn("files", import_diagnostic.fixture_metadata(loaded))
+
+    def test_private_manifest_rejects_unsafe_paths_missing_wrappers_and_bad_evidence(self) -> None:
+        base = import_diagnostic.fixture_manifest()
+
+        def changed() -> dict:
+            return {**base, "files": dict(base["files"])}
+
+        unsafe = changed()
+        unsafe["files"]["../outside.py"] = unsafe["files"].pop("bench_import_fixture/graph/signature.py")
+        missing = changed()
+        missing["files"].pop("workflows/bench_import_graph.py")
+        bad_count = changed()
+        bad_count["file_count"] += 1
+        bad_hash = changed()
+        bad_hash["source_sha256"] = "0" * 64
+        empty_source = changed()
+        empty_source["bench_import_fixture/graph/entry.py"] = ""
+        for manifest in (unsafe, missing, bad_count, bad_hash, empty_source):
+            with self.subTest(manifest=manifest):
+                with self.assertRaises(ValueError):
+                    import_diagnostic.validate_fixture_manifest(manifest)
+
     def test_capture_requires_exactly_one_valid_event_per_execution(self) -> None:
         lines = "INFO bench.import_trace " + json.dumps(payload("one")) + "\n"
         with tempfile.TemporaryDirectory() as temporary:

@@ -293,16 +293,22 @@ def capture_idle_db(current: Run, profile: dict) -> dict:
     return idle_rate
 
 
-def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None, api_image: str | None = None) -> dict:
+def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None, api_image: str | None = None,
+             import_fixture: dict | None = None) -> dict:
     """Deploy the profile, seed through the API, reboot the API on the seeded data, check destinations."""
     selected_api_image = api_image or deploy.images(cluster.identity)["api"]
+    fixture = import_fixture if import_fixture is not None else (
+        import_diagnostic.fixture_manifest() if profile.get("imports_diagnostic") else None
+    )
     host_id = _image_record(selected_api_image, required=True)["id"]
     current.result["api_image_provenance"] = cluster.image_provenance(selected_api_image, host_id)
+    if fixture is not None:
+        current.result["import_fixture"] = import_diagnostic.fixture_metadata(fixture)
     current.save()
     current.result["deploy"] = deploy.apply(cluster, profile, selected_api_image)
     current.result["setup"] = current.driver("setup", {
         "seed": profile["seed"], "backend": backend, "policy": profile["worker_policy"], "table_docs": profile["table_docs"],
-        "import_fixture": import_diagnostic.fixture_manifest() if profile.get("imports_diagnostic") else None,
+        "import_fixture": fixture,
     }, timeout_s=3600)
     ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", "{}"], timeout_s=900)
     check_destinations(cluster, ids)
@@ -314,8 +320,15 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     return ids
 
 
-def run_classes(profile_name: str, backend: str | None, out: Path | None, api_image: str | None = None) -> Path:
+def run_classes(profile_name: str, backend: str | None, out: Path | None, api_image: str | None = None,
+                import_fixture_path: Path | None = None) -> Path:
     profile = load_profile(profile_name)
+    if import_fixture_path is not None and not profile.get("imports_diagnostic"):
+        raise SystemExit("--import-fixture is only supported for imports_diagnostic profiles")
+    try:
+        import_fixture = import_diagnostic.load_fixture_manifest(import_fixture_path) if import_fixture_path else None
+    except ValueError as error:
+        raise SystemExit(f"invalid import fixture manifest: {error}") from error
     out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-{backend or 'none'}")
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise SystemExit(f"classes output already contains evidence: {out}")
@@ -323,7 +336,10 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None, api_im
     cluster.verify()
     current = Run(cluster, "classes", profile_name, profile, backend, out, api_image)
     print(f"Deploying and seeding '{profile_name}' ...", flush=True)
-    _prepare(cluster, current, profile, backend, api_image)
+    if import_fixture is None:
+        _prepare(cluster, current, profile, backend, api_image)
+    else:
+        _prepare(cluster, current, profile, backend, api_image, import_fixture=import_fixture)
     current.snapshot("boot_seeded")
     classes = [c for c in profile["classes"] if backend or not c.startswith(("agent-", "chat-"))]
     for pass_number in (1, 2):
@@ -639,6 +655,7 @@ def main() -> None:
     run_parser.add_argument("--profile", default="m")
     run_parser.add_argument("--backend", choices=["fake", "none"], default="fake")
     run_parser.add_argument("--api-image")
+    run_parser.add_argument("--import-fixture", type=Path)
     run_parser.add_argument("--out", type=Path)
     capacity_parser = sub.add_parser("capacity")
     capacity_parser.add_argument("--profile", default="m")
@@ -686,7 +703,8 @@ def main() -> None:
     if args.command == "up":
         up(load_profile(args.profile))
     elif args.command == "run":
-        run_classes(args.profile, None if args.backend == "none" else args.backend, args.out, args.api_image)
+        kwargs = {"import_fixture_path": args.import_fixture} if args.import_fixture else {}
+        run_classes(args.profile, None if args.backend == "none" else args.backend, args.out, args.api_image, **kwargs)
     elif args.command == "capacity":
         run_capacity(args.profile, args.mix, args.api_image, args.out)
     elif args.command == "confirm":

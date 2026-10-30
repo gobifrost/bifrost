@@ -129,6 +129,13 @@ def tenant_patches(profile: dict, node_ip: str) -> list[dict]:
         "BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB": worker_mib,
         "BIFROST_POOL_WORKER_CPU_REQUEST": profile["worker_cpu"],
         "BIFROST_POOL_WORKER_CPU_LIMIT": profile["worker_cpu"],
+        # The canonical startup import runs before controller reconciliation.
+        # Seed the same policy that setup later writes through the API, so
+        # the first warm Job already belongs to the declared envelope.
+        "BIFROST_POOL_MIN_WORKERS": str(profile["worker_policy"]["warm_workers"]),
+        "BIFROST_POOL_MAX_WORKERS": str(profile["worker_policy"]["max_workers"]),
+        "BIFROST_POOL_WORKER_MEMORY_LIMIT_MIB": worker_mib,
+        "BIFROST_POOL_WORKER_MAX_MEMORY_MIB": str(profile["worker_policy"]["largest_worker_mib"]),
     }
     quota = profile["quota"]
 

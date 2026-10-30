@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 FIXTURE_VERSION = "import-pair-v1"
 TRACE_PREFIX = "bench.import_trace "
@@ -110,21 +110,88 @@ def fixture_files() -> dict[str, str]:
     }
 
 
-def fixture_manifest() -> dict:
-    """Stable fixture evidence stored with setup, never inferred from an image or runtime source."""
-    files = fixture_files()
+_MANIFEST_KEYS = {"version", "files", "file_count", "source_bytes", "source_sha256"}
+_REQUIRED_WORKFLOW_PATHS = {
+    "workflows/bench_import_control.py",
+    "workflows/bench_import_graph.py",
+}
+
+
+def fixture_metadata(fixture: dict) -> dict:
+    """The non-source evidence stored in public benchmark artifacts."""
+    return {key: fixture[key] for key in ("version", "file_count", "source_bytes", "source_sha256")}
+
+
+def _fixture_evidence(version: str, files: dict[str, str]) -> dict:
     digest = hashlib.sha256()
     for path in sorted(files):
         digest.update(path.encode("utf-8"))
         digest.update(b"\0")
         digest.update(files[path].encode("utf-8"))
     return {
-        "version": FIXTURE_VERSION,
-        "files": files,
+        "version": version,
         "file_count": len(files),
         "source_bytes": sum(len(source.encode("utf-8")) for source in files.values()),
         "source_sha256": digest.hexdigest(),
     }
+
+
+def _python_path(path: object) -> bool:
+    if not isinstance(path, str) or not path or "\\" in path:
+        return False
+    if any(ord(character) < 32 or ord(character) == 127 for character in path):
+        return False
+    parsed = PurePosixPath(path)
+    return (
+        not parsed.is_absolute()
+        and parsed.as_posix() == path
+        and all(part not in {".", ".."} for part in parsed.parts)
+        and path.endswith(".py")
+    )
+
+
+def validate_fixture_manifest(manifest: object) -> dict:
+    """Validate a private import fixture before it can reach the cluster editor API."""
+    if not isinstance(manifest, dict) or set(manifest) != _MANIFEST_KEYS:
+        raise ValueError("import fixture must have exactly the canonical manifest fields")
+    version, files = manifest["version"], manifest["files"]
+    if not isinstance(version, str) or not version:
+        raise ValueError("import fixture version must be a nonempty string")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("import fixture files must be a nonempty object")
+    if not _REQUIRED_WORKFLOW_PATHS.issubset(files):
+        raise ValueError("import fixture must contain the control and graph workflow wrappers")
+    normalized: dict[str, str] = {}
+    for path, source in files.items():
+        if not _python_path(path):
+            raise ValueError("import fixture has an unsafe or non-normalized Python path")
+        if not isinstance(source, str) or not source:
+            raise ValueError("import fixture file contents must be nonempty strings")
+        normalized[path] = source
+    evidence = _fixture_evidence(version, normalized)
+    for key in ("file_count", "source_bytes"):
+        value = manifest[key]
+        if type(value) is not int or value < 0 or value != evidence[key]:
+            raise ValueError(f"import fixture {key} does not match its files")
+    digest = manifest["source_sha256"]
+    if not isinstance(digest, str) or digest != evidence["source_sha256"]:
+        raise ValueError("import fixture source_sha256 does not match its files")
+    return {"version": version, "files": normalized, **evidence}
+
+
+def load_fixture_manifest(path: Path) -> dict:
+    """Read a private fixture manifest without retaining its source in benchmark artifacts."""
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"could not read import fixture manifest: {error}") from error
+    return validate_fixture_manifest(manifest)
+
+
+def fixture_manifest() -> dict:
+    """Stable fixture evidence stored with setup, never inferred from an image or runtime source."""
+    files = fixture_files()
+    return {"files": files, **_fixture_evidence(FIXTURE_VERSION, files)}
 
 
 def _count(value: object) -> bool:

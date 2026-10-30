@@ -530,8 +530,42 @@ customer workload and availability tier. It must show the following separately:
 | Gross margin | `(revenue − included hosting/provider costs) / revenue`, with selling price, included cost categories and positive revenue explicit. |
 
 Do not infer tenant density from RAM alone or treat measured saturation as the
-normal operating target. Until prices, realistic demand and cloud calibration
-are supplied, these outputs remain unpriced with missing inputs listed.
+normal operating target. Until realistic demand, region/SKU availability and
+cloud calibration are supplied, these outputs remain unpriced with missing
+inputs listed.
+
+### Dated Provider Price References
+
+Checked 2026-10-30, USD public catalog prices, before discounts or taxes.
+NYC2 availability and the actual billable SKU remain unverified; these are
+worksheet inputs, not a quote or a calibrated hosting result.
+
+| Reference | Monthly price | Included resources / pricing basis |
+|---|---:|---|
+| DigitalOcean Basic, Regular | $24 | 2 shared vCPU, 4 GiB RAM, 80 GiB SSD |
+| DigitalOcean Basic, Regular | $48 | 4 shared vCPU, 8 GiB RAM, 160 GiB SSD |
+| DigitalOcean CPU-Optimized, Regular | $84 | 4 dedicated vCPU, 8 GiB RAM, 50 GiB SSD |
+
+The [Droplet catalog](https://www.digitalocean.com/pricing/droplets) distinguishes
+shared and dedicated CPU plans. A 4 GB memory envelope with a 4 CPU quota
+does not establish fit or performance on the $24 two-vCPU plan. Kubernetes
+system reserves also reduce node allocatable CPU and RAM below advertised
+resources; the full envelope cannot be assumed to fit on a four-vCPU node.
+
+[DOKS worker nodes](https://docs.digitalocean.com/products/kubernetes/details/pricing/)
+use Droplet pricing, with a 672-hour monthly cap for bundled plans. Its
+included control plane has an optional $40/month HA charge. A
+[regional HTTP load balancer](https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/)
+starts at $12/month per node. These shared charges require an allocation
+policy; they are not automatically incurred once per customer.
+
+[Block volumes](https://docs.digitalocean.com/products/volumes/details/pricing/)
+cost $0.10/GiB-month; allocated persistent capacity is charged while it exists.
+[Spaces](https://www.digitalocean.com/pricing/spaces-object-storage) starts at
+$5/month with 250 GiB storage and 1 TiB outbound transfer, then $0.02/GiB
+additional storage and $0.01/GiB additional transfer. Archive retention,
+backup copies and restore requirements must determine billable stored bytes;
+the generated-WAL counter alone does not price them. No resource was provisioned.
 
 Still missing before a complete hosting card: repeatable current constrained
 results, confirmed mixed capacity with adequate class sample counts, long-run
@@ -542,5 +576,29 @@ observations per class. Ordinary independently capped confirmations cannot
 prove it. A separately predeclared pooled campaign needs its own immutable
 manifest and stated exchangeability assumption; see the
 [campaign implementation](../plans/2026-10-30-mixed-confirmation-campaign.md).
-Its focused unit verification is complete; its representative preflight and
-five measured windows have not yet run.
+Its focused unit verification is complete. The representative 4 GB preflight
+on frozen harness `851fe8753` stopped during preparation: the admitted-worker
+guard rejected unequal requests and limits, before seed or workload traffic.
+The campaign remains invalid and its five segments remain unstarted. Both
+namespaces were removed and cleanup verified at 19:41:39 UTC.
+
+The harness had set the smaller worker request before startup but wrote the
+worker-size policy only later through the API. A default-size warm worker
+could therefore start outside the declared profile. The correction supplies
+the same profile through the existing canonical startup policy import before
+the controller starts, then retains the normal API policy write. It does not
+relax the resource guard. The rejected pod's full specification was not saved
+before teardown; exact rejected quantities are inferred from source rather
+than claimed as captured pod evidence. The invalid result and disposition
+remain in `runs/mixed-4gb-a865-campaign-r1` and
+`notes/fourgb-preflight-r1-disposition-20261030.json`.
+
+The import harness also accepts a validated private manifest through
+`run --import-fixture`; fixture metadata and hashes are retained without
+copying private source into the repository. Focused checks of that path,
+default import consumers and profile bootstrap passed 67 tests on each of
+Python 3.12 and 3.14, plus Ruff. The private portal source snapshot comprises
+18 files and 410,707 bytes; the two constant-result diagnostic wrappers make
+20 files and 411,390 bytes. No captured workflow body or provider call has
+been executed by that fixture yet. Its SHA-256 is
+`e4e59e45d8a23726666f285b4979bbc88e3a85deb5b73d8b34eb839e18263881`.
