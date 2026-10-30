@@ -445,6 +445,17 @@ baseline failure, 31-check repair verification and follow-up verification
 remain separate receipts under `notes/terminal-delivery-validation-r1-20261030`
 and `notes/terminal-delivery-validation-r2-20261030`.
 
+PR #1151 merged at 21:41:00 UTC as
+`700e6334f830632ec526654c1ab56e8d74446c69`. Protected queue CI
+`41131661729` passed full backend/client tests, all three backend E2E shards,
+critical browser smoke, quality and both candidate builds. Both source review
+threads are resolved, and post-merge CI, Scorecard and CodeQL passed. Required
+Product Updates metadata activation is [PR #1152](https://github.com/gobifrost/bifrost/pull/1152):
+canonical validation and the actual image-preparation helper confirmed the
+approved Fixed summary in the bundle while retaining the authentication notice
+and prompt. The metadata-only PR is now in the protected queue. No production
+deployment or full 33-second-regression resolution is claimed.
+
 The one-worker deployed-build concurrency diagnostic also completed:
 `runs/import-portal-overlap-prod-c2-r1` has 100 unique correct executions
 with valid traces, one worker pod/UID across all groups, no API pod replacement,
@@ -495,6 +506,40 @@ production CPU-throttling, full workflow, exponential-scaling or capacity claim.
 The added profile's five focused tests passed on each of Python 3.14 and 3.12,
 plus Ruff; the source receipt is
 `notes/import-worker-2cpu-profile-validation-20261030/receipt.json`.
+
+The deployed-build 2-CPU arm completed in
+`runs/import-portal-overlap-prod-c2-worker2cpu-r1`, frozen harness `2bacf728f`.
+All 100 executions returned the exact expected result with correlated traces;
+one worker pod/UID served all groups, both graph passes sampled three children,
+no API replacement occurred and cleanup was verified at 21:55:45 UTC. The
+comparison validator checked identical API image and private fixture, and
+identical profiles except worker CPU, required quota and description.
+
+| Deployed build, import graph | Sequential p50 / p95, ms | Three-submission burst p50 / p95, ms |
+|---|---:|---:|
+| 650m worker, pass 1 | 674.37 / 816.68 | 1737.31 / 1860.38 |
+| 2-CPU worker, pass 1 | 641.48 / 729.40 | 1017.52 / 1187.01 |
+| 650m worker, pass 2 | 686.09 / 730.17 | 1743.13 / 1994.04 |
+| 2-CPU worker, pass 2 | 652.52 / 783.02 | 1060.56 / 1227.65 |
+
+The 2-CPU control sequential p50/p95 were 50.43/75.69 and 48.89/57.26 ms;
+burst values were 58.43/75.87 and 61.67/73.65 ms. Graph burst medians fell
+41.43% and 39.16%, while sequential medians fell about 4.9%. This demonstrates
+local sensitivity to worker CPU allocation. With 25 resolver calls and 18
+compiles unchanged, burst compile-wall medians fell from 256.50/293.70 to
+90.13/91.90 ms; resolver-wall medians remained 655.19/695.78 ms versus
+706.44/693.08 ms at 650m. These are overlapping wall spans, not measured
+CPU-throttling counters or a complete attribution of remaining API delay.
+
+Idle component working sets were worker 268.3, API 336.2, PostgreSQL 230.1,
+pooler 14.6, client 8.0 and Redis 6.0 MiB, total 863.2 MiB. Memory limits
+were unchanged. Declared tenant component CPU reservation increased from
+3250m to 4600m; the namespace CPU quota increased from 4 to 5. This is an
+explicit compute-versus-latency baseline, not a code optimization, memory
+improvement, node-packing result or cloud price. Full private comparison and
+limitations are in `notes/portal-worker-cpu-comparison-20261030.json`.
+The corresponding newer-runtime 2-CPU arm is predeclared separately and running
+under the same host lock; preserve both existing 650m results unchanged.
 
 ### Initial Import Pipeline Diagnostic
 

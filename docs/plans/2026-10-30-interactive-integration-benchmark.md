@@ -30,10 +30,14 @@ between durable worker timestamps minus engine duration. Fixing it does not
 by itself explain that earlier interval or the 33-second outlier. Continue
 recording import, engine, completion commit and app delivery independently.
 
-The local repair is now PR #1151: the unchanged real-transport test failed
+The repair merged in PR #1151 as `700e6334f`: the unchanged real-transport test failed
 with metrics held on main, then passed after correction. All 31 focused
 consumer, event and log-durability checks, API quality and bounded final review
-passed. Protected merge checks remain separate from production validation.
+passed. The protected merge queue then passed full backend/client tests,
+backend E2E, critical browser smoke, quality and candidate builds. Required
+metadata activation PR #1152 is queued after canonical validation and prepared
+bundle verification. Production validation remains separate; no deployment
+was performed.
 
 The next import diagnostic uses `m-import-overlap`: the same full M catalog,
 private captured import graph and resource limits, but exactly one warm/max
@@ -56,6 +60,14 @@ can be admitted. Keep API/database limits, memory, workload and image fixed.
 This isolates the worker CPU allocation within the local diagnostic; it does
 not reproduce all production topology or establish CPU throttling without
 counter evidence. Preserve both original runtime arms before this comparison.
+The deployed-build 2-CPU arm completed 100 correct, traced actions with verified
+cleanup. Its graph burst medians fell to 1018/1061 ms (39–41% lower), while
+sequential medians fell about 4.9% to 641/653 ms. Burst compile-wall medians
+fell to 90/92 ms; resolver-call walls remained 655/696 ms. This supports a
+local worker-CPU contribution and leaves a separate source-loading cost to
+isolate. Tenant component CPU reservation increased from 3250m to 4600m;
+memory limits did not change. The newer-runtime 2-CPU arm is running under
+the same immutable profile/image/fixture checks and shared host lock.
 The newer-runtime arm also completed all 100 correct, traced actions with
 verified cleanup. Its graph medians were 521/535 ms sequentially and
 1504/1615 ms in bursts; the control remained near 51–59 ms. The newer runtime
