@@ -360,13 +360,19 @@ class RunHarnessTest(unittest.TestCase):
             original_save(current)
 
         original_save = run.Run.save
+        original_idle_capture = run.capture_idle_db
         idle_window = {"seconds": 60.0, "tables": {"idle": [1, 2]}}
         all_phases = {"seconds": 600.0, "tables": {"all": [3, 4]}}
+
+        def shared_idle_capture(*args, **kwargs):
+            events.append("shared-idle-capture")
+            return original_idle_capture(*args, **kwargs)
 
         with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
              patch.object(run, "_prepare", side_effect=prepare), \
              patch.object(run.deploy, "reset") as reset, \
              patch.object(run.Run, "save", new=save), \
+             patch.object(run, "capture_idle_db", side_effect=shared_idle_capture), \
              patch.object(run.Run, "snapshot", side_effect=lambda label: events.append(f"snapshot:{label}")), \
              patch.object(run.time, "sleep", side_effect=lambda seconds: events.append(f"sleep:{seconds}")), \
              patch.object(run.time, "monotonic", side_effect=[10.0, 70.0, 100.0, 700.0]), \
@@ -395,10 +401,13 @@ class RunHarnessTest(unittest.TestCase):
         self.assertEqual(result["all_phases_db_window"], {"label": "warmup+measure+drain", **all_phases})
         self.assertEqual(events[:7], ["save:0", "prepare", "save:0", "preflight", "save:0", "prepare", "save:0"])
         profile = run.load_profile("m-capacity")
-        self.assertEqual(events[7:9], [
+        sleep_events = [event for event in events if event.startswith("sleep:")]
+        self.assertEqual(sleep_events, [
             f"sleep:{profile['idle_s'] - profile['idle_db_s']}",
             f"sleep:{profile['idle_db_s']}",
         ])
+        self.assertLess(events.index("shared-idle-capture"), events.index(sleep_events[0]))
+        self.assertLess(events.index("shared-idle-capture"), events.index("snapshot:idle"))
         self.assertLess(events.index("snapshot:idle"), events.index("confirm"))
         self.assertLess(events.index("confirm"), events.index("snapshot:settled"))
         self.assertEqual(result["preflight_setup"]["api_image_provenance"]["phase"], 0)

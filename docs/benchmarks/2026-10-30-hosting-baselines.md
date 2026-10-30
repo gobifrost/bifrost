@@ -482,5 +482,6 @@ an hour at 2.236/s; the strict 0.1% failure bound needs 2,995 failure-free
 observations per class. Ordinary independently capped confirmations cannot
 prove it. A separately predeclared pooled campaign needs its own immutable
 manifest and stated exchangeability assumption; see the
-[campaign design](../plans/2026-10-30-mixed-confirmation-campaign.md), which has
-not yet been implemented or measured.
+[campaign implementation](../plans/2026-10-30-mixed-confirmation-campaign.md).
+Its focused unit verification is complete; its representative preflight and
+five measured windows have not yet run.

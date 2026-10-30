@@ -1,6 +1,6 @@
 # Mixed Confirmation Campaign
 
-Status: design approved for implementation planning; **not implemented or measured**.
+Status: implementation and focused unit verification complete. **Not measured**.
 
 This campaign can certify one frozen mixed-workload rate without holding the
 shared host for one continuous five-hour confirmation. It does not change
@@ -24,6 +24,12 @@ The campaign has exactly five independently reset segments. Each has:
   mix, thresholds, and fake-service configuration;
 - a distinct, predeclared deterministic arrival seed.
 
+The five frozen seeds use the existing shared confirmation rule:
+`search.confirmation_seed(profile.capacity, index)`, for the exact indices
+`0..4`. For the current profile that is `profile.capacity.seed + 1000 + index`.
+The manifest records those derived values before the first reset; its example
+seed values below are illustrative, not a second randomization policy.
+
 Before the first reset, the harness writes an immutable campaign manifest with
 an atomic create. Its identity includes the resolved-profile hash, profile
 name, image provenance and digests, harness source revision, mix, rate,
@@ -38,11 +44,27 @@ tenant, runs the declared segment, saves its complete result atomically, then
 tears the tenant down and releases the host lock. That release deliberately
 leaves gaps for authentication work between segments.
 
+The external supervisor owns the shared host flock for exactly one
+`campaign-preflight` or `confirm-segment` invocation and keeps it through that
+operation's verified cleanup. The harness does not acquire a nested flock, so
+it cannot deadlock an existing supervisor; the next operation is a separate
+invocation after the supervisor releases that lock.
+
 The campaign never turns an incomplete segment into another attempt. A partial,
 missing, or invalid segment remains in the manifest/result as such. The campaign
 runs all five segments when it is safe to do so even after a failure; an
 operator safety stop makes the campaign incomplete rather than creating a
 replacement segment.
+
+Before any segment, the one `campaign-preflight` operation uses the same
+immutable manifest to perform the existing 30-second representative correctness
+prefix after its own fresh reset and full seed. It retains raw sent and durable
+evidence, bounded logs, and verified cleanup in the campaign evidence
+directory. It runs every configured mixed class with the shared confirmation
+prefix seed. A failed, partial, or invalid preflight is retained and blocks all
+segments; it is never overwritten, retried, or replaced. A passing preflight
+does not establish sustained capacity and is followed by a new reset/full seed
+for each one-hour segment.
 
 ## Gates
 
@@ -67,7 +89,12 @@ verifies the manifest and result hashes, includes every declared segment once,
 and pools the raw counts by eligible class. It certifies reliability only when
 each class has actual pooled `n >= 2995` and its exact one-sided
 Clopper-Pearson 95% upper failure bound is at most `0.001`. Expected arrival
-counts never certify a class.
+counts never certify a class. The denominator is the existing raw
+offered-arrival record for each request scheduled inside the measured window;
+an unsent or otherwise non-correct arrival is a failure. The aggregate also
+retains submitted, HTTP-accepted, and durably completed counts separately for
+interpretation. A contradictory `correct` record without a send timestamp
+invalidates the campaign rather than increasing its reliability evidence.
 
 The aggregate passes only when all five segments pass every non-reliability
 gate and every pooled class passes reliability. A failed non-reliability gate
@@ -95,14 +122,14 @@ segment result:
     "image_provenance": {},
     "harness_git_sha": "...",
     "indices": [0, 1, 2, 3, 4],
-    "seeds": [0, 1, 2, 3, 4],
+    "seeds": [20262029, 20262030, 20262031, 20262032, 20262033],
     "output_paths": ["..."]
   },
   "segments": [
     {
       "index": 0,
-      "seed": 0,
-      "status": "pass|fail|invalid|partial",
+      "seed": 20262029,
+      "status": "pass|fail|invalid|partial|inconclusive",
       "step": {}
     }
   ],
@@ -112,7 +139,7 @@ segment result:
       "failures": 0,
       "upper_95": null,
       "limit": 0.001,
-      "status": "pass|fail|inconclusive"
+      "status": "pass|fail|inconclusive|invalid"
     }
   },
   "overall": "pass|fail|inconclusive|invalid"
@@ -122,6 +149,14 @@ segment result:
 The saved segment `step` remains the existing raw result shape so the report
 can show each segment's gates, resource samples, outcomes, and validity
 evidence without a second runner or a parallel measurement format.
+
+Each segment also reuses direct confirmation's idle database window and shared
+container/process snapshot before warm-up, retains the database/WAL counter
+window spanning warm-up, measurement and drain, and saves the post-drain
+snapshot before teardown. Image provenance, host resource samples and all
+partial request/outcome checkpoints remain with that segment. A post-drain
+snapshot does not assert that unfinished work is quiescent; outcome/backlog
+evidence must be read alongside its memory figures.
 
 ## Claim and limits
 

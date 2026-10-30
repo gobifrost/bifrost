@@ -34,6 +34,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import ab  # noqa: E402
+import campaign  # noqa: E402
 import deploy  # noqa: E402
 import drills  # noqa: E402
 import guard  # noqa: E402
@@ -200,49 +201,71 @@ class Run:
         _atomic_write(self.out / "report.md", report.render(self.result))
 
     def snapshot(self, label: str) -> None:
-        pod, uid = self.cluster.api_pod()
-        if self.expected_api_uid is not None and uid != self.expected_api_uid:
-            self.result["api_pod_changes"] += 1
-            self.save()
-            raise SystemExit(f"API pod was replaced during the run (before '{label}'); see {self.out}")
-        self.expected_api_uid = uid
-        summary = smaps.summarize(self.cluster.smaps(pod, "api"))
-        db = self.cluster.db_counters()
-        region = summary.regions.get
-
-        def mib(name: str, field: str) -> float:
-            found = region(name)
-            return round(getattr(found, field) / 1024, 1) if found else 0.0
-
-        self.result["snapshots"].append({
-            "label": label,
-            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "api_pod": pod,
-            "api": {
-                "rss_mib": round(summary.rss_kib / 1024, 1),
-                "pss_mib": round(summary.pss_kib / 1024, 1),
-                "thp_mib": round(summary.thp_kib / 1024, 1),
-                "heap_virt_mib": mib("heap", "virtual_kib"),
-                "heap_rss_mib": mib("heap", "rss_kib"),
-                "anon_large_rss_mib": mib("anon_large", "rss_kib"),
-                "file_rss_mib": mib("file", "rss_kib"),
-            },
-            "containers": self.cluster.container_stats(),
-            "worker_processes": {
-                pod: self.cluster.worker_processes(pod)
-                for pod in self.cluster.worker_pods()
-            },
-            "worker_images": self.cluster.worker_image_evidence(self.result["api_image_provenance"])
-            if self.result.get("api_image_provenance") else {},
-            "db_mib": round(db["db_bytes"] / 1024 / 1024, 1),
-            "wal_mib": round(db["wal_bytes"] / 1024 / 1024, 1),
-        })
-        self.save()
-        api = self.result["snapshots"][-1]["api"]
-        print(f"  [{label}] API {api['rss_mib']:.0f} MiB", flush=True)
+        snapshot(self, label)
 
     def driver(self, mode: str, args: dict, timeout_s: int) -> dict:
         return self.cluster.exec_python("bench-driver", DRIVER, [mode, json.dumps(args)], timeout_s=timeout_s)
+
+
+def snapshot(current: Run, label: str) -> None:
+    """Capture one standard process, container, worker, and database snapshot."""
+    pod, uid = current.cluster.api_pod()
+    if current.expected_api_uid is not None and uid != current.expected_api_uid:
+        current.result["api_pod_changes"] += 1
+        current.save()
+        raise SystemExit(f"API pod was replaced during the run (before '{label}'); see {current.out}")
+    current.expected_api_uid = uid
+    summary = smaps.summarize(current.cluster.smaps(pod, "api"))
+    db = current.cluster.db_counters()
+    region = summary.regions.get
+
+    def mib(name: str, field: str) -> float:
+        found = region(name)
+        return round(getattr(found, field) / 1024, 1) if found else 0.0
+
+    current.result["snapshots"].append({
+        "label": label,
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "api_pod": pod,
+        "api": {
+            "rss_mib": round(summary.rss_kib / 1024, 1),
+            "pss_mib": round(summary.pss_kib / 1024, 1),
+            "thp_mib": round(summary.thp_kib / 1024, 1),
+            "heap_virt_mib": mib("heap", "virtual_kib"),
+            "heap_rss_mib": mib("heap", "rss_kib"),
+            "anon_large_rss_mib": mib("anon_large", "rss_kib"),
+            "file_rss_mib": mib("file", "rss_kib"),
+        },
+        "containers": current.cluster.container_stats(),
+        "worker_processes": {
+            worker_pod: current.cluster.worker_processes(worker_pod)
+            for worker_pod in current.cluster.worker_pods()
+        },
+        "worker_images": current.cluster.worker_image_evidence(current.result["api_image_provenance"])
+        if current.result.get("api_image_provenance") else {},
+        "db_mib": round(db["db_bytes"] / 1024 / 1024, 1),
+        "wal_mib": round(db["wal_bytes"] / 1024 / 1024, 1),
+    })
+    current.save()
+    api = current.result["snapshots"][-1]["api"]
+    print(f"  [{label}] API {api['rss_mib']:.0f} MiB", flush=True)
+
+
+def capture_idle_db(current: Run, profile: dict) -> dict:
+    """Measure the profile's final idle DB window and retain its standard snapshot."""
+    print(f"Idle {profile['idle_s']} s, measuring database load over the last {profile['idle_db_s']} s ...", flush=True)
+    time.sleep(profile["idle_s"] - profile["idle_db_s"])
+    idle_before, idle_started = current.cluster.db_counters(), time.monotonic()
+    time.sleep(profile["idle_db_s"])
+    idle_window = stats.db_delta(idle_before, current.cluster.db_counters(), time.monotonic() - idle_started)
+    idle_rate = stats.db_rate(idle_window)
+    current.result["db_idle"] = {
+        "seconds": round(idle_window["seconds"], 1), "rate": idle_rate,
+        "top_tables": stats.top_tables(idle_window["tables"], 8),
+    }
+    current.snapshot("idle")
+    print(f"  idle: {idle_rate['xact_per_s']:.1f} transactions/s", flush=True)
+    return idle_rate
 
 
 def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None, api_image: str | None = None) -> dict:
@@ -475,17 +498,7 @@ def run_confirmation(profile_name: str, mix_name: str, rate: float, api_image: s
 
     ids = reset_and_prepare("confirmation")
     current.result["ids"] = ids
-    print(f"Idle {profile['idle_s']} s, measuring database load over the last {profile['idle_db_s']} s ...", flush=True)
-    time.sleep(profile["idle_s"] - profile["idle_db_s"])
-    idle_before, idle_started = cluster.db_counters(), time.monotonic()
-    time.sleep(profile["idle_db_s"])
-    idle_window = stats.db_delta(idle_before, cluster.db_counters(), time.monotonic() - idle_started)
-    idle_rate = stats.db_rate(idle_window)
-    current.result["db_idle"] = {
-        "seconds": round(idle_window["seconds"], 1), "rate": idle_rate,
-        "top_tables": stats.top_tables(idle_window["tables"], 8),
-    }
-    current.snapshot("idle")
+    capture_idle_db(current, profile)
     phases_before, phases_started = cluster.db_counters(), time.monotonic()
     step = search.confirm(cluster, ids, rate, plan, profile["capacity"]["disk"])
     current.result["all_phases_db_window"] = {
@@ -609,6 +622,17 @@ def main() -> None:
     confirm_parser.add_argument("--rate", type=float, required=True)
     confirm_parser.add_argument("--api-image")
     confirm_parser.add_argument("--out", type=Path)
+    campaign_init_parser = sub.add_parser("campaign-init")
+    campaign_init_parser.add_argument("--profile", default="m-capacity")
+    campaign_init_parser.add_argument("--api-image", required=True)
+    campaign_init_parser.add_argument("--out", type=Path, required=True)
+    campaign_preflight_parser = sub.add_parser("campaign-preflight")
+    campaign_preflight_parser.add_argument("--manifest", type=Path, required=True)
+    campaign_segment_parser = sub.add_parser("confirm-segment")
+    campaign_segment_parser.add_argument("--manifest", type=Path, required=True)
+    campaign_segment_parser.add_argument("--index", type=int, required=True)
+    campaign_aggregate_parser = sub.add_parser("campaign-aggregate")
+    campaign_aggregate_parser.add_argument("--manifest", type=Path, required=True)
     build_parser = sub.add_parser("build")
     build_parser.add_argument("--source", type=Path, required=True)
     build_parser.add_argument("--label", required=True)
@@ -638,6 +662,15 @@ def main() -> None:
         run_capacity(args.profile, args.mix, args.api_image, args.out)
     elif args.command == "confirm":
         run_confirmation(args.profile, args.mix, args.rate, args.api_image, args.out)
+    elif args.command == "campaign-init":
+        cluster = Cluster()
+        print(campaign.create_manifest(cluster, args.profile, args.api_image, args.out), flush=True)
+    elif args.command == "campaign-preflight":
+        print(campaign.run_preflight(args.manifest), flush=True)
+    elif args.command == "confirm-segment":
+        print(campaign.run_segment(args.manifest, args.index), flush=True)
+    elif args.command == "campaign-aggregate":
+        print(json.dumps(jsoncodec.encode(campaign.aggregate(args.manifest)), indent=2, allow_nan=False), flush=True)
     elif args.command == "build":
         cluster = Cluster()
         cluster.verify()

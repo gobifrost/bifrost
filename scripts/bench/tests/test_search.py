@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -38,6 +40,57 @@ class ConfirmationDecisionTest(unittest.TestCase):
     def test_confirmation_seed_has_a_single_shared_definition(self) -> None:
         self.assertEqual(search.confirmation_seed({"seed": 17}), 1017)
         self.assertEqual(search.confirmation_seed({"seed": 17}, 2), 1019)
+
+    def test_checkpoint_persists_raw_sent_and_outcomes_before_later_gates(self) -> None:
+        sent = {
+            "started": 1_000.0,
+            "requests": [{"id": "request", "class": "wf", "scheduled": 1_090.0, "sent": 1_090.0,
+                          "responded": 1_090.1, "http_status": 200, "error": None}],
+            "backlog": [],
+            "driver_lag_p99_s": None,
+        }
+        outcomes = {"outcomes": {"request": {"correct": True, "completed": 1_091.0, "started": 1_090.2,
+                                                   "created": 1_090.1, "status": "Success", "error": None}},
+                    "duplicates": {}, "missing": [], "rows": []}
+        checkpoints: list[dict] = []
+        cluster = Mock()
+        cluster.tenant_faults.return_value = {}
+        command = Mock()
+        command.result.side_effect = lambda _timeout, on_event: on_event({"event": "started"}) or sent
+        cluster.start_exec_python.return_value = command
+        cluster.exec_python.return_value = outcomes
+
+        class Host:
+            snapshots: list[dict] = []
+
+            def __init__(self, *_args) -> None:
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                pass
+
+            def intervals(self, *_args) -> list[dict]:
+                return []
+
+        plan = {
+            "mix": {"wf": 100}, "warmup_s": 90, "drain_s": 120, "window_min_s": 300,
+            "thresholds": {"drift_fraction": 0.001}, "deadlines_s": {"wf": 60},
+        }
+        with patch.object(search, "HostSampler", Host), \
+             patch.object(search.hostmetrics, "assess", return_value={"invalid": [], "warnings": []}), \
+             patch.object(search.capacity, "step_verdict", return_value={"overall": "pass"}) as verdict, \
+             patch.object(search.time, "sleep"):
+            search.run_step(cluster, {}, 2.236, plan, 9, {}, window_s=3600, confirm=True,
+                            on_event=lambda _event: None, cancel_driver=True, checkpoint=checkpoints.append)
+
+        self.assertEqual([item["phase"] for item in checkpoints], ["sent", "outcomes"])
+        self.assertEqual(checkpoints[-1]["outcomes"], outcomes)
+        self.assertTrue(json.loads(cluster.start_exec_python.call_args.args[2][1])["event_frames"])
+        self.assertTrue(cluster.start_exec_python.call_args.kwargs["cancel_driver"])
+        verdict.assert_called_once()
 
 
 if __name__ == "__main__":

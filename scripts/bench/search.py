@@ -115,7 +115,7 @@ def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict
 
 def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, disk: dict[str, str],
              window_s: float | None = None, confirm: bool = False, on_event: Callable[[dict], None] | None = None,
-             cancel_driver: bool = False) -> dict:
+             cancel_driver: bool = False, checkpoint: Callable[[dict], None] | None = None) -> dict:
     """One open-loop step: warm-up, measured window, drain; returns gates, validity and raw evidence."""
     mix = plan["mix"]
     window_s = window_s or window_seconds(rate, mix, plan["window_min_s"], OBSERVATION_TARGET)
@@ -127,17 +127,21 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         step_args = {
             "rate": rate, "duration_s": duration, "mix": mix, "seed": seed, "ids": ids, "io": plan.get("io"),
         }
-        if on_event is not None:
+        if on_event is not None or checkpoint is not None:
             step_args["event_frames"] = True
-        if on_event is None:
+        if on_event is None and checkpoint is None:
             sent = cluster.exec_python("bench-driver", LOADGEN, ["step", json.dumps(step_args)], timeout_s=int(duration + 600))
         else:
             command = cluster.start_exec_python("bench-driver", LOADGEN, ["step", json.dumps(step_args)], cancel_driver=cancel_driver)
-            sent = command.result(int(duration + 600), on_event)
+            sent = command.result(int(duration + 600), on_event or (lambda _event: None))
+        if checkpoint is not None:
+            checkpoint({"phase": "sent", "sent": sent})
         time.sleep(plan["drain_s"])
     outcomes = cluster.exec_python("bench-driver", LOADGEN, ["outcomes", json.dumps({
         "requests": [{"id": r["id"], "class": r["class"]} for r in sent["requests"]], "io": plan.get("io"),
     })], timeout_s=600)
+    if checkpoint is not None:
+        checkpoint({"phase": "outcomes", "sent": sent, "outcomes": outcomes})
     started = sent["started"]
     window = (plan["warmup_s"], plan["warmup_s"] + window_s)
     faults = {key: after - faults_before.get(key, 0) for key, after in cluster.tenant_faults().items()}
