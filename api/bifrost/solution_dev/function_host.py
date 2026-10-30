@@ -6,7 +6,6 @@ mirroring `bifrost run`'s offline execution — nothing is registered to the API
 """
 from __future__ import annotations
 
-import ast
 import importlib.util
 import inspect
 import sys
@@ -16,6 +15,8 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
+
+from bifrost.decorator_validation import has_executable_declaration
 
 if TYPE_CHECKING:
     from bifrost.client import BifrostClient
@@ -126,6 +127,10 @@ def discover_functions(
     code passes to ``useWorkflow``). The workspace root is placed on
     ``sys.path`` so a function's ``from modules.x import y`` resolves against
     the solution root.
+
+    Only manifest targets and statically declared SDK entry points are imported.
+    Helpers load through normal Python dependencies; unrelated diagnostics and
+    test setup must not execute in (and monkeypatch) the preview process.
     """
     workspace = workspace.resolve()
     root_str = str(workspace)
@@ -142,7 +147,7 @@ def discover_functions(
         rel = py.relative_to(workspace).as_posix()
         if rel not in workflow_paths:
             try:
-                if not _has_executable_declaration(py):
+                if not has_executable_declaration(py.read_text(encoding="utf-8"), path=rel):
                     continue
             except (OSError, SyntaxError, UnicodeError) as exc:
                 failures[rel] = f"{type(exc).__name__}: {exc}"
@@ -158,46 +163,6 @@ def discover_functions(
             if callable(obj) and hasattr(obj, "_executable_metadata"):
                 out[f"{rel}::{name}"] = obj
     return out, failures
-
-
-def _has_executable_declaration(py: Path) -> bool:
-    """Inspect declarations without executing tests, helpers, or diagnostics.
-
-    Imports of dependencies belong to Python when an actual workflow needs
-    them. Importing every .py independently can run test setup that replaces
-    SDK modules (or monkeypatches HTTP clients) in the preview process.
-    Explicit manifest targets are imported regardless of their syntax shape.
-    """
-    tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-    decorators: set[str] = set()
-    modules: set[str] = set()
-    executable_names = {"workflow", "tool", "data_provider", "service"}
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module in {"bifrost", "bifrost.decorators"}:
-            decorators.update(
-                alias.asname or alias.name
-                for alias in node.names if alias.name in executable_names
-            )
-        elif isinstance(node, ast.Import):
-            modules.update(
-                alias.asname or alias.name
-                for alias in node.names if alias.name == "bifrost"
-            )
-    for node in tree.body:
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            target = decorator.func if isinstance(decorator, ast.Call) else decorator
-            if isinstance(target, ast.Name) and target.id in decorators:
-                return True
-            if (
-                isinstance(target, ast.Attribute)
-                and isinstance(target.value, ast.Name)
-                and target.value.id in modules
-                and target.attr in executable_names
-            ):
-                return True
-    return False
 
 
 def _load_module(py: Path, rel: str) -> tuple[ModuleType | None, str | None]:

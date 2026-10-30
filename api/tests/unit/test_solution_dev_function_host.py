@@ -148,6 +148,12 @@ def test_discovery_does_not_execute_diagnostics_or_nested_test_workflows(tmp_pat
     "import bifrost as sdk\n@sdk.workflow",
     "from bifrost.decorators import tool as execute\n@execute()",
     "from bifrost import data_provider\n@data_provider()",
+    "import bifrost.decorators as decorators\n@decorators.workflow()",
+    "import bifrost.decorators\n@bifrost.decorators.workflow",
+    "from bifrost import decorators as d\n@d.workflow()",
+    "from bifrost import *\n@workflow",
+    "from bifrost.decorators import *\n@tool()",
+    "from bifrost import workflow\nexecute = workflow\n@execute()",
 ])
 def test_discovery_recognizes_sdk_decorator_aliases(tmp_path: Path, declaration: str):
     _write(tmp_path / "arbitrary/entry.py", declaration + '\nasync def main():\n    return {}\n')
