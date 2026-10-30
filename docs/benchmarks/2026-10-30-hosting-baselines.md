@@ -206,7 +206,7 @@ as correlated spans from the same request. Preserve cold-template, first-use
 and repeated-action distributions rather than calling every warm-worker child
 a warm-import run.
 
-The user then supplied three execution links. Read-only execution records
+The user then supplied five execution links. Read-only execution records
 confirm the following **started-to-completed** intervals on 2026-10-30:
 
 | Observed operation | Worker wall seconds | Reported engine seconds | Outside engine seconds |
@@ -217,12 +217,12 @@ confirm the following **started-to-completed** intervals on 2026-10-30:
 | SDK-only script-job lookup | 0.271 | 0.138 | 0.133 |
 | SDK-only script-result callback | 0.562 | 0.377 | 0.185 |
 
-All three succeeded. The detail and shallow list are different workloads, not
+All five succeeded. The detail and shallow list are different workloads, not
 an optimization A/B: the detail path performs bounded concurrent per-site
 reads. Outside-engine time is the residual of worker wall time minus engine
-duration; it is not an isolated import span. The execution tool returned no
-creation timestamp or logs, so queue, retries and browser delivery remain
-unmeasured. Runtime image and historical workflow source hashes were not
+duration; it is not an isolated import span. No record returned a creation
+timestamp; the three portal records also returned no logs. Queue, retries and
+browser delivery remain unmeasured. Runtime image and historical workflow source hashes were not
 returned. Selected private evidence, without customer records or credentials,
 is `notes/portal-executions-20261030.json` outside git. Retain these as live
 observations pending a controlled, fully attributed reproduction.
