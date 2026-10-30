@@ -1994,7 +1994,10 @@ class TestSocketWorkflowsAndExecutions:
     """Gate C5a: the socket serves the real workflow/execution routes."""
 
     @pytest.mark.asyncio
-    async def test_workflow_list_requires_read_permission(self, async_session_factory):
+    async def test_workflow_list_filters_unreadable_rows_and_rejects_foreign_scope(
+        self, async_session_factory
+    ):
+        foreign_org = uuid4()
         caller = {
             "Authorization": "Bearer " + await _human_token(
                 async_session_factory,
@@ -2006,11 +2009,18 @@ class TestSocketWorkflowsAndExecutions:
         await server.start()
         try:
             async with _socket_client(server) as client:
-                denied = await client.get("/api/workflows", headers=caller)
+                filtered = await client.get("/api/workflows", headers=caller)
+                denied = await client.get(
+                    "/api/workflows",
+                    params={"scope": str(foreign_org)},
+                    headers=caller,
+                )
                 allowed = await client.get(
                     "/api/workflows",
                     headers={"Authorization": f"Bearer {_engine_token()}"},
                 )
+            assert filtered.status_code == 200, filtered.text
+            assert filtered.json() == []
             assert denied.status_code == 403, denied.text
             assert allowed.status_code == 200, allowed.text
             assert isinstance(allowed.json(), list)

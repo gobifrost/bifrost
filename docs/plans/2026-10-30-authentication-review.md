@@ -207,3 +207,13 @@ expired support markers cannot refresh the operator cookie and still need an
 explicit revoke attempt. Impersonation exit retains its original-operator path.
 The focused regression challenges normal logout before effects, rotates once,
 then completes logout once and clears browser state.
+
+The late worker/SDK selection passed 100 tests and exposed one incorrect migrated
+expectation: workflow listing filters unauthorized rows and returns HTTP 200 with
+an empty list, rather than requiring a route-wide `workflows.read` grant. The old
+legacy-token fixture had refused an unknown user before reaching this contract.
+Independent review confirmed `shared/sdk_execution_reads.py` filters each row;
+out-of-reach requested scope is the separate 403 contract. The corrected test
+must exercise the supported list behavior without weakening authorization.
+Failure evidence: `/tmp/bifrost-auth-review-correction-r5-failure.xml`. The script
+stopped and removed its isolated stack; remaining checks are still required.
