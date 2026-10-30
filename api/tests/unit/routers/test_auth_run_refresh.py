@@ -69,10 +69,13 @@ async def test_a_service_attempt_with_an_expired_lease_is_refused(app: FastAPI, 
     async with committed_world(async_engine) as world:
         organization = await world.organization()
         user = await world.person(organization)
-        workflow = await world.workflow(organization)
-        live = await world.service_attempt(run_user=user, workflow=workflow, organization=organization)
+        # One service definition per workflow.
+        live = await world.service_attempt(
+            run_user=user, workflow=await world.workflow(organization), organization=organization
+        )
         lapsed = await world.service_attempt(
-            run_user=user, workflow=workflow, organization=organization, lease=timedelta(seconds=-1)
+            run_user=user, workflow=await world.workflow(organization), organization=organization,
+            lease=timedelta(seconds=-1),
         )
         await world.session.commit()
 
