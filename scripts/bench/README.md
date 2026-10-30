@@ -78,8 +78,13 @@ step instead (`hostmetrics.py`). The search ramps by 1.25×, bisects twice and
 reports the bracket.
 
 `confirm` is a confirmation-only capacity run: it resets and reseeds the
-tenant, then applies the same strict confirmation criteria at one supplied
-rate. Its result remains `kind: capacity`, records the single entry in
+tenant, saves one 30-second correctness preflight using the confirmation's
+first arrival seed, and stops on incomplete coverage or incorrect durable
+outcomes. A passing preflight is followed by a second reset and full reseed
+before the unchanged strict confirmation at the supplied rate. The preflight
+does not establish capacity or warm the measured tenant. Its raw requests,
+outcomes, fault counters and immediate log tails are retained separately.
+The result remains `kind: capacity`, records the single entry in
 `confirmations`, and sets `sustainable_rate` only when that entry passes. Use
 an explicit `--api-image` when comparing builds; the result and report record
 the selected tag and its local immutable Docker image ID before deployment.

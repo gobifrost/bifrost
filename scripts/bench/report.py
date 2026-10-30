@@ -162,6 +162,18 @@ def _capacity(result: dict) -> list[str]:
          f"Exploratory ramp bracket (last pass, first not passing — failed or inconclusive; coarser gates than confirmation): {result.get('bracket')}"
          + (f"; stopped: {result['stopped']}" if result.get("stopped") else "")),
         "",
+    ]
+    preflight = result.get("preflight")
+    if preflight:
+        rows += [
+            "", "## Representative Correctness Preflight", "",
+            f"Result: **{preflight.get('overall', 'unknown')}**. This short prefix checks durable correctness only; it does not establish sustained capacity.",
+            f"Submitted classes: `{preflight.get('submitted_classes', [])}`; required: `{preflight.get('required_classes', [])}`.",
+        ]
+        if preflight.get("overall") != "pass":
+            rows.append("Raw sent/durable evidence and bounded API/worker log tails are retained with the result JSON; the long confirmation was not run.")
+    rows += [
+        "",
         "| Offered /s | Window s | Result | Throughput | Drift upper /s | Worst class e2e p95 s | Failures | Invalid / warnings |",
         "|---:|---:|---|---:|---:|---:|---:|---|",
     ]

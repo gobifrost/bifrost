@@ -18,6 +18,7 @@ docs/plans/2026-10-29-capacity-benchmark-methodology.md.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -37,6 +38,7 @@ import deploy  # noqa: E402
 import drills  # noqa: E402
 import guard  # noqa: E402
 import jsoncodec  # noqa: E402
+import preflight  # noqa: E402
 import report  # noqa: E402
 import search  # noqa: E402
 import smaps  # noqa: E402
@@ -364,7 +366,7 @@ def run_capacity(profile_name: str, mix_name: str, api_image: str | None, out: P
 
 
 def run_confirmation(profile_name: str, mix_name: str, rate: float, api_image: str | None, out: Path | None) -> Path:
-    """Confirm one offered rate from a freshly reset tenant without a new search."""
+    """Confirm one offered rate after a representative correctness preflight and a fresh reset."""
     if not math.isfinite(rate) or rate <= 0:
         raise SystemExit("confirmation rate must be finite and greater than zero")
     out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-capacity-confirmation-only-{mix_name}")
@@ -377,21 +379,59 @@ def run_confirmation(profile_name: str, mix_name: str, rate: float, api_image: s
     selected_api_image = api_image or deploy.images(cluster.identity)["api"]
     current = Run(cluster, "capacity", profile_name, profile, "fake", out, selected_api_image)
     current.result.update({
-        "mode": "confirmation-only",
-        "mix_name": mix_name,
-        "rate": rate,
-        "api_image": selected_api_image,
-        "steps": [],
-        "confirmations": [],
-        "bracket": None,
-        "stopped": None,
-        "sustainable_rate": None,
+        "mode": "confirmation-only", "mix_name": mix_name, "rate": rate, "api_image": selected_api_image,
+        "steps": [], "confirmations": [], "bracket": None, "stopped": None, "sustainable_rate": None,
+        "phase_definition": {
+            "first": "30-second representative correctness preflight after the first full reset/seed",
+            "steady": "unchanged long confirmation after a second full reset/seed",
+        },
     })
     # Preserve the selected image and planned confirmation even when deployment fails.
     current.save()
-    print(f"Resetting and seeding '{profile_name}' for confirmation-only at {rate:.3f}/s ...", flush=True)
-    deploy.reset(cluster)
-    ids = _prepare(cluster, current, profile, "fake", selected_api_image)
+
+    def reset_and_prepare(phase: str) -> dict:
+        print(f"Resetting and seeding '{profile_name}' for {phase} at {rate:.3f}/s ...", flush=True)
+        deploy.reset(cluster)
+        ids = _prepare(cluster, current, profile, "fake", selected_api_image)
+        current.result[f"{phase}_setup"] = {
+            "ids": ids,
+            "api_image_provenance": copy.deepcopy(current.result["api_image_provenance"]),
+        }
+        current.save()
+        return ids
+
+    preflight_ids = reset_and_prepare("preflight")
+
+    def save_preflight(progress: dict) -> None:
+        current.result["preflight"] = progress
+        current.save()
+
+    try:
+        candidate = preflight.run(cluster, preflight_ids, rate, plan, current.out / "preflight-logs", save_preflight)
+    except BaseException as error:  # save unexpected harness failure before its cleanup decision
+        candidate = {
+            "kind": "representative-correctness-preflight", "overall": "invalid",
+            "error": f"{type(error).__name__}: {error}",
+            "requires_namespace_teardown": bool(getattr(error, "requires_namespace_teardown", False)),
+        }
+    finally:
+        current.result["preflight"] = candidate
+        current.save()
+    if candidate["overall"] != "pass":
+        current.result["stopped"] = "preflight-failed"
+        current.save()
+        try:
+            deploy.reset(cluster)
+        except BaseException as error:
+            candidate["namespace_cleanup"] = {"verified": False, "error": f"{type(error).__name__}: {error}"}
+            current.save()
+            raise
+        candidate["namespace_cleanup"] = {"verified": True}
+        current.save()
+        print(f"  preflight {candidate['overall']}; long confirmation not run: {out}/report.md", flush=True)
+        return out
+
+    ids = reset_and_prepare("confirmation")
     current.result["ids"] = ids
     print(f"Idle {profile['idle_s']} s, measuring database load over the last {profile['idle_db_s']} s ...", flush=True)
     time.sleep(profile["idle_s"] - profile["idle_db_s"])
@@ -400,8 +440,7 @@ def run_confirmation(profile_name: str, mix_name: str, rate: float, api_image: s
     idle_window = stats.db_delta(idle_before, cluster.db_counters(), time.monotonic() - idle_started)
     idle_rate = stats.db_rate(idle_window)
     current.result["db_idle"] = {
-        "seconds": round(idle_window["seconds"], 1),
-        "rate": idle_rate,
+        "seconds": round(idle_window["seconds"], 1), "rate": idle_rate,
         "top_tables": stats.top_tables(idle_window["tables"], 8),
     }
     current.snapshot("idle")
@@ -412,6 +451,7 @@ def run_confirmation(profile_name: str, mix_name: str, rate: float, api_image: s
         **stats.db_delta(phases_before, cluster.db_counters(), time.monotonic() - phases_started),
     }
     current.result["confirmations"].append(step)
+    current.result["steady_phase"] = {"started": step["started"], "window": step["window"], "window_s": step["window_s"]}
     if step["overall"] == "pass":
         current.result["sustainable_rate"] = rate
     current.save()

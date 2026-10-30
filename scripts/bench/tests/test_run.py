@@ -19,6 +19,8 @@ def _step(rate: float, overall: str) -> dict:
     gate = {"status": "pass", "value": 0.2, "limit": 1.0}
     return {
         "rate": rate,
+        "started": 100.0,
+        "window": (0.0, 300.0),
         "window_s": 300.0,
         "overall": overall,
         "confirm": True,
@@ -212,6 +214,7 @@ class RunHarnessTest(unittest.TestCase):
             self.assertEqual(image, self.selected)
             self.assertEqual(persisted["mode"], "confirmation-only")
             self.assertEqual(persisted["sustainable_rate"], None)
+            current.result["api_image_provenance"] = {"tag": image, "phase": len([event for event in events if event == "prepare"])}
             events.append("prepare")
             return {"connections": {}}
 
@@ -229,7 +232,7 @@ class RunHarnessTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
              patch.object(run, "_prepare", side_effect=prepare), \
-             patch.object(run.deploy, "reset"), \
+             patch.object(run.deploy, "reset") as reset, \
              patch.object(run.Run, "save", new=save), \
              patch.object(run.Run, "snapshot", side_effect=lambda label: events.append(f"snapshot:{label}")), \
              patch.object(run.time, "sleep", side_effect=lambda seconds: events.append(f"sleep:{seconds}")), \
@@ -239,6 +242,7 @@ class RunHarnessTest(unittest.TestCase):
                  "xact_per_s": 0.1, "rollbacks_per_s": 0.0, "rows_written_per_s": 0.0, "wal_kib_per_s": 0.0,
              }), \
              patch.object(run.stats, "top_tables", return_value=[("idle", 1, 2)]), \
+             patch.object(run.preflight, "run", side_effect=lambda *_args: events.append("preflight") or {"overall": "pass"}), \
              patch.object(run.search, "confirm", side_effect=confirm):
             out = Path(temporary) / "confirmation-only"
             run.run_confirmation("m-capacity", "sdk-heavy", 3.90625, self.selected, out)
@@ -256,15 +260,105 @@ class RunHarnessTest(unittest.TestCase):
             "top_tables": [["idle", 1, 2]],
         })
         self.assertEqual(result["all_phases_db_window"], {"label": "warmup+measure+drain", **all_phases})
-        self.assertEqual(events[:2], ["save:0", "prepare"])
+        self.assertEqual(events[:7], ["save:0", "prepare", "save:0", "preflight", "save:0", "prepare", "save:0"])
         profile = run.load_profile("m-capacity")
-        self.assertEqual(events[2:4], [
+        self.assertEqual(events[7:9], [
             f"sleep:{profile['idle_s'] - profile['idle_db_s']}",
             f"sleep:{profile['idle_db_s']}",
         ])
         self.assertLess(events.index("snapshot:idle"), events.index("confirm"))
-        self.assertLess(events.index("confirm"), events.index("save:1"))
-        self.assertLess(events.index("save:1"), events.index("snapshot:settled"))
+        self.assertLess(events.index("confirm"), events.index("snapshot:settled"))
+        self.assertEqual(result["preflight_setup"]["api_image_provenance"]["phase"], 0)
+        self.assertEqual(result["confirmation_setup"]["api_image_provenance"]["phase"], 1)
+        self.assertEqual(reset.call_count, 2)
+
+    def test_failed_preflight_stops_before_long_confirmation(self) -> None:
+        cluster = FakeCluster()
+
+        def prepare(_cluster, current, _profile, _backend, image):
+            current.result["api_image_provenance"] = {"tag": image}
+            return {"connections": {}}
+
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run, "_prepare", side_effect=prepare), \
+             patch.object(run.deploy, "reset") as reset, \
+             patch.object(run.preflight, "run", return_value={"overall": "fail", "records": [], "failure_log_tails": {}}), \
+             patch.object(run.search, "confirm") as confirm:
+            out = Path(temporary) / "preflight-fail"
+            run.run_confirmation("m-capacity", "sdk-heavy", 3.90625, self.selected, out)
+            result = json.loads((out / "result.json").read_text())
+        self.assertEqual(reset.call_count, 2)
+        confirm.assert_not_called()
+        self.assertEqual(result["stopped"], "preflight-failed")
+        self.assertEqual(result["preflight"]["namespace_cleanup"], {"verified": True})
+        self.assertEqual(result["preflight"]["overall"], "fail")
+
+    def test_preflight_progress_is_saved_before_deadline_reconciliation(self) -> None:
+        cluster = FakeCluster()
+        observed: dict[str, object] = {}
+
+        def prepare(_cluster, current, _profile, _backend, image):
+            current.result["api_image_provenance"] = {"tag": image}
+            return {"connections": {}}
+
+        def preflight_run(_cluster, _ids, _rate, _plan, _logs, on_progress):
+            on_progress({"overall": "running", "sent": [{"id": "request"}], "immediate_log_tails": {}})
+            observed["saved"] = json.loads((out / "result.json").read_text())["preflight"]
+            return {"overall": "fail", "records": []}
+
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run, "_prepare", side_effect=prepare), \
+             patch.object(run.deploy, "reset"), \
+             patch.object(run.preflight, "run", side_effect=preflight_run), \
+             patch.object(run.search, "confirm") as confirm:
+            out = Path(temporary) / "preflight-progress"
+            run.run_confirmation("m-capacity", "sdk-heavy", 3.90625, self.selected, out)
+        confirm.assert_not_called()
+        self.assertEqual(observed["saved"], {"overall": "running", "sent": [{"id": "request"}], "immediate_log_tails": {}})
+
+    def test_confirmation_prepare_failure_keeps_preflight_proof(self) -> None:
+        cluster = FakeCluster()
+        calls = 0
+
+        def prepare(_cluster, current, _profile, _backend, image):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("confirmation deployment failed")
+            current.result["api_image_provenance"] = {"tag": image, "phase": "preflight"}
+            return {"connections": {}}
+
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run, "_prepare", side_effect=prepare), \
+             patch.object(run.deploy, "reset"), \
+             patch.object(run.preflight, "run", return_value={"overall": "pass"}):
+            out = Path(temporary) / "confirmation-prepare-fail"
+            with self.assertRaisesRegex(RuntimeError, "confirmation deployment failed"):
+                run.run_confirmation("m-capacity", "sdk-heavy", 3.90625, self.selected, out)
+            result = json.loads((out / "result.json").read_text())
+        self.assertEqual(result["preflight"]["overall"], "pass")
+        self.assertEqual(result["preflight_setup"]["api_image_provenance"], {"tag": self.selected, "phase": "preflight"})
+        self.assertNotIn("confirmation_setup", result)
+
+    def test_unverified_preflight_transport_cleanup_resets_before_return(self) -> None:
+        cluster = FakeCluster()
+        invalid = {"overall": "invalid", "requires_namespace_teardown": True, "error": "remote cleanup"}
+
+        def prepare(_cluster, current, _profile, _backend, image):
+            current.result["api_image_provenance"] = {"tag": image}
+            return {"connections": {}}
+
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run, "_prepare", side_effect=prepare), \
+             patch.object(run.deploy, "reset") as reset, \
+             patch.object(run.preflight, "run", return_value=invalid), \
+             patch.object(run.search, "confirm") as confirm:
+            out = Path(temporary) / "preflight-cleanup"
+            run.run_confirmation("m-capacity", "sdk-heavy", 3.90625, self.selected, out)
+            result = json.loads((out / "result.json").read_text())
+        self.assertEqual(reset.call_count, 2)
+        confirm.assert_not_called()
+        self.assertEqual(result["preflight"]["namespace_cleanup"], {"verified": True})
 
     def test_snapshot_records_processes_for_each_worker(self) -> None:
         cluster = FakeCluster()

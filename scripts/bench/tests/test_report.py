@@ -106,6 +106,16 @@ class CapacityReportTest(unittest.TestCase):
         self.assertIn("no exploratory search or saturation bracket was measured", text)
         self.assertNotIn("Exploratory ramp bracket", text)
 
+    def test_preflight_is_explicitly_not_a_capacity_claim(self) -> None:
+        text = "\n".join(report._capacity({
+            "mode": "confirmation-only", "mix_name": "sdk-heavy",
+            "profile": {"capacity": {"mixes": {"sdk-heavy": {"wf-sdk": 100}}, "thresholds_source": "frozen"}},
+            "preflight": {"overall": "fail", "submitted_classes": ["wf-sdk"], "required_classes": ["wf-sdk"]},
+        }))
+        self.assertIn("## Representative Correctness Preflight", text)
+        self.assertIn("does not establish sustained capacity", text)
+        self.assertIn("long confirmation was not run", text)
+
     def test_steps_render_with_gates_and_validity(self) -> None:
         gate = {"status": "pass", "value": 1.2, "limit": 3.0}
         step = {

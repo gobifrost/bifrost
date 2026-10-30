@@ -226,6 +226,11 @@ def confirmation_decision(overall: str, evidence: dict[str, tuple[str, int]], ob
     return "extend", max(max(insufficient), math.ceil(observations * CONFIRM_HEADROOM))
 
 
+def confirmation_seed(plan: dict, segment: int = 0) -> int:
+    """Arrival seed for a confirmation segment; segment zero is the representative prefix seed."""
+    return plan["seed"] + 1000 + segment
+
+
 def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str, str]) -> dict:
     """Confirmation at ``rate``: strict drift tolerance and a 0.1 % per-class failure bound.
 
@@ -238,7 +243,7 @@ def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str
     while True:
         window_s, capped = confirmation_seconds(rate, plan["mix"], observations)
         loose = {**plan, "thresholds": {**plan["thresholds"], "failure_upper": 1.0}}
-        step = run_step(cluster, ids, rate, loose, plan["seed"] + 1000 + len(segments), disk, window_s=window_s, confirm=True)
+        step = run_step(cluster, ids, rate, loose, confirmation_seed(plan, len(segments)), disk, window_s=window_s, confirm=True)
         segments.append(step)
         evidence = {}
         for name in step["verdict"]["reliability"]:

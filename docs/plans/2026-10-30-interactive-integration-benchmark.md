@@ -72,6 +72,14 @@ durations. Retain raw spans, failures, sample counts and uncertainty. Log module
 identifiers, counts and timings without source contents, credentials or caller
 data. Measure instrumentation overhead and keep it identical in comparisons.
 
+The initial child import diagnostic uses one opt-in structured event on the
+existing container log stream, captured immediately by the benchmark. It adds
+no telemetry HTTP request, credential refresh or background emitter to the
+timed execution path. Require exactly one event correlated to each execution;
+missing or duplicate trace evidence invalidates that diagnostic observation.
+Record emission overhead separately from the child spans. This diagnostic
+alone does not measure browser transport or parent-side queue/fork work.
+
 ## Controlled Comparisons
 
 Keep distinct groups for fresh templates, steady templates with new execution

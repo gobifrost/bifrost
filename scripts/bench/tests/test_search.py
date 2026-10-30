@@ -35,6 +35,10 @@ class ConfirmationDecisionTest(unittest.TestCase):
         window, capped = search.confirmation_seconds(1.5, {"wf": 100}, 4744)
         self.assertEqual((window, capped), (search.CONFIRM_CAP_S, True))
 
+    def test_confirmation_seed_has_a_single_shared_definition(self) -> None:
+        self.assertEqual(search.confirmation_seed({"seed": 17}), 1017)
+        self.assertEqual(search.confirmation_seed({"seed": 17}, 2), 1019)
+
 
 if __name__ == "__main__":
     unittest.main()
