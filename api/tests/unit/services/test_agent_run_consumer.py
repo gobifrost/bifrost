@@ -873,23 +873,38 @@ async def test_missing_dispatch_terminalizes_a_queued_chat_run_before_notifying(
 
 
 @pytest.mark.asyncio
-async def test_preclaim_failure_leaves_a_queued_chat_run_silent(consumer):
+@pytest.mark.parametrize("failure_boundary", ["load_run", "take_dispatch"])
+async def test_preclaim_failure_terminalizes_the_recovered_queued_chat_run(
+    consumer, failure_boundary
+):
     run_id = str(uuid4())
     queued_run = MagicMock(status="queued", conversation_id=uuid4())
-    mock_session = AsyncMock()
-    mock_session.get.return_value = queued_run
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session)
+    initial_session = AsyncMock()
+    recovery_session = AsyncMock()
+    for session in (initial_session, recovery_session):
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+    recovery_session.get.return_value = queued_run
+    if failure_boundary == "load_run":
+        initial_session.get.side_effect = ConnectionError("agent run database unavailable")
+    else:
+        initial_session.get.return_value = queued_run
+    consumer._session_factory = MagicMock(side_effect=[initial_session, recovery_session])
 
-    publish_chat = AsyncMock()
-    publish_run = AsyncMock()
-    sync_result = AsyncMock()
+    async def after_terminal_commit(*args, **kwargs):
+        assert recovery_session.commit.await_count == 1
+
+    publish_chat = AsyncMock(side_effect=after_terminal_commit)
+    publish_run = AsyncMock(side_effect=after_terminal_commit)
+    sync_result = AsyncMock(side_effect=after_terminal_commit)
+    dispatch = AsyncMock(return_value={"trigger_type": "chat"})
+    if failure_boundary == "take_dispatch":
+        dispatch.side_effect = ConnectionError("dispatch database unavailable")
 
     with (
         patch(
             "src.services.work_dispatch.take_dispatch_payload",
-            new=AsyncMock(side_effect=ConnectionError("dispatch database unavailable")),
+            dispatch,
         ),
         patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
@@ -906,10 +921,12 @@ async def test_preclaim_failure_leaves_a_queued_chat_run_silent(consumer):
             }
         )
 
-    assert queued_run.status == "queued"
-    publish_chat.assert_not_awaited()
-    publish_run.assert_not_awaited()
-    sync_result.assert_not_awaited()
+    assert queued_run.status == "failed"
+    assert queued_run.completed_at is not None
+    recovery_session.commit.assert_awaited_once()
+    assert [call.kwargs["status"] for call in publish_chat.await_args_list] == ["failed"]
+    assert publish_run.await_args.args[0].status == "failed"
+    assert sync_result.await_args.args[1]["status"] == "failed"
 
 
 @pytest.mark.asyncio

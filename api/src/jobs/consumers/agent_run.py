@@ -199,7 +199,6 @@ class AgentRunConsumer:
         # the claim below.
         dispatch_id = UUID(body["dispatch_id"])
         context: dict | None = None
-        missing_dispatch = False
 
         start_time = time.time()
         # Every write that records this run's outcome shares one retry budget,
@@ -241,10 +240,6 @@ class AgentRunConsumer:
                     )
                     return
                 if context is None:
-                    # The run and its dispatch commit together. Once this
-                    # delete found no dispatch while the queued run was
-                    # locked, no worker can claim it.
-                    missing_dispatch = True
                     raise RuntimeError(f"Queued agent run {run_id} has no dispatch")
                 loaded_actor = await _load_acting_user(db, agent_run.acting_user_id)
                 if loaded_actor is None:
@@ -604,147 +599,144 @@ class AgentRunConsumer:
             # the stale-run sweep ends it and announces that. A failure before
             # the run was claimed has no row to store.
             terminal_outcome_available = False
-            if agent_run is not None:
-                failure_error = str(e)
+            failure_error = str(e)
 
-                async def _write_failure(db: AsyncSession) -> AgentRun | None:
-                    run_obj = await db.get(
-                        AgentRun,
-                        UUID(run_id),
-                        with_for_update={"of": AgentRun},
-                    )
-                    if run_obj is None:
-                        return None
-                    if executor and await executor.is_flushed(db):
-                        # An earlier attempt committed; only its
-                        # acknowledgement was lost.
-                        return run_obj
-                    if run_obj.status in ("running", "cancelling") or (
-                        missing_dispatch and run_obj.status == "queued"
-                    ):
-                        # A run that ends without a result while cancelling
-                        # is cancelled, as announce_ended_agent_run and the
-                        # stale-run sweep record it; the error is kept.
-                        run_obj.status = (
-                            "cancelled" if run_obj.status == "cancelling" else "failed"
-                        )
-                        run_obj.error = failure_error
-                        run_obj.duration_ms = int((time.time() - start_time) * 1000)
-                        run_obj.completed_at = datetime.now(timezone.utc)
-                    else:
-                        logger.info(
-                            "Agent run %s: failure update skipped because current status is %s",
-                            run_id,
-                            run_obj.status,
-                        )
-
-                    # Still flush any buffered steps on failure
-                    if executor:
-                        await executor.flush_to_db(db)
-
-                    await db.commit()
+            async def _write_failure(db: AsyncSession) -> AgentRun | None:
+                run_obj = await db.get(
+                    AgentRun,
+                    UUID(run_id),
+                    with_for_update={"of": AgentRun},
+                )
+                if run_obj is None:
+                    return None
+                if executor and await executor.is_flushed(db):
+                    # An earlier attempt committed; only its acknowledgement
+                    # was lost.
                     return run_obj
-
-                try:
-                    failed_run = await run_with_database_retry(
-                        self._session_factory,
-                        _write_failure,
-                        description=f"agent run {run_id} failure update",
-                        budget=terminal_budget,
+                if run_obj.status in ("queued", "running", "cancelling"):
+                    # The worker owns a claimed dispatch. A pre-claim error
+                    # cannot be left queued because its assignment will not
+                    # be retried by the healthy worker pool.
+                    run_obj.status = (
+                        "cancelled" if run_obj.status == "cancelling" else "failed"
                     )
-                    if failed_run is not None:
-                        agent_run = failed_run
-                        terminal_outcome_available = (
-                            agent_run.status in TERMINAL_AGENT_RUN_STATUSES
-                        )
-                except Exception:
-                    logger.exception(f"Failed to update agent_run {run_id} after error")
-
-                # Clean up Redis Stream on failure too; write-time TTL bounds a leak.
-                try:
-                    async with get_redis() as r:
-                        await r.delete(agent_run_steps_stream_key(run_id))
-                except Exception as cleanup_err:
-                    # Stream cleanup is best-effort; write-time TTL bounds a leak.
-                    logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
-
-                # The failure may precede the claim that loads the context.
-                known = context or {}
-                if terminal_outcome_available and (
-                    trigger_type == "chat" or known.get("trigger_type") == "chat"
-                ):
-                    chat_conversation_id = (
-                        (known.get("input") or {}).get("conversation_id")
-                        or known.get("conversation_id")
-                        or (agent_run.conversation_id if agent_run else None)
+                    run_obj.error = failure_error
+                    run_obj.duration_ms = int((time.time() - start_time) * 1000)
+                    run_obj.completed_at = datetime.now(timezone.utc)
+                else:
+                    logger.info(
+                        "Agent run %s: failure update skipped because current status is %s",
+                        run_id,
+                        run_obj.status,
                     )
-                    if chat_conversation_id is not None:
-                        try:
-                            if agent_run.status == "completed":
-                                output = (
-                                    agent_run.output
-                                    if isinstance(agent_run.output, dict)
-                                    else {}
-                                )
-                                content = output.get("text")
-                                kind = "done"
-                                status = "completed"
-                                payload = ChatStreamChunk(
-                                    type="done",
-                                    content=content if isinstance(content, str) else None,
-                                    finish_reason=(
-                                        output.get("finish_reason")
-                                        if isinstance(output.get("finish_reason"), str)
-                                        else None
-                                    ),
-                                    incomplete=(
-                                        output.get("incomplete")
-                                        if isinstance(output.get("incomplete"), bool)
-                                        else None
-                                    ),
-                                    run_status="completed",
-                                )
-                            elif agent_run.status == "cancelled":
-                                kind = "cancelled"
-                                status = "cancelled"
-                                payload = ChatStreamChunk(
-                                    type="cancelled",
-                                    error=agent_run.error,
-                                    run_status="cancelled",
-                                )
-                            else:
-                                # A sweep may have ended the run while this
-                                # worker was recovering. Its stored outcome,
-                                # including timeout, is authoritative.
-                                kind = "error"
-                                status = agent_run.status
-                                payload = ChatStreamChunk(
-                                    type="error",
-                                    error=agent_run.error,
-                                    run_status=agent_run.status,
-                                )
-                            await publish_chat_run_event(
-                                conversation_id=UUID(str(chat_conversation_id)),
-                                run_id=run_id,
-                                kind=kind,
-                                status=status,
-                                payload=payload,
-                            )
-                        except Exception as pub_err:
-                            logger.debug(
-                                "failed to publish terminal chat status for %s: %s",
-                                run_id,
-                                pub_err,
-                            )
 
-                if terminal_outcome_available:
+                # Still flush any buffered steps on failure.
+                if executor:
+                    await executor.flush_to_db(db)
+
+                await db.commit()
+                return run_obj
+
+            try:
+                failed_run = await run_with_database_retry(
+                    self._session_factory,
+                    _write_failure,
+                    description=f"agent run {run_id} failure update",
+                    budget=terminal_budget,
+                )
+                if failed_run is not None:
+                    agent_run = failed_run
+                    terminal_outcome_available = (
+                        agent_run.status in TERMINAL_AGENT_RUN_STATUSES
+                    )
+            except Exception:
+                logger.exception(f"Failed to update agent_run {run_id} after error")
+
+            # Clean up Redis Stream on failure too; write-time TTL bounds a leak.
+            try:
+                async with get_redis() as r:
+                    await r.delete(agent_run_steps_stream_key(run_id))
+            except Exception as cleanup_err:
+                # Stream cleanup is best-effort; write-time TTL bounds a leak.
+                logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
+
+            # The failure may precede the claim that loads the context.
+            known = context or {}
+            if terminal_outcome_available and (
+                trigger_type == "chat" or known.get("trigger_type") == "chat"
+            ):
+                chat_conversation_id = (
+                    (known.get("input") or {}).get("conversation_id")
+                    or known.get("conversation_id")
+                    or (agent_run.conversation_id if agent_run else None)
+                )
+                if chat_conversation_id is not None:
                     try:
-                        await publish_agent_run_update(
-                            agent_run, agent.name if agent else "Unknown"
+                        if agent_run.status == "completed":
+                            output = (
+                                agent_run.output
+                                if isinstance(agent_run.output, dict)
+                                else {}
+                            )
+                            content = output.get("text")
+                            kind = "done"
+                            status = "completed"
+                            payload = ChatStreamChunk(
+                                type="done",
+                                content=content if isinstance(content, str) else None,
+                                finish_reason=(
+                                    output.get("finish_reason")
+                                    if isinstance(output.get("finish_reason"), str)
+                                    else None
+                                ),
+                                incomplete=(
+                                    output.get("incomplete")
+                                    if isinstance(output.get("incomplete"), bool)
+                                    else None
+                                ),
+                                run_status="completed",
+                            )
+                        elif agent_run.status == "cancelled":
+                            kind = "cancelled"
+                            status = "cancelled"
+                            payload = ChatStreamChunk(
+                                type="cancelled",
+                                error=agent_run.error,
+                                run_status="cancelled",
+                            )
+                        else:
+                            # A sweep may have ended the run while this
+                            # worker was recovering. Its stored outcome,
+                            # including timeout, is authoritative.
+                            kind = "error"
+                            status = agent_run.status
+                            payload = ChatStreamChunk(
+                                type="error",
+                                error=agent_run.error,
+                                run_status=agent_run.status,
+                            )
+                        await publish_chat_run_event(
+                            conversation_id=UUID(str(chat_conversation_id)),
+                            run_id=run_id,
+                            kind=kind,
+                            status=status,
+                            payload=payload,
                         )
                     except Exception as pub_err:
-                        # Pubsub notify is a UI hint; the DB row already reflects the terminal outcome.
-                        logger.debug(f"failed to publish agent_run terminal update for {run_id}: {pub_err}")
+                        logger.debug(
+                            "failed to publish terminal chat status for %s: %s",
+                            run_id,
+                            pub_err,
+                        )
+
+            if terminal_outcome_available:
+                try:
+                    await publish_agent_run_update(
+                        agent_run, agent.name if agent else "Unknown"
+                    )
+                except Exception as pub_err:
+                    # Pubsub notify is a UI hint; the DB row already reflects the terminal outcome.
+                    logger.debug(f"failed to publish agent_run terminal update for {run_id}: {pub_err}")
 
             if sync and terminal_outcome_available:
                 await _publish_sync_result(
