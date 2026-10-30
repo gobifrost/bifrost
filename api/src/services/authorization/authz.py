@@ -38,9 +38,11 @@ from src.services.authorization.runtime import RuntimeKind
 GLOBAL_SUBJECT_KIND = "global"
 GLOBAL_SUBJECT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
-# The credential protocol this API speaks: 1 = validates every runtime
-# token from the database and redeems run refresh tokens.
-CREDENTIAL_PROTOCOL = 1
+# The credential protocol this API speaks. 1: validates every runtime token
+# from the database and redeems run refresh tokens. 2: also mints runtime
+# access tokens that carry their authorization facts (``ver: 1``) and
+# validates them against the authority epoch.
+CREDENTIAL_PROTOCOL = 2
 
 class AuthorityStateMissing(RuntimeError):
     """The global epoch row is missing; never treat that as a default."""

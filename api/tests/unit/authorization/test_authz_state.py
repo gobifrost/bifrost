@@ -17,6 +17,7 @@ from src.models.orm.services import ServiceAttempt, ServiceDefinition
 from src.models.orm.users import User
 from src.models.orm.workflows import Workflow
 from src.services.authorization.authz import (
+    CREDENTIAL_PROTOCOL,
     AuthorityStateMissing,
     read_authority_state,
     read_epoch,
@@ -163,8 +164,15 @@ async def test_a_missing_epoch_row_is_reported_never_defaulted(async_engine: Asy
             await transaction.rollback()
 
 
+def test_this_api_speaks_the_claims_protocol() -> None:
+    # Protocol 2: runtime tokens carry claims validated against the epoch.
+    assert CREDENTIAL_PROTOCOL == 2
+
+
 async def test_the_protocol_start_record_keeps_the_first_start(async_engine: AsyncEngine) -> None:
-    query = text("SELECT first_started_at FROM authz_protocol_state WHERE protocol = 1")
+    query = text("SELECT first_started_at FROM authz_protocol_state WHERE protocol = :protocol").bindparams(
+        protocol=CREDENTIAL_PROTOCOL
+    )
     async with async_engine.begin() as connection:
         first = (await connection.execute(query)).scalar_one_or_none()
     if first is None:

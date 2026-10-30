@@ -30,6 +30,7 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
@@ -100,9 +101,44 @@ def _alembic_config() -> Config:
     return config
 
 
-def _upgrade(database_url: str, revision: str) -> None:
+# Token PR1b's migration refuses to run until an API of the release that
+# added the authority version (protocol 1) has started
+# (``20261031_authz_claims_precondition``). A rehearsal that moves an existing
+# database across both releases does what the operator procedure requires:
+# it stops at that release and records its start, then continues.
+TOKEN_PR1A_REVISION = "20261030_authz_versions"
+
+
+def _upgrade(database_url: str, revision: str, *, roll_out_token_releases: bool = True) -> None:
     with _temporary_migration_database_url(database_url):
-        command.upgrade(_alembic_config(), revision)
+        config = _alembic_config()
+        if roll_out_token_releases and _crosses_token_pr1a(config, database_url, revision):
+            command.upgrade(config, TOKEN_PR1A_REVISION)
+            asyncio.run(_run_in_database(database_url, _record_token_pr1a_start))
+        command.upgrade(config, revision)
+
+
+def _crosses_token_pr1a(config: Config, database_url: str, revision: str) -> bool:
+    """Whether upgrading an existing database to ``revision`` runs both the
+    authority-version migration and a later one. A fresh install records its
+    own protocols."""
+    current = _current_revision(database_url)
+    if current is None:
+        return False
+    script = ScriptDirectory.from_config(config)
+    through_pr1a = {step.revision for step in script.iterate_revisions(TOKEN_PR1A_REVISION, "base")}
+    target = script.get_revision(revision)
+    assert target is not None, revision
+    return current in through_pr1a and target.revision not in through_pr1a
+
+
+async def _record_token_pr1a_start(connection: AsyncConnection) -> None:
+    await connection.execute(
+        sa.text(
+            "INSERT INTO authz_protocol_state (protocol, first_started_at) VALUES (1, now()) "
+            "ON CONFLICT (protocol) DO NOTHING"
+        )
+    )
 
 
 def _current_revision(database_url: str) -> str | None:
