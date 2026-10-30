@@ -184,8 +184,8 @@ sustainable-rate evidence.
 ### Reported interactive Halo workload — controlled baseline pending
 
 On 2026-10-30, the user supplied observations from recent portal runs. These
-are separate measurements from different runs, without raw traces, execution
-IDs or frozen runtime/source attribution in this ledger. Preserve them as a
+are separate measurements from different runs, initially without raw traces,
+execution IDs or frozen runtime/source attribution. Preserve them as a
 reported workload requirement; do not add the rows into a synthetic total or
 treat them as a reproduced current-runtime baseline.
 
@@ -239,6 +239,46 @@ receipt is located and investigate the return of the delay as a regression.
 The accepted 277 MiB idle-worker budget is independent of the latency target;
 it does not authorize settling for a slower interactive execution path.
 
+### Authorized Production Replays
+
+Read-only Kubernetes inspection identified the running API and worker as
+`1.4.2-dev.1793214616`, source `c2a116ca4edd1e35ebdb0e7c47d209444c323d96`.
+The immutable registry source tag resolves to the same running image digest,
+`sha256:ecf4046057ceb8de53047d1a42c9490069aa0403ec347638eba157e6db4f0e83`.
+This October 28 build predates the local October 30 baseline. Do not assume
+current-main improvements were already deployed. Individual historical
+execution image receipts remain unavailable.
+
+With explicit user authorization, the two site reads were rerun sequentially
+using their original inputs and the same user. Both succeeded and returned 88
+sites. These are CLI replays through shared dispatch, not V2 browser timings.
+
+| Replay | Worker wall seconds | Engine seconds | Outside engine seconds |
+|---|---:|---:|---:|
+| Shallow site list | 3.378 | 1.181 | 2.197 |
+| Site list with address details | 14.418 | 12.479 | 1.939 |
+
+The original 32.856-second detail run did not repeat. Its 14.863-second
+outside-engine interval fell to 1.939 seconds, but original requests overlapped
+and replays were sequential, so this is variability evidence rather than an
+optimization comparison. Current workflow source was 3,299 bytes with version
+`sha256:ea1c233efe635e0accf264f77c264a4c216b5ab7681ac6629b58e7948aa19687`;
+the historical source version is unknown.
+
+Selected worker logs show 25 module HTTP responses per replay: an entry-source
+response and 24 resolver responses. Twenty-four responses preceded the
+workflow-loaded log, with one lazy resolver response afterward. Child
+processing to workflow-loaded spanned 2.011 seconds shallow and 1.821 seconds
+detailed. These are worker-log spans, not individual request or authorization
+timings, and overlap the residual. No refresh response was observed in these
+two log sequences; that does not establish what happened in the original run.
+
+Private evidence is retained in `notes/portal-runtime-20261030.json`,
+`notes/portal-replays-analysis-20261030.json` and
+`notes/portal-worker-selected-timeline-20261030.json`, with execution IDs and
+selected timings rather than customer records. No production source,
+configuration or deployment was changed.
+
 The pre-RabbitMQ [worker-memory report](../runbooks/worker-memory-reduction-results.md)
 at `2399fbb049` (September 18) records 100 successful sequential synchronous
 jobs per workload and image. Its organizations SDK baseline end-to-end
@@ -284,8 +324,9 @@ namespace and five missing optional dependencies probed by installed
 `requests` 2.33.1 (`brotlicffi`, `brotli`, `chardet`, `simplejson`, `socks`).
 The fixture constructs a request object and makes no provider call. This is
 evidence of repeated import/probe work, not a reproduction of the live
-5.7–14.9-second outside-engine intervals. The live runtime image remains
-unattributed, and trace observer overhead has not been separately measured.
+5.7–14.9-second original outside-engine intervals. Production replays above
+now identify the deployed image; trace observer overhead has not been
+separately measured.
 
 The idle snapshot after the declared 120-second wait is 770.9 MiB total
 working set, including worker 279.3, API 312.6 and Postgres 153.0 MiB. The
@@ -295,6 +336,29 @@ catalog is not comparable to the full-M memory baseline as an optimization.
 Per-class CPU counter windows and process samples are retained; the first
 control window includes startup work and must not be described as steady CPU
 per action. No workflow/library preload optimization was made in this run.
+
+The full-catalog repetition `runs/import-m-current-r1` used the same frozen
+harness, runtime image and six-file fixture, with 1,851 seeded definitions and
+1,861 workflows total. All 40 executions had unique IDs, successful exact
+outputs and one valid trace each; there were no API pod replacements and
+namespace teardown was verified.
+
+| Full-catalog observation | Pass 1 | Pass 2 |
+|---|---:|---:|
+| Control worker-wall p50 / p95 | 54.899 / 98.637 ms | 51.766 / 78.814 ms |
+| Graph worker-wall p50 / p95 | 266.759 / 371.780 ms | 267.645 / 341.061 ms |
+| Graph entry-load median | 215.864 ms | 215.649 ms |
+| Graph resolver aggregate median wall | 65.933 ms | 69.884 ms |
+
+Ten resolver requests per graph execution remained unchanged. Increasing the
+catalog did not reproduce the production seconds-long delay in this small
+fixture. Idle working set was 846.6 MiB total: worker 277.0, API 316.0,
+Postgres 225.8, pooler 14.4, client 8.0 and Redis 5.4 MiB. This is an idle
+diagnostic snapshot, not a validated capacity or hosting-cost result.
+The generic report incorrectly displays these successful actions as failures
+when their creation timestamp is absent; the import-specific validation and
+timing table are correct. Preserve the original report and raw records, with
+the display defect explicitly recorded in `analysis.json`.
 
 ### Required Hosting Evidence
 

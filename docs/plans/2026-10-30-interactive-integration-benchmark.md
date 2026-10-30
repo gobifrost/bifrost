@@ -25,6 +25,16 @@ authorization/dispatch behavior and attribute a compatibility failure to
 performance. Record any instrumentation or topology differences explicitly.
 Prioritize identifying the regression before choosing a preload optimization.
 
+Authorized production site-read replays identified the deployed build as
+`1.4.2-dev.1793214616` / `c2a116ca4`, with registry digest matching the running
+API and worker. They retained about 1.94–2.20 seconds outside the engine;
+the original 33-second detail case did not repeat. Selected worker logs show
+about 1.82–2.01 seconds before workflow-loaded and 24 preceding module HTTP
+responses. Preserve those live observations separately from the local
+October 30 runtime. An exact-production-base diagnostic image must keep that
+build's dependencies and authorization/schema behavior, adding only the same
+opt-in trace, before making a controlled local comparison.
+
 The pre-migration [worker-memory report](../runbooks/worker-memory-reduction-results.md)
 was introduced at `2399fbb049` on September 18, before worker-local SDK HTTP
 (`e2be9c4c`, September 26) and RabbitMQ retirement (`73506378`, October 23).
@@ -112,8 +122,10 @@ The initial reduced-seed smoke completed 40 correct, uniquely identified and
 fully traced executions; see the [ledger](../benchmarks/2026-10-30-hosting-baselines.md).
 It identifies five extra resolver calls for missing optional `requests`
 dependencies, but does not reproduce the live multi-second residual. Retain
-this negative result. Full-catalog and historical comparisons remain separate
-observations; do not promote the pipeline check into a latency or hosting claim.
+this negative result. The full-M catalog repetition also completed 40 correct,
+fully traced actions, with graph worker-wall medians of 266.8 and 267.6 ms and
+no seconds-long reproduction. Full-catalog and historical comparisons remain
+separate observations; do not promote these diagnostics into a hosting claim.
 
 Extend the existing benchmark with one synthetic V2 interactive fixture. Use
 synthetic organizations and data, a small shared authorization/mapping module,
