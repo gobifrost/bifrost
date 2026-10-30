@@ -30,9 +30,9 @@ than one.
 | Entra ID | Bifrost, for people and runs alike |
 |---|---|
 | Access token carries the caller's claims; resources validate it locally | The access token carries identity **and** authorization facts (section 3). The API checks signature and expiry and decides from the claims, with no database read |
-| Access tokens live 60–90 minutes, picked at random per token | Same: **60–90 minutes, random per token.** The randomness spreads renewals, so tokens issued together (a morning of sign-ins, a burst of runs) don't all expire and renew in the same minute. *Amended 2026-10-30 (A1): service-attempt tokens expire at the attempt's committed lease instead.* |
+| Access tokens live 60–90 minutes, picked at random per token | Same: **60–90 minutes, random per token.** The randomness spreads renewals, so tokens issued together (a morning of sign-ins, a burst of runs) don't all expire and renew in the same minute |
 | A refresh token gets a new access token, and Entra re-evaluates the caller at that moment | Same. A person's refresh token is today's rotating 7-day token. A run's refresh token identifies the run and lasts for the run's lifetime. Either way, refreshing re-reads current state from the database |
-| CAE: after a critical event, resources reject older tokens with a claims challenge; the client refreshes | **Not-before stamps** in Postgres (section 5; amended 2026-10-30). A change to any fact a token carries stamps that subject; the API refuses older tokens with "refresh required"; the web client, CLI and SDK refresh and retry once |
+| CAE: after a critical event, resources reject older tokens with a claims challenge; the client refreshes | **Authority version** in Postgres (section 5; amended 2026-10-30). A change to any fact a token carries changes the version; the API refuses tokens minted under an older version with "refresh required"; the web client, CLI and SDK refresh and retry once |
 | Token lifetime is the backstop for a missed event | Same |
 
 ## 3. What every access token carries
@@ -49,7 +49,8 @@ One claims schema, built by one function from the database:
   facts when different from the run user, and the workflow's powers
   (permission mode and grants).
 - **Impersonation:** session ID and impersonator, when present.
-- `iat`, `exp`, `jti`.
+- `iat`, `exp`, `jti`, and `av`, the authority version at mint (amended
+  2026-10-30).
 
 The API builds the same `UserPrincipal`, `AuthorizationContext` and
 `RuntimeAuthority` it builds today and decides with the same functions
@@ -61,7 +62,7 @@ users. The largest user holds 12 roles with 14 boundaries and 29 permissions;
 their authorization claims are about 1.8 KB as JSON (median 0.3 KB, p99
 0.7 KB). No workflow has permission grants yet. With identity and run claims
 and base64 encoding, the largest token is about 4 KB, under the 6 KB limit, so
-the claims go in as plain JSON (*amended 2026-10-30 (A5): the `usr` block is
+the claims go in as plain JSON (*amended 2026-10-30: the `usr` block is
 zlib-compressed and base64url-encoded in every token, because a browser cookie
 holds only about 4 KB; the largest people token drops from about 4.0 to
 2.4 KB*). Minting logs a warning above 6 KB of encoded token, so growth
@@ -79,60 +80,73 @@ equally readable.
 `issue_access_token(db, subject)` replaces every hand-built claims dict: the
 login, SSO, MFA, refresh and MCP OAuth paths for people, and the engine,
 service and agent-run paths for runs. It reads the database once and returns
-the token. (*Amended 2026-10-30: it runs in its own short transaction, so its
-shared stamp locks never wait inside a caller's transaction; the signature is
+the token. (*Amended 2026-10-30: it runs in its own short `REPEATABLE READ`
+transaction, so facts and version come from one snapshot; the signature is
 `issue_access_token(subject)`.*) Browser impersonation markers and embed tokens keep their own
 formats (section 7).
 
-## 5. Revocation: not-before stamps
+## 5. Revocation: authority version and run liveness
 
-One rule: **any change to a fact a token carries stamps the affected subject
-with the current time.** The API refuses an access token whose `iat` is
-earlier than any stamp for its subjects, with a 401 whose error code means
-"refresh required".
+*Rewritten 2026-10-30 (Jack, on Fable's design review): versions replace the
+earlier not-before timestamps, and Postgres replaces the Redis copy.*
 
-- **Subjects:** user, role, organization, run, workflow, Solution,
-  impersonation session.
-- **Postgres holds the stamps; there is no Redis copy** (Jack, 2026-10-30,
-  replacing the 2026-10-28 "Redis caches them"). A stamp is a row in a small
-  `authz_not_before` table (subject kind, subject ID, time), written **in the
-  same transaction as the change it records**, so a committed change always
-  has its stamp. Rows older than 90 minutes are useless (every older token has
-  expired) and are deleted when new stamps are written. This needs one
-  migration. Why Postgres only: the database is the source of truth, so the
-  check can't be stale; it removes the cache machinery where review found most
-  defects; and it still replaces about three authorization reads per request
-  with one tiny lookup. A Redis cache may be added later only if the
-  benchmark shows the lookup matters.
-- **Per request:** one indexed Postgres query for the token's subjects, in the
-  request's own transaction, replacing the database reads.
-- **Ordering:** writers stamp at commit while holding an exclusive per-subject
-  lock; minters read the clock and the facts while holding the shared lock.
-  Both use the database clock, so a token minted from pre-change facts is
-  always older than the change's stamp, whatever the commit latency or app
-  clock skew (amended 2026-10-30).
-- **Where stamps are written:** by Postgres triggers on the tables that hold
-  each fact (amended 2026-10-30, A4; this replaces "in the service or
-  repository write … next to `role_cache.invalidate_*` … Not in routers").
-  Triggers cover every code path, cascade, raw SQL statement and older pod
-  version.
+One rule: **any change to a fact a token carries changes the authority
+version.** Every access token carries the version it was minted under (`av`).
+The API refuses a token whose version is not the current one, with a 401 whose
+error code means "refresh required".
+
+- **One global authority epoch.** A single row in `authz_versions` holds a
+  random 64-bit value. Any committed change to a carried fact replaces it with
+  a new random value. Facts are people, roles, boundaries, role permissions,
+  organizations' provider flag, workflow powers and ownership, Solution status,
+  Agent Solution binding, service definitions and the platform default
+  workflow mode. Values are compared for equality only, never ordered, so a
+  lossy failover or backup restore can never bring back a superseded value by
+  counting. Production writes about 20 such changes a day (about 600–700 in
+  30 days, measured 2026-10-30), so one epoch suffices. The table is keyed by
+  subject, so per-subject versions can be added later if the measured bump
+  rate calls for it; none are built now.
+- **Written by Postgres triggers** in the changing transaction, once per
+  transaction at commit (a deferred constraint trigger plus a per-transaction
+  flag that every change clears), and by statement-level `TRUNCATE` triggers.
+  This replaces "in the service or repository write … next to
+  `role_cache.invalidate_*` … Not in routers": triggers cover every code path,
+  cascade, raw SQL statement and older pod version. Maintenance that disables
+  triggers must finish by bumping the epoch (runbook rule; migrations are
+  checked by a test).
+- **Run liveness is read from the run's own row** (execution status, agent
+  run status, service attempt state and lease), exactly as today's per-request
+  check does. A run that ends, or a service whose lease lapses, is refused on
+  its next request with no version change.
+- **Per request:** one statement on the primary, in the request's own
+  transaction, reads the epoch row and the run's row by primary key. A missing
+  epoch row refuses; it is never treated as a default.
+- **Minting** reads every fact and the epoch in one `REPEATABLE READ`
+  snapshot, so a token's facts and version always come from the same committed
+  state. There are no locks, waits or clocks.
+- **Why Postgres only:** the database is the source of truth, so the check
+  can't be stale, and it removes the cache machinery where review found most
+  defects. A Redis cache may be added later only if the benchmark shows the
+  lookup matters.
 - **Completeness:** a unit test enumerates every ORM column the minting
-  function reads and fails when a column is added without a trigger that
-  stamps its writes.
+  function reads and fails unless each is covered by an epoch trigger or is a
+  live-read run column.
 - **Clients:** the web client (`client/src/lib/api-client.ts`), the CLI and the
-  SDK (`refresh_connection_access_token`) already refresh on 401 and retry.
-  The new error code needs no new client flow.
+  SDK (`refresh_connection_access_token`) already refresh on 401 and retry. The
+  SDK allows up to three refresh-and-retry cycles for `refresh_required`, so a
+  burst of changes can't fail a call.
 
 What this does to each change:
 
 | Change | Effect |
 |---|---|
-| Role granted, revoked or edited | Next request refreshes and gets the new grants (today: immediate, from the database) |
-| Logout or revoke-all | Stamps the user; access tokens stop working now (**today: up to 30 minutes later**) |
-| Person deactivated | Stamps the user; refresh fails, so they're out now (today: up to 30 minutes later) |
-| Run ends | Stamps the run; refresh fails because the run isn't live (today: immediate) |
+| Role granted, revoked or edited | The epoch changes; every token's next request refreshes and gets current grants (today: immediate, from the database) |
+| Logout or revoke-all (PR2) | The epoch changes; access tokens stop working now (**today: up to 30 minutes later**) |
+| Person deactivated | The epoch changes; their refresh fails, so they're out now (today: up to 30 minutes later) |
+| Run ends | Refused on the next request by the liveness read; refresh fails (today: immediate) |
 | Run user deactivated mid-run | The run refreshes and continues, as today: runtime refresh doesn't check the active flag (`runtime_auth.py`: "does not retroactively cancel it") |
-| Workflow powers, org provider flag, Solution uninstall, impersonation end | Stamps that subject; next request refreshes or is refused |
+| Workflow powers, org provider flag, Solution uninstall | The epoch changes; next request refreshes or is refused |
+| Impersonation end | No version change: no run token depends on session liveness, and browser markers keep their live-session check |
 
 ## 6. Refresh
 
@@ -140,23 +154,24 @@ What this does to each change:
   token, re-checks the user, and now mints through `issue_access_token`.
 - **Runs:** at run start the parent mints an access token and a run refresh
   token (identity only, valid for the run's lifetime, accepted only by the
-  refresh endpoint; *amended 2026-10-30 (A3): it has no fixed expiry and is
+  refresh endpoint; *amended 2026-10-30: it has no fixed expiry and is
   valid while the run is live*). The SDK's existing access and refresh slots, which today
   both hold the same runtime token, hold the two. Refresh runs today's
   `load_runtime_principal`; a run that isn't live gets 401. Services keep
   receiving new tokens through `/api/sdk/runtime/service-control`, now in the
-  new format (*amended 2026-10-30 (A1): each expires at the attempt's
-  committed lease and is minted only after the heartbeat commits*).
+  new format. *Amended 2026-10-30: services get an access token and a run
+  refresh token at launch and refresh like other runs. Their lease is enforced
+  on every request by the liveness read, so parent token rotation is removed.*
 
 ## 7. What we're not doing
 
 - **Embed tokens** (anonymous form and app sessions, `create_embed_token`)
   keep their HMAC-scoped format. They carry no user grants.
 - **Browser impersonation markers** keep their format; ending a session now
-  also stamps it (*amended 2026-10-30 (A2): the stamp lands in PR1, and run
-  tokens carry the impersonation subject*).
+  ends them through their own live-session check (*amended 2026-10-30: no
+  version change, see section 5*).
 - No change to authorization rules or decision functions.
-- No authorization cache, and no Redis copy of the not-before stamps
+- No authorization cache, and no Redis copy of the authority version
   (amended 2026-10-30).
 
 ## 8. Rule change
@@ -164,7 +179,8 @@ What this does to each change:
 `api/src/repositories/README.md` says: "Claims describing a runtime, an
 organization, or a role do not become authority by themselves." It becomes:
 **claims in an access token minted by `issue_access_token` are authority until
-the token expires or a not-before stamp covers it.** Tests that pin the old
+the token expires, while its authority version is current and its run is
+live** (amended 2026-10-30). Tests that pin the old
 rule change with it.
 
 ## 9. Acceptance
@@ -176,12 +192,12 @@ rule change with it.
 | Logout | After logout or revoke-all, the old access token is refused on its next use |
 | Run end | An ended run's token is refused on the next call, and refresh fails |
 | Long waits | A workflow that sleeps past its access token's lifetime refreshes on its next call and continues |
-| Lifetime | Issued lifetimes are spread across 60–90 minutes (service attempts: until the committed lease) |
+| Lifetime | Issued lifetimes are spread across 60–90 minutes |
 | One minter | No access token is minted outside `issue_access_token` except embed tokens and impersonation markers (a test enforces it) |
-| Completeness | The column-enumeration test passes, and fails when a read is added without a stamp |
-| Ordering (amended 2026-10-30) | A token minted while a change is being written, or before a slow commit lands, is refused once the change commits; app-clock skew changes no outcome (deterministic tests) |
+| Completeness | The column-enumeration test passes, and fails when a read is added without an epoch trigger or live read |
+| Snapshot (amended 2026-10-30) | A token minted while a change is uncommitted, or before a slow commit lands, is refused once the change commits; clock skew changes no outcome; `SET CONSTRAINTS ALL IMMEDIATE`, savepoints and `TRUNCATE` still bump (deterministic tests) |
 | Size | Minting warns above 6 KB of encoded token (tested); production's largest is about 2.4 KB with the compressed `usr` block |
-| Benchmark | Per SDK call about five fewer transactions; `wf-sdk` burst p50 and API CPU ms per run improve; no class regresses |
+| Benchmark | *Amended 2026-10-30:* authenticating a runtime request takes no extra transaction and one statement (today one extra transaction with about ten statements), so `wf-sdk` makes one fewer transaction per SDK call; each run adds one at start and one per refresh; `wf-sdk` burst p50 and API CPU ms per run improve; no class regresses |
 | Existing suites | Authorization, RBAC, Solution, runtime-identity, MCP auth, service-credential, web client auth and CLI login tests pass |
 
 ## 10. Delivery
@@ -189,12 +205,13 @@ rule change with it.
 One design, two PRs:
 
 1. **Runs and the shared pieces:** `issue_access_token`, the claims schema,
-   the not-before stamps (table, triggers and migration), run refresh
-   tokens, and the README rule. *Amended 2026-10-30 (A6): delivered as merge
-   units PR1a (stamps, minter and refresh endpoint, no behaviour change),
-   PR1b (switch, plus a bridge that accepts old-format run tokens until they
-   expire), and PR1c (bridge removal in the following release), with the
-   order enforced by migrations.*
+   the authority version (table, triggers and migration), run refresh
+   tokens, and the README rule. *Amended 2026-10-30: delivered as merge units
+   PR1a (version, minter and refresh endpoint, no behaviour change), PR1b
+   (switch, plus a bridge that accepts old-format run tokens until they
+   expire, with an enforced cutoff 24 h 5 min after PR1b first starts), and
+   PR1c (removal of the already inert bridge in the following release), with
+   the order enforced by migrations.*
 2. **People:** login, SSO, MFA, refresh and MCP OAuth switch to
    `issue_access_token`, and per-request grant reads go away.
 
@@ -207,21 +224,26 @@ revocation lookup.
 
 ## Amendments (2026-10-30)
 
-Jack's decisions after the independent review of the PR1 plan:
+Jack's decisions after the independent reviews of the PR1 plan (Astra twice,
+Fable once):
 
-- **Stamps live in Postgres only** (§5). No Redis copy, warm marker or resync.
-  Rationale is in §5. A cache is a later, separately approved change if the
-  benchmark shows a need.
-- **A1 — Service tokens** expire at the attempt's committed lease and are
-  minted after each heartbeat commit, so a fenced service child loses access
-  when its lease lapses, as today (§2, §6).
-- **A2 — Impersonation end** stamps the session in PR1, and run tokens carry
-  the impersonation subject. Runs refresh once and continue (§7).
-- **A3 — Run refresh tokens** have no fixed expiry; they are valid while the
-  run is live (§6).
-- **A4 — Postgres triggers write the stamps** (§5).
-- **A5 — Compressed `usr` block** (zlib + base64url) in every token, decided
-  for PR2's browser cookies and used from PR1 so there is one format (§3).
-- **A6 — PR1 is delivered as merge units** PR1a, PR1b and PR1c, with
-  migration-enforced order and a short-lived bridge for old-format run tokens
-  (§10).
+- **Authority version, not timestamps** (§5). One global random epoch,
+  bumped by Postgres triggers once per changing transaction; equality only;
+  minting in one `REPEATABLE READ` snapshot; validation in one statement on the
+  primary. Re-measure the bump rate and move to per-subject versions if bumps
+  exceed 30 per hour in any hour on three days of a week, or refresh-required
+  responses exceed 5 % of runtime requests over a day.
+- **Postgres only** (§5): no Redis copy.
+- **Run liveness from the run's own row** (§5): replaces run stamps and makes
+  the earlier lease-length service tokens unnecessary. Services use standard
+  lifetimes and refresh; parent rotation is removed (§6).
+- **Impersonation end changes no version** (§5, §7): no run token depends on
+  session liveness; this supersedes the earlier "stamp at impersonation end".
+- **Run refresh tokens** have no fixed expiry; they are valid while the run
+  is live (§6).
+- **Compressed `usr` block** (zlib + base64url) in every token, decided for
+  PR2's browser cookies and used from PR1 so there is one format (§3).
+- **PR1 merge units** PR1a, PR1b and PR1c, with migration-enforced order and
+  an enforced cutoff for old-format run tokens (§10).
+- **Benchmark expectation** corrected from "about five fewer transactions per
+  SDK call" to the measured-scope expectation in §9.
