@@ -297,3 +297,20 @@ page/MFA login; API contexts retain server-issued cookies. Intentional raw and
 negative-auth tests remain explicit. Independent Astra approved this design
 with those safeguards. Implementation, focused reproduction and final delta
 review remain pending; source delivery is not complete.
+
+The revised backend consumers passed all99 selected live tests (44.50s), both
+fixture protocol units and API quality. Client type/lint passed and37 helper/
+component tests passed. The first helper run had eagerly imported Playwright's
+browser runtime into Vitest; loading browser login only when a browser context
+needs it removes that side effect. Playwright's fixture callback is named
+`provide` to avoid the React linter interpreting it as a hook.
+
+The first focused browser reproduction passed agent creation and the public
+form. The remaining member-form failure was a direct-API transport route error:
+its GET received the exact refresh challenge, then the helper called the
+browser proxy alias `/api/auth/refresh` on the API service itself and received
+404. The API-native path is `/auth/refresh`; the helper and its protocol tests
+now use that path. The trace is retained at
+`/tmp/bifrost-auth-queue-form-r2/trace.zip`. No production authentication change
+or generic-401 retry is needed. Focused browser reproduction remains required
+before requeueing.

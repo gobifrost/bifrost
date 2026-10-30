@@ -134,7 +134,7 @@ export function createChallengeAwareApi(
 		refreshInFlight = (async () => {
 			const current = await credentialGeneration(context);
 			if (current !== observedGeneration) return current !== "";
-			const response = await request.fetch("/api/auth/refresh", {
+			const response = await request.fetch("/auth/refresh", {
 				method: "POST",
 				headers: await csrfHeader(context),
 			});

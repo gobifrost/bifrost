@@ -85,7 +85,7 @@ describe("challenge-aware E2E API context", () => {
 		let generation = "before";
 		const raw = {
 			fetch: vi.fn(async (url: string) => {
-				if (url === "/api/auth/refresh") {
+				if (url === "/auth/refresh") {
 					generation = "after";
 					return response(200);
 				}
@@ -100,7 +100,7 @@ describe("challenge-aware E2E API context", () => {
 		await expect(api.get("/api/widgets")).resolves.toMatchObject({});
 		expect(raw.fetch.mock.calls.map(([url]) => url)).toEqual([
 			"/api/widgets",
-			"/api/auth/refresh",
+			"/auth/refresh",
 			"/api/widgets",
 		]);
 	});
@@ -118,7 +118,7 @@ describe("challenge-aware E2E API context", () => {
 		let generation = "before";
 		const raw = {
 			fetch: vi.fn(async (url: string, _options: unknown) => {
-				if (url === "/api/auth/refresh") {
+				if (url === "/auth/refresh") {
 					generation = "after";
 					return response(200);
 				}
@@ -150,7 +150,7 @@ describe("challenge-aware E2E API context", () => {
 		let generation = 0;
 		const raw = {
 			fetch: vi.fn(async (url: string) => {
-				if (url === "/api/auth/refresh") {
+				if (url === "/auth/refresh") {
 					generation += 1;
 					return response(200);
 				}
@@ -166,7 +166,7 @@ describe("challenge-aware E2E API context", () => {
 
 		expect(result.status()).toBe(401);
 		expect(
-			raw.fetch.mock.calls.filter(([url]) => url === "/api/auth/refresh"),
+			raw.fetch.mock.calls.filter(([url]) => url === "/auth/refresh"),
 		).toHaveLength(REQUEST_REPLAY_BUDGET);
 		expect(
 			raw.fetch.mock.calls.filter(([url]) => url === "/api/widgets"),
@@ -181,7 +181,7 @@ describe("challenge-aware E2E API context", () => {
 		});
 		const raw = {
 			fetch: vi.fn(async (url: string) => {
-				if (url === "/api/auth/refresh") {
+				if (url === "/auth/refresh") {
 					await refreshGate;
 					generation = "after";
 					return response(200);
@@ -195,14 +195,14 @@ describe("challenge-aware E2E API context", () => {
 		const second = api.get("/api/two");
 		await vi.waitFor(() =>
 			expect(
-				raw.fetch.mock.calls.filter(([url]) => url === "/api/auth/refresh"),
+				raw.fetch.mock.calls.filter(([url]) => url === "/auth/refresh"),
 			).toHaveLength(1),
 		);
 		releaseRefresh();
 
 		await expect(Promise.all([first, second])).resolves.toHaveLength(2);
 		expect(
-			raw.fetch.mock.calls.filter(([url]) => url === "/api/auth/refresh"),
+			raw.fetch.mock.calls.filter(([url]) => url === "/auth/refresh"),
 		).toHaveLength(1);
 	});
 });

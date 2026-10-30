@@ -139,3 +139,28 @@ artifacts are retained at `/tmp/bifrost-auth-browser-smoke-ci/`.
 
 The independent review record documents the causal fixes being implemented.
 Fresh focused verification and final review are required before requeueing.
+
+## Live Consumer Harness Verification
+
+Candidate `24e771634` passed37 helper/agent-settings tests, client tsc/lint,
+two fixture protocol units, all99 selected live consumers and API quality
+(pyright0 errors/warnings; ruff clean). The live selection completed in44.50s.
+JUnit: `/tmp/bifrost-auth-queue-fixture-unit.xml` and
+`/tmp/bifrost-auth-queue-consumer-e2e.xml`; full log:
+`/tmp/bifrost-auth-queue-consumer-checks-r2.log`.
+
+```bash
+./test.sh client unit src/test/human-auth.test.ts src/components/agents/AgentSettingsTab.test.tsx
+(cd client && npm run tsc && npm run lint)
+./test.sh tests/unit/test_e2e_fixture_refresh.py -v --durations=0
+./test.sh tests/e2e/api/test_websocket_read_visibility.py tests/e2e/platform/test_subscriptions.py tests/e2e/platform/test_cli_apps.py tests/e2e/platform/test_cli_claims.py tests/e2e/platform/test_cli_roles.py tests/e2e/platform/test_cli_workflows.py tests/e2e/platform/test_cli_agents.py tests/e2e/platform/test_cli_orgs.py tests/e2e/platform/test_cli_solution_files.py tests/e2e/api-integration/test_mcp_endpoints.py tests/e2e/api-integration/test_mcp_gateway.py tests/e2e/api-integration/test_mcp_protocol.py tests/e2e/api-integration/test_mcp_refresh_after_register.py tests/e2e/platform/test_application_sdk_update.py -v --durations=0
+./test.sh quality api
+./test.sh client e2e e2e/agent-create-acceptance.user.spec.ts e2e/forms.user.spec.ts e2e/forms-public.unauth.spec.ts --grep @smoke
+```
+
+That browser reproduction passed setup, agent creation and the public form;
+member-form setup exposed the API-native refresh-path correction documented
+in the review record. Its trace/results are retained. Browser r3 is queued
+for the corrected helper and the focused/smoke selections; the unchanged99
+backend cases will not be repeated. No production or performance result is
+implied.
