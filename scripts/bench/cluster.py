@@ -8,6 +8,7 @@ cluster is that local Kind cluster before anything acts on it (``guard.py``).
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,46 @@ _ROLES = (
     ("bifrost-api-", "api"), ("bifrost-worker-", "worker"), ("bifrost-client-", "client"),
     ("bifrost-db-pooler-", "pooler"), ("bifrost-db-", "postgres"), ("redis-", "redis"), ("bench-", "bench"),
 )
+_OCI_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _digest(value: str, label: str) -> str:
+    """One full OCI digest; never accept a layer-like or abbreviated identifier."""
+    if not _OCI_DIGEST.fullmatch(value):
+        raise RuntimeError(f"{label} is not a full OCI digest: {value!r}")
+    return value
+
+
+def image_id_digest(image_id: str) -> str:
+    """Extract the single immutable digest Kubernetes reports for a container."""
+    found = _OCI_DIGEST.findall(image_id)
+    if len(found) != 1:
+        raise RuntimeError(f"container imageID does not contain one OCI digest: {image_id!r}")
+    return found[0]
+
+
+def resolve_oci_chain(root_id: str, os_name: str, architecture: str, content) -> dict[str, str | None]:
+    """Resolve an OCI index or manifest to its config digest in the Kind store."""
+    root_id = _digest(root_id, "host image ID")
+    document = json.loads(content(root_id))
+    if "manifests" in document:
+        matches = [
+            descriptor for descriptor in document["manifests"]
+            if descriptor.get("platform", {}).get("os") == os_name
+            and descriptor.get("platform", {}).get("architecture") == architecture
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(f"OCI index {root_id} has {len(matches)} exact {os_name}/{architecture} manifests")
+        manifest_id = _digest(matches[0].get("digest", ""), "OCI manifest digest")
+        manifest = json.loads(content(manifest_id))
+        config_id = _digest(manifest.get("config", {}).get("digest", ""), "OCI config digest")
+        return {"index_id": root_id, "manifest_id": manifest_id, "config_id": config_id}
+    if "config" in document:
+        config_id = _digest(document["config"].get("digest", ""), "OCI config digest")
+        return {"index_id": None, "manifest_id": root_id, "config_id": config_id}
+    if document.get("rootfs") and document.get("os") == os_name and document.get("architecture") == architecture:
+        return {"index_id": None, "manifest_id": None, "config_id": root_id}
+    raise RuntimeError(f"OCI content {root_id} is neither an index, manifest, nor matching {os_name}/{architecture} config")
 
 
 def role_for_pod(pod: str) -> str:
@@ -151,8 +192,39 @@ class Cluster:
         self.kubectl("rollout", "restart", "deployment/bifrost-api")
         self.kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=900s")
 
-    def api_pod(self) -> tuple[str, str]:
-        """Name and UID of the single ready API pod."""
+    def _node_command(self, *args: str) -> str:
+        """Read from the already guarded Kind node without changing its image store."""
+        completed = subprocess.run(["docker", "exec", self.identity.node_name, *args], capture_output=True, text=True)
+        if completed.returncode != 0:
+            raise RuntimeError(f"Kind node command {' '.join(args)} failed: {completed.stderr.strip()}")
+        return completed.stdout
+
+    def _node_platform(self) -> tuple[str, str]:
+        nodes = json.loads(self.kubectl("get", "nodes", "-o", "json", namespaced=False))["items"]
+        if len(nodes) != 1:
+            raise RuntimeError(f"expected one guarded Kind node, found {len(nodes)}")
+        info = nodes[0].get("status", {}).get("nodeInfo", {})
+        os_name, architecture = info.get("operatingSystem"), info.get("architecture")
+        if not isinstance(os_name, str) or not isinstance(architecture, str):
+            raise RuntimeError("Kind node does not report an operating system and architecture")
+        return os_name, architecture
+
+    def image_provenance(self, image: str, host_id: str) -> dict:
+        """Prove a selected tag resolves to the host-selected image config in this Kind node."""
+        os_name, architecture = self._node_platform()
+        chain = resolve_oci_chain(
+            host_id,
+            os_name,
+            architecture,
+            lambda digest: self._node_command("ctr", "-n", "k8s.io", "content", "get", digest),
+        )
+        inspected = json.loads(self._node_command("crictl", "inspecti", "-o", "json", image))
+        cri_id = _digest(inspected.get("status", {}).get("id", ""), "CRI image ID")
+        if cri_id != chain["config_id"]:
+            raise RuntimeError(f"Kind tag {image} resolves to {cri_id}, expected config {chain['config_id']}")
+        return {"tag": image, "host_id": host_id, "node": chain, "cri_config_id": cri_id}
+
+    def _ready_api_pod(self) -> dict:
         pods = json.loads(self.kubectl("get", "pods", "-l", "app.kubernetes.io/name=bifrost-api", "-o", "json"))
         ready = [
             pod for pod in pods["items"]
@@ -161,7 +233,51 @@ class Cluster:
         ]
         if len(ready) != 1:
             raise RuntimeError(f"expected one ready API pod, found {len(ready)}")
-        return ready[0]["metadata"]["name"], ready[0]["metadata"]["uid"]
+        return ready[0]
+
+    @staticmethod
+    def _verified_image(image_id: str, provenance: dict) -> str:
+        digest = image_id_digest(image_id)
+        chain = provenance["node"]
+        if digest not in {value for value in chain.values() if value}:
+            raise RuntimeError(f"running container imageID {image_id!r} is outside the verified OCI chain")
+        return digest
+
+    def api_image_evidence(self, provenance: dict) -> dict:
+        """The ready API container imageID, proved against the pre-deploy OCI chain."""
+        pod = self._ready_api_pod()
+        statuses = [status for status in pod["status"].get("containerStatuses", []) if status.get("name") == "api"]
+        if len(statuses) != 1:
+            raise RuntimeError(f"expected one API container status in {pod['metadata']['name']}")
+        image_id = statuses[0].get("imageID", "")
+        return {
+            "pod": pod["metadata"]["name"],
+            "pod_uid": pod["metadata"]["uid"],
+            "image_id": image_id,
+            "digest": self._verified_image(image_id, provenance),
+        }
+
+    def worker_image_evidence(self, provenance: dict) -> dict[str, dict]:
+        """Ready worker container imageIDs, if workers exist at a snapshot boundary."""
+        pods = json.loads(self.kubectl("get", "pods", "-o", "json"))["items"]
+        evidence: dict[str, dict] = {}
+        for pod in pods:
+            name = pod["metadata"]["name"]
+            if not name.startswith("bifrost-worker-"):
+                continue
+            if not any(c.get("type") == "Ready" and c.get("status") == "True" for c in pod["status"].get("conditions", [])):
+                continue
+            statuses = [status for status in pod["status"].get("containerStatuses", []) if status.get("name") == "worker"]
+            if len(statuses) != 1:
+                raise RuntimeError(f"expected one worker container status in {name}")
+            image_id = statuses[0].get("imageID", "")
+            evidence[name] = {"image_id": image_id, "digest": self._verified_image(image_id, provenance)}
+        return evidence
+
+    def api_pod(self) -> tuple[str, str]:
+        """Name and UID of the single ready API pod."""
+        pod = self._ready_api_pod()
+        return pod["metadata"]["name"], pod["metadata"]["uid"]
 
     def smaps(self, pod: str, container: str) -> str:
         return self.kubectl("exec", pod, "-c", container, "--", "cat", "/proc/1/smaps")

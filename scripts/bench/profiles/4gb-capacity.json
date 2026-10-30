@@ -1,0 +1,24 @@
+{
+  "extends": "m-capacity",
+  "description": "4 decimal GB whole-runtime envelope (4,000,000,000 bytes, 3.725 GiB), with the same 4 CPU quota and per-component CPU limits as M. Includes API, client, both permitted workers, CNPG Postgres, Pooler and Redis; excludes build jobs, load generation, fake providers, object storage and cluster infrastructure. Memory fit does not establish a worker-memory optimization or sustained capacity.",
+  "quota": {
+    "cpu": "4",
+    "memory": "4G",
+    "storage": "50Gi",
+    "pods": 20,
+    "pvcs": 4
+  },
+  "components": {
+    "api": {"replicas": 1, "cpu": "1250m", "memory": "640Mi"},
+    "client": {"replicas": 1, "cpu": "100m", "memory": "32Mi"},
+    "redis": {"cpu": "150m", "memory": "64Mi"},
+    "postgres": {"cpu": "1", "memory": "768Mi", "storage": "20Gi"},
+    "pooler": {"cpu": "100m", "memory": "64Mi"}
+  },
+  "worker_policy": {
+    "warm_workers": 1,
+    "max_workers": 2,
+    "worker_memory_mib": 1024,
+    "largest_worker_mib": 1024
+  }
+}

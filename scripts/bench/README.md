@@ -10,6 +10,7 @@ Earlier design: `docs/superpowers/specs/2026-10-27-performance-benchmark-suite-d
 ./test.sh bench run --profile m                       # execution classes: sequential + bursts, memory, DB
 ./test.sh bench run --profile m-smoke                 # quick end-to-end check of the same tenant
 ./test.sh bench capacity --profile m-capacity --mix sdk-heavy   # sustainable arrival-rate search
+./test.sh bench confirm --profile m-capacity --mix sdk-heavy --rate 3.90625 --api-image bifrost-api:kind-...  # one strict confirmation
 ./test.sh bench down                                  # delete the cluster and the images
 ```
 
@@ -70,5 +71,12 @@ latency per class, per-class reliability and tenant-fault gates all pass
 (`capacity.py`). Host contention that the tenant did not cause invalidates a
 step instead (`hostmetrics.py`). The search ramps by 1.25×, bisects twice and
 reports the bracket.
+
+`confirm` is a confirmation-only capacity run: it resets and reseeds the
+tenant, then applies the same strict confirmation criteria at one supplied
+rate. Its result remains `kind: capacity`, records the single entry in
+`confirmations`, and sets `sustainable_rate` only when that entry passes. Use
+an explicit `--api-image` when comparing builds; the result and report record
+the selected tag and its local immutable Docker image ID before deployment.
 
 Host code is stdlib only. Tests: `python3 -m unittest discover -s scripts/bench/tests`.

@@ -87,7 +87,9 @@ def _database(result: dict) -> list[str]:
     lines = [
         "## Database",
         "",
-        "Per-run figures in the table above cover each class's sequential and burst runs, net of the idle rate measured at the end of the run.",
+        ("Idle counters are measured before load; the all-phases load window includes warmup, measurement and drain."
+         if result["kind"] == "capacity" else
+         "Per-run figures in the table above cover each class's sequential and burst runs, net of the idle rate measured at the end of the run."),
         "",
         f"- Idle: {rate['xact_per_s']:.1f} transactions/s, {rate['rows_written_per_s']:.1f} rows written/s, "
         f"{rate['wal_kib_per_s']:.1f} KiB WAL/s (over {idle['seconds']:.0f} s)",
@@ -115,13 +117,21 @@ def _failures(classes: list[dict]) -> list[str]:
 def _header(result: dict) -> list[str]:
     profile = result["profile"]
     components = profile["components"]
-    images = ", ".join(f"{name} `{image['tag']}` ({image['id'][:19]})" for name, image in result["images"].items())
+    image_records = dict(result["images"])
+    if result["kind"] == "ab":
+        image_records.pop("api", None)
+        image_records.update({f"API {name.upper()}": image for name, image in result["variants"].items()})
+    images = ", ".join(
+        f"{name} `{image['tag']}` ({image['id'][:19]})"
+        + (f" source `{image['source_git_sha']}`" if image.get("source_git_sha") else "")
+        for name, image in image_records.items()
+    )
     deployed = result.get("deploy") or {}
     envelope = deployed.get("envelope", {})
     quota = profile["quota"]
     return [
         f"- Run: `{result['run_id']}`, started {result['started_at']}",
-        f"- Build: git `{result['git_sha']}`; images {images}",
+        f"- Harness: git `{result['git_sha']}`; runtime images {images}",
         f"- Cluster: Kind {result['kind_version']}, CloudNativePG {result['cnpg_version']}; host {result['host']['cpus']} CPUs, "
         f"load average at start {', '.join(f'{v:.2f}' for v in result['host']['load_average'])}; other Kind nodes on the host: "
         f"{', '.join(result['external_nodes']) or 'none'}",
@@ -138,14 +148,17 @@ def _header(result: dict) -> list[str]:
 
 def _capacity(result: dict) -> list[str]:
     rows = [
-        "## Capacity search",
+        "## Fixed-rate confirmation" if result.get("mode") == "confirmation-only" else "## Capacity search",
         "",
         f"**Sustainable rate (confirmed): {result.get('sustainable_rate') or 'none confirmed'}**"
         + (" per second, within the strict drift tolerance and a 0.1 % per-class failure bound." if result.get("sustainable_rate") else "."),
         "",
         f"Mix `{result['mix_name']}`: `{result['profile']['capacity']['mixes'][result['mix_name']]}`; "
         f"gate thresholds {result['profile']['capacity']['thresholds_source']}. "
-        f"Exploratory ramp bracket (last pass, first not passing — failed or inconclusive; coarser gates than confirmation): {result.get('bracket')}" + (f"; stopped: {result['stopped']}" if result.get("stopped") else ""),
+        + ("Confirmation only; no exploratory search or saturation bracket was measured."
+         if result.get("mode") == "confirmation-only" else
+         f"Exploratory ramp bracket (last pass, first not passing — failed or inconclusive; coarser gates than confirmation): {result.get('bracket')}"
+         + (f"; stopped: {result['stopped']}" if result.get("stopped") else "")),
         "",
         "| Offered /s | Window s | Result | Throughput | Drift upper /s | Worst class e2e p95 s | Failures | Invalid / warnings |",
         "|---:|---:|---|---:|---:|---:|---:|---|",
@@ -164,6 +177,48 @@ def _capacity(result: dict) -> list[str]:
             f"{'' if throughput is None else f'{throughput:.4f}'} | {'' if drift is None else f'{drift:.4f}'} | "
             f"{'' if worst is None else f'{worst:.2f}'} | {failures} | {notes} |"
         )
+    return [*rows, "", *_baseline_memory(result), *_runtime_memory(result), *_database(result)]
+
+
+def _baseline_memory(result: dict) -> list[str]:
+    snapshots = [snap for snap in result.get("snapshots", []) if snap.get("containers")]
+    if not snapshots:
+        return []
+    rows = ["## Idle and settled memory", "",
+            "Per-container kubelet measurements; RSS and working set use different accounting from process PSS or private pages.", "",
+            "| Phase | Pod | Working Set MiB | RSS MiB |", "|---|---|---:|---:|"]
+    for snapshot in snapshots:
+        for container in snapshot["containers"]:
+            rows.append(f"| {snapshot['label']} | {container['pod']} | "
+                        f"{container['working_set_mib']:.1f} | {container['rss_mib']:.1f} |")
+    return [*rows, ""]
+
+
+def _runtime_memory(result: dict) -> list[str]:
+    """Simultaneous tenant totals, never the sum of independently timed peaks."""
+    samples = []
+    for step in [*result.get("steps", []), *result.get("confirmations", [])]:
+        for interval in step.get("host", []):
+            start, end = (step["started"] + value for value in step["window"])
+            if not start <= interval["at"] <= end:
+                continue
+            tenant = [pod["memory_bytes"] for name, pod in interval["pods"].items()
+                      if name.startswith("bench-tenant/") and "memory_bytes" in pod]
+            if tenant:
+                samples.append({key: sum(pod[key] for pod in tenant)
+                                for key in ("current", "working_set", "anon", "file", "kernel")})
+    if not samples:
+        return []
+    rows = ["## Observed runtime memory", "",
+            "Simultaneous tenant totals sampled every five seconds during measured windows. "
+            "Peaks are sampled lower bounds. Charged memory includes reclaimable cache; "
+            "working set subtracts inactive file cache. File memory includes shared memory. "
+            "Build jobs, object storage, collectors, fake providers and cluster infrastructure are outside these totals.", "",
+            "| Metric | Sampled maximum MiB | Decimal GB |", "|---|---:|---:|"]
+    for label, key in (("Charged", "current"), ("Working Set", "working_set"),
+                       ("Anonymous", "anon"), ("File / Shared", "file"), ("Kernel", "kernel")):
+        value = max(sample[key] for sample in samples)
+        rows.append(f"| {label} | {value / 2**20:.1f} | {value / 1e9:.3f} |")
     return [*rows, ""]
 
 

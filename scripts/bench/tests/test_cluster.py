@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -112,3 +113,54 @@ class ExecPythonTest(unittest.TestCase):
         source = script.read_bytes()
         self.assertEqual(call["input"], source + payload.encode("utf-8"))
         self.assertEqual(call["command"][-2:], [str(len(source)), "outcomes"])
+
+
+INDEX = "sha256:" + "1" * 64
+MANIFEST = "sha256:" + "2" * 64
+CONFIG = "sha256:" + "3" * 64
+OTHER = "sha256:" + "4" * 64
+
+
+class ImageProvenanceTest(unittest.TestCase):
+    def test_index_resolves_the_exact_node_platform_to_its_config(self) -> None:
+        content = {
+            INDEX: json.dumps({"manifests": [
+                {"digest": OTHER, "platform": {"os": "linux", "architecture": "arm64"}},
+                {"digest": MANIFEST, "platform": {"os": "linux", "architecture": "amd64"}},
+            ]}),
+            MANIFEST: json.dumps({"config": {"digest": CONFIG}}),
+        }
+        self.assertEqual(
+            cluster.resolve_oci_chain(INDEX, "linux", "amd64", content.__getitem__),
+            {"index_id": INDEX, "manifest_id": MANIFEST, "config_id": CONFIG},
+        )
+
+    def test_tag_mismatch_fails_before_a_deploy_can_use_it(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance._node_platform = lambda: ("linux", "amd64")
+        contents = {
+            INDEX: json.dumps({"manifests": [{"digest": MANIFEST, "platform": {"os": "linux", "architecture": "amd64"}}]}),
+            MANIFEST: json.dumps({"config": {"digest": CONFIG}}),
+        }
+        instance._node_command = lambda *args: contents[args[-1]] if args[0] == "ctr" else json.dumps({"status": {"id": OTHER}})
+        with self.assertRaisesRegex(RuntimeError, "resolves to"):
+            instance.image_provenance("bifrost-api:selected", INDEX)
+
+    def test_legacy_config_root_requires_its_platform_and_config_shape(self) -> None:
+        valid = json.dumps({"rootfs": {"type": "layers"}, "os": "linux", "architecture": "amd64"})
+        self.assertEqual(
+            cluster.resolve_oci_chain(CONFIG, "linux", "amd64", lambda _: valid),
+            {"index_id": None, "manifest_id": None, "config_id": CONFIG},
+        )
+        with self.assertRaisesRegex(RuntimeError, "neither an index"):
+            cluster.resolve_oci_chain(CONFIG, "linux", "amd64", lambda _: "{}")
+
+    def test_api_pod_image_outside_the_verified_chain_fails(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance._ready_api_pod = lambda: {
+            "metadata": {"name": "bifrost-api-1", "uid": "api-uid"},
+            "status": {"containerStatuses": [{"name": "api", "imageID": f"docker-pullable://api@{OTHER}"}]},
+        }
+        provenance = {"node": {"index_id": INDEX, "manifest_id": MANIFEST, "config_id": CONFIG}}
+        with self.assertRaisesRegex(RuntimeError, "outside the verified OCI chain"):
+            instance.api_image_evidence(provenance)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -37,6 +38,22 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(hostmetrics.parse_proc_stat("cpu  10 0 5 80 5 0 0 0 0 0\ncpu0 1 0 0 0\n"), {"busy": 15, "total": 100})
         line = " 259 0 nvme0n1 10 0 100 7 20 0 300 9 0 0 0 0 0 0 0 0 0\n 259 1 nvme0n1p1 1 0 1 1 1 0 1 1 0 0 0\n"
         self.assertEqual(hostmetrics.parse_diskstats(line, "nvme0n1"), {"bytes": 400 * 512, "ios": 30, "io_ms": 16})
+
+    def test_memory_charge_keeps_reclaimable_cache_separate_from_working_set(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "cpu.stat").write_text("usage_usec 100\n")
+            (root / "memory.events").write_text("oom_kill 0\n")
+            (root / "memory.current").write_text("1000\n")
+            (root / "memory.peak").write_text("1500\n")
+            (root / "memory.stat").write_text(
+                "anon 500\nfile 400\nshmem 100\nkernel 100\ninactive_file 300\n"
+            )
+            counters = hostmetrics.cgroup_counters(root)
+        self.assertEqual(counters["memory"], {
+            "current": 1000, "lifetime_peak": 1500, "working_set": 700,
+            "anon": 500, "file": 400, "shmem": 100, "kernel": 100,
+        })
 
 
 class AssessTest(unittest.TestCase):

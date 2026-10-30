@@ -10,6 +10,51 @@ mix, how much successful work does a tenant sustain, at what latency, with what
 headroom?* Local Kind results are A/B and regression evidence on one shared
 workstation; customer-quotable absolutes need the later cloud calibration.
 
+## Hosting economics and baseline ledger (2026-10-30 clarification)
+
+The deliverable is evidence for customer hosting budgets, capacity planning and
+gross margins. A footprint reduction is useful only alongside its effect on
+latency, successful throughput, correctness, recovery and operating headroom.
+Jack accepts the measured roughly 277 MiB idle worker baseline, including the
+always-warm agent template; retaining fast agent/chat startup is intentional.
+There is no requirement to reduce it merely to fit a larger advertised budget.
+
+The practical constrained-runtime target is **4 GB = 4,000,000,000 bytes**
+(about 3.725 GiB), superseding the initial 2 GB target for this continuation.
+`4gb-capacity` preserves M's CPU allocations and workload/gates while limiting
+maximum permitted runtime occupancy to 3,791,650,816 bytes. This is an unproven
+profile until measured. M's 8 GiB remains a comparison envelope, not a stated
+ordinary-runtime requirement. Builds have separate peak and concurrency budgets.
+
+For every accepted baseline or change, retain the full result JSON, readable
+report, immutable images/source, effective profile, seed, workload mix and
+window. Record per-component clean idle and settled memory, process/template
+attribution, loaded sampled simultaneous total and per-component peaks, charged
+memory versus working set/cache, CPU/throttling, successful throughput,
+queue/latency, errors/backlog, database/WAL/object growth and recovery outcomes.
+Sampled peaks are lower bounds; pod lifetime peaks include setup and are labeled
+separately. Compare the same scenario before and after, including regressions
+and gains. Do not sum peaks observed at different times as a simultaneous peak.
+
+The hosting model must distinguish measured consumption, hard allocation and
+safe operating capacity. Price compute/RAM, database/storage/IOPS, retained data,
+backups, object storage/requests/egress, amortized shared cluster infrastructure,
+observability and build capacity separately. Benchmark-excluded infrastructure
+is not free hosting infrastructure. Show utilization, peak concurrency, tenant
+density, redundancy/SLA and spare-capacity assumptions explicitly. Keep model
+inference/API spend separate from platform execution cost. Monthly cost per
+tenant, cost per successful execution and gross margin use explicit dated price
+inputs and selling prices; no dollar or margin claim follows from local Kind
+throughput alone. Cloud calibration remains required before customer guidance.
+
+Known statistical limitation: a 10%-weight class at 2.236 executions/s yields
+only about 805 observations in the current one-hour confirmation cap. The strict
+0.1% failure upper bound requires 2,995 failure-free observations per class.
+The interrupted mixed confirmations therefore establish no sustained mixed
+rate; repeating the capped run cannot resolve the missing evidence. Review the
+confirmation design/window before spending another window, without relaxing
+the latency, failure or backlog acceptance gates.
+
 ## 1. What exists (verified on `26102d1cb`)
 
 - `scripts/bench/` (`./test.sh bench up|run|down`): production `api/Dockerfile`

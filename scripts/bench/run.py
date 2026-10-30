@@ -19,9 +19,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -63,12 +65,22 @@ def _image_id(image: str) -> str:
     return subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, text=True).stdout.strip()
 
 
-def environment(cluster: Cluster) -> dict:
+def _image_record(image: str, *, required: bool = False) -> dict[str, str]:
+    """The local immutable image ID, failing before deploy when an image was selected."""
+    image_id = _image_id(image)
+    if required and not image_id:
+        raise SystemExit(f"selected API image is not available locally: {image}")
+    return {"tag": image, "id": image_id}
+
+
+def environment(cluster: Cluster, api_image: str | None = None) -> dict:
     """Build and cluster facts every result records."""
     images = deploy.images(cluster.identity)
+    if api_image is not None:
+        images["api"] = api_image
     return {
         "git_sha": _git_sha(),
-        "images": {name: {"tag": tag, "id": _image_id(tag)} for name, tag in images.items()},
+        "images": {name: _image_record(tag, required=name == "api" and api_image is not None) for name, tag in images.items()},
         "kind_version": KIND_VERSION,
         "cnpg_version": deploy.CNPG_VERSION,
         "host": {"cpus": os.cpu_count(), "load_average": os.getloadavg()},
@@ -142,8 +154,23 @@ class WorkerSampler:
             self._stop.wait(max(0.0, SAMPLE_INTERVAL_S - (time.monotonic() - started)))
 
 
+def _atomic_write(path: Path, content: str) -> None:
+    """Replace a result artifact only after its complete new content reaches disk."""
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
 class Run:
-    def __init__(self, cluster: Cluster, kind: str, profile_name: str, profile: dict, backend: str | None, out: Path) -> None:
+    def __init__(self, cluster: Cluster, kind: str, profile_name: str, profile: dict, backend: str | None, out: Path,
+                 api_image: str | None = None) -> None:
         self.cluster = cluster
         self.out = out
         self.expected_api_uid: str | None = None
@@ -152,7 +179,7 @@ class Run:
             "kind": kind,
             "run_id": out.name,
             "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            **environment(cluster),
+            **environment(cluster, api_image),
             "profile_name": profile_name,
             "profile": profile,
             "backend": backend,
@@ -165,8 +192,8 @@ class Run:
 
     def save(self) -> None:
         self.out.mkdir(parents=True, exist_ok=True)
-        (self.out / "result.json").write_text(json.dumps(self.result, indent=2), encoding="utf-8")
-        (self.out / "report.md").write_text(report.render(self.result), encoding="utf-8")
+        _atomic_write(self.out / "result.json", json.dumps(self.result, indent=2))
+        _atomic_write(self.out / "report.md", report.render(self.result))
 
     def snapshot(self, label: str) -> None:
         pod, uid = self.cluster.api_pod()
@@ -197,6 +224,12 @@ class Run:
                 "file_rss_mib": mib("file", "rss_kib"),
             },
             "containers": self.cluster.container_stats(),
+            "worker_processes": {
+                pod: self.cluster.worker_processes(pod)
+                for pod in self.cluster.worker_pods()
+            },
+            "worker_images": self.cluster.worker_image_evidence(self.result["api_image_provenance"])
+            if self.result.get("api_image_provenance") else {},
             "db_mib": round(db["db_bytes"] / 1024 / 1024, 1),
             "wal_mib": round(db["wal_bytes"] / 1024 / 1024, 1),
         })
@@ -210,13 +243,19 @@ class Run:
 
 def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None, api_image: str | None = None) -> dict:
     """Deploy the profile, seed through the API, reboot the API on the seeded data, check destinations."""
-    current.result["deploy"] = deploy.apply(cluster, profile, api_image)
+    selected_api_image = api_image or deploy.images(cluster.identity)["api"]
+    host_id = _image_record(selected_api_image, required=True)["id"]
+    current.result["api_image_provenance"] = cluster.image_provenance(selected_api_image, host_id)
+    current.save()
+    current.result["deploy"] = deploy.apply(cluster, profile, selected_api_image)
     current.result["setup"] = current.driver("setup", {
         "seed": profile["seed"], "backend": backend, "policy": profile["worker_policy"], "table_docs": profile["table_docs"],
     }, timeout_s=3600)
     ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", "{}"], timeout_s=900)
     check_destinations(cluster, ids)
     cluster.restart_api()
+    current.result["api_image_provenance"]["api_pod"] = cluster.api_image_evidence(current.result["api_image_provenance"])
+    current.save()
     current.expected_api_uid = None
     time.sleep(profile["settle_s"])
     return ids
@@ -284,15 +323,16 @@ def run_capacity(profile_name: str, mix_name: str, api_image: str | None, out: P
     cluster = Cluster()
     cluster.verify()
     out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-capacity-{mix_name}")
-    current = Run(cluster, "capacity", profile_name, profile, "fake", out)
-    current.result.update({"mix_name": mix_name, "api_image": api_image or deploy.images(cluster.identity)["api"]})
+    selected_api_image = api_image or deploy.images(cluster.identity)["api"]
+    current = Run(cluster, "capacity", profile_name, profile, "fake", out, selected_api_image)
+    current.result.update({"mix_name": mix_name, "api_image": selected_api_image})
     current.result["steps"] = []
     current.result["confirmations"] = []
 
     def fresh() -> dict:
         print(f"Resetting and seeding '{profile_name}' ...", flush=True)
         deploy.reset(cluster)
-        ids = _prepare(cluster, current, profile, "fake", api_image)
+        ids = _prepare(cluster, current, profile, "fake", selected_api_image)
         current.result["ids"] = ids
         return ids
 
@@ -322,6 +362,63 @@ def run_capacity(profile_name: str, mix_name: str, api_image: str | None, out: P
     return out
 
 
+def run_confirmation(profile_name: str, mix_name: str, rate: float, api_image: str | None, out: Path | None) -> Path:
+    """Confirm one offered rate from a freshly reset tenant without a new search."""
+    if not math.isfinite(rate) or rate <= 0:
+        raise SystemExit("confirmation rate must be finite and greater than zero")
+    out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-capacity-confirmation-only-{mix_name}")
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise SystemExit(f"confirmation output already contains evidence: {out}")
+    profile = load_profile(profile_name)
+    plan = {**profile["capacity"], "mix": profile["capacity"]["mixes"][mix_name]}
+    cluster = Cluster()
+    cluster.verify()
+    selected_api_image = api_image or deploy.images(cluster.identity)["api"]
+    current = Run(cluster, "capacity", profile_name, profile, "fake", out, selected_api_image)
+    current.result.update({
+        "mode": "confirmation-only",
+        "mix_name": mix_name,
+        "rate": rate,
+        "api_image": selected_api_image,
+        "steps": [],
+        "confirmations": [],
+        "bracket": None,
+        "stopped": None,
+        "sustainable_rate": None,
+    })
+    # Preserve the selected image and planned confirmation even when deployment fails.
+    current.save()
+    print(f"Resetting and seeding '{profile_name}' for confirmation-only at {rate:.3f}/s ...", flush=True)
+    deploy.reset(cluster)
+    ids = _prepare(cluster, current, profile, "fake", selected_api_image)
+    current.result["ids"] = ids
+    print(f"Idle {profile['idle_s']} s, measuring database load over the last {profile['idle_db_s']} s ...", flush=True)
+    time.sleep(profile["idle_s"] - profile["idle_db_s"])
+    idle_before, idle_started = cluster.db_counters(), time.monotonic()
+    time.sleep(profile["idle_db_s"])
+    idle_window = stats.db_delta(idle_before, cluster.db_counters(), time.monotonic() - idle_started)
+    idle_rate = stats.db_rate(idle_window)
+    current.result["db_idle"] = {
+        "seconds": round(idle_window["seconds"], 1),
+        "rate": idle_rate,
+        "top_tables": stats.top_tables(idle_window["tables"], 8),
+    }
+    current.snapshot("idle")
+    phases_before, phases_started = cluster.db_counters(), time.monotonic()
+    step = search.confirm(cluster, ids, rate, plan, profile["capacity"]["disk"])
+    current.result["all_phases_db_window"] = {
+        "label": "warmup+measure+drain",
+        **stats.db_delta(phases_before, cluster.db_counters(), time.monotonic() - phases_started),
+    }
+    current.result["confirmations"].append(step)
+    if step["overall"] == "pass":
+        current.result["sustainable_rate"] = rate
+    current.save()
+    current.snapshot("settled")
+    print(f"  confirmation {rate:.3f}/s for {step['window_s']:.0f} s: {step['overall']}; done: {out}/report.md", flush=True)
+    return out
+
+
 def run_ab(profile_name: str, mix_name: str, rate: float, image_a: str, image_b: str, order: str, out: Path | None) -> Path:
     profile = load_profile(profile_name)
     plan = {**profile["capacity"], "mix": profile["capacity"]["mixes"][mix_name]}
@@ -331,11 +428,12 @@ def run_ab(profile_name: str, mix_name: str, rate: float, image_a: str, image_b:
     current = Run(cluster, "ab", profile_name, profile, "fake", out)
     images = {"a": image_a, "b": image_b}
     current.result.update({"mix_name": mix_name, "rate": rate, "order": order, "variants": {
-        variant: {"tag": tag, "id": _image_id(tag)} for variant, tag in images.items()}, "arms": []})
+        variant: _image_record(tag, required=True) for variant, tag in images.items()}, "arms": []})
     for index, variant in enumerate(order.lower()):
         print(f"Arm {index + 1}/{len(order)}: {variant} ({images[variant]}) ...", flush=True)
         result = ab.arm(cluster, profile, plan, images[variant], rate,
                         lambda image: _prepare(cluster, current, profile, "fake", image))
+        result["image_provenance"] = current.result["api_image_provenance"]
         current.result["arms"].append(result)
         current.save()
         current.result["comparison"] = ab.compare(current.result["arms"], images)
@@ -352,11 +450,12 @@ def run_drill(profile_name: str, mix_name: str, rate: float, kind: str, api_imag
     cluster = Cluster()
     cluster.verify()
     out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-drill-{kind}")
-    current = Run(cluster, "drill", profile_name, profile, "fake", out)
-    current.result.update({"mix_name": mix_name, "api_image": api_image or deploy.images(cluster.identity)["api"]})
+    selected_api_image = api_image or deploy.images(cluster.identity)["api"]
+    current = Run(cluster, "drill", profile_name, profile, "fake", out, selected_api_image)
+    current.result.update({"mix_name": mix_name, "api_image": selected_api_image})
     print(f"Resetting and seeding '{profile_name}' ...", flush=True)
     deploy.reset(cluster)
-    ids = _prepare(cluster, current, profile, "fake", api_image)
+    ids = _prepare(cluster, current, profile, "fake", selected_api_image)
     print(f"Drill {kind} at {rate}/s ...", flush=True)
     current.result["drill"] = drills.drill(cluster, ids, plan, kind, rate, profile["capacity"]["disk"])
     current.save()
@@ -389,6 +488,12 @@ def main() -> None:
     capacity_parser.add_argument("--mix", required=True)
     capacity_parser.add_argument("--api-image")
     capacity_parser.add_argument("--out", type=Path)
+    confirm_parser = sub.add_parser("confirm")
+    confirm_parser.add_argument("--profile", default="m-capacity")
+    confirm_parser.add_argument("--mix", required=True)
+    confirm_parser.add_argument("--rate", type=float, required=True)
+    confirm_parser.add_argument("--api-image")
+    confirm_parser.add_argument("--out", type=Path)
     build_parser = sub.add_parser("build")
     build_parser.add_argument("--source", type=Path, required=True)
     build_parser.add_argument("--label", required=True)
@@ -416,6 +521,8 @@ def main() -> None:
         run_classes(args.profile, None if args.backend == "none" else args.backend, args.out)
     elif args.command == "capacity":
         run_capacity(args.profile, args.mix, args.api_image, args.out)
+    elif args.command == "confirm":
+        run_confirmation(args.profile, args.mix, args.rate, args.api_image, args.out)
     elif args.command == "build":
         cluster = Cluster()
         cluster.verify()

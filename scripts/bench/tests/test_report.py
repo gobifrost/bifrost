@@ -46,7 +46,7 @@ RESULT = {
         "top_tables": [["scheduler_task_state", 120, 0], ["work_dispatches", 0, 900]],
     },
     "snapshots": [
-        {"label": "fresh", "api": _API, "containers": [{"role": "worker", "working_set_mib": 85.0}], "db_mib": 40.0, "wal_mib": 10.0},
+        {"label": "fresh", "api": _API, "containers": [{"role": "worker", "pod": "bifrost-worker-one", "working_set_mib": 85.0, "rss_mib": 80.0}], "db_mib": 40.0, "wal_mib": 10.0},
         {"label": "idle", "api": _API, "containers": [], "db_mib": 52.5, "wal_mib": 34.0},
     ],
 }
@@ -80,6 +80,32 @@ class RenderTest(unittest.TestCase):
 
 
 class CapacityReportTest(unittest.TestCase):
+    def test_memory_peaks_are_simultaneous_and_exclude_infrastructure_and_warmup(self) -> None:
+        def pod(gib: float) -> dict:
+            value = int(gib * 2**30)
+            return {"memory_bytes": {"current": value, "working_set": value,
+                                     "anon": value, "file": 0, "kernel": 0}}
+
+        step = {"started": 100, "window": [10, 20], "host": [
+            {"at": 105, "pods": {"bench-tenant/api": pod(10)}},
+            {"at": 110, "pods": {"bench-tenant/api": pod(2), "bench-tenant/worker": pod(0.5),
+                                 "bench-infra/driver": pod(10)}},
+            {"at": 120, "pods": {"bench-tenant/api": pod(0.5), "bench-tenant/worker": pod(2)}},
+        ]}
+        text = "\n".join(report._runtime_memory({"confirmations": [step]}))
+        self.assertIn("| Charged | 2560.0 | 2.684 |", text)
+        self.assertIn("sampled lower bounds", text)
+
+    def test_confirmation_is_labeled_without_an_unmeasured_saturation_bracket(self) -> None:
+        text = "\n".join(report._capacity({
+            "mode": "confirmation-only", "mix_name": "sdk-heavy", "profile": {
+                "capacity": {"mixes": {"sdk-heavy": {"wf-sdk": 100}}, "thresholds_source": "frozen"}
+            },
+        }))
+        self.assertIn("## Fixed-rate confirmation", text)
+        self.assertIn("no exploratory search or saturation bracket was measured", text)
+        self.assertNotIn("Exploratory ramp bracket", text)
+
     def test_steps_render_with_gates_and_validity(self) -> None:
         gate = {"status": "pass", "value": 1.2, "limit": 3.0}
         step = {
@@ -94,6 +120,7 @@ class CapacityReportTest(unittest.TestCase):
         self.assertIn("| 2.000 | 240 | invalid | 0.9980 | 0.0004 | 1.20 | 1 | external CPU above 1.5 cores in 5/48 intervals |", text)
         self.assertNotIn("## Execution times", text)
         self.assertIn("**Sustainable rate (confirmed): none confirmed**", text)
+        self.assertIn("| fresh | bifrost-worker-one | 85.0 | 80.0 |", text)
 
 
 if __name__ == "__main__":

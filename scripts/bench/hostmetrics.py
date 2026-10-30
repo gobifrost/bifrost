@@ -103,10 +103,17 @@ def _read(path: Path) -> str:
 
 
 def cgroup_counters(path: Path) -> dict[str, dict[str, int]]:
+    memory = parse_flat(_read(path / "memory.stat"))
+    current = int(_read(path / "memory.current").strip())
     return {
         "cpu": parse_flat(_read(path / "cpu.stat")),
         "memory_events": parse_flat(_read(path / "memory.events")),
-        "memory": {"current": int(_read(path / "memory.current").strip())},
+        "memory": {
+            "current": current,
+            "lifetime_peak": int(_read(path / "memory.peak").strip()),
+            "working_set": max(0, current - memory["inactive_file"]),
+            **{key: memory[key] for key in ("anon", "file", "shmem", "kernel")},
+        },
     }
 
 
@@ -164,6 +171,7 @@ def window(before: dict, after: dict) -> dict:
             "limit_events": sum(now["memory_events"].get(key, 0) - then["memory_events"].get(key, 0) for key in LIMIT_EVENTS),
             "oom_kills": now["memory_events"].get("oom_kill", 0) - then["memory_events"].get("oom_kill", 0),
             "memory_mib": now["memory"]["current"] / 2**20,
+            "memory_bytes": dict(now["memory"]),
         }
     bench = nodes.get("bench", {})
     disk_bytes = after["disk"]["bytes"] - before["disk"]["bytes"]
