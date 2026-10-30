@@ -343,37 +343,70 @@ async def test_a_refreshed_token_is_redacted_from_the_runs_output(monkeypatch: p
     client._sync_http.close()
 
 
-async def test_a_sync_call_during_its_own_loops_refresh_does_not_deadlock() -> None:
-    """A sync request challenged while this thread's loop holds the refresh
-    lock (a log line written mid-refresh) gets no token instead of waiting
-    for a lock only this blocked loop could release."""
+async def test_a_sync_call_on_the_loop_during_an_async_refresh_adopts_its_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While one coroutine's refresh is in flight, another coroutine on the
+    same loop makes a synchronous call (a context read, a workspace import).
+    It waits for that refresh, without needing the blocked loop, and replays
+    with its token: one refresh request, both calls succeed."""
+    import asyncio
     import threading
 
+    monkeypatch.setenv("BIFROST_API_URL", API)
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "stale")
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "run-refresh")
     client_mod._reset_refresh_coordinators_for_tests()
-    coordinator = client_mod._refresh_coordinator(API)
-    coordinator.lock.acquire()
-    coordinator.refreshing_threads[threading.get_ident()] = 1
+    posted, release = threading.Event(), threading.Event()
+    refreshes: list[dict[str, str]] = []
+
+    class RefreshEndpoint:
+        def __init__(self, *, base_url: str, timeout: float) -> None:
+            assert base_url == API
+
+        async def __aenter__(self) -> "RefreshEndpoint":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, path: str, *, json: dict[str, str]) -> httpx.Response:
+            refreshes.append(json)
+            posted.set()
+            await asyncio.to_thread(release.wait, 10)
+            return httpx.Response(
+                200,
+                json={"access_token": "fresh-1", "refresh_token": json["refresh_token"], "expires_in": 3600},
+                request=httpx.Request("POST", f"{API}{path}"),
+            )
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", RefreshEndpoint)
+    server = _Server([])
+    client = BifrostClient(API, "stale")
+    transport = httpx.MockTransport(server)
+    client._http = RefreshingAsyncClient(
+        refresh=client.refresh_access_token, base_url=API, headers={"Authorization": "Bearer stale"}, transport=transport
+    )
+    client._sync_http.close()
+    client._sync_http = RefreshingClient(
+        refresh=client._refresh_access_token_sync,
+        base_url=API,
+        headers={"Authorization": "Bearer stale"},
+        transport=transport,
+    )
+    monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
     try:
-        assert client_mod._refresh_connection_access_token_sync(API, "stale") is None
+        in_flight = asyncio.create_task(client.post("/api/things", json={"name": "async"}))
+        assert await asyncio.to_thread(posted.wait, 10)
+        # The async refresh is mid-request; finish it shortly, from another
+        # thread, while this loop is blocked in the synchronous call.
+        threading.Timer(0.2, release.set).start()
+        synchronous = client.get_sync("/api/sdk/context")
+        asynchronous = await in_flight
     finally:
-        coordinator.refreshing_threads.clear()
-        coordinator.lock.release()
+        client._sync_http.close()
         client_mod._reset_refresh_coordinators_for_tests()
 
-
-async def test_an_async_refresh_marks_its_thread_until_it_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
-    import threading
-
-    client_mod._reset_refresh_coordinators_for_tests()
-    seen: list[bool] = []
-
-    def no_credentials(api_url: str) -> None:
-        seen.append(threading.get_ident() in client_mod._refresh_coordinator(API).refreshing_threads)
-        return None
-
-    monkeypatch.setattr(client_mod, "resolve_credentials", no_credentials)
-    assert await client_mod.refresh_connection_access_token(API, "stale") is None
-
-    assert seen == [True]
-    assert client_mod._refresh_coordinator(API).refreshing_threads == {}
-    client_mod._reset_refresh_coordinators_for_tests()
+    assert (synchronous.status_code, asynchronous.status_code) == (200, 200)
+    assert len(refreshes) == 1
+    assert server.effects == 2

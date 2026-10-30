@@ -238,20 +238,49 @@ async def test_concurrent_refreshes_for_same_stale_token_are_coalesced(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_refresh_lock_waiter_does_not_leak_lock() -> None:
+async def test_a_cancelled_refresh_does_not_leak_the_lock(
+    isolated_credentials, monkeypatch
+) -> None:
     from bifrost import client as client_mod
 
-    lock = threading.Lock()
-    lock.acquire()
-    waiter = asyncio.create_task(client_mod._acquire_refresh_lock(lock))
-    await asyncio.sleep(0)
+    api_url = "https://api.example.com"
+    isolated_credentials.save_credentials(
+        api_url,
+        "stale-access-token",
+        "rotating-refresh-token",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    )
+    posted, release = threading.Event(), threading.Event()
+
+    class FakeAsyncClient:
+        def __init__(self, *, base_url, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, path, *, json):
+            posted.set()
+            await asyncio.to_thread(release.wait, 10)
+            return httpx.Response(401, request=httpx.Request("POST", f"{api_url}{path}"))
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", FakeAsyncClient)
+    waiter = asyncio.create_task(
+        client_mod.refresh_connection_access_token(api_url, "stale-access-token")
+    )
+    assert await asyncio.to_thread(posted.wait, 10)
 
     waiter.cancel()
-    lock.release()
+    release.set()
 
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(waiter, timeout=1)
-    assert lock.acquire(blocking=False) is True
+        await waiter
+    lock = client_mod._refresh_coordinator(api_url).lock
+    # The refresh finishes on its own thread and releases the lock.
+    assert await asyncio.to_thread(lock.acquire, True, 10) is True
     lock.release()
 
 

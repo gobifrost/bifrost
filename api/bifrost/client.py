@@ -223,9 +223,6 @@ class _ConnectionRefreshCoordinator:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        # Threads whose event loop is waiting for or holding ``lock`` in an
-        # async refresh (each thread touches only its own count).
-        self.refreshing_threads: dict[int, int] = {}
         self.latest_access_token: str | None = None
         self.latest_refresh_token: str | None = None
         self.rejected_credential_generation: tuple[str, str, str] | None = None
@@ -251,18 +248,6 @@ def _reset_refresh_coordinators_for_tests() -> None:
         _refresh_coordinators.clear()
 
 
-async def _acquire_refresh_lock(lock: threading.Lock) -> None:
-    """Acquire a thread lock without leaking it when the waiter is cancelled."""
-    acquire_task = asyncio.create_task(asyncio.to_thread(lock.acquire))
-    try:
-        await asyncio.shield(acquire_task)
-    except asyncio.CancelledError:
-        # to_thread keeps running after cancellation. Wait until it owns the lock,
-        # release it, then preserve cancellation for the request task.
-        if await acquire_task:
-            lock.release()
-        raise
-
 # Preserve non-auth project context without merging auth fields from different
 # sources into one synthetic os.environ tuple.
 load_dotenv_context()
@@ -278,17 +263,46 @@ async def refresh_connection_access_token(
     lock so the coordinator works across threads and event loops. After waiting,
     a caller re-reads stored credentials and reuses a token already installed by
     another caller instead of rotating the same refresh token twice.
+
+    The locked refresh runs entirely on a worker thread (see
+    :func:`_refresh_blocking`), so it never needs the caller's event loop to
+    finish: a synchronous SDK call made on that loop while this refresh is in
+    flight waits for it and then adopts its token.
+    """
+    token = await asyncio.to_thread(_refresh_blocking, api_url, observed_access_token)
+    _register_refreshed(token)
+    return token
+
+
+def _register_refreshed(token: str | None) -> None:
+    """Register a refreshed or adopted access token for output redaction in
+    the caller's execution context (kept until one exists, see
+    ``bifrost._context.register_secret``)."""
+    if token is not None:
+        from bifrost._context import register_secret
+
+        register_secret(token)
+
+
+def _refresh_blocking(api_url: str, observed_access_token: str | None) -> str | None:
+    """Hold the connection's refresh lock and refresh on this thread.
+
+    Everything done under the lock, the refresh request included, runs on
+    this thread (with its own short-lived event loop), so releasing the lock
+    never waits on another thread's event loop.
     """
     normalized_url = api_url.rstrip("/")
     coordinator = _refresh_coordinator(normalized_url)
+    with coordinator.lock:
+        return asyncio.run(_refresh_locked(normalized_url, coordinator, observed_access_token))
+
+
+async def _refresh_locked(
+    normalized_url: str,
+    coordinator: _ConnectionRefreshCoordinator,
+    observed_access_token: str | None,
+) -> str | None:
     credential_source = "unknown"
-    thread = threading.get_ident()
-    coordinator.refreshing_threads[thread] = coordinator.refreshing_threads.get(thread, 0) + 1
-    try:
-        await _acquire_refresh_lock(coordinator.lock)
-    except BaseException:
-        _leave_refresh(coordinator, thread)
-        raise
     try:
         resolved = resolve_credentials(normalized_url)
         if resolved is None:
@@ -397,17 +411,6 @@ async def refresh_connection_access_token(
             type(exc).__name__,
         )
         return None
-    finally:
-        coordinator.lock.release()
-        _leave_refresh(coordinator, thread)
-
-
-def _leave_refresh(coordinator: _ConnectionRefreshCoordinator, thread: int) -> None:
-    remaining = coordinator.refreshing_threads[thread] - 1
-    if remaining:
-        coordinator.refreshing_threads[thread] = remaining
-    else:
-        del coordinator.refreshing_threads[thread]
 
 
 async def refresh_tokens(
@@ -449,21 +452,19 @@ def _refresh_connection_access_token_sync(
     api_url: str,
     observed_access_token: str,
 ) -> str | None:
+    """Synchronous counterpart of :func:`refresh_connection_access_token`.
+
+    On a thread that runs an event loop, the refresh runs on a helper thread
+    while this one waits. A refresh already in flight on that loop holds the
+    lock only on its own worker thread, so the wait ends when that refresh
+    does, and this call adopts its token.
+    """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(
-            refresh_connection_access_token(api_url, observed_access_token)
-        )
-
-    # A synchronous call made on a thread whose own event loop is in the
-    # middle of a refresh (for example a workflow log line written while an
-    # async SDK call refreshes) cannot wait for it: the loop that would
-    # release the lock is blocked by this call. Return no token; the
-    # challenged request then surfaces its 401.
-    if threading.get_ident() in _refresh_coordinator(api_url).refreshing_threads:
-        logger.debug("Bifrost token refresh for %s is already in progress on this thread's loop", api_url)
-        return None
+        token = asyncio.run(refresh_connection_access_token(api_url, observed_access_token))
+        _register_refreshed(token)
+        return token
 
     result: str | None = None
     error: Exception | None = None
@@ -483,6 +484,8 @@ def _refresh_connection_access_token_sync(
 
     if error is not None:
         raise error
+    # The helper thread has no execution context; register here.
+    _register_refreshed(result)
     return result
 
 
