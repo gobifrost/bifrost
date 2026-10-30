@@ -108,10 +108,11 @@ class SolutionAppBuilder:
                 self._materialize(workdir, src_files, dependencies)
                 # base must match the serving route so emitted asset URLs resolve
                 # under /api/applications/{id}/dist/ rather than the site root.
+                vite_kwargs = {"require_lockfile": True} if require_lockfile else {}
                 return self._run_vite_build(
                     workdir,
                     base=self._dist_base(app_id),
-                    require_lockfile=require_lockfile,
+                    **vite_kwargs,
                 )
             except ReproducibleDependencyBuildError:
                 raise

@@ -322,6 +322,8 @@
 | GET | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | PUT | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | GET | `/api/llms.txt` |
+| GET | `/api/maintenance/app-sdk-upgrades/settings` |
+| PUT | `/api/maintenance/app-sdk-upgrades/settings` |
 | POST | `/api/maintenance/artifact-retention/cleanup` |
 | GET | `/api/maintenance/artifact-retention/settings` |
 | PUT | `/api/maintenance/artifact-retention/settings` |

@@ -15,7 +15,9 @@ from uuid import uuid4
 import pytest
 from fastapi import Response, UploadFile
 
+from shared import application_sdk_upgrades
 from src.routers import applications
+from src.services.application_sdk_status import CurrentApplicationSdkMetadata
 
 
 def _application() -> SimpleNamespace:
@@ -77,12 +79,30 @@ async def test_an_sdk_update_is_enqueued_with_its_apps_memory_profile(
 ) -> None:
     application = _application()
     user = SimpleNamespace(user_id=uuid4(), email="admin@contoso.example", name="Admin")
-    enqueue = _enqueue(monkeypatch, user.user_id)
+    job = SimpleNamespace(
+        id=uuid4(),
+        status="queued",
+        notification_id=uuid4(),
+        requested_by_user_id=str(user.user_id),
+    )
+    enqueue = AsyncMock(return_value=(job, False))
+    monkeypatch.setattr(application_sdk_upgrades, "enqueue_platform_job", enqueue)
+    db = AsyncMock()
+    db.get.return_value = application
+    db.scalar.return_value = None
+    target = CurrentApplicationSdkMetadata(
+        package_version="1.2.3",
+        fingerprint="target-fingerprint",
+        contract_version=3,
+    )
 
-    await applications._enqueue_sdk_update_for_application(
-        ctx=SimpleNamespace(db=SimpleNamespace()),  # type: ignore[arg-type]
-        user=user,  # type: ignore[arg-type]
-        application=application,  # type: ignore[arg-type]
+    await application_sdk_upgrades.enqueue_application_sdk_upgrade(
+        db,
+        application,  # type: ignore[arg-type]
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name,
+        target=target,
     )
 
     assert enqueue.await_args.kwargs["memory_profile_key"] == (
