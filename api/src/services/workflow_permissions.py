@@ -180,10 +180,10 @@ async def load_workflow_permissions(
 async def list_workflow_grants(
     db: AsyncSession, workflow_id: UUID
 ) -> list[WorkflowGrant]:
-    rows = (
+    permissions = (
         (
             await db.execute(
-                select(WorkflowPermissionGrant).where(
+                select(WorkflowPermissionGrant.permission).where(
                     WorkflowPermissionGrant.workflow_id == workflow_id
                 )
             )
@@ -191,7 +191,7 @@ async def list_workflow_grants(
         .scalars()
         .all()
     )
-    return [WorkflowGrant(permission=row.permission) for row in rows]
+    return [WorkflowGrant(permission=permission) for permission in permissions]
 
 
 def _grants_json(requested: RequestedWorkflowPermissions) -> list[dict[str, str]]:

@@ -12,15 +12,17 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from shared.system_account_guard import is_system_account
 from src.models.enums import LIVE_EXECUTION_STATUSES
-from src.models.orm.agent_runs import AgentRun
+from src.models.orm.agent_runs import LIVE_AGENT_RUN_STATUSES, AgentRun
 from src.models.orm.agents import Agent
 from src.models.orm.executions import Execution
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition
+from src.models.orm.solutions import Solution
 from src.models.orm.workflows import Workflow
 from src.services.authorization.explain import (
     Powers,
@@ -70,6 +72,9 @@ class RuntimeAuthority:
     solution_id: UUID | None = None
     impersonated_by_user_id: UUID | None = None
     impersonation_session_id: UUID | None = None
+    # Whether the run's own Solution is installed and active; None when the
+    # run belongs to no Solution. Answers the run's own ``?solution=`` gate.
+    solution_active: bool | None = None
 
 
 async def load_runtime_authority(
@@ -87,6 +92,16 @@ async def load_runtime_authority(
     if kind == "agent_run":
         return await _load_agent_run(db, credential_id)
     raise RuntimeIdentityError("Unknown runtime kind.")
+
+
+async def _solution_active(db: AsyncSession, solution_id: UUID | None) -> bool | None:
+    if solution_id is None:
+        return None
+    status = (await db.execute(select(Solution.status).where(Solution.id == solution_id))).scalar_one_or_none()
+    return status == "active"
+
+
+_WORKFLOW_AUTHORITY_COLUMNS = (Workflow.id, Workflow.solution_id, Workflow.permission_mode)
 
 
 async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> RuntimeAuthority:
@@ -132,14 +147,7 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
         workflow = await db.get(
             Workflow,
             execution.workflow_id,
-            options=[
-                load_only(
-                    Workflow.id,
-                    Workflow.solution_id,
-                    Workflow.permission_mode,
-                    raiseload=True,
-                )
-            ],
+            options=[load_only(*_WORKFLOW_AUTHORITY_COLUMNS, raiseload=True)],
             populate_existing=True,
         )
         if workflow is None:
@@ -160,6 +168,7 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
         solution_id=solution_id,
         impersonated_by_user_id=execution.impersonated_by_user_id,
         impersonation_session_id=execution.impersonation_session_id,
+        solution_active=await _solution_active(db, solution_id),
     )
 
 
@@ -168,12 +177,32 @@ async def _load_service_attempt(
 ) -> RuntimeAuthority:
     if service_id is None:
         raise RuntimeIdentityError(_SERVICE_ID_MISSING)
-    attempt = await db.get(ServiceAttempt, attempt_id, populate_existing=True)
+    # Column reads, not entity loads: they never touch objects the caller's
+    # session already holds (the service claim path holds this attempt).
+    attempt = (
+        await db.execute(
+            select(
+                ServiceAttempt.id,
+                ServiceAttempt.service_id,
+                ServiceAttempt.run_user_id,
+                ServiceAttempt.state,
+                ServiceAttempt.lease_expires_at,
+            ).where(ServiceAttempt.id == attempt_id)
+        )
+    ).one_or_none()
     if attempt is None:
         raise RuntimeIdentityError(_SERVICE_ATTEMPT_NOT_FOUND)
     if attempt.service_id != service_id:
         raise RuntimeIdentityError(_SERVICE_ATTEMPT_SERVICE_MISMATCH)
-    definition = await db.get(ServiceDefinition, service_id, populate_existing=True)
+    definition = (
+        await db.execute(
+            select(
+                ServiceDefinition.id,
+                ServiceDefinition.workflow_id,
+                ServiceDefinition.organization_id,
+            ).where(ServiceDefinition.id == service_id)
+        )
+    ).one_or_none()
     if definition is None:
         raise RuntimeIdentityError(_SERVICE_NOT_FOUND)
     if attempt.state not in _SERVICE_LIVE_STATES:
@@ -185,7 +214,9 @@ async def _load_service_attempt(
     run_user = await load_run_user(db, attempt.run_user_id)
     if run_user is None:
         raise RuntimeIdentityError(_SERVICE_RUN_USER_MISSING)
-    workflow = await db.get(Workflow, definition.workflow_id, populate_existing=True)
+    workflow = (
+        await db.execute(select(*_WORKFLOW_AUTHORITY_COLUMNS).where(Workflow.id == definition.workflow_id))
+    ).one_or_none()
     if workflow is None:
         raise RuntimeIdentityError(_WORKFLOW_MISSING)
 
@@ -201,14 +232,30 @@ async def _load_service_attempt(
         root_execution_id=None,
         service_id=definition.id,
         solution_id=workflow.solution_id,
+        solution_active=await _solution_active(db, workflow.solution_id),
     )
 
 
 async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
-    run = await db.get(AgentRun, run_id, populate_existing=True)
+    # Column reads, not entity loads: the agent-run consumers call this with
+    # the run object in their own session and keep using it.
+    run = (
+        await db.execute(
+            select(
+                AgentRun.id,
+                AgentRun.status,
+                AgentRun.run_user_id,
+                AgentRun.acting_user_id,
+                AgentRun.org_id,
+                AgentRun.agent_id,
+                AgentRun.impersonated_by_user_id,
+                AgentRun.impersonation_session_id,
+            ).where(AgentRun.id == run_id)
+        )
+    ).one_or_none()
     if run is None:
         raise RuntimeIdentityError(_AGENT_RUN_NOT_FOUND)
-    if run.status not in {"running", "cancelling"}:
+    if run.status not in LIVE_AGENT_RUN_STATUSES:
         raise RuntimeIdentityError(_AGENT_RUN_NOT_LIVE)
     if run.run_user_id is None:
         raise RuntimeIdentityError(_AGENT_RUN_USER_MISSING)
@@ -220,9 +267,11 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
         raise RuntimeIdentityError(_AGENT_ACTOR_MISSING)
     if run.acting_user_id != run_user.user_id and await load_run_user(db, run.acting_user_id) is None:
         raise RuntimeIdentityError(_AGENT_ACTOR_MISSING)
-    # HTTP/MCP refreshes use a fresh async session. Reading run.agent here
-    # would attempt an implicit synchronous lazy query in that session.
-    agent = None if run.agent_id is None else await db.get(Agent, run.agent_id, populate_existing=True)
+    solution_id = (
+        None
+        if run.agent_id is None
+        else (await db.execute(select(Agent.solution_id).where(Agent.id == run.agent_id))).scalar_one_or_none()
+    )
     return RuntimeAuthority(
         kind="agent_run",
         credential_id=run.id,
@@ -230,12 +279,13 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
         powers=None,
         acting_user_id=run.acting_user_id,
         organization_id=run.org_id,
-        solution_id=None if agent is None else agent.solution_id,
+        solution_id=solution_id,
         workflow_id=None,
         started_by_user_id=None,
         root_execution_id=None,
         impersonated_by_user_id=run.impersonated_by_user_id,
         impersonation_session_id=run.impersonation_session_id,
+        solution_active=await _solution_active(db, solution_id),
     )
 
 
