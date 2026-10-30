@@ -214,6 +214,8 @@ confirm the following **started-to-completed** intervals on 2026-10-30:
 | Contact candidate page | 11.037 | 5.299 | 5.738 |
 | Site list without address details | 7.600 | 1.692 | 5.908 |
 | Site list with address details | 32.856 | 17.993 | 14.863 |
+| SDK-only script-job lookup | 0.271 | 0.138 | 0.133 |
+| SDK-only script-result callback | 0.562 | 0.377 | 0.185 |
 
 All three succeeded. The detail and shallow list are different workloads, not
 an optimization A/B: the detail path performs bounded concurrent per-site
@@ -224,6 +226,13 @@ unmeasured. Runtime image and historical workflow source hashes were not
 returned. Selected private evidence, without customer records or credentials,
 is `notes/portal-executions-20261030.json` outside git. Retain these as live
 observations pending a controlled, fully attributed reproduction.
+The two SDK-only controls were supplied afterward and are retained separately
+in `notes/portal-fast-controls-20261030.json`. The user reports these workflows
+are consistently fast; this ledger has one supplied observation of each. Their
+small stdlib/Bifrost import trees contrast with the broader integration graph.
+They establish no universal multi-second worker overhead. Reproduce both a
+minimal control and a same-body workflow with a synthetic shared import graph
+on the same frozen runtime before attributing the difference to imports.
 
 Stable third-party import preloading is a candidate to measure, not an assumed
 improvement. Compare its latency, CPU per correct action, warm-template/private

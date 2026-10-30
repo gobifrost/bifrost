@@ -43,6 +43,13 @@ site/contact payloads from the existing in-cluster fake service, with declared
 delays and bounded contact-read concurrency. Keep the HTTP-library and
 workflow/shared-module versions, file counts and source bytes in the result.
 The fixture is representative by shape, not a claim of identical Halo behavior.
+Keep a minimal stdlib/Bifrost-only control and a same-body workflow with the
+synthetic shared import graph. The supplied fast workflows have observed
+outside-engine intervals of about 0.13–0.19 seconds, so a multi-second platform
+constant is not a supported explanation. Compare import-only controls before
+adding external-read work, then retain both shallow-list and detail-hydration
+request shapes. Measure all variants on the same frozen runtime and template
+state; the live examples alone are not a matched A/B.
 
 Drive it through the actual V2 SDK and shared execution stream in one targeted
 browser path. Reuse existing durable outcome reconciliation, request IDs,
