@@ -1,0 +1,13 @@
+{
+  "key": "pr:1147",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal authorization plumbing with no customer-visible behaviour: runtime credentials (workflow, service and agent-run MCP bridge tokens) carry signed authorization claims checked against the authority epoch, with the same access decisions as before, and old-format run tokens keep working while their run is live; the operator procedure lives in docs/runbooks/authz-epoch.md.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1147",
+      "Program authorization: Jack approved the token program (spec docs/superpowers/specs/2026-10-27-access-token-claims-design.md, amended 2026-10-30) and its PR1b merge unit (plan docs/plans/2026-10-30-token-pr1-implementation-plan.md revision 6.1)."
+    ]
+  }
+}

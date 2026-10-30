@@ -236,14 +236,27 @@ def install_request_context_middleware(app: FastAPI) -> None:
             if token:
                 payload = decode_token(token, expected_type="access")
             if payload:
-                from src.core.database import get_session_factory
-                from src.services.authorization.runtime_auth import is_runtime_credential_payload, load_runtime_principal
+                from src.services.authorization.runtime_auth import is_legacy_runtime_payload, is_runtime_credential_payload
 
-                if is_runtime_credential_payload(payload):
+                if is_legacy_runtime_payload(payload):
+                    # Legacy bridge (token PR1c removes it): validated from
+                    # the database exactly as before; the auth dependency
+                    # reuses this result.
+                    from src.core.database import get_session_factory
+                    from src.services.authorization.runtime_auth import load_runtime_principal
+
                     async with get_session_factory()() as db:
                         runtime_principal = await load_runtime_principal(db, payload)
                     request.state.runtime_token = token
                     request.state.runtime_principal = runtime_principal
+                elif is_runtime_credential_payload(payload):
+                    # Claims (``ver: 1``): attribution only, with no database
+                    # session. The auth dependency validates the token before
+                    # any handler runs, and a refused token never reaches one.
+                    from src.services.authorization.tokens import attribution_principal, parse_runtime_claims
+
+                    claims = parse_runtime_claims(payload)
+                    runtime_principal = None if claims is None else attribution_principal(claims)
             if payload:
                 user_id = payload.get("sub", "")
                 user_name = (
@@ -307,8 +320,9 @@ def install_request_context_middleware(app: FastAPI) -> None:
         try:
             response = await call_next(request)
             # Routing has necessarily happened by now, so request.scope["route"]
-            # (if any route matched) is populated.
-            if engine_workflow_id:
+            # (if any route matched) is populated. A request whose credential
+            # was refused (401) used no operation.
+            if engine_workflow_id and response.status_code != 401:
                 route = request.scope.get("route")
                 if route is not None:
                     operation_key = (

@@ -1235,7 +1235,8 @@ def _extra_entry_roots() -> dict[str, list[object]]:
     roots |= {f"SCHEDULE {func.__qualname__}": [func] for func in _scheduler_job_functions()}
     roots["STARTUP lifespan"] = [lifespan]
     # principal_from_claims builds the runtime principal from a token's
-    # claims; the auth dependency adopts it in token PR1b.
+    # claims, for the auth dependency (through the validator) and for the
+    # middleware's attribution.
     roots["AUTH resolvers"] = [
         *_GATE_FUNCS,
         auth_mod.get_current_user_optional,

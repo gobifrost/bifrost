@@ -16,6 +16,12 @@ Tokens are signed, not encrypted; their claims are readable.
 authority epoch in one read-only ``REPEATABLE READ`` snapshot of the primary
 database (see ``authz``), so a token's facts and its ``av`` always describe
 the same committed state.
+
+Claims in a token minted here are authority while the token is unexpired, its
+``av`` still equals the authority epoch and its run is live.
+``parse_runtime_claims`` followed by ``authenticate_runtime_token`` is the
+only path from such claims to an authenticated principal; it checks the epoch
+and the run in one statement on the request's own database session.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ from src.core.principal import UserPrincipal
 from src.models.contracts.workflow_permissions import WorkflowGrant, WorkflowPermissionMode
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole
-from src.services.authorization.authz import AuthorityStateMissing, read_epoch
+from src.services.authorization.authz import AuthorityStateMissing, read_authority_state, read_epoch
 from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
 from src.services.authorization.explain import Powers, RunUser
 from src.services.authorization.runtime import (
@@ -342,6 +348,65 @@ def principal_from_claims(claims: AccessTokenClaims) -> UserPrincipal:
         impersonation_session_id=authority.impersonation_session_id,
         runtime_authority=authority,
     )
+
+
+def attribution_principal(claims: AccessTokenClaims) -> UserPrincipal:
+    """The principal a signature-verified token names, for attribution only.
+
+    The request middleware labels audit and usage records with it before
+    authentication has run, without a database session. It is never
+    authority: the authentication dependency still validates the token with
+    ``authenticate_runtime_token`` before any route handler runs, and a
+    refused token never reaches one.
+    """
+    return principal_from_claims(claims)
+
+
+RuntimeRefusal = Literal["authority_state_missing", "not_live", "refresh_required"]
+
+
+@dataclass(frozen=True)
+class RuntimeAuthResult:
+    """The validator's decision: a principal, or why the token was refused."""
+
+    principal: UserPrincipal | None
+    refusal: RuntimeRefusal | None = None
+
+    @property
+    def refresh_required(self) -> bool:
+        """Whether a refresh would make the token's run usable again."""
+        return self.refusal == "refresh_required"
+
+
+async def authenticate_runtime_token(db: AsyncSession, claims: AccessTokenClaims) -> RuntimeAuthResult:
+    """Validate ``ver: 1`` runtime claims in one statement on ``db``.
+
+    The statement reads the global authority epoch and the run's liveness
+    (execution status, agent run status, or service attempt state, lease and
+    service) on the primary, in the caller's transaction:
+
+    - a missing epoch row refuses and logs an error; it is never a default;
+    - a run that is not live refuses without a challenge, because a refresh
+      would be refused too;
+    - an epoch that differs from ``av`` refuses with ``refresh_required``:
+      a fact the token carries may have changed since it was minted;
+    - otherwise the claims are the principal.
+    """
+    state = await read_authority_state(
+        db,
+        claims.credential_kind,
+        claims.sub,
+        service_id=claims.service_id,
+        now=datetime.now(timezone.utc),
+    )
+    if state.epoch is None:
+        logger.error("authz.epoch_missing: the global authority epoch row is missing; refusing a runtime token")
+        return RuntimeAuthResult(None, "authority_state_missing")
+    if not state.live:
+        return RuntimeAuthResult(None, "not_live")
+    if state.epoch != int(claims.av):
+        return RuntimeAuthResult(None, "refresh_required")
+    return RuntimeAuthResult(principal_from_claims(claims))
 
 
 # --- The minter ----------------------------------------------------------------

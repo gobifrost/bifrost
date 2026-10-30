@@ -244,3 +244,26 @@ def test_reviewed_uses_pass() -> None:
     assert _jwt_violations(
         "src.services.sneaky", "import json as signing\ndef f(x):\n    return signing.dumps(x).encode()\n"
     ) == []
+
+
+def _principal_from_claims_violations(module: str, source: str) -> list[str]:
+    """Only the tokens module turns claims into a principal (plan §6 rule 2)."""
+    if module == _TOKENS_MODULE:
+        return []
+    return [
+        f"{module}:{scope} names principal_from_claims"
+        for node, scope in _scopes(ast.parse(source))
+        if (isinstance(node, ast.Name) and node.id == "principal_from_claims")
+        or (isinstance(node, ast.Attribute) and node.attr == "principal_from_claims")
+        or (isinstance(node, ast.alias) and "principal_from_claims" in (node.name, node.asname))
+    ]
+
+
+def test_only_the_tokens_module_turns_claims_into_a_principal() -> None:
+    assert [problem for module, source in _modules() for problem in _principal_from_claims_violations(module, source)] == []
+    outside = "src.core.sneaky"
+    for source in (
+        "from src.services.authorization.tokens import principal_from_claims\n",
+        "from src.services.authorization import tokens\ndef f(c):\n    return tokens.principal_from_claims(c)\n",
+    ):
+        assert _principal_from_claims_violations(outside, source), source

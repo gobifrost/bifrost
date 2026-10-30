@@ -117,9 +117,11 @@ def start_collecting(
         collector.surface = "agent" if collector.agent_run_id else surface
         # An agent adds no workflow power; it is judged on its original user.
         collector.direct = runtime.powers is None
-        # RuntimeAuthority was freshly verified before the collector began.
-        # Recording can reuse its durable subject; authorization still loads
-        # and enforces current policy facts independently.
+        # RuntimeAuthority names the verified run: legacy tokens are verified
+        # before the collector begins, and claims are validated by the auth
+        # dependency before any handler can note a check. Recording can reuse
+        # its subject; authorization still loads and enforces current policy
+        # facts independently.
         collector.cache[POLICY_RECORD_SUBJECT_CACHE_KEY] = (
             runtime.run_user,
             runtime.powers,
