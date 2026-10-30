@@ -37,7 +37,7 @@ result remains authoritative if this ledger has not yet been refreshed.
 |---|---|---|---|---|
 | SDK-heavy r1 | `ad623e250` | 4 CPU / 8 GiB | Confirmed 3.90625 executions/s over 958.464 s; p95 0.982 s, CI upper 1.030 s; zero observed failures/faults | `runs/capacity-sdk-heavy-r1/` |
 | SDK-heavy r2 | `ad623e250` | 4 CPU / 8 GiB | Confirmed 3.90625 executions/s over 958.464 s; p95 0.919 s, CI upper 0.966 s; zero observed failures/faults | `runs/capacity-sdk-heavy-r2/` |
-| Current-main SDK-heavy r1 | `a1edc19fd2679e62c071a0ba4269f0f1c3052c29` | 4 CPU / 8 GiB | Failed: all 4,110 submitted executions (including warmup) failed at SDK table insert with HTTP 500; no rate confirmed | `runs/confirm-m-current-sdk-r1/` |
+| Current-main SDK-heavy r1 | `a1edc19fd2679e62c071a0ba4269f0f1c3052c29` | 4 CPU / 8 GiB | All 4,110 submissions (including warmup) returned HTTP 200, but every durable workflow failed at its SDK table insert with an internal-500 error; no rate confirmed | `runs/confirm-m-current-sdk-r1/` |
 | Current-main constrained comparison | Same frozen image as current-main r1 | 4 CPU / 4 decimal GB | Not measured yet | Planned `4gb-capacity` profile |
 | Historical mixed | `ad623e250` | 4 CPU / 8 GiB | Exploratory passes at 2.0 and 2.236/s; no completed accepted confirmation | `runs/capacity-mixed-r2/` and interrupted recovery artifacts |
 
@@ -122,7 +122,8 @@ API 310.1 MiB, Postgres 205.7 MiB, Pooler 16.5 MiB, client 9.3 MiB and Redis
 and agent template 200.3 MiB. Idle database activity is 3.76 transactions/s,
 0.08 rollbacks/s and 2.37 KiB WAL/s over 60.3 seconds.
 
-This run subsequently failed every SDK execution at the table-insert step.
+This run accepted all 4,110 submissions with HTTP 200, then failed every durable
+SDK execution at the table-insert step with an internal-500 error.
 It records 1,372.3 MiB sampled peak charged memory, 1,112.1 MiB peak working
 set, and 898.2 MiB post-load settled working set (one worker, 279.4 MiB).
 These are **failure-path measurements**, not evidence of lower memory for
@@ -183,6 +184,7 @@ customer workload and availability tier. It must show the following separately:
 | Monthly platform cost per tenant | Allocated compute plus database, retained storage, backups, shared infrastructure, builds, observability and network costs, including idle and spare capacity. |
 | Platform cost per successful execution | Monthly platform cost divided by expected successful customer demand for the same scenario; low demand retains the idle cost. |
 | Provider/model cost | Actual model mix, token/tool usage and dated provider prices, shown separately and included in the relevant commercial cost total. |
+| Other cost treatment | Explicitly include or exclude support/on-call/incident labor, security/compliance, software/vendor licenses, registry/CI artifact retention, and billing/payment fees/taxes. State which are included hosting costs, commercial COGS or operating expenses in this model. |
 | Gross margin | `(revenue − included hosting/provider costs) / revenue`, with selling price, included cost categories and positive revenue explicit. |
 
 Do not infer tenant density from RAM alone or treat measured saturation as the
@@ -194,4 +196,8 @@ results, confirmed mixed capacity with adequate class sample counts, long-run
 storage/object growth and retention evidence, soak/recovery drills, and cloud
 calibration. The 10%-weight mixed class yields only about 805 observations in
 an hour at 2.236/s; the strict 0.1% failure bound needs 2,995 failure-free
-observations per class. Repeating the same capped hour cannot prove it.
+observations per class. Ordinary independently capped confirmations cannot
+prove it. A separately predeclared pooled campaign needs its own immutable
+manifest and stated exchangeability assumption; see the
+[campaign design](../plans/2026-10-30-mixed-confirmation-campaign.md), which has
+not yet been implemented or measured.
