@@ -373,3 +373,27 @@ of the queue's 11 REST failures. The next sequence uses distinct existing test
 modules to initialize every actor before role cleanup. Final readiness remains
 pending that ordered red-to-fixed proof, API quality and independent review.
 The corrected execution-log selection already passed all 10 tests in 18.66s.
+
+## Final Source Readiness and Protected Merge
+
+The complete r3 sequence initialized every actor through distinct existing
+modules before the Secrets Reader cleanup. The unchanged 85ae baseline then
+reproduced all 11 original raw REST authentication failures: 11 failed, 4 passed,
+zero errors in 28.89s. Restoring correction 6fc98159a made the same 15 tests pass
+in 28.82s. API quality completed with zero Pyright errors/warnings and Ruff clean.
+The owned stack was removed before releasing the shared host lock.
+
+Independent final Astra review approved the three-test-module correction with
+no P1/P2 findings and confirmed that role-denied and unauthenticated cases remain
+intact. The earlier incomplete reproductions remain above to explain the actor
+initialization condition; they are not substituted for this proof.
+
+Source PR #1149 merged at 2026-10-30T19:39:47Z as
+05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2 after protected CI run 41115436575 passed:
+10,976 backend units, 4,021 client tests, 2,404 backend E2E tests, all 17 critical
+browser smoke tests, quality, both candidate image builds and Product Updates.
+The E2E suite retained 40 existing skips; no skips, retries or timeout changes
+were added. Per-shard counts changed because the repository balances source-file
+sizes, while the combined suite still covers 2,444 cases. The separate verified
+inventory activation remains necessary to deliver the approved in-app notice.
+No production deployment or performance improvement is claimed.

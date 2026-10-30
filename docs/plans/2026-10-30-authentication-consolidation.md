@@ -1,6 +1,6 @@
 # Authentication Consolidation — PR2 Delivery
 
-Status: **PR2 implemented; final subscription-consumer verification and protected merge pending**
+Status: **PR2 source merged; Product Updates activation pending this content revision**
 (2026-10-30). PR1c remains deferred to a later release.
 Owner: this authentication chat, branch `codex/auth-consolidation`, isolated
 worktree `/home/jack/.codex/worktrees/auth-consolidation/bifrost`.
@@ -132,7 +132,8 @@ leaving one serving would permit revocation bypass and break new sessions.
 - [x] Focused browser/V2 SDK auth and one Playwright happy path.
 - [x] Independent exact-candidate security review and dispositions.
 - [x] Product Updates classification/prose, current-main clean candidate and PR #1149.
-- [ ] Protected CI/merge lifecycle with existing authorization; no production deploy.
+- [x] Protected CI/merge lifecycle: PR #1149 merged as
+  `05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2`; no production deployment.
 - [ ] Refresh verified Product Updates inventory after the source merge, prove the
   required notice is in the prepared dev-image bundle, and merge the content PR.
 - [x] Benchmark comparison coordinated with the sibling, without editing its harness

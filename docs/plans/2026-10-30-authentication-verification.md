@@ -241,3 +241,42 @@ required queue reproduction. Logs are retained at
 `/tmp/bifrost-auth-subscription-before-r2.xml`. The refined sequence initializes
 actors in separate existing modules before the role cleanup. Its expected
 11-failure baseline, corrected selection and API quality remain pending.
+
+## Final Causal Proof and Source Merge
+
+The final local sequence used distinct modules to initialize all actor fixtures
+before role cleanup. It reproduces the full-suite credential state, rather than
+letting a late user-creation request refresh the shared admin.
+
+```bash
+./test.sh tests/e2e/api/test_websocket_read_visibility.py::TestAgentRunChannelVisibility::test_owner_can_subscribe_others_denied tests/e2e/api/test_agent_run_visibility.py::test_platform_admin_sees_both_runs tests/e2e/platform/test_solution_storage_full_e2e.py tests/e2e/platform/test_subscriptions.py tests/e2e/platform/test_file_websocket_subscriptions.py -v --durations=0
+./test.sh quality api
+```
+
+Under the shared host flock, the first command against the unchanged 85ae test
+modules produced the 11 original REST `Not authenticated` failures, 4 passes and
+zero errors in 28.89s. With correction 6fc98159a restored, the same 15 cases passed
+in 28.82s. API quality: zero Pyright errors/warnings, Ruff clean. JUnit evidence:
+`/tmp/bifrost-auth-subscription-before.xml` and
+`/tmp/bifrost-auth-subscription-after.xml`; full log:
+`/tmp/bifrost-auth-subscription-repro-r3.log`. The script exited zero, removed its
+owned stack, released the lock and restored a clean worktree. Independent final
+Astra review approved queue readiness with no P1/P2 findings.
+
+PR #1149 then merged as `05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2` at
+2026-10-30T19:39:47Z. Protected queue [CI run 41115436575](https://github.com/gobifrost/bifrost/actions/runs/41115436575)
+passed all required checks on that exact candidate:
+
+- Backend units: 10,976 passed, 65 intentionally deselected slow tests.
+- Client units: 4,021 passed across 606 files.
+- Backend E2E: 2,404 passed, 40 existing skips; shards 809/0, 799/5 and 796/35
+  passed/skipped. Source-file-size balancing accounts for the changed shard mix.
+- Critical browser smoke: 17 passed, no retries.
+- Lint/types, both candidate image builds and Product Updates: passed.
+
+Both language analyses passed on source 6fc98159a, and all five prior inline
+CodeQL review threads were resolved. Full backend E2E ran in the protected queue;
+it was not repeated locally. Full Playwright was not run locally; the exact
+critical smoke and targeted probes above are the browser evidence. The required
+post-source Product Updates activation is tracked separately below. No release
+publication, production deployment or new performance measurement occurred.
