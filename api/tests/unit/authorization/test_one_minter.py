@@ -2,14 +2,19 @@
 
 Run access tokens come from ``tokens.issue_access_token``, which signs
 through ``tokens._encode_claims``. These are blunt, file-level rules that
-fail closed; they catch accidental regressions, not a determined author:
+fail closed. They catch accidental regressions. Deliberate evasion (a
+dynamic ``getattr``, or leaking a signer out of an approved function through
+a global or closure) is out of scope: code review and the runtime validator,
+which refuses any token the database does not back, cover it.
 
 - only reviewed modules may import PyJWT, in any form and at any scope, and
-  only as a plain ``import jwt``; inside them ``jwt`` is used only as
-  ``jwt.<attribute>`` from the module's reviewed attributes, and
-  ``jwt.encode`` only in its reviewed functions;
+  only as a plain ``import jwt``; no module imports a name ``jwt`` from
+  anywhere else or reaches one as an attribute (``security.jwt``); inside the
+  reviewed modules ``jwt`` is used only as ``jwt.<attribute>`` from the
+  module's reviewed attributes, and ``jwt.encode`` only in its reviewed
+  functions, matched by exact qualified name;
 - only the tokens module may name ``_encode_claims`` at all, and only inside
-  the two token issuers;
+  the two token issuers (exact qualified names);
 - ``create_access_token`` is used only by reviewed functions, and never
   imported under another name. Those are embed tokens and impersonation
   markers (which keep their own formats), the runtime minters PR1b replaces,
@@ -98,12 +103,17 @@ def _jwt_violations(module: str, source: str) -> list[str]:
                     problems.append(f"{module}:{scope} imports {alias.name} as {alias.asname or alias.name}")
         elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "jwt" and not node.level:
             problems.append(f"{module}:{scope} imports from {node.module}")
+        elif isinstance(node, ast.ImportFrom) and any(alias.name == "jwt" for alias in node.names):
+            # A re-export of PyJWT through another module.
+            problems.append(f"{module}:{scope} imports jwt from {node.module or '.'}")
+        elif isinstance(node, ast.Attribute) and node.attr == "jwt":
+            problems.append(f"{module}:{scope} reaches jwt as an attribute")
         elif allowed is not None and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "jwt":
             jwt_attribute_bases.add(id(node.value))
             attributes, encoders = allowed
             if node.attr not in attributes:
                 problems.append(f"{module}:{scope} uses jwt.{node.attr}")
-            elif node.attr == "encode" and scope.split(".")[-1] not in encoders:
+            elif node.attr == "encode" and scope not in encoders:
                 problems.append(f"{module}:{scope} signs with jwt.encode")
     if allowed is not None:
         for node, scope in _scopes(tree):
@@ -120,7 +130,7 @@ def _encode_claims_violations(module: str, source: str) -> list[str]:
             or (isinstance(node, ast.Attribute) and node.attr == "_encode_claims")
             or (isinstance(node, ast.alias) and "_encode_claims" in (node.name, node.asname))
         )
-        if named and (module != _TOKENS_MODULE or scope.split(".")[-1] not in _ENCODE_CLAIMS_USERS):
+        if named and (module != _TOKENS_MODULE or scope not in _ENCODE_CLAIMS_USERS):
             problems.append(f"{module}:{scope} names _encode_claims")
     return problems
 
@@ -199,6 +209,14 @@ def test_each_known_bypass_is_flagged() -> None:
         ("shared.browser_impersonation", "import jwt\ndef f(c):\n    signer = jwt.PyJWT()\n    return signer.encode(c, 'k')\n"),
         ("shared.browser_impersonation", "import jwt\ndef f(c):\n    return jwt.encode(c, 'k')\n"),
         ("src.core.security", "import jwt\ndef sneaky(c):\n    return jwt.encode(c, 'k')\n"),
+        # Re-exports of PyJWT through a reviewed module.
+        (outside, "from src.core.security import jwt\ndef f(c):\n    return jwt.encode(c, 'k')\n"),
+        (outside, "from src.core import security\ndef f(c):\n    return security.jwt.encode(c, 'k')\n"),
+        # Approval is by exact qualified name, not the final name.
+        (
+            "src.core.security",
+            "import jwt\nclass Other:\n    def create_access_token(self, c):\n        return jwt.encode(c, 'k')\n",
+        ),
     }
     for module, source in jwt_cases:
         assert _jwt_violations(module, source), (module, source)
@@ -209,6 +227,7 @@ def test_each_known_bypass_is_flagged() -> None:
         (outside, "from src.services.authorization import tokens\nt = tokens\ndef f(c):\n    return t._encode_claims(c)\n"),
         (_TOKENS_MODULE, "def another(c):\n    return _encode_claims(c)\n"),
         (_TOKENS_MODULE, "sign = _encode_claims\n"),
+        (_TOKENS_MODULE, "class Other:\n    def issue_access_token(self, c):\n        return _encode_claims(c)\n"),
     }
     for module, source in encode_claims_cases:
         assert _encode_claims_violations(module, source), (module, source)

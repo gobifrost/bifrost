@@ -748,9 +748,11 @@ function → old token challenged → refresh → new claims reflect it, for eve
 - **One-minter rules are file-level and blunt:** only reviewed modules may
   import PyJWT (in any form, at any scope, and only as plain `import jwt`
   using reviewed `jwt.<attribute>`s, with `jwt.encode` only in reviewed
-  functions); only the tokens module may name `_encode_claims`, and only in
-  the two token issuers; `create_access_token` is used only by reviewed
-  functions and never imported under another name.
+  functions); no module imports a name `jwt` from another module or reaches
+  `<module>.jwt`; only the tokens module may name `_encode_claims`, and only
+  in the two token issuers; `create_access_token` is used only by reviewed
+  functions and never imported under another name. Approved scopes match by
+  exact qualified name (module plus class/function path).
 
 ### 9.3 One minter
 
@@ -763,6 +765,11 @@ function → old token challenged → refresh → new claims reflect it, for eve
   - `create_access_token` callers ⊆ {`create_embed_access_token`,
     `create_browser_impersonation`} ∪ PR2-marked human sites.
 - A synthetic new `jwt.encode` is flagged.
+- **Scope of these guards:** they catch accidental regressions. Deliberate
+  evasion — a dynamic `getattr`, or leaking a signer out of an approved
+  function through a global or closure — is out of scope; code review and the
+  runtime validator (which refuses any token the database does not back)
+  cover it.
 
 ### 9.4 E2E (`tests/e2e/platform/test_runtime_token_claims.py`)
 
