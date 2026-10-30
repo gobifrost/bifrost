@@ -40,6 +40,25 @@ Sampled peaks are lower bounds; pod lifetime peaks include setup and are labeled
 separately. Compare the same scenario before and after, including regressions
 and gains. Do not sum peaks observed at different times as a simultaneous peak.
 
+New result artifacts use schema 3 and strict JSON. Non-finite numeric results
+(for example infinite failure-aware latency) serialize as `null` with a
+top-level `non_finite_numbers` list of `{path: [object keys / array indices],
+kind: positive_infinity|negative_infinity|nan}`. The codec validates and
+restores those values for report regeneration; gate failures and raw request
+records remain intact. A null identified by this metadata is unbounded or
+undefined, not zero or an omitted failure. Finite-only results carry an empty
+metadata list. Historical schema-2 artifacts retain their original Python JSON
+Infinity tokens and are not retroactively made strict JSON.
+
+Before a long confirmation, save a short correctness preflight through the
+same submission and SDK paths, using the intended seed/data shape and arrival
+behavior. A successful small sequential smoke test does not establish that
+the intended concurrent scenario is sound. Preserve preflight failures and
+capture their logs immediately, before container-log rotation. Performance
+claims require matched repeated runs; each change's ledger entry names both
+run IDs, absolute and percentage differences, uncertainty, and any latency,
+recovery or headroom cost. Retain the earlier entries and raw artifacts.
+
 The hosting model must distinguish measured consumption, hard allocation and
 safe operating capacity. Price compute/RAM, database/storage/IOPS, retained data,
 backups, object storage/requests/egress, amortized shared cluster infrastructure,

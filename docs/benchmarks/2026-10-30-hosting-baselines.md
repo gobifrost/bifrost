@@ -40,6 +40,8 @@ result remains authoritative if this ledger has not yet been refreshed.
 | Current-main SDK-heavy r1 | `a1edc19fd2679e62c071a0ba4269f0f1c3052c29` | 4 CPU / 8 GiB | All 4,110 submissions (including warmup) returned HTTP 200, but every durable workflow failed at its SDK table insert with an internal-500 error; no rate confirmed | `runs/confirm-m-current-sdk-r1/` |
 | Current-main constrained comparison | Same frozen image as current-main r1 | 4 CPU / 4 decimal GB | Not measured yet | Planned `4gb-capacity` profile |
 | Historical mixed | `ad623e250` | 4 CPU / 8 GiB | Exploratory passes at 2.0 and 2.236/s; no completed accepted confirmation | `runs/capacity-mixed-r2/` and interrupted recovery artifacts |
+| Current-main sequential diagnostic | `a1edc19fd2679e62c071a0ba4269f0f1c3052c29` | M resources, light seed | Two no-op and two SDK executions succeeded; differs from the failed run in data size and arrival pattern, so establishes no capacity or performance improvement | `runs/diagnose-current-sdk-insert-r2/` |
+| Current-main concurrent diagnostic | Same frozen runtime and harness as the failed confirmation | M resources, original full seed | Original first 30 seconds of the 3.90625/s arrival trace: zero of 127 correct completions; concurrent creation left two same-org, non-Solution `bench_writes` tables, then name lookup raised `MultipleResultsFound` | `runs/diagnose-current-sdk-openloop-r2/` |
 
 SDK-heavy means five config reads, one table query and one table insert per
 execution. It contains no real provider/model work. The historical exploratory
@@ -53,6 +55,30 @@ OCI index `sha256:31b9b8807f2b91b3547a249d88ccd48923e38cbc4cfadd26ba37bce1ad3806
 Its node manifest/config and actual API/worker image IDs are recorded and
 checked by the new run. Historical results do not retroactively gain this
 provenance instrumentation.
+
+### Earlier tracked program results
+
+These dated reports retain the earlier baselines, rejected controls and
+tradeoffs. They use different workloads and process roles. Do not add their
+savings together or treat a change of topology as a matched regression.
+
+| Report | Recorded baseline / tradeoff | Evidence boundary |
+|---|---|---|
+| [Lean runner spike](2026-10-24-lean-runner-spike.md) | 71.8 MiB post-work whole-container working set | Local lower-bound diagnostic that omitted the SDK server and production claim/control loops; not a deployable worker budget. |
+| [Thin API/worker spike](2026-10-24-thin-api-worker-spike.md) | Worker 335.7 → 75.5 MiB; API/worker pair about 193 MiB smaller | Local prototype and smaller workload; active peaks and CPU phases were not aligned. |
+| [Thin runtime live jobs](2026-10-24-thin-runtime-live-jobs.md) | All 23 handlers once; worker 328.6 → 87.7 MiB; API/worker pair 801.8 → 596.5 MiB | Matched historical prototype, without concurrency or current-runtime capacity proof. |
+| [API hosting memory](2026-10-25-api-hosting-memory.md) | Matched API 576.7 → 372.2 MiB; warming four format families reached 392.6 MiB | Local workloads; retained memory/CPU and first-use tradeoffs. The 250 MiB API target was not achieved. Current 310.1 MiB idle API is a different workload. |
+| [Default remote runner](2026-10-25-default-remote-runner.md) | Worker settled at 74.6–87.5 MiB across named workloads; API 373.9–562.0 MiB | Local promoted-runner validation without a fresh old-runner control; predates always-warm agent templates. Active children/builds require more. |
+| [API auth and allocator](2026-10-26-api-auth-and-allocator.md) | Aged production API observed at 691–728 MiB; local allocator threshold saved about 12.5 MiB but was rolled back | Latency tradeoff was unverified. Diagnostic trim reclaim of 184 MiB was not a deployed saving. |
+| [Runtime auth efficiency](2026-10-26-runtime-auth-efficiency.md) | Same-user authentication 15 → 10 SQL statements; median 8.620 → 5.172 ms | Local real-Postgres request-path control, not whole-workflow or production latency. |
+| [First Kind suite baseline](2026-10-27-baseline.md) | End-of-run tenant working set about 1 GiB excluding object storage | Historical local topology: API about 408 MiB, workers 80 + 78 MiB, Postgres 411 MiB; not cloud capacity. |
+| [Agent runs on workers](2026-10-28-agent-runs-on-workers.md) | Always-warm agent template raised worker idle from about 80 to 280–290 MiB, avoiding roughly 10 seconds to build a cold template | Local agent runs were 0.25–0.9 seconds slower in that comparison. Moving work between processes changes the meaning of a per-worker comparison. |
+| [Idle churn step 2](2026-10-28-idle-churn-step2.md) | Idle DB transactions 31.9 → 28.7/s; rows written 4.37 → 2.52/s | One API/worker, 60-second local windows; WAL and latency observations were noisy on a shared host. |
+| [Earlier worker reduction](../runbooks/worker-memory-reduction-results.md) | Settled worker idle 321.4 → 155.0 MiB | Historical RabbitMQ/KEDA topology and removed harness, before the unified runtime. |
+
+The [elastic runtime memory runbook](../runbooks/elastic-runtime-memory.md)
+defines diagnostic measurements rather than another outcome baseline. Import
+attribution is not an independent component budget or live execution memory.
 
 ### Earlier baselines and tradeoffs
 
@@ -131,8 +157,16 @@ successful SDK work. The measured window had zero successful throughput;
 latency gates correctly failed with infinite failure-aware percentiles.
 There were no OOMs, restarts, evictions or quota denials. Host validity had no
 invalid conditions and an unproven external-memory-pressure warning. Preserve
-the result and worker traceback; diagnose the deterministic HTTP 500 before
+the result and worker traceback; diagnose the table-insert failure before
 the constrained comparison. No 4 GB load run has been started.
+The same-image light-seed sequential diagnostic then succeeded. A short
+diagnostic with the original full seed and arrival prefix reproduced the
+failure: zero of 127 correct completions. Before load only `bench_docs`
+existed; afterward two `bench_writes` rows shared the same organization and
+NULL Solution. Immediate API logs show concurrent table creation followed by
+`MultipleResultsFound` in name resolution. This is functional failure evidence,
+not another capacity measurement. Investigate database uniqueness and the
+concurrent SDK create path before resuming long confirmations.
 
 The older accepted SDK-heavy windows already contain charged-memory/CPU time
 series. Their sampled simultaneous tenant charged peaks are 1,395.6 MiB (r1)
@@ -157,6 +191,10 @@ leaving 208,349,184 bytes below its quota. Allocation is not consumption.
 ResourceQuota constrains declared resources; it is not a parent cgroup memory
 limit for every namespace charge. Include observed init/cache charges when
 reconciling consumption with the allocation budget.
+Tenant packing must respect admitted requests, maximum permitted worker growth
+and failover reserves as well as observed usage. Prices must follow the actual
+billing structure: amortize a bundled host SKU once, and do not charge its
+in-node Postgres compute again as though it were a separate managed database.
 
 Each comparison must name baseline and candidate run IDs, sources, profile,
 workload, offered rate, sample/window sizes and confidence intervals. Report
