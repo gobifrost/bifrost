@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import errno
+import socket
+import ssl
 from unittest.mock import AsyncMock, patch
 
 import asyncpg
@@ -10,7 +13,7 @@ import pytest
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from src.core.database_retry import (
-    RETRY_BUDGET_SECONDS,
+    RetryBudget,
     is_database_unavailable,
     run_with_database_retry,
 )
@@ -57,8 +60,14 @@ def _unit_failing(errors: list[BaseException], result: str = "written"):
     ("exc", "unavailable"),
     [
         (REFUSED, True),
-        (OSError(113, "Connect call failed ('10.96.0.12', 5432)"), True),
+        (OSError(errno.EHOSTUNREACH, "Connect call failed ('10.96.0.12', 5432)"), True),
+        (ConnectionResetError(errno.ECONNRESET, "Connection reset by peer"), True),
         (TimeoutError(), True),
+        (socket.gaierror(socket.EAI_NONAME, "Name or service not known"), True),
+        (PermissionError(errno.EACCES, "Permission denied"), False),
+        (FileNotFoundError(errno.ENOENT, "No such file or directory"), False),
+        (OSError(errno.EMFILE, "Too many open files"), False),
+        (ssl.SSLCertVerificationError("certificate verify failed"), False),
         (asyncpg.exceptions.CannotConnectNowError("the database system is starting up"), True),
         (asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed"), True),
         (DBAPIError("SELECT 1", {}, Exception("closed"), connection_invalidated=True), True),
@@ -80,12 +89,29 @@ async def test_retries_in_a_fresh_session_until_the_database_answers():
     unit, seen = _unit_failing([REFUSED, REFUSED, REFUSED])
 
     with patch("src.core.database_retry.sleep", AsyncMock()) as sleep:
-        result = await run_with_database_retry(factory, unit, description="test write")
+        result = await run_with_database_retry(
+            factory, unit, description="test write", budget=RetryBudget()
+        )
 
     assert result == "written"
     assert seen == factory.sessions
     assert len(set(map(id, seen))) == 4
     assert [call.args[0] for call in sleep.await_args_list] == [0.5, 1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_backoff_doubles_to_its_cap():
+    factory = FakeSessionFactory()
+    unit, _ = _unit_failing([REFUSED] * 8)
+
+    with patch("src.core.database_retry.sleep", AsyncMock()) as sleep:
+        await run_with_database_retry(
+            factory, unit, description="test write", budget=RetryBudget()
+        )
+
+    assert [call.args[0] for call in sleep.await_args_list] == [
+        0.5, 1.0, 2.0, 4.0, 8.0, 8.0, 8.0, 8.0
+    ]
 
 
 @pytest.mark.asyncio
@@ -96,7 +122,9 @@ async def test_an_error_about_the_work_is_not_retried():
 
     with patch("src.core.database_retry.sleep", AsyncMock()) as sleep:
         with pytest.raises(IntegrityError):
-            await run_with_database_retry(factory, unit, description="test write")
+            await run_with_database_retry(
+                factory, unit, description="test write", budget=RetryBudget()
+            )
 
     assert len(seen) == 1
     sleep.assert_not_awaited()
@@ -106,16 +134,52 @@ async def test_an_error_about_the_work_is_not_retried():
 async def test_gives_up_with_the_last_error_once_the_budget_is_spent():
     factory = FakeSessionFactory()
     unit, seen = _unit_failing([REFUSED] * 100)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
 
-    with patch("src.core.database_retry.sleep", AsyncMock()) as sleep:
-        with pytest.raises(ConnectionRefusedError):
-            await run_with_database_retry(factory, unit, description="test write")
+    with pytest.raises(ConnectionRefusedError):
+        await run_with_database_retry(
+            factory, unit, description="test write", budget=RetryBudget(0.05)
+        )
 
-    delays = [call.args[0] for call in sleep.await_args_list]
-    assert delays[:5] == [0.5, 1.0, 2.0, 4.0, 8.0]
-    assert max(delays) == 8.0
-    assert sum(delays) == RETRY_BUDGET_SECONDS
-    assert len(seen) == len(delays) + 1
+    assert seen
+    assert loop.time() - started < 1
+
+
+@pytest.mark.asyncio
+async def test_an_attempt_still_running_at_the_deadline_is_cut_off():
+    factory = FakeSessionFactory()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    async def hung_unit(db: FakeSession) -> str:
+        await asyncio.Event().wait()
+        return "never"
+
+    with pytest.raises(TimeoutError):
+        await run_with_database_retry(
+            factory, hung_unit, description="test write", budget=RetryBudget(0.05)
+        )
+
+    assert loop.time() - started < 1
+
+
+@pytest.mark.asyncio
+async def test_writes_sharing_a_spent_budget_make_no_further_attempt():
+    budget = RetryBudget(0.05)
+    failing, _ = _unit_failing([REFUSED] * 100)
+    with pytest.raises(ConnectionRefusedError):
+        await run_with_database_retry(
+            FakeSessionFactory(), failing, description="result write", budget=budget
+        )
+
+    later, seen = _unit_failing([])
+    with pytest.raises(TimeoutError):
+        await run_with_database_retry(
+            FakeSessionFactory(), later, description="failure write", budget=budget
+        )
+
+    assert seen == []
 
 
 @pytest.mark.asyncio
@@ -130,7 +194,9 @@ async def test_cancellation_during_backoff_propagates():
 
     with patch("src.core.database_retry.sleep", _parked_sleep):
         task = asyncio.create_task(
-            run_with_database_retry(factory, unit, description="test write")
+            run_with_database_retry(
+                factory, unit, description="test write", budget=RetryBudget()
+            )
         )
         await backing_off.wait()
         task.cancel()

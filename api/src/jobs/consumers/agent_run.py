@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
-from src.core.database_retry import run_with_database_retry
+from src.core.database_retry import RetryBudget, run_with_database_retry
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
@@ -196,6 +196,10 @@ class AgentRunConsumer:
         context: dict | None = None
 
         start_time = time.time()
+        # Every write that records this run's outcome shares one retry budget,
+        # so a result write that outlasts an outage does not hand the failure
+        # write a second full budget.
+        terminal_budget = RetryBudget()
         agent_run: AgentRun | None = None
         agent: Agent | None = None
         executor = None
@@ -294,6 +298,7 @@ class AgentRunConsumer:
                         caller=chat_caller,
                         sync=sync,
                         start_time=start_time,
+                        terminal_budget=terminal_budget,
                         agent_execution_mode=agent_execution_mode,
                     )
                     return
@@ -476,8 +481,15 @@ class AgentRunConsumer:
                 )
                 if run_obj is None:
                     return None
+                if executor and await executor.is_flushed(db):
+                    # An earlier attempt committed; only its acknowledgement
+                    # was lost. Its summary dispatch, if any, is the
+                    # reconciler's to hand off.
+                    return run_obj, None
                 consumer_applied_result = False
-                if run_obj.status == "running":
+                # A cancel requested after the executor finished does not
+                # undo the outcome it produced; the chat writer does the same.
+                if run_obj.status in ("running", "cancelling"):
                     run_obj.status = run_result.get("status", "completed")
                     run_obj.output = (
                         run_result.get("output")
@@ -528,6 +540,7 @@ class AgentRunConsumer:
                 self._session_factory,
                 _write_result,
                 description=f"agent run {run_id} final update",
+                budget=terminal_budget,
             )
             if written is None:
                 logger.info(f"Agent run {run_id}: final update skipped because row disappeared")
@@ -587,8 +600,17 @@ class AgentRunConsumer:
                     )
                     if run_obj is None:
                         return None
-                    if run_obj.status == "running":
-                        run_obj.status = "failed"
+                    if executor and await executor.is_flushed(db):
+                        # An earlier attempt committed; only its
+                        # acknowledgement was lost.
+                        return run_obj
+                    if run_obj.status in ("running", "cancelling"):
+                        # A run that ends without a result while cancelling
+                        # is cancelled, as announce_ended_agent_run and the
+                        # stale-run sweep record it; the error is kept.
+                        run_obj.status = (
+                            "cancelled" if run_obj.status == "cancelling" else "failed"
+                        )
                         run_obj.error = failure_error
                         run_obj.duration_ms = int((time.time() - start_time) * 1000)
                         run_obj.completed_at = datetime.now(timezone.utc)
@@ -611,6 +633,7 @@ class AgentRunConsumer:
                         self._session_factory,
                         _write_failure,
                         description=f"agent run {run_id} failure update",
+                        budget=terminal_budget,
                     )
                     if failed_run is not None:
                         agent_run = failed_run
@@ -682,6 +705,7 @@ class AgentRunConsumer:
         caller: Caller,
         sync: bool,
         start_time: float,
+        terminal_budget: RetryBudget,
         agent_execution_mode: AgentExecutionMode = "delegated",
     ) -> None:
         input_data = context.get("input") or {}
@@ -893,6 +917,7 @@ class AgentRunConsumer:
                     self._session_factory,
                     _write_terminal,
                     description=f"chat run {run_id} final update",
+                    budget=terminal_budget,
                 )
                 if written is None:
                     logger.info(
@@ -952,12 +977,23 @@ class AgentRunConsumer:
             except asyncio.CancelledError:
                 duration_ms = int((time.time() - start_time) * 1000)
                 if streamed_content and assistant_message_id is not None:
-                    await executor._save_message(
-                        conversation_id=conversation.id,
-                        role=MessageRole.ASSISTANT,
-                        content=streamed_content,
-                        message_id=UUID(assistant_message_id),
-                    )
+                    # The run's terminal write below keeps the partial text in
+                    # its output, so recording the outcome never waits on
+                    # this message: a database outage here must not leave the
+                    # run live or turn a timeout into a generic failure.
+                    try:
+                        await executor._save_message(
+                            conversation_id=conversation.id,
+                            role=MessageRole.ASSISTANT,
+                            content=streamed_content,
+                            message_id=UUID(assistant_message_id),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Chat run %s: could not save the partial assistant message",
+                            run_id,
+                            exc_info=True,
+                        )
 
                 usage = executor._active_usage
                 if usage is not None:
@@ -1021,6 +1057,7 @@ class AgentRunConsumer:
                     self._session_factory,
                     _write_interrupted,
                     description=f"chat run {run_id} interrupted update",
+                    budget=terminal_budget,
                 )
                 if written is None:
                     logger.info(

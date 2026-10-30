@@ -1,15 +1,13 @@
 {
   "key": "pr:1144",
-  "classification": "other",
+  "classification": "omit",
   "entry_ids": [],
-  "category": "fix",
-  "summary": "An agent run interrupted by a brief database restart now shows its real outcome instead of staying Running for about 35 minutes and then reporting a timeout.",
+  "reason": "Internal backend reliability fix: agent run terminal status writes retry through a brief database outage; not announced.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1144",
-      "Fixes #1141: reproduced by the capacity-harness pooler drills; covered by unit tests that drive the consumer through refused database connections.",
-      "Product review: awaiting Jack's approval of the summary."
+      "Jack (2026-10-29) decided via the coordinator that this PR gets no Product Update and is classified Omit."
     ]
   }
 }

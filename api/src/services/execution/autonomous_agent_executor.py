@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
 from sqlalchemy import or_, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from pydantic_ai import Agent as PydanticAgent
@@ -884,11 +885,27 @@ class AutonomousAgentExecutor:
     # DB flush (called by consumer after run completes)
     # ------------------------------------------------------------------
 
+    async def is_flushed(self, session: AsyncSession) -> bool:
+        """Whether an earlier transaction already stored this executor's buffer.
+
+        Steps carry their own ids, so the first buffered step being stored
+        means a :meth:`flush_to_db` transaction committed, even if its
+        acknowledgement was lost. Usage is only ever buffered together with
+        its ``llm_response`` step, so a buffer holding usage always holds a
+        step to tell by; an empty buffer has nothing to store.
+        """
+        if not self._pending_steps:
+            return False
+        first_step_id = UUID(self._pending_steps[0]["id"])
+        return await session.get(AgentRunStep, first_step_id) is not None
+
     async def flush_to_db(self, session: AsyncSession) -> None:
         """Flush all buffered steps and AI usage to Postgres in a single transaction.
 
         Called by the consumer after the run completes (success, failure, timeout, etc.).
         This is the only point where the executor writes to the database.
+        The buffers are kept, so a transaction that fails can be retried;
+        a retrying caller checks :meth:`is_flushed` first.
         """
         # Flush steps from this executor
         if self._pending_steps:
@@ -915,6 +932,9 @@ class AutonomousAgentExecutor:
                         redis_client=self.redis_client,
                         **usage,
                     )
+                except DBAPIError:
+                    # The transaction is gone; the caller decides whether to retry.
+                    raise
                 except Exception as e:
                     logger.warning(f"Failed to flush AI usage record: {e}")
 
