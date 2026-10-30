@@ -42,6 +42,18 @@ def _classes_table(classes: list[dict]) -> list[str]:
     return rows
 
 
+def _import_costs(classes: list[dict]) -> list[str]:
+    rows = [
+        "## Import Diagnostic Counter Windows", "",
+        "CPU and database counters include settling and background work. Startup work can affect the first window; these are not pure child costs.", "",
+        "| Class | Pass | CPU ms/run API / worker | DB transactions/run | WAL KiB/run |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for entry in classes:
+        rows.append(f"| `{entry['name']}` | {entry['pass']} | {_cpu(entry, 'sequential')} | {_db(entry, 'sequential')} |")
+    return [*rows, ""]
+
+
 def _memory_table(snapshots: list[dict]) -> list[str]:
     rows = [
         "| After | API total MiB | API brk heap MiB | API anonymous (allocator arenas) MiB | API THP MiB | Worker working set MiB |",
@@ -318,22 +330,27 @@ def render(result: dict) -> str:
         found = result.get("drill") or {}
         return "\n".join([*lines, "## Drill", "", f"API image `{result['api_image']}`.", "", "```json",
                           json.dumps({k: v for k, v in found.items() if k != "step"}, indent=2, default=str), "```", ""])
+    import_diagnostic = bool(result.get("imports_diagnostic"))
     lines += [
         f"Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes.",
         "",
-        "## Execution times",
-        "",
-        *_classes_table(result["classes"]),
-        "",
+    ]
+    if import_diagnostic:
+        lines += [*_imports_diagnostic(result), *_import_costs(result["classes"])]
+    else:
+        lines += ["## Execution times", "", *_classes_table(result["classes"]), ""]
+    lines += [
         "## Memory after each step",
         "",
         *_memory_table(result["snapshots"]),
         "",
         *_workers_table(result["classes"]),
-        *_imports_diagnostic(result),
         *_database(result),
     ]
-    failures = _failures(result["classes"])
+    # Import diagnostics verify terminal output separately and retain durable
+    # start/completion timing. Their absent created_at makes generic timing
+    # statistics unavailable, not evidence that a successful execution failed.
+    failures = [] if import_diagnostic else _failures(result["classes"])
     if failures:
         lines += ["## Failures", "", *failures, ""]
     return "\n".join(lines)

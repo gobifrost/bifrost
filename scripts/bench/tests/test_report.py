@@ -136,6 +136,25 @@ class CapacityReportTest(unittest.TestCase):
         self.assertIn("unavailable", text)
         self.assertIn("`wf-import-graph`", text)
 
+    def test_import_report_uses_verified_partial_timing_without_generic_false_failures(self) -> None:
+        unavailable = {**_BAD, "succeeded": 0, "failed": 2,
+                       "failures": [{"id": "one", "status": "Success", "error": None}]}
+        result = {**RESULT, "classes": [{**RESULT["classes"][0], "sequential": unavailable}],
+                  "imports_diagnostic": {"overall": "pass", "groups": [{
+                      "class": "wf-import-graph", "pass": 1, "overall": "pass",
+                      "execution_validation": {"overall": "pass"},
+                      "durable_timing": {"durable_started_to_completed_ms": {
+                          "count": 2, "p50_ms": 260, "p95_ms": 300}},
+                  }]}}
+        text = report.render(result)
+        self.assertIn("260.00 / 300.00", text)
+        self.assertIn("Trace result: **pass**", text)
+        self.assertIn("## Import Diagnostic Counter Windows", text)
+        self.assertIn("| 36 | 21.5 |", text)
+        self.assertNotIn("## Execution times", text)
+        self.assertNotIn("## Failures", text)
+        self.assertNotIn("Success —", text)
+
     def test_steps_render_with_gates_and_validity(self) -> None:
         gate = {"status": "pass", "value": 1.2, "limit": 3.0}
         step = {
