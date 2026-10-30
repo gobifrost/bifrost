@@ -236,3 +236,11 @@ must cite the actual source PR and explicit required security review; the draft
 placeholder is not eligible for delivery. The protected merge queue remains the
 complete-suite gate. No production deployment or performance result is approved
 or implied.
+
+The initial PR #1149 Product Updates check ran before the PR-number-dependent
+canonical disposition existed. The draft was intentionally ineligible. After
+GitHub assigned #1149 and verified author `jackmusick`, the canonical approved
+entry/disposition now cite that source and the immutable independent review
+record, with `security_review: required`. Structural Product Updates validation
+passed locally; CI must verify the real PR event after this metadata correction.
+No failed check was simply rerun against unchanged content.

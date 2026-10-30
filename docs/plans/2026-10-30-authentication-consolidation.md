@@ -131,7 +131,7 @@ leaving one serving would permit revocation bypass and break new sessions.
 - [x] Live human refresh/revocation, concurrency and credential-reset verification.
 - [x] Focused browser/V2 SDK auth and one Playwright happy path.
 - [x] Independent exact-candidate security review and dispositions.
-- [ ] Product Updates classification/prose, current-main clean candidate and PR.
+- [x] Product Updates classification/prose, current-main clean candidate and PR #1149.
 - [ ] Protected CI/merge lifecycle with existing authorization; no production deploy.
 - [x] Benchmark comparison coordinated with the sibling, without editing its harness
       or claiming unavailable measurements. Performance benefit remains unmeasured.
