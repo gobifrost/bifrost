@@ -5,15 +5,18 @@ Tests table and document endpoints with real PostgreSQL database.
 These tests require PostgreSQL to be running (via docker-compose.test.yml).
 """
 
+import asyncio
+
 import pytest
 import pytest_asyncio
 import unicodedata
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.tables import Document
+from src.models.orm.tables import Document, Table
 from src.models.orm.organizations import Organization
 from src.repositories.tables import TableRepository
 from shared.table_documents import DocumentRepository
@@ -137,6 +140,66 @@ class TestTableRepositoryIntegration:
 
         with pytest.raises(ValueError, match="already exists"):
             await repo.create_table(table_data, created_by=test_user_email)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_create_uses_database_uniqueness_after_both_miss_lookup(
+        self, db_session: AsyncSession, async_session_factory, test_org, test_user_email, monkeypatch
+    ):
+        """A concurrent SDK auto-create cannot leave duplicate _repo/ rows.
+
+        The barrier makes both repositories finish their absence check before
+        either insert flushes. One writer commits; PostgreSQL must reject the
+        other at the restored partial unique index.
+        """
+        from src.models.contracts.tables import TableCreate
+
+        table_name = f"concurrent_create_{uuid4().hex[:8]}"
+        barrier = asyncio.Barrier(2)
+        original_lookup = TableRepository.get_by_name_strict
+
+        async def synchronized_lookup(repo, *args, **kwargs):
+            found = await original_lookup(repo, *args, **kwargs)
+            if found is None:
+                await barrier.wait()
+            return found
+
+        monkeypatch.setattr(TableRepository, "get_by_name_strict", synchronized_lookup)
+
+        async def create_in_own_session():
+            async with async_session_factory() as session:
+                repo = TableRepository(session, test_org.id)
+                try:
+                    table = await repo.create_table(
+                        TableCreate(name=table_name), created_by=test_user_email
+                    )
+                    await session.commit()
+                    return table.id
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        try:
+            outcomes = await asyncio.gather(
+                create_in_own_session(), create_in_own_session(), return_exceptions=True
+            )
+            assert sum(not isinstance(outcome, BaseException) for outcome in outcomes) == 1
+            assert sum(isinstance(outcome, IntegrityError) for outcome in outcomes) == 1
+            assert await db_session.scalar(
+                select(func.count()).select_from(Table).where(
+                    Table.organization_id == test_org.id,
+                    Table.name == table_name,
+                    Table.solution_id.is_(None),
+                )
+            ) == 1
+        finally:
+            await db_session.execute(
+                delete(Table).where(
+                    Table.organization_id == test_org.id,
+                    Table.name == table_name,
+                    Table.solution_id.is_(None),
+                )
+            )
+            await db_session.commit()
 
 
 class TestDocumentRepositoryIntegration:

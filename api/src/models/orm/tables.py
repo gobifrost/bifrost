@@ -84,7 +84,28 @@ class Table(Base):
 
     __table_args__ = (
         Index("ix_tables_organization_id", "organization_id"),
-        # Unique constraints handled via partial indexes in migration
+        # _repo/ table names share the global/org namespace. Solution-managed
+        # tables have their own (solution_id, name) namespace.
+        Index(
+            "ix_tables_org_name_unique",
+            "organization_id",
+            "name",
+            unique=True,
+            postgresql_where=text("organization_id IS NOT NULL AND solution_id IS NULL"),
+        ),
+        Index(
+            "ix_tables_global_name_unique",
+            "name",
+            unique=True,
+            postgresql_where=text("organization_id IS NULL AND solution_id IS NULL"),
+        ),
+        Index(
+            "ix_tables_solution_name_unique",
+            "solution_id",
+            "name",
+            unique=True,
+            postgresql_where=text("solution_id IS NOT NULL"),
+        ),
     )
 
 
