@@ -341,3 +341,21 @@ async def test_a_refreshed_token_is_redacted_from_the_runs_output(monkeypatch: p
 
     assert registered == ["fresh-access-token-value"]
     client._sync_http.close()
+
+
+async def test_a_sync_call_during_its_own_loops_refresh_does_not_deadlock() -> None:
+    """A sync request challenged while this thread's loop holds the refresh
+    lock (a log line written mid-refresh) gets no token instead of waiting
+    for a lock only this blocked loop could release."""
+    import threading
+
+    client_mod._reset_refresh_coordinators_for_tests()
+    coordinator = client_mod._refresh_coordinator(API)
+    coordinator.lock.acquire()
+    coordinator.holder_thread = threading.get_ident()
+    try:
+        assert client_mod._refresh_connection_access_token_sync(API, "stale") is None
+    finally:
+        coordinator.holder_thread = None
+        coordinator.lock.release()
+        client_mod._reset_refresh_coordinators_for_tests()

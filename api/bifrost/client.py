@@ -223,6 +223,8 @@ class _ConnectionRefreshCoordinator:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
+        # The thread whose event loop holds ``lock`` during an async refresh.
+        self.holder_thread: int | None = None
         self.latest_access_token: str | None = None
         self.latest_refresh_token: str | None = None
         self.rejected_credential_generation: tuple[str, str, str] | None = None
@@ -280,6 +282,7 @@ async def refresh_connection_access_token(
     coordinator = _refresh_coordinator(normalized_url)
     credential_source = "unknown"
     await _acquire_refresh_lock(coordinator.lock)
+    coordinator.holder_thread = threading.get_ident()
     try:
         resolved = resolve_credentials(normalized_url)
         if resolved is None:
@@ -389,6 +392,7 @@ async def refresh_connection_access_token(
         )
         return None
     finally:
+        coordinator.holder_thread = None
         coordinator.lock.release()
 
 
@@ -437,6 +441,15 @@ def _refresh_connection_access_token_sync(
         return asyncio.run(
             refresh_connection_access_token(api_url, observed_access_token)
         )
+
+    # A synchronous call made on a thread whose own event loop is in the
+    # middle of a refresh (for example a workflow log line written while an
+    # async SDK call refreshes) cannot wait for it: the loop that would
+    # release the lock is blocked by this call. Return no token; the
+    # challenged request then surfaces its 401.
+    if _refresh_coordinator(api_url).holder_thread == threading.get_ident():
+        logger.debug("Bifrost token refresh for %s is already in progress on this thread's loop", api_url)
+        return None
 
     result: str | None = None
     error: Exception | None = None
