@@ -865,6 +865,17 @@ async def test_a_failure_that_cannot_be_stored_announces_nothing(consumer):
         await asyncio.sleep(max(0.0, deadline - asyncio.get_running_loop().time()))
         raise TimeoutError(f"Database retry budget spent before chat run {run_id} interrupted update")
 
+    caller_user_id = uuid4()
+    chat_caller = Caller(
+        _chat_caller(caller_user_id).principal,
+        AuthorizationContext(
+            user_id=caller_user_id,
+            home_organization_id=None,
+            base_role_id=None,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
     publish_chat = AsyncMock()
     publish_run = AsyncMock()
 
@@ -886,7 +897,7 @@ async def test_a_failure_that_cannot_be_stored_announces_nothing(consumer):
         ),
         patch(
             "src.services.authorization.enforce.load_caller",
-            new=AsyncMock(return_value=MagicMock(spec=Caller)),
+            new=AsyncMock(return_value=chat_caller),
         ),
         patch("src.jobs.consumers.agent_run.RetryBudget", lambda: RetryBudget(0.05)),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
