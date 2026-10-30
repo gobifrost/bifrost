@@ -145,6 +145,9 @@ async def test_a_token_refreshed_while_the_workflow_loads_is_redacted(monkeypatc
     monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "run-refresh-token-abcdefghijklmnop")
     client_mod._reset_refresh_coordinators_for_tests()
     clear_execution_context()
+    # The run's log delivery builds and caches an SDK client from these
+    # process credentials; never leave it behind for later tests.
+    monkeypatch.setattr(client_mod._thread_local, "bifrost_client", None, raising=False)
 
     class RefreshEndpoint:
         def __init__(self, *, base_url, timeout):
