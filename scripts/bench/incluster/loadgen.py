@@ -28,6 +28,7 @@ import json
 import os
 import random
 import sys
+from pathlib import Path
 import time
 import uuid
 
@@ -302,7 +303,7 @@ async def sql(sql: str) -> dict:
 
 
 def main() -> None:
-    mode, args = sys.argv[1], json.loads(sys.argv[2])
+    mode, args = sys.argv[1], json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     handler = {"prepare": prepare, "step": step, "outcomes": outcomes, "sql": sql}[mode]
     print(json.dumps(asyncio.run(handler(**args)), default=str))
 

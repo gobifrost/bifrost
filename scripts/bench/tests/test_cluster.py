@@ -87,3 +87,28 @@ class WorkerProcessesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExecPythonTest(unittest.TestCase):
+    def test_payload_travels_on_stdin_not_the_command_line(self) -> None:
+        payload = "x" * 200_000  # above Linux's 128 KiB single-argument limit
+        script = Path(cluster.__file__)
+        calls: list[dict] = []
+
+        def fake_run(command, input, capture_output, timeout):  # noqa: A002 - mirrors subprocess.run
+            calls.append({"command": command, "input": input})
+            return type("Completed", (), {"returncode": 0, "stdout": b'{"ok": true}\n', "stderr": b""})()
+
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.kubeconfig, instance.context = Path("/tmp/kubeconfig"), "kind-test"
+        original = cluster.subprocess.run
+        cluster.subprocess.run = fake_run
+        try:
+            self.assertEqual(instance.exec_python("bench-driver", script, ["outcomes", payload]), {"ok": True})
+        finally:
+            cluster.subprocess.run = original
+        (call,) = calls
+        self.assertTrue(all(len(argument) < 4096 for argument in call["command"]))
+        source = script.read_bytes()
+        self.assertEqual(call["input"], source + payload.encode("utf-8"))
+        self.assertEqual(call["command"][-2:], [str(len(source)), "outcomes"])

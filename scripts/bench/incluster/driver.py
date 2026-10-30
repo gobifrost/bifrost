@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 import time
 
 import httpx
@@ -339,7 +340,7 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burs
 
 
 def main() -> None:
-    mode, args = sys.argv[1], json.loads(sys.argv[2])
+    mode, args = sys.argv[1], json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     handler = {"setup": setup, "run_class": run_class}[mode]
     print(json.dumps(asyncio.run(handler(**args))))
 

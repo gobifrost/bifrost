@@ -216,17 +216,25 @@ class Cluster:
         return parse_db_counters(json.dumps(self.driver_sql(DB_COUNTERS_SQL)))
 
     def exec_python(self, pod: str, script: Path, args: list[str], timeout_s: int = 3600, namespace: str = guard.INFRA_NS) -> dict:
-        """Run ``script`` with the pod's Python and return its last JSON line."""
+        """Run ``script`` with the pod's Python as ``script MODE ARGS_FILE`` and return its last JSON line.
+
+        ``args`` is ``[mode, json]``. The script and the JSON both travel on
+        stdin: a request list can exceed Linux's 128 KiB limit on a single
+        command-line argument.
+        """
+        mode, payload = args
+        source = script.read_bytes()
         command = [
             "kubectl", "--kubeconfig", str(self.kubeconfig), "--context", self.context, "-n", namespace,
-            "exec", "-i", pod, "--", "sh", "-c", 'cd /app && exec python - "$@"', "bench", *args,
+            "exec", "-i", pod, "--", "sh", "-c",
+            'd=$(mktemp -d) && head -c "$1" > "$d/script.py" && cat > "$d/args.json" && cd /app'
+            ' && PYTHONPATH=/app python "$d/script.py" "$2" "$d/args.json"; status=$?; rm -rf "$d"; exit $status',
+            "bench", str(len(source)), mode,
         ]
-        completed = subprocess.run(
-            command, input=script.read_text(encoding="utf-8"), capture_output=True, text=True, timeout=timeout_s,
-        )
-        lines = [line for line in completed.stdout.splitlines() if line.startswith("{")]
+        completed = subprocess.run(command, input=source + payload.encode("utf-8"), capture_output=True, timeout=timeout_s)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        lines = [line for line in stdout.splitlines() if line.startswith("{")]
         if completed.returncode != 0 or not lines:
-            raise RuntimeError(
-                f"{script.name} {args[:1]} failed ({completed.returncode}): {completed.stderr.strip()[-2000:]}"
-            )
+            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"{script.name} {mode} failed ({completed.returncode}): {stderr[-2000:]}")
         return json.loads(lines[-1])
