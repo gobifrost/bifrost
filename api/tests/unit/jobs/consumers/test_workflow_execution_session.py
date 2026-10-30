@@ -626,7 +626,7 @@ class TestAsyncTerminalNotificationOrder:
                     assert not completion.done()
                 finally:
                     allow_acknowledgement.set()
-                    await completion
+                    await asyncio.gather(completion)
 
         consumer._redis_client.push_result.assert_not_awaited()
 

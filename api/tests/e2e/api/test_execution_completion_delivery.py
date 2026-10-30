@@ -93,7 +93,7 @@ async def test_app_can_fetch_committed_result_while_completion_metrics_are_block
         allow_metrics.set()
         try:
             if completion is not None:
-                await completion
+                await asyncio.gather(completion)
         finally:
             async with async_session_factory() as session:
                 await session.execute(delete(Execution).where(Execution.id == execution_id))
