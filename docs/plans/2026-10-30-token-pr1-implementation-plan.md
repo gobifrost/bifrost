@@ -1,4 +1,4 @@
-# Token PR1 — Runs and Shared Pieces: Implementation Plan (revision 5)
+# Token PR1 — Runs and Shared Pieces: Implementation Plan (revision 6)
 
 Spec: `docs/superpowers/specs/2026-10-27-access-token-claims-design.md`
 (amended 2026-10-30 to match). Branch `token/pr1-runs`, based on `origin/main`
@@ -17,7 +17,18 @@ switches to claims; people stay on today's path until PR2. Decisions are
 | 2 | `f2e0a8222` | Astra review 1 |
 | 3 | `5a3f0ead7` | Postgres-only not-before timestamps |
 | 4 | `1e5517111` | one global random authority epoch; run liveness from the run row; REPEATABLE READ minter (Jack, on Fable's review and Astra review 2) |
-| 5 | this | Astra review 3, which confirmed the epoch proof, the liveness predicates and D14 |
+| 5 | `ea0c15d60` | Astra review 3, which confirmed the epoch proof, the liveness predicates and D14 |
+| 6 | this | Astra review 4 (1 P1, 3 P2; earlier findings resolved for forward operation) |
+
+### Astra review 4 — disposition
+
+| # | Finding | Resolution | Where |
+|---|---|---|---|
+| 1 | After a PR1b→PR1a rollback, a PR1b child can't refresh on expiry | The expiry challenge and its side-effect-free dependency test ship in **PR1a**; only the epoch challenge waits for PR1b. A contract test runs a PR1b client against PR1a's expiry response | §5.3, §8.2, §9.1 |
+| 2 | The combined trigger with `OLD`/`NEW` in `WHEN` can't be created | Event-specific deferred constraint triggers (`_ins`, `_upd`, `_del`) sharing `authz_epoch_bump_once()`; per-table events listed; run tables are UPDATE-only for carried columns; §9.2 checks the exact trigger set | §3.2, §9.2 |
+| 3 | Compose migration probe can disturb dependencies; `latest` isn't evidence | Pinned release tag or digest; dependency health checked first; `run --rm --no-deps init`; app-only `up --no-deps`; running image IDs verified against the release digest; claim corrected | §8.4 |
+| 4 | PR1c needs an ongoing launcher admission check | The negotiated credential protocol is persisted with the ownership generation; PR1c refuses protocol-1 launchers at hello, before any assignment, and routing excludes them; reconnect test | §5.4, §8.2, §9.1 |
+| — | Safe cuts | Dropped the 3 s snapshot case (event-ordered barriers cover it); full `./test.sh quality api` at five checkpoints instead of after every task | §9.1, §10 |
 
 ### Astra review 3 — disposition
 
@@ -53,7 +64,7 @@ switches to claims; people stay on today's path until PR2. Decisions are
 |---|---|
 | `core/app_wiring.py:221` middleware (runtime branch `:242-246`) | PR1b: parses `ver:1` claims without a DB session (attribution only); legacy tokens keep today's path (bridge, §8.3) |
 | `core/auth.py:135` `_get_current_user_optional` (`:184-192`) | PR1b: `authenticate_runtime_token(db, claims)` runs the validator (§3.5) in the request's own DB session |
-| `core/auth.py:343` `get_current_user` | PR1b: the challenge (D11) for epoch mismatch and for expired runtime **or** human access tokens |
+| `core/auth.py:343` `get_current_user` | PR1a: the challenge (D11) for an expired, signature-valid access token (runtime or human). PR1b: also for epoch mismatch |
 | `core/auth.py:401` `get_execution_context` | PR1b: own-Solution `?solution=` from `run.sol_active` (`:448-465`); role read `:430-433` skipped for runtime principals |
 | `services/mcp_server/auth.py:661` `verify_token` (`:689-745`) | PR1b: same validator in its existing short session; tool-filter roles from `usr` |
 | `routers/auth.py:999` `/auth/refresh` | PR1a: `run_refresh` branch |
@@ -170,29 +181,44 @@ executions.credential_version smallint NULL; service_attempts.credential_version
     core.
 - **Protection**: `BEFORE DELETE` and `BEFORE TRUNCATE` triggers on
   `authz_versions` raise.
-- **Per carried-fact table**, two triggers, both calling
-  `authz_epoch_bump_once()`:
-  - `authz_epoch_flush` — a `CONSTRAINT TRIGGER AFTER INSERT OR UPDATE OR
-    DELETE … DEFERRABLE INITIALLY DEFERRED FOR EACH ROW`. UPDATE is
-    unrestricted (no `UPDATE OF`, which can miss columns changed by `BEFORE`
-    triggers); its `WHEN` compares values,
-    `OLD.<col> IS DISTINCT FROM NEW.<col> OR …`.
-  - `authz_epoch_truncate` — `AFTER TRUNCATE FOR EACH STATEMENT`. Constraint
-    triggers can't be statement-level, so this one bumps immediately.
+- **Per carried-fact table**, event-specific triggers, all calling
+  `authz_epoch_bump_once()`. PostgreSQL forbids `OLD` in a `WHEN` when INSERT
+  is one of the events, and `NEW` when DELETE is, so each event gets its own
+  trigger:
+  - `authz_epoch_ins` — `CONSTRAINT TRIGGER AFTER INSERT … DEFERRABLE
+    INITIALLY DEFERRED FOR EACH ROW` (`WHEN` may reference `NEW` only).
+  - `authz_epoch_upd` — same, `AFTER UPDATE`, unrestricted (no `UPDATE OF`,
+    which can miss changes made by `BEFORE` triggers), with
+    `WHEN (OLD.<col> IS DISTINCT FROM NEW.<col> OR …)`.
+  - `authz_epoch_del` — same, `AFTER DELETE` (`WHEN` may reference `OLD`
+    only).
+  - `authz_epoch_truncate` — `AFTER TRUNCATE FOR EACH STATEMENT`; it bumps
+    immediately, because constraint triggers can't be statement-level.
+- **Events per table.** INSERT fires only where a new row can change what an
+  existing token means. A new user, role, workflow, Solution, agent or run
+  carries no existing token, so none of those fire on INSERT. That keeps the
+  bump rate at the measured ~20/day, where blanket run INSERT triggers would
+  invalidate every token on each run start.
 
-| Table | Relevant change (`WHEN` columns for UPDATE) |
-|---|---|
-| `users` | email, name, organization_id, base_role_id, is_external, identity_kind, is_active; DELETE |
-| `organizations` | is_provider; DELETE |
-| `user_roles`, `user_role_boundaries`, `role_permissions` | any INSERT, UPDATE, DELETE (incl. FK cascades and `COPY FROM`) |
-| `roles` | name; DELETE |
-| `workflows` | solution_id, permission_mode; DELETE |
-| `workflow_permission_grants`, `solution_workflow_permission_requests` | any INSERT, UPDATE, DELETE |
-| `system_configs` | rows where OLD or NEW has category `workflow_permissions`, key `default_mode`, org NULL |
-| `solutions` | status; DELETE |
-| `agents` | solution_id; DELETE |
-| `service_definitions` | workflow_id, organization_id |
-| `executions`, `agent_runs`, `service_attempts` | the carried columns set at creation (run user, actor, workflow, org, lineage, impersonation, `service_id`) — never expected; covered for completeness. Status, state and lease are read live (§3.5) |
+| Table | INSERT | UPDATE (`WHEN` value changed) | DELETE | Measured rate (30 d) |
+|---|---|---|---|---|
+| `users` | — | email, name, organization_id, base_role_id, is_external, identity_kind, is_active | yes | `user.delete` 83; updates within `workflow`/role counts |
+| `organizations` | — | is_provider | yes | orgs 5 |
+| `user_roles`, `user_role_boundaries` | yes | any column | yes (incl. FK cascades) | `role.user_assigned` 211 (assignments on `user.create` 163 included) |
+| `role_permissions` | yes | any column | yes | roles 7 |
+| `roles` | — | name | yes | roles 7 |
+| `workflows` | — | solution_id, permission_mode | yes | subset of `workflow.update` 135 (deletes included) |
+| `workflow_permission_grants` | yes | any column | yes | 0 |
+| `solution_workflow_permission_requests` | yes | any column | yes | 37 |
+| `system_configs` | `WHEN` NEW is the default-mode row | `WHEN` OLD or NEW is the default-mode row and the row changed | `WHEN` OLD is the default-mode row | 0 |
+| `solutions` | — | status | yes | solutions 12 |
+| `agents` | — | solution_id | yes | agents updated 31 |
+| `service_definitions` | — | workflow_id, organization_id | — (deleting a definition removes its attempts; liveness refuses) | low |
+| `executions`, `agent_runs`, `service_attempts` | — | only the carried creation-time columns (run user, actor, workflow, org, lineage, impersonation, `service_id`) — never expected | — (a deleted live run fails the liveness read) | 0 |
+
+Every table also has the TRUNCATE trigger. Status, state and lease are read
+live (§3.5), never versioned. Workflow DELETE frequency during file sync isn't
+broken out in the measurement; the re-measure trigger (§3.1) watches it.
 
 No application write site changes.
 
@@ -372,18 +398,21 @@ reads no database.
 ### 5.3 Challenge-driven refresh on every runtime transport (findings 2 and 5)
 
 **Challenge (D11).** `get_current_user` returns 401 with `WWW-Authenticate:
-Bearer error="invalid_token", error_description="refresh_required"` only for:
-- epoch mismatch; and
-- a signature-valid access token whose `exp` has passed (runtime or human;
-  `decode_token` distinguishes `ExpiredSignatureError`).
+Bearer error="invalid_token", error_description="refresh_required"` only
+when a refresh fixes the problem. The auth dependency raises it before the
+route handler runs.
+- **From PR1a:** a signature-valid access token whose `exp` has passed,
+  runtime or human (`decode_token` distinguishes `ExpiredSignatureError`).
+  Shipping this in PR1a means a PR1b child still refreshes on expiry after the
+  supported PR1b→PR1a rollback, because PR1a already redeems `run_refresh`
+  (Astra review 4 #1).
+- **From PR1b:** also an epoch mismatch.
 
-Both are raised by the auth dependency before the route handler runs.
-
-**Side-effect-free precondition.** A test walks the FastAPI dependency graph
-(`route.dependant`) of every route that accepts runtime tokens. It asserts
-every dependency resolved before the user dependency is in an allowlist of
-side-effect-free dependencies (`get_db`, settings, path/body parsing). So a
-challenged attempt has had **no handler or dependency effect**.
+**Side-effect-free precondition (PR1a).** A test walks the FastAPI dependency
+graph (`route.dependant`) of every route that accepts runtime tokens. It
+asserts every dependency resolved before the user dependency is in an
+allowlist of side-effect-free dependencies (`get_db`, settings, path/body
+parsing). So a challenged attempt has had **no handler or dependency effect**.
 
 **SDK refresh layer** (`bifrost/client.py`). A `RefreshingTransport` wraps
 every HTTPX transport the SDK creates: network async and sync, and the engine
@@ -428,6 +457,13 @@ have been exposed. Once a response is yielded, it is never replayed.
 - **Launcher compatibility.** Remote launchers add
   `"credential_protocol": 2` to their hello (`worker/remote/launcher.py:277-299`).
   A missing field means 1.
+  - The negotiated value is **persisted with the ownership generation**: a
+    new `execution_workers.remote_credential_protocol` column is written in
+    the same `UPDATE` that increments `remote_session_generation`
+    (`worker/remote/ownership.py:70`).
+  - Routing reads the value under the same generation fence
+    (`worker/remote/fencing.py:75`), so a reconnect with a different protocol
+    can't be confused with the session that was routed.
   - Routing picks the route **before** minting: the pool exposes the chosen
     route's credential protocol to the minting callback, in
     `workflow_execution.py:933` and `service_claim.py:691`.
@@ -506,9 +542,9 @@ Main squash-merges each PR, so each unit is one commit.
 
 | Unit | Contents | Behaviour |
 |---|---|---|
-| **PR1a** | migration (versions table, seed, protection, `authz_epoch_bump_once`, triggers, `authz_protocol_state`, `credential_version` columns); `env.py` starting-revision capture; claims schema; minter; `run_refresh`; `verify_iat` off; protocol-1 start record; runbook; completeness tests | unchanged |
-| **PR1b** | precondition; minters switch per route protocol, plus the legacy minter for protocol-1 routes and legacy rotation; reserved-claim refusal; validators and challenge; bridge; SDK and MCP refresh transports; launcher hello field; README | claims are authority |
-| **PR1c** (file the issue when PR1b merges; next release) | fail-closed precondition; delete the bridge, the legacy minter and rotation, the legacy credential install and the three `ServiceControl` token fields (`shared/models.py:48-57`); refresh the contract fingerprint | legacy tokens refused |
+| **PR1a** | migration (versions table, seed, protection, `authz_epoch_bump_once`, event triggers, `authz_protocol_state`, `credential_version` and `remote_credential_protocol` columns); `env.py` starting-revision capture; claims schema; minter; `run_refresh`; `verify_iat` off; **expiry challenge and dependency-graph test**; protocol-1 start record; Compose image-tag variable; runbook; completeness tests | unchanged, apart from the expiry 401 gaining its challenge header |
+| **PR1b** | precondition; minters switch per route protocol, plus the legacy minter for protocol-1 routes and legacy rotation; reserved-claim refusal; validators and the epoch challenge; bridge; SDK and MCP refresh transports; launcher hello field and persisted protocol; README | claims are authority |
+| **PR1c** (file the issue when PR1b merges; next release) | fail-closed precondition; **launcher admission check**; delete the bridge, the legacy minter and rotation, the legacy credential install and the three `ServiceControl` token fields (`shared/models.py:48-57`); refresh the contract fingerprint | legacy tokens refused; protocol-1 launchers refused |
 
 **Fresh-install detection.** In `alembic/env.py`'s `do_run_migrations`
 (`:93`), before `context.run_migrations()`, read
@@ -539,8 +575,15 @@ security.
 **PR1c precondition (fail-closed).** PR1c's migration raises unless the start
 was fresh **or** all of these hold:
 - no live execution or service attempt has `credential_version IS NULL`; and
-- no remote launcher with a live connection reports credential protocol < 2
-  (from the remote pool's ownership rows).
+- no `execution_workers` row with a live remote owner lease has
+  `remote_credential_protocol` NULL or < 2.
+
+**PR1c launcher admission (ongoing).** Offline protocol-1 launchers may
+reconnect after the migration. So PR1c's hello handling refuses a launcher
+reporting protocol < 2 (or none) **before** ownership is granted or any work
+is assigned, closing the socket with "upgrade this launcher". Routing also
+excludes rows whose persisted protocol is < 2. This is a local admission
+check, not fleet fencing.
 
 The operator step confirms the PR1b rollout finished. **Trade-off:** a
 straggling pre-PR1b dispatcher that starts a legacy run after the check makes
@@ -587,14 +630,29 @@ exactly as today: `load_runtime_principal` in the middleware's DB session
 
 ### 8.4 Operator procedure (runbook `docs/runbooks/authz-epoch.md`)
 
-**Compose:**
-1. `docker compose pull`.
-2. `docker compose run --rm init` — runs migrations alone. On a precondition
-   error, stop: nothing running has been touched.
-3. `docker compose up -d`.
-4. `docker compose ps` shows every service on the new image and healthy; this
-   is the rollout-finished confirmation.
-5. Proceed to the next unit only in a later upgrade.
+**Compose (existing installation):**
+
+1. **Pin the release.** PR1a changes `docker-compose.yml`'s Bifrost images
+   (`:83, :139, :203, :224`) to `ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}`
+   (and the client likewise). The operator sets `BIFROST_VERSION=<release
+   tag>` in `.env`, or pins `@sha256:<digest>` from the release notes.
+2. `docker compose pull init api worker client` — application images only;
+   PostgreSQL, PgBouncer, Redis and SeaweedFS are not pulled or changed.
+3. Check dependencies are already healthy: `docker compose ps postgres
+   pgbouncer redis seaweedfs` shows each `running (healthy)`. If not, stop
+   and fix them first.
+4. `docker compose run --rm --no-deps init` — migrations alone, without
+   reconciling or recreating any dependency. A precondition error stops here;
+   the application containers still run the previous release, and only the
+   database transaction of the failed migration was attempted (rolled back).
+5. `docker compose up -d --no-deps api worker client`.
+6. **Verify image identity:** `docker inspect --format '{{.Image}}'
+   $(docker compose ps -q api worker)` must equal `docker image inspect
+   --format '{{.Id}}' ghcr.io/gobifrost/bifrost-api:$BIFROST_VERSION`, and
+   that image's `RepoDigests` must match the release's published digest.
+   This, plus healthy status, is the rollout-finished confirmation. `ps`
+   showing a tag is not enough.
+7. Move to the next unit only in a later upgrade.
 
 **Kubernetes (Flux):** the init Job or initContainer runs migrations first; a
 failure blocks the rollout and existing pods keep serving. Confirm with
@@ -621,13 +679,15 @@ host.
 | File | Contract |
 |---|---|
 | `tests/unit/authorization/test_authz_epoch_triggers.py` | each §3.2 row bumps and irrelevant columns don't; a change made by a `BEFORE` trigger is seen (unrestricted UPDATE); FK cascade, `COPY FROM`, generic `update(model).values(**v)`, raw SQL; `TRUNCATE`; config rows moving into and out of the default-mode predicate; 10,000-row update → one bump; `SET CONSTRAINTS ALL IMMEDIATE` then later changes → one bump, and the epoch at commit differs from the start; forced firing inside a savepoint → `ROLLBACK TO SAVEPOINT` → commit → bumped; rollback → none; global row can't be deleted or truncated |
-| `tests/unit/authorization/test_authz_snapshot.py` | **writer commits between the minter's fact reads and its epoch read** (minter paused by a test hook) → token refused after the commit; slow commit (event-ordered, plus a 3 s case); minter's first statement runs under REPEATABLE READ (`SHOW transaction_isolation` captured before any fact read); clock patched ±1 h → no outcome change; failover: epoch set back to the token's value → accepted, any other value → refused |
+| `tests/unit/authorization/test_authz_snapshot.py` | **writer commits between the minter's fact reads and its epoch read** (minter paused by a test hook) → token refused after the commit; slow commit (event-ordered barriers); minter's first statement runs under REPEATABLE READ (`SHOW transaction_isolation` captured before any fact read); clock patched ±1 h → no outcome change; failover: epoch set back to the token's value → accepted, any other value → refused |
 | `tests/unit/authorization/test_validator.py` | one statement; missing row → 401 + log; mismatch and expired → challenge header; ended runs and expired leases → 401 without challenge |
 | `tests/unit/authorization/test_challenge_precedes_effects.py` | dependency-graph walk (§5.3); challenged mutation requests leave **zero** handler effects |
 | `tests/unit/sdk/test_refreshing_transport.py` | one budget of 3 across `_send_with_retry` transient retries (502 then challenges); same for sync and `request()`; a non-idempotent POST replayed after a challenge produces **exactly one** effect; a non-challenge 401 (AI provider auth error) is not replayed; `stream`/`engine_stream`: challenge on the status line → refresh → reopen, and a stream already yielded is never replayed; engine-socket and network transports both covered; the cold module fetch is covered |
 | `tests/unit/services/mcp_server/test_bridge_refresh.py` | mint → concurrent authority commit → request → challenge → re-mint → success; a bridge context whose first request changes authority makes its second request succeed after one re-mint; budget exhausted → 401 surfaces |
 | `tests/unit/authorization/test_token_claims.py`, `test_issue_access_token.py`, `test_token_parity.py` | as revision 4 (schema and compression, lifetimes, poisoned role cache) |
-| `tests/unit/services/test_service_credentials.py` | protocol-2 route → new-format access + refresh, `credential_version = 2`, no rotation; protocol-1 route → legacy token, NULL, rotation and `service-control` delivery unchanged; the hello without the field counts as protocol 1 |
+| `tests/unit/services/test_service_credentials.py` | protocol-2 route → new-format access + refresh, `credential_version = 2`, no rotation; protocol-1 route → legacy token, NULL, rotation and `service-control` delivery unchanged; the hello without the field counts as protocol 1; the protocol is persisted with the ownership generation |
+| `tests/unit/worker/remote/test_launcher_admission.py` (PR1c) | a protocol-1 (or field-less) launcher reconnecting after PR1c is refused at hello — no ownership row change, no assignment; routing skips a row with a persisted protocol < 2 |
+| `tests/unit/sdk/test_expiry_challenge_cross_version.py` (PR1a server contract, PR1b client) | PR1a: an expired new-format token gets the exact challenge header, and `run_refresh` succeeds. PR1b: the SDK transport, given that recorded PR1a response, refreshes and replays — the PR1b client against PR1a after token expiry |
 | `tests/e2e/platform/test_authz_migrations.py` (pattern `test_builder_residue_migration_rehearsal.py`) | **empty database → `alembic upgrade head` succeeds**; a database at the revision before PR1a → head fails at PR1b's precondition; with protocol-1 evidence it passes; PR1c fails while a live NULL-format run or protocol-1 launcher exists, and passes when none |
 | auth refresh tests | live → token, same refresh token, no cookies; ended run / expired lease → 401; 50 concurrent run refreshes from one IP → all 200 |
 
@@ -639,10 +699,14 @@ function → old token challenged → refresh → new claims reflect it, for eve
 
 - **Read side:** the minter's `(table, column)` reads equal `AUTHZ_FACTS`
   (trigger columns plus the live-read run columns). Meta-test included.
-- **Registry ↔ triggers:** every registry table has the flush and truncate
-  triggers in `pg_trigger`, and each flush trigger's `WHEN` lists exactly the
-  registry columns (from `pg_get_triggerdef`); vice versa. Meta-test: dropping
-  one trigger fails it.
+- **Registry ↔ triggers:** `AUTHZ_FACTS` declares, per table, which of
+  INSERT / UPDATE (with its columns) / DELETE fire (§3.2 table). The test
+  asserts `pg_trigger` holds **exactly** that set of `authz_epoch_ins` /
+  `_upd` / `_del` constraint triggers plus one `authz_epoch_truncate` per
+  table, nothing else and nowhere else. Each `_upd` `WHEN` lists exactly the
+  registry columns (from `pg_get_triggerdef`). Run tables must have no
+  `_ins`. Meta-tests: dropping a trigger, or adding an INSERT trigger to
+  `executions`, fails it.
 - **Maintenance scan:** any later migration with `session_replication_role`
   or `DISABLE TRIGGER` must call `authz_epoch_bump_once()`.
 
@@ -693,8 +757,9 @@ No class may regress beyond ±9 % noise.
 
 ## 10. Task breakdown
 
-One implementer, in order. Each task is ≤ ~300 lines with its tests and runs
-`./test.sh quality api`.
+One implementer, in order. Each task is ≤ ~300 lines and runs its own
+targeted tests. The full `./test.sh quality api` runs at five coherent
+checkpoints: after A2, after A8, after B3, after B8, and at PR1c.
 
 **PR1a**
 
@@ -702,7 +767,7 @@ One implementer, in order. Each task is ≤ ~300 lines with its tests and runs
 |---|---|
 | A1 | Migration: `authz_versions` + seed + protection, `authz_epoch_bump_once`, `authz_protocol_state`, `credential_version` columns; ORM; `env.py` starting-revision capture |
 | A2 | Migration: flush and truncate triggers (§3.2); `test_authz_epoch_triggers.py` |
-| A3 | `authz` module (epoch read, validator queries, `AUTHZ_FACTS`); protocol-1 start record; `verify_iat` off; runbook |
+| A3 | `authz` module (epoch read, validator queries, `AUTHZ_FACTS`); protocol-1 start record; `verify_iat` off; expiry challenge + dependency-graph test; Compose image-tag variable; runbook |
 | A4 | `load_only` tightening; `RuntimeAuthority.solution_active`; `context.py:120` docstring |
 | A5 | Claims schema with compressed `usr`; `principal_from_claims`; `test_token_claims.py` |
 | A6 | Minter (REPEATABLE READ before the first statement), `issue_run_refresh_token`; `test_issue_access_token.py`, `test_authz_snapshot.py`, `test_token_parity.py` |
@@ -714,17 +779,17 @@ One implementer, in order. Each task is ≤ ~300 lines with its tests and runs
 | # | Task |
 |---|---|
 | B1 | Precondition migration; protocol-2 start record |
-| B2 | Validator cutover, challenge (epoch and expiry), dependency-graph test, bridge + counter |
+| B2 | Validator cutover, epoch challenge, bridge + counter |
 | B3 | `RefreshingTransport` for all SDK transports incl. streams and the cold module fetch; per-call budget; remove the old any-401 refresh; tests |
-| B4 | Launcher hello field; route-first minting; workflow mint cutover; worker env; redaction; context scrub; legacy minter; `credential_version` writes |
+| B4 | Launcher hello field and persisted protocol; route-first minting; workflow mint cutover; worker env; redaction; context scrub; legacy minter; `credential_version` writes |
 | B5 | Service credentials per route; legacy rotation retained for NULL attempts; credential install split |
 | B6 | MCP bridge runtime branch + `BridgeRefreshingTransport`; reserved-claim refusal |
 | B7 | README and docstrings; `bifrost admin authz legacy-status` |
 | B8 | E2E; benchmarks |
 
-**PR1c:** fail-closed precondition; delete the bridge, the legacy minter and
-rotation, the legacy install and the `ServiceControl` token fields; refresh
-the fingerprint.
+**PR1c:** fail-closed precondition; launcher admission check with its
+reconnect test; delete the bridge, the legacy minter and rotation, the legacy
+install and the `ServiceControl` token fields; refresh the fingerprint.
 
 ---
 
@@ -749,7 +814,8 @@ the fingerprint.
   PR1c removes the bridge behind a fail-closed precondition.
 - **D11** The challenge (`error="invalid_token"`,
   `error_description="refresh_required"`) is emitted only by the auth
-  dependency, for epoch mismatch and expired access tokens.
+  dependency, before any handler effect: for expired access tokens from PR1a,
+  and also for epoch mismatch from PR1b.
 - **D12** Completeness: triggers, registry ↔ triggers, read capture,
   maintenance scan.
 - **D13** `sol_active` answers the run's own `?solution=` gate.
@@ -757,7 +823,8 @@ the fingerprint.
 - **D17** Run refresh and refreshed tokens redacted; nested service tokens
   scrubbed.
 - **D18** PR1a → PR1b → PR1c; durable evidence; fresh install = empty starting
-  revision; operator steps in §8.4.
+  revision; pinned-release Compose procedure in §8.4; PR1c refuses
+  protocol-1 launchers at hello.
 - **D19 (PR2 decision; used from PR1)** Compressed `usr`; the warning measures
   the encoded token.
 - **D20** One budget of 3 challenge-driven refreshes per SDK call, shared
@@ -775,7 +842,8 @@ the fingerprint.
   the `legacy-status` command make that visible first.
 
 **Operator steps:**
-- Compose upgrades use `docker compose run --rm init` before `up -d`.
+- Compose upgrades pin `BIFROST_VERSION`, pull only app images, check dependency health, run `docker compose run --rm --no-deps init`, then `up -d --no-deps` the app services and verify running image IDs against the release digest (§8.4).
+- After PR1c, upgrade any remote launcher still on protocol 1: it is refused at connect.
 - Confirm each unit's rollout before the next.
 - Before PR1c: upgrade remote launchers and restart the legacy services that
   `legacy-status` lists.

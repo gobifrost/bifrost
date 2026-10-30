@@ -136,7 +136,8 @@ error code means "refresh required".
   SDK (`refresh_connection_access_token`) already refresh on 401 and retry.
   *Amended 2026-10-30:* the API marks refusals that a refresh fixes (version
   mismatch, expired token) with `WWW-Authenticate: Bearer
-  error="invalid_token", error_description="refresh_required"`. Only the auth
+  error="invalid_token", error_description="refresh_required"`; the expiry
+  form ships in PR1a so a newer client still refreshes after a rollback. Only the auth
   dependency raises it, before any handler effect. The SDK replays only on
   that challenge, never on other 401s, with a budget of three refreshes per
   call shared across transient retries, on every runtime transport including
@@ -222,7 +223,8 @@ One design, two PRs:
    today, so they work only while their run is live), and PR1c (bridge
    removal in the following release). Order is enforced by fail-closed
    migration preconditions: PR1b needs PR1a's durable start record or a fresh
-   install; PR1c needs no live legacy-format run and no legacy launcher. Each
+   install; PR1c needs no live legacy-format run and no legacy launcher, and
+   from then on refuses protocol-1 launchers when they connect. Each
    is paired with a documented operator step confirming the previous rollout
    finished.*
 2. **People:** login, SSO, MFA, refresh and MCP OAuth switch to
