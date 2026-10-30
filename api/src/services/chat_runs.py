@@ -512,6 +512,12 @@ async def get_chat_state(
     )
 
 
+async def _signal_chat_run_cancel(run_id: UUID) -> None:
+    """Tell the run's worker to stop; setting the flag again is harmless."""
+    async with get_redis() as redis:
+        await redis.setex(f"bifrost:agent_run:{run_id}:cancel", 3600, "1")
+
+
 async def cancel_chat_run(
     db: DbSession,
     caller: Caller,
@@ -539,6 +545,10 @@ async def cancel_chat_run(
         )
 
     if run.status == "cancelling":
+        # The worker watches only Redis, and an earlier request's signal may
+        # not have reached it; signal again. cancel_requested_at keeps the
+        # time cancellation was first asked for.
+        await _signal_chat_run_cancel(run.id)
         return ChatRunCancelResponse(run_id=run.id, status="cancelling")
 
     cancel = await request_agent_run_cancel(db, run.id)
@@ -551,8 +561,7 @@ async def cancel_chat_run(
         "cancelling" if cancel.status == "cancelling" else "cancelled"
     )
     if new_status == "cancelling":
-        async with get_redis() as redis:
-            await redis.setex(f"bifrost:agent_run:{run_id}:cancel", 3600, "1")
+        await _signal_chat_run_cancel(run.id)
 
     if run.conversation_id is None:
         raise RuntimeError("Chat run has no conversation")

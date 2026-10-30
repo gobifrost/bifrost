@@ -178,6 +178,26 @@ FALLBACK_SYSTEM_PROMPT = """You are a helpful AI assistant. You can help users w
 Be concise, accurate, and helpful in your responses."""
 
 
+async def add_conversation_message(session: AsyncSession, message: Message) -> Message:
+    """Add ``message`` as its conversation's next message, in the caller's transaction."""
+    max_sequence = (
+        await session.execute(
+            select(func.coalesce(func.max(Message.sequence), 0)).where(
+                Message.conversation_id == message.conversation_id
+            )
+        )
+    ).scalar() or 0
+    message.sequence = max_sequence + 1
+    session.add(message)
+    conversation = (
+        await session.execute(
+            select(Conversation).where(Conversation.id == message.conversation_id)
+        )
+    ).scalar_one()
+    conversation.updated_at = datetime.now(timezone.utc)
+    return message
+
+
 class AgentExecutor:
     """
     Executes agent conversations with tool calling support.
@@ -1518,14 +1538,6 @@ class AgentExecutor:
         msg_id = message_id if message_id else uuid4()
 
         async with self._db() as session:
-            # Get next sequence number
-            result = await session.execute(
-                select(func.coalesce(func.max(Message.sequence), 0))
-                .where(Message.conversation_id == conversation_id)
-            )
-            max_sequence = result.scalar() or 0
-            next_sequence = max_sequence + 1
-
             message = Message(
                 id=msg_id,
                 conversation_id=conversation_id,
@@ -1539,7 +1551,6 @@ class AgentExecutor:
                 token_count_output=token_count_output,
                 model=model,
                 duration_ms=duration_ms,
-                sequence=next_sequence,
                 # New fields for TOOL_CALL messages
                 tool_state=tool_state,
                 tool_result=tool_result,
@@ -1547,7 +1558,7 @@ class AgentExecutor:
                 # Client-generated ID for optimistic update reconciliation
                 local_id=local_id,
             )
-            session.add(message)
+            await add_conversation_message(session, message)
             if attachment_ids:
                 from src.services.chat_attachments import ChatAttachmentService
 
@@ -1556,13 +1567,6 @@ class AgentExecutor:
                     message_id=message.id,
                     conversation_id=conversation_id,
                 )
-
-            # Update conversation updated_at
-            conversation_result = await session.execute(
-                select(Conversation).where(Conversation.id == conversation_id)
-            )
-            conversation = conversation_result.scalar_one()
-            conversation.updated_at = datetime.now(timezone.utc)
             # commit happens on context manager exit
 
         return message

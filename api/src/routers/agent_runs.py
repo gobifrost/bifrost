@@ -633,7 +633,10 @@ async def cancel_agent_run(
         )
 
     if agent_run.status == "cancelling":
-        # Already cancelling — idempotent
+        # The worker watches only Redis, and an earlier request's signal may
+        # not have reached it; signal again. cancel_requested_at keeps the
+        # time cancellation was first asked for.
+        await get_redis_client().set_agent_run_cancel_flag(str(run_id))
         return {"run_id": str(run_id), "status": "cancelling"}
 
     cancel = await request_agent_run_cancel(db, run_id)

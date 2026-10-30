@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 
 from src.core.database_retry import RetryBudget
 from src.core.principal import UserPrincipal
-from src.jobs.consumers import agent_run as agent_run_module
 from src.jobs.consumers.agent_run import (
     ACTING_USER_UNAVAILABLE_ERROR,
     RUN_AS_INACTIVE_ERROR,
@@ -27,13 +26,14 @@ from src.jobs.consumers.agent_run import (
 )
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
-from src.models.orm.agents import Conversation
+from src.models.orm.agents import Conversation, Message
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.ai_usage import AIUsage
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 from src.models.orm.work_dispatches import WorkDispatch
 from src.routers import agent_runs as agent_runs_router
+from src.services.agent_executor import AgentExecutor
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
 from src.services.execution.agent_run_service import request_agent_run_cancel
@@ -593,6 +593,9 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
         patch("src.jobs.consumers.agent_run.DEFAULT_RUN_TIMEOUT", 0.001),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch(
+            "src.services.agent_executor.add_conversation_message", AsyncMock()
+        ) as add_message,
     ):
         await consumer._process_chat_run(
             run_id=run_id,
@@ -627,11 +630,13 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
         "running",
         expected_status,
     ]
-    fake_executor._save_message.assert_awaited_once()
-    save_kwargs = fake_executor._save_message.await_args.kwargs
-    assert save_kwargs["message_id"] == assistant_message_id
-    assert save_kwargs["role"] == MessageRole.ASSISTANT
-    assert save_kwargs["content"] == "Partial "
+    add_message.assert_awaited_once()
+    db, partial = add_message.await_args.args
+    assert db is mock_session
+    assert partial.id == assistant_message_id
+    assert partial.role == MessageRole.ASSISTANT
+    assert partial.content == "Partial "
+    mock_session.commit.assert_awaited_once()
     assert run_obj.status == expected_status
     assert run_obj.output == {"text": "Partial ", "partial": True}
     assert run_obj.error == expected_error
@@ -1416,7 +1421,9 @@ async def _cleanup_chat_run(async_session_factory, outage, org, user, conversati
         await cleanup.commit()
 
 
-async def _process_chat_through_outage(consumer, run, conversation, fake_executor, outage_on, outage):
+async def _process_chat_through_outage(
+    consumer, run, conversation, fake_executor, outage_on, outage, budget=None
+):
     """Run ``_process_chat_run``; the outage starts as chunk ``outage_on`` is published."""
     redis_mock = AsyncMock()
     redis_mock.get.return_value = None
@@ -1457,7 +1464,7 @@ async def _process_chat_through_outage(consumer, run, conversation, fake_executo
             caller=_chat_caller(run.run_user_id),
             sync=False,
             start_time=time.time(),
-            terminal_budget=RetryBudget(),
+            terminal_budget=budget or RetryBudget(),
         )
 
 
@@ -1487,54 +1494,103 @@ async def test_chat_final_write_records_completion_through_an_outage(
         await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("save_outcome", ["raises", "hangs"])
-async def test_chat_interruption_is_recorded_whatever_happens_to_the_partial_message(
-    consumer, db_session, async_engine, async_session_factory, save_outcome
-):
-    org, user, conversation, run = await _chat_run_fixture(db_session)
-    factory = ScriptedSessionFactory(async_engine)
-    consumer._session_factory = factory
-    fake_executor = _chat_executor_stub(
+class StalledCommitSession(AsyncSession):
+    """Sends the transaction's writes, then the server stops answering
+    before COMMIT is sent."""
+
+    async def commit(self) -> None:
+        await self.flush()
+        await asyncio.Event().wait()
+
+
+async def _messages(async_session_factory, conversation_id) -> list[tuple[UUID, MessageRole, int]]:
+    async with async_session_factory() as db:
+        rows = await db.execute(
+            select(Message.id, Message.role, Message.sequence)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.sequence)
+        )
+        return [tuple(row) for row in rows]
+
+
+def _interrupted_chat(assistant_message_id: UUID):
+    return _chat_executor_stub(
         [
-            ChatStreamChunk(type="message_start", assistant_message_id=str(uuid4())),
+            ChatStreamChunk(type="message_start", assistant_message_id=str(assistant_message_id)),
             ChatStreamChunk(type="delta", content="Partial answer"),
         ],
         cancel_after=1,
     )
-    database_back = asyncio.Event()
 
-    async def save_message(
-        conversation_id: UUID,
-        role: MessageRole,
-        content: str | None = None,
-        message_id: UUID | None = None,
-    ) -> None:
-        if save_outcome == "raises":
-            raise _disconnect("INSERT INTO messages")
-        # A statement against a server that stopped answering: it only
-        # returns once the test lets it.
-        await database_back.wait()
 
-    fake_executor._save_message = AsyncMock(side_effect=save_message)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outage", [["refused"], ["lost_commit_ack"]], ids=["refused", "lost-ack"])
+async def test_chat_interruption_commits_the_partial_answer_with_its_terminal_status(
+    consumer, db_session, async_engine, async_session_factory, outage
+):
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    question = Message(
+        id=uuid4(), conversation_id=conversation.id, role=MessageRole.USER, content="Hello", sequence=1
+    )
+    db_session.add(question)
+    await db_session.commit()
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
 
     try:
-        with patch("src.jobs.consumers.agent_run.PARTIAL_MESSAGE_WAIT_SECONDS", 0.05):
-            await _process_chat_through_outage(
-                consumer, run, conversation, fake_executor, "delta", ["refused", "refused"]
-            )
+        await _process_chat_through_outage(
+            consumer, run, conversation, _interrupted_chat(assistant_message_id), "delta", outage
+        )
 
-        fake_executor._save_message.assert_awaited_once()
-        assert factory.handed_out[-3:] == ["refused", "refused", "healthy"]
+        assert factory.handed_out[-2:] == [*outage, "healthy"]
         refreshed = await _load_run(async_session_factory, run.id)
         assert refreshed.status == "cancelled"
-        assert refreshed.error == "Chat run cancelled"
         assert refreshed.output == {"text": "Partial answer", "partial": True}
-    finally:
-        database_back.set()
-        await asyncio.gather(
-            *agent_run_module._unawaited_partial_saves, return_exceptions=True
+        assert await _messages(async_session_factory, conversation.id) == [
+            (question.id, MessageRole.USER, 1),
+            (assistant_message_id, MessageRole.ASSISTANT, 2),
+        ]
+
+        # The next turn follows the partial answer.
+        next_turn = await AgentExecutor(async_session_factory)._save_message(
+            conversation_id=conversation.id, role=MessageRole.USER, content="Go on"
         )
+        assert next_turn.sequence == 3
+    finally:
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+@pytest.mark.asyncio
+async def test_a_partial_answer_stalled_past_the_budget_is_never_committed(
+    consumer, db_session, async_engine, async_session_factory
+):
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
+
+    try:
+        with pytest.raises(TimeoutError):
+            await _process_chat_through_outage(
+                consumer,
+                run,
+                conversation,
+                _interrupted_chat(assistant_message_id),
+                "delta",
+                [StalledCommitSession],
+                budget=RetryBudget(0.2),
+            )
+
+        # The stalled transaction was discarded, not left to commit later:
+        # no partial answer, and the run is left for the stale-run sweep.
+        assert await _messages(async_session_factory, conversation.id) == []
+        assert (await _load_run(async_session_factory, run.id)).status == "running"
+        next_turn = await AgentExecutor(async_session_factory)._save_message(
+            conversation_id=conversation.id, role=MessageRole.USER, content="Hello again"
+        )
+        assert next_turn.sequence == 1
+    finally:
         await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
 
 

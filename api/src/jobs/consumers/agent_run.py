@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Coroutine
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
@@ -21,7 +20,7 @@ from src.core.database_retry import RetryBudget, run_with_database_retry
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
-from src.models.orm.agents import Agent, Conversation
+from src.models.orm.agents import Agent, Conversation, Message
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
@@ -75,49 +74,6 @@ def _chat_chunk_status(chunk_type: str) -> str:
         return "cancelled"
     return "failed"
 
-
-
-# The longest a chat run's terminal write waits for its partial assistant
-# message to be saved. The wait comes out of the run's retry budget.
-PARTIAL_MESSAGE_WAIT_SECONDS = 5.0
-# Partial-message saves no longer waited for, kept referenced until they end.
-_unawaited_partial_saves: set[asyncio.Task[Any]] = set()
-
-
-def _partial_save_ended(task: asyncio.Task[Any]) -> None:
-    _unawaited_partial_saves.discard(task)
-    if not task.cancelled() and task.exception() is not None:
-        logger.warning(
-            "Could not save a chat run's partial assistant message",
-            exc_info=task.exception(),
-        )
-
-
-async def _save_partial_message(
-    save: Coroutine[Any, Any, Any],
-    *,
-    run_id: str,
-    budget: RetryBudget,
-) -> None:
-    """Give an interrupted chat run's partial message a bounded chance to save.
-
-    The run's terminal write keeps the partial text in its output, so
-    recording the outcome never waits on this message: after
-    PARTIAL_MESSAGE_WAIT_SECONDS (or what is left of the run's budget) the
-    terminal write goes ahead and the save finishes, or fails, on its own.
-    A save that cannot reach the database could otherwise hold the run open
-    indefinitely, since its session's close is shielded from cancellation.
-    """
-    task = asyncio.ensure_future(save)
-    _unawaited_partial_saves.add(task)
-    task.add_done_callback(_partial_save_ended)
-    remaining = budget.deadline() - asyncio.get_running_loop().time()
-    await asyncio.wait({task}, timeout=max(0.0, min(PARTIAL_MESSAGE_WAIT_SECONDS, remaining)))
-    if not task.done():
-        logger.warning(
-            "Chat run %s: recording the outcome before its partial message is saved",
-            run_id,
-        )
 
 
 async def _load_acting_user(
@@ -831,7 +787,7 @@ class AgentRunConsumer:
             if chat_agent is not None and chat_agent.max_run_timeout
             else DEFAULT_RUN_TIMEOUT
         )
-        from src.services.agent_executor import AgentExecutor
+        from src.services.agent_executor import AgentExecutor, add_conversation_message
 
         executor = AgentExecutor(self._session_factory)
         current_task = asyncio.current_task()
@@ -1020,17 +976,6 @@ class AgentRunConsumer:
                     )
             except asyncio.CancelledError:
                 duration_ms = int((time.time() - start_time) * 1000)
-                if streamed_content and assistant_message_id is not None:
-                    await _save_partial_message(
-                        executor._save_message(
-                            conversation_id=conversation.id,
-                            role=MessageRole.ASSISTANT,
-                            content=streamed_content,
-                            message_id=UUID(assistant_message_id),
-                        ),
-                        run_id=run_id,
-                        budget=terminal_budget,
-                    )
 
                 usage = executor._active_usage
                 if usage is not None:
@@ -1070,6 +1015,23 @@ class AgentRunConsumer:
                     )
                     if run_obj is None:
                         return None
+                    # The partial answer commits with the terminal status, so
+                    # it can never land after a later turn's messages. Its id
+                    # tells a retry whether an earlier attempt committed it.
+                    if (
+                        streamed_content
+                        and assistant_message_id is not None
+                        and await db.get(Message, UUID(assistant_message_id)) is None
+                    ):
+                        await add_conversation_message(
+                            db,
+                            Message(
+                                id=UUID(assistant_message_id),
+                                conversation_id=conversation.id,
+                                role=MessageRole.ASSISTANT,
+                                content=streamed_content,
+                            ),
+                        )
                     if run_obj.status in {"running", "cancelling"}:
                         run_obj.status = interrupted_status
                         run_obj.output = {
@@ -1087,7 +1049,7 @@ class AgentRunConsumer:
                                 **(run_obj.run_metadata or {}),
                                 "failover_path": json.dumps(executor._active_failover_path),
                             }
-                        await db.commit()
+                    await db.commit()
                     return run_obj
 
                 written = await run_with_database_retry(
