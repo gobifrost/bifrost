@@ -278,21 +278,21 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None) -> Pat
     return out
 
 
-def run_capacity(profile_name: str, mix_name: str, out: Path | None) -> Path:
+def run_capacity(profile_name: str, mix_name: str, api_image: str | None, out: Path | None) -> Path:
     profile = load_profile(profile_name)
     plan = {**profile["capacity"], "mix": profile["capacity"]["mixes"][mix_name], "start_rate": profile["capacity"]["start_rates"][mix_name]}
     cluster = Cluster()
     cluster.verify()
     out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-capacity-{mix_name}")
     current = Run(cluster, "capacity", profile_name, profile, "fake", out)
-    current.result["mix_name"] = mix_name
+    current.result.update({"mix_name": mix_name, "api_image": api_image or deploy.images(cluster.identity)["api"]})
     current.result["steps"] = []
     current.result["confirmations"] = []
 
     def fresh() -> dict:
         print(f"Resetting and seeding '{profile_name}' ...", flush=True)
         deploy.reset(cluster)
-        ids = _prepare(cluster, current, profile, "fake")
+        ids = _prepare(cluster, current, profile, "fake", api_image)
         current.result["ids"] = ids
         return ids
 
@@ -387,6 +387,7 @@ def main() -> None:
     capacity_parser = sub.add_parser("capacity")
     capacity_parser.add_argument("--profile", default="m")
     capacity_parser.add_argument("--mix", required=True)
+    capacity_parser.add_argument("--api-image")
     capacity_parser.add_argument("--out", type=Path)
     build_parser = sub.add_parser("build")
     build_parser.add_argument("--source", type=Path, required=True)
@@ -414,7 +415,7 @@ def main() -> None:
     elif args.command == "run":
         run_classes(args.profile, None if args.backend == "none" else args.backend, args.out)
     elif args.command == "capacity":
-        run_capacity(args.profile, args.mix, args.out)
+        run_capacity(args.profile, args.mix, args.api_image, args.out)
     elif args.command == "build":
         cluster = Cluster()
         cluster.verify()
