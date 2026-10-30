@@ -30,6 +30,22 @@ between durable worker timestamps minus engine duration. Fixing it does not
 by itself explain that earlier interval or the 33-second outlier. Continue
 recording import, engine, completion commit and app delivery independently.
 
+The local repair is now PR #1151: the unchanged real-transport test failed
+with metrics held on main, then passed after correction. All 31 focused
+consumer, event and log-durability checks, API quality and bounded final review
+passed. Protected merge checks remain separate from production validation.
+
+The next import diagnostic uses `m-import-overlap`: the same full M catalog,
+private captured import graph and resource limits, but exactly one warm/max
+worker. Each of two passes has ten sequential executions and five rounds of
+three concurrent submissions for both graph and control, 100 executions total.
+Retain sequential and burst distributions separately, all trace IDs, worker
+incarnations and observed child concurrency. A three-submission burst does
+not guarantee three simultaneous running children. The worker's 650m CPU
+limit differs from production's 2 CPU; this tests local concurrency sensitivity,
+not a matched production CPU-throttling cause or capacity claim. Keep all
+previous sequential results unchanged.
+
 The hosting benchmark needs an interactive, non-AI integration workload as well
 as SDK-heavy throughput and agent mixes. Recent user-reported Halo portal
 observations are preserved in the [hosting ledger](../benchmarks/2026-10-30-hosting-baselines.md).

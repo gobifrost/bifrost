@@ -64,6 +64,15 @@ class RuntimeProfileTest(unittest.TestCase):
             self.assertEqual(component["cpu"], reference["components"][name]["cpu"])
         deploy.check_profile(profile)
 
+    def test_import_overlap_holds_one_warm_worker_with_the_same_import_workload(self) -> None:
+        baseline = run.load_profile("m-import")
+        profile = run.load_profile("m-import-overlap")
+        for key in ("quota", "components", "worker_cpu", "seed", "table_docs", "classes", "env", "imports_diagnostic"):
+            self.assertEqual(profile[key], baseline[key], key)
+        self.assertEqual(profile["worker_policy"], {**baseline["worker_policy"], "max_workers": 1})
+        self.assertEqual((profile["sequential"], profile["burst"], profile["burst_rounds"]), (10, 3, 5))
+        deploy.check_profile(profile)
+
 
 if __name__ == "__main__":
     unittest.main()

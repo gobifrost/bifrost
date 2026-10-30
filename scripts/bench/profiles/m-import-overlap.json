@@ -1,0 +1,13 @@
+{
+  "extends": "m-import",
+  "description": "Import-only sequential versus three-submission bursts on one warm M worker. The 650m worker CPU limit differs from production; this is not a production latency or hosting capacity claim.",
+  "worker_policy": {
+    "warm_workers": 1,
+    "max_workers": 1,
+    "worker_memory_mib": 2048,
+    "largest_worker_mib": 2048
+  },
+  "sequential": 10,
+  "burst": 3,
+  "burst_rounds": 5
+}
