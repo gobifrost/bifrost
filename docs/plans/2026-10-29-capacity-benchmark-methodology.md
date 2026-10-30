@@ -15,6 +15,10 @@ workstation; customer-quotable absolutes need the later cloud calibration.
 The deliverable is evidence for customer hosting budgets, capacity planning and
 gross margins. A footprint reduction is useful only alongside its effect on
 latency, successful throughput, correctness, recovery and operating headroom.
+The cumulative run inventory and before/after tradeoffs live in
+[`docs/benchmarks/2026-10-30-hosting-baselines.md`](../benchmarks/2026-10-30-hosting-baselines.md).
+Preserve failed, invalid and interrupted results with their dispositions as
+well as accepted baselines; a missing measurement is not a zero-cost resource.
 Jack accepts the measured roughly 277 MiB idle worker baseline, including the
 always-warm agent template; retaining fast agent/chat startup is intentional.
 There is no requirement to reduce it merely to fit a larger advertised budget.
