@@ -465,4 +465,3 @@ def validate_csrf_token(cookie_token: str, header_token: str) -> bool:
     if not cookie_token or not header_token:
         return False
     return secrets.compare_digest(cookie_token, header_token)
-

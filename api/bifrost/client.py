@@ -385,6 +385,11 @@ async def _refresh_locked(
             seconds=data.get("expires_in", 1800)
         )
         new_refresh_token = str(data["refresh_token"])
+        # This thread completes even if its awaiting caller is cancelled. Make
+        # the new value safe to emit before publishing it to process
+        # credentials, while the caller still registers adopted values in its
+        # own context after the await.
+        _register_refreshed(access_token)
         saved = save_refreshed_credentials(
             resolved,
             stored_access_token,

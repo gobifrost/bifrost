@@ -22,7 +22,6 @@ from bifrost._refreshing import (
     is_refresh_challenge,
     refresh_extensions,
 )
-from bifrost.client import BifrostClient
 
 CHALLENGE = {"WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"'}
 API = "http://test.local"
@@ -86,10 +85,12 @@ class _Refresher:
         return self.token()
 
 
-def _client(server: _Server, monkeypatch: pytest.MonkeyPatch, refresher: _Refresher) -> BifrostClient:
+def _client(
+    server: _Server, monkeypatch: pytest.MonkeyPatch, refresher: _Refresher
+) -> client_mod.BifrostClient:
     monkeypatch.setattr(client_mod, "refresh_connection_access_token", refresher)
     monkeypatch.setattr(client_mod, "_refresh_connection_access_token_sync", refresher.sync)
-    client = BifrostClient(API, "stale")
+    client = client_mod.BifrostClient(API, "stale")
     transport = httpx.MockTransport(server)
     client._http = RefreshingAsyncClient(
         refresh=client.refresh_access_token,
@@ -230,7 +231,7 @@ async def test_a_stream_refreshes_on_the_status_line_before_any_bytes(monkeypatc
     server = _StreamServer()
     refresher = _Refresher()
     monkeypatch.setattr(client_mod, "refresh_connection_access_token", refresher)
-    client = BifrostClient(API, "stale")
+    client = client_mod.BifrostClient(API, "stale")
     client._http = RefreshingAsyncClient(
         refresh=client.refresh_access_token,
         base_url=API,
@@ -257,7 +258,7 @@ async def test_a_returned_stream_is_never_replayed(monkeypatch: pytest.MonkeyPat
         requests.append(request.headers["authorization"])
         return httpx.Response(200, content=b"partial", request=request)
 
-    client = BifrostClient(API, "stale")
+    client = client_mod.BifrostClient(API, "stale")
     client._http = RefreshingAsyncClient(
         refresh=client.refresh_access_token,
         base_url=API,
@@ -284,7 +285,7 @@ async def test_the_engine_socket_transports_refresh_on_the_challenge(monkeypatch
     monkeypatch.setattr(client_mod.httpx, "HTTPTransport", lambda **_: httpx.MockTransport(server))
     client_mod._install_engine_socket("/tmp/bifrost-test-engine.sock")
     try:
-        client = BifrostClient(API, "stale")
+        client = client_mod.BifrostClient(API, "stale")
         unary = await client.engine_request("POST", "/api/sdk/config/set", json={"k": "v"})
         sync = client.engine_request_sync("GET", "/api/sdk/context")
         async with client.engine_stream("POST", "/api/sdk/ai/stream", json={}) as streamed:
@@ -335,7 +336,7 @@ def test_the_cold_module_fetch_refreshes_on_the_challenge(monkeypatch: pytest.Mo
 async def test_a_refreshed_token_is_redacted_from_the_runs_output(monkeypatch: pytest.MonkeyPatch) -> None:
     registered: list[str] = []
     monkeypatch.setattr("bifrost._context.register_secret", registered.append)
-    client = BifrostClient(API, "stale")
+    client = client_mod.BifrostClient(API, "stale")
 
     client.install_access_token("fresh-access-token-value")
 
@@ -382,7 +383,7 @@ async def test_a_sync_call_on_the_loop_during_an_async_refresh_adopts_its_token(
 
     monkeypatch.setattr(client_mod.httpx, "AsyncClient", RefreshEndpoint)
     server = _Server([])
-    client = BifrostClient(API, "stale")
+    client = client_mod.BifrostClient(API, "stale")
     transport = httpx.MockTransport(server)
     client._http = RefreshingAsyncClient(
         refresh=client.refresh_access_token, base_url=API, headers={"Authorization": "Bearer stale"}, transport=transport
