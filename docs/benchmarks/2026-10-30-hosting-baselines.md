@@ -341,6 +341,91 @@ case; a later authorized live validation measures actual Halo variability
 separately. No customer code, identifiers or credentials belong in the public
 benchmark fixture.
 
+### Follow-Up Production Checks
+
+A read-only, timeout-bounded query joined the five supplied executions and
+five authorized replays to their retained worker claims. All ten used the
+same worker incarnation, reporting build `1.4.2-dev.1793214616`. That worker
+was ready at 14:52:20 UTC, nearly two hours before the original slow group.
+Fresh pod startup therefore does not explain those slow runs. The historical
+workflow source version remains unknown. Evidence is retained privately in
+`notes/portal-claim-metadata-20261030.json`.
+
+A separate temporary process in that worker used the deployed canonical DB
+engine for six read-only `SELECT 1` transactions. The first connection setup
+took 49.8 ms total; five warm checkout/begin-select/rollback cycles took
+3.17–3.77 ms total. The earlier basic internal health probe was also fast.
+Neither probe measures the authenticated SDK route, API pool contention or
+source-resolution work. Do not extrapolate these small probes into an end-to-end
+latency baseline. The first DB probe referenced a helper absent from the older
+deployed source and failed before connecting; that failed attempt is preserved
+alongside the corrected deployed-API probe.
+
+Selected production response logs show sequential inter-response medians of
+59.7–65.7 ms, increasing and becoming more variable in the overlapping replay.
+These gaps include intervening import work and the next request; they are
+not server request durations. The actual captured portal import closure is
+much larger than the original synthetic fixture, so attribution requires the
+dependency-matched import-only diagnostic below.
+
+The first private-graph diagnostic, `runs/import-portal-prod-c2-r1`, had 20
+successful controls and 20 graph failures because `markdown` was absent from
+the immutable base image. The production worker reports Markdown 3.11.2 as
+an installed dependency outside that image. This is a diagnostic setup error,
+not a production workflow defect or a speed result. The original failed run
+and verified cleanup are preserved. A local overlay adds the hash-verified
+3.11.2 wheel; Python and six selected installed library versions then match
+the production worker. The corrected diagnostic is separately declared as
+`import-portal-prod-c2-r2`; no production package was installed or changed.
+
+That corrected diagnostic completed all 40 unique executions with the exact
+expected output and a valid import trace, without an API pod replacement.
+The two graph passes measured durable start-to-completion p50/p95 of
+697.95/837.59 ms and 686.49/739.99 ms. Controls measured 47.90/76.47 ms and
+52.14/73.28 ms. The graph made 25 resolver calls per execution; their aggregate
+median transport walls were 335.16 and 345.18 ms. Entry loading, compilation
+and execution took median 642.80 and 637.99 ms. These phases overlap and
+must not be added. Wrapping the original entry as an import adds two lookups
+relative to loading it directly in production.
+
+This establishes a measurable import cost on the deployed source and selected
+matching dependencies, but does not reproduce the production loading spans
+of 1.82–2.01 seconds or explain the original 14.86 seconds outside the engine.
+No original workflow body or provider call ran in this fixture. A comparison
+on the newer runtime is separately declared as `import-portal-current-r1`.
+Successful engine durations exclude source loading at every inspected
+historical boundary, including before RabbitMQ retirement; source history
+does not show a timer-boundary change that would explain the apparent
+regression. The latency cause remains unresolved.
+
+The corrected diagnostic's settled component working sets were API 334.2,
+worker 268.5, PostgreSQL 235.7, pooler 15.3, client 8.0 and Redis 5.8 MiB:
+867.5 MiB total. This is an import diagnostic, not a constrained hosting
+capacity result. Raw records, trace validation, image/dependency provenance
+and analysis are preserved under `runs/import-portal-prod-c2-r2`; both
+benchmark namespaces were removed and cleanup verified at 20:14:10 UTC.
+
+The matched current-runtime repetition, `runs/import-portal-current-r1`, also
+completed 40 correct, uniquely traced actions without an API pod replacement.
+Graph p50/p95 were 538.68/648.36 ms and 534.72/590.97 ms; controls were
+52.67/97.59 and 52.01/64.53 ms. Graph medians are 22.8% and 22.1% lower than
+the deployed-build diagnostic. These two small blocked comparisons span
+multiple runtime changes and are not an adjacent-commit causal experiment.
+The source audit identifies fewer authorization queries for current claims
+credentials, but this experiment does not isolate that cause. Cleanup was
+verified at 20:26:34 UTC. Settled working set was 850.7 MiB, not a hosting
+capacity result; all raw counters, components and failures remain retained.
+
+Historical completion fixes #483 (`390026147`) and #621 (`dccd6f0e3`) still
+release synchronous results after the authoritative commit and before
+bookkeeping. V2 apps use an asynchronous WebSocket/result-GET path; its terminal
+notification remains after log acknowledgement/recovery, completion events
+and aggregate updates. A separate focused repair is being verified to move
+that existing notification immediately after durability and sync wakeup.
+Its expected benefit is post-commit app response, distinct from the original
+wall-minus-engine residual. Neither this source finding nor a local fix is
+proof of the full production regression's cause.
+
 ### Initial Import Pipeline Diagnostic
 
 `runs/import-smoke-r1` completed with 40 unique successful executions and one
@@ -599,6 +684,7 @@ copying private source into the repository. Focused checks of that path,
 default import consumers and profile bootstrap passed 67 tests on each of
 Python 3.12 and 3.14, plus Ruff. The private portal source snapshot comprises
 18 files and 410,707 bytes; the two constant-result diagnostic wrappers make
-20 files and 411,390 bytes. No captured workflow body or provider call has
-been executed by that fixture yet. Its SHA-256 is
+20 files and 411,390 bytes. The fixture imports the captured modules and
+returns a constant; no captured workflow body or provider call executes.
+Its SHA-256 is
 `e4e59e45d8a23726666f285b4979bbc88e3a85deb5b73d8b34eb839e18263881`.

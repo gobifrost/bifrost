@@ -1,7 +1,34 @@
 # Interactive Integration Benchmark
 
-Status: initial import diagnostic implemented and pipeline-verified in the
-isolated benchmark. The V2 browser/fake-integration fixture remains planned.
+Status: deployed/current private portal import diagnostics completed with
+40 correct, traced actions each. Reviewing app result delivery is the urgent
+repair; hosting confirmation, soak and recovery work remain in the plan.
+The V2 browser/fake-integration fixture remains planned.
+
+## Immediate Priority: App Result Delivery
+
+Workflows serve as APIs for apps, so verify the complete app-facing result
+path before accepting a platform latency improvement. Historical fixes
+`390026147` (#483, July 14) and `dccd6f0e3` (#621, August 22) wake synchronous
+callers immediately after the authoritative completion transaction commits.
+That ordering survives the RabbitMQ retirement. V2 apps switched to async
+submission and WebSocket/GET result delivery in `082db6c5c` (#487). Their
+terminal execution notification still follows log acknowledgement/recovery,
+completion-event emission and derived aggregates. This leaves an observable
+post-commit dependency on bookkeeping despite the sync fix.
+
+Move the existing terminal notification after commit and sync-result wakeup,
+before follow-up bookkeeping. Preserve lease fencing, result/SDK-write/log
+durability, payload shape and existing transports. Verify blocked follow-up
+work cannot delay either async success or failure. One zero-job integration
+test should exercise the canonical consumer with real PostgreSQL, Redis,
+API WebSocket and result GET, holding metrics open while checking the result.
+Do not add a second execution path, client polling or detached work.
+
+This post-commit delivery gap is separate from the original 14.86 seconds
+between durable worker timestamps minus engine duration. Fixing it does not
+by itself explain that earlier interval or the 33-second outlier. Continue
+recording import, engine, completion commit and app delivery independently.
 
 The hosting benchmark needs an interactive, non-AI integration workload as well
 as SDK-heavy throughput and agent mixes. Recent user-reported Halo portal
@@ -43,6 +70,17 @@ group increased site residuals to about 3.0–3.2 seconds and contact residual t
 5.2 seconds, but actual starts clustered rather than reproducing the original
 arrival offsets. The original 33-second case remains unreproduced.
 
+The larger captured portal graph is now also measured, with the production
+Markdown dependency matched locally. Its two graph passes have worker-wall
+p50/p95 697.95/837.59 and 686.49/739.99 ms on deployed `c2`, versus
+538.68/648.36 and 534.72/590.97 ms on the newer runtime. Every execution in
+both 40-action diagnostics succeeded with correct output and one valid trace;
+cleanup was verified. These are import-only wrappers, not original workflow
+body, Halo, browser or hosting-capacity measurements. Preserve both private
+runs (`import-portal-prod-c2-r2`, `import-portal-current-r1`) and the earlier
+missing-Markdown failure. The local improvement does not reproduce the
+seconds-long production loading spans or establish a causal commit.
+
 The pre-remote `a00bb09e` runtime supports the existing isolated deployment:
 its API hosts control and creates its own image's worker Jobs, which inject a
 worker-local SDK Unix socket into each child. Compare it on its own schema and
@@ -81,9 +119,11 @@ and exceptions can use broader elapsed time, so this field is not a uniform
 child-wall-time measure for every outcome.
 
 Existing durable timestamps support `created_at → started_at` queue and
-`started_at → completed_at` worker-wall intervals. They do not isolate
-dependency loading. Completion is written before log staging and notification
-delivery, so durable completion is also not browser result availability.
+`started_at → completed_at` worker-wall intervals when those fields are
+present. They do not isolate dependency loading. The completion timestamp is
+assigned before log staging and transaction commit; notification delivery
+follows commit. Neither that timestamp nor engine duration measures browser
+result availability.
 
 The V2 `useWorkflow` path submits over REST, subscribes over the shared execution
 WebSocket and reconciles results over REST. A terminal WebSocket notification
