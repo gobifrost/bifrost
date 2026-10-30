@@ -1,5 +1,10 @@
 import type { components } from "@/lib/v1";
-import { getBifrostTransport, getPlatformAuth } from "./transport";
+import {
+  getBifrostTransport,
+  getPlatformAuth,
+  isRefreshRequiredChallenge,
+  REQUEST_REPLAY_BUDGET,
+} from "./transport";
 import { subscribeToTable } from "./ws-client";
 
 // Transport state lives in ./transport (shared with the ws client); re-export
@@ -127,24 +132,36 @@ async function http<T>(
   // Capture the v1 bridge token before the request. A delayed 401 can arrive
   // after another request already renewed the cookie session; in that case the
   // changed token proves this request should retry once without renewing again.
-  const attemptedToken = usingProvider
+  let attemptedToken = usingProvider
     ? null
     : (getPlatformAuth()?.getAccessToken() ?? null);
   let r = await send();
-  // v1 apps run on the host's 30-minute session cookie, and nothing else in
-  // the app renews it. Renew through the host's single-flight refresh and
-  // retry once. A provider transport (v2) already does this in its fetchImpl.
-  if (r.status === 401 && !usingProvider) {
+  // v1 apps run on the host's session cookie. A provider transport (v2)
+  // handles the same refresh_required challenge in its authenticated fetch.
+  // A generic 401 might have been produced after an endpoint effect, so leave
+  // it to the caller without replaying it.
+  let remaining = REQUEST_REPLAY_BUDGET;
+  while (remaining > 0 && isRefreshRequiredChallenge(r) && !usingProvider) {
+    remaining -= 1;
     const auth = getPlatformAuth();
     if (auth?.canRefreshAccessToken()) {
       const freshToken = auth.getAccessToken();
       if (freshToken && freshToken !== attemptedToken) {
+        attemptedToken = freshToken;
         r = await send();
       } else if (await auth.refreshAccessToken()) {
+        attemptedToken = auth.getAccessToken();
         r = await send();
+      } else {
+        break;
       }
-      if (r.status === 401) auth.handleAuthenticationFailure();
+    } else {
+      break;
     }
+  }
+  if (isRefreshRequiredChallenge(r) && !usingProvider) {
+    const auth = getPlatformAuth();
+    if (auth?.canRefreshAccessToken()) auth.handleAuthenticationFailure();
   }
   if (r.status === 403) {
     const body = await r.text().catch(() => "");

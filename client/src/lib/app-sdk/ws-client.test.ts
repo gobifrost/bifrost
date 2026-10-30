@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setBifrostTransport } from "./tables";
+import type { PlatformAuthBridge } from "./transport";
 import type { TableChangeMessage } from "./ws-client";
 import { buildWsUrl, subscribeToTable } from "./ws-client";
 
@@ -42,6 +43,9 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+	delete (globalThis as typeof globalThis & {
+		__BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge;
+	}).__BIFROST_PLATFORM_AUTH_V1__;
 });
 
 describe("subscribeToTable", () => {
@@ -151,6 +155,28 @@ describe("subscribeToTable", () => {
     expect(MockWebSocket.instances).toHaveLength(1);
     unsubscribe();
   });
+
+	it("stops a 4001 reconnect when host refresh fails", async () => {
+		const refreshAccessToken = vi.fn(async () => false);
+		const handleAuthenticationFailure = vi.fn();
+		(globalThis as typeof globalThis & {
+			__BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge;
+		}).__BIFROST_PLATFORM_AUTH_V1__ = {
+			getAccessToken: () => "expired",
+			canRefreshAccessToken: () => true,
+			refreshAccessToken,
+			handleAuthenticationFailure,
+		};
+		const unsubscribe = subscribeToTable("table-1", null, () => {});
+
+		MockWebSocket.instances[0].emit("close", { code: 4001 });
+		await Promise.resolve();
+
+		expect(refreshAccessToken).toHaveBeenCalledOnce();
+		expect(handleAuthenticationFailure).toHaveBeenCalledOnce();
+		expect(MockWebSocket.instances).toHaveLength(1);
+		unsubscribe();
+	});
 });
 
 describe("buildWsUrl", () => {
@@ -179,6 +205,11 @@ describe("buildWsUrl", () => {
     expect(url.pathname).toBe("/ws/connect");
     expect(url.searchParams.has("token")).toBe(false);
   });
+
+	it("keeps a same-origin provider token out of the websocket URL", () => {
+		restore = setBifrostTransport({ baseUrl: "", token: "browser-token" });
+		expect(new URL(buildWsUrl()).searchParams.has("token")).toBe(false);
+	});
 
   it("maps an http baseUrl to the ws: scheme", () => {
     restore = setBifrostTransport({

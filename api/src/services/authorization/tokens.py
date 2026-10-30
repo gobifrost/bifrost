@@ -1,4 +1,4 @@
-"""Access-token claims for runs: the schema, its encoding and the principal it yields.
+"""Shared human and runtime access claims, encoding and verified principals.
 
 An access token minted by ``issue_access_token`` carries the run's identity
 and authorization facts (``ver: 1``). ``principal_from_claims`` rebuilds from
@@ -8,8 +8,9 @@ already carries (``sub``, ``credential_kind``, ``service_id``) keep their
 meaning, so an API that validates every token from the database still
 accepts these tokens.
 
+Human tokens carry the same envelope and user facts without runtime powers.
 ``usr`` is zlib-compressed JSON, base64url-encoded: a person's grants are
-the bulk of a token, and the same format must fit a browser cookie later.
+the bulk of a token. Browser cookies transport these same signed bytes.
 Tokens are signed, not encrypted; their claims are readable.
 
 ``issue_access_token`` is the one minter. It reads every fact and the
@@ -17,8 +18,8 @@ authority epoch in one read-only ``REPEATABLE READ`` snapshot of the primary
 database (see ``authz``), so a token's facts and its ``av`` always describe
 the same committed state.
 
-Claims in a token minted here are authority while the token is unexpired, its
-``av`` still equals the authority epoch and its run is live.
+Claims in a token minted here are authority while the token is unexpired and
+its ``av`` still equals the authority epoch. Runtime tokens also require a live run.
 ``parse_runtime_claims`` followed by ``authenticate_runtime_token`` is the
 only path from such claims to an authenticated principal; it checks the epoch
 and the run in one statement on the request's own database session.
@@ -34,7 +35,7 @@ import time
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Any, Literal, overload
 from uuid import UUID, uuid4
 
 import jwt
@@ -50,7 +51,7 @@ from src.models.contracts.workflow_permissions import WorkflowGrant, WorkflowPer
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole
 from src.services.authorization.authz import AuthorityStateMissing, read_authority_state, read_epoch
-from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
+from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant, build_authorization_context
 from src.services.authorization.explain import Powers, RunUser
 from src.services.authorization.runtime import (
     RuntimeAuthority,
@@ -163,8 +164,8 @@ def _decode_user(value: str) -> dict[str, Any]:
     return json.loads(zlib.decompress(base64.urlsafe_b64decode(padded)))
 
 
-class AccessTokenClaims(_Claims):
-    """The ``ver: 1`` access-token payload for a run."""
+class _AccessClaims(_Claims):
+    """The shared signed envelope and compressed authorization facts."""
 
     iss: str
     aud: str
@@ -175,14 +176,8 @@ class AccessTokenClaims(_Claims):
     jti: str
     # Authority epoch at mint: the decimal string of a signed 64-bit value.
     av: str = Field(pattern=r"^-?[0-9]{1,19}$")
-    # The runtime credential id (the execution, service attempt or agent run).
     sub: UUID
-    credential_kind: RuntimeKind
-    service_id: UUID | None = None
     usr: UserClaims
-    act: ActorClaims | None = None
-    run: RunClaims
-    imp: ImpersonationClaims | None = None
 
     @field_validator("usr", mode="before")
     @classmethod
@@ -203,6 +198,22 @@ class AccessTokenClaims(_Claims):
         return self.model_dump(mode="json", exclude_none=True)
 
 
+class AccessTokenClaims(_AccessClaims):
+    """The ``ver: 1`` access-token payload for a run."""
+
+    credential_kind: RuntimeKind
+    service_id: UUID | None = None
+    act: ActorClaims | None = None
+    run: RunClaims
+    imp: ImpersonationClaims | None = None
+
+
+class HumanAccessTokenClaims(_AccessClaims):
+    """Human access facts; no runtime powers or capability fields."""
+
+    sid: UUID | None = None
+
+
 class RunRefreshClaims(_Claims):
     """A run refresh token: identity only, no expiry; valid while the run is
     live, and accepted only by ``/auth/refresh``."""
@@ -221,14 +232,14 @@ class RunRefreshClaims(_Claims):
         return self.model_dump(mode="json", exclude_none=True)
 
 
-def _encode_claims(claims: AccessTokenClaims | RunRefreshClaims) -> str:
+def _encode_claims(claims: AccessTokenClaims | HumanAccessTokenClaims | RunRefreshClaims) -> str:
     """Sign a run token, warning (never refusing) when an access token is large."""
     settings = get_settings()
     token = jwt.encode(claims.to_payload(), settings.secret_key, algorithm=settings.algorithm)
-    if isinstance(claims, AccessTokenClaims) and len(token) > TOKEN_SIZE_WARNING_BYTES:
+    if isinstance(claims, _AccessClaims) and len(token) > TOKEN_SIZE_WARNING_BYTES:
         logger.warning(
             "authz.token_size_warning: %s access token for %s is %d bytes (warning above %d)",
-            claims.credential_kind,
+            claims.credential_kind if isinstance(claims, AccessTokenClaims) else "human",
             claims.sub,
             len(token),
             TOKEN_SIZE_WARNING_BYTES,
@@ -266,15 +277,23 @@ def parse_runtime_claims(payload: dict[str, Any]) -> AccessTokenClaims | None:
     return claims
 
 
-def principal_from_claims(claims: AccessTokenClaims) -> UserPrincipal:
-    """The principal ``runtime_auth.load_runtime_principal`` would build.
+def parse_human_claims(payload: dict[str, Any]) -> HumanAccessTokenClaims | None:
+    """Parse only an exact, signature-verified human access payload."""
+    if payload.get("ver") != CLAIMS_VERSION:
+        return None
+    try:
+        claims = HumanAccessTokenClaims.model_validate(payload)
+    except ValidationError:
+        return None
+    if claims.sub != claims.usr.id or claims.usr.kind is not None or not claims.usr.active:
+        return None
+    if claims.usr.org is None and not _context_from_user(claims.usr).is_platform_admin:
+        return None
+    return claims
 
-    Authorization facts come from ``usr`` (the run user). The acting user
-    (``act``, or ``usr`` when absent) supplies only identity and the
-    SDK-visible role facts, as on the database path.
-    """
-    user = claims.usr
-    context = AuthorizationContext(
+
+def _context_from_user(user: UserClaims) -> AuthorizationContext:
+    return AuthorizationContext(
         user_id=user.id,
         home_organization_id=user.org,
         base_role_id=user.base.id,
@@ -290,6 +309,40 @@ def principal_from_claims(claims: AccessTokenClaims) -> UserPrincipal:
             if role.bnd
         ),
     )
+
+
+def _human_principal(claims: HumanAccessTokenClaims) -> UserPrincipal:
+    user = claims.usr
+    context = _context_from_user(user)
+    names = [role.name for role in user.roles]
+    return UserPrincipal(
+        user_id=user.id,
+        email=user.email,
+        name=user.name or "",
+        organization_id=user.org,
+        is_active=user.active,
+        is_verified=True,
+        is_superuser=context.is_platform_admin,
+        is_external=user.ext,
+        is_provider_org=user.prov,
+        roles=["authenticated", *names],
+        role_ids=[role.id for role in user.roles],
+        role_names=names,
+        authorization_context=context,
+        auth_session_id=claims.sid,
+        token_exp=claims.exp,
+    )
+
+
+def principal_from_claims(claims: AccessTokenClaims) -> UserPrincipal:
+    """The principal ``runtime_auth.load_runtime_principal`` would build.
+
+    Authorization facts come from ``usr`` (the run user). The acting user
+    (``act``, or ``usr`` when absent) supplies only identity and the
+    SDK-visible role facts, as on the database path.
+    """
+    user = claims.usr
+    context = _context_from_user(user)
     run_user = RunUser(user_id=user.id, ctx=context, identity_kind=user.kind, is_active=user.active)
 
     actor = claims.act
@@ -419,6 +472,18 @@ async def authenticate_runtime_token(db: AsyncSession, claims: AccessTokenClaims
     return RuntimeAuthResult(principal_from_claims(claims))
 
 
+async def authenticate_human_token(db: AsyncSession, claims: HumanAccessTokenClaims) -> RuntimeAuthResult:
+    """Authenticate human facts with one primary epoch lookup, no role cache."""
+    try:
+        epoch = await read_epoch(db)
+    except AuthorityStateMissing:
+        logger.error("authz.epoch_missing: refusing a human access token")
+        return RuntimeAuthResult(None, "authority_state_missing")
+    if int(claims.av) != epoch:
+        return RuntimeAuthResult(None, "refresh_required")
+    return RuntimeAuthResult(_human_principal(claims))
+
+
 # --- The minter ----------------------------------------------------------------
 
 
@@ -432,10 +497,25 @@ class RuntimeSubject:
 
 
 @dataclass(frozen=True)
+class HumanSubject:
+    """A database human, optionally bound to a durable refresh session."""
+
+    user_id: UUID
+    session_id: UUID | None = None
+
+
+@dataclass(frozen=True)
 class IssuedAccessToken:
     token: str
     expires_at: datetime
     claims: AccessTokenClaims
+
+
+@dataclass(frozen=True)
+class IssuedHumanAccessToken:
+    token: str
+    expires_at: datetime
+    claims: HumanAccessTokenClaims
 
 
 class TokenSubjectUnavailable(Exception):
@@ -446,7 +526,15 @@ def _now() -> int:
     return int(time.time())
 
 
-async def issue_access_token(subject: RuntimeSubject) -> IssuedAccessToken:
+@overload
+async def issue_access_token(subject: RuntimeSubject) -> IssuedAccessToken: ...
+
+
+@overload
+async def issue_access_token(subject: HumanSubject) -> IssuedHumanAccessToken: ...
+
+
+async def issue_access_token(subject: RuntimeSubject | HumanSubject) -> IssuedAccessToken | IssuedHumanAccessToken:
     """Mint a ``ver: 1`` access token for a live run.
 
     Every fact and the epoch come from one read-only ``REPEATABLE READ``
@@ -462,11 +550,68 @@ async def issue_access_token(subject: RuntimeSubject) -> IssuedAccessToken:
         await db.connection(
             execution_options={"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
         )
-        claims = await _snapshot_claims(db, subject)
-    return IssuedAccessToken(
-        token=_encode_claims(claims),
-        expires_at=datetime.fromtimestamp(claims.exp, timezone.utc),
-        claims=claims,
+        claims = (
+            await _snapshot_human_claims(db, subject)
+            if isinstance(subject, HumanSubject)
+            else await _snapshot_claims(db, subject)
+        )
+    token = _encode_claims(claims)
+    expires_at = datetime.fromtimestamp(claims.exp, timezone.utc)
+    if isinstance(claims, HumanAccessTokenClaims):
+        return IssuedHumanAccessToken(token, expires_at, claims)
+    return IssuedAccessToken(token, expires_at, claims)
+
+
+async def _snapshot_human_claims(db: AsyncSession, subject: HumanSubject) -> HumanAccessTokenClaims:
+    row = (
+        await db.execute(
+            select(
+                User.id, User.email, User.name, User.organization_id,
+                User.is_external, User.identity_kind, User.is_active, User.is_system, Organization.is_provider,
+            )
+            .outerjoin(Organization, Organization.id == User.organization_id)
+            .where(User.id == subject.user_id)
+        )
+    ).one_or_none()
+    if row is None or not row.is_active or row.is_system or row.identity_kind is not None:
+        raise TokenSubjectUnavailable("The human account is not available.")
+    context = await build_authorization_context(db, subject.user_id)
+    if context.home_organization_id is None and not context.is_platform_admin:
+        raise TokenSubjectUnavailable("A human account without an organization must be a Platform Admin.")
+    held_roles = (
+        await db.execute(
+            select(Role.id, Role.name)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .where(UserRole.user_id == subject.user_id)
+            .order_by(Role.name, Role.id)
+        )
+    ).all()
+    permissions: dict[UUID, list[str]] = {role.id: [] for role in held_roles}
+    if permissions:
+        for role_id, permission in (
+            await db.execute(
+                select(RolePermission.role_id, RolePermission.permission)
+                .where(RolePermission.role_id.in_(permissions))
+            )
+        ).all():
+            permissions[role_id].append(permission)
+    boundaries = {grant.role_id: grant.boundaries for grant in context.role_grants}
+    settings = get_settings()
+    now = _now()
+    return HumanAccessTokenClaims(
+        iss=settings.jwt_issuer, aud=settings.jwt_audience, iat=now,
+        exp=now + ACCESS_TOKEN_MIN_SECONDS + secrets.randbelow(ACCESS_TOKEN_SPREAD_SECONDS + 1),
+        jti=str(uuid4()), av=str(await read_epoch(db)), sub=row.id, sid=subject.session_id,
+        usr=UserClaims(
+            id=row.id, email=row.email, name=row.name, kind=row.identity_kind,
+            org=row.organization_id, ext=bool(row.is_external), prov=bool(row.is_provider),
+            active=row.is_active,
+            base=BaseRoleClaim(id=context.base_role_id, perm=sorted(context.base_permissions)),
+            roles=[RoleClaim(
+                id=role.id, name=role.name, perm=sorted(permissions[role.id]),
+                bnd=[(b.kind, b.organization_id) for b in boundaries.get(role.id, ())],
+            ) for role in held_roles],
+        ),
     )
 
 

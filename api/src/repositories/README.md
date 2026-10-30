@@ -12,16 +12,17 @@ services in `src.services.authorization`.
 ## Authority model
 
 Authorization starts from database-backed facts. `load_caller` builds an
-`AuthorizationContext` for a direct user. A runtime principal comes from one of
+`AuthorizationContext` from a validated human token, or from current database
+records for an in-process or impersonation caller. A runtime principal comes from one of
 two places, and `load_caller` then uses the run's original user context:
 
 - **Claims in an access token minted by `tokens.issue_access_token` are
   authority while the token is unexpired, its authority version is current and
-  its run is live.** The minter reads every fact and the authority epoch in one
-  `REPEATABLE READ` snapshot; `tokens.parse_runtime_claims` followed by
-  `tokens.authenticate_runtime_token` is the only path from those claims to an
-  authenticated principal, checking the epoch and the run's liveness in one
-  statement. A change to any fact a token carries changes the epoch (database
+  any runtime run is live.** The minter reads every fact and the authority epoch in one
+  `REPEATABLE READ` snapshot; `tokens.parse_human_claims` / `tokens.parse_runtime_claims` followed by
+  their authentication validators are the only paths to authenticated claims
+  principals. Human validation reads the primary epoch once; runtime validation
+  checks the epoch and run liveness in one statement. A change to any fact a token carries changes the epoch (database
   triggers, `services/authorization/authz.py`), and the token is refused with
   the `refresh_required` challenge.
 - `runtime_auth.load_runtime_principal` reconstructs a runtime principal from a

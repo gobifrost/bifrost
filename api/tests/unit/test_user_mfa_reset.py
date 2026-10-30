@@ -19,7 +19,7 @@ from src.services.mfa_service import MFAService
 from src.services.user_mfa_reset import PASSKEY_ONLY_MESSAGE, SELF_RESET_MESSAGE, reset_user_mfa
 from tests.helpers.authorization import admin_caller, handlers_as
 
-REVOKE = "src.routers.auth.revoke_all_user_refresh_tokens"
+REVOKE = "shared.human_sessions.revoke_all_human_sessions_in_transaction"
 
 
 async def _seed_user(db, *, password: str | None = "hashed", totp: bool = True, passkeys: int = 0) -> UserORM:
@@ -77,7 +77,7 @@ class TestResetUserMfa:
         with patch(REVOKE, new=AsyncMock(return_value=4)) as revoke:
             result = await reset_user_mfa(db_session, admin_caller(), user.id)
 
-        revoke.assert_awaited_once_with(str(user.id))
+        revoke.assert_awaited_once_with(db_session, user.id)
         assert result.model_dump() == {
             "totp_removed": True,
             "recovery_codes_removed": 3,

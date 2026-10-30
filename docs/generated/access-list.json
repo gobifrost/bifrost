@@ -9026,7 +9026,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9071,7 +9070,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9132,7 +9130,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9218,12 +9215,8 @@
     "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
@@ -9278,12 +9271,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
@@ -9326,7 +9315,6 @@
     "current_gate": "none",
     "inline_checks": [
       "is_platform_admin",
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9399,7 +9387,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9457,12 +9444,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
@@ -9521,7 +9504,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9566,8 +9548,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9737,10 +9717,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "GET",
@@ -9767,12 +9745,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",

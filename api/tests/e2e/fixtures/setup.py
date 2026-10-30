@@ -105,8 +105,7 @@ def _register_and_authenticate_user(
         assert response.status_code == 200, f"MFA verify failed: {response.text}"
         verify_data = response.json()
 
-        user.access_token = verify_data["access_token"]
-        user.refresh_token = verify_data["refresh_token"]
+        user.set_tokens(verify_data["access_token"], verify_data["refresh_token"])
 
         logger.info(f"Authenticated user: {user.email}")
         return user
@@ -145,8 +144,7 @@ def _login_user(user: E2EUser) -> E2EUser:
             assert response.status_code == 200, f"MFA login failed: {response.text}"
             login_data = response.json()
 
-        user.access_token = login_data["access_token"]
-        user.refresh_token = login_data["refresh_token"]
+        user.set_tokens(login_data["access_token"], login_data["refresh_token"])
         return user
 
 

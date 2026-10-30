@@ -33,7 +33,7 @@ from src.models.orm.users import User
 from src.services.authorization import tokens
 from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
 from src.services.authorization.authz import ANY_COLUMN, AUTHZ_FACTS
-from src.services.authorization.tokens import RuntimeSubject, issue_access_token
+from src.services.authorization.tokens import HumanSubject, RuntimeSubject, issue_access_token
 from tests.unit.authorization.committed_runs import World, committed_world
 
 _EPOCH_TABLE = "authz_versions"
@@ -201,6 +201,7 @@ async def _capture_minting(engine: AsyncEngine, extra: Any = None) -> set[tuple[
     statement the minter runs inside its snapshot (a meta-test's injected read)."""
     async with committed_world(engine) as world:
         subjects = [await build(world) for build in _SCENARIOS]
+        human = await world.person(await world.organization())
         await world.session.commit()
         real_read_epoch = tokens.read_epoch
 
@@ -214,6 +215,7 @@ async def _capture_minting(engine: AsyncEngine, extra: Any = None) -> set[tuple[
             async with _capturing() as reads:
                 for subject in subjects:
                     await issue_access_token(subject)
+                await issue_access_token(HumanSubject(human.id))
         finally:
             tokens.read_epoch = real_read_epoch  # type: ignore[assignment]
     return set(reads)

@@ -116,14 +116,15 @@ def create_refresh_token(
     Create a JWT refresh token with JTI for revocation support.
 
     Refresh tokens have longer expiration and are used to obtain new access tokens.
-    Each token has a unique JTI (JWT ID) that must be stored in Redis for validation.
+    Each token has a unique JTI (JWT ID). The human-session service stores its
+    hash in the durable session registry before publishing the credential.
 
     Args:
         data: Dictionary of claims to encode in the token
         expires_delta: Optional custom expiration time
 
     Returns:
-        Tuple of (encoded JWT token string, JTI for Redis storage)
+        Tuple of (encoded JWT token string, JTI for the durable session registry)
     """
     import uuid
 

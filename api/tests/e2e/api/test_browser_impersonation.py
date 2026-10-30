@@ -107,6 +107,7 @@ def test_browser_impersonation_cookie_overrides_human_credentials_and_exits_fail
             ("/auth/mfa/totp/setup", {}),
             ("/auth/mfa/totp/verify", {"code": "123456"}),
             ("/auth/mfa/recovery-codes/regenerate", {"mfa_code": "123456"}),
+            ("/api/profile/password", {"new_password": "New-password-42!"}),
         ):
             denied = browser.post(path, headers=caller.headers, json=body)
             assert denied.status_code == 403, (path, denied.text)

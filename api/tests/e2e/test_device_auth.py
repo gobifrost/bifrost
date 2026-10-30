@@ -6,6 +6,8 @@ Tests the complete flow from device code request → user authorization → toke
 
 import pytest
 import httpx
+import jwt
+import time
 
 
 @pytest.mark.e2e
@@ -97,6 +99,9 @@ def test_device_flow_complete_success(
     assert "token_type" in token_data
     assert "expires_in" in token_data
     assert token_data["token_type"] == "bearer"
+    payload = jwt.decode(token_data["access_token"], options={"verify_signature": False})
+    assert abs(payload["exp"] - time.time() - token_data["expires_in"]) < 3
+    assert 3500 < token_data["expires_in"] <= 5400
 
     # Verify access token works
     response = e2e_client.get(

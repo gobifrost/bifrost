@@ -570,7 +570,14 @@ function installBridge(over: Partial<PlatformAuthBridge> = {}) {
 	return bridge;
 }
 
-const unauth = () => new Response('{"detail":"Not authenticated"}', { status: 401 });
+const unauth = () =>
+	new Response('{"detail":"Not authenticated"}', {
+		status: 401,
+		headers: {
+			"WWW-Authenticate":
+				'Bearer error="invalid_token", error_description="refresh_required"',
+		},
+	});
 const page = () =>
 	new Response(JSON.stringify({ documents: [], table_id: "tbl", total: 0 }), {
 		status: 200,
@@ -578,6 +585,18 @@ const page = () =>
 	});
 
 describe("session renewal on 401 (same-origin v1 transport)", () => {
+	it("does not replay a generic 401 mutation", async () => {
+		const bridge = installBridge();
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(new Response('{"detail":"Not authenticated"}', { status: 401 }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(tables.insert("t1", { k: "v" })).rejects.toThrow(/tables: 401/);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(bridge.refreshAccessToken).not.toHaveBeenCalled();
+	});
+
 	it("renews once and retries the request", async () => {
 		const bridge = installBridge();
 		const fetchMock = vi.fn().mockResolvedValueOnce(unauth()).mockResolvedValueOnce(page());
@@ -637,14 +656,14 @@ describe("session renewal on 401 (same-origin v1 transport)", () => {
 		expect(bridge.handleAuthenticationFailure).toHaveBeenCalledTimes(1);
 	});
 
-	it("retries at most once and hands off when the retry is still 401", async () => {
+	it("uses the bounded recovery budget before handing off a persistent challenge", async () => {
 		const bridge = installBridge();
 		const fetchMock = vi.fn().mockImplementation(async () => unauth());
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(tables.query("t1")).rejects.toThrow(/tables: 401/);
-		expect(fetchMock).toHaveBeenCalledTimes(2);
-		expect(bridge.refreshAccessToken).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(4);
+		expect(bridge.refreshAccessToken).toHaveBeenCalledTimes(3);
 		expect(bridge.handleAuthenticationFailure).toHaveBeenCalledTimes(1);
 	});
 

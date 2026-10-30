@@ -20,8 +20,8 @@ which refuses any token the database does not back, cover it.
   run-credential issuer and the legacy service rotation;
 - ``create_access_token`` is used only by reviewed functions, and never
   imported under another name. Those are embed tokens and impersonation
-  markers (which keep their own formats), the MCP bridge's people branch,
-  and the people sites PR2 moves to ``issue_access_token``.
+  markers, which keep their own formats. All human and runtime access facts
+  come from ``issue_access_token``.
 """
 
 from __future__ import annotations
@@ -69,17 +69,6 @@ _CREATE_ACCESS_TOKEN_SITES = {
     # Their own formats, unchanged by the token program.
     "src.core.security:create_embed_access_token",
     "shared.browser_impersonation:create_browser_impersonation",
-    # The MCP bridge's people branch (PR2); its runtime branch uses
-    # issue_access_token.
-    "src.services.mcp_server.tools._http_bridge:_token_from_context",
-    # People: PR2 moves these to issue_access_token.
-    "src.routers.auth:_generate_login_tokens",
-    "src.routers.auth:mfa_initial_verify",
-    "src.routers.auth:refresh_token",
-    "src.routers.auth:setup_passkey_verify",
-    "src.routers.mfa:verify_mfa",
-    "src.routers.oauth_sso:oauth_callback",
-    "src.services.mcp_server.auth:BifrostAuthProvider._token",
 }
 
 

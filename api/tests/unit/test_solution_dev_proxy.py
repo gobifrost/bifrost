@@ -212,7 +212,7 @@ def _make_auth_refresh_upstream(record):
         record.setdefault("auth_headers", []).append(auth)
         if auth == "Bearer fresh-token":
             return web.json_response({"email": "dev@gobifrost.com", "name": "Dev User"})
-        return web.json_response({"detail": "Not authenticated"}, status=401)
+        return web.json_response({"detail": "Not authenticated"}, status=401, headers={"WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"'})
 
     async def branding(_request):
         record["branding_requested"] = True
@@ -717,6 +717,41 @@ async def test_api_proxy_refreshes_cli_token_once_after_401():
         assert r.json()["email"] == "dev@gobifrost.com"
         assert record["refresh_called"] == "stale-token"
         assert record["auth_headers"] == ["Bearer stale-token", "Bearer fresh-token"]
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+@pytest.mark.parametrize("challenge", [False, True], ids=["effectful-generic-401", "bounded-auth-challenge"])
+async def test_api_proxy_only_replays_exact_auth_challenges_with_a_budget(challenge):
+    calls = []
+    refreshes = []
+
+    async def write(request):
+        calls.append(await request.json())
+        headers = {"WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"'} if challenge else {}
+        return web.json_response({"detail": "refused"}, status=401, headers=headers)
+
+    upstream = web.Application()
+    upstream.router.add_post("/api/write", write)
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(upstream, up_port)
+
+    async def refresh_token(observed_token):
+        refreshes.append(observed_token)
+        return f"rotated-{len(refreshes)}"
+
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}", token="initial-token",
+        app_id="A", org_id="O", refresh_token=refresh_token,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, _StubHost(set()), vite_url="http://127.0.0.1:1"), dev_port)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(f"http://127.0.0.1:{dev_port}/api/write", json={"value": 1})
+        assert response.status_code == 401
+        assert calls == [{"value": 1}] * (4 if challenge else 1)
+        assert len(refreshes) == (3 if challenge else 0)
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()

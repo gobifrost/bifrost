@@ -29,7 +29,7 @@ import {
 	setImpersonationToken,
 } from "@/lib/auth-token";
 import { clearPreferredSsoRedirectAttempt } from "@/services/auth";
-import { refreshAccessToken } from "@/lib/api-client";
+import { authFetch, refreshAccessToken } from "@/lib/api-client";
 import { getErrorMessage } from "@/lib/api-error";
 import type { components } from "@/lib/v1";
 
@@ -91,7 +91,7 @@ interface AuthContextValue {
 		state: string,
 	) => Promise<void>;
 	loginWithPasskey: (email?: string) => Promise<void>;
-	completeLoginWithToken: (accessToken: string) => void;
+	completeLoginWithToken: (accessToken: string) => Promise<void>;
 	logout: () => void;
 	refreshToken: () => Promise<boolean>;
 	checkAuthStatus: () => Promise<void>;
@@ -104,6 +104,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 // Token storage keys
 // Note: Refresh token is stored in HttpOnly cookie only (more secure)
 const USER_KEY = "bifrost_user";
+const IDENTITY_RELOAD_BUDGET = 3;
 
 // JWT payload structure
 interface JwtPayload {
@@ -153,6 +154,18 @@ function extractUser(payload: JwtPayload): AuthUser {
 	};
 }
 
+function userFromResponse(user: components["schemas"]["UserResponse"]): AuthUser {
+	return {
+		id: user.id,
+		email: user.email,
+		name: user.name,
+		userType: user.is_superuser ? "PLATFORM" : "ORG",
+		isSuperuser: user.is_superuser,
+		organizationId: user.organization_id,
+		roles: user.roles,
+	};
+}
+
 // Check if token is expired (with 30s buffer)
 function isTokenExpired(token: string): boolean {
 	const payload = parseJwt(token);
@@ -171,20 +184,52 @@ export function AuthProvider({ children }: AuthProviderProps) {
 	const navigate = useNavigate();
 	const location = useLocation();
 
-	const completeLoginWithToken = useCallback((accessToken: string): void => {
+	const loadCurrentUser = useCallback(async (accessToken: string): Promise<boolean> => {
+		let token = accessToken;
+		for (let attempt = 0; attempt < IDENTITY_RELOAD_BUDGET; attempt += 1) {
+			try {
+				const response = await authFetch("/auth/me", {
+					headers: { Authorization: `Bearer ${token}` },
+				});
+				if (!response.ok) return false;
+
+				// A challenge-driven retry can rotate the access token. Re-read with
+				// the new token so a late response for an older identity cannot win.
+				const activeToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+				if (!activeToken) return false;
+				if (activeToken !== token) {
+					token = activeToken;
+					continue;
+				}
+
+				const current = userFromResponse(
+					(await response.json()) as components["schemas"]["UserResponse"],
+				);
+				// Logout or another tab can change state while the body is read.
+				const latestToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+				if (!latestToken) return false;
+				if (latestToken !== token) {
+					token = latestToken;
+					continue;
+				}
+				setUser(current);
+				localStorage.setItem(USER_KEY, JSON.stringify(current));
+				sessionStorage.setItem("userId", current.id);
+				return true;
+			} catch {
+				return false;
+			}
+		}
+		return false;
+	}, []);
+
+	const completeLoginWithToken = useCallback(async (accessToken: string): Promise<void> => {
 		clearEmbedToken();
 		clearImpersonationToken();
 		clearPreferredSsoRedirectAttempt();
 		localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-
-		const payload = parseJwt(accessToken);
-		if (payload) {
-			const extractedUser = extractUser(payload);
-			setUser(extractedUser);
-			localStorage.setItem(USER_KEY, JSON.stringify(extractedUser));
-			sessionStorage.setItem("userId", extractedUser.id);
-		}
-	}, []);
+		await loadCurrentUser(accessToken);
+	}, [loadCurrentUser]);
 
 	// Internal refresh function (no hooks)
 	// Uses HttpOnly cookie for refresh token (browser sends it automatically)
@@ -195,24 +240,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			// during bootstrap can invalidate an otherwise valid browser session.
 			if (!(await refreshAccessToken())) return false;
 			const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
-			if (accessToken) {
-				const payload = parseJwt(accessToken);
-				if (payload) {
-					const extractedUser = extractUser(payload);
-					setUser(extractedUser);
-					localStorage.setItem(
-						USER_KEY,
-						JSON.stringify(extractedUser),
-					);
-					sessionStorage.setItem("userId", extractedUser.id);
-				}
-				return true;
-			}
+			if (accessToken) return loadCurrentUser(accessToken);
 			return false;
 		} catch {
 			return false;
 		}
-	}, []);
+	}, [loadCurrentUser]);
 
 	// Check auth status on mount
 	const checkAuthStatus = useCallback(async () => {
@@ -270,15 +303,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
 				}
 			}
 
-			// Parse user from token (re-read in case it was refreshed)
+			// Embed and support-session tokens keep their display-only claims. A
+			// normal human token carries compressed authorization claims, so load
+			// canonical identity and current roles from /auth/me instead.
 			const currentToken = getActiveToken();
 			const payload = parseJwt(currentToken || token);
-			if (payload) {
+			if (payload && (isEmbedSession() || isImpersonating())) {
 				const extractedUser = extractUser(payload);
 				setUser(extractedUser);
-
-				// Store user ID for org context
 				sessionStorage.setItem("userId", extractedUser.id);
+			} else if (currentToken && !(await loadCurrentUser(currentToken))) {
+				setUser(null);
 			}
 		} catch (error) {
 			console.error("Auth check failed:", error);
@@ -286,7 +321,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		} finally {
 			setIsLoading(false);
 		}
-	}, [refreshTokenInternal]);
+	}, [loadCurrentUser, refreshTokenInternal]);
 
 	// Login with email/password
 	const login = useCallback(
@@ -329,7 +364,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 			// Success - store access token (refresh token is in HttpOnly cookie)
 			if (data.access_token) {
-				completeLoginWithToken(data.access_token);
+				await completeLoginWithToken(data.access_token);
 				return { success: true };
 			}
 
@@ -363,7 +398,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			const data = await res.json();
 
 			if (data.access_token) {
-				completeLoginWithToken(data.access_token);
+				await completeLoginWithToken(data.access_token);
 			}
 		},
 		[completeLoginWithToken],
@@ -396,7 +431,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			const data = await res.json();
 
 			if (data.access_token) {
-				completeLoginWithToken(data.access_token);
+				await completeLoginWithToken(data.access_token);
 			}
 		},
 		[completeLoginWithToken],
@@ -412,7 +447,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			const tokens = await authenticateWithPasskey(email);
 
 			if (tokens.access_token) {
-				completeLoginWithToken(tokens.access_token);
+				await completeLoginWithToken(tokens.access_token);
 			}
 		},
 		[completeLoginWithToken],
@@ -463,6 +498,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 	useEffect(() => {
 		const handleStorage = (event: StorageEvent) => {
 			if (event.storageArea !== localStorage || isEmbedSession()) return;
+			if (event.key === ACCESS_TOKEN_KEY && event.newValue) {
+				void loadCurrentUser(event.newValue);
+				return;
+			}
 			if (
 				event.key === IMPERSONATION_TOKEN_KEY ||
 				(event.key === ACCESS_TOKEN_KEY && event.newValue === null)
@@ -472,7 +511,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		};
 		window.addEventListener("storage", handleStorage);
 		return () => window.removeEventListener("storage", handleStorage);
-	}, []);
+	}, [loadCurrentUser]);
+
+	useEffect(() => {
+		const refreshIdentity = () => {
+			if (isEmbedSession() || isImpersonating()) return;
+			const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+			if (token) void loadCurrentUser(token);
+		};
+		window.addEventListener("bifrost:access-token-refreshed", refreshIdentity);
+		return () =>
+			window.removeEventListener("bifrost:access-token-refreshed", refreshIdentity);
+	}, [loadCurrentUser]);
 
 	const startImpersonation = useCallback(
 		async (target: ImpersonationTarget): Promise<void> => {
@@ -517,19 +567,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		// Restore one fresh operator token before the storage event reloads the
 		// other tabs. Otherwise an expired operator token makes every tab race
 		// to rotate the same single-use refresh cookie independently.
-		const restored = await fetch("/api/auth/refresh", {
-			method: "POST",
-			credentials: "same-origin",
-		});
-		if (!restored.ok) throw new Error("Could not restore your operator session");
-		const tokens = (await restored.json()) as components["schemas"]["Token"];
-		if (!tokens.access_token) throw new Error("Operator session did not return an access token");
-		localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
+		if (!(await refreshAccessToken({ allowImpersonation: true }))) {
+			throw new Error("Could not restore your operator session");
+		}
+		const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+		if (!accessToken) throw new Error("Operator session did not return an access token");
+		// refreshAccessToken emits its identity event before this marker is
+		// cleared; the listener intentionally ignores support sessions. Load the
+		// restored operator only after clearing it, so no target identity can win.
 		clearImpersonationToken();
-		const payload = parseJwt(tokens.access_token);
-		if (payload) sessionStorage.setItem("userId", extractUser(payload).id);
+		if (!(await loadCurrentUser(accessToken))) {
+			throw new Error("Could not load your restored operator session");
+		}
 		window.location.assign("/users");
-	}, []);
+	}, [loadCurrentUser]);
 
 	// Refresh token
 	const refreshToken = useCallback(async (): Promise<boolean> => {

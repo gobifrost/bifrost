@@ -116,9 +116,15 @@ test.describe("Login Flow", () => {
 			await expect(mfaInput).toBeVisible();
 			const totpCode = generateTOTP(user.totpSecret);
 			await mfaInput.fill(totpCode);
+			const identity = page.waitForResponse(
+				(response) =>
+					new URL(response.url()).pathname === "/auth/me" &&
+					response.request().method() === "GET",
+			);
 			await page
 				.getByRole("button", { name: /verify|submit|continue/i })
 				.click();
+			await expect(await identity).toBeOK();
 
 			// Should redirect to dashboard (wait for not being on login page)
 			await page.waitForURL((url) => !url.pathname.includes("/login"), {

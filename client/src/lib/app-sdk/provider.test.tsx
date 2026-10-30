@@ -21,6 +21,16 @@ function setPlatformAuth(bridge: TestPlatformAuthBridge): void {
 		bridge;
 }
 
+function refreshRequiredResponse(): Response {
+	return new Response("{}", {
+		status: 401,
+		headers: {
+			"WWW-Authenticate":
+				'Bearer error="invalid_token", error_description="refresh_required"',
+		},
+	});
+}
+
 afterEach(() => {
 	delete (globalThis as TestPlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__;
 });
@@ -155,7 +165,7 @@ describe("BifrostProvider", () => {
 		expect(screen.queryByText("Not authenticated")).not.toBeInTheDocument();
 	});
 
-	it("refreshes once after a 401 and retries the request with the rotated token", async () => {
+	it("refreshes once after the exact challenge and retries with the rotated token", async () => {
 		let liveToken = "tok-old";
 		const refreshAccessToken = vi.fn(async () => {
 			liveToken = "tok-new";
@@ -174,9 +184,9 @@ describe("BifrostProvider", () => {
 				const authorization =
 					new Headers(init?.headers).get("Authorization") ?? "";
 				seen.push(authorization);
-				return new Response("{}", {
-					status: authorization === "Bearer tok-old" ? 401 : 200,
-				});
+				return authorization === "Bearer tok-old"
+					? refreshRequiredResponse()
+					: new Response("{}", { status: 200 });
 			},
 		);
 		const callSdkRef = createRef<typeof fetch>();
@@ -220,7 +230,7 @@ describe("BifrostProvider", () => {
 		});
 		const fakeFetch = vi
 			.fn()
-			.mockResolvedValue(new Response("{}", { status: 401 }));
+			.mockResolvedValue(refreshRequiredResponse());
 		const callSdkRef = createRef<typeof fetch>();
 
 		function Caller() {
@@ -242,6 +252,41 @@ describe("BifrostProvider", () => {
 		expect(response.status).toBe(401);
 		expect(handleAuthenticationFailure).toHaveBeenCalledTimes(1);
 		expect(fakeFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not replay a generic 401 mutation", async () => {
+		const refreshAccessToken = vi.fn(async () => true);
+		setPlatformAuth({
+			getAccessToken: () => "tok-old",
+			canRefreshAccessToken: () => true,
+			refreshAccessToken,
+			handleAuthenticationFailure: vi.fn(),
+		});
+		const fakeFetch = vi
+			.fn()
+			.mockResolvedValue(new Response("{}", { status: 401 }));
+		const callSdkRef = createRef<typeof fetch>();
+
+		function Caller() {
+			const { authedFetch } = useBifrostContext();
+			useEffect(() => {
+				callSdkRef.current = authedFetch;
+			}, [authedFetch]);
+			return null;
+		}
+
+		render(
+			<BifrostProvider baseUrl="/" token="tok-old" fetchImpl={fakeFetch}>
+				<Caller />
+			</BifrostProvider>,
+		);
+		await waitFor(() => expect(callSdkRef.current).toBeDefined());
+		await expect(
+			callSdkRef.current!("/api/workflows/execute", { method: "POST" }),
+		).resolves.toMatchObject({ status: 401 });
+
+		expect(fakeFetch).toHaveBeenCalledTimes(1);
+		expect(refreshAccessToken).not.toHaveBeenCalled();
 	});
 
   it("treats / as the browser's same-origin transport", async () => {

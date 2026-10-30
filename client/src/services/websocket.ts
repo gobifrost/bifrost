@@ -598,7 +598,8 @@ class WebSocketService {
 							console.warn(
 								"[WebSocket] Token expired, refreshing before reconnect",
 							);
-							await refreshAccessToken();
+							const refreshed = await refreshAccessToken();
+							if (!refreshed) return;
 						}
 						this.connect(Array.from(this.subscribedChannels));
 					}, delay);
