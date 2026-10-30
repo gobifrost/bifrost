@@ -698,7 +698,8 @@ async def test_ownership_check_failing_past_the_lease_closes_the_control_socket(
     # Checks at 100, 102, ... 118; after 118 a 2 s retry would end at the lease.
     assert owns.await_count == 10
     assert clock.now == 118.0
-    assert not reply.done()
+    # The reply was never accepted: closing the socket failed its waiter.
+    assert isinstance(reply.exception(), ConnectionError)
 
 
 @pytest.mark.asyncio
@@ -742,4 +743,5 @@ async def test_ownership_check_finding_the_fence_replaced_closes_without_retryin
     sleep.assert_not_awaited()
     session.lose_ownership.assert_awaited_once_with("Remote API owner fence was replaced")
     socket.close.assert_awaited_once_with(code=1008)
-    assert not reply.done()
+    # The reply was never accepted: closing the socket failed its waiter.
+    assert isinstance(reply.exception(), ConnectionError)
