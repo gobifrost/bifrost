@@ -1,6 +1,7 @@
-# Authentication Consolidation — Unfinished
+# Authentication Consolidation — PR2 Delivery
 
-Status: **implementation and verification in progress; not complete** (2026-10-30).
+Status: **PR2 implemented and focused verification passed; protected merge pending**
+(2026-10-30). PR1c remains deferred to a later release.
 Owner: this authentication chat, branch `codex/auth-consolidation`, isolated
 worktree `/home/jack/.codex/worktrees/auth-consolidation/bifrost`.
 
@@ -125,15 +126,20 @@ leaving one serving would permit revocation bypass and break new sessions.
 - [x] Build the cross-surface coverage inventory above.
 - [x] Independent Astra architecture review; replace Redis dual-write/JTI-only proposal
       with durable session families, explicit maintenance cutover and WebSocket checks.
-- [ ] Finish shared human claims/session implementation and all consumer adjustments.
-- [ ] Focused Docker API type/lint, auth/runtime/authorization/consumer/contract tests.
-- [ ] Live human refresh/revocation, concurrency and credential-reset verification.
-- [ ] Focused browser/V2 SDK auth and one Playwright happy path.
-- [ ] Independent exact-candidate security review and dispositions.
+- [x] Finish shared human claims/session implementation and all consumer adjustments.
+- [x] Focused Docker API type/lint, auth/runtime/authorization/consumer/contract tests.
+- [x] Live human refresh/revocation, concurrency and credential-reset verification.
+- [x] Focused browser/V2 SDK auth and one Playwright happy path.
+- [x] Independent exact-candidate security review and dispositions.
 - [ ] Product Updates classification/prose, current-main clean candidate and PR.
 - [ ] Protected CI/merge lifecycle with existing authorization; no production deploy.
-- [ ] Benchmark comparison coordinated with the sibling, without editing its harness
+- [x] Benchmark comparison coordinated with the sibling, without editing its harness
       or claiming unavailable measurements. Performance benefit remains unmeasured.
+
+Final focused commands, results, timings and limits are in
+[Authentication Verification](2026-10-30-authentication-verification.md). All
+known diagnostic failures have concrete dispositions in the independent review
+record. No full-suite or performance success is claimed.
 
 Initial diagnostic: **58 focused unit tests passed**, no failures/errors/skips;
 JUnit `/tmp/bifrost-auth-initial-unit.xml`. API pyright: zero errors/warnings.

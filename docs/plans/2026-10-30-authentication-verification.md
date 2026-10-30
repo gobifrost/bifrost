@@ -1,7 +1,8 @@
 # Authentication Consolidation Verification
 
 Candidate: `codex/auth-consolidation`, based on `a1edc19fd`.
-Status: final late-correction checks pending. This is local delivery evidence,
+Status: focused verification passed through source candidate `310b1f2f4`.
+This is local delivery evidence,
 not deployment approval or a performance result.
 
 All Docker/client workloads acquire `/tmp/bifrost-capacity-host.lock` and retain
@@ -40,14 +41,28 @@ runtime refresh. JUnit: `/tmp/bifrost-auth-focused-e2e.xml`.
 ./test.sh quality api
 ```
 
-API quality passed with zero pyright errors/warnings and clean ruff. The final
-late SDK-status correction and remaining fixture callers require these checks:
+API quality passed with zero pyright errors/warnings and clean ruff. The late
+worker/SDK selection passed 100 of 101 tests, including all SDK-status cases.
+The only failure was the workflow-list expectation documented in the review
+record. Its corrected class then passed all six tests. Both remaining live
+consumer cases passed (workspace requester binding and external attribution).
+JUnit: `/tmp/bifrost-auth-review-correction-r5-failure.xml`,
+`/tmp/bifrost-auth-worker-list-correction.xml` and
+`/tmp/bifrost-auth-final-extra-e2e.xml`.
 
 ```bash
 ./test.sh tests/unit/services/test_worker_sdk_http.py tests/unit/test_application_sdk_status.py tests/unit/test_solution_sdk_aggregates.py -q --durations=10
+./test.sh tests/unit/services/test_worker_sdk_http.py::TestSocketWorkflowsAndExecutions -q --durations=10
 ./test.sh tests/e2e/platform/test_workspace_bundle_import.py::test_workspace_bundle_preview_enforces_auth_requester_expiry_and_active_dedupe tests/e2e/api/test_access_check_attribution.py::test_external_provider_claim_and_agent_access_checks -v --durations=10
 ./test.sh quality api
 ```
+
+The slowest changed live-consumer case spent 6.48 seconds in fixture setup and
+0.98 seconds in its call. External attribution spent 3.28 seconds in ordinary
+HTTP/authentication requests and observation of the existing audit flush. These
+fixture migrations add no deploy/install/build/sync or worker job. In the
+72-test selection, the slowest call was the existing password change (1.61
+seconds); the larger times were shared fixture setup.
 
 ## Focused Browser and SDK Coverage
 
@@ -64,7 +79,11 @@ passed. Lint reported zero errors and the existing console warning in
 
 The initial production-client MFA run reached `/auth/me` HTTP 200 but used the
 APIResponse-only `toBeOK` matcher on a browser Response. The assertion now checks
-`status() === 200`. The final run must verify the corrected assertion.
+`status() === 200`. The final run passed: setup 17.4 seconds, the MFA happy path
+2.2 seconds, two tests passed in 20.7 seconds. API quality passed again with zero
+pyright errors/warnings and clean ruff. Final log:
+`/tmp/bifrost-auth-last-checks.log`; isolated stack teardown completed before
+releasing the host lock.
 
 ## Limits
 
