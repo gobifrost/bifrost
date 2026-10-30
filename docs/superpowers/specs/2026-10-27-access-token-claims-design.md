@@ -113,8 +113,9 @@ error code means "refresh required".
   the transaction. This replaces "in the service or repository write … next to
   `role_cache.invalidate_*` … Not in routers": triggers cover every code path,
   cascade, raw SQL statement and older pod version. Maintenance that disables
-  triggers must finish by bumping the epoch (runbook rule; migrations are
-  checked by a test).
+  triggers must bump the epoch in the same transaction as its changes, or
+  keep authentication unavailable until the bump commits (runbook rule;
+  migrations are checked by a test; amended after code review of PR1a).
 - **Run liveness is read from the run's own row** (execution status, agent
   run status, service attempt state and lease), exactly as today's per-request
   check does. A run that ends, or a service whose lease lapses, is refused on
@@ -268,3 +269,7 @@ Fable once):
   changes.
 - **Benchmark expectation** corrected from "about five fewer transactions per
   SDK call" to the measured-scope expectation in §9.
+- **Maintenance bump in the same transaction** (§5; code review of PR1a,
+  2026-10-30): trigger-disabling maintenance bumps the epoch inside its own
+  transaction, or keeps authentication unavailable until the bump commits, so
+  no token minted before the change validates after it.

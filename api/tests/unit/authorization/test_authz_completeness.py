@@ -7,7 +7,8 @@ checks hold that equal (plan §9.2, D12):
 - read side: the columns the minter actually reads equal the registry;
 - registry and database: ``pg_trigger`` holds exactly the registry's
   ``authz_epoch_*`` triggers, with exactly its UPDATE columns;
-- maintenance: a migration that disables triggers must bump the epoch.
+- maintenance: a migration that disables triggers must bump the epoch after
+  the change, in the same transaction.
 
 Each check has a meta-test proving it fails when its invariant breaks.
 """
@@ -15,16 +16,21 @@ Each check has a meta-test proving it fails when its invariant breaks.
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy import ColumnClause, Select, TableClause, event, func, select, text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
+from sqlalchemy.sql import visitors
 
 from src.core.database import get_engine
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+from src.models.orm.forms import Form
+from src.models.orm.users import User
+from src.services.authorization import tokens
 from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
 from src.services.authorization.authz import ANY_COLUMN, AUTHZ_FACTS
 from src.services.authorization.tokens import RuntimeSubject, issue_access_token
@@ -32,41 +38,88 @@ from tests.unit.authorization.committed_runs import World, committed_world
 
 _EPOCH_TABLE = "authz_versions"
 _FACTS = {fact.table: fact for fact in AUTHZ_FACTS}
-# Driver and dialect housekeeping, not fact reads.
-_SYSTEM_SCHEMAS = frozenset({"pg_catalog", "information_schema"})
-_QUALIFIED = re.compile(r'"?([a-z_][a-z0-9_]*)"?\."?([a-z_][a-z0-9_]*|\*)"?')
+# A read of a table's rows, whatever columns: FROM, JOIN, count(*).
+_ROWS = "<rows>"
+# A statement whose reads cannot be resolved structurally.
+_UNSUPPORTED = "?unsupported"
 
 
 # --- Read side --------------------------------------------------------------
 
 
-def _reads(statements: list[str]) -> set[tuple[str, str]]:
-    """(table, column) pairs a set of SQL statements references.
+def _base_table(selectable: Any) -> TableClause | None:
+    """The table behind an alias, or None for a subquery or other selectable."""
+    while not isinstance(selectable, TableClause):
+        selectable = getattr(selectable, "element", None)
+        if selectable is None:
+            return None
+    return selectable
 
-    SQLAlchemy qualifies every column; an alias such as ``organizations_1``
-    names its table. A qualifier that is neither a known table nor such an
-    alias is reported as ``("?alias", column)`` so the check fails loudly.
+
+def _statement_reads(context: Any) -> set[tuple[str, str]]:
+    """The (table, column) reads of one executed statement, from SQLAlchemy's
+    compiled statement rather than its SQL text.
+
+    For an ORM statement this is the core SELECT the ORM compiled (so
+    ``load_only`` and joined eager loads are exact). A table appears as
+    ``(table, _ROWS)``. A statement that is not a structured SELECT (textual
+    SQL, driver-level SQL), or a column with no table, is reported as
+    ``(_UNSUPPORTED, ...)`` so the check fails instead of reading as empty.
     """
-    known = set(_FACTS) | {_EPOCH_TABLE}
-    found: set[tuple[str, str]] = set()
-    for statement in statements:
-        for qualifier, column in _QUALIFIED.findall(statement):
-            if qualifier in _SYSTEM_SCHEMAS:
+    compiled = getattr(context, "compiled", None)
+    state = getattr(compiled, "compile_state", None)
+    statement = getattr(state, "statement", None) if state is not None else None
+    if statement is None and compiled is not None:
+        statement = compiled.statement
+    if not isinstance(statement, Select):
+        return {(_UNSUPPORTED, str(getattr(context, "statement", "")).strip()[:120])}
+    reads: set[tuple[str, str]] = set()
+    for element in visitors.iterate(statement, {"column_collections": False}):
+        if isinstance(element, TableClause):
+            reads.add((element.name, _ROWS))
+        elif isinstance(element, ColumnClause):
+            if element.table is None:
+                reads.add((_UNSUPPORTED, f"column {element.name} has no table"))
                 continue
-            table = qualifier if qualifier in known else re.sub(r"_\d+$", "", qualifier)
-            found.add((table if table in known else f"?{qualifier}", column))
-    return found
+            table = _base_table(element.table)
+            if table is not None:
+                reads.add((table.name, element.name))
+    return reads
+
+
+@asynccontextmanager
+async def _capturing() -> AsyncIterator[set[tuple[str, str]]]:
+    """Record the reads of every statement the application engine executes."""
+    reads: set[tuple[str, str]] = set()
+
+    def record(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:
+        reads.update(_statement_reads(context))
+
+    # Connect once first, so dialect initialization is not recorded.
+    async with get_engine().connect() as warm:
+        await warm.execute(text("SELECT 1"))
+    engine = get_engine().sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield reads
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
 
 
 def _read_side_mismatches(reads: set[tuple[str, str]]) -> list[str]:
     problems: list[str] = []
     read_tables = {table for table, _ in reads}
     for table, column in sorted(reads):
+        if table == _UNSUPPORTED:
+            problems.append(f"unsupported statement: {column}")
+            continue
         if table == _EPOCH_TABLE:
             continue
         fact = _FACTS.get(table)
         if fact is None:
             problems.append(f"{table}.{column} is read but no epoch trigger covers {table}")
+        elif column == _ROWS:
+            continue
         elif fact.update != ANY_COLUMN and column not in fact.update and column not in fact.live:
             problems.append(f"{table}.{column} is read but neither versioned nor read live")
     for fact in AUTHZ_FACTS:
@@ -138,27 +191,63 @@ _SCENARIOS: tuple[Callable[[World], Awaitable[RuntimeSubject]], ...] = (
 )
 
 
-async def test_the_minters_reads_equal_the_registry(async_engine: AsyncEngine) -> None:
-    statements: list[str] = []
-
-    def record(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
-        statements.append(statement)
-
-    async with committed_world(async_engine) as world:
+async def _capture_minting(engine: AsyncEngine, extra: Any = None) -> set[tuple[str, str]]:
+    """The reads of minting a token for every scenario. ``extra`` is one more
+    statement the minter runs inside its snapshot (a meta-test's injected read)."""
+    async with committed_world(engine) as world:
         subjects = [await build(world) for build in _SCENARIOS]
         await world.session.commit()
-        # Connect once first, so dialect initialization is not recorded.
-        async with get_engine().connect() as warm:
-            await warm.execute(text("SELECT 1"))
-        engine = get_engine().sync_engine
-        event.listen(engine, "before_cursor_execute", record)
-        try:
-            for subject in subjects:
-                await issue_access_token(subject)
-        finally:
-            event.remove(engine, "before_cursor_execute", record)
+        real_read_epoch = tokens.read_epoch
 
-    assert _read_side_mismatches(_reads(statements)) == []
+        async def read_epoch(db: AsyncSession) -> int:
+            if extra is not None:
+                await extra(db)
+            return await real_read_epoch(db)
+
+        tokens.read_epoch = read_epoch  # type: ignore[assignment]
+        try:
+            async with _capturing() as reads:
+                for subject in subjects:
+                    await issue_access_token(subject)
+        finally:
+            tokens.read_epoch = real_read_epoch  # type: ignore[assignment]
+    return set(reads)
+
+
+async def test_the_minters_reads_equal_the_registry(async_engine: AsyncEngine) -> None:
+    assert _read_side_mismatches(await _capture_minting(async_engine)) == []
+
+
+async def _textual(db: AsyncSession) -> None:
+    await db.execute(text("SELECT last_login FROM users LIMIT 1"))
+
+
+async def _driver_level(db: AsyncSession) -> None:
+    await (await db.connection()).exec_driver_sql("SELECT count(*) FROM users")
+
+
+async def _unversioned_column(db: AsyncSession) -> None:
+    await db.execute(select(User.last_login).limit(1))
+
+
+async def _unregistered_table(db: AsyncSession) -> None:
+    await db.execute(select(func.count()).select_from(Form))
+
+
+@pytest.mark.parametrize(
+    ("extra", "problem"),
+    [
+        (_textual, "unsupported statement: SELECT last_login FROM users LIMIT 1"),
+        (_driver_level, "unsupported statement: SELECT count(*) FROM users"),
+        (_unversioned_column, "users.last_login is read but neither versioned nor read live"),
+        (_unregistered_table, "forms.<rows> is read but no epoch trigger covers forms"),
+    ],
+    ids=["textual SQL", "driver-level SQL", "unversioned column", "unregistered table"],
+)
+async def test_an_injected_read_fails_the_check_through_real_capture(
+    async_engine: AsyncEngine, extra: Callable[[AsyncSession], Awaitable[None]], problem: str
+) -> None:
+    assert problem in _read_side_mismatches(await _capture_minting(async_engine, extra))
 
 
 def test_the_read_side_check_fails_for_an_unversioned_or_unregistered_read() -> None:
@@ -175,10 +264,6 @@ def test_the_read_side_check_fails_for_an_unversioned_or_unregistered_read() -> 
     assert _read_side_mismatches(covered | {("forms", "name")}) == [
         "forms.name is read but no epoch trigger covers forms"
     ]
-    assert _reads(["SELECT organizations_1.is_provider, anon_1.x FROM organizations AS organizations_1"]) == {
-        ("organizations", "is_provider"),
-        ("?anon_1", "x"),
-    }
 
 
 # --- Registry and database triggers ----------------------------------------
@@ -300,11 +385,16 @@ _DISABLES_TRIGGERS = re.compile(r"session_replication_role|DISABLE\s+TRIGGER", r
 
 
 def _maintenance_violations(sources: dict[str, str]) -> list[str]:
-    return sorted(
-        name
-        for name, source in sources.items()
-        if _DISABLES_TRIGGERS.search(source) and "authz_epoch_bump_once()" not in source
-    )
+    """Migrations that disable triggers without bumping the epoch after the
+    last disabling statement, in the migration's own transaction."""
+    violations = []
+    for name, source in sorted(sources.items()):
+        disables = [match.end() for match in _DISABLES_TRIGGERS.finditer(source)]
+        if not disables:
+            continue
+        if source.rfind("authz_epoch_bump_once()") < max(disables) or "autocommit_block" in source:
+            violations.append(name)
+    return violations
 
 
 def test_migrations_that_disable_triggers_bump_the_epoch() -> None:
@@ -314,12 +404,18 @@ def test_migrations_that_disable_triggers_bump_the_epoch() -> None:
     assert _maintenance_violations(sources) == []
 
 
-def test_the_maintenance_check_flags_a_migration_that_disables_triggers_without_a_bump() -> None:
+def test_the_maintenance_check_requires_the_bump_after_the_change_in_the_same_transaction() -> None:
     assert _maintenance_violations(
         {
-            "bulk.py": 'op.execute("SET session_replication_role = replica")',
-            "fixed.py": 'op.execute("ALTER TABLE users DISABLE TRIGGER ALL")\n'
+            "no_bump.py": 'op.execute("SET session_replication_role = replica")',
+            "bump_first.py": 'op.execute("SELECT authz_epoch_bump_once()")\n'
+            'op.execute("ALTER TABLE users DISABLE TRIGGER ALL")',
+            "separate_transaction.py": 'op.execute("ALTER TABLE users DISABLE TRIGGER ALL")\n'
+            "with op.get_context().autocommit_block():\n"
+            '    op.execute("SELECT authz_epoch_bump_once()")',
+            "same_transaction.py": 'op.execute("ALTER TABLE users DISABLE TRIGGER ALL")\n'
+            'op.execute("UPDATE users SET name = name")\n'
             'op.execute("SELECT authz_epoch_bump_once()")',
             "plain.py": 'op.add_column("users", sa.Column("x", sa.Integer()))',
         }
-    ) == ["bulk.py"]
+    ) == ["bump_first.py", "no_bump.py", "separate_transaction.py"]

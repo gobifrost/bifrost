@@ -33,21 +33,44 @@ Postgres triggers change it; no application code writes it.
 
 The `authz_versions` row cannot be deleted or truncated (a trigger raises).
 
-## Maintenance rule: bump after disabling triggers
+## Maintenance rule: bump in the same transaction
 
 Anything that bypasses triggers can change a fact without changing the epoch.
 That includes `SET session_replication_role = replica`,
 `ALTER TABLE … DISABLE TRIGGER`, and data-only restores such as
-`pg_restore --disable-triggers`. After any of them, run this in a **new
-transaction**, once the maintenance has committed:
+`pg_restore --disable-triggers`. The epoch must change **in the same
+transaction** as the facts. Bumping in a later transaction leaves a window,
+between the two commits, in which tokens minted before the change still pass
+validation; if the second step is interrupted, that window lasts until those
+tokens expire.
+
+Run trigger-disabling maintenance as one transaction that ends with the bump:
 
 ```sql
+BEGIN;
+SET LOCAL session_replication_role = replica;  -- or ALTER TABLE … DISABLE TRIGGER
+-- … the maintenance changes …
 SELECT authz_epoch_bump_once();
+COMMIT;
 ```
 
-Every outstanding access token then refreshes on its next request. Migrations
-are held to the same rule by `api/tests/unit/authorization/test_authz_completeness.py`:
-a migration that disables triggers must call `authz_epoch_bump_once()`.
+`authz_epoch_bump_once()` is a plain function, so it works while triggers are
+disabled. If the change commits, so does the new epoch; if it rolls back,
+neither happens.
+
+When a tool commits on its own and cannot add the bump to its transaction
+(for example a data-only `pg_restore`), keep authentication unavailable across
+both steps instead: stop the API and workers (Compose:
+`docker compose stop api worker`; Kubernetes: scale the API and worker
+Deployments to zero), run the tool, run `SELECT authz_epoch_bump_once();`, and
+only then start them again. No token is validated while the facts and the
+epoch disagree.
+
+Every outstanding access token refreshes on its next request after the bump.
+Migrations are held to the same rule by
+`api/tests/unit/authorization/test_authz_completeness.py`: a migration that
+disables triggers must call `authz_epoch_bump_once()` after its last
+trigger-disabling statement, in its own transaction (no `autocommit_block`).
 
 If the row is ever missing (for example after a partial, table-by-table
 restore), every token that depends on it is refused and an error is logged.
@@ -155,6 +178,13 @@ and `.env`.
    release, and only the failed migration's own transaction was attempted and
    rolled back.
 
+   The authority-version migration waits at most 5 seconds for each of its
+   table locks. Behind a long-running transaction it fails with
+   `canceling statement due to lock timeout` (or `statement timeout`) rather
+   than stalling traffic; the database stays at the previous revision. Run the
+   same command again; if it keeps timing out, find the long transaction with
+   `SELECT pid, now() - xact_start, query FROM pg_stat_activity WHERE xact_start IS NOT NULL ORDER BY 2 DESC;`.
+
 5. **Replace the application containers.**
 
    ```bash
@@ -187,7 +217,8 @@ and `.env`.
 ### Kubernetes (Flux)
 
 The init Job (or initContainer) runs the migrations before the new pods start;
-a refused migration blocks the rollout and the existing pods keep serving.
+a refused migration blocks the rollout and the existing pods keep serving. A
+lock timeout behaves the same way and is retried with the Job.
 Confirm the rollout finished with `kubectl rollout status deploy/<api>` and the
 worker controller showing only Jobs of the new version before taking the next
 token release.
