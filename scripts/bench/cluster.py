@@ -429,7 +429,7 @@ class Cluster:
             if not any(status.get("name") == "worker" for status in statuses):
                 continue
             sources.append({
-                "pod": name, "pod_uid": uid,
+                "pod": name, "pod_uid": uid, "container": "worker",
                 "logs": self.kubectl("logs", name, "-c", "worker", "--tail=1000", check=False),
             })
         return sources

@@ -31,7 +31,7 @@ class FakeCluster:
         self.logs = logs
 
     def worker_log_sources(self) -> list[dict]:
-        return self.logs
+        return [{"container": "worker", **row} for row in self.logs]
 
     def api_log_source(self) -> dict:
         return {"pod": "api-a", "pod_uid": "api-uid-a", "container": "api", "logs": "API ready"}

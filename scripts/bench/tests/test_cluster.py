@@ -89,6 +89,30 @@ class WorkerProcessesTest(unittest.TestCase):
         self.assertEqual(rows[41]["private_mib"], 168.0)
 
 
+class LogSourcesTest(unittest.TestCase):
+    def test_api_and_worker_log_sources_include_container_and_immutable_pod_identity(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance._ready_api_pod = lambda: {"metadata": {"name": "bifrost-api-1", "uid": "api-uid"}}
+        pods = {"items": [
+            {"metadata": {"name": "bifrost-worker-1", "uid": "worker-uid"},
+             "status": {"containerStatuses": [{"name": "worker"}]}},
+            {"metadata": {"name": "bifrost-worker-no-container", "uid": "ignored"}, "status": {}},
+        ]}
+
+        def kubectl(*args, **_kwargs):
+            if args[:3] == ("get", "pods", "-o"):
+                return json.dumps(pods)
+            return f"logs:{args[1]}:{args[3]}"
+
+        instance.kubectl = kubectl
+        self.assertEqual(instance.api_log_source(), {
+            "pod": "bifrost-api-1", "pod_uid": "api-uid", "container": "api", "logs": "logs:bifrost-api-1:api",
+        })
+        self.assertEqual(instance.worker_log_sources(), [{
+            "pod": "bifrost-worker-1", "pod_uid": "worker-uid", "container": "worker", "logs": "logs:bifrost-worker-1:worker",
+        }])
+
+
 if __name__ == "__main__":
     unittest.main()
 
