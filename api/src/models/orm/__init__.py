@@ -35,6 +35,7 @@ from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.audit import AuditLog
 from src.models.orm.audit_archive import AuditArchiveSegment
+from src.models.orm.authz import AuthzProtocolState, AuthzVersion
 from src.models.orm.base import Base
 from src.models.orm.branding import GlobalBranding
 from src.models.orm.config import Config, SystemConfig
@@ -101,6 +102,8 @@ __all__ = [
     "PlatformJob",
     "PlatformJobMemoryProfile",
     "SchedulerLease",
+    "AuthzVersion",
+    "AuthzProtocolState",
     "WorkDispatch",
     "ExecutionWorker",
     "ExecutionWorkerClaim",

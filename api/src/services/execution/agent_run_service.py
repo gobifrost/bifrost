@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
+from sqlalchemy import select, update
 
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_db_context, get_dispatch_db_context
@@ -246,6 +247,51 @@ async def wait_for_agent_run_result(run_id: str, timeout: int = 1800) -> dict | 
         return None
     finally:
         await client.aclose()
+
+
+@dataclass(frozen=True)
+class CancelRequest:
+    """The outcome of asking a run to stop."""
+
+    #: The run's status once the request was made.
+    status: str
+    #: False when the run had already ended, so nothing was changed.
+    accepted: bool
+
+
+async def request_agent_run_cancel(db: AsyncSession, run_id: UUID) -> CancelRequest:
+    """Ask a live run to stop, and commit.
+
+    A queued run becomes ``cancelled``; a running one, ``cancelling``, for
+    its worker to wind down. Each change is a compare-and-set on the run's
+    current status, so a run that ended after the caller last read it (its
+    worker's terminal write committed in between) is never revived. A run
+    already ``cancelling`` is accepted unchanged.
+    """
+    now = datetime.now(timezone.utc)
+    cancelled = await db.scalar(
+        update(AgentRun)
+        .where(AgentRun.id == run_id, AgentRun.status == "queued")
+        .values(status="cancelled", completed_at=now)
+        .returning(AgentRun.id)
+    )
+    if cancelled is not None:
+        await db.commit()
+        return CancelRequest(status="cancelled", accepted=True)
+    cancelling = await db.scalar(
+        update(AgentRun)
+        .where(AgentRun.id == run_id, AgentRun.status == "running")
+        .values(status="cancelling", cancel_requested_at=now)
+        .returning(AgentRun.id)
+    )
+    if cancelling is not None:
+        await db.commit()
+        return CancelRequest(status="cancelling", accepted=True)
+    current = (
+        await db.execute(select(AgentRun.status).where(AgentRun.id == run_id))
+    ).scalar_one()
+    await db.commit()
+    return CancelRequest(status=current, accepted=current == "cancelling")
 
 
 async def announce_ended_agent_run(run_id: UUID, error: str) -> bool:

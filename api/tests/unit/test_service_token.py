@@ -1,12 +1,14 @@
-"""Typed durable service-attempt token minting."""
+"""Legacy-format service-attempt tokens (rotated for legacy attempts until token PR1c)."""
 
 from datetime import datetime, timedelta, timezone
 
-from src.core.security import SERVICE_TOKEN_LIFETIME_SECONDS, decode_token, mint_service_token
+from src.core.security import decode_token
+from src.services.authorization.tokens import LEGACY_SERVICE_TOKEN_SECONDS as SERVICE_TOKEN_LIFETIME_SECONDS
+from tests.helpers.runtime_tokens import legacy_service_token
 
 
 def _mint():
-    return mint_service_token(
+    return legacy_service_token(
         service_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         attempt_id="11111111-1111-4111-8111-111111111111",
     )

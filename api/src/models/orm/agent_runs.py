@@ -13,6 +13,10 @@ if TYPE_CHECKING:
     from src.models.orm.ai_usage import AIUsage
 
 
+# Agent-run statuses whose run still holds runtime authority.
+LIVE_AGENT_RUN_STATUSES: frozenset[str] = frozenset({"running", "cancelling"})
+
+
 class AgentRun(Base):
     __tablename__ = "agent_runs"
 

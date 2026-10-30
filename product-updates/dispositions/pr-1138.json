@@ -1,0 +1,13 @@
+{
+  "key": "pr:1138",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal resilience fix: remote ownership, trigger leadership and platform-job supervision no longer end on a single transient database error; no new customer-facing workflow.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1138",
+      "Program authorization: Jack (2026-10-29) approved fixing these loops before removing pool_pre_ping; independent Astra review verdict merge."
+    ]
+  }
+}

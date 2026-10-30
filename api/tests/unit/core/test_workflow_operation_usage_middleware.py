@@ -17,7 +17,7 @@ import httpx
 import pytest
 
 from src.core.principal import UserPrincipal
-from src.core.security import mint_engine_token
+from tests.helpers.runtime_tokens import legacy_engine_token
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.explain import Powers, RunUser
@@ -105,7 +105,7 @@ class TestWorkflowOperationUsageMiddleware:
 
         workflow_id = uuid4()
         execution_id = uuid4()
-        token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=300)
+        token, _ = legacy_engine_token(execution_id=str(execution_id), timeout_seconds=300)
         _install_runtime_principal(monkeypatch, execution_id, workflow_id)
 
         fake_redis_client, fake_pipe = _fake_redis_pipe()
@@ -142,7 +142,7 @@ class TestWorkflowOperationUsageMiddleware:
 
         workflow_id = uuid4()
         execution_id = uuid4()
-        token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=300)
+        token, _ = legacy_engine_token(execution_id=str(execution_id), timeout_seconds=300)
         _install_runtime_principal(monkeypatch, execution_id, workflow_id)
 
         fake_redis_client, fake_pipe = _fake_redis_pipe()
@@ -191,7 +191,7 @@ class TestWorkflowOperationUsageMiddleware:
             return {"ok": True}
 
         execution_id = uuid4()
-        token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=300)
+        token, _ = legacy_engine_token(execution_id=str(execution_id), timeout_seconds=300)
         _install_runtime_principal(monkeypatch, execution_id, uuid4())
 
         transport = httpx.ASGITransport(app=app)

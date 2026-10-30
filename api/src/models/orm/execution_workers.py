@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,6 +54,9 @@ class ExecutionWorker(Base):
     remote_hello_sequence: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default=text("0")
     )
+    # Credential protocol the launcher negotiated for the current control
+    # session (remote_session_generation); NULL means protocol 1.
+    remote_credential_protocol: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     # Existing rows retain the prior all-handler behavior during rollout.
     # New worker forms narrow the list when they are registered or reserved.
     supported_handlers: Mapped[list[str]] = mapped_column(

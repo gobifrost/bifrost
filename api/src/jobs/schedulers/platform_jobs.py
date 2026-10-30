@@ -653,6 +653,12 @@ async def run_claimed_platform_job(
                 extra={"job_id": str(claim.id)},
             )
         raise
+    except Exception:
+        # A failed heartbeat or memory check must not leave the runner going
+        # unsupervised: lease recovery would requeue or fail a job that is
+        # still running.
+        await process.terminate()
+        raise
 
     async with get_db_context() as db:
         job = await db.get(PlatformJob, claim.id)

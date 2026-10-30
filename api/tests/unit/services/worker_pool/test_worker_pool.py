@@ -811,6 +811,9 @@ async def test_a_requeued_agent_run_claimed_twice_executes_once(db, monkeypatch)
             await asyncio.sleep(0.05)
             return {"output": "ok", "status": "completed", "iterations_used": 1, "tokens_used": 1}
 
+        async def is_flushed(self, _db) -> bool:  # type: ignore[no-untyped-def]
+            return False
+
         async def flush_to_db(self, _db) -> None:  # type: ignore[no-untyped-def]
             return None
 

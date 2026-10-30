@@ -151,3 +151,22 @@ async def test_remote_backend_timeout_uses_process_termination(
         error_message="Platform job timed out after 60 seconds.",
         memory_sample=(0, 0),
     )
+
+
+@pytest.mark.asyncio
+async def test_supervision_failure_stops_the_runner_before_propagating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _RemoteProcess()
+    process.wait = AsyncMock(side_effect=TimeoutError)  # type: ignore[method-assign]
+    backend = _RemoteBackend(process, (0, 0))
+    claim = scheduler.ClaimedPlatformJob(uuid4(), uuid4(), 600, 0.95, 0)
+    monkeypatch.setattr(
+        scheduler, "_heartbeat", AsyncMock(side_effect=ConnectionError("database restarted"))
+    )
+    monkeypatch.setattr(scheduler, "_monotonic", MagicMock(return_value=0))
+
+    with pytest.raises(ConnectionError):
+        await scheduler.run_claimed_platform_job(claim, backend=backend)
+
+    process.terminate.assert_awaited_once()

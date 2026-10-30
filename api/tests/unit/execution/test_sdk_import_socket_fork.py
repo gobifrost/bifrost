@@ -152,7 +152,7 @@ class TestForkedColdImportOverSocket:
         self, db_session, async_session_factory, monkeypatch
     ):
         """Cold entry fetch + dynamic resolve ride the socket, no credentials."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.enums import FormAccessLevel
         from src.models.orm.forms import Form as FormModel
 
@@ -186,7 +186,7 @@ class TestForkedColdImportOverSocket:
 
         execution_id = f"exec-{tag}"
         engine_execution_id = str(uuid4())
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=engine_execution_id,
             timeout_seconds=120,
         )

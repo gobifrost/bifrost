@@ -59,6 +59,7 @@ from src.services.memory_requests import DANGEROUS_MEMORY_RATIO, memory_ratio, u
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
+from src.worker.remote.protocol import CREDENTIAL_PROTOCOL
 
 if TYPE_CHECKING:
     from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
@@ -78,8 +79,35 @@ PROCESS_POOL_PUBSUB_HEALTH_CHECK_INTERVAL_SECONDS = 60
 # Context fields that must never reach the diagnostic Redis copy of an
 # execution context. The child still receives these over its private work
 # pipe (see route_execution) - only the durability/diagnostic Redis record
-# (read by queue display and other tooling) is scrubbed.
-_CONTEXT_REDIS_EXCLUDED_KEYS = frozenset({"engine_token"})
+# (read by queue display and other tooling) is scrubbed. Service credentials
+# nested under ``service`` are scrubbed too.
+_CONTEXT_REDIS_EXCLUDED_KEYS = frozenset({"engine_token", "engine_refresh_token"})
+_SERVICE_CONTEXT_REDIS_EXCLUDED_KEYS = frozenset({"token", "refresh_token"})
+
+
+def _diagnostic_context(context: dict[str, Any]) -> dict[str, Any]:
+    """An execution context without any credential, for the Redis copy."""
+    sanitized = {key: value for key, value in context.items() if key not in _CONTEXT_REDIS_EXCLUDED_KEYS}
+    service = sanitized.get("service")
+    if isinstance(service, dict):
+        sanitized["service"] = {
+            key: value for key, value in service.items() if key not in _SERVICE_CONTEXT_REDIS_EXCLUDED_KEYS
+        }
+    return sanitized
+
+
+@dataclass(frozen=True)
+class CredentialRoute:
+    """Where a dispatch will run, as far as its credentials are concerned.
+
+    Read from the pool before the run's credentials are minted: ``protocol``
+    decides their format (see ``tokens.issue_run_credentials``). A remote
+    launcher's route also names the session ``generation`` it was read under;
+    dispatch refuses to send the credentials to any other session.
+    """
+
+    protocol: int
+    generation: int | None = None
 
 
 async def _notify_requirements_failures(result: RequirementsInstallResult) -> None:
@@ -914,11 +942,18 @@ class ProcessPoolManager:
                 pass
             handle.process.join(timeout=1)
 
+    def credential_route(self) -> CredentialRoute:
+        """The credential route of this pool's children: local forks of this
+        build, which speak the claims protocol."""
+        return CredentialRoute(CREDENTIAL_PROTOCOL)
+
     async def route_execution(
         self,
         execution_id: str,
         context: dict[str, Any],
         active_execution: ActiveExecution,
+        *,
+        credential_route: CredentialRoute | None = None,
     ) -> None:
         """
         Fork a one-shot worker for this execution.
@@ -935,6 +970,8 @@ class ProcessPoolManager:
             execution_id: Unique identifier for the execution
             context: Execution context sent to the child and retained in Redis
             active_execution: Compact completion metadata retained by the parent
+            credential_route: The route the context's credentials were minted
+                for (``credential_route()``); local children always match it
         """
         # Fail closed before the Redis write or fork.
         validate_execution_context(context)
@@ -1040,6 +1077,7 @@ class ProcessPoolManager:
         lease_token: str,
         context: dict[str, Any],
         graceful_shutdown_seconds: int = 30,
+        credential_route: CredentialRoute | None = None,
     ) -> None:
         """
         Fork a supervised service child for one claimed attempt.
@@ -1153,12 +1191,7 @@ class ProcessPoolManager:
         """
         r = await self._get_redis()
         context_key = f"bifrost:exec:{execution_id}:context"
-        sanitized = {
-            key: value
-            for key, value in context.items()
-            if key not in _CONTEXT_REDIS_EXCLUDED_KEYS
-        }
-        await r.setex(context_key, 3600, json.dumps(sanitized, default=str))
+        await r.setex(context_key, 3600, json.dumps(_diagnostic_context(context), default=str))
 
     async def _write_active_execution_lease(self, execution: ExecutionInfo) -> None:
         """Create or recreate the compact Redis lease for one live execution."""

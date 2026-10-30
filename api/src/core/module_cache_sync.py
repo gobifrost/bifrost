@@ -105,13 +105,35 @@ def _get_resolution_cache() -> dict[tuple[str, str | None, bool], ModuleResoluti
 
 
 def _get_http_client() -> Any:
+    """The cold module fetch's own HTTP client.
+
+    It refreshes and replays a request only on the API's ``refresh_required``
+    challenge, within the request's refresh budget, like every SDK client.
+    """
     client = getattr(_solution_ctx, "http_client", None)
     if client is None:
-        import httpx
+        from bifrost._refreshing import RefreshingClient
 
-        client = httpx.Client(timeout=10.0)
+        client = RefreshingClient(timeout=10.0, refresh=_refresh_engine_access_token)
         _solution_ctx.http_client = client
     return client
+
+
+def _refresh_engine_access_token(observed_access_token: str | None) -> str | None:
+    """Refresh this process's credentials after a challenge to the cold fetch."""
+    creds = _get_engine_credentials()
+    if creds is None or observed_access_token is None:
+        return None
+    from bifrost.client import _refresh_connection_access_token_sync
+
+    return _refresh_connection_access_token_sync(creds[0], observed_access_token)
+
+
+def _fetch_extensions() -> dict[str, Any]:
+    """One refresh budget for one cold-fetch request."""
+    from bifrost._refreshing import refresh_extensions
+
+    return refresh_extensions()
 
 
 def _close_http_client() -> None:
@@ -247,6 +269,7 @@ def _fetch_module_from_api(path: str) -> CachedModule | None:
         resp = _get_http_client().get(
             url,
             headers={"Authorization": f"Bearer {token}"},
+            extensions=_fetch_extensions(),
         )
         if resp.status_code == 404:
             return None
@@ -291,6 +314,7 @@ def _fetch_module_resolution_from_api(name: str) -> ModuleResolution | None:
             f"{api_url}/api/sdk/modules-resolve",
             headers={"Authorization": f"Bearer {token}"},
             params=params,
+            extensions=_fetch_extensions(),
         )
         if resp.status_code != 200:
             logger.warning(

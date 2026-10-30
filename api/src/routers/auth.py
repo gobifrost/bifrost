@@ -71,6 +71,7 @@ from shared.browser_impersonation import (
     revoke_browser_impersonation,
 )
 from src.services.authorization.impersonation import RunAsError
+from src.services.authorization.tokens import TokenSubjectUnavailable, redeem_run_refresh_token
 from src.core.security import (
     create_access_token,
     create_mfa_token,
@@ -1017,6 +1018,11 @@ async def refresh_token(
 
     Rate limited: 10 requests per minute per IP address.
 
+    A run refresh token (``type: run_refresh``, in the body) instead
+    re-evaluates its run and returns a new access token with the same run
+    refresh token: it is reusable and unrotated, sets no cookies, and is not
+    rate limited per IP, since many runs share a worker's address.
+
     Args:
         request: FastAPI request object
         token_data: Optional refresh token in body (API clients)
@@ -1028,6 +1034,19 @@ async def refresh_token(
     Raises:
         HTTPException: If refresh token is invalid or revoked
     """
+    if token_data and token_data.refresh_token:
+        run_refresh = decode_token(token_data.refresh_token, expected_type="run_refresh")
+        if run_refresh is not None:
+            try:
+                issued = await redeem_run_refresh_token(run_refresh)
+            except TokenSubjectUnavailable:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Run is no longer live",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return Token(access_token=issued.token, refresh_token=token_data.refresh_token)
+
     # Rate limiting
     client_ip = get_client_ip(request)
     await auth_limiter.check("refresh", client_ip)

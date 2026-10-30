@@ -141,7 +141,8 @@ class MCPContext:
     # Audit attribution only; never used for authorization.
     agent_run_id: UUID | str | None = None
     # A durable runtime credential to forward through the REST bridge. These
-    # are identifiers only; HTTP auth resolves their authority from the DB.
+    # are identifiers only: the bridge mints a claims access token for the
+    # run with ``issue_access_token``, which HTTP auth then validates.
     runtime_credential_kind: str | None = None
     runtime_credential_id: UUID | str | None = None
     runtime_service_id: UUID | str | None = None

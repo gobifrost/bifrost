@@ -15,16 +15,19 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.db_deps import DbSession
 from src.core.principal import UserPrincipal
-from src.core.security import decode_token
+from src.core.security import decode_expired_access_token, decode_token
 from shared.browser_impersonation import (
     BrowserImpersonationError,
     IMPERSONATION_COOKIE_NAME,
     validate_browser_impersonation,
 )
 from src.services.authorization.runtime_auth import (
+    is_legacy_runtime_payload,
     is_runtime_credential_payload,
     load_runtime_principal,
+    log_legacy_runtime_token_accepted,
 )
+from src.services.authorization.tokens import authenticate_runtime_token, parse_runtime_claims
 from shared.role_cache import get_user_roles
 
 if TYPE_CHECKING:
@@ -34,6 +37,28 @@ logger = logging.getLogger(__name__)
 
 # HTTP Bearer token scheme
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# RFC 6750 challenge on a 401 that a refresh fixes. Clients replay a request
+# only after this challenge, which the auth dependency raises before any
+# handler or later dependency runs.
+REFRESH_REQUIRED_CHALLENGE = 'Bearer error="invalid_token", error_description="refresh_required"'
+
+
+def _refresh_fixes(token: str) -> bool:
+    """Whether a refresh would make this refused credential usable again.
+
+    True for a signature-valid access token whose only fault is expiry and
+    that has a refresh path: a person's token, or a run token minted by
+    ``issue_access_token`` (``ver: 1``). Embed tokens and impersonation
+    markers have no refresh, and a legacy runtime token's refresh slot holds
+    the same token, which ``/auth/refresh`` refuses.
+    """
+    payload = decode_expired_access_token(token)
+    if payload is None or payload.get("embed") or payload.get("impersonation_session_id") is not None:
+        return False
+    if is_runtime_credential_payload(payload):
+        return payload.get("ver") == 1
+    return True
 
 
 def select_http_auth_token(
@@ -181,15 +206,10 @@ async def _get_current_user_optional(
     if payload is None:
         return None
 
-    if getattr(request.state, "runtime_token", None) == token:
-        return request.state.runtime_principal
-    runtime_principal = await load_runtime_principal(db, payload)
-    if runtime_principal is not None:
-        return runtime_principal
-    # A legacy engine/service claim, malformed typed credential, or runtime
-    # record that is no longer valid never falls through to human-token auth.
+    # A runtime credential, valid or not, never falls through to human-token
+    # auth.
     if is_runtime_credential_payload(payload):
-        return None
+        return await _authenticate_runtime_payload(request, token, payload, db)
 
     # Extract user ID from token
     user_id_str = payload.get("sub")
@@ -280,6 +300,34 @@ async def _get_current_user_optional(
     return principal
 
 
+async def _authenticate_runtime_payload(
+    request: Request, token: str, payload: dict, db: DbSession
+) -> UserPrincipal | None:
+    """Authenticate a signature-verified runtime token.
+
+    Claims minted by ``issue_access_token`` (``ver: 1``) are validated in one
+    statement on this request's session; an epoch mismatch marks the request
+    so ``get_current_user`` answers with the refresh challenge. A legacy
+    token (no ``ver``) is bridged until token PR1c: validated exactly as
+    before from the database, normally by the request middleware.
+    """
+    if not is_legacy_runtime_payload(payload):
+        claims = parse_runtime_claims(payload)
+        if claims is None:
+            return None
+        result = await authenticate_runtime_token(db, claims)
+        if result.refresh_required:
+            request.state.runtime_refresh_required_token = token
+        return result.principal
+    if getattr(request.state, "runtime_token", None) == token:
+        principal = request.state.runtime_principal
+    else:
+        principal = await load_runtime_principal(db, payload)
+    if principal is not None:
+        log_legacy_runtime_token_accepted(payload)
+    return principal
+
+
 async def get_original_human_user(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
@@ -364,10 +412,14 @@ async def get_current_user(
     user = await get_current_user_optional(request, credentials, db)
 
     if user is None:
+        token = select_http_auth_token(request, credentials.credentials if credentials else None)
+        refresh_fixes = token is not None and (
+            getattr(request.state, "runtime_refresh_required_token", None) == token or _refresh_fixes(token)
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={"WWW-Authenticate": REFRESH_REQUIRED_CHALLENGE if refresh_fixes else "Bearer"},
         )
 
     return user
@@ -426,8 +478,10 @@ async def get_execution_context(
     # Populate role_ids / role_names. The table-policy evaluator's
     # `has_role` function reads these (the JWT claims do not carry the post-
     # token role assignments needed by row-level policies). Reads go through
-    # the per-user role cache (Redis); DB is fallback on miss.
-    if not user.role_ids and not user.role_names:
+    # the per-user role cache (Redis); DB is fallback on miss. A runtime
+    # principal already carries its actor's current roles: from its claims,
+    # or from the database on the legacy path.
+    if user.runtime_authority is None and not user.role_ids and not user.role_names:
         role_ids, role_names = await get_user_roles(user.user_id, db)
         user.role_ids = role_ids
         user.role_names = role_names
@@ -455,7 +509,17 @@ async def get_execution_context(
             # the resolved org scope (see resolve_solution_ref). Auth only
             # gates UUIDs here; slugs 404 later if unresolvable.
             solution_uuid = None
-        if solution_uuid is not None:
+        runtime = user.runtime_authority
+        if (
+            solution_uuid is not None
+            and runtime is not None
+            and runtime.solution_id == solution_uuid
+            and runtime.solution_active is True
+        ):
+            # The run's own Solution, known active from its authority (claims
+            # whose epoch is current, or the database on the legacy path).
+            pass
+        elif solution_uuid is not None:
             solution_row = await db.get(SolutionORM, solution_uuid)
             if solution_row is None:
                 raise HTTPException(

@@ -19,17 +19,24 @@ Why in-process HTTP instead of calling router functions directly:
   Pydantic validation, and error handling exactly as an external caller
   would, so parity with the CLI is structural, not best-effort.
 
-Auth strategy — two mutually exclusive paths:
+Auth strategy — mutually exclusive paths:
 
 1. **MCP SDK HTTP context** (a tool call reached the MCP server via HTTP):
    :func:`mcp.server.auth.middleware.auth_context.get_access_token` yields the caller's
    bearer token. We reuse it directly.
-2. **Executor / test context** (no FastMCP request on the stack, the MCP
-   context was constructed by the agent executor or a unit test): we mint
-   a short-lived JWT matching the ``MCPContext``'s claims using the same
-   ``create_access_token`` helper Bifrost uses for login. This keeps every
-   request going through :mod:`src.core.security` — there is no "trusted
-   in-process" side door that skips auth validation.
+2. **Runtime context** (an agent run, workflow or service attempt, with no
+   FastMCP request on the stack): we mint a claims access token for the run
+   with ``tokens.issue_access_token``. The client's transport re-mints and
+   replays a request when the API answers with the ``refresh_required``
+   challenge (a fact the token carries changed, possibly through this same
+   bridge context's earlier request), at most three times per request.
+3. **People context** (executor or test, no FastMCP request): we mint a
+   short-lived JWT matching the ``MCPContext``'s claims using the same
+   ``create_access_token`` helper Bifrost uses for login (token PR2 moves it
+   to ``issue_access_token``).
+
+Every request goes through the API's normal authentication: there is no
+"trusted in-process" side door that skips auth validation.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 import httpx
 
 if TYPE_CHECKING:
+    from src.services.authorization.tokens import RuntimeSubject
     from src.services.mcp_server.server import MCPContext
 
 logger = logging.getLogger(__name__)
@@ -52,14 +60,13 @@ logger = logging.getLogger(__name__)
 _BRIDGE_URL_ENV = "BIFROST_MCP_HTTP_BRIDGE_URL"
 
 
-def _token_from_context(context: "MCPContext") -> str:
-    """Return a bearer token usable for an in-process REST call.
+# Challenge-driven re-mints allowed per bridge request, as for the SDK.
+BRIDGE_REFRESH_BUDGET = 3
 
-    Prefers the live MCP SDK access token (same bytes the external MCP
-    client sent); falls back to minting a short-lived JWT from the
-    context's claims so executor / test contexts still go through the
-    standard auth path.
-    """
+
+def _live_access_token() -> str | None:
+    """The live MCP SDK access token (same bytes the external MCP client
+    sent), when this call reached the MCP server over HTTP."""
     try:
         from mcp.server.auth.middleware.auth_context import get_access_token
 
@@ -67,23 +74,48 @@ def _token_from_context(context: "MCPContext") -> str:
         if token is not None and getattr(token, "token", None):
             return token.token
     except Exception:
-        # Not in a FastMCP HTTP request — fall through to minting.
+        # Not in a FastMCP HTTP request: the caller mints instead.
         pass
+    return None
+
+
+def _runtime_subject(context: "MCPContext") -> "RuntimeSubject | None":
+    """The run a runtime context acts for; None for a people context."""
+    if context.runtime_credential_kind is None:
+        return None
+    from typing import cast
+    from uuid import UUID
+
+    from src.services.authorization.runtime import RuntimeKind
+    from src.services.authorization.tokens import RuntimeSubject
+
+    if context.runtime_credential_id is None:
+        raise ValueError("Runtime MCP context requires a credential ID")
+    service_id = None
+    if context.runtime_credential_kind == "service_attempt":
+        if context.runtime_service_id is None:
+            raise ValueError("Service runtime MCP context requires a service ID")
+        service_id = UUID(str(context.runtime_service_id))
+    return RuntimeSubject(
+        cast(RuntimeKind, context.runtime_credential_kind), UUID(str(context.runtime_credential_id)), service_id
+    )
+
+
+def _token_from_context(context: "MCPContext") -> str:
+    """Return a people bearer token usable for an in-process REST call.
+
+    Prefers the live MCP SDK access token; otherwise mints a short-lived JWT
+    from a people context's claims so executor / test contexts still go
+    through the standard auth path. Runtime contexts never come here: they
+    mint claims access tokens (see :func:`rest_client`).
+    """
+    live = _live_access_token()
+    if live is not None:
+        return live
+    if context.runtime_credential_kind is not None:
+        raise ValueError("A runtime MCP context mints its token with issue_access_token")
 
     from src.core.security import create_access_token
-
-    if context.runtime_credential_kind is not None:
-        if context.runtime_credential_id is None:
-            raise ValueError("Runtime MCP context requires a credential ID")
-        claims: dict[str, Any] = {
-            "sub": str(context.runtime_credential_id),
-            "credential_kind": context.runtime_credential_kind,
-        }
-        if context.runtime_credential_kind == "service_attempt":
-            if context.runtime_service_id is None:
-                raise ValueError("Service runtime MCP context requires a service ID")
-            claims["service_id"] = str(context.runtime_service_id)
-        return create_access_token(data=claims)
 
     claims: dict[str, Any] = {
         "sub": str(context.user_id) if context.user_id else "",
@@ -111,6 +143,45 @@ def _build_in_process_transport() -> httpx.ASGITransport:
     return httpx.ASGITransport(app=app)
 
 
+class BridgeRefreshingTransport(httpx.AsyncBaseTransport):
+    """Carry a run's claims access token, re-minting it on the challenge.
+
+    Every request is sent with the transport's current token. When the API
+    answers with the ``refresh_required`` challenge (raised by its auth
+    dependency before any handler effect), the transport mints a new token
+    in-process with ``issue_access_token`` and replays the request, up to
+    ``BRIDGE_REFRESH_BUDGET`` times per request; later requests on the same
+    client use the newest token. If the run can no longer be authorized the
+    challenge is returned as it is.
+    """
+
+    def __init__(self, inner: httpx.AsyncBaseTransport, subject: "RuntimeSubject", token: str) -> None:
+        self._inner = inner
+        self._subject = subject
+        self._token = token
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        from src.services.authorization.tokens import TokenSubjectUnavailable, issue_access_token
+        from bifrost._refreshing import is_refresh_challenge
+
+        request.headers["Authorization"] = f"Bearer {self._token}"
+        response = await self._inner.handle_async_request(request)
+        remaining = BRIDGE_REFRESH_BUDGET
+        while remaining > 0 and is_refresh_challenge(response):
+            remaining -= 1
+            try:
+                self._token = (await issue_access_token(self._subject)).token
+            except TokenSubjectUnavailable:
+                return response
+            await response.aclose()
+            request.headers["Authorization"] = f"Bearer {self._token}"
+            response = await self._inner.handle_async_request(request)
+        return response
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
 @asynccontextmanager
 async def rest_client(context: "MCPContext") -> AsyncIterator[httpx.AsyncClient]:
     """Yield an ``httpx.AsyncClient`` bound to the API with auth attached.
@@ -128,30 +199,32 @@ async def rest_client(context: "MCPContext") -> AsyncIterator[httpx.AsyncClient]
             resp.raise_for_status()
             return resp.json()
     """
-    token = _token_from_context(context)
     headers = {
-        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         # Self-reported audit attribution only (see
         # src.core.request_actor.resolve_self_reported_surface) — labels
         # this bridge call's audit rows with surface="mcp".
         "X-Bifrost-Surface": "mcp",
     }
+    live = _live_access_token()
+    subject = None if live is not None else _runtime_subject(context)
 
     override_base = os.environ.get(_BRIDGE_URL_ENV)
-    if override_base:
-        async with httpx.AsyncClient(
-            base_url=override_base.rstrip("/"),
-            headers=headers,
-            timeout=30.0,
-        ) as client:
-            yield client
-        return
+    base_url = override_base.rstrip("/") if override_base else "http://mcp-bridge"
+    transport: httpx.AsyncBaseTransport | None = (
+        None if override_base else _build_in_process_transport()
+    )
+    if subject is not None:
+        from src.services.authorization.tokens import issue_access_token
 
-    transport = _build_in_process_transport()
+        token = (await issue_access_token(subject)).token
+        transport = BridgeRefreshingTransport(transport or httpx.AsyncHTTPTransport(), subject, token)
+    else:
+        headers["Authorization"] = f"Bearer {live if live is not None else _token_from_context(context)}"
+
     async with httpx.AsyncClient(
         transport=transport,
-        base_url="http://mcp-bridge",
+        base_url=base_url,
         headers=headers,
         timeout=30.0,
     ) as client:

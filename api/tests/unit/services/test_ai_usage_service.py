@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 
 from src.services.model_catalog import parse_catalog
 from src.services.ai_usage_service import (
@@ -242,6 +243,19 @@ class TestGetCachedPrice:
         # Should still work via DB
         assert input_price == Decimal("5.00")
         assert output_price == Decimal("15.00")
+
+
+    @pytest.mark.asyncio
+    async def test_a_database_error_reaches_the_caller(self, mock_redis, mock_session):
+        """The caller's transaction is gone, so the error is the caller's."""
+        mock_redis.get.return_value = None
+        disconnect = DBAPIError("SELECT", None, Exception("closed"), connection_invalidated=True)
+        mock_session.execute.side_effect = disconnect
+
+        with pytest.raises(DBAPIError) as raised:
+            await get_cached_price(mock_redis, mock_session, "openai", "gpt-4o")
+
+        assert raised.value is disconnect
 
 
 class TestGetUsageTotals:
@@ -733,6 +747,30 @@ class TestRecordAIUsage:
                 input_tokens=1000,
                 output_tokens=500,
             )
+
+
+    @pytest.mark.asyncio
+    async def test_a_database_error_reaches_the_caller(self, mock_redis, mock_session):
+        """Swallowing it would leave the caller committing a dead transaction."""
+        mock_redis.get.return_value = json.dumps({
+            "input_price": "5.00",
+            "output_price": "15.00",
+        })
+        disconnect = DBAPIError("INSERT", None, Exception("closed"), connection_invalidated=True)
+        mock_session.flush.side_effect = disconnect
+
+        with patch("src.models.orm.ai_usage.AIUsage"):
+            with pytest.raises(DBAPIError) as raised:
+                await record_ai_usage(
+                    session=mock_session,
+                    redis_client=mock_redis,
+                    provider="openai",
+                    model="gpt-4o",
+                    input_tokens=1000,
+                    output_tokens=500,
+                )
+
+        assert raised.value is disconnect
 
 
 class TestBackfillModelCosts:

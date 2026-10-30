@@ -673,9 +673,12 @@ class BifrostAuthProvider:
         from src.core.database import get_db_context
         from src.core.security import decode_token
         from src.services.authorization.runtime_auth import (
+            is_legacy_runtime_payload,
             is_runtime_credential_payload,
             load_runtime_principal,
+            log_legacy_runtime_token_accepted,
         )
+        from src.services.authorization.tokens import authenticate_runtime_token, parse_runtime_claims
 
         payload = decode_token(token, expected_type="access")
         if payload is None:
@@ -687,11 +690,25 @@ class BifrostAuthProvider:
             return None
 
         runtime_principal = None
-        if is_runtime_credential_payload(payload):
+        runtime_role_names: list[str] | None = None
+        if is_legacy_runtime_payload(payload):
+            # Legacy bridge (token PR1c removes it): validated as before.
             async with get_db_context() as db:
                 runtime_principal = await load_runtime_principal(db, payload)
             if runtime_principal is None:
                 return None
+            log_legacy_runtime_token_accepted(payload)
+        elif is_runtime_credential_payload(payload):
+            claims = parse_runtime_claims(payload)
+            if claims is None:
+                return None
+            async with get_db_context() as db:
+                result = await authenticate_runtime_token(db, claims)
+            if result.principal is None:
+                return None
+            runtime_principal = result.principal
+            # Tool filtering follows the run user's roles, carried by the claims.
+            runtime_role_names = [role.name for role in claims.usr.roles]
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")
 
@@ -708,7 +725,9 @@ class BifrostAuthProvider:
         )
         # Runtime tool filtering follows the original run user's current
         # roles, while effects keep the separately resolved acting identity.
-        role_names = await self._get_user_roles(role_user_id)
+        role_names = (
+            runtime_role_names if runtime_role_names is not None else await self._get_user_roles(role_user_id)
+        )
 
         logger.info(f"MCP auth: Token valid for user {payload.get('email')}, roles={role_names}")
 

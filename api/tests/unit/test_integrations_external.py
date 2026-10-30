@@ -17,7 +17,7 @@ no is_external claim, re-opening the global tier to external MCP principals on
 the executor/test path.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -165,22 +165,20 @@ class TestHttpBridgeTypedRuntimeMint:
             runtime_credential_id=credential_id,
         )
 
-    def test_agent_runtime_mint_carries_only_the_durable_credential(self):
-        from src.services.mcp_server.tools._http_bridge import _token_from_context
+    def test_agent_runtime_mint_names_only_the_durable_credential(self):
+        from src.services.authorization.tokens import RuntimeSubject
+        from src.services.mcp_server.tools._http_bridge import _runtime_subject
 
         credential_id = uuid4()
-        with patch("src.core.security.create_access_token", side_effect=lambda *, data: data):
-            claims = _token_from_context(self._ctx(credential_id))
-        assert claims == {"sub": str(credential_id), "credential_kind": "agent_run"}
+        # The claims minter reads every fact from the database for this run;
+        # nothing from the context's caller fields reaches the token.
+        assert _runtime_subject(self._ctx(credential_id)) == RuntimeSubject("agent_run", credential_id)
 
-    def test_typed_agent_runtime_mint_omits_external_caller_claims(self):
+    def test_a_runtime_context_never_mints_a_people_token(self):
         from src.services.mcp_server.tools._http_bridge import _token_from_context
 
-        credential_id = uuid4()
-        with patch("src.core.security.create_access_token", side_effect=lambda *, data: data):
-            claims = _token_from_context(self._ctx(credential_id))
-        assert "is_external" not in claims
-        assert "org_id" not in claims
+        with pytest.raises(ValueError, match="issue_access_token"):
+            _token_from_context(self._ctx(uuid4()))
 
 
 class TestHttpBridgeMintCarriesTheAgentRunUser:

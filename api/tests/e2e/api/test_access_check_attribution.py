@@ -8,8 +8,6 @@ from uuid import UUID, uuid4
 import jwt
 import pytest
 
-from src.services.mcp_server.server import MCPContext
-from src.services.mcp_server.tools._http_bridge import _token_from_context
 from tests.e2e.conftest import poll_until
 from tests.e2e.fixtures.setup import PROVIDER_ORG_ID, _register_and_authenticate_user
 from tests.e2e.fixtures.users import E2EUser
@@ -38,6 +36,17 @@ async def _create_running_agent_run(session_factory, *, user_id: str) -> str:
             session.add(run)
             await session.commit()
             return str(run.id)
+    finally:
+        await close_db()
+
+
+async def _agent_bridge_token(run_id: str) -> str:
+    """The claims access token the MCP bridge mints for an agent run."""
+    from src.core.database import close_db
+    from src.services.authorization.tokens import RuntimeSubject, issue_access_token
+
+    try:
+        return (await issue_access_token(RuntimeSubject("agent_run", UUID(run_id)))).token
     finally:
         await close_db()
 
@@ -88,10 +97,7 @@ def test_external_provider_claim_and_agent_access_checks(
         run_id = asyncio.run(
             _create_running_agent_run(async_session_factory, user_id=person["id"])
         )
-        bridge = _token_from_context(MCPContext(
-            user_id=person["id"], org_id=PROVIDER_ORG_ID, user_email=person["email"],
-            runtime_credential_kind="agent_run", runtime_credential_id=run_id,
-        ))
+        bridge = asyncio.run(_agent_bridge_token(run_id))
         bridge_headers = {"Authorization": f"Bearer {bridge}", "X-Bifrost-Surface": "mcp"}
         _ok(e2e_client.get(f"/api/forms/{form['id']}/runtime", headers=bridge_headers))
         _ok(

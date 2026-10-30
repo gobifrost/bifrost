@@ -36,6 +36,24 @@ def test_handed_down_token_uses_ephemeral_process_backend(
     assert resolved.credentials.refresh_token == "one-shot-token"
 
 
+def test_a_claims_run_installs_its_run_refresh_token(
+    monkeypatch,
+    set_process_engine_credentials,
+):
+    monkeypatch.setenv("BIFROST_API_URL", "http://api:8000")
+    monkeypatch.delenv("BIFROST_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("BIFROST_REFRESH_TOKEN", raising=False)
+
+    assert set_process_engine_credentials(
+        {"engine_token": "claims-access", "engine_refresh_token": "run-refresh"}
+    )
+
+    resolved = resolve_credentials("http://api:8000")
+    assert resolved is not None
+    assert resolved.credentials.access_token == "claims-access"
+    assert resolved.credentials.refresh_token == "run-refresh"
+
+
 def test_missing_handed_down_token_does_not_create_process_credentials(
     monkeypatch,
     set_process_engine_credentials,
@@ -49,9 +67,10 @@ def test_missing_handed_down_token_does_not_create_process_credentials(
 
 
 def test_engine_token_carries_signed_execution_module_scope() -> None:
-    from src.core.security import decode_token, mint_engine_token
+    from src.core.security import decode_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
-    token, _expires_at = mint_engine_token(
+    token, _expires_at = legacy_engine_token(
         execution_id="execution-1",
         timeout_seconds=120,
     )

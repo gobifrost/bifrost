@@ -328,7 +328,7 @@ class ControlPlane:
         scheduler.shutdown(wait=False)
         logger.info("Trigger leader stopped scheduled tasks")
 
-    async def _renew_within_lease(self) -> bool:
+    async def _renew_within_lease(self) -> bool | None:
         remaining = self.lease.seconds_remaining()
         if remaining <= 0:
             return False
@@ -341,7 +341,7 @@ class ControlPlane:
             return False
         except Exception:
             logger.exception("Failed to renew scheduler trigger lease")
-            return False
+            return None
 
     async def _surrender(self) -> None:
         try:
@@ -386,8 +386,25 @@ class ControlPlane:
                 await wait_or_stop(self._stop_event, self._renew_seconds)
                 if self._stop_event.is_set():
                     break
-                if await self._renew_within_lease():
+                renewed = await self._renew_within_lease()
+                while (
+                    renewed is None
+                    and self.lease.holds_lease()
+                    and not self._stop_event.is_set()
+                ):
+                    # Retry transient database failures only while this local
+                    # lease remains authoritative.
+                    await wait_or_stop(
+                        self._stop_event,
+                        min(self._retry_seconds, self.lease.seconds_remaining()),
+                    )
+                    if self._stop_event.is_set():
+                        break
+                    renewed = await self._renew_within_lease()
+                if renewed:
                     continue
+                if self._stop_event.is_set():
+                    break
 
                 logger.warning(
                     "Control replica lost trigger leadership",

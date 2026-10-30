@@ -32,6 +32,26 @@ FRAGMENT_SPOOL_BYTES = MAX_FRAME_BYTES
 MAX_CLOCK_SKEW_SECONDS = 60
 
 
+# The runtime credential protocol this build's children speak, reported in a
+# launcher's hello: 2 accepts claims access tokens with run refresh tokens and
+# refreshes them on the API's challenge. A hello without the field is 1, which
+# receives legacy runtime tokens.
+CREDENTIAL_PROTOCOL = 2
+
+
+def hello_credential_protocol(frame: Mapping[str, Any]) -> int:
+    """The credential protocol a launcher's hello frame reports (1 when absent)."""
+    value = frame.get("credential_protocol")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return 1
+    return value
+
+
+class CredentialRouteChanged(Exception):
+    """A dispatch's credentials were minted for a launcher session that has
+    since been replaced; they are never sent to the new session."""
+
+
 class ProtocolError(ValueError):
     """A peer supplied an invalid or unsafe control frame."""
 

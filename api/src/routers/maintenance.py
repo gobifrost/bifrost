@@ -37,6 +37,7 @@ from src.models.contracts.artifact_retention import (
     ArtifactRetentionSettings,
     ArtifactRetentionSettingsUpdate,
 )
+from src.models.contracts.authz import LegacyCredentialStatus
 from src.models.contracts.audit_retention import (
     AuditArchiveRunRequest,
     AuditExpiryPreview,
@@ -67,6 +68,7 @@ from src.models.orm.file_index import FileIndex
 from src.services.app_dependencies import parse_dependencies
 from src.services.artifact_retention import ArtifactRetentionSettingsService
 from src.services.audit import emit_audit
+from src.services.authorization.legacy_status import legacy_credential_status
 from src.services.audit_retention.archiver import (
     latest_audit_archive_job,
     plan_expiry,
@@ -278,6 +280,24 @@ async def _run_retention_status(
         info=RunRetentionInfo(**await run_retention_info(db, settings)),
         last_run=platform_job_to_public(last_run) if last_run else None,
     )
+
+
+@router.get(
+    "/authz/legacy-status",
+    response_model=LegacyCredentialStatus,
+    summary="List what still depends on legacy runtime credentials",
+    description=(
+        "Live workflow executions and service attempts whose credentials are in the legacy "
+        "format, and connected remote launchers that receive legacy credentials. The release "
+        "that removes legacy runtime tokens refuses to install while either list is non-empty. "
+        "Read-only."
+    ),
+)
+async def get_legacy_credential_status(
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> LegacyCredentialStatus:
+    return await legacy_credential_status(db)
 
 
 @router.get(

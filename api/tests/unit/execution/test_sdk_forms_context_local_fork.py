@@ -78,7 +78,7 @@ class TestForkedFormsContextTransport:
     ):
         """A real forked child reads forms and context over the socket."""
         from src.core.principal import UserPrincipal
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.enums import ExecutionStatus, FormAccessLevel
         from src.models.orm.audit import AuditLog
         from src.models.orm.executions import Execution
@@ -220,7 +220,7 @@ class TestForkedFormsContextTransport:
         ]
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
-            mint_engine_token(
+            legacy_engine_token(
                 execution_id=str(engine_execution_id),
                 timeout_seconds=120,
             )[0],

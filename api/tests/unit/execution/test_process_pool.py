@@ -460,6 +460,33 @@ class TestProcessPoolManagerRouting:
         assert context["engine_token"] == "super-secret-jwt-value"
 
     @pytest.mark.asyncio
+    async def test_write_context_to_redis_excludes_refresh_and_nested_service_tokens(self):
+        """Run refresh tokens and nested service credentials are scrubbed too."""
+        pool = ProcessPoolManager()
+        fake_redis = AsyncMock()
+
+        with patch.object(pool, "_get_redis", AsyncMock(return_value=fake_redis)):
+            context = {
+                "execution_id": "exec-secret",
+                "engine_token": "access-jwt-value",
+                "engine_refresh_token": "run-refresh-jwt-value",
+                "service": {"attempt_id": "a-1", "token": "svc-access", "refresh_token": "svc-refresh"},
+            }
+            await pool._write_context_to_redis("exec-secret", context)
+
+        stored_json = fake_redis.setex.call_args.args[2]
+        for secret in ("access-jwt-value", "run-refresh-jwt-value", "svc-access", "svc-refresh"):
+            assert secret not in stored_json
+        assert json.loads(stored_json)["service"] == {"attempt_id": "a-1"}
+        # The child's copy is untouched.
+        assert context["service"]["token"] == "svc-access"
+
+    def test_local_children_speak_the_claims_credential_protocol(self):
+        from src.services.execution.process_pool import CredentialRoute
+
+        assert ProcessPoolManager().credential_route() == CredentialRoute(2)
+
+    @pytest.mark.asyncio
     async def test_route_execution_sends_full_context_to_child_despite_redis_scrub(self):
         """route_execution must still hand the child its engine token."""
         pool = ProcessPoolManager()

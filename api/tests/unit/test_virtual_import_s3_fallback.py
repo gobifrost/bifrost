@@ -1,7 +1,7 @@
 """Tests for virtual import S3 fallback."""
 import json
 import logging
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 
@@ -118,7 +118,7 @@ def test_targeted_resolution_threads_solution_scope_params():
             patch("src.core.module_cache_sync._get_engine_credentials", return_value=("http://api", "token")),
             patch("src.core.module_cache_sync._get_cached_module_resolution", return_value=None),
             patch("src.core.module_cache_sync._get_exact_scoped_module", return_value=None),
-            patch("httpx.Client", return_value=client) as client_cls,
+            patch("bifrost._refreshing.RefreshingClient", return_value=client) as client_cls,
         ):
             result = mcs.resolve_module_sync("modules.helpers")
             result_again = mcs.resolve_module_sync("modules.helpers")
@@ -126,7 +126,7 @@ def test_targeted_resolution_threads_solution_scope_params():
         assert result.kind == "module"
         assert result_again is result
         assert result.content == "VALUE = 1"
-        client_cls.assert_called_once_with(timeout=10.0)
+        client_cls.assert_called_once_with(timeout=10.0, refresh=mcs._refresh_engine_access_token)
         client.get.assert_called_once_with(
             "http://api/api/sdk/modules-resolve",
             headers={"Authorization": "Bearer token"},
@@ -135,6 +135,7 @@ def test_targeted_resolution_threads_solution_scope_params():
                 "solution_id": "sol-1",
                 "global_repo_access": True,
             },
+            extensions=ANY,
         )
     finally:
         mcs.clear_solution_context()

@@ -43,8 +43,9 @@ wait_for_service() {
 }
 
 # Wait for the API to respond 200 on /health/ready — a real readiness probe
-# that confirms the API is serving traffic AND its dependencies (DB, Redis,
-# S3) are reachable. This is the source-of-truth check used by both
+# that confirms the API is serving traffic AND found its dependencies (DB,
+# Redis, S3) reachable after it started. It does not re-check them later;
+# /health/detailed does. This is the source-of-truth check used by both
 # `stack up` (block until ready) and `require_stack_up` (verify ready before
 # running tests). Closes the race where `docker ps` says "running" but uvicorn
 # is still booting / migrations are still applying.

@@ -329,6 +329,7 @@
 | POST | `/api/maintenance/audit-retention/run` |
 | GET | `/api/maintenance/audit-retention/settings` |
 | PUT | `/api/maintenance/audit-retention/settings` |
+| GET | `/api/maintenance/authz/legacy-status` |
 | POST | `/api/maintenance/cleanup-orphaned` |
 | POST | `/api/maintenance/index-docs` |
 | POST | `/api/maintenance/preflight` |

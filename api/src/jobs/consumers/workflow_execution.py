@@ -874,6 +874,13 @@ class WorkflowExecutionConsumer:
                     return
             metadata_ready_ms = (time.perf_counter() - dispatch_started) * 1000
 
+            # The route is chosen before the credentials are minted: its
+            # credential protocol decides their format, which the execution
+            # row records.
+            from src.services.authorization.tokens import credential_version_for
+
+            credential_route = self._pool.credential_route()
+
             # Create PostgreSQL record with RUNNING status
             await create_execution(
                 execution_id=execution_id,
@@ -890,6 +897,7 @@ class WorkflowExecutionConsumer:
                 check_existing=True,
                 lineage=lineage,
                 impersonation_provenance=impersonation_provenance,
+                credential_version=credential_version_for(credential_route.protocol),
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
             if not is_sync:
@@ -926,14 +934,21 @@ class WorkflowExecutionConsumer:
                         "is_provider": org.is_provider,
                     }
 
-            # Mint engine token parent-side (consumer holds SECRET_KEY legitimately).
-            # The child receives it through context_data and installs it only in
-            # its one-shot process environment — no SECRET_KEY or persistent
+            # Mint the run's credentials parent-side (the consumer holds
+            # SECRET_KEY legitimately) for the chosen route. The child
+            # receives them through context_data and installs them only in its
+            # one-shot process environment: no SECRET_KEY or persistent
             # credential write is needed in the child.
-            from src.core.security import mint_engine_token
-            engine_token, _ = mint_engine_token(
-                execution_id=execution_id,
-                timeout_seconds=timeout_seconds,
+            from src.services.authorization.tokens import (
+                RuntimeSubject,
+                issue_run_credentials,
+                legacy_engine_token_lifetime,
+            )
+
+            credentials = await issue_run_credentials(
+                RuntimeSubject("workflow_execution", UUID(execution_id)),
+                protocol=credential_route.protocol,
+                legacy_lifetime_seconds=legacy_engine_token_lifetime(timeout_seconds),
             )
 
             # Build context for worker process
@@ -968,16 +983,19 @@ class WorkflowExecutionConsumer:
                 "solution_id": solution_id,  # Install id if solution-managed (else None)
                 "solution_global_repo_access": solution_global_repo_access,
                 "artifact_workspace_id": artifact_workspace_id,
-                # Pre-minted engine token: child uses process-scoped SDK
-                # credentials, with no SECRET_KEY in its environment.
-                "engine_token": engine_token,
+                # Pre-minted engine credentials: the child uses process-scoped
+                # SDK credentials, with no SECRET_KEY in its environment.
+                "engine_token": credentials.access_token,
             }
+            if credentials.refresh_token is not None:
+                context_data["engine_refresh_token"] = credentials.refresh_token
 
             # Route to process pool
             # Results are handled asynchronously via _handle_result callback
             await self._pool.route_execution(
                 execution_id=execution_id,
                 context=context_data,
+                credential_route=credential_route,
                 active_execution=ActiveExecution(
                     execution_id=execution_id,
                     workflow_id=str(workflow_id) if workflow_id else None,

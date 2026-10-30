@@ -10194,15 +10194,25 @@
     }
   ],
   "counts": {
-    "cli": 172,
+    "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 689,
+    "rest": 690,
     "sdk": 21
   },
   "schema_version": 1,
   "uncataloged": {
     "cli": [
+      {
+        "kind": "operation",
+        "path": [
+          "admin",
+          "authz",
+          "legacy-status"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
       {
         "kind": "lifecycle",
         "path": [
@@ -12846,6 +12856,13 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/maintenance/audit-retention/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/authz/legacy-status",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

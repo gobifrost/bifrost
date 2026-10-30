@@ -117,7 +117,9 @@ class AuthorizationContext:
 async def build_authorization_context(
     db: AsyncSession, user_id: UUID
 ) -> AuthorizationContext:
-    """Load the context for ``user_id``: two queries, no per-role lookups."""
+    """Load the context for ``user_id``: three queries (the user row, their
+    role boundaries, and the permissions of the base role and bounded
+    roles), no per-role lookups."""
     user_row = (
         await db.execute(
             select(User.organization_id, User.base_role_id, User.is_external).where(

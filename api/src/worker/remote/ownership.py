@@ -20,6 +20,9 @@ class RemoteOwnerLease:
     owner_id: UUID
     launcher_id: UUID
     session_generation: int
+    # The runtime credential protocol the launcher reported for this
+    # session, persisted with the generation (1: legacy tokens only).
+    credential_protocol: int = 1
 
 
 async def acquire_remote_owner(
@@ -29,6 +32,7 @@ async def acquire_remote_owner(
     launcher_id: UUID,
     nonce_digest: str,
     hello_sequence: int,
+    credential_protocol: int = 1,
     lease_seconds: int = DEFAULT_OWNER_LEASE_SECONDS,
 ) -> RemoteOwnerLease | None:
     """Acquire one fenced API owner session for an admitted launcher.
@@ -37,6 +41,10 @@ async def acquire_remote_owner(
     one; the current owner may rotate its own session on reconnect.  Every
     accepted hello consumes its nonce, preventing a captured hello from being
     replayed after a replica restart.
+
+    The launcher's credential protocol is written in the same statement that
+    advances the session generation, so a generation always names the
+    protocol its launcher reported.
     """
     if lease_seconds <= 0:
         raise ValueError("remote owner lease must be positive")
@@ -71,13 +79,15 @@ async def acquire_remote_owner(
                 remote_owner_lease_expires_at=func.now() + text(f"INTERVAL '{interval}'"),
                 remote_auth_nonce_digest=nonce_digest,
                 remote_hello_sequence=hello_sequence,
+                remote_credential_protocol=credential_protocol,
             )
-            .returning(ExecutionWorker.remote_session_generation)
+            .returning(ExecutionWorker.remote_session_generation, ExecutionWorker.remote_credential_protocol)
         )
-        generation = row.scalar_one_or_none()
-    if generation is None:
+        acquired = row.one_or_none()
+    if acquired is None:
         return None
-    return RemoteOwnerLease(worker_id, owner_id, launcher_id, generation)
+    generation, protocol = acquired
+    return RemoteOwnerLease(worker_id, owner_id, launcher_id, generation, protocol)
 
 
 async def renew_remote_owner(

@@ -10,7 +10,9 @@ mapping in one pure function means HTTP and worker-local (Unix socket)
 requests audit identically.
 
 Human and embed claims supply attribution only. Runtime requests use
-:func:`actor_from_runtime_principal` after durable credential verification.
+:func:`actor_from_runtime_principal`: on a legacy runtime token, after its
+database verification; on a ``ver: 1`` token, from its signed claims, which
+the auth dependency validates before any handler can emit an event.
 """
 
 from __future__ import annotations
@@ -136,7 +138,9 @@ def actor_from_token_payload(
 def actor_from_runtime_principal(
     principal: UserPrincipal, *, ip_address: str | None, user_agent: str | None,
 ) -> ActorContext:
-    """Runtime attribution comes from verified durable identity, never extra claims."""
+    """Runtime attribution from the run's identity: database-verified for a
+    legacy token, signed claims (``tokens.attribution_principal``) otherwise,
+    never unsigned or extra claims."""
     authority = principal.runtime_authority
     if authority is None:
         raise ValueError("Runtime authority required")

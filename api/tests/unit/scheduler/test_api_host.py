@@ -172,6 +172,8 @@ async def test_lifespan_hosts_control_and_remote_launchers(
     monkeypatch.setattr(api_main, "close_db", AsyncMock())
     monkeypatch.setattr(api_main, "register_dynamic_workflow_endpoints", AsyncMock())
     monkeypatch.setattr(api_main, "get_session_factory", MagicMock(side_effect=RuntimeError))
+    protocol_start = AsyncMock()
+    monkeypatch.setattr(api_main, "record_protocol_start", protocol_start)
     shared_redis_start = AsyncMock()
     shared_redis_close = AsyncMock(side_effect=lambda: shutdown.append("redis"))
     monkeypatch.setattr(api_main, "initialize_shared_redis", shared_redis_start)
@@ -190,6 +192,7 @@ async def test_lifespan_hosts_control_and_remote_launchers(
 
     application = FastAPI()
     async with api_main.app_lifespan(application):
+        protocol_start.assert_awaited_once_with()
         shared_redis_start.assert_awaited_once()
         [host] = hosts
         host.start.assert_awaited_once()
@@ -233,6 +236,7 @@ async def test_lifespan_imports_kubernetes_settings_before_serving(
     monkeypatch.setattr(api_main, "close_db", AsyncMock())
     monkeypatch.setattr(api_main, "register_dynamic_workflow_endpoints", AsyncMock())
     monkeypatch.setattr(api_main, "get_session_factory", lambda: open_session)
+    monkeypatch.setattr(api_main, "record_protocol_start", AsyncMock())
     monkeypatch.setattr(api_main, "initialize_shared_redis", AsyncMock())
     monkeypatch.setattr(api_main, "close_shared_redis", AsyncMock())
     monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())

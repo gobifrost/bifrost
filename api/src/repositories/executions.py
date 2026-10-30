@@ -81,6 +81,7 @@ class ExecutionRepository(BaseRepository[Execution]):
         *,
         lineage: dict[str, str] | None,
         impersonation_provenance: dict[str, str] | None = None,
+        credential_version: int | None = None,
     ) -> Execution:
         """
         Create a new execution record.
@@ -101,6 +102,8 @@ class ExecutionRepository(BaseRepository[Execution]):
             execution_model: Which system ran the execution ('process' or 'thread')
             lineage: Run lineage from the pending record (RunLineage.bound).
                 None leaves a pre-existing row's lineage as it is.
+            credential_version: The format of the credentials this run will
+                receive (``tokens.credential_version_for``); None is legacy.
 
         Returns:
             Created Execution record
@@ -145,6 +148,7 @@ class ExecutionRepository(BaseRepository[Execution]):
             existing.api_key_id = parsed_api_key_id
             existing.execution_model = execution_model
             existing.started_at = datetime.now(timezone.utc)
+            existing.credential_version = credential_version
             if lineage is not None:
                 for column, value in lineage_columns(lineage).items():
                     setattr(existing, column, value)
@@ -172,6 +176,7 @@ class ExecutionRepository(BaseRepository[Execution]):
             api_key_id=parsed_api_key_id,
             execution_model=execution_model,
             started_at=datetime.now(timezone.utc),
+            credential_version=credential_version,
             **lineage_columns(lineage),
             **pending_durable_impersonation(impersonation_provenance).columns(),
         )
@@ -751,6 +756,7 @@ async def create_execution(
     *,
     lineage: dict[str, str] | None,
     impersonation_provenance: dict[str, str] | None = None,
+    credential_version: int | None = None,
 ) -> None:
     """
     Create a new execution record in PostgreSQL.
@@ -783,6 +789,7 @@ async def create_execution(
             check_existing=check_existing,
             lineage=lineage,
             impersonation_provenance=impersonation_provenance,
+            credential_version=credential_version,
         )
 
     if session is not None:

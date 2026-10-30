@@ -19,9 +19,11 @@ class UserPrincipal:
     Authenticated user principal.
 
     Represents an authenticated user with their identity and permissions.
-    Human sessions carry identity claims. Runtime sessions are resolved from
-    current durable records. Authorization uses the canonical Caller context;
-    actor flags on this object describe the acting user.
+    Human sessions carry identity claims. Runtime sessions come from claims
+    minted by ``tokens.issue_access_token`` and validated against the
+    authority epoch and the run's liveness, or (legacy tokens and in-process
+    callers) from current durable records. Authorization uses the canonical
+    Caller context; actor flags on this object describe the acting user.
     """
     user_id: UUID
     email: str
@@ -60,27 +62,28 @@ class UserPrincipal:
     # auth boundary revalidates both on every request.
     impersonated_by_user_id: UUID | None = None
     impersonation_session_id: UUID | None = None
-    # Engine execution claims (mint_engine_token). Present only on the
-    # short-lived execution-scoped engine token: the SIGNED caller install
-    # for per-call solution inbound attestation. Ordinary user/admin JWTs
-    # carry neither; request-supplied caller ids from those callers are
-    # untrusted. None solution_id = _repo/global execution (outside).
+    # Engine execution facts (workflow executions and service attempts),
+    # from the runtime authority: the caller install for per-call solution
+    # inbound attestation. Ordinary user/admin JWTs carry neither;
+    # request-supplied caller ids from those callers are untrusted. None
+    # solution_id = _repo/global execution (outside).
     engine_execution_id: str | None = None
     engine_solution_id: str | None = None
-    # Service identity claims (mint_service_token). Present only on
-    # renewable service-scoped credentials: the definition and attempt the
-    # token was minted for. See is_service_principal (solution_scope).
+    # Service identity (service-attempt credentials): the definition and
+    # attempt the token was minted for. See is_service_principal
+    # (solution_scope).
     service_id: str | None = None
     service_attempt_id: str | None = None
-    # Run lineage claims (mint_engine_token, and the MCP bridge for agent
-    # runs): who the run is for, who started its tree, its first execution
-    # and the workflow. Observation and attribution only; never authorization.
+    # Run lineage, from the runtime authority: who the run is for, who
+    # started its tree, its first execution and the workflow. Observation
+    # and attribution only; never authorization.
     run_user_id: UUID | None = None
     started_by_user_id: UUID | None = None
     root_execution_id: UUID | None = None
     workflow_id: UUID | None = None
-    # Verified only by the runtime credential resolver. Transport claims do
-    # not populate this field.
+    # Set only by the runtime credential resolvers: the claims validator
+    # (``tokens.authenticate_runtime_token``) and ``load_runtime_principal``.
+    # No other transport claims populate it.
     runtime_authority: "RuntimeAuthority | None" = None
 
     @property

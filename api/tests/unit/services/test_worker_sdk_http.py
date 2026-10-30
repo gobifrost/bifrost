@@ -12,7 +12,7 @@ The real forked-child round trip lives in
 import asyncio
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -142,9 +142,9 @@ def _no_cache():
 
 
 def _engine_token() -> str:
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
-    token, _ = mint_engine_token(
+    token, _ = legacy_engine_token(
         execution_id=_ENGINE_TOKEN_EXECUTION_ID,
         timeout_seconds=300,
     )
@@ -163,13 +163,13 @@ async def _delete_owned_test_orgs(session, organization_ids):
 
 async def _scoped_engine_token(session_factory, organization_id):
     from tests.helpers.live_execution import create_live_execution
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     execution_id = str(uuid4())
     await create_live_execution(
         session_factory, execution_id, organization_id=organization_id, platform_admin=False,
     )
-    token, _ = mint_engine_token(execution_id=execution_id, timeout_seconds=300)
+    token, _ = legacy_engine_token(execution_id=execution_id, timeout_seconds=300)
     return token, execution_id
 
 
@@ -1378,7 +1378,7 @@ class TestEngineLocalTransportSelection:
         assert get_engine_socket_path() is None
         client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 1})
         network_http.stream.assert_called_once_with(
-            "POST", "/api/sdk/ai/stream", json={"x": 1}
+            "POST", "/api/sdk/ai/stream", json={"x": 1}, extensions=ANY
         )
         assert engine_http.stream.call_count == 0
 
@@ -1387,7 +1387,7 @@ class TestEngineLocalTransportSelection:
         _install_engine_socket(f"/tmp/bifrost-{uuid4().hex}.sock")
         client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 2})
         engine_http.stream.assert_called_once_with(
-            "POST", "/api/sdk/ai/stream", json={"x": 2}
+            "POST", "/api/sdk/ai/stream", json={"x": 2}, extensions=ANY
         )
         assert network_http.stream.call_count == 1
 
@@ -1479,8 +1479,8 @@ class TestEngineLocalTransportSelection:
         assert client._engine_http is not None
 
     @pytest.mark.asyncio
-    async def test_engine_local_401_does_not_refresh_or_replay(self):
-        """A local 401 surfaces; it never triggers network refresh/replay."""
+    async def test_engine_local_401_without_the_challenge_does_not_refresh_or_replay(self):
+        """A local 401 that is not the refresh challenge surfaces as it is."""
         from bifrost import config as bifrost_config
 
         server = WorkerSdkHttpServer()
@@ -1491,13 +1491,13 @@ class TestEngineLocalTransportSelection:
             _set_client(client)
 
             refresh_attempts: list[str] = []
-            original_refresh = client._refresh_and_update
+            original_refresh = client.refresh_access_token
 
-            async def _spy(observed: str | None = None) -> bool:
+            async def _spy(observed: str | None = None) -> str | None:
                 refresh_attempts.append("called")
                 return await original_refresh(observed)
 
-            client._refresh_and_update = _spy  # type: ignore[method-assign]
+            client.refresh_access_token = _spy  # type: ignore[method-assign]
             with pytest.raises(httpx.HTTPStatusError):
                 await bifrost_config.get("k", scope="global")
             assert refresh_attempts == []
@@ -3434,14 +3434,14 @@ class TestSocketErrorParityAndActorContext:
 
     @pytest.mark.asyncio
     async def test_request_context_attributes_engine_caller(self, async_session_factory):
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.orm.executions import Execution
         from src.models.orm.users import User
         from src.services.audit_context import current_actor
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
         execution_id = uuid4()
-        token, _ = mint_engine_token(
+        token, _ = legacy_engine_token(
             execution_id=str(execution_id),
             timeout_seconds=300,
         )
