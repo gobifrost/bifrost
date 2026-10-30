@@ -41,6 +41,7 @@ from src.services.authorization.agent_runtime import (
 from src.services.artifacts import artifact_ref
 from src.services.chat_attachments import ChatAttachmentError, ChatAttachmentService
 from src.services.chat_errors import public_chat_error_message
+from src.services.conversation_messages import add_conversation_message
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
     request_agent_run_cancel,
@@ -121,29 +122,22 @@ async def _persist_user_message(
     user_message_id: UUID,
     attachment_ids: list[UUID],
 ) -> Message:
-    max_sequence_result = await db.execute(
-        select(func.coalesce(func.max(Message.sequence), 0)).where(
-            Message.conversation_id == conversation.id
-        )
+    message = await add_conversation_message(
+        db,
+        Message(
+            id=user_message_id,
+            conversation_id=conversation.id,
+            role=MessageRole.USER,
+            content=content,
+            local_id=str(user_message_id),
+        ),
     )
-    next_sequence = int(max_sequence_result.scalar() or 0) + 1
-
-    message = Message(
-        id=user_message_id,
-        conversation_id=conversation.id,
-        role=MessageRole.USER,
-        content=content,
-        sequence=next_sequence,
-        local_id=str(user_message_id),
-    )
-    db.add(message)
     if attachment_ids:
         await ChatAttachmentService(db).bind(
             attachment_ids=attachment_ids,
             message_id=message.id,
             conversation_id=conversation.id,
         )
-    conversation.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return message
 

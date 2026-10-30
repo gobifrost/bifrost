@@ -25,6 +25,7 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 from src.services.ai_behavior_service import AgentExecutionMode, AIBehaviorService
+from src.services.conversation_messages import add_conversation_message
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -787,7 +788,7 @@ class AgentRunConsumer:
             if chat_agent is not None and chat_agent.max_run_timeout
             else DEFAULT_RUN_TIMEOUT
         )
-        from src.services.agent_executor import AgentExecutor, add_conversation_message
+        from src.services.agent_executor import AgentExecutor
 
         executor = AgentExecutor(self._session_factory)
         current_task = asyncio.current_task()
@@ -999,13 +1000,6 @@ class AgentRunConsumer:
                     duration_ms=duration_ms,
                     error=interrupted_error,
                 )
-                await publish_chat_run_event(
-                    conversation_id=conversation.id,
-                    run_id=run_id,
-                    kind=interrupted_kind,
-                    status=interrupted_status,
-                    payload=interrupted_payload,
-                )
 
                 async def _write_interrupted(db: AsyncSession) -> AgentRun | None:
                     run_obj = await db.get(
@@ -1018,6 +1012,7 @@ class AgentRunConsumer:
                     # The partial answer commits with the terminal status, so
                     # it can never land after a later turn's messages. Its id
                     # tells a retry whether an earlier attempt committed it.
+                    # Locks: this run's row (above), then the conversation's.
                     if (
                         streamed_content
                         and assistant_message_id is not None
@@ -1065,6 +1060,16 @@ class AgentRunConsumer:
                     )
                     return
                 agent_run_ref = written
+
+                # Only now, with the partial answer stored, may the client
+                # treat the run as over and send its next message.
+                await publish_chat_run_event(
+                    conversation_id=conversation.id,
+                    run_id=run_id,
+                    kind=interrupted_kind,
+                    status=interrupted_status,
+                    payload=interrupted_payload,
+                )
 
                 await publish_agent_run_update(
                     agent_run_ref,

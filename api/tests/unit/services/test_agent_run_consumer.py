@@ -33,6 +33,7 @@ from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 from src.models.orm.work_dispatches import WorkDispatch
 from src.routers import agent_runs as agent_runs_router
+from src.services import chat_runs
 from src.services.agent_executor import AgentExecutor
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
@@ -594,7 +595,7 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
         patch(
-            "src.services.agent_executor.add_conversation_message", AsyncMock()
+            "src.jobs.consumers.agent_run.add_conversation_message", AsyncMock()
         ) as add_message,
     ):
         await consumer._process_chat_run(
@@ -1422,9 +1423,10 @@ async def _cleanup_chat_run(async_session_factory, outage, org, user, conversati
 
 
 async def _process_chat_through_outage(
-    consumer, run, conversation, fake_executor, outage_on, outage, budget=None
+    consumer, run, conversation, fake_executor, outage_on, outage, budget=None, published=None
 ):
-    """Run ``_process_chat_run``; the outage starts as chunk ``outage_on`` is published."""
+    """Run ``_process_chat_run``; the outage starts as chunk ``outage_on`` is
+    published. Published event kinds are appended to ``published``."""
     redis_mock = AsyncMock()
     redis_mock.get.return_value = None
 
@@ -1435,6 +1437,8 @@ async def _process_chat_through_outage(
         status: str,
         payload: ChatStreamChunk,
     ) -> dict[str, Any]:
+        if published is not None:
+            published.append(kind)
         if kind == outage_on:
             consumer._session_factory.script = list(outage)
         return {}
@@ -1558,6 +1562,78 @@ async def test_chat_interruption_commits_the_partial_answer_with_its_terminal_st
         )
         assert next_turn.sequence == 3
     finally:
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_sent_while_the_partial_answer_is_being_stored_comes_after_it(
+    consumer, db_session, async_engine, async_session_factory
+):
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    question = Message(
+        id=uuid4(), conversation_id=conversation.id, role=MessageRole.USER, content="Hello", sequence=1
+    )
+    db_session.add(question)
+    await db_session.commit()
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
+    next_turn_id = uuid4()
+    written = asyncio.Event()
+    release = asyncio.Event()
+    published: list[str] = []
+
+    class HeldBeforeCommitSession(AsyncSession):
+        """The terminal transaction has written the partial answer and
+        holds its locks, but has not committed yet."""
+
+        async def commit(self) -> None:
+            await self.flush()
+            written.set()
+            await release.wait()
+            await super().commit()
+
+    async def send_next_turn() -> None:
+        async with async_session_factory() as db:
+            current = await db.get(Conversation, conversation.id)
+            assert current is not None
+            await chat_runs._persist_user_message(
+                db, current, content="And then?", user_message_id=next_turn_id, attachment_ids=[]
+            )
+            await db.commit()
+
+    try:
+        interrupted = asyncio.create_task(
+            _process_chat_through_outage(
+                consumer,
+                run,
+                conversation,
+                _interrupted_chat(assistant_message_id),
+                "delta",
+                [HeldBeforeCommitSession],
+                published=published,
+            )
+        )
+        await written.wait()
+        assert "cancelled" not in published
+        next_turn = asyncio.create_task(send_next_turn())
+        # The next turn waits for the conversation lock the terminal
+        # transaction holds.
+        done, _ = await asyncio.wait({next_turn}, timeout=0.5)
+        assert not done
+        release.set()
+        await interrupted
+        await next_turn
+
+        assert published[-1] == "cancelled"
+        assert await _messages(async_session_factory, conversation.id) == [
+            (question.id, MessageRole.USER, 1),
+            (assistant_message_id, MessageRole.ASSISTANT, 2),
+            (next_turn_id, MessageRole.USER, 3),
+        ]
+        assert (await _load_run(async_session_factory, run.id)).status == "cancelled"
+    finally:
+        release.set()
         await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
 
 

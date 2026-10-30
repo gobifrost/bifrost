@@ -16,7 +16,6 @@ import logging
 import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -51,6 +50,7 @@ from src.models.contracts.agents import (
 from src.models.enums import MessageRole
 from src.models.orm import Agent, Conversation, Message, MessageAttachment
 from src.services.ai_model_service import AIModelService
+from src.services.conversation_messages import add_conversation_message
 from src.services.llm import (
     LLMMessage,
     LLMInputFile,
@@ -176,26 +176,6 @@ def _serialize_tool_result_for_runtime(tool_result: ToolResult) -> str:
 FALLBACK_SYSTEM_PROMPT = """You are a helpful AI assistant. You can help users with a variety of tasks including answering questions, providing information, and having general conversations.
 
 Be concise, accurate, and helpful in your responses."""
-
-
-async def add_conversation_message(session: AsyncSession, message: Message) -> Message:
-    """Add ``message`` as its conversation's next message, in the caller's transaction."""
-    max_sequence = (
-        await session.execute(
-            select(func.coalesce(func.max(Message.sequence), 0)).where(
-                Message.conversation_id == message.conversation_id
-            )
-        )
-    ).scalar() or 0
-    message.sequence = max_sequence + 1
-    session.add(message)
-    conversation = (
-        await session.execute(
-            select(Conversation).where(Conversation.id == message.conversation_id)
-        )
-    ).scalar_one()
-    conversation.updated_at = datetime.now(timezone.utc)
-    return message
 
 
 class AgentExecutor:
