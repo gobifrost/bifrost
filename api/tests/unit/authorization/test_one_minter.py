@@ -292,3 +292,15 @@ def test_only_the_tokens_module_turns_claims_into_a_principal() -> None:
         "from src.services.authorization import tokens\ndef f(c):\n    return tokens.principal_from_claims(c)\n",
     ):
         assert _principal_from_claims_violations(outside, source), source
+
+
+def test_create_access_token_refuses_reserved_runtime_claims() -> None:
+    import pytest
+
+    from src.core.security import RESERVED_RUNTIME_CLAIMS, create_access_token
+
+    assert RESERVED_RUNTIME_CLAIMS == {"ver", "av", "credential_kind", "usr", "act", "run", "imp"}
+    for claim in RESERVED_RUNTIME_CLAIMS:
+        with pytest.raises(ValueError, match="reserved runtime claims"):
+            create_access_token({"sub": "someone", claim: "x"})
+    assert create_access_token({"sub": "someone", "email": "someone@example.test"})

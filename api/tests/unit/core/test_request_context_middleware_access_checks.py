@@ -17,6 +17,7 @@ from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.explain import Powers, RunUser
 from src.services.authorization.runtime import RuntimeAuthority
+from tests.helpers.runtime_tokens import legacy_engine_token
 
 
 class _Session:
@@ -63,9 +64,7 @@ def _runtime_credential() -> tuple[str, UserPrincipal]:
         root_execution_id=execution_id,
     )
     return (
-        create_access_token(
-            {"sub": str(execution_id), "credential_kind": "workflow_execution"}
-        ),
+        legacy_engine_token(execution_id=execution_id, timeout_seconds=300)[0],
         principal,
     )
 

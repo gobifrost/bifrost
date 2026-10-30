@@ -9,6 +9,7 @@ route with expired and valid tokens.
 
 # No ``from __future__ import annotations``: FastAPI must resolve these
 # routes' Annotated dependencies, which name functions local to each test.
+import time
 from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
 from typing import Annotated, Any
@@ -131,6 +132,20 @@ def _expired(claims: dict[str, Any]) -> str:
     return create_access_token(claims, expires_delta=timedelta(seconds=-30))
 
 
+def _expired_runtime(claims: dict[str, Any]) -> str:
+    """An expired, correctly signed runtime-shaped token. ``create_access_token``
+    refuses runtime claims, so it is signed here directly."""
+    settings = get_settings()
+    payload = {
+        **claims,
+        "type": "access",
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "exp": int(time.time()) - 30,
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+
+
 async def _post(app: FastAPI, token: str | None) -> httpx.Response:
     headers = {} if token is None else {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -171,15 +186,15 @@ def _wrong_signature() -> str:
     ("make_token", "challenged"),
     [
         (lambda: _expired(_human_claims()), True),
-        (lambda: _expired({"sub": str(uuid4()), "credential_kind": "workflow_execution", "ver": 1}), True),
+        (lambda: _expired_runtime({"sub": str(uuid4()), "credential_kind": "workflow_execution", "ver": 1}), True),
         (
-            lambda: _expired(
+            lambda: _expired_runtime(
                 {"sub": str(uuid4()), "credential_kind": "service_attempt", "service_id": str(uuid4()), "ver": 1}
             ),
             True,
         ),
         # A legacy runtime token's refresh slot holds the same token.
-        (lambda: _expired({"sub": str(uuid4()), "credential_kind": "workflow_execution"}), False),
+        (lambda: _expired_runtime({"sub": str(uuid4()), "credential_kind": "workflow_execution"}), False),
         # Embed tokens and impersonation markers have no refresh.
         (
             lambda: create_embed_access_token(

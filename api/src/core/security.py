@@ -54,6 +54,11 @@ def get_password_hash(password: str) -> str:
     return password_hash.hash(password)
 
 
+# Claims only ``tokens.issue_access_token`` may sign: a token carrying them is
+# validated as runtime authority, so no other minter may produce one.
+RESERVED_RUNTIME_CLAIMS = frozenset({"ver", "av", "credential_kind", "usr", "act", "run", "imp"})
+
+
 def create_access_token(
     data: dict[str, Any],
     expires_delta: timedelta | None = None
@@ -67,7 +72,15 @@ def create_access_token(
 
     Returns:
         Encoded JWT token string
+
+    Raises:
+        ValueError: ``data`` names a claim reserved for runtime tokens
+            (``RESERVED_RUNTIME_CLAIMS``); mint those with
+            ``tokens.issue_access_token``.
     """
+    reserved = RESERVED_RUNTIME_CLAIMS & data.keys()
+    if reserved:
+        raise ValueError(f"create_access_token refuses reserved runtime claims: {sorted(reserved)}")
     settings = get_settings()
 
     to_encode = data.copy()
