@@ -18,6 +18,7 @@ from src.core.csrf import CSRFMiddleware
 from src.core.embed_middleware import EmbedScopeMiddleware
 from src.core.request_body_limit import RouteBodyLimitMiddleware
 from src.core.database import close_db, get_session_factory, init_db
+from src.services.authorization.authz import record_protocol_start
 from src.core.pubsub import manager as pubsub_manager
 from src.routers.agent_runs import router as agent_runs_router
 from src.routers.agent_tuning import router as agent_tuning_router
@@ -145,6 +146,10 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Initializing database connection...")
     await init_db()
     logger.info("Database connection established")
+
+    # Durable rollout evidence: later token migrations refuse to run until an
+    # API speaking this credential protocol has started.
+    await record_protocol_start()
 
     await initialize_shared_redis()
     logger.info("Redis cache connection established")

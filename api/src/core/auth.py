@@ -15,7 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.db_deps import DbSession
 from src.core.principal import UserPrincipal
-from src.core.security import decode_token
+from src.core.security import decode_expired_access_token, decode_token
 from shared.browser_impersonation import (
     BrowserImpersonationError,
     IMPERSONATION_COOKIE_NAME,
@@ -34,6 +34,28 @@ logger = logging.getLogger(__name__)
 
 # HTTP Bearer token scheme
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# RFC 6750 challenge on a 401 that a refresh fixes. Clients replay a request
+# only after this challenge, which the auth dependency raises before any
+# handler or later dependency runs.
+REFRESH_REQUIRED_CHALLENGE = 'Bearer error="invalid_token", error_description="refresh_required"'
+
+
+def _refresh_fixes(token: str) -> bool:
+    """Whether a refresh would make this refused credential usable again.
+
+    True for a signature-valid access token whose only fault is expiry and
+    that has a refresh path: a person's token, or a run token minted by
+    ``issue_access_token`` (``ver: 1``). Embed tokens and impersonation
+    markers have no refresh, and a legacy runtime token's refresh slot holds
+    the same token, which ``/auth/refresh`` refuses.
+    """
+    payload = decode_expired_access_token(token)
+    if payload is None or payload.get("embed") or payload.get("impersonation_session_id") is not None:
+        return False
+    if is_runtime_credential_payload(payload):
+        return payload.get("ver") == 1
+    return True
 
 
 def select_http_auth_token(
@@ -364,10 +386,15 @@ async def get_current_user(
     user = await get_current_user_optional(request, credentials, db)
 
     if user is None:
+        token = select_http_auth_token(request, credentials.credentials if credentials else None)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={
+                "WWW-Authenticate": (
+                    REFRESH_REQUIRED_CHALLENGE if token is not None and _refresh_fixes(token) else "Bearer"
+                )
+            },
         )
 
     return user

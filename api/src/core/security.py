@@ -163,6 +163,10 @@ def decode_token(token: str, expected_type: str | None = None) -> dict[str, Any]
             algorithms=[settings.algorithm],
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,
+            # ``iat`` is set from the minting host's clock for JWT hygiene
+            # only; nothing compares it, so another host's clock skew must
+            # never reject a token.
+            options={"verify_iat": False},
         )
 
         # Validate token type if specified
@@ -174,6 +178,43 @@ def decode_token(token: str, expected_type: str | None = None) -> dict[str, Any]
         return None
     except jwt.InvalidTokenError:
         return None
+
+
+def decode_expired_access_token(token: str) -> dict[str, Any] | None:
+    """The payload of a signature-valid access token whose ``exp`` has passed.
+
+    None for a token that is still valid, malformed, wrongly signed, from
+    another issuer or audience, or not an access token. Authentication
+    never accepts what this returns; it only decides whether a 401 carries
+    the refresh challenge.
+    """
+    settings = get_settings()
+    try:
+        jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            options={"verify_iat": False},
+        )
+        return None
+    except jwt.ExpiredSignatureError:
+        pass  # Expired is exactly the case this helper reports.
+    except jwt.InvalidTokenError:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            options={"verify_exp": False, "verify_iat": False},
+        )
+    except jwt.InvalidTokenError:
+        return None
+    return payload if payload.get("type") == "access" else None
 
 
 def create_mfa_token(user_id: str, purpose: str = "mfa_verify") -> str:

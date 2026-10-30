@@ -14,6 +14,11 @@ name: bifrost
 #   BIFROST_SECRET_KEY  - 32+ char secret for JWT signing and secret encryption
 #   POSTGRES_PASSWORD   - PostgreSQL password
 #
+# Release pinning:
+#   BIFROST_VERSION     - release tag of the init, api, worker and client images
+#                         (default: latest). Set it in .env and upgrade one
+#                         release at a time: docs/runbooks/authz-epoch.md.
+#
 # The BIFROST_SECRET_KEY is critical - it's used for:
 #   - JWT token signing (HS256)
 #   - Fernet encryption of secrets stored in PostgreSQL
@@ -80,7 +85,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
-    image: ghcr.io/gobifrost/bifrost-api:latest
+    image: ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}
     container_name: bifrost-init
     environment:
       # Core (required by Settings during migrations)
@@ -136,7 +141,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
-    image: ghcr.io/gobifrost/bifrost-api:latest
+    image: ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}
     environment:
       # Core
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
@@ -200,7 +205,7 @@ services:
     #   context: ./client
     #   dockerfile: Dockerfile
     #   target: production
-    image: ghcr.io/gobifrost/bifrost-client:latest
+    image: ghcr.io/gobifrost/bifrost-client:${BIFROST_VERSION:-latest}
     container_name: bifrost-client
     environment:
       API_URL: http://api:8000
@@ -221,7 +226,7 @@ services:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
-    image: ghcr.io/gobifrost/bifrost-api:latest
+    image: ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}
     environment:
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
