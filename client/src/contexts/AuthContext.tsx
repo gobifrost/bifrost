@@ -463,12 +463,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		}
 		void (async () => {
 			try {
-				const token = getActiveToken();
-				const response = await fetch("/api/auth/logout", {
-					method: "POST",
-					headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-					credentials: "same-origin",
-				});
+				// Support tokens cannot rotate the operator cookie. Keep their direct
+				// revoke request so an expired support session can still be ended.
+				const response = isImpersonating()
+					? await fetch("/api/auth/logout", {
+							method: "POST",
+							headers: { Authorization: `Bearer ${getActiveToken()}` },
+							credentials: "same-origin",
+						})
+					: await authFetch("/api/auth/logout", { method: "POST" });
 				if (!response.ok) {
 					const body = await response.json().catch(() => ({}));
 					throw new Error(body.detail || "Could not sign out");
@@ -531,10 +534,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			}
 			const token = getActiveToken();
 			if (!token) throw new Error("Your session has expired");
-			const response = await fetch(`/api/auth/impersonate/${target.id}`, {
+			const response = await authFetch(`/api/auth/impersonate/${target.id}`, {
 				method: "POST",
-				headers: { Authorization: `Bearer ${token}` },
-				credentials: "same-origin",
 			});
 			if (!response.ok) {
 				const body = await response.json().catch(() => ({}));

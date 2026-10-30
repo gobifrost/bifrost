@@ -199,3 +199,11 @@ AuthContext reproduction showed its remaining ordering failure was a local-stora
 spy on the wrong object; the corrected spy passed all 12 AuthContext tests. The
 speculative bootstrap edit was reverted. Neither failure was masked or retried
 without a concrete correction.
+
+A final browser caller audit found that normal logout and impersonation entry
+still used raw fetch. They now use the same exact-challenge transport as normal
+protected requests. Support-session logout retains its direct revoke request:
+expired support markers cannot refresh the operator cookie and still need an
+explicit revoke attempt. Impersonation exit retains its original-operator path.
+The focused regression challenges normal logout before effects, rotates once,
+then completes logout once and clears browser state.

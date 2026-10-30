@@ -253,6 +253,50 @@ it("does not restore identity after logout wins an in-flight identity read", asy
 	expect(await screen.findByText("Signed out")).toBeVisible();
 });
 
+it("rotates a stale normal session before completing logout once", async () => {
+	const stale = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "stale" }))}.signature`;
+	const fresh = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "fresh" }))}.signature`;
+	localStorage.setItem(ACCESS_TOKEN_KEY, stale);
+	let logoutRequests = 0;
+	let completedLogouts = 0;
+	const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+		const url = requestUrl(input);
+		if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
+		if (url.endsWith("/auth/me")) return Response.json(currentUser());
+		if (url.endsWith("/api/auth/refresh")) {
+			return Response.json({ access_token: fresh });
+		}
+		if (url.endsWith("/api/auth/logout")) {
+			logoutRequests += 1;
+			if (logoutRequests === 1) return new Response(null, {
+				status: 401,
+				headers: {
+					"WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"',
+				},
+			});
+			completedLogouts += 1;
+			return new Response(null, { status: 204 });
+		}
+		return Response.json({});
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	let logout: (() => void) | undefined;
+	function Probe() {
+		const auth = useAuth();
+		logout = auth.logout;
+		return <p>{auth.user?.email ?? "Signed out"}</p>;
+	}
+	render(<MemoryRouter initialEntries={["/login"]}><AuthProvider><Probe /></AuthProvider></MemoryRouter>);
+	await screen.findByText("account@example.test");
+
+	act(() => logout!());
+	await vi.waitFor(() => expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull());
+
+	expect(logoutRequests).toBe(2);
+	expect(completedLogouts).toBe(1);
+	expect(fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith("/api/auth/refresh"))).toHaveLength(1);
+});
+
 it("reloads an existing normal tab when impersonation or logout changes shared auth", async () => {
 	const reload = vi.fn();
 	const originalLocation = window.location;
@@ -344,7 +388,7 @@ it("keeps the browser-wide support session when logout cannot revoke it", async 
 	localStorage.setItem(ACCESS_TOKEN_KEY, "operator-token");
 	setImpersonationToken("impersonated-token");
 	const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-		const url = typeof input === "string" ? input : input.toString();
+		const url = requestUrl(input);
 		if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
 		if (url.endsWith("/auth/logout")) return new Response(null, { status: 500 });
 		return Response.json({});
