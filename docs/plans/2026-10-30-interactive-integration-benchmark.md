@@ -65,8 +65,12 @@ actual transport events before assigning that delay to polling.
 
 Workflow templates already preload the base execution engine, `bifrost`,
 `httpx` and `pydantic`. Workspace modules remain fresh per execution and load
-through the authenticated worker-local SDK API. A warm worker therefore does
-not imply that each new child inherits a warm workflow import graph.
+through the authenticated SDK API. The SDK selects an injected worker-local
+Unix socket when present; the default thin runner uses network HTTP to the
+API. The frozen current-runtime diagnostic logs already show network entry
+source reads at `http://api:8000/api/sdk/modules/...`. Do not infer Unix-socket
+transport from the helper name `engine_request_sync`. A warm worker therefore
+does not imply that each new child inherits a warm workflow import graph.
 
 ## Reproducible Workload
 
