@@ -13,6 +13,7 @@ from uuid import UUID
 
 from sqlalchemy import update
 
+from shared.app_sdk_upgrade_settings import AppSdkUpgradeSettingsService
 from shared.app_build_errors import (
     AppBuildMemoryError,
     app_build_memory_message,
@@ -24,7 +25,10 @@ from src.models.orm.applications import Application
 from src.services.application_sdk_status import current_sdk_metadata
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
 from src.services.application_source_resolver import ResolvedApplicationSource
-from src.services.solutions.app_build import SolutionAppBuilder
+from src.services.solutions.app_build import (
+    ReproducibleDependencyBuildError,
+    SolutionAppBuilder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,10 @@ async def rebuild_application_from_source(
     expected_sdk_contract_version: int | None = None,
     expected_sdk_built_at: datetime | None = None,
     enforce_expected_state: bool = False,
+    target_sdk_fingerprint: str | None = None,
+    target_sdk_contract_version: int | None = None,
+    retain_previous_deployment: bool = False,
+    automatic_upgrade: bool = False,
 ) -> dict[str, str]:
     if application is None and application_id is None:
         raise ValueError("application or application_id is required")
@@ -62,14 +70,25 @@ async def rebuild_application_from_source(
                     "sdk_provenance_unavailable",
                     "Current SDK provenance is unavailable.",
                 )
+            _assert_target_sdk_metadata(
+                sdk_metadata,
+                target_sdk_fingerprint=target_sdk_fingerprint,
+                target_sdk_contract_version=target_sdk_contract_version,
+            )
+            build_kwargs = {"require_lockfile": True} if automatic_upgrade else {}
             dist = await asyncio.to_thread(
                 builder.compile_dist,
                 app_id,
                 source.files,
                 source.dependencies,
+                **build_kwargs,
             )
         except PlatformJobFailure:
             raise
+        except ReproducibleDependencyBuildError as exc:
+            raise PlatformJobFailure(
+                "sdk_update_lockfile_unreproducible", str(exc)
+            ) from exc
         except AppBuildMemoryError as exc:
             raise PlatformJobFailure("memory_pressure", str(exc)) from exc
         except subprocess.CalledProcessError as exc:
@@ -97,12 +116,36 @@ async def rebuild_application_from_source(
             if source.source_kind == "independent":
                 source_zip_to_store = retained_source_zip or Path(tmp) / "source.zip"
                 if retained_source_zip is None:
-                    await asyncio.to_thread(_write_source_zip, source_zip_to_store, source.files)
+                    await asyncio.to_thread(
+                        _write_source_zip, source_zip_to_store, source.files
+                    )
                 await source_artifacts.write_deployment_source(
                     app_id, deployment_id, source_zip_to_store
                 )
 
         async with get_db_context() as db:
+            activation_sdk_metadata = await asyncio.to_thread(current_sdk_metadata)
+            if (
+                not activation_sdk_metadata.fingerprint
+                or activation_sdk_metadata.contract_version is None
+            ):
+                raise PlatformJobFailure(
+                    "sdk_provenance_unavailable",
+                    "Current SDK provenance is unavailable.",
+                )
+            _assert_target_sdk_metadata(
+                activation_sdk_metadata,
+                target_sdk_fingerprint=target_sdk_fingerprint,
+                target_sdk_contract_version=target_sdk_contract_version,
+            )
+            if (
+                automatic_upgrade
+                and not (await AppSdkUpgradeSettingsService(db).get_settings()).enabled
+            ):
+                raise PlatformJobFailure(
+                    "automatic_sdk_upgrades_disabled",
+                    "Automatic App SDK upgrades were disabled before this update could activate.",
+                )
             app = await _get_activation_app(db, app_id, application)
             if app is None or app.app_model != "standalone_v2":
                 raise PlatformJobFailure(
@@ -128,9 +171,9 @@ async def rebuild_application_from_source(
             provenance_values = {
                 "active_deployment_id": deployment_id,
                 "deployed_at": deployed_at,
-                "sdk_package_version": sdk_metadata.package_version,
-                "sdk_fingerprint": sdk_metadata.fingerprint,
-                "sdk_contract_version": sdk_metadata.contract_version,
+                "sdk_package_version": activation_sdk_metadata.package_version,
+                "sdk_fingerprint": activation_sdk_metadata.fingerprint,
+                "sdk_contract_version": activation_sdk_metadata.contract_version,
                 "sdk_built_at": deployed_at,
             }
             if app.solution_id is None:
@@ -151,7 +194,11 @@ async def rebuild_application_from_source(
                 )
         activated = True
 
-        if old_deployment_id and old_deployment_id != deployment_id:
+        if (
+            old_deployment_id
+            and old_deployment_id != deployment_id
+            and not retain_previous_deployment
+        ):
             try:
                 await builder.delete_deployment(app_id, old_deployment_id)
             except Exception:
@@ -179,9 +226,7 @@ async def rebuild_application_from_source(
     finally:
         if not activated:
             try:
-                await source_artifacts.delete_deployment_source(
-                    app_id, deployment_id
-                )
+                await source_artifacts.delete_deployment_source(app_id, deployment_id)
             except Exception:
                 logger.warning(
                     "Failed to clean incomplete retained App source %s",
@@ -274,6 +319,31 @@ def _assert_expected_state(
                 "app_sdk_update_stale",
                 "The App SDK provenance changed before the SDK update could activate.",
             )
+
+
+def _assert_target_sdk_metadata(
+    sdk_metadata,
+    *,
+    target_sdk_fingerprint: str | None,
+    target_sdk_contract_version: int | None,
+) -> None:
+    """Fence an SDK update to the version pinned when its job was enqueued."""
+    if target_sdk_fingerprint is None and target_sdk_contract_version is None:
+        return
+    if target_sdk_fingerprint is None or target_sdk_contract_version is None:
+        raise PlatformJobFailure(
+            "app_sdk_target_mismatch",
+            "The SDK update target is incomplete. Enqueue the SDK update again.",
+        )
+    if (
+        sdk_metadata.fingerprint != target_sdk_fingerprint
+        or sdk_metadata.contract_version != target_sdk_contract_version
+    ):
+        raise PlatformJobFailure(
+            "app_sdk_target_mismatch",
+            "The running worker SDK no longer matches the target pinned for this "
+            "update. Enqueue the SDK update again.",
+        )
 
 
 def _write_source_zip(path: Path, files: dict[str, bytes]) -> None:

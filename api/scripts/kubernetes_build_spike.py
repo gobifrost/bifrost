@@ -306,6 +306,11 @@ async def _enqueue_maintenance_job(prefix: str) -> PlatformJob:
 
 
 async def _enqueue_sdk_update_job(app: Application) -> PlatformJob:
+    from src.services.application_sdk_status import load_current_sdk_metadata
+
+    target = await load_current_sdk_metadata()
+    if not target.fingerprint or target.contract_version is None:
+        raise RuntimeError("Current App SDK provenance is unavailable")
     async with get_db_context() as db:
         fresh = await db.get(Application, app.id)
         if fresh is None:
@@ -321,6 +326,8 @@ async def _enqueue_sdk_update_job(app: Application) -> PlatformJob:
                 expected_sdk_fingerprint=fresh.sdk_fingerprint,
                 expected_sdk_contract_version=fresh.sdk_contract_version,
                 expected_sdk_built_at=fresh.sdk_built_at,
+                target_sdk_fingerprint=target.fingerprint,
+                target_sdk_contract_version=target.contract_version,
             ),
             dedupe_key=f"kubernetes-build-spike:{fresh.id}:sdk-update:{uuid4()}",
             resource_lock_key=f"application:{fresh.id}",

@@ -30,13 +30,14 @@ def _metadata(
     definition_name: str,
     policy: PlatformJobPolicy,
     *,
+    payload_version: int = 1,
     encrypt_payload: bool = False,
     display_name: str | None = None,
     description: str | None = None,
 ) -> PlatformJobMetadata:
     return PlatformJobMetadata(
         job_type=job_type,
-        payload_version=1,
+        payload_version=payload_version,
         policy=policy,
         module=module,
         definition_name=definition_name,
@@ -76,6 +77,7 @@ _METADATA = MappingProxyType(
                     execution_class="build",
                 ),
                 display_name="App SDK Rebuilds",
+                payload_version=2,
                 description="Rebuilds the web SDK and republishes affected apps in an isolated pod.",
             ),
             _metadata(

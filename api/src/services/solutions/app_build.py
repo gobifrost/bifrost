@@ -49,6 +49,10 @@ def _output_tail(exc: subprocess.CalledProcessError) -> str:
     return "\n".join(lines[-_FAILURE_OUTPUT_LINES:]) or "(no output)"
 
 
+class ReproducibleDependencyBuildError(Exception):
+    """The automatic SDK updater cannot safely reproduce the app dependency graph."""
+
+
 class SolutionAppBuilder:
     """Builds a v2 app's dist/ and serves it from ``_apps/{app_id}/dist/``."""
 
@@ -84,6 +88,8 @@ class SolutionAppBuilder:
         src_files: dict[str, bytes],
         dependencies: dict[str, str],
         prebuilt_dist: dict[str, bytes] | None = None,
+        *,
+        require_lockfile: bool = False,
     ) -> dict[str, bytes]:
         """Produce the app's dist/ IN MEMORY (no S3). This is the failure-prone
         part — npm install + vite build — isolated so a deploy can run it BEFORE
@@ -102,7 +108,13 @@ class SolutionAppBuilder:
                 self._materialize(workdir, src_files, dependencies)
                 # base must match the serving route so emitted asset URLs resolve
                 # under /api/applications/{id}/dist/ rather than the site root.
-                return self._run_vite_build(workdir, base=self._dist_base(app_id))
+                return self._run_vite_build(
+                    workdir,
+                    base=self._dist_base(app_id),
+                    require_lockfile=require_lockfile,
+                )
+            except ReproducibleDependencyBuildError:
+                raise
             except subprocess.TimeoutExpired as exc:
                 # Translate to the deploy's build-failure exception (→ 409 with
                 # the reason) instead of an unhandled TimeoutExpired 500.
@@ -203,12 +215,20 @@ class SolutionAppBuilder:
             existing["dependencies"] = {**existing["dependencies"], **deps}
             pkg.write_text(json.dumps(existing, indent=2))
         else:
-            pkg.write_text(json.dumps(
-                {"name": "bifrost-app", "private": True, "dependencies": deps},
-                indent=2,
-            ))
+            pkg.write_text(
+                json.dumps(
+                    {"name": "bifrost-app", "private": True, "dependencies": deps},
+                    indent=2,
+                )
+            )
 
-    def _run_vite_build(self, workdir: Path, base: str = "/") -> dict[str, bytes]:
+    def _run_vite_build(
+        self,
+        workdir: Path,
+        base: str = "/",
+        *,
+        require_lockfile: bool = False,
+    ) -> dict[str, bytes]:
         """Install declared deps, run ``vite build`` in ``workdir``, and return
         the produced dist/ files.
 
@@ -219,16 +239,33 @@ class SolutionAppBuilder:
         declared dependencies (react, the bifrost SDK, etc.) resolve during the
         build — Vite cannot resolve bare imports from a bare package.json alone.
         """
+        if require_lockfile:
+            self._refresh_sdk_lockfile(workdir)
+        install_command = (
+            ["npm", "ci", "--no-audit", "--no-fund"]
+            if require_lockfile
+            else ["npm", "install", "--no-audit", "--no-fund", "--package-lock=false"]
+        )
         subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
-            ["npm", "install", "--no-audit", "--no-fund", "--package-lock=false"],
+            install_command,
             cwd=str(workdir),
             check=True,
             capture_output=True,
             timeout=_BUILD_STEP_TIMEOUT_S,
             env=package_tool_env(),
         )
+        vite_command = ["npx", "vite"]
+        if require_lockfile:
+            locked_vite = workdir / "node_modules" / ".bin" / "vite"
+            if not locked_vite.is_file():
+                raise ReproducibleDependencyBuildError(
+                    "Automatic SDK updates require Vite in the retained locked "
+                    "dependencies. Use Update SDK manually, or redeploy with Vite "
+                    "included in package-lock.json."
+                )
+            vite_command = [str(locked_vite)]
         subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
-            ["npx", "vite", "build", "--base", base],
+            [*vite_command, "build", "--base", base],
             cwd=str(workdir),
             check=True,
             capture_output=True,
@@ -242,13 +279,85 @@ class SolutionAppBuilder:
                 out[f.relative_to(dist_dir).as_posix()] = f.read_bytes()
         return out
 
+    def _refresh_sdk_lockfile(self, workdir: Path) -> None:
+        """Replace only the vendored SDK entry in a declared npm lockfile.
+
+        The automatic updater replaces ``bifrost-sdk.tgz`` with the target SDK,
+        so a lockfile from the prior deployment can retain its old tarball
+        integrity. npm must rewrite that one entry before ``npm ci`` can safely
+        install the existing pinned dependency graph. Any mutation outside the
+        SDK's root/package entries is rejected.
+        """
+        lock_path = workdir / "package-lock.json"
+        if not lock_path.is_file():
+            raise ReproducibleDependencyBuildError(
+                "Automatic SDK updates require the retained App source to include "
+                "package-lock.json. Use Update SDK to rebuild manually, or redeploy "
+                "with a package-lock.json to allow automatic upgrades."
+            )
+
+        original_bytes = lock_path.read_bytes()
+        try:
+            original_lock = json.loads(original_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ReproducibleDependencyBuildError(
+                "Automatic SDK updates require a valid package-lock.json. Use Update "
+                "SDK to rebuild manually, or redeploy with a valid package-lock.json "
+                "to allow automatic upgrades."
+            ) from exc
+
+        try:
+            subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
+                [
+                    "npm",
+                    "install",
+                    "--package-lock-only",
+                    "--ignore-scripts",
+                    "--no-audit",
+                    "--no-fund",
+                    "bifrost@file:./bifrost-sdk.tgz",
+                ],
+                cwd=str(workdir),
+                check=True,
+                capture_output=True,
+                timeout=_BUILD_STEP_TIMEOUT_S,
+                env=package_tool_env(),
+            )
+            refreshed_lock = json.loads(lock_path.read_bytes())
+        except subprocess.CalledProcessError as exc:
+            lock_path.write_bytes(original_bytes)
+            raise ReproducibleDependencyBuildError(
+                "Could not refresh the retained SDK entry in package-lock.json: "
+                f"{_output_tail(exc)}. Use Update SDK to rebuild manually, or redeploy "
+                "with a package-lock.json that can preserve the locked dependencies."
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            lock_path.write_bytes(original_bytes)
+            raise ReproducibleDependencyBuildError(
+                "npm produced an invalid package-lock.json while preparing the SDK "
+                "update. Use Update SDK to rebuild manually, or redeploy with a valid "
+                "package-lock.json to allow automatic upgrades."
+            ) from exc
+
+        if _lockfile_without_sdk(original_lock) != _lockfile_without_sdk(
+            refreshed_lock
+        ):
+            lock_path.write_bytes(original_bytes)
+            raise ReproducibleDependencyBuildError(
+                "Refreshing the SDK lock entry would change other App dependencies. "
+                "Use Update SDK to rebuild manually, or redeploy with an up-to-date "
+                "package-lock.json to allow automatic upgrades."
+            )
+
     async def _upload_dist(self, app_id: UUID | str, dist: dict[str, bytes]) -> None:
         # Full replace: a redeploy must not leave a removed/renamed asset
         # fetchable from the new dist/. Clear the prefix, then upload.
         await self.delete_dist(app_id)
         async with self._client() as c:
             for rel, data in dist.items():
-                await c.put_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel), Body=data)
+                await c.put_object(
+                    Bucket=self._bucket, Key=self._dist_key(app_id, rel), Body=data
+                )
 
     async def read_dist(
         self,
@@ -295,7 +404,9 @@ class SolutionAppBuilder:
         """Delete an app's entire ``_apps/{app_id}/dist/`` artifact (reconcile)."""
         async with self._client() as c:
             for rel in await self.list_dist(app_id):
-                await c.delete_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel))
+                await c.delete_object(
+                    Bucket=self._bucket, Key=self._dist_key(app_id, rel)
+                )
 
     async def delete_deployment(
         self, app_id: UUID | str, deployment_id: UUID | str
@@ -330,3 +441,22 @@ class SolutionAppBuilder:
                 if not resp.get("IsTruncated"):
                     break
                 token = resp.get("NextContinuationToken")
+
+
+def _lockfile_without_sdk(lockfile: object) -> object:
+    """Return a comparable lockfile shape excluding only the vendored SDK entries."""
+    if not isinstance(lockfile, dict):
+        return lockfile
+    result = json.loads(json.dumps(lockfile))
+    packages = result.get("packages")
+    if isinstance(packages, dict):
+        root = packages.get("")
+        if isinstance(root, dict):
+            dependencies = root.get("dependencies")
+            if isinstance(dependencies, dict):
+                dependencies.pop("bifrost", None)
+        packages.pop("node_modules/bifrost", None)
+    dependencies = result.get("dependencies")
+    if isinstance(dependencies, dict):
+        dependencies.pop("bifrost", None)
+    return result

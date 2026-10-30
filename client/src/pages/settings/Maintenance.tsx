@@ -31,6 +31,7 @@ import { authFetch } from "@/lib/api-client";
 import { exportAll } from "@/services/exportImport";
 import { ImportDialog } from "@/components/ImportDialog";
 import { ArtifactRetentionSettings } from "@/pages/settings/ArtifactRetentionSettings";
+import { AppSdkUpgradeSettings } from "@/pages/settings/AppSdkUpgradeSettings";
 import { AuditRetentionSettings } from "@/pages/settings/AuditRetentionSettings";
 import { RunRetentionSettings } from "@/pages/settings/RunRetentionSettings";
 
@@ -315,6 +316,7 @@ export function Maintenance() {
 
 	return (
 		<div className="space-y-6">
+			<AppSdkUpgradeSettings />
 			<ArtifactRetentionSettings />
 			<AuditRetentionSettings />
 			<RunRetentionSettings />

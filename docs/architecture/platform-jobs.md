@@ -43,6 +43,23 @@ error, retry policy, timestamps, and lease state. Workflow claims, service
 attempt leases, and PlatformJob leases remain PostgreSQL records; a physical
 runner never turns a control-channel message into a new claim.
 
+### Payload versions
+
+The metadata catalog names each definition's current payload version. By
+default, a runner accepts only that version. A definition can explicitly retain
+an exact Pydantic model for an older version; the shared runner selects that
+model before validating either a plain or encrypted payload. It does not
+transform stored payloads or make older schemas available to other job types.
+Unknown versions fail before a handler runs.
+
+`application.sdk_update` currently enqueues version 2 jobs, which include a
+pinned SDK target. Its definition also accepts already queued version 1 manual
+jobs through their strict legacy payload model. New workers can therefore
+finish those manual jobs with their original behavior, while older workers
+refuse version 2 jobs rather than ignoring the pin. Upgrade workers before
+enabling automatic updates; draining queued manual version 1 jobs is not
+required.
+
 The API owns canonical execution control. During its lifespan, each API replica
 starts the remote-control host. When an authenticated physical launcher
 connects, that host constructs one canonical `PoolWorker` control instance for
@@ -153,6 +170,15 @@ A handler may release its scheduler slot in `waiting` state after dispatching
 durable child work. The child tracker completes the parent row later. Summary
 backfills and Solution app builds use this path so summary fan-out or an
 isolated build process does not occupy scheduler capacity.
+
+The App SDK Upgrades trigger reconciles at startup and once per minute when
+its global setting is enabled. Each pass selects at most 20 eligible Apps and
+enqueues the existing `application.sdk_update` definition. Admission shares the
+manual updater's App and Solution locks; terminal job history prevents another
+automatic attempt for the same App and target SDK. Failed attempts require a
+manual retry. Compilation, memory protection, placement, progress, cancellation,
+and notifications all use the ordinary PlatformJob paths. The default remains
+off during initial testing; see [Application SDK updates](../runbooks/application-sdk-update.md).
 
 ### Isolated build execution (Kubernetes)
 

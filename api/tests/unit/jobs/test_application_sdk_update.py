@@ -10,6 +10,7 @@ from src.jobs.platform.base import PlatformJobFailure
 
 
 def test_sdk_update_definition_is_registered_with_expected_policy() -> None:
+    from shared.models import ApplicationSdkUpdatePayloadV1
     from src.jobs.platform.application_sdk_update import (
         APPLICATION_SDK_UPDATE_DEFINITION,
         ApplicationSdkUpdatePayload,
@@ -20,8 +21,10 @@ def test_sdk_update_definition_is_registered_with_expected_policy() -> None:
 
     assert definition is APPLICATION_SDK_UPDATE_DEFINITION
     assert definition.job_type == "application.sdk_update"
-    assert definition.payload_version == 1
+    assert definition.payload_version == 2
     assert definition.payload_model is ApplicationSdkUpdatePayload
+    assert definition.payload_model_for_version(1) is ApplicationSdkUpdatePayloadV1
+    assert definition.payload_model_for_version(3) is None
     assert definition.policy.timeout_seconds == 20 * 60
     assert definition.policy.max_attempts == 1
     assert definition.policy.max_concurrency == 1
@@ -82,6 +85,10 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
         assert kwargs["expected_active_deployment_id"] == old_id
         assert kwargs["expected_sdk_fingerprint"] == "old-fp"
         assert kwargs["source"].source_kind == "independent"
+        assert kwargs["target_sdk_fingerprint"] == "target-fp"
+        assert kwargs["target_sdk_contract_version"] == 3
+        assert kwargs["automatic_upgrade"] is False
+        assert kwargs["retain_previous_deployment"] is False
         return {"application_id": str(app_id), "deployment_id": str(new_id)}
 
     monkeypatch.setattr(job, "get_db_context", lambda: db_context())
@@ -98,6 +105,8 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
             expected_sdk_fingerprint="old-fp",
             expected_sdk_contract_version=1,
             expected_sdk_built_at=built_at,
+            target_sdk_fingerprint="target-fp",
+            target_sdk_contract_version=3,
         ),
     )
 
@@ -116,6 +125,75 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
         ("Rebuilding App", None),
         ("App SDK updated", 100),
     ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_sdk_update_uses_original_manual_build_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shared.models import ApplicationSdkUpdatePayloadV1
+    from src.jobs.platform import application_sdk_update as job
+    from src.services.application_source_resolver import ResolvedApplicationSource
+
+    app_id, deployment_id = uuid4(), uuid4()
+    app = SimpleNamespace(id=app_id, app_model="standalone_v2", solution_id=None)
+    build_args: dict[str, object] = {}
+
+    class DB:
+        async def get(self, _model, requested_id):
+            assert requested_id == app_id
+            return app
+
+    class Context:
+        async def report(self, *_args, **_kwargs):
+            pass
+
+    @asynccontextmanager
+    async def db_context():
+        yield DB()
+
+    async def resolve_source(_application):
+        return ResolvedApplicationSource(
+            files={"package.json": b"{}"}, dependencies={}, source_kind="independent"
+        )
+
+    async def rebuild_application(**kwargs):
+        build_args.update(kwargs)
+        return {"application_id": str(app_id), "deployment_id": str(deployment_id)}
+
+    monkeypatch.setattr(job, "get_db_context", lambda: db_context())
+    monkeypatch.setattr(job, "resolve_application_source", resolve_source)
+    monkeypatch.setattr(job, "rebuild_application_from_source", rebuild_application)
+
+    await job.run_application_sdk_update(
+        Context(),
+        ApplicationSdkUpdatePayloadV1(
+            application_id=app_id,
+            deployment_id=deployment_id,
+        ),
+    )
+
+    assert build_args["application"] is app
+    assert build_args["deployment_id"] == deployment_id
+    assert build_args["enforce_expected_state"] is True
+    assert "target_sdk_fingerprint" not in build_args
+    assert "target_sdk_contract_version" not in build_args
+    assert "automatic_upgrade" not in build_args
+    assert "retain_previous_deployment" not in build_args
+
+
+def test_legacy_sdk_update_payload_rejects_automatic_target_fields() -> None:
+    from pydantic import ValidationError
+
+    from shared.models import ApplicationSdkUpdatePayloadV1
+
+    with pytest.raises(ValidationError):
+        ApplicationSdkUpdatePayloadV1(
+            application_id=uuid4(),
+            automatic_upgrade=True,
+            target_sdk_fingerprint="target-fingerprint",
+            target_sdk_contract_version=3,
+        )
 
 
 @pytest.mark.asyncio
@@ -154,6 +232,8 @@ async def test_sdk_update_source_unavailable_is_platform_job_failure(
             job.ApplicationSdkUpdatePayload(
                 application_id=app_id,
                 deployment_id=deployment_id,
+                target_sdk_fingerprint="target-fp",
+                target_sdk_contract_version=3,
             ),
         )
 

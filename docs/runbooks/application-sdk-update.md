@@ -1,9 +1,10 @@
 # Application SDK updates
 
-Bifrost exposes SDK provenance on deployed V2 Apps and lets an administrator
+Bifrost exposes SDK provenance on deployed Apps and lets an administrator
 rebuild selected Apps against the SDK shipped by the current Bifrost instance.
-This is explicit, not automatic: upgrading Bifrost can make an update visible,
-but does not change a deployed App until an administrator starts one.
+Manual updates keep their current behavior. Automatic updates are an opt-in,
+reviewed source-compatible transition; they do not apply developer code
+changes.
 
 ## Provenance and status
 
@@ -19,17 +20,16 @@ Every successful V2 build records four values on the App:
 - `sdk_built_at`: when that SDK was activated for the App.
 
 The status contract is `current`, `update_available`, `update_required`,
-`unknown`, or `not_applicable`. Missing provenance on an older V2 deployment is
-`unknown`; V1 inline Apps are `not_applicable`. App list responses include
-whether rebuild source is available. Solution list/get responses provide a
-server-computed aggregate and actionable App count, using one bounded App query
-rather than fetching every App in the browser.
+`unknown`, or `not_applicable`. Missing provenance is `unknown`; App list
+responses include whether rebuild source is available. Solution list/get
+responses provide a server-computed aggregate and actionable App count, using
+one bounded App query rather than fetching every App in the browser.
 
 ## Rebuild behavior
 
 `application.sdk_update` is a shared PlatformJob. It resolves the active
 deployment's retained source, injects the current SDK tarball, runs the normal
-V2 compiler, and atomically swaps the active deployment only after a successful
+compiler, and atomically swaps the active deployment only after a successful
 build. Failure leaves the previous deployment active. The job reports truthful
 phases—loading, resolving source, and rebuilding—without synthetic percentages;
 completion is 100%.
@@ -40,9 +40,45 @@ or mutate sibling entities. Batch actions enqueue one independently observable
 job per actionable App so the scheduler retains its normal admission control,
 resource protection, cancellation, and failure reporting.
 
+## Automatic App SDK Upgrades
+
+In **Settings → Maintenance**, **App SDK Upgrades** has an **Enable Automatic
+App SDK Upgrades** toggle. It defaults to off while this capability is being
+dogfooded; the intended future default is on after that proof is complete.
+
+When enabled, the elected scheduler reconciles at startup and once per minute,
+considering at most 20 candidates per pass. It queues ordinary
+`application.sdk_update` PlatformJobs, whose progress appears in
+Notifications. An automatic attempt is eligible only for an active,
+source-built App with retained source that needs a transition explicitly
+approved by SDK metadata. The currently reviewed predecessor is contract 2 to
+contract 3 only.
+
+The scheduler attempts an App/target pair once, including failures. Use the
+existing manual **Update SDK** action to retry a failure. Automatic updates do
+not change authorization or add an authentication bypass.
+
+Automatic rebuilds require a valid retained `package-lock.json`. The compiler
+may refresh the vendored SDK lock entry, but refuses unrelated dependency
+changes. An App without a valid reproducible lockfile is left for a manual
+update or source redeploy.
+
+Automatic jobs pin the SDK fingerprint and contract before compilation, then
+verify that same target before activation. They retain the prior deployment
+artifacts for recovery; failures leave the active deployment unchanged, and
+there is no automatic rollback.
+
+`application.sdk_update` uses payload version 2 for newly queued work. New
+workers also finish already queued version 1 manual updates with their original
+behavior, so those jobs do not need to be drained. A worker that predates
+version 2 refuses a pinned automatic job rather than ignoring its target.
+Upgrade workers before enabling automatic updates. A worker whose installed SDK
+does not match a job's pinned target also refuses it; enqueue the job again
+after workers are aligned.
+
 ## Retained source and privacy
 
-Independent V2 deploys retain a sanitized zip beside each immutable deployment.
+Independent deploys retain a sanitized zip beside each immutable deployment.
 Solution deploys retain the validated deployed Solution archive. SDK rebuilds
 never rely on `node_modules` or an already-built `dist` directory.
 
@@ -66,7 +102,8 @@ Apps keep their normal deployment status and add a separate SDK badge. Starting
 an update changes that badge to `Updating SDK`; the menu action becomes disabled
 and progress continues through Notifications. Failed jobs show `SDK update
 failed` with a retry action. Apps that need an update but lack retained source
-also show `Source unavailable`.
+also show `Source unavailable`. Manual updates remain available whether or not
+the automatic setting is enabled.
 
 CLI operations:
 

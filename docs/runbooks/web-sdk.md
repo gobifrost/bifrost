@@ -1,6 +1,6 @@
 # Bifrost Web SDK
 
-The V2 web SDK is the installable `bifrost` package used by independent and
+The web SDK is the installable `bifrost` package used by independent and
 Solution-owned Apps:
 
 ```tsx
@@ -32,7 +32,7 @@ instance that served it.
 
 ## Local Apps
 
-V2 App scaffolds deliberately omit an instance-specific SDK dependency from
+App scaffolds deliberately omit an instance-specific SDK dependency from
 `package.json`. Both connected development commands install the selected
 instance's SDK transiently without rewriting project metadata:
 
@@ -78,7 +78,7 @@ normal not-found behavior, and a successful query with no matching rows is empty
 
 Server-side independent-App and Solution builds do not call the public SDK
 download URL and do not need network access to npm for the SDK itself.
-`SolutionAppBuilder` is the shared V2 compiler: it generates
+`SolutionAppBuilder` is the shared compiler: it generates
 the same tarball from the running API image, writes it into the temporary build
 directory as `bifrost-sdk.tgz`, and injects:
 
@@ -95,8 +95,15 @@ stores a sanitized source archive beside the immutable compiled deployment,
 and atomically activates it. `bifrost solution deploy` builds the same App shape
 as part of full Solution reconciliation and retains the deployed Solution
 archive. These retained artifacts make an SDK-only rebuild possible without a
-full redeploy; `.env*`, dependencies, generated output, caches, and VCS data are
-excluded. See [Application SDK updates](application-sdk-update.md).
+full redeploy; `.env*`, installed dependencies, generated output, caches, and VCS data are
+excluded.
+
+A deployed bundle remains immutable until it is redeployed or rebuilt. By
+default, an instance upgrade does not rebuild it. An administrator can update
+an App manually, or opt in to **App SDK Upgrades** in Maintenance for the
+reviewed automatic transition in
+[Application SDK updates](application-sdk-update.md). That setting queues
+source-compatible rebuilds as PlatformJobs.
 
 Prebuilt disconnected Solution packages are different: if a bundle ships a
 ready `dist/`, the platform skips the server-side Vite build. In that case the
@@ -104,7 +111,7 @@ SDK version is whatever the bundle was built with.
 
 ## App Mount Lifecycle
 
-V2 Apps keep the module graph exactly as Vite emits it. The host loads the
+Apps keep the module graph exactly as Vite emits it. The host loads the
 content-hashed entry through its canonical URL, without per-mount query
 parameters, then invokes the entry's exported `mount(mountEl, bootstrap)` for
 each visit. `mount` must return a teardown function (normally
@@ -165,9 +172,9 @@ Practical consequences:
 - App authors should let the CLI/server inject the selected instance's SDK, not depend on `bifrost@latest`.
 - SDK changes ship with the Bifrost deployment that contains them.
 - Local Apps update through `app start` or `solution sdk update`.
-- Deployed source-built Apps update only when an administrator explicitly runs
-  an SDK update or redeploys the App or Solution; a Bifrost upgrade does not
-  silently change a deployed App.
+- Deployed source-built Apps update when an administrator explicitly runs an
+  SDK update or redeploys the App or Solution. They can also use the opt-in
+  automatic setting for an explicitly reviewed source-compatible transition.
 - Breaking SDK surface changes should be treated as Bifrost release changes and
   documented in release notes, because apps consume the SDK from their host
   instance.

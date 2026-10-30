@@ -30,6 +30,10 @@ vi.mock("@/pages/settings/ArtifactRetentionSettings", () => ({
 	),
 }));
 
+vi.mock("@/pages/settings/AppSdkUpgradeSettings", () => ({
+	AppSdkUpgradeSettings: () => <section>App SDK upgrade settings</section>,
+}));
+
 vi.mock("@/pages/settings/AuditRetentionSettings", () => ({
 	AuditRetentionSettings: () => <section>Audit retention settings</section>,
 }));
@@ -75,6 +79,17 @@ afterEach(() => {
 });
 
 describe("Maintenance", () => {
+	it("shows App SDK upgrades before retention settings", () => {
+		renderWithProviders(<Maintenance />);
+
+		const upgrades = screen.getByText("App SDK upgrade settings");
+		const artifact = screen.getByText("Artifact retention settings");
+		expect(
+			upgrades.compareDocumentPosition(artifact) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	});
+
 	it("shows the run history card after the audit retention card", () => {
 		renderWithProviders(<Maintenance />);
 

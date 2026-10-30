@@ -1,5 +1,6 @@
 {
   "version": 3,
+  "automatic_upgrade_from": [2],
   "history": {
     "1": "Baseline. v2 SDKs built before the streaming workflow transport (this PR) POSTed /api/workflows/execute and read the result straight off the response. The new transport starts the run the same way, then subscribes to a websocket for live status/log frames and fetches GET /api/executions/{id} for the terminal result -- but a pre-streaming SDK's synchronous POST/response flow still works unmodified against the new server (the server still returns a usable response, and old SDKs never subscribed to the socket in the first place). Additive, not breaking. No contract bump.",
     "2": "Batch table mutations now emit a table_invalidated frame instead of granular row frames, and SDK v2 refetches authoritative table snapshots when it receives that invalidation. Older SDKs ignore the new frame and may remain stale until reload or manual refresh. This is a breaking realtime semantics change, not an automatic runtime upgrade.",

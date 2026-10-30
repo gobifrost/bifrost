@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
@@ -86,3 +86,29 @@ class DeviceAuthorizeRequest(BaseModel):
     """The code for a CLI device login being approved or denied."""
 
     user_code: str
+
+
+class AppSdkUpgradeSettings(BaseModel):
+    """Platform-wide policy for automatic App SDK upgrades."""
+
+    enabled: bool = False
+
+
+class AppSdkUpgradeSettingsUpdate(BaseModel):
+    """Requested platform-wide App SDK upgrade policy."""
+
+    enabled: bool
+
+
+class ApplicationSdkUpdatePayloadV1(BaseModel):
+    """Legacy manual App SDK update payload retained for already queued jobs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: UUID
+    deployment_id: UUID = Field(default_factory=uuid4)
+    expected_active_deployment_id: UUID | None = None
+    expected_sdk_package_version: str | None = None
+    expected_sdk_fingerprint: str | None = None
+    expected_sdk_contract_version: int | None = None
+    expected_sdk_built_at: datetime | None = None

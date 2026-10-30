@@ -114,6 +114,23 @@ def sdk_contract_version() -> int:
     return contract["version"]
 
 
+@functools.lru_cache(maxsize=1)
+def sdk_automatic_upgrade_contracts() -> frozenset[int]:
+    """Reviewed source contracts that can rebuild without developer changes.
+
+    A wire-contract mismatch is insufficient evidence of source compatibility.
+    Each target release explicitly lists the predecessors it can upgrade.
+    """
+    contract = json.loads((_SDK_SRC / "sdk-contract.json").read_text())
+    predecessors = contract.get("automatic_upgrade_from", [])
+    if not isinstance(predecessors, list) or any(
+        type(version) is not int or not 0 < version < contract["version"]
+        for version in predecessors
+    ):
+        raise ValueError("Invalid SDK automatic-upgrade contract declaration")
+    return frozenset(predecessors)
+
+
 # Caching is safe: the tarball is a pure function of version + the SDK source
 # baked into the image. maxsize=2 covers a rolling-upgrade window.
 @functools.lru_cache(maxsize=2)

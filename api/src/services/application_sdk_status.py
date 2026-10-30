@@ -9,6 +9,7 @@ from uuid import UUID
 
 from shared.version import get_version
 from src.services.sdk_package import (
+    sdk_automatic_upgrade_contracts,
     sdk_contract_version,
     sdk_fingerprint,
     sdk_package_version,
@@ -30,6 +31,7 @@ class CurrentApplicationSdkMetadata:
     package_version: str
     fingerprint: str | None
     contract_version: int | None
+    automatic_upgrade_from: frozenset[int] = frozenset()
 
 
 class ApplicationSdkStatusInput(Protocol):
@@ -50,6 +52,7 @@ def current_sdk_metadata() -> CurrentApplicationSdkMetadata:
         package_version=sdk_package_version(version),
         fingerprint=sdk_fingerprint(version),
         contract_version=sdk_contract_version(),
+        automatic_upgrade_from=sdk_automatic_upgrade_contracts(),
     )
 
 
