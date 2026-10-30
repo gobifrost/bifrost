@@ -181,6 +181,7 @@ async def _run_agent_tool_as(session_factory, agent_id: str, initiator: E2EUser,
     """Run the agent in process as ``target``; its tool runs on the worker."""
     from sqlalchemy.orm import selectinload
 
+    from src.core.cache.redis_client import close_shared_redis
     from src.core.database import close_db
     from src.jobs.consumers.agent_run import _load_run_as
     from src.models.orm.agent_runs import AgentRun
@@ -242,6 +243,10 @@ async def _run_agent_tool_as(session_factory, agent_id: str, initiator: E2EUser,
             await cleanup.execute(delete(AgentRun).where(AgentRun.id == run_id))
             await cleanup.commit()
         await close_db()
+        # The run binds the process-global shared Redis client to this private
+        # loop; close it here, on its owning loop, or a later async test finds
+        # it bound to a dead loop.
+        await close_shared_redis()
         _reset_loop_singletons()
 
 
