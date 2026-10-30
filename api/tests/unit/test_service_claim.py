@@ -392,6 +392,19 @@ async def test_a_claims_route_gets_an_access_and_run_refresh_token_and_is_never_
     assert service_token_key(attempt_id) not in redis_holder["redis"].values
 
 
+async def test_an_adopted_claims_attempt_is_not_rotated_after_a_roll_forward(redis_holder):
+    """An attempt adopted from a launcher's inventory keeps its recorded
+    claims format, so this parent never rotates a legacy token into it."""
+    attempt_id = uuid4()
+    owned = OwnedAttempt(attempt_id=attempt_id, service_id=uuid4(), lease_token="lease", credential_version=2)
+    db = AsyncMock()
+
+    await _loop(StubPool())._rotate_token(db, owned, SimpleNamespace(organization_id=uuid4()))
+
+    assert service_token_key(str(attempt_id)) not in redis_holder["redis"].values
+    db.get.assert_not_awaited()
+
+
 async def test_service_rotation_keeps_only_durable_credential_identifiers(redis_holder):
     from src.core.security import decode_token
 

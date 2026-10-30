@@ -1088,8 +1088,11 @@ async def _service_supervisor(
             if payload["stop_requested"]:
                 stop_event.set()
                 break
-            # Only a legacy-format attempt's parent rotates its token.
-            if payload["access_token"] is not None:
+            # Only a legacy-format attempt installs a token its parent
+            # rotates. A claims-format attempt refreshes its own access
+            # token and ignores rotations, which an older API (after a
+            # rollback) sends for every attempt it supervises.
+            if payload["access_token"] is not None and not cfg.refresh_token:
                 install_legacy_service_token(payload["access_token"])
                 cfg.token_expires_at = payload["token_expires_at"]
         except asyncio.CancelledError:

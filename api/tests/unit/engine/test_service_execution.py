@@ -356,3 +356,28 @@ async def test_a_claims_attempt_installs_its_refresh_token_and_is_never_rotated(
     assert result.status == ExecutionStatus.SUCCESS
     assert runtime_io.installed_tokens[0] == ("initial-token", "run-refresh-token")
     assert all(isinstance(installed, tuple) for installed in runtime_io.installed_tokens)
+
+
+async def test_a_claims_attempt_ignores_rotations_from_a_rolled_back_api(runtime_io):
+    """Rollback to an API that rotates every attempt: its legacy tokens never
+    replace the claims attempt's credentials."""
+    from bifrost._service_runtime import clear_service_runtime, install_service_runtime
+
+    cfg = _config(refresh_token="run-refresh-token")
+    stop = asyncio.Event()
+    install_service_runtime(stop)
+    runtime_io.responses.append(
+        {
+            "stop_requested": False,
+            "access_token": "legacy-rotated-token",
+            "token_expires_at": "2026-09-20T08:30:00+00:00",
+        }
+    )
+    runtime_io.stop_after_request = stop
+    try:
+        await _service_supervisor(cfg, stop)
+    finally:
+        clear_service_runtime()
+
+    assert runtime_io.installed_tokens == []
+    assert cfg.token_expires_at == "2026-09-20T08:15:00+00:00"

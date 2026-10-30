@@ -104,3 +104,26 @@ def test_a_claims_attempt_installs_an_access_token_and_its_run_refresh_token(mon
     resolved = resolve_credentials("http://service-test.invalid")
     assert resolved is not None
     assert (resolved.credentials.access_token, resolved.credentials.refresh_token) == ("claims-access", "run-refresh")
+
+
+def test_a_rotated_legacy_token_never_replaces_a_run_refresh_token(monkeypatch):
+    """After a rollback, an older parent rotates legacy tokens into a
+    claims-format attempt: only the access slot may change, so the attempt
+    can still refresh once the newer API is back."""
+    from bifrost.credentials import resolve_credentials
+
+    monkeypatch.setenv("BIFROST_API_URL", "http://service-test.invalid")
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "test-placeholder")
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "test-placeholder")
+    try:
+        assert install_service_credentials("claims-access", "run-refresh")
+        assert install_legacy_service_token("legacy-rotated")
+
+        resolved = resolve_credentials("http://service-test.invalid")
+        assert resolved is not None
+        assert (resolved.credentials.access_token, resolved.credentials.refresh_token) == (
+            "legacy-rotated",
+            "run-refresh",
+        )
+    finally:
+        clear_service_runtime()

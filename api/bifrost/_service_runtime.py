@@ -32,6 +32,9 @@ from typing import Any, Awaitable, Callable
 
 _ready_flag = threading.Event()
 _stop_event: asyncio.Event | None = None
+# A claims-format attempt's run refresh token, once installed. A token the
+# parent rotates in never replaces it (see install_legacy_service_token).
+_run_refresh_token: str | None = None
 
 
 def install_service_credentials(access_token: str, refresh_token: str) -> bool:
@@ -42,8 +45,10 @@ def install_service_credentials(access_token: str, refresh_token: str) -> bool:
     as the attempt is live. Nothing rotates them from the parent. Returns
     False when either is empty.
     """
+    global _run_refresh_token
     if not access_token or not refresh_token:
         return False
+    _run_refresh_token = refresh_token
     _install(access_token, refresh_token)
     return True
 
@@ -54,10 +59,15 @@ def install_legacy_service_token(token: str) -> bool:
     The refresh slot holds the token itself; the parent rotates it through
     the attempt's ``service-control`` handoff before it expires. Returns
     False when empty.
+
+    In a claims-format attempt (its run refresh token installed) this never
+    replaces the run refresh token: only the access slot changes, so the
+    attempt can still refresh after a rollback to an older API that rotates
+    every attempt and a roll forward that stops rotating it again.
     """
     if not token:
         return False
-    _install(token, token)
+    _install(token, _run_refresh_token or token)
     return True
 
 
@@ -99,8 +109,9 @@ def install_service_runtime(stop_event: asyncio.Event) -> None:
 
 def clear_service_runtime() -> None:
     """Remove service supervision state (engine teardown)."""
-    global _stop_event
+    global _stop_event, _run_refresh_token
     _stop_event = None
+    _run_refresh_token = None
     _ready_flag.clear()
 
 
