@@ -6,7 +6,7 @@ migration (``20261030_authz_versions``) on both paths: an empty database
 upgraded to head, and an existing database upgraded from the revision before
 it. They also rehearse its bounded lock waits behind a long transaction, and
 the cost of a large cascade through the epoch triggers. The PR1b migration
-(``20261031_authz_claims_precondition``) refuses an existing database until an
+(``20261031_authz_claims_gate``) refuses an existing database until an
 API of the PR1a release has recorded its start. PR1c adds its precondition
 rehearsal here.
 """

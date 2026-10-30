@@ -103,7 +103,7 @@ def _alembic_config() -> Config:
 
 # Token PR1b's migration refuses to run until an API of the release that
 # added the authority version (protocol 1) has started
-# (``20261031_authz_claims_precondition``). A rehearsal that moves an existing
+# (``20261031_authz_claims_gate``). A rehearsal that moves an existing
 # database across both releases does what the operator procedure requires:
 # it stops at that release and records its start, then continues.
 TOKEN_PR1A_REVISION = "20261030_authz_versions"

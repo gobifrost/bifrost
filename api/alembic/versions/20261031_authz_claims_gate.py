@@ -1,6 +1,6 @@
 """Require the authority-version release to have rolled out before claims.
 
-Revision ID: 20261031_authz_claims_precondition
+Revision ID: 20261031_authz_claims_gate
 Revises: 20261030_authz_versions
 Create Date: 2026-10-31
 
@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from alembic import context, op
 
 
-revision: str = "20261031_authz_claims_precondition"
+revision: str = "20261031_authz_claims_gate"
 down_revision: Union[str, None] = "20261030_authz_versions"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
