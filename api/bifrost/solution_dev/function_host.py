@@ -6,6 +6,7 @@ mirroring `bifrost run`'s offline execution — nothing is registered to the API
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import inspect
 import sys
@@ -110,6 +111,8 @@ def build_local_workflow_index(
 
 def discover_functions(
     workspace: Path,
+    *,
+    workflow_paths: set[str] | None = None,
 ) -> tuple[dict[str, Callable[..., Any]], dict[str, str]]:
     """Map ``path::function_name`` → callable for every decorated function.
 
@@ -129,6 +132,7 @@ def discover_functions(
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
 
+    workflow_paths = workflow_paths or set()
     out: dict[str, Callable[..., Any]] = {}
     failures: dict[str, str] = {}
     for py in sorted(workspace.rglob("*.py")):
@@ -136,6 +140,13 @@ def discover_functions(
         if any(part in _SKIP_DIRS for part in rel_parts):
             continue
         rel = py.relative_to(workspace).as_posix()
+        if rel not in workflow_paths:
+            try:
+                if not _has_executable_declaration(py):
+                    continue
+            except (OSError, SyntaxError, UnicodeError) as exc:
+                failures[rel] = f"{type(exc).__name__}: {exc}"
+                continue
         module, err = _load_module(py, rel)
         if err is not None:
             failures[rel] = err
@@ -147,6 +158,46 @@ def discover_functions(
             if callable(obj) and hasattr(obj, "_executable_metadata"):
                 out[f"{rel}::{name}"] = obj
     return out, failures
+
+
+def _has_executable_declaration(py: Path) -> bool:
+    """Inspect declarations without executing tests, helpers, or diagnostics.
+
+    Imports of dependencies belong to Python when an actual workflow needs
+    them. Importing every .py independently can run test setup that replaces
+    SDK modules (or monkeypatches HTTP clients) in the preview process.
+    Explicit manifest targets are imported regardless of their syntax shape.
+    """
+    tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+    decorators: set[str] = set()
+    modules: set[str] = set()
+    executable_names = {"workflow", "tool", "data_provider", "service"}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module in {"bifrost", "bifrost.decorators"}:
+            decorators.update(
+                alias.asname or alias.name
+                for alias in node.names if alias.name in executable_names
+            )
+        elif isinstance(node, ast.Import):
+            modules.update(
+                alias.asname or alias.name
+                for alias in node.names if alias.name == "bifrost"
+            )
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if isinstance(target, ast.Name) and target.id in decorators:
+                return True
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id in modules
+                and target.attr in executable_names
+            ):
+                return True
+    return False
 
 
 def _load_module(py: Path, rel: str) -> tuple[ModuleType | None, str | None]:
@@ -226,14 +277,20 @@ class FunctionHost:
         self._index = LocalWorkflowIndex()
 
     def reload(self) -> None:
-        self._fns, self._failures = discover_functions(self._workspace)
+        manifest_error: str | None = None
         try:
             entries = _load_workflow_manifest_entries(self._workspace)
         except yaml.YAMLError as exc:
             # A mid-edit save must degrade to "no aliases + loud failure line",
             # never an exception — an escaped error kills the watcher thread.
-            self._failures[".bifrost/workflows.yaml"] = f"invalid YAML: {exc}"
+            manifest_error = f"invalid YAML: {exc}"
             entries = []
+        self._fns, self._failures = discover_functions(
+            self._workspace,
+            workflow_paths={str(entry["path"]) for entry in entries if entry.get("path")},
+        )
+        if manifest_error:
+            self._failures[".bifrost/workflows.yaml"] = manifest_error
         self._index = build_local_workflow_index(entries, set(self._fns), self._failures)
 
     def refs(self) -> list[str]:
