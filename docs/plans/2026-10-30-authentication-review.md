@@ -298,7 +298,7 @@ negative-auth tests remain explicit. Independent Astra approved this design
 with those safeguards. Implementation, focused reproduction and final delta
 review remain pending; source delivery is not complete.
 
-The revised backend consumers passed all99 selected live tests (44.50s), both
+The revised backend consumers passed all 99 selected live tests (44.50s), both
 fixture protocol units and API quality. Client type/lint passed and37 helper/
 component tests passed. The first helper run had eagerly imported Playwright's
 browser runtime into Vitest; loading browser login only when a browser context
@@ -314,3 +314,33 @@ now use that path. The trace is retained at
 `/tmp/bifrost-auth-queue-form-r2/trace.zip`. No production authentication change
 or generic-401 retry is needed. Focused browser reproduction remains required
 before requeueing.
+
+
+## Verified Consumer-Harness Correction
+
+The native API refresh-path fix passed the six helper protocol cases and
+client quality checks. The previously failing browser selection passed 4/4,
+including setup, and the complete zero-retry critical smoke passed 17/17.
+The additional OAuth/settings/chat selection passed 6/6. Its chat request-body
+assertion now relies on the persisted model usage already checked by the same
+journey, while `chatRuns.test.ts` preserves exact serialization coverage.
+Routed mocks retain their observable payload assertions; no production request
+buffering or alternate transport was introduced.
+
+All owned stacks stopped before the shared host lock was released. The
+verification record preserves exact source metadata, commands and limits.
+Final independent delta review and clean-head CI remain required before the
+protected queue can merge this work. Product Updates inventory activation after
+the source merge is a separate required delivery step; source merge alone does
+not finish the task. Production deployment and runtime bridge removal remain
+outside this delivery.
+
+Independent Astra completed the final bounded harness/source/security review
+on 2026-10-30 and approved queue readiness with no P1/P2 findings, conditional
+on clean-head required CI. The reviewer verified the 4/4 reproduction, 17/17
+critical smoke and 6/6 payload probes, six helper protocol cases, two fixture
+units, 99 live cases and quality evidence. Native refresh routing, separate
+session families and exact-challenge-only bounded replay are intact. The
+unchanged console warning is documented; lint has zero errors. This approval
+does not authorize production deployment or runtime-bridge removal, and the
+post-merge Product Updates activation remains required.

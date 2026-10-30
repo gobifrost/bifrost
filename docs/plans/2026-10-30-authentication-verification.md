@@ -1,7 +1,9 @@
 # Authentication Consolidation Verification
 
 Candidate: `codex/auth-consolidation`, based on `a1edc19fd`.
-Status: focused verification passed through source candidate `6ea657ae2`.
+Status: implementation and corrected consumer-harness verification passed.
+The latest browser evidence uses base `8daa923ef`; the chat-oracle simplification
+was verified as its explicitly recorded working delta.
 This is local delivery evidence,
 not deployment approval or a performance result.
 
@@ -142,9 +144,9 @@ Fresh focused verification and final review are required before requeueing.
 
 ## Live Consumer Harness Verification
 
-Candidate `24e771634` passed37 helper/agent-settings tests, client tsc/lint,
-two fixture protocol units, all99 selected live consumers and API quality
-(pyright0 errors/warnings; ruff clean). The live selection completed in44.50s.
+Candidate `24e771634` passed 37 helper/agent-settings tests, client tsc/lint,
+two fixture protocol units, all 99 selected live consumers and API quality
+(pyright 0 errors/warnings; ruff clean). The live selection completed in 44.50 seconds.
 JUnit: `/tmp/bifrost-auth-queue-fixture-unit.xml` and
 `/tmp/bifrost-auth-queue-consumer-e2e.xml`; full log:
 `/tmp/bifrost-auth-queue-consumer-checks-r2.log`.
@@ -161,6 +163,47 @@ JUnit: `/tmp/bifrost-auth-queue-fixture-unit.xml` and
 That browser reproduction passed setup, agent creation and the public form;
 member-form setup exposed the API-native refresh-path correction documented
 in the review record. Its trace/results are retained. Browser r3 is queued
-for the corrected helper and the focused/smoke selections; the unchanged99
+for the corrected helper and the focused/smoke selections; the unchanged 99
 backend cases will not be repeated. No production or performance result is
 implied.
+
+
+## Final Browser Consumer Verification
+
+The corrected native API refresh path passed all six helper protocol tests,
+client tsc and lint. The focused reproduction passed all four cases (setup
+plus the three previously failing journeys) in 40.1 seconds. The complete
+critical smoke passed 17 cases in 110.7 seconds. Both runs report source
+`8daa923ef024c9764efe5747faf20b920b5d194d`, `sourceDirty: false`, and zero skips,
+retries, unexpected results or run-level errors.
+
+The additional payload-observation selection passed all six cases in 44.7
+seconds. Routed OAuth/settings mocks preserve their request-body observations;
+no broad mock rewrite was needed. The passive chat request-body assertion was
+replaced by the existing persisted context-usage model-profile check. Exact
+outbound chat payload coverage remains in `services/chatRuns.test.ts`. This run
+records `sourceDirty: true` for that single chat-test delta against the base
+above; it is focused working-tree evidence, not an immutable release claim.
+
+```bash
+./test.sh client unit src/test/human-auth.test.ts
+(cd client && npm run tsc && npm run lint)
+./test.sh client e2e e2e/agent-create-acceptance.user.spec.ts e2e/forms.user.spec.ts e2e/forms-public.unauth.spec.ts --grep @smoke
+./test.sh client smoke
+./test.sh client e2e e2e/ai-model-settings.admin.spec.ts e2e/per-mapping-oauth.admin.spec.ts e2e/chat-persistence.admin.spec.ts
+```
+
+Evidence: `/tmp/bifrost-auth-browser-consumer-r3.log`,
+`/tmp/bifrost-auth-queue-failed-browser-results.json`,
+`/tmp/bifrost-auth-queue-browser-smoke-results.json`, and
+`/tmp/bifrost-auth-queue-request-body-results.json`. The owned stack was removed
+before the host lock was released. No unchanged failing test was retried.
+
+The slowest backend selection setup took 9.47 seconds to create shared user
+fixtures; its WebSocket call took less than a second. The existing CLI file
+restore call took 3.90 seconds and retains its unique encrypted-backup/CLI
+install contract. No test adds an install, deploy, publish, build, sync or worker
+job. Full backend E2E and full Playwright were not run locally; the protected
+queue remains the complete-suite gate. Full client CI on `8daa923ef` passed
+4,021 tests across 606 files, both CodeQL analyses, Product Updates and lint/type
+checks; the actual full backend-unit job is still being monitored.

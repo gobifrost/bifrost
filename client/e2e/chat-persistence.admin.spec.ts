@@ -210,9 +210,6 @@ test("[CHAT-PERSIST-01 desktop] admin sends chat through local provider and relo
 		await page.getByRole("button", { name: "Send message" }).click();
 		const runResponse = await runResponsePromise;
 		await expectOk(runResponse);
-		expect(runResponse.request().postDataJSON()).toMatchObject({
-			model_profile_id: profileId,
-		});
 		const run = (await runResponse.json()) as { run_id: string };
 
 		await expect(page.getByText(USER_PROMPT)).toBeVisible();
@@ -223,6 +220,8 @@ test("[CHAT-PERSIST-01 desktop] admin sends chat through local provider and relo
 			run.run_id,
 		);
 		const contextUsage = await waitForContextUsage(api, conversationId);
+		// The persisted usage identifies the model actually used by the run;
+		// chatRuns unit tests cover the exact outbound request shape.
 		expect(contextUsage).toMatchObject({
 			input_tokens: 1,
 			cache_read_tokens: 0,

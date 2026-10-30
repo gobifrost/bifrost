@@ -126,7 +126,7 @@ export default defineConfig({
 		// Drives the screenshots.yaml manifest in gobifrost
 		// to capture full-page screenshots, with sharp-based crop/callout
 		// post-processing. Per-entry auth is handled inside the spec via
-		// ensureAuthenticated() so a single project can capture under
+		// createFreshBrowserContext() so a single project can capture under
 		// platform_admin, org user, or unauthenticated states.
 		// =============================================================
 		{

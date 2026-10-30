@@ -133,6 +133,8 @@ leaving one serving would permit revocation bypass and break new sessions.
 - [x] Independent exact-candidate security review and dispositions.
 - [x] Product Updates classification/prose, current-main clean candidate and PR #1149.
 - [ ] Protected CI/merge lifecycle with existing authorization; no production deploy.
+- [ ] Refresh verified Product Updates inventory after the source merge, prove the
+  required notice is in the prepared dev-image bundle, and merge the content PR.
 - [x] Benchmark comparison coordinated with the sibling, without editing its harness
       or claiming unavailable measurements. Performance benefit remains unmeasured.
 
