@@ -36,7 +36,8 @@ The referenced raw `/tmp/bifrost-769-clean-*` artifacts are no longer present;
 the report remains evidence, with that provenance limitation.
 
 After reproducing the current import case, compare supported revisions around
-worker-local SDK HTTP, durable acceptance (`720c7554`), unified dispatch and
+worker-local SDK HTTP, child source isolation (`0423c883`, October 17),
+durable acceptance (`720c7554`), unified dispatch and
 RabbitMQ retirement (`53728257`, `73506378`), API-controlled remote launch
 (`f2fcd2fa`), runtime authority reads (`98fdc4a6`), and claims/refresh behavior
 (`68139d0a`, `22fde0c0`). This is a candidate sequence from source history,
@@ -71,6 +72,18 @@ API. The frozen current-runtime diagnostic logs already show network entry
 source reads at `http://api:8000/api/sdk/modules/...`. Do not infer Unix-socket
 transport from the helper name `engine_request_sync`. A warm worker therefore
 does not imply that each new child inherits a warm workflow import graph.
+
+Source history distinguishes two changes. `0423c883` moved an injected-socket
+child's source reads ahead of direct Redis access, including warm sources.
+`f2fcd2fa` retained that behavior for socket children and added a post-fork
+marker for thin children without a socket; those children use authenticated
+network source requests. It did not add another resolver request to each
+existing socket import. Each distinct virtual fullname, including namespace
+parents, resolves once per child; that response already contains source.
+Installed dependencies resolve normally before the virtual finder. Entry
+source loading is a separate request. Measure route counts and walls before
+attributing an import-graph penalty to either boundary. Direct child access
+to Redis or infrastructure credentials is not an acceptable optimization.
 
 ## Reproducible Workload
 
