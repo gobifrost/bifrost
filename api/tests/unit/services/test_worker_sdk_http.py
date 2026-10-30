@@ -12,7 +12,7 @@ The real forked-child round trip lives in
 import asyncio
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -1378,7 +1378,7 @@ class TestEngineLocalTransportSelection:
         assert get_engine_socket_path() is None
         client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 1})
         network_http.stream.assert_called_once_with(
-            "POST", "/api/sdk/ai/stream", json={"x": 1}
+            "POST", "/api/sdk/ai/stream", json={"x": 1}, extensions=ANY
         )
         assert engine_http.stream.call_count == 0
 
@@ -1387,7 +1387,7 @@ class TestEngineLocalTransportSelection:
         _install_engine_socket(f"/tmp/bifrost-{uuid4().hex}.sock")
         client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 2})
         engine_http.stream.assert_called_once_with(
-            "POST", "/api/sdk/ai/stream", json={"x": 2}
+            "POST", "/api/sdk/ai/stream", json={"x": 2}, extensions=ANY
         )
         assert network_http.stream.call_count == 1
 

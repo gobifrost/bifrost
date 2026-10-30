@@ -44,11 +44,15 @@ class _Server:
 
     def __init__(self, script: list[str]) -> None:
         self.script = list(script)
-        self.requests: list[httpx.Request] = []
+        # Each request's Authorization as sent: a replay rewrites the same
+        # request object's header afterwards.
+        self.authorizations: list[str] = []
+        self.bodies: list[bytes] = []
         self.effects = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
+        self.authorizations.append(request.headers["authorization"])
+        self.bodies.append(request.content)
         step = self.script.pop(0) if self.script else "auth"
         if step == "502":
             return httpx.Response(502, request=request)
@@ -125,7 +129,7 @@ async def test_one_budget_spans_the_transient_retries_of_an_async_call(monkeypat
     assert response.status_code == 401
     assert is_refresh_challenge(response)
     assert len(refresher.observed) == REFRESH_BUDGET_PER_CALL
-    assert len(server.requests) == 5
+    assert len(server.authorizations) == 5
 
 
 def test_one_budget_spans_the_transient_retries_of_a_sync_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,7 +141,7 @@ def test_one_budget_spans_the_transient_retries_of_a_sync_call(monkeypatch: pyte
 
     assert response.status_code == 401
     assert len(refresher.observed) == REFRESH_BUDGET_PER_CALL
-    assert len(server.requests) == 5
+    assert len(server.authorizations) == 5
 
 
 async def test_request_shares_one_budget_and_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,7 +153,7 @@ async def test_request_shares_one_budget_and_recovers(monkeypatch: pytest.Monkey
 
     assert response.status_code == 200
     assert refresher.observed == ["stale"]
-    assert [r.headers["authorization"] for r in server.requests] == ["Bearer stale", "Bearer fresh-1", "Bearer fresh-1"]
+    assert server.authorizations == ["Bearer stale", "Bearer fresh-1", "Bearer fresh-1"]
 
 
 async def test_a_challenged_post_is_replayed_and_takes_effect_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,7 +165,7 @@ async def test_a_challenged_post_is_replayed_and_takes_effect_once(monkeypatch: 
 
     assert response.status_code == 200
     assert server.effects == 1
-    assert [json.loads(r.content) for r in server.requests] == [{"name": "one"}, {"name": "one"}]
+    assert [json.loads(body) for body in server.bodies] == [{"name": "one"}, {"name": "one"}]
     # Every later request carries the refreshed token.
     assert client._access_token == "fresh-1"
     assert client._sync_http.headers["Authorization"] == "Bearer fresh-1"
@@ -178,7 +182,7 @@ async def test_a_401_without_the_challenge_is_never_replayed(monkeypatch: pytest
 
     assert response.status_code == 401
     assert refresher.observed == []
-    assert len(server.requests) == 1
+    assert len(server.authorizations) == 1
 
 
 async def test_a_request_without_a_budget_is_never_replayed() -> None:
@@ -255,7 +259,10 @@ async def test_a_returned_stream_is_never_replayed(monkeypatch: pytest.MonkeyPat
 
     client = BifrostClient(API, "stale")
     client._http = RefreshingAsyncClient(
-        refresh=client.refresh_access_token, base_url=API, transport=httpx.MockTransport(server)
+        refresh=client.refresh_access_token,
+        base_url=API,
+        headers={"Authorization": "Bearer stale"},
+        transport=httpx.MockTransport(server),
     )
     monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
 
@@ -289,7 +296,7 @@ async def test_the_engine_socket_transports_refresh_on_the_challenge(monkeypatch
     # One refresh: later requests on every engine client carry the new token.
     assert refresher.observed == ["stale"]
     assert server.effects == 3
-    assert [r.headers["authorization"] for r in server.requests] == [
+    assert server.authorizations == [
         "Bearer stale",
         "Bearer fresh-1",
         "Bearer fresh-1",
