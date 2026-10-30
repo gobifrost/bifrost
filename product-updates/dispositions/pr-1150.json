@@ -1,0 +1,14 @@
+{
+  "key": "pr:1150",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal activation of the already approved authentication cutover notice through verified source metadata; no new runtime behavior or announcement prose.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1150",
+      "https://github.com/gobifrost/bifrost/pull/1149",
+      "Independent Astra content review verified history and credit retention, matching inventory headers, and unchanged approved notice; canonical validation and prepared-image proof passed."
+    ]
+  }
+}
