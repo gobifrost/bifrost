@@ -70,10 +70,17 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
 def create_pool_engine(url: str, *, pool: str, pool_size: int, max_overflow: int, pool_timeout: int, echo: bool = False) -> AsyncEngine:
     """An engine for one of the process's connection pools.
 
-    There is no pre-ping. A connection broken by a database or pooler restart
-    fails the one statement that uses it, and SQLAlchemy then invalidates the
-    whole pool, so later checkouts reconnect. Pre-ping instead spent a
-    round trip and a rollback on every checkout to hide that failure.
+    There is no pre-ping. After a database or pooler restart, the first
+    statement on a broken connection fails and SQLAlchemy invalidates the
+    pool, so later checkouts reconnect. Connections already checked out when
+    that happens are not repaired: each can still fail once, and every engine
+    in every process detects the restart on its own. Pre-ping instead spent a
+    round trip and a rollback on every checkout to hide those failures.
+
+    This assumes the pooler does not close idle client connections on its
+    own (PgBouncer ``client_idle_timeout``, disabled by default). A timeout
+    shorter than ``pool_recycle`` would fail the first statement on every
+    connection that sat idle that long.
 
     Connections are tagged ``bifrost:<pool>`` so pg_stat_activity and the
     pooler can tell the pools apart.
