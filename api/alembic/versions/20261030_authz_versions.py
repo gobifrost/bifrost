@@ -48,7 +48,8 @@ _RANDOM_EPOCH_SQL = (
 # transaction commits; TRUNCATE bumps immediately. INSERT fires only where a
 # new row can change what an existing token means; run tables fire only when
 # a carried creation-time column changes (never expected). Status, state and
-# lease are read live, never versioned.
+# lease are read live, never versioned. "Any column" compares whole rows as
+# jsonb: system_configs.value_json is json, which has no equality operator.
 _TRIGGER_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON users
@@ -96,7 +97,7 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON user_roles
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        WHEN (to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW))
         EXECUTE FUNCTION authz_epoch_bump_trigger()
     """,
     """
@@ -116,7 +117,7 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON user_role_boundaries
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        WHEN (to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW))
         EXECUTE FUNCTION authz_epoch_bump_trigger()
     """,
     """
@@ -136,7 +137,7 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON role_permissions
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        WHEN (to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW))
         EXECUTE FUNCTION authz_epoch_bump_trigger()
     """,
     """
@@ -189,7 +190,7 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON workflow_permission_grants
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        WHEN (to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW))
         EXECUTE FUNCTION authz_epoch_bump_trigger()
     """,
     """
@@ -209,7 +210,7 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON solution_workflow_permission_requests
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        WHEN (to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW))
         EXECUTE FUNCTION authz_epoch_bump_trigger()
     """,
     """
@@ -231,7 +232,7 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
     CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON system_configs
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
         WHEN (((OLD.category = 'workflow_permissions' AND OLD.key = 'default_mode' AND OLD.organization_id IS NULL) OR (NEW.category = 'workflow_permissions' AND NEW.key = 'default_mode' AND NEW.organization_id IS NULL))
-            AND OLD.* IS DISTINCT FROM NEW.*)
+            AND to_jsonb(OLD) IS DISTINCT FROM to_jsonb(NEW))
         EXECUTE FUNCTION authz_epoch_bump_trigger()
     """,
     """

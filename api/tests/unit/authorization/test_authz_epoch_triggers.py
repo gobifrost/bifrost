@@ -163,6 +163,14 @@ async def _seed(session: AsyncSession) -> World:
         organization_id=None,
     )
     other_config = SystemConfig(category="epoch_test", key="unrelated", value_json={"x": 1}, organization_id=None)
+    # At most one global default-mode row may exist (a partial unique index).
+    await session.execute(
+        delete(SystemConfig).where(
+            SystemConfig.category == "workflow_permissions",
+            SystemConfig.key == "default_mode",
+            SystemConfig.organization_id.is_(None),
+        )
+    )
     session.add_all([execution, agent_run, attempt, default_config, other_config])
     await session.flush()
     return World(
@@ -173,7 +181,10 @@ async def _seed(session: AsyncSession) -> World:
     )
 
 
-# (case id, SQL with :named world fields, expected bumps)
+_FREE_DEFAULT_MODE = "DELETE FROM system_configs WHERE id = :default_config; "
+
+# (case id, SQL with :named world fields, expected bumps). A leading
+# _FREE_DEFAULT_MODE runs first, unmeasured.
 _CASES: list[tuple[str, str, int]] = [
     # users: UPDATE of carried columns, DELETE; never INSERT.
     ("users email", "UPDATE users SET email = 'moved-' || email WHERE id = :user", 1),
@@ -239,7 +250,7 @@ _CASES: list[tuple[str, str, int]] = [
     # system_configs: only the platform default workflow mode row.
     (
         "system_configs default insert",
-        "INSERT INTO system_configs (id, category, key, value_json, organization_id, created_at, updated_at) "
+        _FREE_DEFAULT_MODE + "INSERT INTO system_configs (id, category, key, value_json, organization_id, created_at, updated_at) "
         "VALUES (gen_random_uuid(), 'workflow_permissions', 'default_mode', '{\"mode\": \"restricted\"}', NULL, now(), now())",
         1,
     ),
@@ -257,7 +268,7 @@ _CASES: list[tuple[str, str, int]] = [
     ),
     ("system_configs default update", "UPDATE system_configs SET value_json = '{\"mode\": \"restricted\"}' WHERE id = :default_config", 1),
     ("system_configs other update", "UPDATE system_configs SET value_json = '{\"x\": 2}' WHERE id = :other_config", 0),
-    ("system_configs moves into default", "UPDATE system_configs SET category = 'workflow_permissions', key = 'default_mode' WHERE id = :other_config", 1),
+    ("system_configs moves into default", _FREE_DEFAULT_MODE + "UPDATE system_configs SET category = 'workflow_permissions', key = 'default_mode' WHERE id = :other_config", 1),
     ("system_configs moves out of default", "UPDATE system_configs SET organization_id = :org WHERE id = :default_config", 1),
     ("system_configs default delete", "DELETE FROM system_configs WHERE id = :default_config", 1),
     ("system_configs other delete", "DELETE FROM system_configs WHERE id = :other_config", 0),
@@ -295,6 +306,11 @@ async def test_each_carried_fact_change_bumps_and_others_do_not(
     async_engine: AsyncEngine, sql: str, expected: int
 ) -> None:
     async with _probe(async_engine) as (probe, world):
+        if sql.startswith(_FREE_DEFAULT_MODE):
+            await probe.connection.execute(
+                text(_FREE_DEFAULT_MODE.rstrip("; ")), {"default_config": world.default_config}
+            )
+            sql = sql.removeprefix(_FREE_DEFAULT_MODE)
         params = {key: value for key, value in vars(world).items() if f":{key}" in sql}
         before = await probe.epoch()
 
