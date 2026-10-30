@@ -352,10 +352,28 @@ async def test_a_sync_call_during_its_own_loops_refresh_does_not_deadlock() -> N
     client_mod._reset_refresh_coordinators_for_tests()
     coordinator = client_mod._refresh_coordinator(API)
     coordinator.lock.acquire()
-    coordinator.holder_thread = threading.get_ident()
+    coordinator.refreshing_threads[threading.get_ident()] = 1
     try:
         assert client_mod._refresh_connection_access_token_sync(API, "stale") is None
     finally:
-        coordinator.holder_thread = None
+        coordinator.refreshing_threads.clear()
         coordinator.lock.release()
         client_mod._reset_refresh_coordinators_for_tests()
+
+
+async def test_an_async_refresh_marks_its_thread_until_it_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    client_mod._reset_refresh_coordinators_for_tests()
+    seen: list[bool] = []
+
+    def no_credentials(api_url: str) -> None:
+        seen.append(threading.get_ident() in client_mod._refresh_coordinator(API).refreshing_threads)
+        return None
+
+    monkeypatch.setattr(client_mod, "resolve_credentials", no_credentials)
+    assert await client_mod.refresh_connection_access_token(API, "stale") is None
+
+    assert seen == [True]
+    assert client_mod._refresh_coordinator(API).refreshing_threads == {}
+    client_mod._reset_refresh_coordinators_for_tests()

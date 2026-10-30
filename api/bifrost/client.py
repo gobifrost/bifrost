@@ -223,8 +223,9 @@ class _ConnectionRefreshCoordinator:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        # The thread whose event loop holds ``lock`` during an async refresh.
-        self.holder_thread: int | None = None
+        # Threads whose event loop is waiting for or holding ``lock`` in an
+        # async refresh (each thread touches only its own count).
+        self.refreshing_threads: dict[int, int] = {}
         self.latest_access_token: str | None = None
         self.latest_refresh_token: str | None = None
         self.rejected_credential_generation: tuple[str, str, str] | None = None
@@ -281,8 +282,13 @@ async def refresh_connection_access_token(
     normalized_url = api_url.rstrip("/")
     coordinator = _refresh_coordinator(normalized_url)
     credential_source = "unknown"
-    await _acquire_refresh_lock(coordinator.lock)
-    coordinator.holder_thread = threading.get_ident()
+    thread = threading.get_ident()
+    coordinator.refreshing_threads[thread] = coordinator.refreshing_threads.get(thread, 0) + 1
+    try:
+        await _acquire_refresh_lock(coordinator.lock)
+    except BaseException:
+        _leave_refresh(coordinator, thread)
+        raise
     try:
         resolved = resolve_credentials(normalized_url)
         if resolved is None:
@@ -392,8 +398,16 @@ async def refresh_connection_access_token(
         )
         return None
     finally:
-        coordinator.holder_thread = None
         coordinator.lock.release()
+        _leave_refresh(coordinator, thread)
+
+
+def _leave_refresh(coordinator: _ConnectionRefreshCoordinator, thread: int) -> None:
+    remaining = coordinator.refreshing_threads[thread] - 1
+    if remaining:
+        coordinator.refreshing_threads[thread] = remaining
+    else:
+        del coordinator.refreshing_threads[thread]
 
 
 async def refresh_tokens(
@@ -447,7 +461,7 @@ def _refresh_connection_access_token_sync(
     # async SDK call refreshes) cannot wait for it: the loop that would
     # release the lock is blocked by this call. Return no token; the
     # challenged request then surfaces its 401.
-    if _refresh_coordinator(api_url).holder_thread == threading.get_ident():
+    if threading.get_ident() in _refresh_coordinator(api_url).refreshing_threads:
         logger.debug("Bifrost token refresh for %s is already in progress on this thread's loop", api_url)
         return None
 
