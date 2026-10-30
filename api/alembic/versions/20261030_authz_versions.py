@@ -19,12 +19,15 @@ Token PR1a (docs/plans/2026-10-30-token-pr1-implementation-plan.md §3.2,
   ``execution_workers.remote_credential_protocol`` the protocol a remote
   launcher negotiated (NULL = protocol 1).
 
-Locking: every table lock is taken first, with each wait bounded to 5 s
-(``_take_locks``). Behind a long-running transaction the upgrade fails fast
-instead of queueing product traffic behind its lock request; the upgrade run
-is one transaction, so a failure leaves the prior revision and the operator
-re-runs it. Splitting this into several migrations would not shorten any
-lock hold: ``alembic/env.py`` runs a whole upgrade in one transaction.
+Locking: every table lock is taken first, in two LOCK TABLE statements each
+capped at 1 s (``_take_locks``). Product traffic on the locked tables can
+still queue behind the migration: at most about 2 s on the three tables that
+get columns and about 1 s on the other trigger tables, plus milliseconds of
+DDL and commit. Behind a long-running transaction the upgrade times out
+rather than holding traffic longer; the upgrade run is one transaction, so a
+failure leaves the prior revision and the operator re-runs it. Splitting this
+into several migrations would not shorten any lock hold: ``alembic/env.py``
+runs a whole upgrade in one transaction.
 """
 from __future__ import annotations
 
@@ -365,8 +368,8 @@ _TRIGGERS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-# Bounded lock waits (see _take_locks).
-_LOCK_TIMEOUT = "5s"
+# The cap on each lock wait and on each statement (see _take_locks).
+_LOCK_WAIT = "1s"
 # Tables whose column adds need ACCESS EXCLUSIVE.
 _COLUMN_TABLES = ("executions", "service_attempts", "execution_workers")
 # Every other table that receives epoch triggers.
@@ -379,33 +382,51 @@ def _started_on_empty_schema() -> bool:
     return _STARTING_REVISION in attributes and attributes[_STARTING_REVISION] is None
 
 
-def _take_locks() -> None:
-    """Acquire every table lock up front, each wait bounded.
+def _take_locks() -> tuple[str, str]:
+    """Acquire every table lock up front with short, capped waits.
 
-    A lock request queues behind a long-running reader and blocks all later
-    traffic on that table, so a long wait here would stall the product.
-    Both statements give up after 5 s, failing the whole upgrade run: the
-    run is one transaction, so the database stays at the prior revision and
-    re-running is safe. The most-read tables, which need ACCESS EXCLUSIVE
-    for the column adds, are locked first, while nothing else is held; the
-    trigger tables then need only SHARE ROW EXCLUSIVE, which blocks writes
-    but not reads. Once both are held the DDL below runs in milliseconds
-    (nullable columns, no rewrite) and commits.
+    A queued lock request blocks every later request on that table, so
+    product traffic waits for as long as this migration waits plus until it
+    commits. Each wait is capped: one ``LOCK TABLE`` per lock mode, each
+    bounded by ``statement_timeout`` (all of its tables together) and
+    ``lock_timeout`` (each table) of 1 s, and every later statement keeps the
+    1 s cap. Worst case, traffic on ``executions``, ``service_attempts`` and
+    ``execution_workers`` waits about 2 s (both LOCK statements) and traffic
+    writing a trigger table about 1 s, plus the DDL and commit, which wait on
+    no other session and take milliseconds (nullable columns, no rewrite).
+    A timeout fails the whole upgrade run, which is one transaction: the
+    database stays at the prior revision, queued traffic proceeds at once,
+    and the operator re-runs it.
+
+    The column tables are locked first, while nothing else is held: a long
+    reader on ``executions`` is the likeliest wait, and then only those three
+    tables are blocked. Locking the trigger tables first would block
+    ``agent_runs`` status writes and ``users`` sign-in writes for that wait
+    as well.
+
+    Returns the session's previous ``lock_timeout`` and ``statement_timeout``
+    for ``_restore_timeouts``.
     """
-    op.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
-    op.execute(f"SET LOCAL statement_timeout = '{_LOCK_TIMEOUT}'")
+    previous = op.get_bind().execute(
+        sa.text("SELECT current_setting('lock_timeout'), current_setting('statement_timeout')")
+    ).one()
+    op.execute(f"SET LOCAL lock_timeout = '{_LOCK_WAIT}'")
+    op.execute(f"SET LOCAL statement_timeout = '{_LOCK_WAIT}'")
     op.execute(f"LOCK TABLE {', '.join(_COLUMN_TABLES)} IN ACCESS EXCLUSIVE MODE")
     op.execute(f"LOCK TABLE {', '.join(_TRIGGER_ONLY_TABLES)} IN SHARE ROW EXCLUSIVE MODE")
-    op.execute("SET LOCAL statement_timeout TO DEFAULT")
+    return previous[0], previous[1]
 
 
-def _release_timeouts() -> None:
-    # Later migrations in the same upgrade run keep their own behaviour.
-    op.execute("SET LOCAL lock_timeout TO DEFAULT")
+def _restore_timeouts(previous: tuple[str, str]) -> None:
+    """Restore the exact earlier settings for later migrations in the run."""
+    op.get_bind().execute(
+        sa.text("SELECT set_config('lock_timeout', :lock, true), set_config('statement_timeout', :statement, true)"),
+        {"lock": previous[0], "statement": previous[1]},
+    )
 
 
 def upgrade() -> None:
-    _take_locks()
+    previous = _take_locks()
     op.add_column("executions", sa.Column("credential_version", sa.SmallInteger(), nullable=True))
     op.add_column(
         "service_attempts", sa.Column("credential_version", sa.SmallInteger(), nullable=True)
@@ -487,12 +508,12 @@ def upgrade() -> None:
         op.execute(
             "INSERT INTO authz_protocol_state (protocol, first_started_at) VALUES (1, now())"
         )
-    _release_timeouts()
+    _restore_timeouts(previous)
 
 
 
 def downgrade() -> None:
-    _take_locks()
+    previous = _take_locks()
     op.drop_column("execution_workers", "remote_credential_protocol")
     op.drop_column("service_attempts", "credential_version")
     op.drop_column("executions", "credential_version")
@@ -504,4 +525,4 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION authz_epoch_bump_once()")
     op.execute("DROP TABLE authz_versions")
     op.execute("DROP FUNCTION authz_versions_protect()")
-    _release_timeouts()
+    _restore_timeouts(previous)

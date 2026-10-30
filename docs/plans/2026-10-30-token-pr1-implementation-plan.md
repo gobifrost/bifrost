@@ -19,7 +19,7 @@ switches to claims; people stay on today's path until PR2. Decisions are
 | 4 | `1e5517111` | one global random authority epoch; run liveness from the run row; REPEATABLE READ minter (Jack, on Fable's review and Astra review 2) |
 | 5 | `ea0c15d60` | Astra review 3, which confirmed the epoch proof, the liveness predicates and D14 |
 | 6 | `7f40d55db` | Astra review 4 (1 P1, 3 P2; earlier findings resolved for forward operation) |
-| 6.1 | this | Astra code review 1 of #1146: bounded migration locks, same-transaction maintenance bump, structural read capture, import-resolving one-minter check |
+| 6.1 | this | Astra code reviews 1–2 of #1146: migration locks capped at 1 s per statement with exact timeout restore, same-transaction maintenance bump, fail-closed structural read capture, file-level one-minter rules |
 
 ### Astra review 4 — disposition
 
@@ -235,17 +235,26 @@ and workers stopped — until the bump has committed. A test scans
 `api/alembic/versions/` for those statements and requires the bump after the
 last one, in the migration's own transaction (no `autocommit_block`).
 
-**Migration locking** (Astra code review 1, #1): the migration takes every
-table lock first, each wait bounded to 5 s (`lock_timeout`, plus
-`statement_timeout` around the `LOCK TABLE` statements): ACCESS EXCLUSIVE on
+**Migration locking** (Astra code reviews 1 and 2): the migration takes every
+table lock first, in one `LOCK TABLE` per mode, each statement capped at 1 s
+(`statement_timeout`, with `lock_timeout` 1 s per table): ACCESS EXCLUSIVE on
 `executions`, `service_attempts` and `execution_workers` (the column adds)
 while nothing else is held, then SHARE ROW EXCLUSIVE on the other trigger
-tables (blocks writes, not reads). Behind a long-running transaction it fails
-fast instead of queueing traffic; the whole upgrade run is one transaction, so
-the database stays at the prior revision and re-running is safe. Splitting the
-migration would not shorten any hold, because `env.py` runs an upgrade in one
-transaction. `tests/e2e/platform/test_authz_migrations.py` rehearses the
-contention and a 200,000-row cascade.
+tables (blocks writes, not reads). Every later statement keeps the 1 s cap,
+and the session's previous `lock_timeout` and `statement_timeout` are saved
+and restored exactly. **Worst-case blocking of product traffic:** about 2 s on
+the three column tables (both lock statements) and about 1 s for writes to the
+other trigger tables, plus the DDL and commit, which wait on no other session
+and take milliseconds. Column tables go first because a long reader on
+`executions` is the likeliest wait, and then nothing else is blocked; trigger
+tables first would also block `agent_runs` and `users` writes during that wait.
+A timeout fails the whole upgrade run (one transaction, per `env.py`): queued
+traffic proceeds, the database stays at the prior revision, and the operator
+re-runs it. Splitting the migration would not shorten any hold for the same
+reason. `tests/e2e/platform/test_authz_migrations.py` rehearses the contention
+(with a traffic probe) and a 200,000-row cascade (measured 17.19 s locally;
+with the triggers disabled the same delete took 16.1 s, plus 1.77 s at commit
+for the deferred events).
 
 ### 3.3 Correctness of the bump (finding 6)
 
@@ -709,7 +718,7 @@ host.
 | `tests/unit/services/test_service_credentials.py` | protocol-2 route → new-format access + refresh, `credential_version = 2`, no rotation; protocol-1 route → legacy token, NULL, rotation and `service-control` delivery unchanged; the hello without the field counts as protocol 1; the protocol is persisted with the ownership generation |
 | `tests/unit/worker/remote/test_launcher_admission.py` (PR1c) | a protocol-1 (or field-less) launcher reconnecting after PR1c is refused at hello — no ownership row change, no assignment; routing skips a row with a persisted protocol < 2 |
 | `tests/unit/sdk/test_expiry_challenge_cross_version.py` (PR1a server contract, PR1b client) | PR1a: an expired new-format token gets the exact challenge header, and `run_refresh` succeeds. PR1b: the SDK transport, given that recorded PR1a response, refreshes and replays — the PR1b client against PR1a after token expiry |
-| `tests/e2e/platform/test_authz_migrations.py` (pattern `test_builder_residue_migration_rehearsal.py`) | **empty database → `alembic upgrade head` succeeds**; a long transaction holding `executions` (or writing a trigger table) makes the PR1a migration fail within its lock timeout, leaving the prior revision, and a re-run after it ends succeeds; deleting a user referenced by 200,000 executions bumps once within a stated bound; a database at the revision before PR1a → head fails at PR1b's precondition; with protocol-1 evidence it passes; PR1c fails while a live NULL-format run or protocol-1 launcher exists, and passes when none |
+| `tests/e2e/platform/test_authz_migrations.py` (pattern `test_builder_residue_migration_rehearsal.py`) | **empty database → `alembic upgrade head` succeeds**; a long transaction holding `executions` (or writing a trigger table) makes the PR1a migration fail within its 1 s lock caps, with a concurrent `executions` reader never waiting 2.5 s, leaving the prior revision, and a re-run after it ends succeeds; deleting a user referenced by 200,000 executions bumps once within a stated bound; a database at the revision before PR1a → head fails at PR1b's precondition; with protocol-1 evidence it passes; PR1c fails while a live NULL-format run or protocol-1 launcher exists, and passes when none |
 | auth refresh tests | live → token, same refresh token, no cookies; ended run / expired lease → 401; 50 concurrent run refreshes from one IP → all 200 |
 
 **Mutation matrix** (one test each): mint → change through the real service
@@ -732,13 +741,16 @@ function → old token challenged → refresh → new claims reflect it, for eve
   or `DISABLE TRIGGER` must call `authz_epoch_bump_once()` after the last
   such statement and must not use `autocommit_block` (the bump commits with
   the change).
-- **Read capture is structural:** each captured statement is resolved from
-  SQLAlchemy's compiled statement (tables and columns, aliases resolved); a
-  textual or driver-level statement fails the check instead of reading as
-  empty.
-- **One-minter AST** resolves `import jwt as x`, `from jwt import encode`,
-  `PyJWT().encode` and aliased `create_access_token`, counts references as
-  well as calls, and limits `tokens._encode_claims` to the two token issuers.
+- **Read capture is structural and fails closed:** each captured statement is
+  resolved from SQLAlchemy's compiled statement (tables and columns, aliases
+  resolved); a textual or driver-level statement, or a textual fragment
+  anywhere in a statement's tree, fails the check instead of reading as empty.
+- **One-minter rules are file-level and blunt:** only reviewed modules may
+  import PyJWT (in any form, at any scope, and only as plain `import jwt`
+  using reviewed `jwt.<attribute>`s, with `jwt.encode` only in reviewed
+  functions); only the tokens module may name `_encode_claims`, and only in
+  the two token issuers; `create_access_token` is used only by reviewed
+  functions and never imported under another name.
 
 ### 9.3 One minter
 

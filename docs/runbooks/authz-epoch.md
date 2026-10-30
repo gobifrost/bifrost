@@ -178,11 +178,16 @@ and `.env`.
    release, and only the failed migration's own transaction was attempted and
    rolled back.
 
-   The authority-version migration waits at most 5 seconds for each of its
-   table locks. Behind a long-running transaction it fails with
-   `canceling statement due to lock timeout` (or `statement timeout`) rather
-   than stalling traffic; the database stays at the previous revision. Run the
-   same command again; if it keeps timing out, find the long transaction with
+   The authority-version migration takes its table locks in two statements,
+   each capped at 1 second. While it waits and until it commits, product
+   traffic on the locked tables queues behind it: at most about 2 seconds on
+   `executions`, `service_attempts` and `execution_workers`, and about
+   1 second for writes to the other authority tables, plus milliseconds of
+   schema changes. Behind a longer-running transaction it fails with
+   `canceling statement due to lock timeout` (or `statement timeout`), the
+   queued traffic proceeds at once, and the database stays at the previous
+   revision. Run the same command again; if it keeps timing out, find the
+   long transaction with
    `SELECT pid, now() - xact_start, query FROM pg_stat_activity WHERE xact_start IS NOT NULL ORDER BY 2 DESC;`.
 
 5. **Replace the application containers.**

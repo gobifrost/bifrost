@@ -135,9 +135,32 @@ def _hold(database_url: str, statement: str, ready: threading.Event, release: th
     asyncio.run(hold())
 
 
-# The migration waits at most 5 s for each LOCK TABLE statement; allow margin
-# for the upgrade run's own work, not for a queue.
-_FAIL_FAST_SECONDS = 20
+def _probe(database_url: str, started: threading.Event, stop: threading.Event, waits: list[float]) -> None:
+    """Product traffic: read ``executions`` in a loop, recording each wait."""
+
+    async def probe() -> None:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.connect() as connection:
+                started.set()
+                while not stop.is_set():
+                    began = time.monotonic()
+                    await connection.execute(sa.text("SELECT 1 FROM executions LIMIT 1"))
+                    await connection.commit()
+                    waits.append(time.monotonic() - began)
+                    await asyncio.sleep(0.02)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(probe())
+
+
+# Two LOCK TABLE statements capped at 1 s each: the run fails within about
+# 2 s of waiting, plus Alembic start-up.
+_FAIL_FAST_SECONDS = 10
+# Worst-case queueing of traffic: about 2 s of lock waits plus DDL; the probe
+# allows scheduling margin on top.
+_TRAFFIC_WAIT_SECONDS = 2.5
 
 
 @pytest.mark.parametrize(
@@ -145,7 +168,8 @@ _FAIL_FAST_SECONDS = 20
     [
         # A long reader: conflicts with ACCESS EXCLUSIVE for the column adds.
         "SELECT count(*) FROM executions",
-        # A long writer: conflicts with SHARE ROW EXCLUSIVE for the triggers.
+        # A long writer: conflicts with SHARE ROW EXCLUSIVE for the triggers,
+        # after the executions lock is already held.
         "UPDATE users SET name = name WHERE false",
     ],
     ids=["long reader on executions", "open writer on users"],
@@ -155,19 +179,28 @@ def test_a_long_transaction_makes_the_migration_fail_fast_and_a_rerun_succeeds(s
     _assert_safe_database_name(database_name)
     database_url = _direct_database_url(database_name)
     ready, release = threading.Event(), threading.Event()
+    probing, stop_probe = threading.Event(), threading.Event()
+    waits: list[float] = []
     holder = threading.Thread(target=_hold, args=(database_url, statement, ready, release), daemon=True)
+    prober = threading.Thread(target=_probe, args=(database_url, probing, stop_probe, waits), daemon=True)
     try:
         asyncio.run(_create_database(database_name))
         _upgrade(database_url, PRE_PR1A_REVISION)
         holder.start()
         assert ready.wait(30)
+        prober.start()
+        assert probing.wait(30)
 
         started = time.monotonic()
         with pytest.raises(Exception, match="timeout"):
             _upgrade(database_url, "head")
         elapsed = time.monotonic() - started
+        stop_probe.set()
+        prober.join(30)
 
         assert elapsed < _FAIL_FAST_SECONDS
+        # Traffic on executions queued behind the migration only briefly.
+        assert waits and max(waits) < _TRAFFIC_WAIT_SECONDS, max(waits, default=None)
         # One transaction: nothing of the run survives the timeout.
         assert _current_revision(database_url) == PRE_PR1A_REVISION
 
@@ -178,8 +211,10 @@ def test_a_long_transaction_makes_the_migration_fail_fast_and_a_rerun_succeeds(s
         assert asyncio.run(_authz_state(database_url))["epoch_kinds"] == ["global"]
     finally:
         release.set()
-        if holder.is_alive():
-            holder.join(30)
+        stop_probe.set()
+        for thread in (holder, prober):
+            if thread.is_alive():
+                thread.join(30)
         asyncio.run(_drop_database(database_name))
 
 
