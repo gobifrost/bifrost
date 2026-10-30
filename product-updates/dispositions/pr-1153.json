@@ -1,0 +1,14 @@
+{
+  "key": "pr:1153",
+  "classification": "highlight",
+  "entry_ids": [
+    "620a0f81-11c2-4cfb-90c7-345317efaab6"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1153",
+      "Independent Astra Product Updates copy and delivery review approved on 2026-10-30."
+    ]
+  }
+}
