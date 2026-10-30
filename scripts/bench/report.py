@@ -107,6 +107,42 @@ def _database(result: dict) -> list[str]:
     return [*lines, ""]
 
 
+def _imports_diagnostic(result: dict) -> list[str]:
+    diagnostic = result.get("imports_diagnostic")
+    if not diagnostic:
+        return []
+    rows = [
+        "## Partial Imports Diagnostic", "",
+        "This captures worker import traces after credential installation. The control is SDK/stdlib-only; the graph's installed `requests` import is an intentional third-party branch. It excludes browser work, complete integration latency, credential installation, resource baselines, consumer/fork/delivery, and log emission; it is not a Halo or customer-latency claim.",
+        "Durable timestamps and engine durations below are execution records, not polling, waiting, browser, or customer-latency observations. The terminal-output read occurs after Success and is outside those spans. Trace child and phase walls are partial and overlapping, so they must not be summed. Raw API/worker pod/UID logs and worker process samples retain warm-versus-recycled-worker evidence.",
+        "",
+        f"Trace result: **{diagnostic.get('overall', 'unknown')}**.", "",
+        "| Class | Pass | Trace result | Terminal output | Durable started→completed p50 / p95 ms | Engine p50 / p95 ms | Missing | Duplicate | Invalid metadata |",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for group in diagnostic.get("groups", []):
+        timing = group.get("durable_timing", {})
+        durable = _partial_ms(timing.get("durable_started_to_completed_ms", {}))
+        engine = _partial_ms(timing.get("engine_duration_ms", {}))
+        output = group.get("execution_validation", {}).get("overall", "unavailable")
+        rows.append(
+            f"| `{group['class']}` | {group['pass']} | {group['overall']} | {output} | {durable} | {engine} | "
+            f"{len(group.get('missing_execution_ids', []))} | {len(group.get('duplicate_execution_ids', []))} | "
+            f"{len(group.get('invalid_events', []))} |"
+        )
+    return [*rows, ""]
+
+
+def _partial_ms(summary: dict) -> str:
+    """Format optional partial import-diagnostic timing without inventing zeroes."""
+    if not isinstance(summary, dict) or not summary.get("count"):
+        return "unavailable"
+    p50, p95 = summary.get("p50_ms"), summary.get("p95_ms")
+    if not isinstance(p50, (int, float)) or not isinstance(p95, (int, float)):
+        return "unavailable"
+    return f"{p50:.2f} / {p95:.2f}"
+
+
 def _failures(classes: list[dict]) -> list[str]:
     lines: list[str] = []
     for entry in classes:
@@ -294,6 +330,7 @@ def render(result: dict) -> str:
         *_memory_table(result["snapshots"]),
         "",
         *_workers_table(result["classes"]),
+        *_imports_diagnostic(result),
         *_database(result),
     ]
     failures = _failures(result["classes"])

@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,6 +117,138 @@ class RunHarnessTest(unittest.TestCase):
         self.assertEqual(result["images"]["api"], {"tag": self.selected, "id": "sha256:selected"})
         self.assertEqual(result["sustainable_rate"], 3.90625)
         self.assertIn("`bifrost-api:selected` (sha256:selected)", rendered)
+
+    def test_run_cli_passes_explicit_image_to_class_harness(self) -> None:
+        with patch.object(sys, "argv", ["run.py", "run", "--profile", "m-import", "--api-image", self.selected]), \
+             patch.object(run, "run_classes") as classes:
+            run.main()
+        classes.assert_called_once_with("m-import", "fake", None, self.selected)
+
+    def test_classes_refuses_nonempty_evidence_directory_before_cluster_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary) / "classes"
+            out.mkdir()
+            (out / "result.json").write_text("previous", encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "already contains evidence"):
+                run.run_classes("m-import", "fake", out, self.selected)
+
+    def test_import_classes_explicit_image_reaches_run_and_prepare(self) -> None:
+        cluster = Mock()
+        cluster.identity = SimpleNamespace()
+        cluster.db_counters.return_value = {
+            "tables": {}, "xact": 0, "rollbacks": 0, "rows_written": 0, "wal_bytes": 0,
+        }
+        cluster.container_stats.return_value = []
+        prepared: list[str | None] = []
+        created: list[str | None] = []
+        runs: list[object] = []
+
+        class CapturingRun:
+            def __init__(self, _cluster, _kind, _profile_name, _profile, _backend, out, api_image=None) -> None:
+                created.append(api_image)
+                self.out = out
+                self.result = {"classes": [], "snapshots": []}
+                runs.append(self)
+
+            def driver(self, _mode, _args, timeout_s):
+                record = {
+                    "id": "execution", "status": "Success", "result": {
+                        "ok": True, "endpoint": "https://imports.invalid/fixture", "signature": "import-fixture-v1",
+                    },
+                    "created_at": "2026-10-30T12:00:00Z", "started_at": "2026-10-30T12:00:00Z",
+                    "completed_at": "2026-10-30T12:00:00.001Z", "duration_ms": 1,
+                }
+                return {"sequential": [record] * 10, "burst": []}
+
+            def save(self) -> None:
+                pass
+
+            def snapshot(self, _label) -> None:
+                pass
+
+        class Sampler:
+            samples: list[dict] = []
+
+            def __init__(self, _cluster) -> None:
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                pass
+
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(run, "Cluster", return_value=cluster), \
+             patch.object(run, "Run", CapturingRun), \
+             patch.object(run, "WorkerSampler", Sampler), \
+             patch.object(run, "_prepare", side_effect=lambda *_args: prepared.append(_args[-1]) or {"connections": {}}), \
+             patch.object(run.import_diagnostic, "capture", side_effect=RuntimeError("worker logs unavailable")), \
+             patch.object(run.time, "sleep"):
+            run.run_classes("m-import", "fake", Path(temporary) / "classes", self.selected)
+
+        self.assertEqual(created, [self.selected])
+        self.assertEqual(prepared, [self.selected])
+        self.assertEqual(runs[0].result["imports_diagnostic"]["overall"], "invalid")
+        self.assertIn("worker logs unavailable", runs[0].result["imports_diagnostic"]["groups"][0]["capture_error"])
+
+    def test_import_raw_records_and_trace_are_saved_before_counter_failure(self) -> None:
+        cluster = Mock()
+        cluster.identity = SimpleNamespace()
+        counter = {"tables": {}, "xact": 0, "rollbacks": 0, "rows_written": 0, "wal_bytes": 0}
+        cluster.db_counters.side_effect = [counter, RuntimeError("database counters unavailable")]
+        saved: list[dict] = []
+
+        class CapturingRun:
+            def __init__(self, _cluster, _kind, _profile_name, _profile, _backend, out, _api_image=None) -> None:
+                self.out = out
+                self.result = {"classes": [], "snapshots": []}
+
+            def driver(self, _mode, _args, timeout_s):
+                record = {
+                    "id": "execution", "status": "Success", "result": {
+                        "ok": True, "endpoint": "https://imports.invalid/fixture", "signature": "import-fixture-v1",
+                    },
+                    "created_at": "2026-10-30T12:00:00Z", "started_at": "2026-10-30T12:00:00Z",
+                    "completed_at": "2026-10-30T12:00:00.001Z", "duration_ms": 1,
+                }
+                return {"sequential": [record] * 10, "burst": []}
+
+            def save(self) -> None:
+                saved.append(deepcopy(self.result))
+
+            def snapshot(self, _label) -> None:
+                pass
+
+        class Sampler:
+            samples: list[dict] = []
+
+            def __init__(self, _cluster) -> None:
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                pass
+
+        trace = {
+            "kind": "partial-imports-diagnostic", "overall": "pass", "expected_execution_ids": ["execution"] * 10,
+            "sources": [], "events": [], "missing_execution_ids": [], "duplicate_execution_ids": [],
+            "unmatched_execution_ids": [], "invalid_events": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(run, "Cluster", return_value=cluster), \
+             patch.object(run, "Run", CapturingRun), \
+             patch.object(run, "WorkerSampler", Sampler), \
+             patch.object(run, "_prepare", return_value={"connections": {}}), \
+             patch.object(run.import_diagnostic, "capture", return_value=trace), \
+             patch.object(run.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "counters unavailable"):
+                run.run_classes("m-import", "fake", Path(temporary) / "classes", self.selected)
+
+        self.assertTrue(any(entry["classes"] and entry["classes"][0].get("raw") for entry in saved))
+        self.assertTrue(any(entry.get("imports_diagnostic", {}).get("groups") for entry in saved))
 
     def test_drill_explicit_image_is_deployed_and_recorded_by_id(self) -> None:
         cluster = FakeCluster()

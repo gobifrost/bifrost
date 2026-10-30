@@ -116,6 +116,26 @@ class CapacityReportTest(unittest.TestCase):
         self.assertIn("does not establish sustained capacity", text)
         self.assertIn("long confirmation was not run", text)
 
+    def test_import_diagnostic_is_explicitly_not_a_browser_or_customer_latency_claim(self) -> None:
+        result = {**RESULT, "imports_diagnostic": {
+            "overall": "invalid",
+            "groups": [{"class": "wf-import-graph", "pass": 1, "overall": "invalid",
+                        "missing_execution_ids": ["one"], "duplicate_execution_ids": [], "invalid_events": [],
+                        "durable_timing": {
+                            "durable_started_to_completed_ms": {"count": 1, "p50_ms": 12.5, "p95_ms": 12.5},
+                            "engine_duration_ms": {"count": 0, "p50_ms": None, "p95_ms": None},
+                        }}],
+        }}
+        text = report.render(result)
+        self.assertIn("## Partial Imports Diagnostic", text)
+        self.assertIn("not a Halo or customer-latency claim", text)
+        self.assertIn("not polling, waiting, browser, or customer-latency observations", text)
+        self.assertIn("terminal-output read occurs after Success", text)
+        self.assertIn("partial and overlapping", text)
+        self.assertIn("12.50 / 12.50", text)
+        self.assertIn("unavailable", text)
+        self.assertIn("`wf-import-graph`", text)
+
     def test_steps_render_with_gates_and_validity(self) -> None:
         gate = {"status": "pass", "value": 1.2, "limit": 3.0}
         step = {

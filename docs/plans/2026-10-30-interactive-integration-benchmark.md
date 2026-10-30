@@ -1,6 +1,7 @@
 # Interactive Integration Benchmark
 
-Status: source investigation and measurement plan; not implemented or measured.
+Status: initial import diagnostic implemented and source-verified; no live
+diagnostic result yet. The V2 browser/fake-integration fixture remains planned.
 
 The hosting benchmark needs an interactive, non-AI integration workload as well
 as SDK-heavy throughput and agent mixes. Recent user-reported Halo portal
@@ -86,6 +87,26 @@ attributing an import-graph penalty to either boundary. Direct child access
 to Redis or infrastructure credentials is not an acceptable optimization.
 
 ## Reproducible Workload
+
+The first implemented slice is `m-import`, with a reduced-seed pipeline check
+in `m-import-smoke`. It uses separate workflow entry files with the same small
+body and output: an SDK/stdlib-only control and a synthetic namespace/package
+graph loaded at module scope before engine entry. The graph intentionally
+adds installed `requests`; it constructs a request object and makes no
+external call. Six synthetic files, their source bytes/hash and the installed
+library version are retained. Both passes use fresh execution children and
+ten sequential requests per class. This is a small import diagnostic, not the
+complete portal dependency graph, a capacity test or a Halo reproduction.
+
+Run the existing harness with an explicit frozen API image and a new output
+directory: `./test.sh bench run --profile m-import-smoke --backend none
+--api-image <trace-image> --out <new-directory>`. Each execution must have the
+expected successful output and exactly one valid correlated worker trace.
+Save raw records and pod/UID logs before settling or reading final counters;
+missing trace/output evidence invalidates the diagnostic. A bounded result GET
+after terminal success verifies output outside the recorded durable spans.
+The existing class runner now records the explicitly selected image rather
+than silently deploying its default. Preserve both images and all attempts.
 
 Extend the existing benchmark with one synthetic V2 interactive fixture. Use
 synthetic organizations and data, a small shared authorization/mapping module,

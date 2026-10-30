@@ -1,0 +1,10 @@
+{
+  "extends": "m-import",
+  "description": "Reduced-seed imports-only pipeline smoke. It is not a hosting baseline or latency claim.",
+  "seed": {
+    "workflow": 50,
+    "tool": 10,
+    "data_provider": 5
+  },
+  "table_docs": 50
+}

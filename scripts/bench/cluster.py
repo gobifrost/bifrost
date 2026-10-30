@@ -407,6 +407,34 @@ class Cluster:
         names = self.kubectl("get", "pods", "--field-selector=status.phase=Running", "-o", "name").split()
         return [name.removeprefix("pod/") for name in names if name.startswith("pod/bifrost-worker-")]
 
+    def api_log_source(self) -> dict:
+        """Bounded API log tail with immutable pod identity."""
+        pod = self._ready_api_pod()
+        name, uid = pod["metadata"]["name"], pod["metadata"]["uid"]
+        return {
+            "pod": name, "pod_uid": uid, "container": "api",
+            "logs": self.kubectl("logs", name, "-c", "api", "--tail=1000", check=False),
+        }
+
+    def worker_log_sources(self) -> list[dict]:
+        """Bounded worker logs with immutable pod identity, including just-finished Jobs."""
+        pods = json.loads(self.kubectl("get", "pods", "-o", "json"))["items"]
+        sources = []
+        for pod in pods:
+            metadata = pod.get("metadata", {})
+            name, uid = metadata.get("name"), metadata.get("uid")
+            if not isinstance(name, str) or not name.startswith("bifrost-worker-") or not isinstance(uid, str):
+                continue
+            statuses = pod.get("status", {}).get("containerStatuses", [])
+            if not any(status.get("name") == "worker" for status in statuses):
+                continue
+            sources.append({
+                "pod": name, "pod_uid": uid,
+                "logs": self.kubectl("logs", name, "-c", "worker", "--tail=1000", check=False),
+            })
+        return sources
+
+
     def worker_processes(self, pod: str) -> list[dict]:
         return parse_worker_processes(self.kubectl("exec", pod, "-c", "worker", "--", "sh", "-c", WORKER_PROCESSES_SCRIPT))
 

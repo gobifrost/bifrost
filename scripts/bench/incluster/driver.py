@@ -15,6 +15,7 @@ Modes:
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
 import os
 import sys
@@ -92,6 +93,8 @@ WORKFLOW_CLASSES = {
     "wf-wait": "bench_wf_wait",
     "wf-cpu": "bench_wf_cpu",
     "wf-large": "bench_wf_large",
+    "wf-import-control": "bench_wf_import_control",
+    "wf-import-graph": "bench_wf_import_graph",
 }
 AGENT_CLASSES = {
     "agent-chat": ("bench_agent_chat", "delegated"),
@@ -210,6 +213,24 @@ async def _ensure_agents(http: httpx.AsyncClient, tool_ids: list[str]) -> None:
         }), f"create agent {name}")
 
 
+async def _write_import_fixture(http: httpx.AsyncClient, fixture: dict, known: dict[str, str]) -> dict:
+    """Write the synthetic import fixture through the same editor API as workflows."""
+    files = fixture["files"]
+    for path, source in files.items():
+        _check(await http.put("/api/files/editor/content", json={"path": path, "content": source, "encoding": "utf-8"}), f"write {path}")
+    await _write_and_register(
+        http, "workflows/bench_import_control.py", files["workflows/bench_import_control.py"],
+        ["bench_wf_import_control"], known,
+    )
+    await _write_and_register(
+        http, "workflows/bench_import_graph.py", files["workflows/bench_import_graph.py"],
+        ["bench_wf_import_graph"], known,
+    )
+    return {
+        key: fixture[key] for key in ("version", "file_count", "source_bytes", "source_sha256")
+    } | {"third_party_versions": {"requests": importlib.metadata.version("requests")}}
+
+
 async def _ensure_table(http: httpx.AsyncClient, docs: int) -> None:
     created = await http.post("/api/tables", json={"name": "bench_docs"})
     if created.status_code >= 300 and created.status_code != 409 and "exist" not in created.text.lower():
@@ -222,7 +243,7 @@ async def _ensure_table(http: httpx.AsyncClient, docs: int) -> None:
         _check(await http.post("/api/tables/bench_docs/documents/batch", json={"documents": batch[start:start + 500]}), "insert docs")
 
 
-async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int) -> dict:
+async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int, import_fixture: dict | None = None) -> dict:
     http = await client()
     try:
         _check(await http.put("/api/admin/kubernetes/policy", json=policy), "set worker policy")
@@ -233,11 +254,13 @@ async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int) 
                 source, names = _seed_source(kind, range(start, min(start + 50, count)))
                 await _write_and_register(http, f"workflows/seed_{kind}_{start:04d}.py", source, names, known)
         known = await _workflow_ids(http)
+        imports = await _write_import_fixture(http, import_fixture, known) if import_fixture else None
+        known = await _workflow_ids(http)
         await _ensure_table(http, table_docs)
         model = await _configure_backend(http, backend) if backend else None
         await _ensure_agents(http, [known[name] for name in ("bench_tool_lookup", "bench_tool_count", "bench_tool_note")])
         seeded = sum(1 for name in known if name.startswith("seed_"))
-        return {"workflows": len(known), "seeded": seeded, "model": model}
+        return {"workflows": len(known), "seeded": seeded, "model": model, "import_fixture": imports}
     finally:
         await http.aclose()
 
@@ -245,7 +268,8 @@ async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int) 
 POLL_INTERVAL_S = 1.0
 
 
-async def _wait_all(http: httpx.AsyncClient, list_path: str, params: dict, ids: list[str], timeout_s: int) -> list[dict]:
+async def _wait_all(http: httpx.AsyncClient, list_path: str, params: dict, ids: list[str], timeout_s: int,
+                    include_result: bool = False) -> list[dict]:
     """Wait for runs with one list request per tick, so polling adds almost no load.
 
     Workflow executions and agent runs both expose created/started/completed
@@ -266,10 +290,14 @@ async def _wait_all(http: httpx.AsyncClient, list_path: str, params: dict, ids: 
     records = []
     for run_id in ids:
         row = found.get(run_id, {"status": "TimedOutInBench"})
+        if include_result and row.get("status") == "Success":
+            row = _check(await http.get(f"/api/executions/{run_id}"), f"read execution {run_id}").json()
         records.append({
             "id": run_id, "status": row.get("status"), "created_at": row.get("created_at"),
             "started_at": row.get("started_at"), "completed_at": row.get("completed_at"),
+            "result": row.get("result"),
             "error": row.get("error_message") or row.get("error"),
+            "duration_ms": row.get("duration_ms"),
             "iterations": row.get("iterations_used"), "tokens": row.get("tokens_used"),
         })
     return records
@@ -328,12 +356,13 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burs
                 return str(_check(await http.post("/api/agent-runs/enqueue", json=body), "enqueue agent").json()["run_id"])
 
         sequential_records: list[dict] = []
+        include_result = name in {"wf-import-control", "wf-import-graph"}
         for _ in range(sequential):
-            sequential_records += await _wait_all(http, list_path, params, [await submit()], timeout_s)
+            sequential_records += await _wait_all(http, list_path, params, [await submit()], timeout_s, include_result)
         burst_records: list[dict] = []
         for _ in range(burst_rounds):
             ids = list(await asyncio.gather(*(submit() for _ in range(burst))))
-            burst_records += await _wait_all(http, list_path, params, ids, timeout_s)
+            burst_records += await _wait_all(http, list_path, params, ids, timeout_s, include_result)
         return {"class": name, "sequential": sequential_records, "burst": burst_records}
     finally:
         await http.aclose()

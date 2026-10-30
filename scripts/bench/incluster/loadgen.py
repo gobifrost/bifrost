@@ -63,6 +63,8 @@ WORKFLOW_CLASSES = {
     "wf-noop": "bench_wf_noop",
     "wf-sdk": "bench_wf_sdk",
     "wf-io": "bench_wf_io",
+    "wf-import-control": "bench_wf_import_control",
+    "wf-import-graph": "bench_wf_import_graph",
 }
 AGENT_CLASSES = {
     "agent-chat": ("bench_agent_chat", AGENT_CHAT_PROMPT),

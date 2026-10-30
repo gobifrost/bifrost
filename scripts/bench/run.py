@@ -37,6 +37,7 @@ import ab  # noqa: E402
 import deploy  # noqa: E402
 import drills  # noqa: E402
 import guard  # noqa: E402
+import import_diagnostic  # noqa: E402
 import jsoncodec  # noqa: E402
 import preflight  # noqa: E402
 import report  # noqa: E402
@@ -253,6 +254,7 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     current.result["deploy"] = deploy.apply(cluster, profile, selected_api_image)
     current.result["setup"] = current.driver("setup", {
         "seed": profile["seed"], "backend": backend, "policy": profile["worker_policy"], "table_docs": profile["table_docs"],
+        "import_fixture": import_diagnostic.fixture_manifest() if profile.get("imports_diagnostic") else None,
     }, timeout_s=3600)
     ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", "{}"], timeout_s=900)
     check_destinations(cluster, ids)
@@ -264,14 +266,16 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     return ids
 
 
-def run_classes(profile_name: str, backend: str | None, out: Path | None) -> Path:
+def run_classes(profile_name: str, backend: str | None, out: Path | None, api_image: str | None = None) -> Path:
     profile = load_profile(profile_name)
+    out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-{backend or 'none'}")
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise SystemExit(f"classes output already contains evidence: {out}")
     cluster = Cluster()
     cluster.verify()
-    out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{profile_name}-{backend or 'none'}")
-    current = Run(cluster, "classes", profile_name, profile, backend, out)
+    current = Run(cluster, "classes", profile_name, profile, backend, out, api_image)
     print(f"Deploying and seeding '{profile_name}' ...", flush=True)
-    _prepare(cluster, current, profile, backend)
+    _prepare(cluster, current, profile, backend, api_image)
     current.snapshot("boot_seeded")
     classes = [c for c in profile["classes"] if backend or not c.startswith(("agent-", "chat-"))]
     for pass_number in (1, 2):
@@ -284,21 +288,59 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None) -> Pat
                     "name": name, "sequential": profile["sequential"], "burst": profile["burst"],
                     "burst_rounds": profile["burst_rounds"], "timeout_s": profile["timeout_s"],
                 }, timeout_s=profile["timeout_s"] * (profile["sequential"] + profile["burst_rounds"] + 1))
-            time.sleep(profile["settle_s"])
-            runs = len(records["sequential"]) + len(records["burst"])
-            db_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
-            current.result["classes"].append({
+            raw_records = [*records["sequential"], *records["burst"]]
+            entry = {
                 "name": name,
                 "pass": pass_number,
                 "sequential": stats.timings(records["sequential"]),
                 "burst": stats.timings(records["burst"]),
-                "cpu_ms_per_run": stats.cpu_ms_per_run(cpu_before, cluster.container_stats(), runs),
-                "runs": runs,
-                "db_window": db_window,
-                "db_top_tables": stats.top_tables(db_window["tables"], 8),
+                "runs": len(raw_records),
                 "worker_children": stats.worker_children(sampler.samples),
                 "raw": records,
+            }
+            imports_diagnostic = profile.get("imports_diagnostic")
+            if imports_diagnostic:
+                # Save raw terminal records before log capture, settling, or counter reads.
+                current.result["classes"].append(entry)
+                current.save()
+                execution = import_diagnostic.validate_execution_records(raw_records)
+                try:
+                    trace = import_diagnostic.capture(
+                        cluster, current.out, name, pass_number, [record["id"] for record in raw_records],
+                    )
+                except Exception as error:
+                    trace = {
+                        "kind": "partial-imports-diagnostic", "overall": "invalid",
+                        "expected_execution_ids": [record["id"] for record in raw_records],
+                        "sources": [], "events": [], "missing_execution_ids": [],
+                        "duplicate_execution_ids": [], "unmatched_execution_ids": [], "invalid_events": [],
+                        "capture_error": f"{type(error).__name__}: {error}",
+                    }
+                entry["import_trace"] = trace
+                entry["import_execution_validation"] = execution
+                entry["worker_process_samples"] = sampler.samples
+                diagnostic = current.result.setdefault(
+                    "imports_diagnostic", {"kind": "partial-imports-diagnostic", "overall": "pass", "groups": []},
+                )
+                group = {
+                    "class": name, "pass": pass_number, **trace,
+                    "execution_validation": execution,
+                    "durable_timing": import_diagnostic.durable_timing(raw_records),
+                }
+                diagnostic["groups"].append(group)
+                if trace["overall"] != "pass" or execution["overall"] != "pass":
+                    diagnostic["overall"] = "invalid"
+                current.save()
+            time.sleep(profile["settle_s"])
+            runs = entry["runs"]
+            db_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
+            entry.update({
+                "cpu_ms_per_run": stats.cpu_ms_per_run(cpu_before, cluster.container_stats(), runs),
+                "db_window": db_window,
+                "db_top_tables": stats.top_tables(db_window["tables"], 8),
             })
+            if not imports_diagnostic:
+                current.result["classes"].append(entry)
             current.snapshot(f"{name} (pass {pass_number})")
     print(f"Idle {profile['idle_s']} s, measuring database load over the last {profile['idle_db_s']} s ...", flush=True)
     time.sleep(profile["idle_s"] - profile["idle_db_s"])
@@ -554,6 +596,7 @@ def main() -> None:
     run_parser = sub.add_parser("run")
     run_parser.add_argument("--profile", default="m")
     run_parser.add_argument("--backend", choices=["fake", "none"], default="fake")
+    run_parser.add_argument("--api-image")
     run_parser.add_argument("--out", type=Path)
     capacity_parser = sub.add_parser("capacity")
     capacity_parser.add_argument("--profile", default="m")
@@ -590,7 +633,7 @@ def main() -> None:
     if args.command == "up":
         up(load_profile(args.profile))
     elif args.command == "run":
-        run_classes(args.profile, None if args.backend == "none" else args.backend, args.out)
+        run_classes(args.profile, None if args.backend == "none" else args.backend, args.out, args.api_image)
     elif args.command == "capacity":
         run_capacity(args.profile, args.mix, args.api_image, args.out)
     elif args.command == "confirm":

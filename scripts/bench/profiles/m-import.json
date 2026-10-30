@@ -1,0 +1,16 @@
+{
+  "extends": "m",
+  "description": "Imports-only diagnostic pair in the M envelope. It is not a browser, Halo, or complete integration benchmark.",
+  "env": {
+    "MALLOC_ARENA_MAX": "2",
+    "BIFROST_BENCH_IMPORT_TRACE": "1"
+  },
+  "classes": [
+    "wf-import-control",
+    "wf-import-graph"
+  ],
+  "sequential": 10,
+  "burst": 0,
+  "burst_rounds": 0,
+  "imports_diagnostic": true
+}
