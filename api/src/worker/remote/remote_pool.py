@@ -207,6 +207,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                     services.append(OwnedAttempt(
                         attempt_id=subject, service_id=definition.id, lease_token=attempt.lease_token,
                         workflow_id=definition.workflow_id, memory_request_bytes=request_bytes,
+                        credential_version=attempt.credential_version,
                     ))
                 elif kind == "platform_job":
                     job = await db.scalar(select(PlatformJob).where(

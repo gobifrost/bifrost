@@ -62,6 +62,10 @@ class OwnedAttempt:
     workflow_id: UUID | None = None
     memory_request_bytes: int = 0
     peak_memory_bytes: int = 0
+    # The attempt's credential format (``ServiceAttempt.credential_version``):
+    # None is legacy, whose token this worker rotates; claims-format
+    # attempts refresh their own access tokens.
+    credential_version: int | None = None
 
 
 @dataclass
@@ -451,11 +455,18 @@ class ServiceClaimLoop:
             )
 
     async def _rotate_token(self, db, owned: OwnedAttempt, definition=None) -> None:
-        """Mint a fresh service credential and hand it to the child."""
+        """Mint a fresh legacy service token and hand it to the child.
+
+        Only legacy-format attempts are rotated (token PR1c removes this);
+        a claims-format attempt refreshes its own access token, and its lease
+        is enforced on every request.
+        """
         from src.core.cache import get_redis
         from src.models.orm.services import ServiceDefinition
         from src.services.authorization.tokens import RuntimeSubject, _legacy_runtime_token
 
+        if owned.credential_version is not None:
+            return
         if definition is None:
             definition = await db.get(ServiceDefinition, owned.service_id)
         if definition is None or not definition.organization_id:
@@ -638,7 +649,7 @@ class ServiceClaimLoop:
         from src.core.cache import get_redis
         from src.models.orm.services import ServiceDefinition
         from src.repositories.organizations import OrganizationRepository
-        from src.services.authorization.tokens import RuntimeSubject, _legacy_runtime_token
+        from src.services.authorization.tokens import RuntimeSubject, issue_run_credentials
         from src.services.execution.service import (
             WorkflowNotFoundError,
             get_workflow_for_execution,
@@ -687,11 +698,17 @@ class ServiceClaimLoop:
         actor = await db.get(User, authority.acting_user_id)
         if actor is None:
             raise RuntimeError("Service attempt has no current acting user")
-        token, token_expires_at = _legacy_runtime_token(
+        # The route is chosen before the credentials are minted: its
+        # credential protocol decides their format, which the attempt row
+        # records (committed with this launch).
+        credential_route = self.pool.credential_route()
+        credentials = await issue_run_credentials(
             RuntimeSubject("service_attempt", attempt.id, definition.id),
-            lifetime_seconds=self.token_lifetime_seconds,
+            protocol=credential_route.protocol,
+            legacy_lifetime_seconds=self.token_lifetime_seconds,
         )
-        expires_at = token_expires_at.isoformat()
+        attempt.credential_version = credentials.credential_version
+        expires_at = credentials.expires_at.isoformat()
         context = {
             "execution_id": str(attempt.id),
             "name": workflow_data["name"],
@@ -717,10 +734,12 @@ class ServiceClaimLoop:
                 "revision": attempt.revision,
                 "graceful_shutdown_seconds": definition.graceful_shutdown_seconds,
                 "startup_grace_seconds": definition.startup_grace_seconds,
-                "token": token,
+                "token": credentials.access_token,
                 "token_expires_at": expires_at,
             },
         }
+        if credentials.refresh_token is not None:
+            context["service"]["refresh_token"] = credentials.refresh_token
         from sqlalchemy import select
 
         from src.models.orm.workflows import Workflow
@@ -743,19 +762,23 @@ class ServiceClaimLoop:
             lease_token=attempt.lease_token,
             context=context,
             graceful_shutdown_seconds=definition.graceful_shutdown_seconds,
+            credential_route=credential_route,
         )
-        async with get_redis() as r:
-            await r.setex(
-                service_token_key(str(attempt.id)),
-                self.token_lifetime_seconds + 300,
-                json.dumps({"token": token, "expires_at": expires_at}),
-            )
+        if credentials.credential_version is None:
+            # The legacy rotation channel, read through service-control.
+            async with get_redis() as r:
+                await r.setex(
+                    service_token_key(str(attempt.id)),
+                    self.token_lifetime_seconds + 300,
+                    json.dumps({"token": credentials.access_token, "expires_at": expires_at}),
+                )
         self._owned[str(attempt.id)] = OwnedAttempt(
             attempt_id=attempt.id,
             service_id=definition.id,
             lease_token=attempt.lease_token,
             workflow_id=definition.workflow_id,
             memory_request_bytes=request,
+            credential_version=credentials.credential_version,
         )
         logger.info(
             "worker %s launched service %s (attempt %s)",

@@ -63,7 +63,6 @@ _ENCODE_LEGACY_USERS = frozenset({"_legacy_runtime_token"})
 _LEGACY_MINTER_SITES = {
     f"{_TOKENS_MODULE}:issue_run_credentials",
     "src.services.service_claim:ServiceClaimLoop._rotate_token",
-    "src.services.service_claim:ServiceClaimLoop._launch_claimed",
 }
 
 _CREATE_ACCESS_TOKEN_SITES = {

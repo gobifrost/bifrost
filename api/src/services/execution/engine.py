@@ -254,10 +254,13 @@ class ServiceRunConfig:
     revision: str | None = None
     graceful_shutdown_seconds: int = 30
     startup_grace_seconds: int = 60
-    # Initial renewable credential; the supervisor installs fresher ones
-    # from the parent's Redis handoff as they arrive.
+    # Initial credential. A claims-format attempt also has a run refresh
+    # token, and the SDK refreshes on the API's challenge; a legacy-format
+    # attempt's supervisor installs fresher tokens from the parent's Redis
+    # handoff as they arrive.
     token: str = ""
     token_expires_at: str = ""
+    refresh_token: str | None = None
 
 
 @dataclass
@@ -948,11 +951,15 @@ async def execute_service(
     if BIFROST_CONTEXT_AVAILABLE:
         set_execution_context(context)
 
-    # Install the initial renewable credential handed down at dispatch.
+    # Install the credentials handed down at dispatch, now that the
+    # execution context exists to register them for redaction.
     if cfg.token:
-        from bifrost._service_runtime import install_service_credentials
+        from bifrost._service_runtime import install_legacy_service_token, install_service_credentials
 
-        install_service_credentials(cfg.token)
+        if cfg.refresh_token:
+            install_service_credentials(cfg.token, cfg.refresh_token)
+        else:
+            install_legacy_service_token(cfg.token)
 
     stop_event = asyncio.Event()
     from bifrost._service_runtime import (
@@ -1061,7 +1068,7 @@ async def _service_supervisor(
     cfg: ServiceRunConfig, stop_event: asyncio.Event
 ) -> None:
     """Exchange only this attempt's control state over its authenticated API."""
-    from bifrost._service_runtime import install_service_credentials, take_ready_report
+    from bifrost._service_runtime import install_legacy_service_token, take_ready_report
     from bifrost.client import get_client, raise_for_status_with_detail
 
     ready_pending = False
@@ -1081,8 +1088,9 @@ async def _service_supervisor(
             if payload["stop_requested"]:
                 stop_event.set()
                 break
+            # Only a legacy-format attempt's parent rotates its token.
             if payload["access_token"] is not None:
-                install_service_credentials(payload["access_token"])
+                install_legacy_service_token(payload["access_token"])
                 cfg.token_expires_at = payload["token_expires_at"]
         except asyncio.CancelledError:
             break

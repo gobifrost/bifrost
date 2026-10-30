@@ -8,6 +8,7 @@ from bifrost import service
 from bifrost.client import get_client
 from bifrost._service_runtime import (
     clear_service_runtime,
+    install_legacy_service_token,
     install_service_credentials,
     install_service_runtime,
     take_ready_report,
@@ -69,7 +70,7 @@ def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
     )
 
     monkeypatch.setenv("BIFROST_API_URL", "http://service-test.invalid")
-    # install_service_credentials mutates both variables directly; register
+    # install_legacy_service_token mutates both variables directly; register
     # them with monkeypatch so later SDK tests see their original environment.
     monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "test-placeholder")
     monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "test-placeholder")
@@ -77,14 +78,29 @@ def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
     _thread_local.bifrost_client = None
     _install_engine_socket("/tmp/service-test.sock")
     try:
-        assert install_service_credentials("initial-token")
+        assert install_legacy_service_token("initial-token")
         assert getattr(_thread_local, "bifrost_client", None) is None
         client = get_client()
         assert client._get_engine_async_client().headers["Authorization"] == "Bearer initial-token"
 
-        assert install_service_credentials("rotated-token")
+        assert install_legacy_service_token("rotated-token")
         assert get_client() is client
         assert client._get_engine_async_client().headers["Authorization"] == "Bearer rotated-token"
     finally:
         _clear_engine_socket()
         _thread_local.bifrost_client = previous
+
+
+def test_a_claims_attempt_installs_an_access_token_and_its_run_refresh_token(monkeypatch):
+    from bifrost.credentials import resolve_credentials
+
+    monkeypatch.setenv("BIFROST_API_URL", "http://service-test.invalid")
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "test-placeholder")
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "test-placeholder")
+
+    assert install_service_credentials("claims-access", "run-refresh")
+    assert not install_service_credentials("claims-access", "")
+
+    resolved = resolve_credentials("http://service-test.invalid")
+    assert resolved is not None
+    assert (resolved.credentials.access_token, resolved.credentials.refresh_token) == ("claims-access", "run-refresh")

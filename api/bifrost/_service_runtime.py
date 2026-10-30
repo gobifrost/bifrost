@@ -15,9 +15,9 @@ callables are attached to the ``service`` decorator object in
         while not service.is_stopping():
             await poll_once()
 
-Parent communication (ready flag, stop key, rotation token) travels over
-Redis keys owned by the worker parent — this module is process-local only
-and never touches the network. ``ready()`` sets a thread-safe flag the
+Parent communication (ready flag, stop key, and for legacy-format attempts
+the rotation token) travels over Redis keys owned by the worker parent —
+this module is process-local only and never touches the network. ``ready()`` sets a thread-safe flag the
 engine supervisor sends over the authenticated attempt transport; the stop
 event is an ``asyncio.Event``
 the engine sets on SIGTERM or when the parent mirrors ``stop_requested``.
@@ -34,25 +34,51 @@ _ready_flag = threading.Event()
 _stop_event: asyncio.Event | None = None
 
 
-def install_service_credentials(token: str) -> bool:
-    """Install a service token as process-scoped SDK credentials.
+def install_service_credentials(access_token: str, refresh_token: str) -> bool:
+    """Install a claims-format attempt's credentials for the SDK.
 
-    Mirrors the engine-token handoff: the SDK's process backend takes
-    precedence over keyring/JSON persistence, and supports refresh by
-    replacing the same two variables. Returns False when empty.
+    The access token carries the attempt's authorization claims; the run
+    refresh token lets the SDK refresh it on the API's challenge for as long
+    as the attempt is live. Nothing rotates them from the parent. Returns
+    False when either is empty.
+    """
+    if not access_token or not refresh_token:
+        return False
+    _install(access_token, refresh_token)
+    return True
+
+
+def install_legacy_service_token(token: str) -> bool:
+    """Install a legacy-format attempt's token (token PR1c deletes this).
+
+    The refresh slot holds the token itself; the parent rotates it through
+    the attempt's ``service-control`` handoff before it expires. Returns
+    False when empty.
     """
     if not token:
         return False
+    _install(token, token)
+    return True
+
+
+def _install(access_token: str, refresh_token: str) -> None:
+    """Mirror the engine-credential handoff: the SDK's process backend takes
+    precedence over keyring/JSON persistence and is updated in place when the
+    SDK refreshes. Inside the attempt's execution context both tokens are
+    registered for output redaction."""
+    from bifrost._context import register_secret
+
     api_url = os.getenv("BIFROST_API_URL", "http://api:8000")
     os.environ["BIFROST_API_URL"] = api_url
-    os.environ["BIFROST_ACCESS_TOKEN"] = token
-    os.environ["BIFROST_REFRESH_TOKEN"] = token
+    os.environ["BIFROST_ACCESS_TOKEN"] = access_token
+    os.environ["BIFROST_REFRESH_TOKEN"] = refresh_token
+    register_secret(access_token)
+    register_secret(refresh_token)
     # The SDK caches its client after the first call. Updating only the
     # environment leaves that client's HTTP transports using an expired token.
     from bifrost.client import _install_cached_access_token
 
-    _install_cached_access_token(api_url, token)
-    return True
+    _install_cached_access_token(api_url, access_token)
 
 
 def _get_stop_event() -> asyncio.Event:

@@ -421,12 +421,16 @@ async def run_service(
             name=caller_data["name"],
         )
 
-        # Renewable service credential handed down at dispatch (no SECRET_KEY
-        # in the child). The engine supervisor refreshes it from the parent's
-        # Redis handoff for the life of the attempt.
-        from bifrost._service_runtime import install_service_credentials
+        # Service credentials handed down at dispatch (no SECRET_KEY in the
+        # child). A claims-format attempt also gets a run refresh token and
+        # refreshes on the API's challenge; a legacy-format attempt's engine
+        # supervisor installs the parent's rotated tokens.
+        from bifrost._service_runtime import install_legacy_service_token, install_service_credentials
 
-        install_service_credentials(service_cfg.get("token", ""))
+        if service_cfg.get("refresh_token"):
+            install_service_credentials(service_cfg.get("token", ""), service_cfg["refresh_token"])
+        else:
+            install_legacy_service_token(service_cfg.get("token", ""))
 
         # Load the @service function (same DB-first loader as workflows).
         service_func = None
@@ -505,6 +509,7 @@ async def run_service(
                 ),
                 token=service_cfg.get("token", ""),
                 token_expires_at=service_cfg.get("token_expires_at", ""),
+                refresh_token=service_cfg.get("refresh_token"),
             ),
         )
 

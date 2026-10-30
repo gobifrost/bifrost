@@ -23,6 +23,7 @@ from src.core.cache.keys import (
     service_token_key,
 )
 from src.services import service_lifecycle
+from src.services.execution.process_pool import CredentialRoute
 from src.services.service_claim import OwnedAttempt, ServiceClaimLoop
 
 
@@ -140,10 +141,17 @@ async def _cleanup_services(async_session_factory):
 
 
 class StubPool:
-    def __init__(self):
+    """A pool whose children speak ``protocol``: 1 (a legacy launcher) unless
+    a test asks for the claims protocol."""
+
+    def __init__(self, protocol: int = 1):
         self.service_processes = {}
         self.route_service = AsyncMock()
         self.stop_service_child = AsyncMock(return_value=True)
+        self.protocol = protocol
+
+    def credential_route(self) -> CredentialRoute:
+        return CredentialRoute(self.protocol)
 
 
 async def _ensure_org(db_session):
@@ -250,9 +258,14 @@ async def test_tick_claims_and_routes_with_service_context(
     assert context["organization"]["id"] == str(org.id)
     assert context["service"]["lease_token"]
     assert context["service"]["token"]
-    # Token handoff written for the child to rotate from.
+    # A legacy route: today's token, recorded as the legacy format, with the
+    # handoff written for the child to rotate from.
+    assert "refresh_token" not in context["service"]
+    assert attempt.credential_version is None
+    assert kwargs["credential_route"] == CredentialRoute(1)
     attempt_id = kwargs["attempt_id"]
     assert attempt_id in loop._owned
+    assert loop._owned[attempt_id].credential_version is None
     assert redis_holder["redis"].values.get(
         service_token_key(attempt_id)
     ) is not None
@@ -345,6 +358,38 @@ async def test_beat_renews_lease_and_rotates_token(db_session, redis_holder):
         await db_session.get(ServiceAttempt, attempt_id)
     ).lease_expires_at
     assert after > before
+
+
+async def test_a_claims_route_gets_an_access_and_run_refresh_token_and_is_never_rotated(
+    db_session, redis_holder
+):
+    from src.core.security import decode_token
+    from src.models.orm.services import ServiceAttempt
+
+    await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool(protocol=2)
+    loop = _loop(pool)
+
+    await loop.tick()
+
+    kwargs = pool.route_service.await_args.kwargs
+    attempt_id = kwargs["attempt_id"]
+    service = kwargs["context"]["service"]
+    access = decode_token(service["token"], expected_type="access")
+    refresh = decode_token(service["refresh_token"], expected_type="run_refresh")
+    assert access is not None and access["ver"] == 1 and access["sub"] == attempt_id
+    assert refresh is not None and refresh["sub"] == attempt_id
+    assert kwargs["credential_route"] == CredentialRoute(2)
+    attempt = await db_session.get(ServiceAttempt, attempt_id)
+    await db_session.refresh(attempt)
+    assert attempt.credential_version == 2
+    assert loop._owned[attempt_id].credential_version == 2
+    # No rotation channel, now or on a beat: the child refreshes itself.
+    assert service_token_key(attempt_id) not in redis_holder["redis"].values
+    loop._last_beat = 0
+    await loop.tick()
+    assert service_token_key(attempt_id) not in redis_holder["redis"].values
 
 
 async def test_service_rotation_keeps_only_durable_credential_identifiers(redis_holder):
