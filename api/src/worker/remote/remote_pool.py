@@ -796,11 +796,13 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         launcher retains it until ACK. Keep the handle and propagate callback
         failures so that transport replay can safely try the durable commit.
         """
+        from src.worker.remote.ownership import RemoteOwnershipLost
+
         async with self._result_locks.setdefault(handle.id, asyncio.Lock()):
             if handle.id not in self._routes:
                 return
             if not await self._owns_session():
-                raise ConnectionError("Remote API ownership was replaced")
+                raise RemoteOwnershipLost("Remote API ownership was replaced")
             if handle.service is not None:
                 if self.on_service_result is not None:
                     await self.on_service_result(self._service_envelope(handle, result))
@@ -810,7 +812,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                 if self.on_result is not None:
                     await self.on_result(result)
             if not await self._owns_session():
-                raise ConnectionError("Remote API ownership was replaced before ACK")
+                raise RemoteOwnershipLost("Remote API ownership was replaced before ACK")
             handle.result_reported = True
             handle.process.exitcode = 0
             handle.current_execution = None

@@ -14,6 +14,14 @@ from src.models.orm.execution_workers import ExecutionWorker
 DEFAULT_OWNER_LEASE_SECONDS = 20
 
 
+class RemoteOwnershipLost(ConnectionError):
+    """A completed database check proved this session no longer owns its launcher.
+
+    A check that fails (for example, a database error) proves nothing: it
+    leaves ownership unknown and does not raise this.
+    """
+
+
 @dataclass(frozen=True)
 class RemoteOwnerLease:
     worker_id: UUID

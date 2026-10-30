@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -37,6 +38,7 @@ from src.worker.remote.fencing import LeaseRef, remote_owner_context
 from src.worker.remote.ownership import (
     DEFAULT_OWNER_LEASE_SECONDS,
     RemoteOwnerLease,
+    RemoteOwnershipLost,
     acquire_remote_owner,
     owns_remote_session,
     release_remote_owner,
@@ -119,6 +121,9 @@ class Bridge:
         self.lease = lease
         self.handoff = False
         self.lease_ref: LeaseRef | None = None
+        # Its session's ``lease_known_until``; a bridge without one never
+        # treats its lease as known to be held.
+        self.lease_known_until: Callable[[], float] = lambda: 0.0
         self._sequence = 0
         self.results: set[asyncio.Task[Any]] = set()
         self.lock = asyncio.Lock()
@@ -365,12 +370,39 @@ class Bridge:
         # Completion may call SDK/Redis/DB or send a new command. Never
         # block this receiver, which must also deliver command replies. The
         # launcher receives ACK only after that canonical mutation returns.
+        socket = self.socket
+
         async def handle_event() -> None:
-            if self.lease_ref is None:
-                await deliver(event)
-            else:
-                with remote_owner_context(self.lease_ref):
-                    await deliver(event)
+            deadline: float | None = None
+            while True:
+                try:
+                    if self.lease_ref is None:
+                        await deliver(event)
+                    else:
+                        with remote_owner_context(self.lease_ref):
+                            await deliver(event)
+                    break
+                except RemoteOwnershipLost:
+                    raise
+                except Exception:
+                    # A failed delivery (such as a database error) proves no
+                    # ownership change. Retry it on this socket while the
+                    # lease current at the first failure is known to be held,
+                    # rather than closing the socket to force a replay. Each
+                    # attempt is fenced again; nothing is ACKed until one
+                    # succeeds.
+                    known_until = self.lease_known_until()
+                    deadline = known_until if deadline is None else min(deadline, known_until)
+                    if self.socket is not socket or not _retry_fits(deadline):
+                        raise
+                    logging.getLogger(__name__).warning(
+                        "Remote terminal delivery failed; retrying before the lease expires",
+                        exc_info=True,
+                    )
+                await asyncio.sleep(RENEW_RETRY_SECONDS)
+                if self.socket is not socket:
+                    # The launcher replays this event on its new connection.
+                    return
             if isinstance(event_id, str):
                 await self.acknowledge(event_id)
 
@@ -378,7 +410,6 @@ class Bridge:
         self.results.add(task)
         task.add_done_callback(self.results.discard)
         task.add_done_callback(_observe_task)
-        socket = self.socket
 
         def reconnect_on_failure(done: asyncio.Task[Any]) -> None:
             if done.cancelled() or done.exception() is None or self.socket is not socket:
@@ -408,6 +439,11 @@ class Bridge:
         for future in self.pending.values():
             if not future.done():
                 future.set_exception(ConnectionError("Launcher disconnected"))
+
+
+def _retry_fits(deadline: float) -> bool:
+    """Whether a retry after a failed database call still ends before ``deadline``."""
+    return time.monotonic() + RENEW_RETRY_SECONDS < deadline
 
 
 def _observe_task(task: asyncio.Task[Any]) -> None:
@@ -713,6 +749,7 @@ class RemoteSession:
         self.owned_until = owned_until
         self.lease_ref = LeaseRef(lease)
         bridge.lease_ref = self.lease_ref
+        bridge.lease_known_until = self.lease_known_until
         self.last_sequence = 0
         self.handoff = False
         self._lease_released = False
@@ -824,13 +861,40 @@ class RemoteSession:
             logging.getLogger(__name__).exception("Remote owner renewal failed")
             await self.lose_ownership("Remote API owner lease could not be renewed")
 
+    def lease_known_until(self) -> float:
+        """Monotonic time before which this owner's lease is known to be held."""
+        return 0.0 if self._lease_released else self.owned_until
+
     async def may_accept(self, kind: str, payload: dict[str, Any]) -> bool:
         """Whether this owner may act on a launcher message. Telemetry changes
         nothing durable, so a lease known to be current is enough; everything
-        else is fenced in the database."""
+        else is fenced in the database.
+
+        A check that fails (such as a database error) leaves ownership
+        unknown, not lost: the message waits, unaccepted, and the check is
+        retried while the lease current at the first failure is known to be
+        held. Past that, the error propagates and closes the socket.
+        """
         if kind == "event" and payload.get("event") == "sample" and time.monotonic() < self.owned_until:
             return True
-        return await owns_remote_session(self.lease)
+        lease = self.lease
+        deadline: float | None = None
+        while True:
+            try:
+                return await owns_remote_session(lease)
+            except Exception:
+                known_until = self.lease_known_until()
+                deadline = known_until if deadline is None else min(deadline, known_until)
+                if not _retry_fits(deadline):
+                    raise
+                logging.getLogger(__name__).warning(
+                    "Remote ownership check failed; retrying before the lease expires",
+                    exc_info=True,
+                )
+            await asyncio.sleep(RENEW_RETRY_SECONDS)
+            if self.lease != lease:
+                # A reconnect replaced this socket's session generation.
+                raise ProtocolError("stale remote control session")
 
     async def lose_ownership(self, reason: str) -> None:
         self.owned_until = 0.0

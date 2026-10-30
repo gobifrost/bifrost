@@ -10,11 +10,14 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
+from fastapi import WebSocket, WebSocketDisconnect
+from sqlalchemy.exc import OperationalError
+from starlette.websockets import WebSocketState
 
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
 from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession, _reply_timeout
 from src.worker.remote.ownership import RemoteOwnerLease
-from src.worker.remote.protocol import Hello, sign_hello
+from src.worker.remote.protocol import ControlEnvelope, FragmentAssembler, Hello, sign_hello
 from src.worker.pool_main import PoolWorker
 
 
@@ -593,3 +596,150 @@ async def test_telemetry_skips_the_database_fence_only_while_the_lease_is_known_
         session.owned_until = time.monotonic() - 1
         assert await session.may_accept("event", sample) is False
         assert fence.await_count == 3
+
+
+def _database_error() -> OperationalError:
+    return OperationalError(
+        "SELECT execution_workers.id", None, ConnectionResetError("pooler restarted")
+    )
+
+
+class _ConnectedHost:
+    """Stands in for RemoteControlHost once the launcher's hello was accepted."""
+
+    stopping = False
+
+    def __init__(self, session: RemoteSession) -> None:
+        self.session = session
+
+    async def connect(self, socket: WebSocket) -> tuple[RemoteSession, FragmentAssembler]:
+        return self.session, FragmentAssembler()
+
+
+def _connected_session(owned_until: float) -> tuple[RemoteSession, Mock, asyncio.Future]:
+    """A session whose launcher sends one command reply and then disconnects."""
+    socket = Mock(
+        send_text=AsyncMock(),
+        close=AsyncMock(),
+        application_state=WebSocketState.CONNECTED,
+        receive_text=AsyncMock(side_effect=[
+            ControlEnvelope(
+                session_generation=LEASE.session_generation, sequence=1, kind="event",
+                payload={"reply": "request-1", "result": {"ready": True}},
+            ).to_json(),
+            WebSocketDisconnect(),
+        ]),
+    )
+    bridge = Bridge(
+        socket, {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE
+    )
+    reply: asyncio.Future = asyncio.get_running_loop().create_future()
+    bridge.pending["request-1"] = reply
+    session = object.__new__(RemoteSession)
+    session.bridge, session.lease, session.owned_until = bridge, LEASE, owned_until
+    session.last_sequence, session._lease_released = 0, False
+    session.lose_ownership = AsyncMock()
+    bridge.lease_known_until = session.lease_known_until
+    return session, socket, reply
+
+
+@pytest.mark.asyncio
+async def test_failed_ownership_check_keeps_the_control_socket_while_the_lease_holds() -> None:
+    from src.worker.remote import host as host_mod
+
+    session, socket, reply = _connected_session(owned_until=120)
+    accepted_during_retry: list[bool] = []
+
+    async def sleep(seconds: float) -> None:
+        accepted_during_retry.append(reply.done())
+
+    with (
+        patch.object(host_mod, "_host", _ConnectedHost(session)),
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch.object(
+            host_mod, "owns_remote_session", new=AsyncMock(side_effect=[_database_error(), True])
+        ) as owns,
+    ):
+        await host_mod.remote_control(socket)
+
+    # The reply waited, unaccepted, for a successful check, then was delivered
+    # on the same socket: no close, so no reconnect and no new generation.
+    assert accepted_during_retry == [False]
+    assert owns.await_count == 2
+    assert reply.result() == {"ready": True}
+    assert socket.receive_text.await_count == 2
+    socket.close.assert_not_awaited()
+    session.lose_ownership.assert_not_awaited()
+    assert session.lease is LEASE
+
+
+@pytest.mark.asyncio
+async def test_ownership_check_failing_past_the_lease_closes_the_control_socket() -> None:
+    from src.worker.remote import host as host_mod
+
+    session, socket, reply = _connected_session(owned_until=120.0)
+    clock = SimpleNamespace(now=100.0)
+
+    async def sleep(seconds: float) -> None:
+        clock.now += seconds
+
+    with (
+        patch.object(host_mod, "_host", _ConnectedHost(session)),
+        patch("src.worker.remote.host.time.monotonic", new=lambda: clock.now),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch.object(
+            host_mod, "owns_remote_session", new=AsyncMock(side_effect=_database_error())
+        ) as owns,
+    ):
+        with pytest.raises(OperationalError):
+            await host_mod.remote_control(socket)
+
+    # Checks at 100, 102, ... 118; after 118 a 2 s retry would end at the lease.
+    assert owns.await_count == 10
+    assert clock.now == 118.0
+    assert not reply.done()
+
+
+@pytest.mark.asyncio
+async def test_ownership_check_stops_retrying_once_the_lease_is_lost() -> None:
+    from src.worker.remote import host as host_mod
+
+    session, _socket, _reply = _connected_session(owned_until=120)
+
+    async def sleep(seconds: float) -> None:
+        session.owned_until = 0.0  # renewal was refused meanwhile
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch.object(
+            host_mod, "owns_remote_session", new=AsyncMock(side_effect=_database_error())
+        ) as owns,
+    ):
+        with pytest.raises(OperationalError):
+            await session.may_accept("event", {"event": "result", "route_id": "r"})
+
+    assert owns.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_ownership_check_finding_the_fence_replaced_closes_without_retrying() -> None:
+    from src.worker.remote import host as host_mod
+
+    session, socket, reply = _connected_session(owned_until=120)
+    sleep = AsyncMock()
+
+    with (
+        patch.object(host_mod, "_host", _ConnectedHost(session)),
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+        patch.object(host_mod, "owns_remote_session", new=AsyncMock(return_value=False)) as owns,
+    ):
+        await host_mod.remote_control(socket)
+
+    owns.assert_awaited_once()
+    sleep.assert_not_awaited()
+    session.lose_ownership.assert_awaited_once_with("Remote API owner fence was replaced")
+    socket.close.assert_awaited_once_with(code=1008)
+    assert not reply.done()

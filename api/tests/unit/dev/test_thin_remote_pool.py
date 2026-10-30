@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 from unittest.mock import AsyncMock, patch
+from uuid import UUID
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from src.core.redis_client import ActiveExecution
+from src.worker.remote.fencing import LeaseRef, remote_owner_context
+from src.worker.remote.ownership import RemoteOwnerLease, RemoteOwnershipLost
 from src.worker.remote.remote_pool import ThinRemoteProcessPool
 from src.models.contracts.platform import ProcessInfo
 
@@ -351,3 +355,48 @@ async def test_callback_failure_retains_route_until_durable_result_replay() -> N
     assert pool._routes == {}
     assert callback.await_count == 2
     assert callback.await_args.args[0]["sync"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ownership_check", "raised"),
+    [
+        (OperationalError("SELECT 1", None, ConnectionResetError("pooler restarted")), OperationalError),
+        (False, RemoteOwnershipLost),
+    ],
+    ids=["ownership-unknown", "ownership-lost"],
+)
+async def test_result_is_not_committed_without_confirmed_ownership(
+    ownership_check: Exception | bool, raised: type[Exception]
+) -> None:
+    transport = _Transport()
+    on_result = AsyncMock()
+    pool = ThinRemoteProcessPool(transport, on_result=on_result)
+    with (
+        patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock),
+        patch.object(pool, "_write_active_execution_lease", new_callable=AsyncMock),
+    ):
+        await pool.route_execution("exec-1", {"timeout_seconds": 30}, _active("exec-1"))
+    route = transport.requests[-1][1]["route_id"]
+    lease = RemoteOwnerLease(
+        worker_id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        owner_id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        launcher_id=UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+        session_generation=1,
+    )
+
+    with (
+        remote_owner_context(LeaseRef(lease)),
+        patch(
+            "src.worker.remote.ownership.owns_remote_session",
+            new=AsyncMock(side_effect=[ownership_check]),
+        ),
+        pytest.raises(raised),
+    ):
+        await pool.handle_event({
+            "event": "result", "route_id": route,
+            "result": {"execution_id": "exec-1", "success": True},
+        })
+
+    on_result.assert_not_awaited()
+    assert route in pool._routes

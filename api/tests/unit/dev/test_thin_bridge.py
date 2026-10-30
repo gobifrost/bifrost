@@ -1,12 +1,15 @@
 import asyncio
+import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from uuid import UUID
+from sqlalchemy.exc import OperationalError
 
 from src.worker.remote.host import Bridge, RemoteProcess
-from src.worker.remote.ownership import RemoteOwnerLease
+from src.worker.remote.ownership import RemoteOwnerLease, RemoteOwnershipLost
 
 
 LEASE = RemoteOwnerLease(
@@ -101,6 +104,71 @@ async def test_terminal_delivery_failure_closes_its_current_transport_for_replay
     await asyncio.gather(*bridge.results, return_exceptions=True)
     await asyncio.sleep(0)
 
+    socket.close.assert_awaited_once_with(code=1011, reason="terminal delivery failed")
+    socket.send_text.assert_not_awaited()
+
+
+class _FailingPool:
+    """A pool whose canonical result delivery fails with the given errors first."""
+
+    def __init__(self, failures: list[Exception]) -> None:
+        self.failures = failures
+        self.deliveries = 0
+
+    async def handle_event(self, event: dict[str, Any]) -> None:
+        self.deliveries += 1
+        if self.failures:
+            raise self.failures.pop(0)
+
+
+def _database_error() -> OperationalError:
+    return OperationalError("SELECT 1", None, ConnectionResetError("pooler restarted"))
+
+
+@pytest.mark.asyncio
+async def test_terminal_delivery_failure_retries_on_its_socket_while_the_lease_holds():
+    socket = Mock(send_text=AsyncMock(), close=AsyncMock())
+    bridge = _bridge(socket)
+    bridge.pool = pool = _FailingPool([_database_error()])
+    bridge.lease_known_until = lambda: 120.0
+    bridge.reconciliation_ready.set()
+    acknowledged_during_retry: list[int] = []
+
+    async def sleep(seconds: float) -> None:
+        acknowledged_during_retry.append(socket.send_text.await_count)
+
+    with (
+        patch("src.worker.remote.host.time.monotonic", return_value=100),
+        patch("src.worker.remote.host.asyncio.sleep", new=sleep),
+    ):
+        await bridge.receive({
+            "event": "result", "route_id": "route", "result": {"success": True},
+            "_event_id": "terminal-1",
+        })
+        await asyncio.gather(*bridge.results)
+
+    assert pool.deliveries == 2
+    assert acknowledged_during_retry == [0]
+    assert '"event_id":"terminal-1"' in socket.send_text.await_args.args[0]
+    socket.close.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_terminal_delivery_proving_ownership_lost_closes_without_retrying():
+    socket = Mock(send_text=AsyncMock(), close=AsyncMock())
+    bridge = _bridge(socket)
+    bridge.pool = pool = _FailingPool([RemoteOwnershipLost("Remote API ownership was replaced")])
+    bridge.lease_known_until = lambda: time.monotonic() + 60
+    bridge.reconciliation_ready.set()
+    await bridge.receive({
+        "event": "result", "route_id": "route", "result": {"success": True},
+        "_event_id": "terminal-1",
+    })
+
+    await asyncio.gather(*bridge.results, return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert pool.deliveries == 1
     socket.close.assert_awaited_once_with(code=1011, reason="terminal delivery failed")
     socket.send_text.assert_not_awaited()
 
