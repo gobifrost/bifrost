@@ -48,7 +48,7 @@ async def _attempt(session: AsyncSession, user: User, organization: Organization
 async def _launcher(session: AsyncSession, **fields) -> ExecutionWorker:
     worker = ExecutionWorker(
         form="static", state="ready", resource_class="standard", slots=1, hostname=f"runner-{uuid4().hex[:6]}",
-        remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(seconds=20), **fields,
+        **{"remote_owner_lease_expires_at": datetime.now(timezone.utc) + timedelta(seconds=20), **fields},
     )
     session.add(worker)
     await session.flush()
