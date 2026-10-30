@@ -74,6 +74,8 @@ def arm(cluster: Cluster, profile: dict, plan: dict, api_image: str, rate: float
         "correct": correct,
         "xact_per_correct": window["xact"] / correct if correct else math.inf,
         "rollbacks_per_correct": window["rollbacks"] / correct if correct else math.inf,
+        "wal_lsn_kib_per_correct": window["wal_bytes"] / 1024 / correct if correct else math.inf,
+        "wal_generated_kib_per_correct": window["wal_generated_bytes"] / 1024 / correct if correct else math.inf,
         "api_cpu_s_per_correct": api_cpu_seconds(step) / correct if correct else math.inf,
         "e2e_p95_s": per_class,
         "overall": step["overall"],
@@ -85,6 +87,8 @@ METRICS = (
     ("idle rollbacks/s", lambda a: a["idle"]["rollbacks_per_s"]),
     ("transactions per correct run", lambda a: a["xact_per_correct"]),
     ("rollbacks per correct run", lambda a: a["rollbacks_per_correct"]),
+    ("WAL LSN advance KiB per correct run", lambda a: a["wal_lsn_kib_per_correct"]),
+    ("generated WAL KiB per correct run", lambda a: a["wal_generated_kib_per_correct"]),
     ("API CPU ms per correct run", lambda a: a["api_cpu_s_per_correct"] * 1000),
 )
 

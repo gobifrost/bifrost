@@ -21,15 +21,17 @@ def _cpu(entry: dict, phase: str) -> str:
 def _db(entry: dict, phase: str) -> str:
     db = entry.get("db_per_run")
     if phase != "sequential" or not db:
-        return " | "
-    return f"{db['xact']:.0f} | {db['wal_kib']:.1f}"
+        return " |  | "
+    generated = db.get("wal_generated_kib")
+    generated_cell = "" if generated is None else f"{generated:.1f}"
+    return f"{db['xact']:.0f} | {db['wal_kib']:.1f} | {generated_cell}"
 
 
 def _classes_table(classes: list[dict]) -> list[str]:
     rows = [
         "| Class | Pass | Phase | OK / runs | Queue p50 / p95 ms | Run p50 / p95 ms | End-to-end p50 / p95 ms "
-        + "| CPU ms/run API / worker | DB transactions/run | WAL KiB/run |",
-        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|",
+        + "| CPU ms/run API / worker | DB transactions/run | WAL LSN advance KiB/run | Generated WAL KiB/run |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for entry in classes:
         for phase in ("sequential", "burst"):
@@ -46,8 +48,8 @@ def _import_costs(classes: list[dict]) -> list[str]:
     rows = [
         "## Import Diagnostic Counter Windows", "",
         "CPU and database counters include settling and background work. Startup work can affect the first window; these are not pure child costs.", "",
-        "| Class | Pass | CPU ms/run API / worker | DB transactions/run | WAL KiB/run |",
-        "|---|---:|---:|---:|---:|",
+        "| Class | Pass | CPU ms/run API / worker | DB transactions/run | WAL LSN advance KiB/run | Generated WAL KiB/run |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for entry in classes:
         rows.append(f"| `{entry['name']}` | {entry['pass']} | {_cpu(entry, 'sequential')} | {_db(entry, 'sequential')} |")
@@ -92,30 +94,62 @@ def _workers_table(classes: list[dict]) -> list[str]:
     return [*rows, ""]
 
 
+def _generated_snapshot_delta(before: dict, after: dict) -> tuple[float | None, str | None]:
+    """A generated-WAL snapshot delta only when its reset epoch and bytes are valid."""
+    resets = (before.get("wal_stats_reset"), after.get("wal_stats_reset"))
+    if any(type(reset) is not str or not reset for reset in resets):
+        return None, "missing or invalid `pg_stat_wal.stats_reset` marker"
+    if resets[0] != resets[1]:
+        return None, "`pg_stat_wal.stats_reset` changed"
+    counters = (before.get("wal_generated_bytes"), after.get("wal_generated_bytes"))
+    if any(type(counter) is not int or counter < 0 for counter in counters):
+        return None, "missing or invalid generated WAL byte counter"
+    if counters[1] < counters[0]:
+        return None, "generated WAL byte counter regressed"
+    return (counters[1] - counters[0]) / 1024 / 1024, None
+
+
 def _database(result: dict) -> list[str]:
     idle = result.get("db_idle")
     if not idle:
-        return []
+        error = result.get("db_idle_error")
+        if not error:
+            return []
+        return [
+            "## Database", "",
+            f"Database counter window invalid: {error.get('reason', 'unknown error')}. "
+            "Raw before/after samples are retained in result.json; no rate or cost was calculated.", "",
+        ]
     rate = idle["rate"]
     busiest = ", ".join(f"`{name}` {writes} / {scans}" for name, writes, scans in idle["top_tables"]) or "none"
+    generated_rate = rate.get("wal_generated_kib_per_s")
+    generated = "unavailable in this artifact" if generated_rate is None else f"{generated_rate:.1f} KiB generated WAL/s"
     lines = [
-        "## Database",
-        "",
+        "## Database", "",
         ("Idle counters are measured before load; the all-phases load window includes warmup, measurement and drain."
          if result["kind"] == "capacity" else
          "Per-run figures in the table above cover each class's sequential and burst runs, net of the idle rate measured at the end of the run."),
+        "WAL LSN advance includes segment switches and padding. Generated WAL is the cluster-wide "
+        "`pg_stat_wal.wal_bytes` counter. Neither measures WAL files retained on disk or archive storage.",
         "",
         f"- Idle: {rate['xact_per_s']:.1f} transactions/s, {rate['rows_written_per_s']:.1f} rows written/s, "
-        f"{rate['wal_kib_per_s']:.1f} KiB WAL/s (over {idle['seconds']:.0f} s)",
+        f"{rate['wal_kib_per_s']:.1f} KiB WAL LSN advance/s, {generated} (over {idle['seconds']:.0f} s)",
         f"- Busiest tables while idle (rows written / scans): {busiest}",
     ]
+    if "wal_stats_reset" in idle:
+        lines.append(f"- Generated WAL stats-reset marker: `{idle['wal_stats_reset']}`")
     sized = [snap for snap in result["snapshots"] if "db_mib" in snap]
     if len(sized) >= 2:
         lines.append(
             f"- Database grew {sized[-1]['db_mib'] - sized[0]['db_mib']:.1f} MiB; "
-            f"WAL written {sized[-1]['wal_mib'] - sized[0]['wal_mib']:.1f} MiB "
+            f"WAL LSN advance {sized[-1]['wal_mib'] - sized[0]['wal_mib']:.1f} MiB "
             f"between '{sized[0]['label']}' and '{sized[-1]['label']}'"
         )
+        generated_delta_mib, generated_error = _generated_snapshot_delta(sized[0], sized[-1])
+        if generated_error:
+            lines.append(f"- Generated WAL counter unavailable across snapshots: {generated_error}")
+        else:
+            lines.append(f"- Generated WAL counter changed {generated_delta_mib:.1f} MiB over the same snapshots")
     return [*lines, ""]
 
 

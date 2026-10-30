@@ -78,12 +78,61 @@ def cpu_ms_per_run(before: list[dict], after: list[dict], runs: int) -> dict[str
     return {role: round(seconds * 1000 / max(runs, 1), 1) for role, seconds in totals.items() if role in ("api", "worker")}
 
 
+class DbCounterWindowError(ValueError):
+    """A database counter window that cannot safely be used for cost evidence."""
+
+    def __init__(self, reason: str, before: dict, after: dict) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.before = before
+        self.after = after
+
+    def evidence(self) -> dict:
+        return {"reason": self.reason, "before": self.before, "after": self.after}
+
+
+def _counter(value: object, name: str, before: dict, after: dict) -> int:
+    if type(value) is not int or value < 0:
+        raise DbCounterWindowError(f"invalid cumulative database counter {name}", before, after)
+    return value
+
+
 def db_delta(before: dict, after: dict, seconds: float) -> dict:
-    """Postgres work between two counter samples; tables that didn't change are dropped."""
+    """Postgres work between samples, rejecting resets or counter regressions.
+
+    ``wal_bytes`` remains the legacy current-LSN advance. ``wal_generated_bytes``
+    comes from the cluster-wide ``pg_stat_wal.wal_bytes`` counter and is only
+    meaningful while its ``stats_reset`` marker is unchanged.
+    """
+    counters = ("xact", "rollbacks", "rows_written", "wal_bytes", "wal_generated_bytes")
+    for name in counters:
+        previous = _counter(before.get(name), name, before, after)
+        current = _counter(after.get(name), name, before, after)
+        if current < previous:
+            raise DbCounterWindowError(f"database counter regressed: {name}", before, after)
+    if "wal_stats_reset" not in before or "wal_stats_reset" not in after:
+        raise DbCounterWindowError("missing pg_stat_wal stats_reset marker", before, after)
+    if any(type(value) is not str or not value for value in (before["wal_stats_reset"], after["wal_stats_reset"])):
+        raise DbCounterWindowError("invalid pg_stat_wal stats_reset marker", before, after)
+    if before["wal_stats_reset"] != after["wal_stats_reset"]:
+        raise DbCounterWindowError("pg_stat_wal stats_reset changed during database window", before, after)
+    if not isinstance(before.get("tables"), dict) or not isinstance(after.get("tables"), dict):
+        raise DbCounterWindowError("invalid database table counters", before, after)
     tables: dict[str, list[int]] = {}
-    for name, (writes, scans) in after["tables"].items():
-        previous = before["tables"].get(name, [0, 0])
-        change = [writes - previous[0], scans - previous[1]]
+    for name, values in after["tables"].items():
+        previous_values = before["tables"].get(name, [0, 0])
+        if (
+            type(name) is not str
+            or not isinstance(values, list)
+            or len(values) != 2
+            or not isinstance(previous_values, list)
+            or len(previous_values) != 2
+            or any(type(value) is not int or value < 0 for value in [*values, *previous_values])
+        ):
+            raise DbCounterWindowError(f"invalid database table counter {name!r}", before, after)
+        change = [values[0] - previous_values[0], values[1] - previous_values[1]]
+        if any(value < 0 for value in change):
+            raise DbCounterWindowError(f"database table counter regressed: {name}", before, after)
         if any(change):
             tables[name] = change
     return {
@@ -92,6 +141,8 @@ def db_delta(before: dict, after: dict, seconds: float) -> dict:
         "rollbacks": after["rollbacks"] - before["rollbacks"],
         "rows_written": after["rows_written"] - before["rows_written"],
         "wal_bytes": after["wal_bytes"] - before["wal_bytes"],
+        "wal_generated_bytes": after["wal_generated_bytes"] - before["wal_generated_bytes"],
+        "wal_stats_reset": after["wal_stats_reset"],
         "tables": tables,
     }
 
@@ -103,6 +154,7 @@ def db_rate(delta: dict) -> dict[str, float]:
         "rollbacks_per_s": round(delta["rollbacks"] / seconds, 2),
         "rows_written_per_s": round(delta["rows_written"] / seconds, 2),
         "wal_kib_per_s": round(delta["wal_bytes"] / 1024 / seconds, 2),
+        "wal_generated_kib_per_s": round(delta["wal_generated_bytes"] / 1024 / seconds, 2),
     }
 
 
@@ -114,6 +166,9 @@ def db_per_run(delta: dict, idle: dict[str, float], runs: int) -> dict[str, floa
         "xact": round((delta["xact"] - idle["xact_per_s"] * seconds) / runs, 1),
         "rows_written": round((delta["rows_written"] - idle["rows_written_per_s"] * seconds) / runs, 1),
         "wal_kib": round((delta["wal_bytes"] / 1024 - idle["wal_kib_per_s"] * seconds) / runs, 1),
+        "wal_generated_kib": round(
+            (delta["wal_generated_bytes"] / 1024 - idle["wal_generated_kib_per_s"] * seconds) / runs, 1,
+        ),
     }
 
 

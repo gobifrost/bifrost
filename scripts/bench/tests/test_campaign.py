@@ -170,7 +170,9 @@ class MixedCampaignTest(unittest.TestCase):
                 return {"connections": {}}
 
             def idle_evidence(current, _profile):
-                current.result["db_idle"] = {"seconds": 10.0, "rate": {"xact_per_s": 0.0}, "top_tables": []}
+                current.result["db_idle"] = {
+                    "seconds": 10.0, "rate": {"xact_per_s": 0.0}, "wal_stats_reset": "stable", "top_tables": [],
+                }
                 current.result["snapshots"].append({"label": "idle"})
                 current.save()
 
@@ -178,7 +180,10 @@ class MixedCampaignTest(unittest.TestCase):
                 current.result["snapshots"].append({"label": label})
                 current.save()
 
-            all_phases = {"seconds": 3_810.0, "tables": {}, "xact": 1}
+            all_phases = {
+                "seconds": 3_810.0, "tables": {}, "xact": 1,
+                "wal_bytes": 2_048, "wal_generated_bytes": 1_024, "wal_stats_reset": "stable",
+            }
             image, revision = self._frozen_inputs()
             with image, revision, \
                  patch.object(campaign, "Cluster", return_value=cluster), \

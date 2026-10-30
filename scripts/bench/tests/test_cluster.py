@@ -53,15 +53,26 @@ class StatsSummaryTest(unittest.TestCase):
 
 class DbCountersTest(unittest.TestCase):
     def test_parse_db_counters(self) -> None:
-        raw = '{"xact": 12, "rows_written": 3, "wal_bytes": 4096, "db_bytes": 1048576, "tables": {"users": [0, 7]}}\n'
+        raw = ('{"xact": 12, "rows_written": 3, "wal_bytes": 4096, '
+               '"wal_generated_bytes": 2048, "wal_stats_reset": "2026-10-30T00:00:00Z", '
+               '"db_bytes": 1048576, "tables": {"users": [0, 7]}}\n')
         counters = cluster.parse_db_counters(raw)
         self.assertEqual(counters["xact"], 12)
         self.assertEqual(counters["wal_bytes"], 4096)
+        self.assertEqual(counters["wal_generated_bytes"], 2048)
+        self.assertIs(type(counters["wal_generated_bytes"]), int)
+        self.assertEqual(counters["wal_stats_reset"], "2026-10-30T00:00:00Z")
         self.assertEqual(counters["tables"], {"users": [0, 7]})
 
     def test_empty_table_list_is_an_empty_dict(self) -> None:
-        raw = '{"xact": 1, "rows_written": 0, "wal_bytes": 0, "db_bytes": 0, "tables": null}'
+        raw = ('{"xact": 1, "rows_written": 0, "wal_bytes": 0, '
+               '"wal_generated_bytes": 0, "wal_stats_reset": null, "db_bytes": 0, "tables": null}')
         self.assertEqual(cluster.parse_db_counters(raw)["tables"], {})
+
+    def test_counter_query_keeps_lsn_advance_and_pg_stat_wal_generation_separate(self) -> None:
+        self.assertIn("pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')", cluster.DB_COUNTERS_SQL)
+        self.assertIn("'wal_generated_bytes', (select wal_bytes from pg_stat_wal)", cluster.DB_COUNTERS_SQL)
+        self.assertIn("'wal_stats_reset', (select stats_reset from pg_stat_wal)", cluster.DB_COUNTERS_SQL)
 
 
 PROCESSES = """M /proc/1/smaps_rollup 24360

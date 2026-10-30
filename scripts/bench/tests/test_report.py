@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from copy import deepcopy
 import unittest
 from pathlib import Path
 
@@ -36,18 +37,22 @@ RESULT = {
     },
     "classes": [
         {"name": "wf-noop", "pass": 1, "sequential": _OK, "burst": _OK,
-         "db_per_run": {"xact": 36.4, "rows_written": 12.0, "wal_kib": 21.5},
+         "db_per_run": {"xact": 36.4, "rows_written": 12.0, "wal_kib": 21.5, "wal_generated_kib": 18.5},
          "worker_children": {"samples": 9, "peak_child_private_mib": 24.5, "peak_children": 3, "peak_template_private_mib": 168.0}},
         {"name": "agent-codemode", "pass": 1, "sequential": _OK, "burst": _BAD},
     ],
     "db_idle": {
         "seconds": 60.0,
-        "rate": {"xact_per_s": 31.2, "rows_written_per_s": 4.0, "wal_kib_per_s": 2.5},
+        "rate": {"xact_per_s": 31.2, "rows_written_per_s": 4.0, "wal_kib_per_s": 2.5,
+                 "wal_generated_kib_per_s": 1.5},
+        "wal_stats_reset": "reset-a",
         "top_tables": [["scheduler_task_state", 120, 0], ["work_dispatches", 0, 900]],
     },
     "snapshots": [
-        {"label": "fresh", "api": _API, "containers": [{"role": "worker", "pod": "bifrost-worker-one", "working_set_mib": 85.0, "rss_mib": 80.0}], "db_mib": 40.0, "wal_mib": 10.0},
-        {"label": "idle", "api": _API, "containers": [], "db_mib": 52.5, "wal_mib": 34.0},
+        {"label": "fresh", "api": _API, "containers": [{"role": "worker", "pod": "bifrost-worker-one", "working_set_mib": 85.0, "rss_mib": 80.0}], "db_mib": 40.0, "wal_mib": 10.0, "wal_generated_bytes": 8 * 1024 * 1024,
+         "wal_generated_mib": 8.0, "wal_stats_reset": "reset-a"},
+        {"label": "idle", "api": _API, "containers": [], "db_mib": 52.5, "wal_mib": 34.0,
+         "wal_generated_bytes": 18 * 1024 * 1024, "wal_generated_mib": 18.0, "wal_stats_reset": "reset-a"},
     ],
 }
 
@@ -68,10 +73,25 @@ class RenderTest(unittest.TestCase):
 
     def test_database_load_is_reported(self) -> None:
         text = report.render(RESULT)
-        self.assertIn("| 36 | 21.5 |", text)
+        self.assertIn("| 36 | 21.5 | 18.5 |", text)
         self.assertIn("31.2 transactions/s", text)
+        self.assertIn("1.5 KiB generated WAL/s", text)
         self.assertIn("`work_dispatches`", text)
-        self.assertIn("Database grew 12.5 MiB; WAL written 24.0 MiB", text)
+        self.assertIn("Database grew 12.5 MiB; WAL LSN advance 24.0 MiB", text)
+        self.assertIn("Generated WAL counter changed 10.0 MiB", text)
+        self.assertIn("Generated WAL stats-reset marker: `reset-a`", text)
+
+    def test_generated_snapshot_total_refuses_unknown_reset_or_regressing_bytes(self) -> None:
+        for mutate, reason in (
+            (lambda result: result["snapshots"][1].update({"wal_stats_reset": None}), "missing or invalid"),
+            (lambda result: result["snapshots"][1].update({"wal_generated_bytes": 1}), "regressed"),
+        ):
+            result = deepcopy(RESULT)
+            mutate(result)
+            text = report.render(result)
+            self.assertNotIn("Generated WAL counter changed", text)
+            self.assertIn("Generated WAL counter unavailable across snapshots:", text)
+            self.assertIn(reason, text)
 
     def test_worker_processes_are_reported(self) -> None:
         text = report.render(RESULT)

@@ -24,6 +24,19 @@ customer hosting quote. Raw artifacts stay outside git under
   Accepting this baseline does not end measurement or optimization: retain
   regressions and evaluate future savings against cost per successful work,
   latency and safe headroom.
+- In this capacity harness's retained runs through `dcb86a113`, the legacy
+  `wal_bytes`, `wal_kib_per_s`, `wal_kib` and snapshot `wal_mib` values measure
+  **WAL LSN advance**, not generated WAL bytes. Keep the recorded numbers;
+  their older "WAL written" labels were imprecise. Generated WAL was not
+  collected for those windows and remains unmeasured. PostgreSQL exposes a
+  separate cluster-wide `pg_stat_wal.wal_bytes` counter and reset timestamp.
+  [PostgreSQL 16 statistics documentation](https://www.postgresql.org/docs/16/monitoring-stats.html#MONITORING-PG-STAT-WAL-VIEW)
+  defines that counter. Forced segment switches can close partially filled
+  files at full segment length; generated WAL, LSN advance and retained or
+  archived storage are distinct quantities.
+  [PostgreSQL 16 archive-timeout documentation](https://www.postgresql.org/docs/16/runtime-config-wal.html#GUC-ARCHIVE-TIMEOUT)
+  describes that behavior. Storage pricing still needs actual retention,
+  backup/archive size, compression and object-request evidence.
 
 ## Evidence inventory
 
@@ -108,10 +121,10 @@ PgBouncer loss, in the pre-ping-off drill. Steady-state savings do not erase
 that recovery tradeoff. These results describe their frozen variants; they
 must not be attributed wholesale to every intervening current-main change.
 
-Historical class reports include an idle-subtracted WAL-per-execution estimate.
-In `m-baseline-r2`, the sampled idle WAL rate was 161.08 KiB/s and subtraction
+Historical class reports include an idle-subtracted LSN-advance-per-execution estimate.
+In `m-baseline-r2`, the sampled idle LSN advance was 161.08 KiB/s and subtraction
 produced negative per-execution estimates. Preserve those raw values but do
-not use them for storage pricing: background WAL varies across windows. Gross
+not use them for storage pricing: background activity and segment switches vary across windows. Gross
 WAL generated, retained database/object bytes and backup retention are distinct
 cost inputs; none is interchangeable with that negative estimate.
 
@@ -146,7 +159,7 @@ working set** (0.867 decimal GB / 0.808 GiB). Components are worker 278.9 MiB,
 API 310.1 MiB, Postgres 205.7 MiB, Pooler 16.5 MiB, client 9.3 MiB and Redis
 6.6 MiB. Worker private pages are launcher 24.4 MiB, workflow template 48.0 MiB
 and agent template 200.3 MiB. Idle database activity is 3.76 transactions/s,
-0.08 rollbacks/s and 2.37 KiB WAL/s over 60.3 seconds.
+0.08 rollbacks/s and 2.37 KiB/s of WAL LSN advance over 60.3 seconds.
 
 This run accepted all 4,110 submissions with HTTP 200, then failed every durable
 SDK execution at the table-insert step with an internal-500 error.
@@ -418,13 +431,59 @@ Settled working set was 880.4 MiB on the deployed base: worker 279.0, API
 run was 846.6 MiB, including worker 277.0. These snapshots do not establish
 tenant density or a confirmed memory saving. The declared 60-second idle DB
 windows observed 20.05 transactions/s (10.17 rollbacks/s) on the deployed base
-and 3.53 transactions/s (0.08 rollbacks/s) on the newer runtime; WAL was
+and 3.53 transactions/s (0.08 rollbacks/s) on the newer runtime; WAL LSN advance was
 235.39 and 237.47 KiB/s. Session rollback counters are not workflow failures.
 Preserve background work, latency and memory together when costing a runtime.
 Raw results, image chain and limits are retained in both run directories and
 `runs/import-current-versus-prod-c2-20261030.json`.
 
+### Historical Socket-Based Comparison
+
+`runs/import-m-pre-remote-a00-r1` used native base `a00bb09e00`, immediately
+before the remote-launch change, with the four trace files from clean
+`ada8cce650`. Its API, worker, schema and dependencies stayed on that base;
+the frozen harness, full-M catalog and six-file fixture matched the other
+diagnostics. All 40 actions had unique IDs, correct successful output and
+one valid trace each. There were no API pod replacements, and namespace
+teardown was verified at 19:21:34 UTC.
+
+| Historical observation | Pass 1 | Pass 2 |
+|---|---:|---:|
+| Control worker-wall p50 / p95 | 81.007 / 970.028 ms | 59.292 / 81.369 ms |
+| Graph worker-wall p50 / p95 | 453.369 / 1,030.995 ms | 450.769 / 874.029 ms |
+| Graph entry-load median | 398.538 ms | 395.624 ms |
+| Graph resolver aggregate median wall | 223.402 ms | 226.316 ms |
+
+The graph still made ten resolver requests per execution. This older runtime
+was slower on the small fixture than both later runtimes; it does not explain
+the live portal regression. These are three architecture snapshots, not an
+adjacent-commit experiment that isolates socket transport. The older SDK
+server ran inside the worker's CPU budget, while the newer resolver ran in
+the API's budget. No real Halo dependency graph or provider call was tested.
+
+Historical idle working set was 1,019.1 MiB: worker 369.6, API 390.5,
+Postgres 229.5, pooler 14.6, client 9.1 and Redis 5.8 MiB. The worker process
+sample contained a 306.1 MiB private parent and a 47.9 MiB workflow template;
+it had no warmed agent template. This differs from the newer process
+topology and is not a like-for-like capacity saving. The idle DB window
+recorded 17.18 transactions/s, 8.74 rollbacks/s and 216.21 KiB/s of LSN
+advance. Generated and retained WAL were not measured. Raw records, source
+and image identities, trace selection and these limits are retained in the
+run's `analysis.json`; the original report's timestamp display defect remains
+preserved.
+
 ### Required Hosting Evidence
+
+The harness now captures `pg_stat_wal.wal_bytes` and its reset marker alongside
+the unchanged legacy LSN counter. Counter windows reject missing evidence,
+reset-marker changes and regressions while retaining raw before/after samples.
+Snapshot reports also refuse generated-byte totals with unknown reset identity.
+The SQL was verified as an ordinary app role against disposable PostgreSQL 16;
+both byte counters arrived as exact JSON integers. Harness validation passed
+253 stdlib tests on Python 3.12, focused run/report checks on Python 3.14,
+and Ruff. Earlier failed fixture checks and their causal corrections are
+preserved under `notes/wal-source-validation*-20261030/`. This verification
+adds no capacity or storage-retention result.
 
 Each accepted run records idle/settled per-container memory, worker process
 inventory, simultaneous loaded memory samples, CPU/throttling, latency and its

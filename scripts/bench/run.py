@@ -245,10 +245,29 @@ def snapshot(current: Run, label: str) -> None:
         if current.result.get("api_image_provenance") else {},
         "db_mib": round(db["db_bytes"] / 1024 / 1024, 1),
         "wal_mib": round(db["wal_bytes"] / 1024 / 1024, 1),
+        "wal_generated_bytes": db["wal_generated_bytes"],
+        "wal_generated_mib": round(db["wal_generated_bytes"] / 1024 / 1024, 1),
+        "wal_stats_reset": db["wal_stats_reset"],
     })
     current.save()
     api = current.result["snapshots"][-1]["api"]
     print(f"  [{label}] API {api['rss_mib']:.0f} MiB", flush=True)
+
+
+def _counter_window_error(error: stats.DbCounterWindowError) -> dict:
+    return error.evidence()
+
+
+def capture_db_window(current: Run, key: str, label: str, before: dict, started: float) -> dict:
+    """Save raw counter evidence before rejecting an unusable database window."""
+    after = current.cluster.db_counters()
+    try:
+        delta = stats.db_delta(before, after, time.monotonic() - started)
+    except stats.DbCounterWindowError as error:
+        current.result[f"{key}_error"] = _counter_window_error(error)
+        current.save()
+        raise
+    return {"label": label, **delta}
 
 
 def capture_idle_db(current: Run, profile: dict) -> dict:
@@ -257,10 +276,16 @@ def capture_idle_db(current: Run, profile: dict) -> dict:
     time.sleep(profile["idle_s"] - profile["idle_db_s"])
     idle_before, idle_started = current.cluster.db_counters(), time.monotonic()
     time.sleep(profile["idle_db_s"])
-    idle_window = stats.db_delta(idle_before, current.cluster.db_counters(), time.monotonic() - idle_started)
+    try:
+        idle_window = stats.db_delta(idle_before, current.cluster.db_counters(), time.monotonic() - idle_started)
+    except stats.DbCounterWindowError as error:
+        current.result["db_idle_error"] = _counter_window_error(error)
+        current.save()
+        raise
     idle_rate = stats.db_rate(idle_window)
     current.result["db_idle"] = {
         "seconds": round(idle_window["seconds"], 1), "rate": idle_rate,
+        "wal_stats_reset": idle_window["wal_stats_reset"],
         "top_tables": stats.top_tables(idle_window["tables"], 8),
     }
     current.snapshot("idle")
@@ -356,7 +381,14 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None, api_im
                 current.save()
             time.sleep(profile["settle_s"])
             runs = entry["runs"]
-            db_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
+            try:
+                db_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
+            except stats.DbCounterWindowError as error:
+                entry["db_window_error"] = _counter_window_error(error)
+                if not imports_diagnostic:
+                    current.result["classes"].append(entry)
+                current.save()
+                raise
             entry.update({
                 "cpu_ms_per_run": stats.cpu_ms_per_run(cpu_before, cluster.container_stats(), runs),
                 "db_window": db_window,
@@ -365,22 +397,13 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None, api_im
             if not imports_diagnostic:
                 current.result["classes"].append(entry)
             current.snapshot(f"{name} (pass {pass_number})")
-    print(f"Idle {profile['idle_s']} s, measuring database load over the last {profile['idle_db_s']} s ...", flush=True)
-    time.sleep(profile["idle_s"] - profile["idle_db_s"])
-    db_before, started = cluster.db_counters(), time.monotonic()
-    time.sleep(profile["idle_db_s"])
-    idle_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
-    idle_rate = stats.db_rate(idle_window)
-    current.result["db_idle"] = {
-        "seconds": round(idle_window["seconds"], 1),
-        "rate": idle_rate,
-        "top_tables": stats.top_tables(idle_window["tables"], 8),
-    }
+    idle_rate = capture_idle_db(current, profile)
     # Net each class of the steady idle rate, measured once nothing else is running.
     for entry in current.result["classes"]:
         entry["db_per_run"] = stats.db_per_run(entry["db_window"], idle_rate, entry["runs"])
-    print(f"  idle: {idle_rate['xact_per_s']:.1f} transactions/s", flush=True)
-    current.snapshot("idle")
+    # capture_idle_db saves the idle evidence before this loop; persist the
+    # derived per-run costs before the caller can inspect the result artifact.
+    current.save()
     print(f"Done: {out}/report.md", flush=True)
     return out
 
@@ -501,10 +524,9 @@ def run_confirmation(profile_name: str, mix_name: str, rate: float, api_image: s
     capture_idle_db(current, profile)
     phases_before, phases_started = cluster.db_counters(), time.monotonic()
     step = search.confirm(cluster, ids, rate, plan, profile["capacity"]["disk"])
-    current.result["all_phases_db_window"] = {
-        "label": "warmup+measure+drain",
-        **stats.db_delta(phases_before, cluster.db_counters(), time.monotonic() - phases_started),
-    }
+    current.result["all_phases_db_window"] = capture_db_window(
+        current, "all_phases_db_window", "warmup+measure+drain", phases_before, phases_started,
+    )
     current.result["confirmations"].append(step)
     current.result["steady_phase"] = {"started": step["started"], "window": step["window"], "window_s": step["window_s"]}
     if step["overall"] == "pass":
@@ -527,8 +549,15 @@ def run_ab(profile_name: str, mix_name: str, rate: float, image_a: str, image_b:
         variant: _image_record(tag, required=True) for variant, tag in images.items()}, "arms": []})
     for index, variant in enumerate(order.lower()):
         print(f"Arm {index + 1}/{len(order)}: {variant} ({images[variant]}) ...", flush=True)
-        result = ab.arm(cluster, profile, plan, images[variant], rate,
-                        lambda image: _prepare(cluster, current, profile, "fake", image))
+        try:
+            result = ab.arm(cluster, profile, plan, images[variant], rate,
+                            lambda image: _prepare(cluster, current, profile, "fake", image))
+        except stats.DbCounterWindowError as error:
+            current.result.setdefault("db_counter_window_errors", []).append({
+                "arm": index + 1, "variant": variant, **_counter_window_error(error),
+            })
+            current.save()
+            raise
         result["image_provenance"] = current.result["api_image_provenance"]
         current.result["arms"].append(result)
         current.save()

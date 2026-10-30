@@ -137,6 +137,7 @@ class RunHarnessTest(unittest.TestCase):
         cluster.identity = SimpleNamespace()
         cluster.db_counters.return_value = {
             "tables": {}, "xact": 0, "rollbacks": 0, "rows_written": 0, "wal_bytes": 0,
+            "wal_generated_bytes": 0, "wal_stats_reset": "stable",
         }
         cluster.container_stats.return_value = []
         prepared: list[str | None] = []
@@ -146,6 +147,7 @@ class RunHarnessTest(unittest.TestCase):
         class CapturingRun:
             def __init__(self, _cluster, _kind, _profile_name, _profile, _backend, out, api_image=None) -> None:
                 created.append(api_image)
+                self.cluster = _cluster
                 self.out = out
                 self.result = {"classes": [], "snapshots": []}
                 runs.append(self)
@@ -192,10 +194,86 @@ class RunHarnessTest(unittest.TestCase):
         self.assertEqual(runs[0].result["imports_diagnostic"]["overall"], "invalid")
         self.assertIn("worker logs unavailable", runs[0].result["imports_diagnostic"]["groups"][0]["capture_error"])
 
+    def test_classes_persists_per_run_costs_after_shared_idle_capture(self) -> None:
+        def counters(xact: int, wal: int, generated: int) -> dict:
+            return {
+                "tables": {}, "xact": xact, "rollbacks": 0, "rows_written": xact,
+                "wal_bytes": wal, "wal_generated_bytes": generated, "wal_stats_reset": "stable",
+            }
+
+        cluster = Mock()
+        cluster.identity = SimpleNamespace()
+        cluster.container_stats.return_value = []
+        cluster.db_counters.side_effect = [
+            counters(0, 0, 0), counters(2, 1_024, 512),
+            counters(2, 1_024, 512), counters(4, 2_048, 1_024),
+        ]
+        saved: list[dict] = []
+        runs: list[object] = []
+        profile = {
+            "classes": ["wf-sdk"], "sequential": 1, "burst": 0, "burst_rounds": 0, "timeout_s": 1,
+            "settle_s": 0, "capacity": {"disk": {}},
+        }
+
+        class CapturingRun:
+            def __init__(self, _cluster, _kind, _profile_name, _profile, _backend, out, _api_image=None) -> None:
+                self.out = out
+                self.result = {"classes": [], "snapshots": []}
+                runs.append(self)
+
+            def driver(self, _mode, _args, timeout_s):
+                record = {
+                    "id": "execution", "status": "Success", "created_at": "2026-10-30T12:00:00Z",
+                    "started_at": "2026-10-30T12:00:00Z", "completed_at": "2026-10-30T12:00:00.001Z",
+                }
+                return {"sequential": [record], "burst": []}
+
+            def save(self) -> None:
+                saved.append(deepcopy(self.result))
+
+            def snapshot(self, _label) -> None:
+                pass
+
+        class Sampler:
+            samples: list[dict] = []
+
+            def __init__(self, _cluster) -> None:
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                pass
+
+        def idle_capture(current, _profile):
+            current.result["db_idle"] = {"seconds": 1.0, "rate": {
+                "xact_per_s": 0.0, "rows_written_per_s": 0.0, "wal_kib_per_s": 0.0,
+                "wal_generated_kib_per_s": 0.0,
+            }, "wal_stats_reset": "stable", "top_tables": []}
+            current.save()
+            return current.result["db_idle"]["rate"]
+
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(run, "load_profile", return_value=profile), \
+             patch.object(run, "Cluster", return_value=cluster), \
+             patch.object(run, "Run", CapturingRun), \
+             patch.object(run, "WorkerSampler", Sampler), \
+             patch.object(run, "_prepare", return_value={"connections": {}}), \
+             patch.object(run, "capture_idle_db", side_effect=idle_capture), \
+             patch.object(run.time, "sleep"), \
+             patch.object(run.time, "monotonic", side_effect=[0.0, 1.0, 2.0, 3.0]):
+            run.run_classes("m", "fake", Path(temporary) / "classes", self.selected)
+
+        self.assertEqual(runs[0].result["classes"][0]["db_per_run"]["wal_generated_kib"], 0.5)
+        self.assertEqual(saved[-1]["classes"][0]["db_per_run"]["wal_generated_kib"], 0.5)
+        self.assertEqual(saved[-1]["classes"][1]["db_per_run"]["wal_generated_kib"], 0.5)
+
     def test_import_raw_records_and_trace_are_saved_before_counter_failure(self) -> None:
         cluster = Mock()
         cluster.identity = SimpleNamespace()
-        counter = {"tables": {}, "xact": 0, "rollbacks": 0, "rows_written": 0, "wal_bytes": 0}
+        counter = {"tables": {}, "xact": 0, "rollbacks": 0, "rows_written": 0, "wal_bytes": 0,
+                   "wal_generated_bytes": 0, "wal_stats_reset": None}
         cluster.db_counters.side_effect = [counter, RuntimeError("database counters unavailable")]
         saved: list[dict] = []
 
@@ -361,8 +439,8 @@ class RunHarnessTest(unittest.TestCase):
 
         original_save = run.Run.save
         original_idle_capture = run.capture_idle_db
-        idle_window = {"seconds": 60.0, "tables": {"idle": [1, 2]}}
-        all_phases = {"seconds": 600.0, "tables": {"all": [3, 4]}}
+        idle_window = {"seconds": 60.0, "tables": {"idle": [1, 2]}, "wal_stats_reset": "stable"}
+        all_phases = {"seconds": 600.0, "tables": {"all": [3, 4]}, "wal_stats_reset": "stable"}
 
         def shared_idle_capture(*args, **kwargs):
             events.append("shared-idle-capture")
@@ -378,7 +456,8 @@ class RunHarnessTest(unittest.TestCase):
              patch.object(run.time, "monotonic", side_effect=[10.0, 70.0, 100.0, 700.0]), \
              patch.object(run.stats, "db_delta", side_effect=[idle_window, all_phases]), \
              patch.object(run.stats, "db_rate", return_value={
-                 "xact_per_s": 0.1, "rollbacks_per_s": 0.0, "rows_written_per_s": 0.0, "wal_kib_per_s": 0.0,
+                 "xact_per_s": 0.1, "rollbacks_per_s": 0.0, "rows_written_per_s": 0.0,
+                 "wal_kib_per_s": 0.0, "wal_generated_kib_per_s": 0.0,
              }), \
              patch.object(run.stats, "top_tables", return_value=[("idle", 1, 2)]), \
              patch.object(run.preflight, "run", side_effect=lambda *_args: events.append("preflight") or {"overall": "pass"}), \
@@ -395,7 +474,11 @@ class RunHarnessTest(unittest.TestCase):
         self.assertIsNone(result["sustainable_rate"])
         self.assertEqual(result["db_idle"], {
             "seconds": 60.0,
-            "rate": {"xact_per_s": 0.1, "rollbacks_per_s": 0.0, "rows_written_per_s": 0.0, "wal_kib_per_s": 0.0},
+            "wal_stats_reset": "stable",
+            "rate": {
+                "xact_per_s": 0.1, "rollbacks_per_s": 0.0, "rows_written_per_s": 0.0,
+                "wal_kib_per_s": 0.0, "wal_generated_kib_per_s": 0.0,
+            },
             "top_tables": [["idle", 1, 2]],
         })
         self.assertEqual(result["all_phases_db_window"], {"label": "warmup+measure+drain", **all_phases})
@@ -502,11 +585,32 @@ class RunHarnessTest(unittest.TestCase):
         confirm.assert_not_called()
         self.assertEqual(result["preflight"]["namespace_cleanup"], {"verified": True})
 
+    def test_idle_counter_reset_saves_raw_window_before_raising(self) -> None:
+        before = {
+            "xact": 1, "rollbacks": 0, "rows_written": 0, "wal_bytes": 100,
+            "wal_generated_bytes": 100, "wal_stats_reset": "before", "tables": {},
+        }
+        after = {**before, "xact": 2, "wal_bytes": 200, "wal_generated_bytes": 200, "wal_stats_reset": "after"}
+        current = SimpleNamespace(cluster=SimpleNamespace(db_counters=Mock(side_effect=[before, after])), result={},
+                                  save=Mock(), snapshot=Mock())
+        profile = {"idle_s": 60, "idle_db_s": 30}
+        with patch.object(run.time, "sleep"), patch.object(run.time, "monotonic", side_effect=[1.0, 31.0]):
+            with self.assertRaisesRegex(run.stats.DbCounterWindowError, "stats_reset changed"):
+                run.capture_idle_db(current, profile)
+
+        self.assertEqual(current.result["db_idle_error"], {
+            "reason": "pg_stat_wal stats_reset changed during database window", "before": before, "after": after,
+        })
+        current.save.assert_called_once()
+        current.snapshot.assert_not_called()
+
     def test_snapshot_records_processes_for_each_worker(self) -> None:
         cluster = FakeCluster()
         cluster.api_pod = Mock(return_value=("bifrost-api-1", "api-uid"))
         cluster.smaps = Mock(return_value="ignored")
-        cluster.db_counters = Mock(return_value={"db_bytes": 0, "wal_bytes": 0})
+        cluster.db_counters = Mock(return_value={
+            "db_bytes": 0, "wal_bytes": 0, "wal_generated_bytes": 0, "wal_stats_reset": None,
+        })
         cluster.container_stats = Mock(return_value=[])
         cluster.worker_pods = Mock(return_value=["worker-a", "worker-b"])
         processes = {
@@ -523,6 +627,9 @@ class RunHarnessTest(unittest.TestCase):
             current.snapshot("idle")
 
         self.assertEqual(current.result["snapshots"][0]["worker_processes"], processes)
+        self.assertEqual(current.result["snapshots"][0]["wal_generated_bytes"], 0)
+        self.assertEqual(current.result["snapshots"][0]["wal_generated_mib"], 0.0)
+        self.assertIsNone(current.result["snapshots"][0]["wal_stats_reset"])
         self.assertEqual(cluster.worker_processes.call_args_list[0].args, ("worker-a",))
         self.assertEqual(cluster.worker_processes.call_args_list[1].args, ("worker-b",))
 

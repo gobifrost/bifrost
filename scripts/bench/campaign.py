@@ -355,10 +355,9 @@ def run_segment(manifest_path: Path, index: int) -> Path:
             window_s=MEASURED_WINDOW_S, confirm=True, on_event=observe,
             cancel_driver=True, checkpoint=checkpoint,
         )
-        result["all_phases_db_window"] = {
-            "label": "warmup+measure+drain",
-            **run.stats.db_delta(phases_before, cluster.db_counters(), time.monotonic() - phases_started),
-        }
+        result["all_phases_db_window"] = run.capture_db_window(
+            current, "all_phases_db_window", "warmup+measure+drain", phases_before, phases_started,
+        )
         step["reliability_status"] = "pending_pooled"
         result.update({"stage": "complete", "step": step, "status": _segment_status(step)})
         current.save()

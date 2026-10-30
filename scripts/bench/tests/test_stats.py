@@ -59,8 +59,13 @@ class CpuTest(unittest.TestCase):
         self.assertEqual(stats.cpu_ms_per_run(before, after, 4), {"api": 500.0, "worker": 250.0})
 
 
-def _db(xact: int, rows: int, wal: int, tables: dict, rollbacks: int = 0) -> dict:
-    return {"xact": xact, "rollbacks": rollbacks, "rows_written": rows, "wal_bytes": wal, "db_bytes": 0, "tables": tables}
+def _db(xact: int, rows: int, wal: int, tables: dict, rollbacks: int = 0,
+        generated: int | None = None, reset: str | None = "2026-10-30T00:00:00Z") -> dict:
+    return {
+        "xact": xact, "rollbacks": rollbacks, "rows_written": rows, "wal_bytes": wal,
+        "wal_generated_bytes": wal if generated is None else generated, "wal_stats_reset": reset,
+        "db_bytes": 0, "tables": tables,
+    }
 
 
 class DbTest(unittest.TestCase):
@@ -73,16 +78,60 @@ class DbTest(unittest.TestCase):
         self.assertEqual(delta["xact"], 60)
         self.assertEqual(delta["rows_written"], 30)
         self.assertEqual(delta["wal_bytes"], 8192)
+        self.assertEqual(delta["wal_generated_bytes"], 8192)
         self.assertEqual(delta["tables"], {"executions": [20, 30], "users": [0, 21], "new": [2, 0]})
 
     def test_per_run_subtracts_idle_rate_over_the_window(self) -> None:
         idle = stats.db_rate(stats.db_delta(_db(0, 0, 0, {}), _db(30, 10, 10240, {}, rollbacks=15), seconds=10.0))
-        self.assertEqual(idle, {"xact_per_s": 3.0, "rollbacks_per_s": 1.5, "rows_written_per_s": 1.0, "wal_kib_per_s": 1.0})
+        self.assertEqual(idle, {
+            "xact_per_s": 3.0, "rollbacks_per_s": 1.5, "rows_written_per_s": 1.0,
+            "wal_kib_per_s": 1.0, "wal_generated_kib_per_s": 1.0,
+        })
         window = stats.db_delta(_db(0, 0, 0, {}), _db(230, 110, 112640, {}), seconds=20.0)
         self.assertEqual(
             stats.db_per_run(window, idle, runs=10),
-            {"xact": 17.0, "rows_written": 9.0, "wal_kib": 9.0},
+            {"xact": 17.0, "rows_written": 9.0, "wal_kib": 9.0, "wal_generated_kib": 9.0},
         )
+
+    def test_generated_wal_reset_or_regression_keeps_raw_evidence_and_rejects_window(self) -> None:
+        before = _db(10, 5, 100, {}, generated=100, reset="before")
+        after = _db(20, 8, 200, {}, generated=50, reset="after")
+        with self.assertRaisesRegex(stats.DbCounterWindowError, "regressed") as caught:
+            stats.db_delta(before, after, 1.0)
+        self.assertEqual(caught.exception.evidence(), {"reason": caught.exception.reason, "before": before, "after": after})
+
+    def test_missing_generated_wal_is_not_silently_zero_filled(self) -> None:
+        before = _db(10, 5, 100, {})
+        after = _db(20, 8, 200, {})
+        del after["wal_generated_bytes"]
+        with self.assertRaisesRegex(stats.DbCounterWindowError, "wal_generated_bytes"):
+            stats.db_delta(before, after, 1.0)
+
+    def test_wal_stats_reset_change_rejects_an_otherwise_increasing_window(self) -> None:
+        before = _db(10, 5, 100, {}, generated=100, reset="before")
+        after = _db(20, 8, 200, {}, generated=200, reset="after")
+        with self.assertRaisesRegex(stats.DbCounterWindowError, "stats_reset changed"):
+            stats.db_delta(before, after, 1.0)
+
+    def test_missing_wal_stats_reset_marker_is_not_treated_as_stable(self) -> None:
+        before = _db(10, 5, 100, {})
+        after = _db(20, 8, 200, {})
+        del after["wal_stats_reset"]
+        with self.assertRaisesRegex(stats.DbCounterWindowError, "missing pg_stat_wal"):
+            stats.db_delta(before, after, 1.0)
+
+    def test_none_wal_stats_reset_marker_is_not_treated_as_stable(self) -> None:
+        before = _db(10, 5, 100, {}, reset=None)
+        after = _db(20, 8, 200, {}, reset=None)
+        with self.assertRaisesRegex(stats.DbCounterWindowError, "invalid pg_stat_wal"):
+            stats.db_delta(before, after, 1.0)
+
+    def test_fractional_wal_counter_is_rejected_without_rounding(self) -> None:
+        before = _db(10, 5, 100, {})
+        after = _db(20, 8, 200, {})
+        after["wal_generated_bytes"] = 200.5
+        with self.assertRaisesRegex(stats.DbCounterWindowError, "wal_generated_bytes"):
+            stats.db_delta(before, after, 1.0)
 
     def test_top_tables_by_reads_plus_writes(self) -> None:
         tables = {"a": [1, 1], "b": [10, 0], "c": [0, 5], "d": [3, 3]}
