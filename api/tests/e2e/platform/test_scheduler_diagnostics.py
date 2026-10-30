@@ -52,6 +52,7 @@ class TestSchedulerDiagnostics:
             "file_index_reconciliation",
             "webhook_renewal",
             "solution_update_check",
+            "app_sdk_upgrades",
             "model_catalog_refresh",
             "solution_export_job_cleanup",
             "run_retention",
