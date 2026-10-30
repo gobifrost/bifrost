@@ -43,6 +43,320 @@ _RANDOM_EPOCH_SQL = (
 )
 
 
+# Every table holding a fact an access token carries (plan §3.2). A change
+# queues a deferred constraint-trigger event that bumps the epoch before the
+# transaction commits; TRUNCATE bumps immediately. INSERT fires only where a
+# new row can change what an existing token means; run tables fire only when
+# a carried creation-time column changes (never expected). Status, state and
+# lease are read live, never versioned.
+_TRIGGER_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON users
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.email IS DISTINCT FROM NEW.email
+            OR OLD.name IS DISTINCT FROM NEW.name
+            OR OLD.organization_id IS DISTINCT FROM NEW.organization_id
+            OR OLD.base_role_id IS DISTINCT FROM NEW.base_role_id
+            OR OLD.is_external IS DISTINCT FROM NEW.is_external
+            OR OLD.identity_kind IS DISTINCT FROM NEW.identity_kind
+            OR OLD.is_active IS DISTINCT FROM NEW.is_active)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON users
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON users
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON organizations
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.is_provider IS DISTINCT FROM NEW.is_provider)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON organizations
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON organizations
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_ins AFTER INSERT ON user_roles
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON user_roles
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON user_roles
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON user_roles
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_ins AFTER INSERT ON user_role_boundaries
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON user_role_boundaries
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON user_role_boundaries
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON user_role_boundaries
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_ins AFTER INSERT ON role_permissions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON role_permissions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON role_permissions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON role_permissions
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON roles
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.name IS DISTINCT FROM NEW.name)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON roles
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON roles
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON workflows
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.solution_id IS DISTINCT FROM NEW.solution_id
+            OR OLD.permission_mode IS DISTINCT FROM NEW.permission_mode)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON workflows
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON workflows
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_ins AFTER INSERT ON workflow_permission_grants
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON workflow_permission_grants
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON workflow_permission_grants
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON workflow_permission_grants
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_ins AFTER INSERT ON solution_workflow_permission_requests
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON solution_workflow_permission_requests
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.* IS DISTINCT FROM NEW.*)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON solution_workflow_permission_requests
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON solution_workflow_permission_requests
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_ins AFTER INSERT ON system_configs
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (NEW.category = 'workflow_permissions' AND NEW.key = 'default_mode' AND NEW.organization_id IS NULL)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON system_configs
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (((OLD.category = 'workflow_permissions' AND OLD.key = 'default_mode' AND OLD.organization_id IS NULL) OR (NEW.category = 'workflow_permissions' AND NEW.key = 'default_mode' AND NEW.organization_id IS NULL))
+            AND OLD.* IS DISTINCT FROM NEW.*)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON system_configs
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.category = 'workflow_permissions' AND OLD.key = 'default_mode' AND OLD.organization_id IS NULL)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON system_configs
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON solutions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.status IS DISTINCT FROM NEW.status)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON solutions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON solutions
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON agents
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.solution_id IS DISTINCT FROM NEW.solution_id)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_del AFTER DELETE ON agents
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON agents
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON service_definitions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.workflow_id IS DISTINCT FROM NEW.workflow_id
+            OR OLD.organization_id IS DISTINCT FROM NEW.organization_id)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON service_definitions
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON executions
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.run_user_id IS DISTINCT FROM NEW.run_user_id
+            OR OLD.executed_by IS DISTINCT FROM NEW.executed_by
+            OR OLD.workflow_id IS DISTINCT FROM NEW.workflow_id
+            OR OLD.organization_id IS DISTINCT FROM NEW.organization_id
+            OR OLD.started_by_user_id IS DISTINCT FROM NEW.started_by_user_id
+            OR OLD.root_execution_id IS DISTINCT FROM NEW.root_execution_id
+            OR OLD.impersonated_by_user_id IS DISTINCT FROM NEW.impersonated_by_user_id
+            OR OLD.impersonation_session_id IS DISTINCT FROM NEW.impersonation_session_id)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON executions
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON agent_runs
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.run_user_id IS DISTINCT FROM NEW.run_user_id
+            OR OLD.acting_user_id IS DISTINCT FROM NEW.acting_user_id
+            OR OLD.org_id IS DISTINCT FROM NEW.org_id
+            OR OLD.agent_id IS DISTINCT FROM NEW.agent_id
+            OR OLD.impersonated_by_user_id IS DISTINCT FROM NEW.impersonated_by_user_id
+            OR OLD.impersonation_session_id IS DISTINCT FROM NEW.impersonation_session_id)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON agent_runs
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE CONSTRAINT TRIGGER authz_epoch_upd AFTER UPDATE ON service_attempts
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        WHEN (OLD.id IS DISTINCT FROM NEW.id
+            OR OLD.run_user_id IS DISTINCT FROM NEW.run_user_id
+            OR OLD.service_id IS DISTINCT FROM NEW.service_id)
+        EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+    """
+    CREATE TRIGGER authz_epoch_truncate AFTER TRUNCATE ON service_attempts
+        FOR EACH STATEMENT EXECUTE FUNCTION authz_epoch_bump_trigger()
+    """,
+)
+
+# (table, trigger names) for downgrade.
+_TRIGGERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("users", ("authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("organizations", ("authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("user_roles", ("authz_epoch_ins", "authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("user_role_boundaries", ("authz_epoch_ins", "authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("role_permissions", ("authz_epoch_ins", "authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("roles", ("authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("workflows", ("authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("workflow_permission_grants", ("authz_epoch_ins", "authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("solution_workflow_permission_requests", ("authz_epoch_ins", "authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("system_configs", ("authz_epoch_ins", "authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("solutions", ("authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("agents", ("authz_epoch_upd", "authz_epoch_del", "authz_epoch_truncate")),
+    ("service_definitions", ("authz_epoch_upd", "authz_epoch_truncate")),
+    ("executions", ("authz_epoch_upd", "authz_epoch_truncate")),
+    ("agent_runs", ("authz_epoch_upd", "authz_epoch_truncate")),
+    ("service_attempts", ("authz_epoch_upd", "authz_epoch_truncate")),
+)
+
+
 def _started_on_empty_schema() -> bool:
     """Whether this upgrade run began on an empty schema (a fresh install)."""
     attributes = context.config.attributes
@@ -98,6 +412,20 @@ def upgrade() -> None:
         """
     )
 
+    op.execute(
+        """
+        CREATE FUNCTION authz_epoch_bump_trigger() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            PERFORM authz_epoch_bump_once();
+            RETURN NULL;
+        END;
+        $$
+        """
+    )
+    for statement in _TRIGGER_STATEMENTS:
+        op.execute(statement)
+
     op.create_table(
         "authz_protocol_state",
         sa.Column("protocol", sa.Integer(), autoincrement=False, nullable=False),
@@ -124,6 +452,10 @@ def downgrade() -> None:
     op.drop_column("service_attempts", "credential_version")
     op.drop_column("executions", "credential_version")
     op.drop_table("authz_protocol_state")
+    for table, names in _TRIGGERS:
+        for name in names:
+            op.execute(f"DROP TRIGGER {name} ON {table}")
+    op.execute("DROP FUNCTION authz_epoch_bump_trigger()")
     op.execute("DROP FUNCTION authz_epoch_bump_once()")
     op.execute("DROP TABLE authz_versions")
     op.execute("DROP FUNCTION authz_versions_protect()")
