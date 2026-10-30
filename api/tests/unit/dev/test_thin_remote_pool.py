@@ -129,7 +129,7 @@ async def test_result_arriving_before_dispatch_ack_is_completed_once() -> None:
     on_result = AsyncMock()
     pool = ThinRemoteProcessPool(transport, on_result=on_result)
 
-    async def result_before_ack(action: str, payload: dict) -> dict:
+    async def result_before_ack(action: str, payload: dict, *, expected_generation: int | None = None) -> dict:
         transport.requests.append((action, payload))
         if action == "workflow":
             await pool.handle_event(
