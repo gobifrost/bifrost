@@ -131,7 +131,13 @@ _s3_health_client = S3HealthClient()
 # checks live. Shutdown needs no unready state: Kubernetes removes a
 # terminating pod from the Service, and uvicorn stops listening before the
 # lifespan shuts down.
-_startup_components: dict[str, dict] | None = None
+class _StartupCheck:
+    """Dependency components from the first readiness check that passed."""
+
+    components: dict[str, dict] | None = None
+
+
+_startup_check = _StartupCheck()
 
 
 class HealthCheck(BaseModel):
@@ -288,19 +294,18 @@ async def ready_health_check(response: Response) -> DetailedHealthCheck:
     """
     Readiness check for core API serving dependencies.
     """
-    global _startup_components
-    if _startup_components is not None:
+    if _startup_check.components is not None:
         return DetailedHealthCheck(
             status="healthy",
             timestamp=_now(),
             environment=get_settings().environment,
-            components=_startup_components,
+            components=_startup_check.components,
         )
 
     async with get_session_factory()() as db:
         result = await _readiness_response(response, db)
     if result.status == "healthy":
-        _startup_components = result.components
+        _startup_check.components = result.components
     return result
 
 

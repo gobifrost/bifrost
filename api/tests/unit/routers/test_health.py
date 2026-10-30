@@ -21,7 +21,7 @@ async def _dummy_session():
 @pytest.fixture(autouse=True)
 def fresh_process(monkeypatch):
     """Each test starts as a process whose readiness check has not passed yet."""
-    monkeypatch.setattr(health, "_startup_components", None)
+    monkeypatch.setattr(health._startup_check, "components", None)
     monkeypatch.setattr(health, "get_session_factory", lambda: _dummy_session)
 
 
