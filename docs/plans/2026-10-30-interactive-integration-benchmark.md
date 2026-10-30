@@ -35,6 +35,22 @@ October 30 runtime. An exact-production-base diagnostic image must keep that
 build's dependencies and authorization/schema behavior, adding only the same
 opt-in trace, before making a controlled local comparison.
 
+That exact-base local diagnostic is now complete: all 40 actions succeeded
+with correct output and correlated traces. Graph worker-wall medians were
+321.2 and 317.6 ms, versus 266.8 and 267.6 ms on the newer local runtime. It
+does not reproduce the live seconds-long loading interval. A live overlap
+group increased site residuals to about 3.0–3.2 seconds and contact residual to
+5.2 seconds, but actual starts clustered rather than reproducing the original
+arrival offsets. The original 33-second case remains unreproduced.
+
+The pre-remote `a00bb09e` runtime supports the existing isolated deployment:
+its API hosts control and creates its own image's worker Jobs, which inject a
+worker-local SDK Unix socket into each child. Compare it on its own schema and
+native dependencies with the same fixture and trace. Record the older worker's
+memory/process cost as well as latency. An `a00` versus later `c2` difference
+only brackets several changes; an adjacent post-change arm is needed before
+assigning causality to remote launch.
+
 The pre-migration [worker-memory report](../runbooks/worker-memory-reduction-results.md)
 was introduced at `2399fbb049` on September 18, before worker-local SDK HTTP
 (`e2be9c4c`, September 26) and RabbitMQ retirement (`73506378`, October 23).

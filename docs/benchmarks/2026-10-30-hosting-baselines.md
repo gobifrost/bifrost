@@ -279,6 +279,35 @@ Private evidence is retained in `notes/portal-runtime-20261030.json`,
 selected timings rather than customer records. No production source,
 configuration or deployment was changed.
 
+One further authorized overlap group used the original three read inputs.
+All executions again succeeded, with 88 sites or 50 contacts and the same
+caller and inputs. The planned CLI launch offsets were 0, 1.506 and 5.008
+seconds, but actual worker starts clustered within 0.188 seconds. This is an
+overlap observation, not an exact replay of the original admission schedule.
+
+| Overlap operation | Worker wall seconds | Engine seconds | Outside engine seconds |
+|---|---:|---:|---:|
+| Shallow site list | 4.319 | 1.090 | 3.229 |
+| Contact candidate page | 7.330 | 2.172 | 5.158 |
+| Site list with address details | 16.987 | 13.939 | 3.048 |
+
+Selected worker logs show child-processing to workflow-loaded spans of 3.071,
+3.793 and 2.893 seconds respectively. Site reads again produced 25 module
+responses, the contact read 27; no refresh response was observed. These logs
+support a larger loading interval during overlap, but do not isolate its
+authorization, database, local import or scheduling components. CLI whole
+command times were 21.296, 22.183 and 28.486 seconds. Missing creation times
+prevent assigning that additional client time to queueing. The original
+33-second worker interval remains unreproduced.
+
+The configured worker SDK origin is the internal `http://api:8000`. Five
+unauthenticated basic-health reads from the worker returned 200: the first
+took 11.626 ms, subsequent reads 1.357–1.641 ms. This bounds only that basic
+route, not authenticated SDK/database or provider operations. Private selected
+evidence is `notes/portal-overlap-replay-r1.json`,
+`notes/portal-overlap-worker-timeline-r1.json` and
+`notes/portal-worker-internal-health-20261030.json`.
+
 The pre-RabbitMQ [worker-memory report](../runbooks/worker-memory-reduction-results.md)
 at `2399fbb049` (September 18) records 100 successful sequential synchronous
 jobs per workload and image. Its organizations SDK baseline end-to-end
@@ -359,6 +388,41 @@ The generic report incorrectly displays these successful actions as failures
 when their creation timestamp is absent; the import-specific validation and
 timing table are correct. Preserve the original report and raw records, with
 the display defect explicitly recorded in `analysis.json`.
+
+### Exact Deployed-Build Comparison
+
+`runs/import-m-prod-c2-r1` repeats the full-M diagnostic on the immutable
+production base image, with only the same four opt-in trace files overlaid
+from clean commit `f8bcf75ab`. It retains the deployed build's Python and
+dependencies, including `requests` 2.33.1, and initializes its own schema and
+worker image. Harness `dcb86a113`, catalog, fixture bytes/hash, profile and
+blocked pass order match `import-m-current-r1`. All 40 actions had unique IDs,
+correct successful output and valid traces; no API pod replacement occurred
+and namespace teardown was verified.
+
+| Observation | Deployed base pass 1 / 2 | Newer runtime pass 1 / 2 |
+|---|---:|---:|
+| Control worker-wall p50 | 52.159 / 53.265 ms | 54.899 / 51.766 ms |
+| Graph worker-wall p50 | 321.217 / 317.552 ms | 266.759 / 267.645 ms |
+| Graph worker-wall p95 | 380.309 / 368.448 ms | 371.780 / 341.061 ms |
+| Graph resolver aggregate median | 134.688 / 136.994 ms | 65.933 / 69.884 ms |
+
+The newer graph medians are 54.458 ms (17.0%) and 49.907 ms (15.7%) lower.
+Each graph still makes ten resolver requests. Neither local runtime reproduces
+the live multi-second loading interval. This is one diagnostic run per
+runtime, not an independently replicated capacity comparison or a causal
+attribution to a particular commit.
+
+Settled working set was 880.4 MiB on the deployed base: worker 279.0, API
+334.8, Postgres 233.9, pooler 15.2, client 9.6 and Redis 7.9 MiB. The newer
+run was 846.6 MiB, including worker 277.0. These snapshots do not establish
+tenant density or a confirmed memory saving. The declared 60-second idle DB
+windows observed 20.05 transactions/s (10.17 rollbacks/s) on the deployed base
+and 3.53 transactions/s (0.08 rollbacks/s) on the newer runtime; WAL was
+235.39 and 237.47 KiB/s. Session rollback counters are not workflow failures.
+Preserve background work, latency and memory together when costing a runtime.
+Raw results, image chain and limits are retained in both run directories and
+`runs/import-current-versus-prod-c2-20261030.json`.
 
 ### Required Hosting Evidence
 
