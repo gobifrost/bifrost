@@ -106,10 +106,11 @@ error code means "refresh required".
   30 days, measured 2026-10-30), so one epoch suffices. The table is keyed by
   subject, so per-subject versions can be added later if the measured bump
   rate calls for it; none are built now.
-- **Written by Postgres triggers** in the changing transaction, once per
-  transaction at commit (a deferred constraint trigger plus a per-transaction
-  flag that every change clears), and by statement-level `TRUNCATE` triggers.
-  This replaces "in the service or repository write … next to
+- **Written by Postgres triggers** in the changing transaction: a deferred
+  constraint trigger on each fact table bumps the epoch once per transaction
+  (a transaction-local flag), and statement-level `TRUNCATE` triggers bump too.
+  With one global row, a single bump commits atomically with every change in
+  the transaction. This replaces "in the service or repository write … next to
   `role_cache.invalidate_*` … Not in routers": triggers cover every code path,
   cascade, raw SQL statement and older pod version. Maintenance that disables
   triggers must finish by bumping the epoch (runbook rule; migrations are
@@ -132,9 +133,15 @@ error code means "refresh required".
   function reads and fails unless each is covered by an epoch trigger or is a
   live-read run column.
 - **Clients:** the web client (`client/src/lib/api-client.ts`), the CLI and the
-  SDK (`refresh_connection_access_token`) already refresh on 401 and retry. The
-  SDK allows up to three refresh-and-retry cycles for `refresh_required`, so a
-  burst of changes can't fail a call.
+  SDK (`refresh_connection_access_token`) already refresh on 401 and retry.
+  *Amended 2026-10-30:* the API marks refusals that a refresh fixes (version
+  mismatch, expired token) with `WWW-Authenticate: Bearer
+  error="invalid_token", error_description="refresh_required"`. Only the auth
+  dependency raises it, before any handler effect. The SDK replays only on
+  that challenge, never on other 401s, with a budget of three refreshes per
+  call shared across transient retries, on every runtime transport including
+  streams (before any bytes are exposed) and the MCP bridge. A call can still
+  fail if more than three version changes land within it.
 
 What this does to each change:
 
@@ -159,9 +166,12 @@ What this does to each change:
   both hold the same runtime token, hold the two. Refresh runs today's
   `load_runtime_principal`; a run that isn't live gets 401. Services keep
   receiving new tokens through `/api/sdk/runtime/service-control`, now in the
-  new format. *Amended 2026-10-30: services get an access token and a run
-  refresh token at launch and refresh like other runs. Their lease is enforced
-  on every request by the liveness read, so parent token rotation is removed.*
+  new format. *Amended 2026-10-30: services launched with new-format
+  credentials get an access token and a run refresh token and refresh like
+  other runs, with their lease enforced on every request by the liveness read.
+  New-format credentials go only to launchers that report support for them;
+  legacy-format attempts keep today's rotation and `service-control` delivery
+  until the bridge is removed.*
 
 ## 7. What we're not doing
 
@@ -208,10 +218,13 @@ One design, two PRs:
    the authority version (table, triggers and migration), run refresh
    tokens, and the README rule. *Amended 2026-10-30: delivered as merge units
    PR1a (version, minter and refresh endpoint, no behaviour change), PR1b
-   (switch, plus a bridge that accepts old-format run tokens until they
-   expire, with an enforced cutoff 24 h 5 min after PR1b first starts), and
-   PR1c (removal of the already inert bridge in the following release), with
-   the order enforced by migrations.*
+   (switch, plus a bridge that validates old-format run tokens exactly as
+   today, so they work only while their run is live), and PR1c (bridge
+   removal in the following release). Order is enforced by fail-closed
+   migration preconditions: PR1b needs PR1a's durable start record or a fresh
+   install; PR1c needs no live legacy-format run and no legacy launcher. Each
+   is paired with a documented operator step confirming the previous rollout
+   finished.*
 2. **People:** login, SSO, MFA, refresh and MCP OAuth switch to
    `issue_access_token`, and per-request grant reads go away.
 
@@ -235,15 +248,21 @@ Fable once):
   responses exceed 5 % of runtime requests over a day.
 - **Postgres only** (§5): no Redis copy.
 - **Run liveness from the run's own row** (§5): replaces run stamps and makes
-  the earlier lease-length service tokens unnecessary. Services use standard
-  lifetimes and refresh; parent rotation is removed (§6).
+  the earlier lease-length service tokens unnecessary. New-format services use
+  standard lifetimes and refresh; legacy-format attempts keep today's rotation
+  until PR1c (§6).
 - **Impersonation end changes no version** (§5, §7): no run token depends on
   session liveness; this supersedes the earlier "stamp at impersonation end".
 - **Run refresh tokens** have no fixed expiry; they are valid while the run
   is live (§6).
 - **Compressed `usr` block** (zlib + base64url) in every token, decided for
   PR2's browser cookies and used from PR1 so there is one format (§3).
-- **PR1 merge units** PR1a, PR1b and PR1c, with migration-enforced order and
-  an enforced cutoff for old-format run tokens (§10).
+- **PR1 merge units** PR1a, PR1b and PR1c, with fail-closed migration
+  preconditions and operator steps; old-format run tokens are bounded by their
+  run's liveness rather than a clock (§10).
+- **Refresh challenge** (§5): replay only on the auth dependency's
+  `refresh_required` challenge, with a budget of three per call on every
+  runtime transport. Calls can still fail in a burst of more than three
+  changes.
 - **Benchmark expectation** corrected from "about five fewer transactions per
   SDK call" to the measured-scope expectation in §9.
