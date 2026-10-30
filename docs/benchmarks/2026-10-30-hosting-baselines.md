@@ -37,7 +37,7 @@ result remains authoritative if this ledger has not yet been refreshed.
 |---|---|---|---|---|
 | SDK-heavy r1 | `ad623e250` | 4 CPU / 8 GiB | Confirmed 3.90625 executions/s over 958.464 s; p95 0.982 s, CI upper 1.030 s; zero observed failures/faults | `runs/capacity-sdk-heavy-r1/` |
 | SDK-heavy r2 | `ad623e250` | 4 CPU / 8 GiB | Confirmed 3.90625 executions/s over 958.464 s; p95 0.919 s, CI upper 0.966 s; zero observed failures/faults | `runs/capacity-sdk-heavy-r2/` |
-| Current-main SDK-heavy r1 | `a1edc19fd2679e62c071a0ba4269f0f1c3052c29` | 4 CPU / 8 GiB | Supervised confirmation started; no result accepted yet | `runs/confirm-m-current-sdk-r1/` |
+| Current-main SDK-heavy r1 | `a1edc19fd2679e62c071a0ba4269f0f1c3052c29` | 4 CPU / 8 GiB | Failed: all 4,110 submitted executions (including warmup) failed at SDK table insert with HTTP 500; no rate confirmed | `runs/confirm-m-current-sdk-r1/` |
 | Current-main constrained comparison | Same frozen image as current-main r1 | 4 CPU / 4 decimal GB | Not measured yet | Planned `4gb-capacity` profile |
 | Historical mixed | `ad623e250` | 4 CPU / 8 GiB | Exploratory passes at 2.0 and 2.236/s; no completed accepted confirmation | `runs/capacity-mixed-r2/` and interrupted recovery artifacts |
 
@@ -120,8 +120,18 @@ working set** (0.867 decimal GB / 0.808 GiB). Components are worker 278.9 MiB,
 API 310.1 MiB, Postgres 205.7 MiB, Pooler 16.5 MiB, client 9.3 MiB and Redis
 6.6 MiB. Worker private pages are launcher 24.4 MiB, workflow template 48.0 MiB
 and agent template 200.3 MiB. Idle database activity is 3.76 transactions/s,
-0.08 rollbacks/s and 2.37 KiB WAL/s over 60.3 seconds. This is not a loaded
-peak or a post-load settled result; the current load window is still running.
+0.08 rollbacks/s and 2.37 KiB WAL/s over 60.3 seconds.
+
+This run subsequently failed every SDK execution at the table-insert step.
+It records 1,372.3 MiB sampled peak charged memory, 1,112.1 MiB peak working
+set, and 898.2 MiB post-load settled working set (one worker, 279.4 MiB).
+These are **failure-path measurements**, not evidence of lower memory for
+successful SDK work. The measured window had zero successful throughput;
+latency gates correctly failed with infinite failure-aware percentiles.
+There were no OOMs, restarts, evictions or quota denials. Host validity had no
+invalid conditions and an unproven external-memory-pressure warning. Preserve
+the result and worker traceback; diagnose the deterministic HTTP 500 before
+the constrained comparison. No 4 GB load run has been started.
 
 The older accepted SDK-heavy windows already contain charged-memory/CPU time
 series. Their sampled simultaneous tenant charged peaks are 1,395.6 MiB (r1)
