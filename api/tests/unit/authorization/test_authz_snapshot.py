@@ -9,7 +9,6 @@ equals the token's ``av``.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -17,22 +16,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.services.authorization import tokens
-from src.services.authorization.authz import read_authority_state
-from src.services.authorization.tokens import AccessTokenClaims, RuntimeSubject, issue_access_token
-from tests.unit.authorization.committed_runs import World, committed_world
+from src.services.authorization.tokens import RuntimeSubject, issue_access_token
+from tests.unit.authorization.committed_runs import World, committed_world, token_accepted
 
 _SET_EPOCH = text(
     "UPDATE authz_versions SET version = :version "
     "WHERE subject_kind = 'global' AND subject_id = '00000000-0000-0000-0000-000000000000'"
 )
-
-
-async def _accepted(engine: AsyncEngine, claims: AccessTokenClaims) -> bool:
-    async with AsyncSession(engine) as session:
-        state = await read_authority_state(
-            session, claims.credential_kind, claims.sub, service_id=claims.service_id, now=datetime.now(timezone.utc)
-        )
-    return state.live and state.epoch == int(claims.av)
 
 
 async def _run(world: World) -> tuple[RuntimeSubject, Any, Any, Any]:
@@ -77,11 +67,11 @@ async def test_a_writer_committing_between_fact_reads_and_the_epoch_read_refuses
 
         # Facts and epoch both predate the writer.
         assert claims.usr.roles == []
-        assert not await _accepted(async_engine, claims)
+        assert not await token_accepted(async_engine, claims)
         monkeypatch.undo()
         fresh = (await issue_access_token(subject)).claims
         assert [r.id for r in fresh.usr.roles] == [role.id]
-        assert await _accepted(async_engine, fresh)
+        assert await token_accepted(async_engine, fresh)
 
 
 async def test_a_slow_commit_landing_after_the_mint_refuses_the_token(async_engine: AsyncEngine) -> None:
@@ -94,11 +84,11 @@ async def test_a_slow_commit_landing_after_the_mint_refuses_the_token(async_engi
                 await writer.execute(text(statement), params)
             # The change is written, its deferred bump queued, nothing committed.
             claims = (await issue_access_token(subject)).claims
-            assert await _accepted(async_engine, claims)
+            assert await token_accepted(async_engine, claims)
             await transaction.commit()
 
         assert claims.usr.roles == []
-        assert not await _accepted(async_engine, claims)
+        assert not await token_accepted(async_engine, claims)
 
 
 async def test_the_snapshot_is_repeatable_read_and_read_only_from_the_first_statement(
@@ -141,7 +131,7 @@ async def test_the_minting_hosts_clock_changes_no_outcome(
         claims = (await issue_access_token(subject)).claims
 
         assert abs(claims.iat - real_now() - skew) <= 5
-        assert await _accepted(async_engine, claims)
+        assert await token_accepted(async_engine, claims)
 
 
 async def test_equality_alone_decides_after_a_failover_restores_an_epoch(async_engine: AsyncEngine) -> None:
@@ -152,14 +142,14 @@ async def test_equality_alone_decides_after_a_failover_restores_an_epoch(async_e
 
         async with async_engine.begin() as connection:
             await connection.execute(text("SELECT authz_epoch_bump_once()"))
-        assert not await _accepted(async_engine, claims)
+        assert not await token_accepted(async_engine, claims)
 
         # A lossy failover or restore lands back on the token's epoch, and on
         # the facts that went with it.
         async with async_engine.begin() as connection:
             await connection.execute(_SET_EPOCH, {"version": minted})
-        assert await _accepted(async_engine, claims)
+        assert await token_accepted(async_engine, claims)
 
         async with async_engine.begin() as connection:
             await connection.execute(_SET_EPOCH, {"version": minted + 1 if minted < 2**63 - 1 else minted - 1})
-        assert not await _accepted(async_engine, claims)
+        assert not await token_accepted(async_engine, claims)

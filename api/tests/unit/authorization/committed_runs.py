@@ -16,6 +16,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from src.services.authorization.authz import read_authority_state
+from src.services.authorization.tokens import AccessTokenClaims
+
 from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.models.enums import AgentAccessLevel, ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
@@ -187,3 +190,12 @@ async def committed_world(engine: AsyncEngine) -> AsyncIterator[World]:
         finally:
             await session.rollback()
             await world.cleanup(engine)
+
+
+async def token_accepted(engine: AsyncEngine, claims: AccessTokenClaims) -> bool:
+    """The validator's rule: the run is live and the epoch still equals ``av``."""
+    async with AsyncSession(engine) as session:
+        state = await read_authority_state(
+            session, claims.credential_kind, claims.sub, service_id=claims.service_id, now=datetime.now(timezone.utc)
+        )
+    return state.live and state.epoch == int(claims.av)
