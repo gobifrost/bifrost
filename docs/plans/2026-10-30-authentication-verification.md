@@ -207,3 +207,37 @@ job. Full backend E2E and full Playwright were not run locally; the protected
 queue remains the complete-suite gate. Full client CI on `8daa923ef` passed
 4,021 tests across 606 files, both CodeQL analyses, Product Updates and lint/type
 checks; the actual full backend-unit job is still being monitored.
+
+## Second Queue Consumer Correction (Verification Pending)
+
+Final source 85ae0cc9d passed actual CI: 10,976 backend units, 4,021 client
+tests across 606 files, both CodeQL analyses, lint/types and Product Updates.
+Its merge candidate e54c1b6d952dbe8d5f8b0739a2a0f0482f95c104 passed both image
+builds, full units/client tests, lint/types, 870 shard-3 E2E tests (21 existing
+skips) and the 17-test critical browser smoke. The other shards exposed 11 raw
+subscription REST callers using stale human credentials. The source merge is
+still pending; the queue failure is not waived.
+
+The correction is limited to three test modules. Current credentials are
+obtained for raw table/file subscription HTTP and WebSocket consumers and for
+execution-log raw clients. No production source changed. The direct-client
+inventory and cause are recorded in the review document.
+
+Verified under the host flock:
+
+```bash
+./test.sh tests/e2e/platform/test_solution_storage_full_e2e.py tests/e2e/test_execution_logs_list_endpoint.py -v --durations=0
+```
+
+Result: 10 passed in 18.66s; JUnit `/tmp/bifrost-auth-raw-logs.xml`, log
+`/tmp/bifrost-auth-raw-logs-check.log`. Its owned stack was stopped.
+
+The initial subscription sequence passed 13 tests but allowed fresh actor setup
+to hide the stale admin. A second attempt exposed four stale WebSocket actors
+but combined duplicate module selections, so neither result is claimed as the
+required queue reproduction. Logs are retained at
+`/tmp/bifrost-auth-subscription-repro.log` and
+`/tmp/bifrost-auth-subscription-repro-r2.log`, with the latter JUnit at
+`/tmp/bifrost-auth-subscription-before-r2.xml`. The refined sequence initializes
+actors in separate existing modules before the role cleanup. Its expected
+11-failure baseline, corrected selection and API quality remain pending.

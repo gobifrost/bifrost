@@ -1,6 +1,6 @@
 # Authentication Consolidation — PR2 Delivery
 
-Status: **PR2 implemented and focused verification passed; protected merge pending**
+Status: **PR2 implemented; final subscription-consumer verification and protected merge pending**
 (2026-10-30). PR1c remains deferred to a later release.
 Owner: this authentication chat, branch `codex/auth-consolidation`, isolated
 worktree `/home/jack/.codex/worktrees/auth-consolidation/bifrost`.

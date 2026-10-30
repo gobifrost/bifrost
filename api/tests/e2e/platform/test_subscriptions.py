@@ -64,14 +64,24 @@ async def _policy_deny_rows(
     return response.json()["entries"]
 
 
+@pytest.fixture
+def raw_platform_admin_headers(platform_admin, human_minter) -> dict[str, str]:
+    """Mint a current admin credential for raw HTTP clients.
+
+    ``httpx.AsyncClient`` bypasses the shared client's challenge-refresh path.
+    """
+    human_minter(platform_admin)
+    return platform_admin.headers
+
+
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_with_read_accepted(platform_admin, alice_user, human_minter):
+async def test_subscribe_with_read_accepted(raw_platform_admin_headers, alice_user, human_minter):
     """Alice subscribes; everyone-read policy permits."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
             "/api/tables",
-            headers=platform_admin.headers,
+            headers=raw_platform_admin_headers,
             json={
                 "name": f"sub_ok_{uuid.uuid4().hex[:8]}",
                 "organization_id": None,
@@ -102,13 +112,15 @@ async def test_subscribe_with_read_accepted(platform_admin, alice_user, human_mi
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_without_read_rejected(platform_admin, alice_user, human_minter):
+async def test_subscribe_without_read_rejected(
+    raw_platform_admin_headers, alice_user, human_minter
+):
     """Alice subscribes to a seeded-only table → rejected."""
     table_name = f"sub_deny_{uuid.uuid4().hex[:8]}"
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
             "/api/tables",
-            headers=platform_admin.headers,
+            headers=raw_platform_admin_headers,
             json={
                 "name": table_name,
                 "organization_id": None,
@@ -119,7 +131,7 @@ async def test_subscribe_without_read_rejected(platform_admin, alice_user, human
         before = len(
             await _policy_deny_rows(
                 client,
-                platform_admin.headers,
+                raw_platform_admin_headers,
                 user_id=str(alice_user.user_id),
             )
         )
@@ -137,7 +149,7 @@ async def test_subscribe_without_read_rejected(platform_admin, alice_user, human
 
         rows = await _policy_deny_rows(
             client,
-            platform_admin.headers,
+            raw_platform_admin_headers,
             user_id=str(alice_user.user_id),
         )
         assert len(rows) == before + 1
@@ -152,12 +164,12 @@ async def test_subscribe_without_read_rejected(platform_admin, alice_user, human
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_receive_insert(platform_admin, alice_user, human_minter):
+async def test_receive_insert(raw_platform_admin_headers, alice_user, human_minter):
     """Alice subscribes, admin inserts → Alice sees insert."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
             "/api/tables",
-            headers=platform_admin.headers,
+            headers=raw_platform_admin_headers,
             json={
                 "name": f"sub_insert_{uuid.uuid4().hex[:8]}",
                 "organization_id": None,
@@ -179,7 +191,7 @@ async def test_receive_insert(platform_admin, alice_user, human_minter):
             assert ack.get("type") == "subscribed", f"subscribe failed: {ack}"
             await client.post(
                 f"/api/tables/{table_id}/documents",
-                headers=platform_admin.headers,
+                headers=raw_platform_admin_headers,
                 json={"data": {"x": 1}},
             )
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
@@ -194,7 +206,9 @@ async def test_receive_insert(platform_admin, alice_user, human_minter):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, alice_user, human_minter):
+async def test_subscribe_by_name_resolves_to_canonical_channel(
+    raw_platform_admin_headers, alice_user, human_minter
+):
     """`useTable(name)` subscribes via `table:<name>`; server resolves to UUID.
 
     The publisher only emits on `table:<uuid>` channels, so a subscription
@@ -206,7 +220,7 @@ async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, a
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
             "/api/tables",
-            headers=platform_admin.headers,
+            headers=raw_platform_admin_headers,
             json={
                 "name": table_name,
                 "organization_id": None,
@@ -234,7 +248,7 @@ async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, a
 
             await client.post(
                 f"/api/tables/{table_id}/documents",
-                headers=platform_admin.headers,
+                headers=raw_platform_admin_headers,
                 json={"data": {"x": 7}},
             )
             msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=3.0))
@@ -247,7 +261,7 @@ async def test_subscribe_by_name_resolves_to_canonical_channel(platform_admin, a
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_by_unknown_name_rejected(platform_admin, alice_user, human_minter):
+async def test_subscribe_by_unknown_name_rejected(alice_user, human_minter):
     """Subscribing to a non-existent table name returns an error ack."""
     bogus = f"nope_{uuid.uuid4().hex[:8]}"
     ws, ack = await _ws_subscribe(alice_user, human_minter, [f"table:{bogus}"])
@@ -260,12 +274,14 @@ async def test_subscribe_by_unknown_name_rejected(platform_admin, alice_user, hu
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscription_revoked_on_policy_change(platform_admin, alice_user, human_minter):
+async def test_subscription_revoked_on_policy_change(
+    raw_platform_admin_headers, alice_user, human_minter
+):
     """Admin removes read access → Alice's ws gets subscription_revoked."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
             "/api/tables",
-            headers=platform_admin.headers,
+            headers=raw_platform_admin_headers,
             json={
                 "name": f"revoke_{uuid.uuid4().hex[:8]}",
                 "organization_id": None,
@@ -288,7 +304,7 @@ async def test_subscription_revoked_on_policy_change(platform_admin, alice_user,
             # Remove the everyone_read rule
             patch = await client.patch(
                 f"/api/tables/{table_id}",
-                headers=platform_admin.headers,
+                headers=raw_platform_admin_headers,
                 json={"policies": {"policies": [
                     {
                         "name": "admin_bypass",
@@ -307,12 +323,12 @@ async def test_subscription_revoked_on_policy_change(platform_admin, alice_user,
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_user_filter_narrows_messages(platform_admin, alice_user, human_minter):
+async def test_user_filter_narrows_messages(raw_platform_admin_headers, alice_user, human_minter):
     """Alice subscribes with status=open filter; messages for status=done are dropped."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         r = await client.post(
             "/api/tables",
-            headers=platform_admin.headers,
+            headers=raw_platform_admin_headers,
             json={
                 "name": f"filter_{uuid.uuid4().hex[:8]}",
                 "organization_id": None,
@@ -341,14 +357,14 @@ async def test_user_filter_narrows_messages(platform_admin, alice_user, human_mi
             # Insert a 'done' row → filter drops it
             done = await client.post(
                 f"/api/tables/{table_id}/documents",
-                headers=platform_admin.headers,
+                headers=raw_platform_admin_headers,
                 json={"data": {"status": "done"}},
             )
             assert done.status_code == 201, done.text
             # Insert an 'open' row → user sees it
             open_row = await client.post(
                 f"/api/tables/{table_id}/documents",
-                headers=platform_admin.headers,
+                headers=raw_platform_admin_headers,
                 json={"data": {"status": "open"}},
             )
             assert open_row.status_code == 201, open_row.text
@@ -364,7 +380,9 @@ async def test_user_filter_narrows_messages(platform_admin, alice_user, human_mi
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_subscribe_to_other_org_table_rejected(platform_admin, alice_user, org2, human_minter):
+async def test_subscribe_to_other_org_table_rejected(
+    raw_platform_admin_headers, alice_user, org2, human_minter
+):
     """Hard org gate: alice (org1) cannot subscribe to an org2-scoped table,
     by NAME or by UUID, even if its policies look permissive.
 
@@ -381,7 +399,7 @@ async def test_subscribe_to_other_org_table_rejected(platform_admin, alice_user,
         # gate the only line of defense — without it, alice could subscribe).
         r = await client.post(
             "/api/tables",
-            headers=platform_admin.headers,
+            headers=raw_platform_admin_headers,
             json={
                 "name": name,
                 "organization_id": org2_id,

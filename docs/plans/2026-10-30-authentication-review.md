@@ -344,3 +344,32 @@ session families and exact-challenge-only bounded replay are intact. The
 unchanged console warning is documented; lint has zero errors. This approval
 does not authorize production deployment or runtime-bridge removal, and the
 post-merge Product Updates activation remains required.
+
+## Second Queue: Raw Subscription Consumers
+
+The second queue candidate, e54c1b6d952dbe8d5f8b0739a2a0f0482f95c104
+(CI run 41109245030), passed full units/client tests, lint/types, both image
+builds, shard 3 (870 passed, 21 existing skips), and all 17 critical browser
+smoke tests. Shards 1 and 2 found seven table-subscription and four
+file-subscription failures: raw admin REST calls received a stale-human 401.
+The preceding Secrets Reader fixture cleanup changes role assignments and the
+global authority epoch. These raw clients bypass the shared refreshing client.
+
+The correction obtains current admin credentials before each raw subscription
+test and current actor credentials before each file WebSocket connection. A
+bounded raw-client inventory also found the execution-log list tests capturing
+shared human headers without a refresh; their caller fixture now refreshes both
+actors. Its role-denied and unauthenticated cases remain intact. Two static SDK
+consumers were checked and need no change: they copy credentials after a shared
+client preflight, without an intervening authority mutation. No runtime
+implementation, challenge contract, retry budget or authorization rule changed.
+
+Local reproduction retained two incomplete sequences rather than treating them
+as correction evidence. Storage cleanup followed by fresh actor fixture creation
+passed 13 tests because setup refreshed the admin. A refined selection warmed
+org users but pytest combined a repeated subscription-file argument, leaving
+Alice initialization late; it exposed four file-WebSocket 4001 failures instead
+of the queue's 11 REST failures. The next sequence uses distinct existing test
+modules to initialize every actor before role cleanup. Final readiness remains
+pending that ordered red-to-fixed proof, API quality and independent review.
+The corrected execution-log selection already passed all 10 tests in 18.66s.

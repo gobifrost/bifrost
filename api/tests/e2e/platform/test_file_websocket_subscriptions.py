@@ -17,10 +17,12 @@ TEST_API_URL = os.environ.get("TEST_API_URL", "http://api:8000")
 TEST_WS_URL = TEST_API_URL.replace("http://", "ws://").replace("https://", "wss://")
 
 
-async def _ws_subscribe(user_token: str, channel: str, *, scope: str | None = None):
+async def _ws_subscribe(user, human_minter, channel: str, *, scope: str | None = None):
+    human_minter(user)
+    assert user.access_token is not None
     ws = await connect(
         f"{TEST_WS_URL}/ws/connect",
-        additional_headers={"Authorization": f"Bearer {user_token}"},
+        additional_headers={"Authorization": f"Bearer {user.access_token}"},
     )
     greeting = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
     assert greeting.get("type") == "connected", f"expected greeting, got {greeting}"
@@ -73,12 +75,20 @@ async def _policy_deny_rows(
     return response.json()["entries"]
 
 
+@pytest.fixture
+def raw_platform_admin_headers(platform_admin, human_minter) -> dict[str, str]:
+    """Mint a current admin credential for raw HTTP clients."""
+    human_minter(platform_admin)
+    return platform_admin.headers
+
+
 @pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_file_subscribe_without_policy_is_rejected_and_audited(
-    platform_admin,
+    raw_platform_admin_headers,
     org1_user,
     org1,
+    human_minter,
 ):
     location = f"wssub-{uuid.uuid4().hex[:8]}"
     channel = f"files:{location}:gallery"
@@ -87,12 +97,13 @@ async def test_file_subscribe_without_policy_is_rejected_and_audited(
         before = len(
             await _policy_deny_rows(
                 client,
-                platform_admin.headers,
+                raw_platform_admin_headers,
                 user_id=str(org1_user.user_id),
             )
         )
         ws, ack = await _ws_subscribe(
-            org1_user.access_token,
+            org1_user,
+            human_minter,
             channel,
             scope=org1["id"],
         )
@@ -105,7 +116,7 @@ async def test_file_subscribe_without_policy_is_rejected_and_audited(
 
         rows = await _policy_deny_rows(
             client,
-            platform_admin.headers,
+            raw_platform_admin_headers,
             user_id=str(org1_user.user_id),
         )
         assert len(rows) == before + 1
@@ -121,9 +132,10 @@ async def test_file_subscribe_without_policy_is_rejected_and_audited(
 @pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_file_subscribe_scope_denial_is_audited(
-    platform_admin,
+    raw_platform_admin_headers,
     org1_user,
     org2,
+    human_minter,
 ):
     location = f"wssub-{uuid.uuid4().hex[:8]}"
     channel = f"files:{location}:gallery"
@@ -132,12 +144,13 @@ async def test_file_subscribe_scope_denial_is_audited(
         before = len(
             await _policy_deny_rows(
                 client,
-                platform_admin.headers,
+                raw_platform_admin_headers,
                 user_id=str(org1_user.user_id),
             )
         )
         ws, ack = await _ws_subscribe(
-            org1_user.access_token,
+            org1_user,
+            human_minter,
             channel,
             scope=org2["id"],
         )
@@ -150,7 +163,7 @@ async def test_file_subscribe_scope_denial_is_audited(
 
         rows = await _policy_deny_rows(
             client,
-            platform_admin.headers,
+            raw_platform_admin_headers,
             user_id=str(org1_user.user_id),
         )
         assert len(rows) == before + 1
@@ -165,7 +178,9 @@ async def test_file_subscribe_scope_denial_is_audited(
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_file_subscriber_receives_policy_allowed_write(platform_admin, org1_user, org1):
+async def test_file_subscriber_receives_policy_allowed_write(
+    raw_platform_admin_headers, org1_user, org1, human_minter
+):
     location = f"wssub-{uuid.uuid4().hex[:8]}"
     prefix = "gallery"
     channel = f"files:{location}:{prefix}"
@@ -174,13 +189,13 @@ async def test_file_subscriber_receives_policy_allowed_write(platform_admin, org
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         await _put_allow_policy(
             client,
-            platform_admin.headers,
+            raw_platform_admin_headers,
             location=location,
             scope=org1["id"],
             prefix=prefix,
         )
 
-        ws, ack = await _ws_subscribe(org1_user.access_token, channel, scope=org1["id"])
+        ws, ack = await _ws_subscribe(org1_user, human_minter, channel, scope=org1["id"])
         try:
             assert ack.get("type") == "subscribed", ack
             assert ack.get("channel") == channel
@@ -209,7 +224,9 @@ async def test_file_subscriber_receives_policy_allowed_write(platform_admin, org
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_file_subscription_revoked_after_policy_delete(platform_admin, org1_user, org1):
+async def test_file_subscription_revoked_after_policy_delete(
+    raw_platform_admin_headers, org1_user, org1, human_minter
+):
     location = f"wssub-{uuid.uuid4().hex[:8]}"
     prefix = "gallery"
     channel = f"files:{location}:{prefix}"
@@ -217,19 +234,19 @@ async def test_file_subscription_revoked_after_policy_delete(platform_admin, org
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
         await _put_allow_policy(
             client,
-            platform_admin.headers,
+            raw_platform_admin_headers,
             location=location,
             scope=org1["id"],
             prefix=prefix,
         )
 
-        ws, ack = await _ws_subscribe(org1_user.access_token, channel, scope=org1["id"])
+        ws, ack = await _ws_subscribe(org1_user, human_minter, channel, scope=org1["id"])
         try:
             assert ack.get("type") == "subscribed", ack
 
             delete = await client.delete(
                 f"/api/files/policies/{quote(prefix, safe='')}",
-                headers=platform_admin.headers,
+                headers=raw_platform_admin_headers,
                 params={"location": location, "scope": org1["id"]},
             )
             assert delete.status_code == 204, delete.text
