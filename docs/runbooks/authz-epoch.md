@@ -102,6 +102,10 @@ requests over a day.
 The token change ships as consecutive releases. Each later release's migration
 refuses to run until the release before it has fully rolled out, and the
 database records that an API of each release started (`authz_protocol_state`).
+The second release's migration (`20261031_authz_claims_gate`) fails with
+"Upgrade to the release that added the authority version … and let it finish
+rolling out first" unless an API of the first release has started against
+this database (a fresh install records both itself).
 Upgrade **one token release at a time**, confirm the rollout finished, and only
 then take the next one. Never roll back below the first token release (the one
 that added `authz_versions`): run refresh requests would fail closed.
@@ -228,15 +232,56 @@ Confirm the rollout finished with `kubectl rollout status deploy/<api>` and the
 worker controller showing only Jobs of the new version before taking the next
 token release.
 
-## Expired-token challenge
+## Refresh challenge
 
-An expired access token that a refresh can fix (a person's token, or a run
-token minted with authorization claims) is refused with:
+A token that a refresh can fix is refused with:
 
 ```text
 WWW-Authenticate: Bearer error="invalid_token", error_description="refresh_required"
 ```
 
-The authentication dependency raises it before any route handler or later
-dependency runs, so a client may refresh and replay the request. Other 401s
-keep `WWW-Authenticate: Bearer`.
+That is an expired access token with a refresh path (a person's token, or a
+run token minted with authorization claims), and a run token minted under an
+older authority epoch. The authentication dependency raises it before any
+route handler or later dependency runs, so a client may refresh and replay
+the request. Other 401s keep `WWW-Authenticate: Bearer`, including a run
+whose execution has ended or whose service lease has lapsed (a refresh would
+be refused too).
+
+The SDK refreshes and replays only on this challenge, at most three times per
+call (shared by the call's transient retries), on every transport including
+streams, before any response bytes reach workflow code. The MCP bridge
+re-mints in-process the same way. A call can therefore fail with 401 if more
+than three authority changes land within it.
+
+## Runtime credentials and the legacy bridge
+
+From the second token release, runs receive an access token carrying their
+authorization facts plus a run refresh token. Remote launchers report the
+credential protocol they support when they connect; a launcher that reports
+none (an older build) keeps receiving the older, identity-only runtime token,
+and its service attempts keep the parent's token rotation. Each run's row
+records which format it received (`credential_version`: 2, or NULL for the
+older format).
+
+Older-format runtime tokens are accepted exactly as before, from the
+database, and only while their run is live. Each acceptance logs
+`authz.legacy_runtime_token_accepted` with the credential kind and expiry;
+count those lines to watch the bridge drain.
+
+### Before the release that removes the bridge
+
+The third token release refuses to install while any live run holds
+older-format credentials or any connected launcher receives them. First:
+
+1. List what remains, as a Platform Admin:
+
+   ```bash
+   bifrost admin authz legacy-status
+   ```
+
+2. Upgrade every listed remote launcher to the current release.
+3. Restart every listed service attempt through the normal service restart;
+   it relaunches with new-format credentials.
+4. Let listed workflow runs finish; they end at their timeout at the latest.
+5. Run the command again and continue only when both lists are empty.

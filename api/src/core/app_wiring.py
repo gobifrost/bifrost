@@ -313,8 +313,8 @@ def install_request_context_middleware(app: FastAPI) -> None:
             logger.warning("access checks skipped: unreadable lineage claims")
             checks_token = None
         collector = access_checks.current()
-        # Attribution only (see mint_engine_token docstring): feeds the
-        # workflow-operation-usage counter below, never read for authorization.
+        # Attribution only: feeds the workflow-operation-usage counter below,
+        # never read for authorization.
         engine_workflow_id = None if runtime_principal is None else runtime_principal.workflow_id
 
         try:

@@ -1,8 +1,9 @@
 """
 Authoritative liveness check for an execution.
 
-An execution-scoped engine token (see `src.core.security.mint_engine_token`)
-must stop working once its execution is no longer running. The execution
+An execution-scoped runtime credential (see
+`src.services.authorization.tokens`) must stop working once its execution is
+no longer running. The execution
 row's status in Postgres is the single source of truth for this -- unlike
 the Redis active-execution lease, which is best-effort tracking that the
 platform deliberately tolerates losing.

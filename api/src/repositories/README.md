@@ -12,10 +12,25 @@ services in `src.services.authorization`.
 ## Authority model
 
 Authorization starts from database-backed facts. `load_caller` builds an
-`AuthorizationContext` for a direct user. `runtime_auth.load_runtime_principal`
-reconstructs a runtime principal from its typed credential and the durable run,
-then `load_caller` uses the run's original user context. Claims describing a
-runtime, an organization, or a role do not become authority by themselves.
+`AuthorizationContext` for a direct user. A runtime principal comes from one of
+two places, and `load_caller` then uses the run's original user context:
+
+- **Claims in an access token minted by `tokens.issue_access_token` are
+  authority while the token is unexpired, its authority version is current and
+  its run is live.** The minter reads every fact and the authority epoch in one
+  `REPEATABLE READ` snapshot; `tokens.parse_runtime_claims` followed by
+  `tokens.authenticate_runtime_token` is the only path from those claims to an
+  authenticated principal, checking the epoch and the run's liveness in one
+  statement. A change to any fact a token carries changes the epoch (database
+  triggers, `services/authorization/authz.py`), and the token is refused with
+  the `refresh_required` challenge.
+- `runtime_auth.load_runtime_principal` reconstructs a runtime principal from a
+  typed credential's identity and the durable run, for in-process callers and
+  for legacy runtime tokens (no `ver`), which are bridged until token PR1c and
+  work only while their run is live.
+
+Any other claims describing a runtime, an organization, or a role do not
+become authority by themselves.
 
 ```mermaid
 flowchart LR
@@ -31,10 +46,12 @@ permission context. The **effect actor** is the account recorded as performing
 the run. Keep those facts separate: the actor is useful for attribution and
 effects, but must not widen the original user's access.
 
-`RuntimeAuthority` is loaded from the current database state for workflow
-executions, service attempts, and agent runs. A missing, ended, or inconsistent
-record is rejected. A fixed transport account or provider-organization
-membership never grants this authority.
+`RuntimeAuthority` describes workflow executions, service attempts, and agent
+runs. It is read from the database when a claims token is minted or a legacy
+or in-process credential is resolved, and carried in the token's claims
+between mints; every request re-reads the run's liveness, so an ended run, an
+expired service lease, or a missing record is rejected. A fixed transport
+account or provider-organization membership never grants this authority.
 
 ### Reach, scope, and permissions
 
@@ -196,7 +213,9 @@ resource capability paths must validate active state before resolving it.
 
 1. Resolve the caller from verified server context. Never accept serialized
    role, platform-admin, provider, or runtime-authority flags from request
-   data.
+   data. The one exception is the claims of an access token minted by
+   `issue_access_token`, accepted only through `authenticate_runtime_token`
+   (unexpired, current authority version, live run).
 2. Resolve the requested scope with `resolve_effective_scope`, then check the
    named permission at the selected target.
 3. After loading a row, recheck against the row's actual organization. For
@@ -210,5 +229,6 @@ resource capability paths must validate active state before resolving it.
 
 The relevant implementations are `shared/scope_resolver.py`,
 `services/authorization/context.py`, `services/authorization/runtime.py`,
-`services/authorization/runtime_auth.py`, `services/authorization/enforce.py`,
+`services/authorization/runtime_auth.py`, `services/authorization/tokens.py`,
+`services/authorization/authz.py`, `services/authorization/enforce.py`,
 `repositories/org_scoped.py`, and `shared/policies/evaluate.py`.
