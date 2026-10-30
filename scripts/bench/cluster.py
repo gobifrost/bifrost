@@ -8,9 +8,18 @@ cluster is that local Kind cluster before anything acts on it (``guard.py``).
 from __future__ import annotations
 
 import json
+import os
+import queue
 import re
+import select
+import signal
 import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
+from typing import Callable
 
 import guard
 
@@ -21,6 +30,109 @@ _ROLES = (
     ("bifrost-db-pooler-", "pooler"), ("bifrost-db-", "postgres"), ("redis-", "redis"), ("bench-", "bench"),
 )
 _OCI_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_PROXY_ADDRESS = re.compile(r"Starting to serve on 127\.0\.0\.1:(\d+)")
+
+
+class RemoteCleanupError(RuntimeError):
+    """The captured in-cluster driver could not be proved destroyed."""
+
+    requires_namespace_teardown = True
+
+
+class FramedPython:
+    """One in-cluster Python command whose JSON event frames can be observed live."""
+
+    def __init__(self, process: subprocess.Popen[bytes], script: Path, writer: threading.Thread,
+                 writer_errors: list[BaseException], remote_cancel: Callable[[], None] | None) -> None:
+        self.process = process
+        self.script = script
+        self.writer = writer
+        self.writer_errors = writer_errors
+        self.remote_cancel = remote_cancel
+        self.events: queue.Queue[dict | None] = queue.Queue()
+        self.stderr: list[str] = []
+        self._stdout_thread = threading.Thread(target=self._read_stdout, daemon=True)
+        self._stderr_thread = threading.Thread(target=self._read_stderr, daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+    def _read_stdout(self) -> None:
+        assert self.process.stdout is not None
+        for raw in self.process.stdout:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                frame = json.loads(line)
+            except json.JSONDecodeError:
+                self.events.put({"event": "protocol_error", "error": f"malformed JSON frame: {line[:200]}"})
+                continue
+            if isinstance(frame, dict):
+                self.events.put(frame)
+        self.events.put(None)
+
+    def _read_stderr(self) -> None:
+        assert self.process.stderr is not None
+        for raw in self.process.stderr:
+            self.stderr.append(raw.decode("utf-8", errors="replace"))
+
+    def _error(self) -> RuntimeError:
+        return RuntimeError(f"{self.script.name} framed command failed ({self.process.returncode}): {''.join(self.stderr)[-2000:].strip()}")
+
+    def result(self, timeout_s: float, on_event: Callable[[dict], None]) -> dict:
+        """Wait for the final JSON result while delivering all preceding event frames."""
+        deadline = time.monotonic() + timeout_s
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"{self.script.name} framed command exceeded {timeout_s}s")
+                try:
+                    frame = self.events.get(timeout=remaining)
+                except queue.Empty as error:
+                    raise TimeoutError(f"{self.script.name} framed command exceeded {timeout_s}s") from error
+                if frame is None:
+                    self.process.wait(timeout=max(0.1, deadline - time.monotonic()))
+                    if self.writer_errors:
+                        raise RuntimeError(f"{self.script.name} stdin write failed: {self.writer_errors[0]}")
+                    raise self._error()
+                if "event" in frame:
+                    if frame["event"] in {"error", "protocol_error"}:
+                        raise RuntimeError(f"{self.script.name} frame error: {frame.get('error', frame['event'])}")
+                    on_event(frame)
+                    continue
+                self.process.wait(timeout=max(0.1, deadline - time.monotonic()))
+                if self.process.returncode != 0:
+                    raise self._error()
+                return frame
+        except BaseException:
+            self.cancel()
+            raise
+        finally:
+            self._stdout_thread.join(timeout=1)
+            self._stderr_thread.join(timeout=1)
+            self.writer.join(timeout=1)
+
+    def cancel(self) -> None:
+        """Destroy the captured remote driver before reaping local kubectl exec."""
+        remote_error: BaseException | None = None
+        if self.remote_cancel is not None:
+            try:
+                self.remote_cancel()
+            except BaseException as error:  # retain ownership failure for the caller's invalid result
+                remote_error = error
+        if self.process.poll() is None:
+            os.killpg(self.process.pid, signal.SIGTERM)
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.process.pid, signal.SIGKILL)
+                self.process.wait(timeout=5)
+        self._stdout_thread.join(timeout=1)
+        self._stderr_thread.join(timeout=1)
+        self.writer.join(timeout=1)
+        if remote_error is not None:
+            raise RemoteCleanupError(f"remote framed-command cleanup was not verified: {remote_error}") from remote_error
 
 
 def _digest(value: str, label: str) -> str:
@@ -354,3 +466,127 @@ class Cluster:
             stderr = completed.stderr.decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"{script.name} {mode} failed ({completed.returncode}): {stderr[-2000:]}")
         return json.loads(lines[-1])
+
+    def _bench_driver_identity(self) -> tuple[str, str]:
+        pod = json.loads(self.kubectl("get", "pod", "bench-driver", "-o", "json", namespace=guard.INFRA_NS))
+        metadata = pod.get("metadata", {})
+        if metadata.get("namespace") != guard.INFRA_NS or metadata.get("name") != "bench-driver" or \
+                metadata.get("labels", {}).get("app.kubernetes.io/name") != "bench-driver":
+            raise guard.GuardError("framed benchmark command requires bench-infra/bench-driver")
+        uid = metadata.get("uid")
+        if not isinstance(uid, str) or not uid:
+            raise guard.GuardError("bench-driver has no UID")
+        return metadata["name"], uid
+
+    def _delete_bench_driver_uid(self, uid: str) -> None:
+        self.verify()
+        name, current_uid = self._bench_driver_identity()
+        if current_uid != uid:
+            raise RuntimeError("bench-driver changed before remote command cleanup")
+        self.delete_pod_uid(name, uid, namespace=guard.INFRA_NS)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            raw = self.kubectl("get", "pod", name, "-o", "json", namespace=guard.INFRA_NS, check=False)
+            if not raw.strip():
+                return
+            observed = json.loads(raw).get("metadata", {}).get("uid")
+            if observed != uid:
+                return
+            time.sleep(0.2)
+        raise TimeoutError("bench-driver deletion was not observed")
+
+    def start_exec_python(self, pod: str, script: Path, args: list[str], namespace: str = guard.INFRA_NS,
+                          cancel_driver: bool = False) -> FramedPython:
+        """Start an event-framed in-cluster script without changing blocking callers."""
+        mode, payload = args
+        source = script.read_bytes()
+        command = [
+            "kubectl", "--kubeconfig", str(self.kubeconfig), "--context", self.context, "-n", namespace,
+            "exec", "-i", pod, "--", "sh", "-c",
+            'd=$(mktemp -d) && head -c "$1" > "$d/script.py" && cat > "$d/args.json" && cd /app'
+            ' && PYTHONPATH=/app python "$d/script.py" "$2" "$d/args.json"; status=$?; rm -rf "$d"; exit $status',
+            "bench", str(len(source)), mode,
+        ]
+        if cancel_driver:
+            if pod != "bench-driver" or namespace != guard.INFRA_NS:
+                raise guard.GuardError("remote cancellation is only allowed for bench-infra/bench-driver")
+            self.verify()
+            _, driver_uid = self._bench_driver_identity()
+
+            def remote_cancel() -> None:
+                self._delete_bench_driver_uid(driver_uid)
+        else:
+            remote_cancel = None
+        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        writer_errors: list[BaseException] = []
+
+        def write_stdin() -> None:
+            assert process.stdin is not None
+            try:
+                process.stdin.write(source + payload.encode("utf-8"))
+                process.stdin.close()
+            except BaseException as error:  # result turns this into a bounded command error
+                writer_errors.append(error)
+                try:
+                    process.stdin.close()
+                except OSError:
+                    pass
+
+        writer = threading.Thread(target=write_stdin, name="bench-framed-stdin", daemon=True)
+        writer.start()
+        return FramedPython(process, script, writer, writer_errors, remote_cancel)
+
+    def delete_pod_uid(self, name: str, uid: str, namespace: str = guard.TENANT_NS) -> dict:
+        """Delete an allowlisted benchmark pod through a guarded loopback API proxy.
+
+        Kubectl's ordinary delete command cannot carry Kubernetes DeleteOptions
+        UID preconditions.  The proxy is constrained to this one pod path,
+        bound to loopback and always reaped after the request.
+        """
+        self.verify()
+        allowed = {(guard.TENANT_NS, "redis-0"), (guard.INFRA_NS, "bench-driver")}
+        if (namespace, name) not in allowed or not uid:
+            raise guard.GuardError("pod delete requires a simple name and UID")
+        path = f"/api/v1/namespaces/{namespace}/pods/{name}"
+        proxy = subprocess.Popen([
+            "kubectl", "--kubeconfig", str(self.kubeconfig), "--context", self.context,
+            "proxy", "--address=127.0.0.1", "--port=0", f"--accept-paths=^{re.escape(path)}$",
+        ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            assert proxy.stdout is not None
+            started = time.monotonic() + 10
+            port = None
+            while time.monotonic() < started:
+                readable, _, _ = select.select([proxy.stdout], [], [], max(0.0, started - time.monotonic()))
+                if not readable:
+                    break
+                line = proxy.stdout.readline()
+                matched = _PROXY_ADDRESS.search(line)
+                if matched:
+                    port = matched.group(1)
+                    break
+                if proxy.poll() is not None:
+                    raise RuntimeError(f"kubectl proxy failed: {line.strip()}")
+            if port is None:
+                raise TimeoutError("kubectl proxy did not report its loopback port")
+            options = json.dumps({
+                "apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": uid},
+            }).encode("utf-8")
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}{path}", data=options, method="DELETE",
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as error:
+                body = error.read().decode("utf-8", errors="replace")[-1000:]
+                raise RuntimeError(f"UID-preconditioned delete returned HTTP {error.code}: {body}") from error
+        finally:
+            if proxy.poll() is None:
+                proxy.terminate()
+                try:
+                    proxy.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proxy.kill()
+                    proxy.wait(timeout=5)

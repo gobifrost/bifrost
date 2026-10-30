@@ -177,7 +177,8 @@ async def _sample(started: float, interval_s: float, stop: asyncio.Event, series
 
 
 async def step(rate: float, duration_s: float, mix: dict[str, float], seed: int, ids: dict,
-               sample_interval_s: float = 2.0, request_timeout_s: float = 30.0, io: dict | None = None) -> dict:
+               sample_interval_s: float = 2.0, request_timeout_s: float = 30.0, io: dict | None = None,
+               event_frames: bool = False) -> dict:
     io = {**IO_DEFAULTS, **(io or {})}
     session = Session()
     await session.login()
@@ -186,6 +187,8 @@ async def step(rate: float, duration_s: float, mix: dict[str, float], seed: int,
     stop = asyncio.Event()
     series: list[dict] = []
     started = time.time()
+    if event_frames:
+        print(json.dumps({"event": "started", "started": started}), flush=True)
     sampler = asyncio.create_task(_sample(started, sample_interval_s, stop, series))
 
     async def send(offset: float, cls: str) -> None:
@@ -207,6 +210,8 @@ async def step(rate: float, duration_s: float, mix: dict[str, float], seed: int,
             method, path, body, key = "POST", "/api/agent-runs/enqueue", {
                 "agent_name": agent_name, "input": {"message": f"{prompt} [bench:{request_id}]", "bench_request_id": request_id}}, "run_id"
         record["sent"] = time.time()
+        if event_frames:
+            print(json.dumps({"event": "request_sent", "request_id": request_id, "sent": record["sent"]}), flush=True)
         try:
             response = await asyncio.wait_for(session.request(method, path, json=body), timeout=request_timeout_s)
         except Exception as error:  # noqa: BLE001 - every submission failure is a recorded outcome
@@ -272,23 +277,37 @@ async def outcomes(requests: list[dict], io: dict | None = None) -> dict:
         rows += [("agent", row) for row in await connection.fetch(AGENT_RUNS_SQL, ids)]
     finally:
         await connection.close()
+    return reconcile_rows(rows, by_id, io)
+
+
+def reconcile_rows(rows: list[tuple[str, object]], by_id: dict[str, str], io: dict) -> dict:
+    """Preserve every durable row before making the legacy one-row projection."""
     found: dict[str, dict] = {}
     duplicates: dict[str, int] = {}
+    raw_rows: list[dict] = []
     for kind, row in rows:
         request_id = row[0]
-        if request_id in found:
-            duplicates[request_id] = duplicates.get(request_id, 1) + 1
-            continue
         result = row[3]
         if isinstance(result, str):
             result = json.loads(result)
-        found[request_id] = {
+        parsed = {
+            "request_id": request_id,
             "kind": kind, "durable_id": row[1], "status": row[2], "created": row[4] and float(row[4]),
             "started": row[5] and float(row[5]), "completed": row[6] and float(row[6]), "error": (row[7] or "")[:300] or None,
             "correct": correct(by_id[request_id], row[2], result, io),
             **({"iterations": row[8], "tokens": row[9]} if kind == "agent" else {}),
         }
-    return {"outcomes": found, "duplicates": duplicates, "missing": [request_id for request_id in by_id if request_id not in found]}
+        raw_rows.append(parsed)
+        if request_id in found:
+            duplicates[request_id] = duplicates.get(request_id, 1) + 1
+            continue
+        found[request_id] = parsed
+    return {
+        "outcomes": found,
+        "duplicates": duplicates,
+        "missing": [request_id for request_id in by_id if request_id not in found],
+        "rows": raw_rows,
+    }
 
 
 async def sql(sql: str) -> dict:

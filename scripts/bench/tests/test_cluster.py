@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -115,6 +118,74 @@ class ExecPythonTest(unittest.TestCase):
         self.assertEqual(call["command"][-2:], [str(len(source)), "outcomes"])
 
 
+class UidDeleteTest(unittest.TestCase):
+    def test_delete_uses_loopback_proxy_and_uid_precondition(self) -> None:
+        captured: dict = {}
+
+        class Proxy:
+            def __init__(self) -> None:
+                self.stdout = io.StringIO("Starting to serve on 127.0.0.1:43123\n")
+                self.returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.returncode = 0
+
+            def wait(self, timeout=None) -> None:
+                self.returncode = 0
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self) -> bytes:
+                return b'{"metadata":{"uid":"redis-old"}}'
+
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.kubeconfig, instance.context = Path("/tmp/kubeconfig"), "kind-test"
+        instance.verify = lambda: None
+        original_popen = cluster.subprocess.Popen
+        original_select = cluster.select.select
+        original_open = cluster.urllib.request.urlopen
+
+        def fake_popen(command, **kwargs):
+            captured["command"] = command
+            captured["popen"] = kwargs
+            return Proxy()
+
+        def fake_open(request, timeout):
+            captured["url"] = request.full_url
+            captured["method"] = request.get_method()
+            captured["body"] = request.data
+            captured["content_type"] = request.get_header("Content-type")
+            captured["timeout"] = timeout
+            return Response()
+
+        cluster.subprocess.Popen = fake_popen
+        cluster.select.select = lambda *_args: ([_args[0][0]], [], [])
+        cluster.urllib.request.urlopen = fake_open
+        try:
+            response = instance.delete_pod_uid("redis-0", "redis-old")
+        finally:
+            cluster.subprocess.Popen = original_popen
+            cluster.select.select = original_select
+            cluster.urllib.request.urlopen = original_open
+
+        self.assertEqual(response["metadata"]["uid"], "redis-old")
+        self.assertIn("--address=127.0.0.1", captured["command"])
+        self.assertIn("--port=0", captured["command"])
+        self.assertEqual(captured["url"], "http://127.0.0.1:43123/api/v1/namespaces/bench-tenant/pods/redis-0")
+        self.assertEqual(captured["method"], "DELETE")
+        self.assertEqual(json.loads(captured["body"]), {
+            "apiVersion": "v1", "kind": "DeleteOptions", "preconditions": {"uid": "redis-old"},
+        })
+
+
 INDEX = "sha256:" + "1" * 64
 MANIFEST = "sha256:" + "2" * 64
 CONFIG = "sha256:" + "3" * 64
@@ -164,3 +235,133 @@ class ImageProvenanceTest(unittest.TestCase):
         provenance = {"node": {"index_id": INDEX, "manifest_id": MANIFEST, "config_id": CONFIG}}
         with self.assertRaisesRegex(RuntimeError, "outside the verified OCI chain"):
             instance.api_image_evidence(provenance)
+
+
+class _Process:
+    def __init__(self, stdout: bytes = b"", *, running: bool = False) -> None:
+        self.stdout = io.BytesIO(stdout)
+        self.stderr = io.BytesIO()
+        self.stdin = io.BytesIO()
+        self.pid = 54321
+        self.returncode = None if running else 0
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        self.returncode = 0
+        return 0
+
+
+def _finished_writer() -> threading.Thread:
+    writer = threading.Thread(target=lambda: None)
+    writer.start()
+    return writer
+
+
+class FramedPythonTest(unittest.TestCase):
+    def _framed(self, output: bytes, remote_cancel=Mock(), *, running: bool = False):
+        process = _Process(output, running=running)
+        framed = cluster.FramedPython(process, Path("/tmp/loadgen.py"), _finished_writer(), [], remote_cancel)
+        return framed, process
+
+    def test_malformed_and_error_frames_cancel_the_remote_driver(self) -> None:
+        for output in (b"{not json}\n", b'{"event":"error","error":"driver error"}\n'):
+            with self.subTest(output=output), patch.object(cluster.os, "killpg") as killpg:
+                order: list[str] = []
+                remote = Mock(side_effect=lambda: order.append("delete"))
+                killpg.side_effect = lambda *_: order.append("reap")
+                framed, _ = self._framed(output, remote, running=True)
+                with self.assertRaisesRegex(RuntimeError, "frame error"):
+                    framed.result(1, lambda _: None)
+                self.assertEqual(order, ["delete", "reap"])
+
+    def test_timeout_deletes_remote_driver_before_reaping_local_kubectl(self) -> None:
+        class HangingStdout:
+            def __init__(self) -> None:
+                self.release = threading.Event()
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                self.release.wait()
+                raise StopIteration
+
+        with patch.object(cluster.os, "killpg") as killpg:
+            order: list[str] = []
+            remote = Mock(side_effect=lambda: order.append("delete"))
+            killpg.side_effect = lambda *_: order.append("reap")
+            process = _Process(running=True)
+            stdout = HangingStdout()
+            process.stdout = stdout
+            framed = cluster.FramedPython(process, Path("/tmp/loadgen.py"), _finished_writer(), [], remote)
+            with self.assertRaises(TimeoutError):
+                framed.result(0.001, lambda _: None)
+            stdout.release.set()
+            self.assertEqual(order, ["delete", "reap"])
+
+    def test_cleanup_failure_surfaces_after_local_reap(self) -> None:
+        with patch.object(cluster.os, "killpg") as killpg:
+            framed, _ = self._framed(b"", Mock(side_effect=RuntimeError("delete failed")), running=True)
+            with self.assertRaises(cluster.RemoteCleanupError):
+                framed.cancel()
+            killpg.assert_called_once()
+
+    def test_normal_final_frame_does_not_delete_the_driver(self) -> None:
+        remote = Mock()
+        framed, _ = self._framed(b'{"ok":true}\n', remote)
+        self.assertEqual(framed.result(1, lambda _: None), {"ok": True})
+        remote.assert_not_called()
+
+    def test_start_exec_cancellation_uses_the_captured_driver_uid_before_local_reap(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.kubeconfig, instance.context = Path("/tmp/kubeconfig"), "kind-test"
+        instance.verify = Mock()
+        instance._bench_driver_identity = Mock(return_value=("bench-driver", "captured-uid"))
+        order: list[object] = []
+        instance._delete_bench_driver_uid = Mock(side_effect=lambda uid: order.append(("delete", uid)))
+        process = _Process(running=True)
+        with patch.object(cluster.subprocess, "Popen", return_value=process), \
+             patch.object(cluster.os, "killpg", side_effect=lambda *_: order.append(("reap", None))):
+            framed = instance.start_exec_python("bench-driver", Path(cluster.__file__), ["step", "{}"], cancel_driver=True)
+            framed.cancel()
+        self.assertEqual(order, [("delete", "captured-uid"), ("reap", None)])
+
+
+class UidDeleteGuardsTest(unittest.TestCase):
+    def test_rejects_nonallowlisted_pod_without_starting_a_proxy(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.verify = Mock()
+        with patch.object(cluster.subprocess, "Popen") as popen:
+            with self.assertRaises(cluster.guard.GuardError):
+                instance.delete_pod_uid("anything", "uid", namespace="other")
+        popen.assert_not_called()
+
+    def test_always_reaps_proxy_after_request_failure(self) -> None:
+        class Proxy:
+            def __init__(self) -> None:
+                self.stdout = io.StringIO("Starting to serve on 127.0.0.1:43123\n")
+                self.returncode = None
+                self.terminated = False
+
+            def poll(self):
+                return self.returncode
+
+            def terminate(self):
+                self.terminated = True
+                self.returncode = 0
+
+            def wait(self, timeout=None):
+                self.returncode = 0
+
+        proxy = Proxy()
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.kubeconfig, instance.context = Path("/tmp/kubeconfig"), "kind-test"
+        instance.verify = Mock()
+        with patch.object(cluster.subprocess, "Popen", return_value=proxy), \
+             patch.object(cluster.select, "select", return_value=([proxy.stdout], [], [])), \
+             patch.object(cluster.urllib.request, "urlopen", side_effect=OSError("refused")):
+            with self.assertRaises(OSError):
+                instance.delete_pod_uid("redis-0", "uid")
+        self.assertTrue(proxy.terminated)

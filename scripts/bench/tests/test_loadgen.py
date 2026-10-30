@@ -46,5 +46,19 @@ class CorrectTest(unittest.TestCase):
         self.assertFalse(loadgen.correct("agent-tools", "failed", None, self.io))
 
 
+class OutcomeRowsTest(unittest.TestCase):
+    def test_keeps_all_durable_rows_before_the_single_outcome_projection(self) -> None:
+        rows = [
+            ("workflow", ("request-a", "execution-a", "Success", {"configs": 5}, 1.0, 2.0, 3.0, None)),
+            ("workflow", ("request-a", "execution-b", "Success", {"configs": 5}, 1.0, 2.0, 4.0, None)),
+        ]
+
+        result = loadgen.reconcile_rows(rows, {"request-a": "wf-sdk"}, {"calls": 3, "response_bytes": 2000})
+
+        self.assertEqual([row["durable_id"] for row in result["rows"]], ["execution-a", "execution-b"])
+        self.assertEqual(result["duplicates"], {"request-a": 2})
+        self.assertEqual(result["outcomes"]["request-a"]["durable_id"], "execution-a")
+
+
 if __name__ == "__main__":
     unittest.main()

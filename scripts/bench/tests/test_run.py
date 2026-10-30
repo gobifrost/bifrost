@@ -44,6 +44,37 @@ class RunHarnessTest(unittest.TestCase):
     selected = "bifrost-api:selected"
     default_images = {"api": "bifrost-api:default", "client": "bifrost-client:default"}
 
+    def test_failed_confirmation_saves_strict_json_and_regenerates_unbounded_latency(self) -> None:
+        cluster = FakeCluster()
+        step = _step(3.90625, "fail")
+        step["verdict"]["latency"]["wf-sdk"]["e2e_p95"] = {
+            "status": "fail", "value": float("inf"), "limit": 1.5,
+            "ci": {"value": float("inf"), "low": float("inf"), "high": float("inf")},
+        }
+        step["records"] = [{"outcome": "failed", "error": "SDK insert returned HTTP 500"}]
+
+        def reject_nonstandard_constant(value: str):
+            raise ValueError(f"nonstandard JSON constant: {value}")
+
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster):
+            current = run.Run(cluster, "capacity", "m-capacity", run.load_profile("m-capacity"),
+                              "fake", Path(temporary), self.selected)
+            current.result.update({"mode": "confirmation-only", "mix_name": "sdk-heavy", "rate": 3.90625,
+                                   "confirmations": [step], "steps": [], "sustainable_rate": None,
+                                   "bracket": None, "stopped": None})
+            current.save()
+            stored = json.loads((current.out / "result.json").read_text(), parse_constant=reject_nonstandard_constant)
+            original_report = (current.out / "report.md").read_text()
+
+        self.assertEqual(stored["schema_version"], 3)
+        self.assertEqual(stored["confirmations"][0]["overall"], "fail")
+        self.assertEqual(stored["confirmations"][0]["records"], step["records"])
+        self.assertIsNone(stored["confirmations"][0]["verdict"]["latency"]["wf-sdk"]["e2e_p95"]["value"])
+        self.assertEqual(current.result["confirmations"][0]["verdict"]["latency"]["wf-sdk"]["e2e_p95"]["value"], float("inf"))
+        self.assertEqual(run.report.render(stored), original_report)
+        self.assertIn("| inf |", original_report)
+        self.assertIn("| fail |", original_report)
+
     @contextmanager
     def _common_patches(self, cluster: FakeCluster):
         ids = {**{tag: f"sha256:{name}" for name, tag in self.default_images.items()}, self.selected: "sha256:selected"}
@@ -106,6 +137,36 @@ class RunHarnessTest(unittest.TestCase):
         self.assertEqual(prepared, [self.selected])
         self.assertEqual(result["images"]["api"], {"tag": self.selected, "id": "sha256:selected"})
         self.assertIn("`bifrost-api:selected` (sha256:selected)", rendered)
+
+    def test_d4_is_persisted_as_correctness_only_not_capacity(self) -> None:
+        cluster = FakeCluster()
+        prepared: list[str] = []
+
+        def prepare(_cluster, _current, _profile, _backend, image):
+            prepared.append(image)
+            return {"connections": {}}
+
+        def d4(_cluster, _ids, _plan, _disk, _run_id, persist_initial):
+            initial = {"kind": "redis-empty-restart", "mode": "correctness-only", "passed": False, "overall": "invalid"}
+            persist_initial(initial)
+            return {**initial, "passed": True, "overall": "pass"}
+
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run, "_prepare", side_effect=prepare), \
+             patch.object(run.deploy, "reset"), \
+             patch.object(run.drills, "d4", side_effect=d4):
+            out = Path(temporary) / "d4"
+            run.run_drill("m-capacity", "mixed", 1.0, "redis-empty-restart", self.selected, out)
+            result = json.loads((out / "result.json").read_text())
+
+        self.assertEqual(prepared, [self.selected])
+        self.assertEqual(result["mode"], "correctness-only")
+        self.assertTrue(result["not_capacity"])
+        self.assertEqual(result["drill"]["overall"], "pass")
+
+    def test_d4_rejects_any_rate_other_than_one(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "correctness-only"):
+            run.run_drill("m-capacity", "mixed", 1.1, "redis-empty-restart", self.selected, None)
 
     def test_prepare_records_node_chain_before_deploy_and_running_api_after_restart(self) -> None:
         cluster = Mock()
@@ -326,3 +387,33 @@ class RunHarnessTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class D4NamespaceCleanupTest(RunHarnessTest):
+    def test_unverified_remote_cleanup_resets_guarded_namespaces_before_return(self) -> None:
+        cluster = FakeCluster()
+        drill = {"overall": "invalid", "passed": False, "requires_namespace_teardown": True}
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run, "_prepare", return_value={"connections": {}}), \
+             patch.object(run.drills, "d4", return_value=drill), \
+             patch.object(run.deploy, "reset") as reset:
+            out = Path(temporary) / "d4-cleanup"
+            run.run_drill("m-capacity", "mixed", 1.0, "redis-empty-restart", self.selected, out)
+            result = json.loads((out / "result.json").read_text())
+        self.assertEqual(reset.call_count, 2)
+        self.assertEqual(result["drill"]["namespace_cleanup"], {"verified": True})
+
+    def test_namespace_cleanup_failure_is_persisted_and_propagated(self) -> None:
+        cluster = FakeCluster()
+        drill = {"overall": "invalid", "passed": False, "requires_namespace_teardown": True}
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run, "_prepare", return_value={"connections": {}}), \
+             patch.object(run.drills, "d4", return_value=drill), \
+             patch.object(run.deploy, "reset", side_effect=[None, RuntimeError("namespace stuck")]):
+            out = Path(temporary) / "d4-cleanup-failure"
+            with self.assertRaisesRegex(RuntimeError, "namespace stuck"):
+                run.run_drill("m-capacity", "mixed", 1.0, "redis-empty-restart", self.selected, out)
+            result = json.loads((out / "result.json").read_text())
+        self.assertEqual(result["drill"]["namespace_cleanup"], {
+            "verified": False, "error": "RuntimeError: namespace stuck",
+        })

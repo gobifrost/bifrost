@@ -12,6 +12,7 @@ import math
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 import capacity
 import hostmetrics
@@ -113,7 +114,8 @@ def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict
 
 
 def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, disk: dict[str, str],
-             window_s: float | None = None, confirm: bool = False) -> dict:
+             window_s: float | None = None, confirm: bool = False, on_event: Callable[[dict], None] | None = None,
+             cancel_driver: bool = False) -> dict:
     """One open-loop step: warm-up, measured window, drain; returns gates, validity and raw evidence."""
     mix = plan["mix"]
     window_s = window_s or window_seconds(rate, mix, plan["window_min_s"], OBSERVATION_TARGET)
@@ -122,9 +124,16 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
     duration = plan["warmup_s"] + window_s
     faults_before = cluster.tenant_faults()
     with HostSampler(cluster, disk) as host:
-        sent = cluster.exec_python("bench-driver", LOADGEN, ["step", json.dumps({
+        step_args = {
             "rate": rate, "duration_s": duration, "mix": mix, "seed": seed, "ids": ids, "io": plan.get("io"),
-        })], timeout_s=int(duration + 600))
+        }
+        if on_event is not None:
+            step_args["event_frames"] = True
+        if on_event is None:
+            sent = cluster.exec_python("bench-driver", LOADGEN, ["step", json.dumps(step_args)], timeout_s=int(duration + 600))
+        else:
+            command = cluster.start_exec_python("bench-driver", LOADGEN, ["step", json.dumps(step_args)], cancel_driver=cancel_driver)
+            sent = command.result(int(duration + 600), on_event)
         time.sleep(plan["drain_s"])
     outcomes = cluster.exec_python("bench-driver", LOADGEN, ["outcomes", json.dumps({
         "requests": [{"id": r["id"], "class": r["class"]} for r in sent["requests"]], "io": plan.get("io"),
@@ -142,7 +151,7 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
     if sent["driver_lag_p99_s"] is not None and sent["driver_lag_p99_s"] > 0.25:
         validity["invalid"].append(f"driver lag p99 {sent['driver_lag_p99_s']:.3f} s")
     overall = "invalid" if validity["invalid"] else verdict["overall"]
-    return {
+    result = {
         "started": started,
         "window": window,
         "rate": rate, "seed": seed, "window_s": window_s, "confirm": confirm, "drift_limit_per_s": drift_limit, "overall": overall, "verdict": verdict, "validity": validity,
@@ -150,6 +159,10 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         "records": records, "backlog": backlog,
         "host": host.intervals(started, started + duration + plan["drain_s"]),
     }
+    if on_event is not None:
+        result["sent"] = sent["requests"]
+        result["outcomes"] = outcomes
+    return result
 
 
 def search(cluster: Cluster, ids: dict, plan: dict, disk: dict[str, str], on_step) -> dict:

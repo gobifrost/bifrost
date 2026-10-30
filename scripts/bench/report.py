@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import jsoncodec
+
 
 def _ms(dist: dict) -> str:
     return f"{dist['p50']:.0f} / {dist['p95']:.0f}"
@@ -251,6 +253,8 @@ def _ab(result: dict) -> list[str]:
 
 
 def render(result: dict) -> str:
+    if jsoncodec.NON_FINITE_NUMBERS in result:
+        result = jsoncodec.decode(result)
     profile = result["profile"]
     lines = [
         f"# Benchmark: {result['profile_name']} {result['kind']} ({result['backend'] or 'no model'})",

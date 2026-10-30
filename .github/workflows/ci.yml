@@ -100,6 +100,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Benchmark harness unit tests
+        run: python -m unittest discover -s scripts/bench/tests
+
       # Create .venv at the repo root so pyrightconfig.json's
       # `venvPath: ..` + `venv: .venv` resolves the same way locally and in CI.
       # Install runtime deps from the hash-pinned lock file (Scorecard

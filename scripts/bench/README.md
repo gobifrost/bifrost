@@ -11,13 +11,18 @@ Earlier design: `docs/superpowers/specs/2026-10-27-performance-benchmark-suite-d
 ./test.sh bench run --profile m-smoke                 # quick end-to-end check of the same tenant
 ./test.sh bench capacity --profile m-capacity --mix sdk-heavy   # sustainable arrival-rate search
 ./test.sh bench confirm --profile m-capacity --mix sdk-heavy --rate 3.90625 --api-image bifrost-api:kind-...  # one strict confirmation
+./test.sh bench drill --profile m-capacity --mix mixed --rate 1 --kind redis-empty-restart  # D4 correctness-only
 ./test.sh bench down                                  # delete the cluster and the images
 ```
 
-Each run writes `result.json` (schema version 2) and `report.md` to
+Each run writes `result.json` (schema version 3) and `report.md` to
 `/tmp/bifrost-bench-<utc>-<profile>-...` (or `--out DIR`). The result records
 the git SHA, image IDs, Kind and CloudNativePG versions, the full profile, the
 envelope arithmetic, host load and any other Kind nodes on the host.
+Non-finite metrics use JSON `null` plus an explicit `non_finite_numbers`
+sidecar identifying their path and meaning. An unbounded failure latency is
+preserved as unbounded, never interpreted as zero. Reports decode this
+representation; existing version 1/2 artifacts remain readable and unchanged.
 
 ## Topology
 
@@ -80,3 +85,8 @@ an explicit `--api-image` when comparing builds; the result and report record
 the selected tag and its local immutable Docker image ID before deployment.
 
 Host code is stdlib only. Tests: `python3 -m unittest discover -s scripts/bench/tests`.
+
+`redis-empty-restart` is D4 recovery evidence at a fixed 1/s, not a capacity
+measurement or a claim about 50% of a sustainable rate.  It writes its initial
+and final durable-request reconciliation, including every matching execution
+or agent row, and records the Redis emptyDir/sentinel recovery proof.

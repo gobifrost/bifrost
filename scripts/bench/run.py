@@ -36,6 +36,7 @@ import ab  # noqa: E402
 import deploy  # noqa: E402
 import drills  # noqa: E402
 import guard  # noqa: E402
+import jsoncodec  # noqa: E402
 import report  # noqa: E402
 import search  # noqa: E402
 import smaps  # noqa: E402
@@ -175,7 +176,7 @@ class Run:
         self.out = out
         self.expected_api_uid: str | None = None
         self.result: dict = {
-            "schema_version": 2,
+            "schema_version": jsoncodec.SCHEMA_VERSION,
             "kind": kind,
             "run_id": out.name,
             "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -192,7 +193,7 @@ class Run:
 
     def save(self) -> None:
         self.out.mkdir(parents=True, exist_ok=True)
-        _atomic_write(self.out / "result.json", json.dumps(self.result, indent=2))
+        _atomic_write(self.out / "result.json", json.dumps(jsoncodec.encode(self.result), indent=2, allow_nan=False))
         _atomic_write(self.out / "report.md", report.render(self.result))
 
     def snapshot(self, label: str) -> None:
@@ -445,6 +446,8 @@ def run_ab(profile_name: str, mix_name: str, rate: float, image_a: str, image_b:
 
 
 def run_drill(profile_name: str, mix_name: str, rate: float, kind: str, api_image: str | None, out: Path | None) -> Path:
+    if kind == "redis-empty-restart" and rate != 1.0:
+        raise SystemExit("D4 Redis restart is correctness-only and must run at 1/s")
     profile = load_profile(profile_name)
     plan = {**profile["capacity"], "mix": profile["capacity"]["mixes"][mix_name]}
     cluster = Cluster()
@@ -457,11 +460,40 @@ def run_drill(profile_name: str, mix_name: str, rate: float, kind: str, api_imag
     deploy.reset(cluster)
     ids = _prepare(cluster, current, profile, "fake", selected_api_image)
     print(f"Drill {kind} at {rate}/s ...", flush=True)
-    current.result["drill"] = drills.drill(cluster, ids, plan, kind, rate, profile["capacity"]["disk"])
+    if kind == "redis-empty-restart":
+        current.result.update({"mode": "correctness-only", "not_capacity": True, "rate": 1.0})
+
+        def persist_initial(result: dict) -> None:
+            current.result["drill"] = result
+            current.save()
+
+        current.result["drill"] = drills.d4(
+            cluster, ids, plan, profile["capacity"]["disk"], current.result["run_id"], persist_initial,
+        )
+        if current.result["drill"].get("requires_namespace_teardown"):
+            # The D4 driver may have been removed to stop a framed command.  Do
+            # not release this caller until the guarded benchmark namespaces
+            # have been removed and that cleanup has been recorded.
+            current.save()
+            try:
+                deploy.reset(cluster)
+            except BaseException as error:
+                current.result["drill"]["namespace_cleanup"] = {
+                    "verified": False, "error": f"{type(error).__name__}: {error}",
+                }
+                current.save()
+                raise
+            current.result["drill"]["namespace_cleanup"] = {"verified": True}
+            current.save()
+    else:
+        current.result["drill"] = drills.drill(cluster, ids, plan, kind, rate, profile["capacity"]["disk"])
     current.save()
     result = current.result["drill"]
-    print(f"  failures {result['failures']} of {result['requests']}; first success {result['first_success_after_ready_s']} s after ready; "
-          f"checks {result['checks']}; passed {result['passed']}", flush=True)
+    if kind == "redis-empty-restart":
+        print(f"  correctness-only D4: {result['overall']}; passed {result['passed']}", flush=True)
+    else:
+        print(f"  failures {result['failures']} of {result['requests']}; first success {result['first_success_after_ready_s']} s after ready; "
+              f"checks {result['checks']}; passed {result['passed']}", flush=True)
     return out
 
 
@@ -509,7 +541,7 @@ def main() -> None:
     drill_parser.add_argument("--profile", default="m-capacity")
     drill_parser.add_argument("--mix", default="mixed")
     drill_parser.add_argument("--rate", type=float, required=True)
-    drill_parser.add_argument("--kind", choices=["pooler-delete", "pgbouncer-kill"], required=True)
+    drill_parser.add_argument("--kind", choices=["pooler-delete", "pgbouncer-kill", "redis-empty-restart"], required=True)
     drill_parser.add_argument("--api-image")
     drill_parser.add_argument("--out", type=Path)
     sub.add_parser("down")
