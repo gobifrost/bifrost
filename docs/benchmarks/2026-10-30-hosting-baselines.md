@@ -239,6 +239,16 @@ receipt is located and investigate the return of the delay as a regression.
 The accepted 277 MiB idle-worker budget is independent of the latency target;
 it does not authorize settling for a slower interactive execution path.
 
+The pre-RabbitMQ [worker-memory report](../runbooks/worker-memory-reduction-results.md)
+at `2399fbb049` (September 18) records 100 successful sequential synchronous
+jobs per workload and image. Its organizations SDK baseline end-to-end
+p50/p95 was 68.6/89.8 ms; the slimmer image was 89.1/201.8 ms. Both Redis
+result receipt and durable status were checked. This supports preserving a
+historical low-latency whole-path comparator, but it is neither a Halo workload
+nor a paired wall-minus-engine trace. The referenced raw temporary artifacts
+are absent. Keep the report's one-sample/local-environment limitations and
+both images' results; do not substitute newer post-migration runs for it.
+
 Stable third-party import preloading is a candidate to measure, not an assumed
 improvement. Compare its latency, CPU per correct action, warm-template/private
 memory, child peak, copy-on-write behavior and safe worker concurrency. Do not

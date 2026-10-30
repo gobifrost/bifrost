@@ -24,6 +24,25 @@ authorization/dispatch behavior and attribute a compatibility failure to
 performance. Record any instrumentation or topology differences explicitly.
 Prioritize identifying the regression before choosing a preload optimization.
 
+The pre-migration [worker-memory report](../runbooks/worker-memory-reduction-results.md)
+was introduced at `2399fbb049` on September 18, before worker-local SDK HTTP
+(`e2be9c4c`, September 26) and RabbitMQ retirement (`73506378`, October 23).
+It records 100 successful sequential synchronous jobs per workload and image,
+checking both Redis result receipt and durable status. The baseline SDK case
+reported end-to-end p50/p95 of 68.6/89.8 ms; the slimmer image reported
+89.1/201.8 ms. These are historical whole-path observations for a small
+organizations SDK call, not paired outside-engine spans or Halo measurements.
+The referenced raw `/tmp/bifrost-769-clean-*` artifacts are no longer present;
+the report remains evidence, with that provenance limitation.
+
+After reproducing the current import case, compare supported revisions around
+worker-local SDK HTTP, durable acceptance (`720c7554`), unified dispatch and
+RabbitMQ retirement (`53728257`, `73506378`), API-controlled remote launch
+(`f2fcd2fa`), runtime authority reads (`98fdc4a6`), and claims/refresh behavior
+(`68139d0a`, `22fde0c0`). This is a candidate sequence from source history,
+not a causal attribution. Do not include commits outside the measured runtime's
+ancestry in a linear bisect, or run incompatible schemas as performance cases.
+
 ## Verified Timing Boundaries
 
 The current shared execution path loads workflow source and executes its import
