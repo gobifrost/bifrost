@@ -289,7 +289,7 @@ The canonical collector retained ledger base
 preserving all 259 earlier sources and the one reviewed additional-credit record.
 The source PR's author, merge SHA and merge time were verified against GitHub.
 Two interrupted read-only GitHub requests were resumed from successful cached
-reads; the inventory was written atomically only after collection completed.
+reads; the inventory was written only after collection completed.
 
 ```bash
 python3 scripts/product_updates.py collect-inventory --base ade714a08b95c84daa285e859ebece55f45c6754 --target 05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2 --repository gobifrost/bifrost --output product-updates/inventory.json
