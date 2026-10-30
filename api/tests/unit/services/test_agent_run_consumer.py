@@ -879,13 +879,22 @@ async def test_a_failure_that_cannot_be_stored_announces_nothing(consumer):
             "src.jobs.consumers.agent_run.AIBehaviorService.resolve_agent_run_execution_mode",
             new=AsyncMock(return_value="delegated"),
         ),
+        # The claim authorizes the chat run; reach the chat itself.
+        patch(
+            "src.services.authorization.runtime_auth.load_runtime_principal",
+            new=AsyncMock(return_value=MagicMock()),
+        ),
+        patch(
+            "src.services.authorization.enforce.load_caller",
+            new=AsyncMock(return_value=MagicMock(spec=Caller)),
+        ),
         patch("src.jobs.consumers.agent_run.RetryBudget", lambda: RetryBudget(0.05)),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
         patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
         patch.object(
             consumer, "_process_chat_run", AsyncMock(side_effect=interruption_not_stored)
-        ),
+        ) as process_chat,
     ):
         await consumer.process_message(
             {
@@ -897,6 +906,7 @@ async def test_a_failure_that_cannot_be_stored_announces_nothing(consumer):
             }
         )
 
+    process_chat.assert_awaited_once()
     # Only the claim's "running" announcements; no failure was stored.
     assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == ["run_status"]
     assert [call.args[0].status for call in publish_run.await_args_list] == ["running"]
