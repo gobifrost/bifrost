@@ -244,3 +244,28 @@ entry/disposition now cite that source and the immutable independent review
 record, with `security_review: required`. Structural Product Updates validation
 passed locally; CI must verify the real PR event after this metadata correction.
 No failed check was simply rerun against unchanged content.
+
+
+## Full CI Consumer Corrections
+
+PR preflight found two additional stale consumers. Client CI passed 4,014 tests
+and failed one useTable fixture that expected refresh after a generic 401; the
+fixture now emits the exact pre-effect refresh challenge. Backend CI passed
+10,975 tests and failed one Solution migration fixture that expected the deleted
+useUser warning. It now proves useUser/RequireRole stay supported while useAppState
+still needs manual adaptation. The E2E aggregate failed because preflight
+blocked its shards; this is not a new live-service failure. Auto-merge was
+disabled before correction. Logs: `/tmp/bifrost-auth-ci-client-failure.log` and
+`/tmp/bifrost-auth-ci-unit-failure.log`.
+
+CodeQL also requested explicit intent for a deliberately ignored malformed
+refresh SID, typing overload stubs, and Task awaits inside raises assertions.
+The logout handler now explains why the validated access SID remains in force;
+overloads have descriptive docstring bodies, and the two tests explicitly
+discard awaited results. Their authorization, rotation and cancellation behavior
+is unchanged. Focused correction checks and CI are required before requeueing.
+
+Independent Astra approved the correction through `6ea657ae2` after verifying
+77/77 client tests, client type/lint, 122/122 backend tests, 7/7 live session
+cases and clean API quality. No P1/P2 findings. This approves the corrected
+local candidate; full-unit and CodeQL CI remain required before requeueing.

@@ -1,7 +1,7 @@
 # Authentication Consolidation Verification
 
 Candidate: `codex/auth-consolidation`, based on `a1edc19fd`.
-Status: focused verification passed through source candidate `310b1f2f4`.
+Status: focused verification passed through source candidate `6ea657ae2`.
 This is local delivery evidence,
 not deployment approval or a performance result.
 
@@ -87,9 +87,40 @@ releasing the host lock.
 
 ## Limits
 
-Full backend, full Vitest, full Playwright, pre-pr and local CodeQL suites were
-not run. Focused tests cover changed behavior and identified consumers; the
+Full backend, full Vitest, full Playwright, pre-pr and CodeQL suites were
+not run locally. PR CI subsequently ran the full unit selections and exposed
+the two stale consumers described below. Focused tests cover changed behavior and identified consumers; the
 protected merge queue remains the complete-suite gate. This work makes no
 capacity, CPU or memory improvement claim. The sibling benchmark owns those
 measurements. Runtime legacy-bridge removal remains deferred to PR1c in a later
 release; this change does not establish its rollout prerequisite.
+
+
+## Full CI Findings and Focused Corrections
+
+PR preflight on `290a3f367` passed 10,975 backend tests and 4,014 client tests but
+failed one consumer in each suite: the Solution CLI guide's removed useUser
+warning and a useTable fixture's generic-401 renewal assumption. The E2E
+aggregate failed because preflight blocked the shards. CodeQL added five
+intent/annotation comments, addressed without changing authentication behavior.
+The independent review record retains every cause and correction.
+
+The corrected source `6ea657ae2` passed 77 hook/transport tests, 122 selected
+backend tests, seven PostgreSQL session cases and API/client type/lint checks.
+JUnit: `/tmp/bifrost-auth-ci-correction-unit.xml` and
+`/tmp/bifrost-auth-ci-correction-e2e.xml`; log:
+`/tmp/bifrost-auth-ci-corrections.log`. The scoped commands were:
+
+```bash
+./test.sh client unit src/lib/app-sdk/use-table.test.tsx src/lib/app-sdk/tables.test.ts src/lib/app-sdk/transport.test.ts
+(cd client && npm run tsc && ./node_modules/.bin/eslint src/lib/app-sdk/use-table.test.tsx)
+./test.sh tests/unit/test_cli_solution_migrate_app.py tests/unit/test_cli_app_migrate.py tests/unit/test_migrate_v2.py tests/unit/authorization/test_human_tokens.py tests/unit/authorization/test_one_minter.py tests/unit/shared/test_human_sessions.py tests/unit/shared/test_auth_cookies.py tests/unit/test_access_list.py -q --durations=10
+./test.sh tests/e2e/platform/test_human_sessions.py -v --durations=0
+./test.sh quality api
+```
+
+The access catalog generator ran under the host lock and produced no change.
+The live cases completed in 1.02 seconds; rotation/revocation and cancellation
+assertions remained intact. The stack was removed before releasing the lock.
+Full corrected CI remains required before requeueing; no unchanged CI retry was
+requested.
