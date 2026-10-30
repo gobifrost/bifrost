@@ -828,6 +828,231 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
 
 
 @pytest.mark.asyncio
+async def test_missing_dispatch_terminalizes_a_queued_chat_run_before_notifying(consumer):
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
+
+    async def after_terminal_commit(*args, **kwargs):
+        assert mock_session.commit.await_count == 1
+
+    publish_chat = AsyncMock(side_effect=after_terminal_commit)
+    publish_run = AsyncMock(side_effect=after_terminal_commit)
+    sync_result = AsyncMock(side_effect=after_terminal_commit)
+
+    with (
+        _dispatched(None),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", sync_result),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+                "sync": True,
+            }
+        )
+
+    assert queued_run.status == "failed"
+    assert queued_run.error == f"Queued agent run {run_id} has no dispatch"
+    assert queued_run.completed_at is not None
+    mock_session.commit.assert_awaited_once()
+    assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == ["error"]
+    assert [call.kwargs["status"] for call in publish_chat.await_args_list] == ["failed"]
+    assert publish_run.await_args.args[0].status == "failed"
+    assert sync_result.await_args.args[1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_preclaim_failure_leaves_a_queued_chat_run_silent(consumer):
+    run_id = str(uuid4())
+    queued_run = MagicMock(status="queued", conversation_id=uuid4())
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
+
+    publish_chat = AsyncMock()
+    publish_run = AsyncMock()
+    sync_result = AsyncMock()
+
+    with (
+        patch(
+            "src.services.work_dispatch.take_dispatch_payload",
+            new=AsyncMock(side_effect=ConnectionError("dispatch database unavailable")),
+        ),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", sync_result),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+                "sync": True,
+            }
+        )
+
+    assert queued_run.status == "queued"
+    publish_chat.assert_not_awaited()
+    publish_run.assert_not_awaited()
+    sync_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal_status", "terminal_kind"),
+    [("cancelled", "cancelled"), ("completed", "done")],
+)
+async def test_chat_outer_failure_republishes_the_committed_terminal_status_after_a_notification_failure(
+    consumer, terminal_status, terminal_kind
+):
+    """A publication failure after a terminal commit must not rewrite the
+    chat stream as a failure.
+
+    The recovery write reads the terminal row the chat worker committed. It
+    republishes that durable outcome, rather than the exception from the
+    failed notification.
+    """
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.execute = AsyncMock(
+        side_effect=AssertionError("agent lookup should be skipped for chat")
+    )
+    mock_session.commit = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
+
+    context = {
+        "trigger_type": "chat",
+        "input": {"conversation_id": str(conversation_id), "content": "Hello"},
+        "caller": {"user_id": str(uuid4()), "email": "caller@example.com", "name": "Caller"},
+    }
+    runtime_principal = MagicMock()
+    caller_user_id = uuid4()
+    runtime_caller = Caller(
+        _chat_caller(caller_user_id).principal,
+        AuthorizationContext(
+            user_id=caller_user_id,
+            home_organization_id=None,
+            base_role_id=None,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
+    published_chat: list[tuple[str, str, ChatStreamChunk]] = []
+    terminal_notification_failed = False
+
+    async def publish_chat_run_event(*, kind, status, payload, **kwargs):
+        nonlocal terminal_notification_failed
+        published_chat.append((kind, status, payload))
+        if (
+            terminal_status == "cancelled"
+            and kind == terminal_kind
+            and not terminal_notification_failed
+        ):
+            terminal_notification_failed = True
+            raise RuntimeError("terminal notification unavailable")
+
+    published_run_statuses: list[str] = []
+
+    async def publish_agent_run_update(run, name):
+        nonlocal terminal_notification_failed
+        published_run_statuses.append(run.status)
+        if (
+            terminal_status == "completed"
+            and run.status == terminal_status
+            and not terminal_notification_failed
+        ):
+            terminal_notification_failed = True
+            raise RuntimeError("terminal notification unavailable")
+
+    async def commit_terminal_then_publish(**kwargs):
+        run = kwargs["agent_run"]
+        run.status = terminal_status
+        run.output = {"text": "Committed answer"} if terminal_status == "completed" else None
+        run.error = "Chat run cancelled" if terminal_status == "cancelled" else None
+        await mock_session.commit()
+        if terminal_status == "cancelled":
+            await publish_chat_run_event(
+                conversation_id=conversation_id,
+                run_id=run_id,
+                kind=terminal_kind,
+                status=terminal_status,
+                payload=ChatStreamChunk(type=terminal_kind, run_status=terminal_status),
+            )
+        else:
+            await publish_agent_run_update(run, "Chat")
+
+    with (
+        _dispatched(context),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=_loaded_actor()),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.AIBehaviorService.resolve_agent_run_execution_mode",
+            new=AsyncMock(return_value="delegated"),
+        ),
+        patch(
+            "src.services.authorization.runtime_auth.load_runtime_principal",
+            new=AsyncMock(return_value=runtime_principal),
+        ),
+        patch(
+            "src.services.authorization.enforce.load_caller",
+            new=AsyncMock(return_value=runtime_caller),
+        ),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat_run_event),
+        patch(
+            "src.jobs.consumers.agent_run.publish_agent_run_update",
+            publish_agent_run_update,
+        ),
+        patch.object(consumer, "_process_chat_run", commit_terminal_then_publish),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+            }
+        )
+
+    assert terminal_notification_failed
+    expected_chat_events = [("run_status", "running")] + [
+        (terminal_kind, terminal_status)
+    ] * (2 if terminal_status == "cancelled" else 1)
+    assert [(kind, status) for kind, status, _ in published_chat] == expected_chat_events
+    assert all(status != "failed" for _, status, _ in published_chat)
+    assert published_chat[-1][2].run_status == terminal_status
+    expected_run_updates = ["running", terminal_status] + (
+        [terminal_status] if terminal_status == "completed" else []
+    )
+    assert published_run_statuses == expected_run_updates
+    # Claim, terminal write, then the recovery read/commit. The failed
+    # notification follows the durable terminal write.
+    assert mock_session.commit.await_count == 3
+
+
+@pytest.mark.asyncio
 async def test_a_failure_that_cannot_be_stored_announces_nothing(consumer):
     """A chat run whose interruption could not be stored within its budget
     reaches the outer failure path with the budget spent: the failure
