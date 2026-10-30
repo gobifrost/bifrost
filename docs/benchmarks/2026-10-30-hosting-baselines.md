@@ -437,6 +437,36 @@ actionable issue. Existing result-ready timing retains its boundary; notificatio
 timing is recorded separately. The protected queue remains pending, with no
 production deployment or claim that this explains the 33-second run.
 
+Two CodeQL review comments flagged direct task awaits in the new tests'
+cleanup. The follow-up uses the existing `asyncio.gather` join pattern;
+the server implementation is unchanged. All 13 affected checks and API
+quality passed again, and both review threads are resolved. The original
+baseline failure, 31-check repair verification and follow-up verification
+remain separate receipts under `notes/terminal-delivery-validation-r1-20261030`
+and `notes/terminal-delivery-validation-r2-20261030`.
+
+The one-worker deployed-build concurrency diagnostic also completed:
+`runs/import-portal-overlap-prod-c2-r1` has 100 unique correct executions
+with valid traces, one worker pod/UID across all groups, no API pod replacement,
+and verified cleanup at 21:24:10 UTC. Each pass has ten sequential actions and
+five rounds of three submissions for each graph/control class. Graph
+sequential p50/p95 were 674.37/816.68 and 686.09/730.17 ms; burst p50/p95
+were 1737.31/1860.38 and 1743.13/1994.04 ms. Control sequential p50/p95
+were 52.85/88.73 and 50.41/60.44 ms; burst values were 51.41/58.25 and
+63.31/124.96 ms. The worker sampler observed three graph children concurrently
+in both passes. Submission concurrency alone is not proof of simultaneous
+child admission, and sampled peaks are lower bounds.
+
+Graph entry-loading wall medians increased from 630.31/638.14 ms sequentially
+to 1664.98/1669.37 ms in bursts. All runs kept the same 25 resolver calls and
+18 virtual compiles: aggregate resolver wall medians rose from
+347.41/358.47 to 706.44/693.08 ms, while compile wall medians rose from
+77.85/75.00 to 256.50/293.70 ms. These overlapping wall spans do not identify
+CPU time or prove CPU throttling. The worker's 650m CPU limit differs from
+production's 2 CPU. This establishes local import-specific concurrency
+sensitivity, not exponential scaling or the cause of the original 14.86-second
+residual. The matched newer-runtime repetition remains separate.
+
 ### Initial Import Pipeline Diagnostic
 
 `runs/import-smoke-r1` completed with 40 unique successful executions and one
