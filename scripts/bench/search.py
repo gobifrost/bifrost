@@ -172,8 +172,10 @@ def search(cluster: Cluster, ids: dict, plan: dict, disk: dict[str, str], on_ste
                 return {"steps": steps, "bracket": None, "stopped": f"step at {rate}/s invalid twice"}
             window_s = step["window_s"]
             continue
-        if step["overall"] == "inconclusive" and step["window_s"] * 2 <= EXTEND_CAP_S:
-            window_s = step["window_s"] * 2
+        # Extend up to the cap; an observation-sized window already at or past
+        # the cap is not extended.
+        if step["overall"] == "inconclusive" and step["window_s"] < EXTEND_CAP_S:
+            window_s = min(step["window_s"] * 2, EXTEND_CAP_S)
             continue
         window_s = None
         history.append((rate, step["overall"]))

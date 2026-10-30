@@ -182,6 +182,33 @@ class ReliabilityEvidenceTest(unittest.TestCase):
         self.assertLessEqual(capacity.clopper_pearson_upper(1, needed), 0.001)
 
 
+class LatencyGateTest(unittest.TestCase):
+    """Pass needs the whole CI within the threshold; fail is point-based."""
+
+    @staticmethod
+    def _status(value: float, high: float, limit: float = 8.0) -> str:
+        summary = {"value": value, "low": min(value, high), "high": high, "half_width": abs(high - value)}
+        return capacity._latency_gate(summary, limit)["status"]
+
+    def test_wide_ci_fully_below_threshold_passes(self) -> None:
+        self.assertEqual(self._status(5.66, 6.66), "pass")
+
+    def test_narrow_ci_straddling_threshold_is_inconclusive(self) -> None:
+        self.assertEqual(self._status(7.95, 8.05), "inconclusive")
+
+    def test_point_above_threshold_fails_despite_straddling_ci(self) -> None:
+        self.assertEqual(self._status(8.1, 8.3), "fail")
+
+    def test_upper_bound_equal_to_threshold_passes(self) -> None:
+        self.assertEqual(self._status(7.0, 8.0), "pass")
+
+    def test_infinite_upper_bound_with_point_within_is_inconclusive(self) -> None:
+        self.assertEqual(self._status(5.0, math.inf), "inconclusive")
+
+    def test_infinite_point_fails(self) -> None:
+        self.assertEqual(self._status(math.inf, math.inf), "fail")
+
+
 class SearchTest(unittest.TestCase):
     def test_geometric_ramp_then_two_bisections(self) -> None:
         self.assertEqual(capacity.search_next([(10.0, "pass")]), 12.5)

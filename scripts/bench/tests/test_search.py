@@ -38,3 +38,29 @@ class ConfirmationDecisionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InconclusiveExtensionTest(unittest.TestCase):
+    """An inconclusive ramp step is rerun with its window doubled, clamped to the cap."""
+
+    def _windows(self, first_window: float) -> list[float]:
+        windows: list[float] = []
+
+        def fake_step(cluster, ids, rate, plan, seed, disk, window_s=None, confirm=False):
+            window = window_s or first_window
+            windows.append(window)
+            return {"rate": rate, "overall": "inconclusive", "window_s": window}
+
+        original = search.run_step
+        search.run_step = fake_step
+        try:
+            search.search(None, {}, {"start_rate": 2.0, "seed": 1}, {}, lambda step: None)
+        finally:
+            search.run_step = original
+        return windows
+
+    def test_final_extension_is_clamped_to_the_cap(self) -> None:
+        self.assertEqual(self._windows(600.0), [600.0, 1200.0, search.EXTEND_CAP_S])
+
+    def test_window_already_past_the_cap_is_not_extended(self) -> None:
+        self.assertEqual(self._windows(2400.0), [2400.0])

@@ -291,9 +291,11 @@ def _gate(status: str, value: object, limit: object, **detail: object) -> dict:
 
 
 def _latency_gate(summary: dict, limit: float) -> dict:
+    """Fail when the observed percentile exceeds ``limit``; pass only when its
+    whole 95 % CI is within it; inconclusive while the CI straddles it."""
     if summary["value"] > limit:
         status = "fail"
-    elif summary["half_width"] > limit * 0.10:
+    elif summary["high"] > limit:
         status = "inconclusive"
     else:
         status = "pass"
