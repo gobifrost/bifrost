@@ -1,0 +1,14 @@
+{
+  "key": "pr:1148",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Keep diagnostic and test setup out of local Solution workflow discovery.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1148",
+      "Reviewed the supported SDK decorator bindings, manifest overrides and broken-entry behavior; 103 focused tests and Python type/lint checks passed. Routine development-preview repair; no customer upgrade action required."
+    ]
+  }
+}
