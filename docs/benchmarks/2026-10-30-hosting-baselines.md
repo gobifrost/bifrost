@@ -233,6 +233,11 @@ small stdlib/Bifrost import trees contrast with the broader integration graph.
 They establish no universal multi-second worker overhead. Reproduce both a
 minimal control and a same-body workflow with a synthetic shared import graph
 on the same frozen runtime before attributing the difference to imports.
+The user reports that this outside-engine overhead had been nearly eliminated
+before the RabbitMQ migration. Preserve that known-good baseline when its
+receipt is located and investigate the return of the delay as a regression.
+The accepted 277 MiB idle-worker budget is independent of the latency target;
+it does not authorize settling for a slower interactive execution path.
 
 Stable third-party import preloading is a candidate to measure, not an assumed
 improvement. Compare its latency, CPU per correct action, warm-template/private

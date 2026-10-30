@@ -9,6 +9,21 @@ Their separate runs are not an additive trace or a controlled current-runtime
 baseline. The goal is to reduce complete action-to-result latency while
 recording CPU, memory, concurrency and hosting-cost tradeoffs.
 
+The user reports that outside-engine time was nearly eliminated before the
+RabbitMQ migration and subsequent runtime changes. Treat the current large
+intervals as a regression investigation. Locate the last attributable
+known-good receipt and compare the same import-heavy workload across that
+boundary and the later execution/import/auth changes. Keep the fast SDK-only
+case as a negative control. Accepting the idle-worker memory baseline does not
+accept this latency regression or justify replacing the known-good baseline.
+
+First establish the current reproducible case, then narrow the regression
+range with frozen revisions. Preserve each revision's supported execution,
+SDK, schema and topology contract; do not pair a historical worker with current
+authorization/dispatch behavior and attribute a compatibility failure to
+performance. Record any instrumentation or topology differences explicitly.
+Prioritize identifying the regression before choosing a preload optimization.
+
 ## Verified Timing Boundaries
 
 The current shared execution path loads workflow source and executes its import
