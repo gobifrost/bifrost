@@ -1,7 +1,7 @@
 # Interactive Integration Benchmark
 
-Status: initial import diagnostic implemented and source-verified; no live
-diagnostic result yet. The V2 browser/fake-integration fixture remains planned.
+Status: initial import diagnostic implemented and pipeline-verified in the
+isolated benchmark. The V2 browser/fake-integration fixture remains planned.
 
 The hosting benchmark needs an interactive, non-AI integration workload as well
 as SDK-heavy throughput and agent mixes. Recent user-reported Halo portal
@@ -107,6 +107,13 @@ missing trace/output evidence invalidates the diagnostic. A bounded result GET
 after terminal success verifies output outside the recorded durable spans.
 The existing class runner now records the explicitly selected image rather
 than silently deploying its default. Preserve both images and all attempts.
+
+The initial reduced-seed smoke completed 40 correct, uniquely identified and
+fully traced executions; see the [ledger](../benchmarks/2026-10-30-hosting-baselines.md).
+It identifies five extra resolver calls for missing optional `requests`
+dependencies, but does not reproduce the live multi-second residual. Retain
+this negative result. Full-catalog and historical comparisons remain separate
+observations; do not promote the pipeline check into a latency or hosting claim.
 
 Extend the existing benchmark with one synthetic V2 interactive fixture. Use
 synthetic organizations and data, a small shared authorization/mapping module,

@@ -259,6 +259,45 @@ case; a later authorized live validation measures actual Halo variability
 separately. No customer code, identifiers or credentials belong in the public
 benchmark fixture.
 
+### Initial Import Pipeline Diagnostic
+
+`runs/import-smoke-r1` completed with 40 unique successful executions and one
+valid correlated trace for each, across two blocked passes of ten requests per
+class. Harness `dcb86a113`, runtime `b46ffb19c` (the frozen `a1edc19fd` runtime
+plus table-index repair and opt-in tracing), and the selected image's
+index/manifest/config identities are retained with raw results and logs.
+Namespace teardown was verified. This reduced-seed pipeline has 65 seeded
+definitions, 75 workflows total and a six-file, 1,745-byte synthetic fixture;
+it is not a hosting-capacity or Halo-equivalence result.
+
+| Observation | Pass 1 | Pass 2 |
+|---|---:|---:|
+| SDK/stdlib control worker-wall p50 / p95 | 59.805 / 113.242 ms | 52.720 / 72.789 ms |
+| Import-graph worker-wall p50 / p95 | 255.004 / 395.653 ms | 265.392 / 319.082 ms |
+| Graph entry-load median, before engine entry | 202.073 ms | 214.494 ms |
+| Graph resolver calls per execution / aggregate median wall | 10 / 66.758 ms | 10 / 69.057 ms |
+
+All fixture engine durations rounded to zero integer milliseconds. Resolver
+and nested import walls overlap entry loading and must not be added to it.
+The graph's ten resolver calls comprise three modules, one package, one
+namespace and five missing optional dependencies probed by installed
+`requests` 2.33.1 (`brotlicffi`, `brotli`, `chardet`, `simplejson`, `socks`).
+The fixture constructs a request object and makes no provider call. This is
+evidence of repeated import/probe work, not a reproduction of the live
+5.7–14.9-second outside-engine intervals. The live runtime image remains
+unattributed, and trace observer overhead has not been separately measured.
+
+The idle snapshot after the declared 120-second wait is 770.9 MiB total
+working set, including worker 279.3, API 312.6 and Postgres 153.0 MiB. The
+earlier boot snapshot's worker is 678.9 MiB with an additional helper process;
+retain that startup observation separately from settled idle. This smaller
+catalog is not comparable to the full-M memory baseline as an optimization.
+Per-class CPU counter windows and process samples are retained; the first
+control window includes startup work and must not be described as steady CPU
+per action. No workflow/library preload optimization was made in this run.
+
+### Required Hosting Evidence
+
 Each accepted run records idle/settled per-container memory, worker process
 inventory, simultaneous loaded memory samples, CPU/throttling, latency and its
 uncertainty, successful throughput, failures, backlog, DB idle activity and
