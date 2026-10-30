@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2",
-  "collected_at": "2026-10-30T19:50:59Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2",
+  "target_ref": "700e6334f830632ec526654c1ab56e8d74446c69",
+  "collected_at": "2026-10-30T21:42:52Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...700e6334f830632ec526654c1ab56e8d74446c69",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2118,6 +2118,20 @@
       "subject": "Consolidate human authentication on shared claims and durable sessions (#1149)",
       "prs": [
         1149
+      ]
+    },
+    {
+      "sha": "8bef83b73f1b33b62ac2aff57220767b354f0729",
+      "subject": "Activate the approved authentication cutover notice (#1150)",
+      "prs": [
+        1150
+      ]
+    },
+    {
+      "sha": "700e6334f830632ec526654c1ab56e8d74446c69",
+      "subject": "Deliver workflow completion to apps before bookkeeping (#1151)",
+      "prs": [
+        1151
       ]
     }
   ],
@@ -6056,6 +6070,32 @@
       "merge_commit": "05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2",
       "body": "## Product Updates\n\n- [x] Highlight \u2014 Action Required entry `68314b62-0ea3-4d44-8779-6241f77275f3`, \u201cRequired: Plan an Authentication Maintenance Cutover.\u201d Canonical approved entry and `product-updates/dispositions/pr-1149.json` cite this PR, verified author attribution, and explicit required security review evidence.\n- [ ] Other\n- [ ] Omit\n\n## Summary\n\nHuman access now uses the shared signed claims minter and global authority epoch across HTTP, WebSockets and MCP. PostgreSQL session families make refresh single-use and let logout revoke a rotated successor; password/MFA resets revoke families and advance the epoch atomically. Browser, CLI and MCP share human session semantics while other credential purposes remain distinct.\n\nProtected browser/SDK calls recover only from the exact pre-effect refresh challenge, with bounded replay and cross-tab rotation serialization. WebSockets revalidate before protected input and outgoing delivery. Large browser credentials use bounded fragments of the same signed JWT. Internal MCP forwarding resolves authoritative subjects rather than copied role flags.\n\n**Upgrade requires maintenance:** block/drain API, MCP and WebSocket traffic, deploy a homogeneous API/MCP fleet and matching SDK build workers, update deployed V2 Apps to SDK contract 3, then reopen service and have everyone sign in again. Ordinary rolling activation and rollback below this authentication version are unsupported. The runtime legacy bridge stays supported until the separately gated later-release PR1c. No production deployment is included.\n\n- [Cutover runbook](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/runbooks/human-auth-cutover.md)\n- [Cross-surface contract and delivery plan](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/plans/2026-10-30-authentication-consolidation.md)\n- [Independent security review and durable failure dispositions](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/plans/2026-10-30-authentication-review.md)\n- [Exact focused commands, results and limits](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/plans/2026-10-30-authentication-verification.md)\n\n## Validation\n\nActual source CI on `6fc98159a` passed 10,976 backend unit tests, 4,021 client tests across 606 files, both CodeQL analyses, lint/type checks and Product Updates validation. Independent source/security reviews found no P1/P2 findings; all inline review threads are resolved.\n\nFocused implementation verification includes 72 live authentication/runtime/SSO/WebSocket/device E2E tests, 99 live CLI/MCP/WS/SDK consumers, 37 client helper/component tests, two fixture protocol units, the complete 17-test critical browser smoke, and six additional payload/persistence probes. Exact commands and limits are linked above.\n\nThe second queue exposed stale credentials in raw subscription test clients after prior role cleanup. A local sequence now reproduces all 11 original REST authentication failures after initializing every actor before that cleanup; restoring the correction makes the same 15-test sequence pass. The raw execution-log selection also passed all 10 tests, preserving its role-denied and unauthenticated cases. The correction changes three test modules and leaves production behavior unchanged. No unchanged failing run was retried and no gate was bypassed. Earlier incomplete reproductions and their masking conditions are retained in the review record.\n\nFull backend E2E and full Playwright were not run locally; the protected merge queue is the complete-suite gate. The separate Product Updates content PR will refresh verified inventory, prove the prepared development-image bundle includes the unchanged required-action notice and agent prompt, and record the final delivery evidence after this source merges. No production deployment or capacity/memory improvement is claimed.",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1149"
+    },
+    {
+      "number": 1150,
+      "title": "Activate the approved authentication cutover notice",
+      "url": "https://github.com/gobifrost/bifrost/pull/1150",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T20:41:35Z",
+      "merge_commit": "8bef83b73f1b33b62ac2aff57220767b354f0729",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 activates the already reviewed authentication cutover notice; no new runtime behavior or customer-facing prose.\n\n## Summary\n\nRefresh the cumulative verified inventory through merged authentication PR #1149, retaining all 259 historical sources and reviewed contributor evidence while expanding coverage to 302 sources. This makes Action Required entry `68314b62-0ea3-4d44-8779-6241f77275f3` eligible in prepared development-image bundles. Its UUID, revision, prose, prompt and source disposition are unchanged.\n\nRecord the final source delivery evidence: protected CI passed 10,976 backend units, 4,021 client tests, 2,404 backend E2E tests and all 17 critical browser smoke tests. The exact stale-epoch regression was reproduced and corrected before source merge. No runtime code, generated bundles, release publication or production deployment is included.\n\n## Validation\n\n- Canonical Product Updates validation passed locally and in [manual CI run 41118855589](https://github.com/gobifrost/bifrost/actions/runs/41118855589).\n- Scratch image preparation on clean content commit `bc9f323b14cd6fcc147b43cf371a57e68b21e29b` included the exact notice with `action_required: true`, in-app visibility, source PR #1149 and the approved agent prompt. The notice checksum and all historical inventory records are unchanged.\n- Independent Astra content review found no P1/P2 findings. Final commands, results and scope limits are retained in the authentication verification document. Full local backend/browser suites were not repeated for this metadata-only change; the protected queue remains the complete gate.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1150"
+    },
+    {
+      "number": 1151,
+      "title": "Deliver workflow completion to apps before bookkeeping",
+      "url": "https://github.com/gobifrost/bifrost/pull/1151",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T21:41:00Z",
+      "merge_commit": "700e6334f830632ec526654c1ab56e8d74446c69",
+      "body": "## Summary\n\nV2 apps submit workflows asynchronously and fetch the result after a terminal WebSocket notification. That notification waited behind log acknowledgement/recovery, completion-event emission and metrics updates even after the result had committed. The earlier synchronous-result fixes (#483, #621) did not remove this wait from the app path.\n\nPublish the existing terminal status immediately after the authoritative commit and synchronous result handoff for both success and failure. Results and logs remain durable before notification, stale executor results remain fenced, and the WebSocket payload stays unchanged. Preserve the existing result-ready timing boundary and record notification timing separately.\n\n## Validation\n\nThe new real PostgreSQL/Redis/API WebSocket test failed on unmodified main while metrics were held, then passed unchanged after this correction: the app receives terminal status and fetches the committed result while metrics remain blocked. It dispatches zero worker or event jobs.\n\n- `./test.sh tests/unit/jobs/consumers/test_workflow_execution_session.py tests/unit/jobs/consumers/test_workflow_execution_lineage.py tests/unit/services/events/test_builtins.py tests/e2e/api/test_execution_completion_delivery.py tests/e2e/test_execution_log_durability.py -v --durations=0` \u2014 31 passed; no failures, errors or skips.\n- `./test.sh quality api` \u2014 Pyright and Ruff passed.\n- The test-cleanup follow-up passed all 13 affected checks and API quality; both CodeQL review threads are resolved. The server implementation is unchanged.\n- Bounded final review found no actionable issues. Full backend/client/browser suites were not run locally; the protected merge queue remains the broad gate.\n\nThis proves and repairs post-commit delivery ordering. It does not establish the cause of the reported 33-second production run or quantify a production speedup. No production deployment is included.\n\n## Product Updates\n\n- [x] Other \u2014 Apps receive workflow completion before follow-up bookkeeping.\n- [ ] Highlight\n- [ ] Omit\n\nCanonical classification: `product-updates/dispositions/pr-1151.json`.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1151"
     }
   ]
 }
