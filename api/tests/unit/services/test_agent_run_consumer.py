@@ -1538,27 +1538,25 @@ async def test_chat_interruption_is_recorded_whatever_happens_to_the_partial_mes
         await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
 
 
-def _cancelling_principal(user: User) -> UserPrincipal:
+def _principal_of(user: User) -> UserPrincipal:
     return UserPrincipal(
         user_id=user.id,
         email=user.email,
         organization_id=user.organization_id,
         name=user.name or "",
-        is_superuser=True,
     )
 
 
 @pytest.mark.asyncio
 async def test_a_cancel_that_read_a_running_run_does_not_revive_it_after_its_terminal_commit(
-    consumer, db_session, async_engine, async_session_factory, seed_agent, seed_user, monkeypatch
+    consumer, db_session, async_engine, async_session_factory, seed_agent, monkeypatch
 ):
     """Cancel reads ``running``; the result commits but its acknowledgement
-    is lost; the cancel then writes; the consumer retries."""
+    is lost; the cancel then writes; the consumer retries. The lead who
+    started the run cancels it."""
     contoso, lead, target, run = await _run_as_fixture(
         db_session, seed_agent, with_run_as=False
     )
-    run.caller_user_id = str(seed_user.id)
-    await db_session.commit()
     factory = ScriptedSessionFactory(async_engine)
     consumer._session_factory = factory
     monkeypatch.setattr(
@@ -1580,14 +1578,19 @@ async def test_a_cancel_that_read_a_running_run_does_not_revive_it_after_its_ter
         async with async_session_factory() as cancel_db:
             try:
                 return await agent_runs_router.cancel_agent_run(
-                    run_id=run.id, db=cancel_db, user=_cancelling_principal(seed_user)
+                    run_id=run.id, db=cancel_db, user=_principal_of(lead)
                 )
             except HTTPException as refused:
                 return refused
 
     async def start_cancel() -> None:
-        cancel_tasks.append(asyncio.create_task(cancel()))
-        await cancel_read.wait()
+        task = asyncio.create_task(cancel())
+        cancel_tasks.append(task)
+        read = asyncio.ensure_future(cancel_read.wait())
+        await asyncio.wait({task, read}, return_when=asyncio.FIRST_COMPLETED)
+        read.cancel()
+        # A cancel that ends here never read the run as running.
+        assert not task.done(), f"cancel ended before writing: {task.result()!r}"
 
     class CancelWritesAfterLostAckSession(AsyncSession):
         async def commit(self) -> None:
