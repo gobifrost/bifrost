@@ -465,6 +465,7 @@ class TestSuccessfulExecutionCompletionOrder:
                 "event": None,
             }
             completed_event = AsyncMock()
+            publish_execution = AsyncMock()
 
             with (
                 patch(
@@ -480,6 +481,10 @@ class TestSuccessfulExecutionCompletionOrder:
                     "src.services.events.builtins.emit_workflow_completed_event",
                     new=completed_event,
                 ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.publish_execution_update",
+                    new=publish_execution,
+                ),
             ):
                 await consumer._process_success(
                     "00000000-0000-0000-0000-000000000004",
@@ -493,6 +498,137 @@ class TestSuccessfulExecutionCompletionOrder:
 
         session.rollback.assert_awaited_once()
         completed_event.assert_not_awaited()
+        publish_execution.assert_not_awaited()
+
+
+class TestAsyncTerminalNotificationOrder:
+    """Async terminal status delivery must precede deferred completion work."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("processor_name", "result"),
+        [
+            (
+                "_process_success",
+                {
+                    "success": True,
+                    "status": "Success",
+                    "duration_ms": 123,
+                    "sync": False,
+                },
+            ),
+            (
+                "_process_failure",
+                {
+                    "success": False,
+                    "status": "Failed",
+                    "error": "boom",
+                    "error_type": "RuntimeError",
+                    "duration_ms": 123,
+                    "sync": False,
+                },
+            ),
+        ],
+    )
+    async def test_async_terminal_notification_precedes_log_acknowledgement(
+        self,
+        processor_name: str,
+        result: dict[str, object],
+    ):
+        """The terminal notification is available while log acknowledgement blocks."""
+        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+
+        call_order: list[str] = []
+        durable_session = AsyncMock()
+        durable_session.commit.side_effect = lambda: call_order.append("durable_commit")
+        durable_context = MagicMock()
+        durable_context.__aenter__ = AsyncMock(return_value=durable_session)
+        durable_context.__aexit__ = AsyncMock(return_value=None)
+        notification_sent = asyncio.Event()
+        acknowledgement_started = asyncio.Event()
+        allow_acknowledgement = asyncio.Event()
+
+        async def publish_execution(*_args, **_kwargs):
+            call_order.append("publish_execution")
+            notification_sent.set()
+
+        async def block_acknowledgement(*_args, **_kwargs):
+            call_order.append("acknowledge_logs")
+            acknowledgement_started.set()
+            await allow_acknowledgement.wait()
+
+        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
+            consumer = WorkflowExecutionConsumer()
+            consumer._redis_client = AsyncMock()
+            consumer._redis_client.get_active_execution.return_value = {
+                "workflow_id": "00000000-0000-0000-0000-000000000001",
+                "workflow_name": "async_workflow",
+                "org_id": "00000000-0000-0000-0000-000000000002",
+                "user_id": "00000000-0000-0000-0000-000000000003",
+                "user_name": "Test User",
+                "sync": False,
+            }
+            consumer._record_completion_metrics = AsyncMock()
+
+            with (
+                patch(
+                    "src.core.database.get_session_factory",
+                    return_value=MagicMock(return_value=durable_context),
+                ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.update_execution",
+                    new_callable=AsyncMock,
+                ),
+                patch.object(
+                    WorkflowExecutionConsumer,
+                    "_read_persisted_completion_timing",
+                    new=AsyncMock(return_value=(None, None)),
+                ),
+                patch(
+                    "bifrost._logging.stage_logs_to_postgres",
+                    new=AsyncMock(return_value=MagicMock(count=1)),
+                ),
+                patch(
+                    "bifrost._logging.acknowledge_staged_logs",
+                    new=AsyncMock(side_effect=block_acknowledgement),
+                ),
+                patch(
+                    "bifrost._logging.recover_terminal_execution_logs",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.publish_execution_update",
+                    new=publish_execution,
+                ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.publish_history_update",
+                    new_callable=AsyncMock,
+                ),
+                patch("src.core.cache.cleanup_execution_cache", new_callable=AsyncMock),
+                patch(
+                    "src.services.events.builtins.emit_workflow_failure_events",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                completion = asyncio.create_task(
+                    getattr(consumer, processor_name)(
+                        "00000000-0000-0000-0000-000000000004", result
+                    )
+                )
+                try:
+                    await asyncio.wait_for(notification_sent.wait(), timeout=1)
+                    await asyncio.wait_for(acknowledgement_started.wait(), timeout=1)
+                    assert call_order == [
+                        "durable_commit",
+                        "publish_execution",
+                        "acknowledge_logs",
+                    ]
+                    assert not completion.done()
+                finally:
+                    allow_acknowledgement.set()
+                    await completion
+
+        consumer._redis_client.push_result.assert_not_awaited()
 
 
 class TestFailedExecutionCompletionOrder:
