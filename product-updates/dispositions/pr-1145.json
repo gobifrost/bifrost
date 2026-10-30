@@ -1,0 +1,13 @@
+{
+  "key": "pr:1145",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal resilience fix: a transient database or pooler restart no longer closes the worker control socket and regenerates every connected worker's remote session; no customer-facing workflow.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1145",
+      "Program authorization: Jack (2026-10-29) approved fixing database-blip churn found by the capacity-harness pooler drills (#1142)."
+    ]
+  }
+}
