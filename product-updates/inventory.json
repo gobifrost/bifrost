@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "700e6334f830632ec526654c1ab56e8d74446c69",
-  "collected_at": "2026-10-30T21:42:52Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...700e6334f830632ec526654c1ab56e8d74446c69",
+  "target_ref": "88f9567e3d04e05b153360a14b2f14668db998e1",
+  "collected_at": "2026-10-30T23:44:25Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...88f9567e3d04e05b153360a14b2f14668db998e1",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2132,6 +2132,20 @@
       "subject": "Deliver workflow completion to apps before bookkeeping (#1151)",
       "prs": [
         1151
+      ]
+    },
+    {
+      "sha": "ad3ff6a6df1c97709c0fdbb3ef14f7eb3e5fe02e",
+      "subject": "Activate workflow completion fix in Product Updates (#1152)",
+      "prs": [
+        1152
+      ]
+    },
+    {
+      "sha": "88f9567e3d04e05b153360a14b2f14668db998e1",
+      "subject": "Add reviewed automatic App SDK upgrades (#1153)",
+      "prs": [
+        1153
       ]
     }
   ],
@@ -6096,6 +6110,32 @@
       "merge_commit": "700e6334f830632ec526654c1ab56e8d74446c69",
       "body": "## Summary\n\nV2 apps submit workflows asynchronously and fetch the result after a terminal WebSocket notification. That notification waited behind log acknowledgement/recovery, completion-event emission and metrics updates even after the result had committed. The earlier synchronous-result fixes (#483, #621) did not remove this wait from the app path.\n\nPublish the existing terminal status immediately after the authoritative commit and synchronous result handoff for both success and failure. Results and logs remain durable before notification, stale executor results remain fenced, and the WebSocket payload stays unchanged. Preserve the existing result-ready timing boundary and record notification timing separately.\n\n## Validation\n\nThe new real PostgreSQL/Redis/API WebSocket test failed on unmodified main while metrics were held, then passed unchanged after this correction: the app receives terminal status and fetches the committed result while metrics remain blocked. It dispatches zero worker or event jobs.\n\n- `./test.sh tests/unit/jobs/consumers/test_workflow_execution_session.py tests/unit/jobs/consumers/test_workflow_execution_lineage.py tests/unit/services/events/test_builtins.py tests/e2e/api/test_execution_completion_delivery.py tests/e2e/test_execution_log_durability.py -v --durations=0` \u2014 31 passed; no failures, errors or skips.\n- `./test.sh quality api` \u2014 Pyright and Ruff passed.\n- The test-cleanup follow-up passed all 13 affected checks and API quality; both CodeQL review threads are resolved. The server implementation is unchanged.\n- Bounded final review found no actionable issues. Full backend/client/browser suites were not run locally; the protected merge queue remains the broad gate.\n\nThis proves and repairs post-commit delivery ordering. It does not establish the cause of the reported 33-second production run or quantify a production speedup. No production deployment is included.\n\n## Product Updates\n\n- [x] Other \u2014 Apps receive workflow completion before follow-up bookkeeping.\n- [ ] Highlight\n- [ ] Omit\n\nCanonical classification: `product-updates/dispositions/pr-1151.json`.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1151"
+    },
+    {
+      "number": 1152,
+      "title": "Activate workflow completion fix in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1152",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T22:06:52Z",
+      "merge_commit": "ad3ff6a6df1c97709c0fdbb3ef14f7eb3e5fe02e",
+      "body": "Refresh the cumulative Product Updates metadata through merged workflow completion fix #1151 so its approved Fixed summary appears in development image bundles. Preserve all 302 previously verified PR records, entry prose, required authentication notice, agent prompt and reviewed contributor credits.\n\nValidation: canonical Product Updates validation passes. The actual image-preparation helper produced a bundle containing the new summary and the unchanged authentication notice and prompt. This changes cached metadata only; it does not deploy production or publish a release.\n\nProduct Updates: Omit \u2014 internal activation of the already approved #1151 summary.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1152"
+    },
+    {
+      "number": 1153,
+      "title": "Add reviewed automatic App SDK upgrades",
+      "url": "https://github.com/gobifrost/bifrost/pull/1153",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T23:43:28Z",
+      "merge_commit": "88f9567e3d04e05b153360a14b2f14668db998e1",
+      "body": "## Product Updates\n\n- [x] Highlight \u2014 620a0f81-11c2-4cfb-90c7-345317efaab6 (approved canonical entry).\n\n## Summary\n\nAdd **App SDK Upgrades** in Settings \u2192 Maintenance so the platform can attempt required SDK updates that need no app code changes. The setting starts **off** during dogfood testing; the reviewed automatic transition is contract 2 \u2192 3.\n\nThe elected scheduler queues the existing `application.sdk_update` PlatformJob, at most 20 apps per pass. Automatic attempts share manual App/Solution locks, pin the requested SDK, preserve unrelated locked dependencies with `npm ci`, and keep the prior deployment artifacts. Failed attempts leave the active deployment unchanged and require a manual retry; job history prevents repeated automatic attempts for the same App and target.\n\nNew SDK-update jobs use payload version 2 so older workers cannot silently ignore target pinning. New workers also finish already-queued v1 manual jobs through an exact historical schema that rejects automatic/target fields. Authentication expiry and revocation checks are unchanged.\n\n## Validation\n\n- API Pyright and Ruff; client TypeScript and ESLint: passed.\n- Focused frontend service/component/SDK tripwire coverage: 13 passed.\n- Settings authorization/audit, existing manual/Solution SDK update boundaries, and one actual automatic worker rebuild: 11 passed. The live rebuild verifies activation, old artifact retention, and no duplicate on reconciliation.\n- Maintenance browser happy path plus auth setup: 2 passed; screenshot reviewed.\n- Final backend unit/shared-contract checks: 270 passed.\n- Manual build/error paths, SDK memory-profile enqueue, build safeguards, and generated references: 34 targeted consumer checks passed; skill mirror validation passed.\n- Live scheduler diagnostics: all 4 passed, including the schedule inventory with App SDK Upgrades. The stale-list queue failure was reproduced in isolation before correcting the expectation.\n\nFull suites were not run locally; the protected merge queue remains the complete-suite gate.\n\n<details>\n<summary>Focused commands</summary>\n\n```bash\n./test.sh quality api\n(cd client && npm run tsc)\n(cd client && npm run lint)\n./test.sh client unit src/services/appSdkUpgradeSettings.test.ts src/pages/settings/AppSdkUpgradeSettings.test.tsx src/pages/settings/Maintenance.test.tsx src/lib/app-sdk/sdk-contract.test.ts\n./test.sh tests/e2e/api/test_app_sdk_upgrade_settings.py tests/e2e/platform/test_application_sdk_update.py tests/e2e/platform/test_automatic_app_sdk_upgrade.py -q --durations=0\n./test.sh client e2e --screenshots e2e/app-sdk-upgrades.admin.spec.ts\n./test.sh tests/unit/test_app_sdk_upgrade_settings.py tests/unit/shared/test_automatic_app_sdk_upgrades.py tests/unit/test_sdk_automatic_upgrade_contracts.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/jobs/test_application_sdk_update.py tests/unit/test_application_sdk_status.py tests/unit/services/test_platform_jobs.py tests/unit/jobs/test_platform_job_runner.py tests/unit/scheduler/test_control.py tests/unit/test_access_list.py tests/unit/test_dto_flags.py tests/unit/test_contract_version.py tests/unit/jobs/test_platform_job_catalog.py tests/unit/services/test_operation_inventory.py -q --durations=10\n./test.sh tests/unit/test_solution_app_build.py tests/unit/routers/test_application_job_memory_profiles.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/test_skill_appendix_fresh.py tests/unit/jobs/test_application_sdk_update.py -q --durations=10\npython3 scripts/check_skill_mirrors.py\n./test.sh tests/e2e/platform/test_scheduler_diagnostics.py -q --durations=0\n```\n</details>\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1153"
     }
   ]
 }
