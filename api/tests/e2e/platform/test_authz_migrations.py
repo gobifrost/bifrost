@@ -4,23 +4,29 @@
 starts on an empty schema is a fresh install. These tests prove the PR1a
 migration (``20261030_authz_versions``) on both paths: an empty database
 upgraded to head, and an existing database upgraded from the revision before
-it. PR1b and PR1c add their precondition rehearsals here.
+it. They also rehearse its bounded lock waits behind a long transaction, and
+the cost of a large cascade through the epoch triggers. PR1b and PR1c add
+their precondition rehearsals here.
 """
 
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from src.services.authorization.authz import AUTHZ_FACTS
 from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
     _assert_safe_database_name,
     _create_database,
+    _current_revision,
     _direct_database_url,
     _drop_database,
     _run_in_database,
@@ -105,3 +111,154 @@ def test_an_existing_database_upgrades_without_claiming_a_protocol_start() -> No
     assert state["triggers"] == _expected_trigger_count()
     assert len(state["columns"]) == 3
     assert state["bumps"] is True
+
+
+# --- Bounded lock waits ---------------------------------------------------------
+
+
+def _hold(database_url: str, statement: str, ready: threading.Event, release: threading.Event) -> None:
+    """Keep a transaction open after ``statement`` until ``release`` is set."""
+
+    async def hold() -> None:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.connect() as connection:
+                transaction = await connection.begin()
+                await connection.execute(sa.text(statement))
+                ready.set()
+                while not release.is_set():
+                    await asyncio.sleep(0.05)
+                await transaction.rollback()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(hold())
+
+
+# The migration waits at most 5 s for each LOCK TABLE statement; allow margin
+# for the upgrade run's own work, not for a queue.
+_FAIL_FAST_SECONDS = 20
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A long reader: conflicts with ACCESS EXCLUSIVE for the column adds.
+        "SELECT count(*) FROM executions",
+        # A long writer: conflicts with SHARE ROW EXCLUSIVE for the triggers.
+        "UPDATE users SET name = name WHERE false",
+    ],
+    ids=["long reader on executions", "open writer on users"],
+)
+def test_a_long_transaction_makes_the_migration_fail_fast_and_a_rerun_succeeds(statement: str) -> None:
+    database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
+    _assert_safe_database_name(database_name)
+    database_url = _direct_database_url(database_name)
+    ready, release = threading.Event(), threading.Event()
+    holder = threading.Thread(target=_hold, args=(database_url, statement, ready, release), daemon=True)
+    try:
+        asyncio.run(_create_database(database_name))
+        _upgrade(database_url, PRE_PR1A_REVISION)
+        holder.start()
+        assert ready.wait(30)
+
+        started = time.monotonic()
+        with pytest.raises(Exception, match="timeout"):
+            _upgrade(database_url, "head")
+        elapsed = time.monotonic() - started
+
+        assert elapsed < _FAIL_FAST_SECONDS
+        # One transaction: nothing of the run survives the timeout.
+        assert _current_revision(database_url) == PRE_PR1A_REVISION
+
+        release.set()
+        holder.join(30)
+        _upgrade(database_url, "head")
+        assert _current_revision(database_url) != PRE_PR1A_REVISION
+        assert asyncio.run(_authz_state(database_url))["epoch_kinds"] == ["global"]
+    finally:
+        release.set()
+        if holder.is_alive():
+            holder.join(30)
+        asyncio.run(_drop_database(database_name))
+
+
+# --- Cascade cost ---------------------------------------------------------------
+
+_CASCADE_ROWS = 200_000
+# Stated bound for deleting one user referenced by 200,000 executions: three
+# SET NULL cascades (run user, actor, starter) queue 600,000 deferred trigger
+# events, all of which find the bump already done.
+_CASCADE_SECONDS = 60
+_TIMING_FILE = Path("/tmp/bifrost/authz-cascade-timing.txt")
+
+_SEED_USER = """
+INSERT INTO users (id, email, is_active, is_superuser, is_verified, is_registered, is_system,
+                   mfa_enabled, base_role_id)
+VALUES (CAST(:user AS uuid), 'cascade@example.test', true, true, true, true, false, false,
+        '00000000-0000-0000-0000-000000000006')
+"""
+_SEED_EXECUTIONS = """
+INSERT INTO executions (id, workflow_name, status, parameters, time_saved, value, executed_by,
+                        executed_by_name, run_user_id, started_by_user_id, root_execution_id)
+SELECT gen_random_uuid(), 'cascade', 'Success', '{}'::jsonb, 0, 0, CAST(:user AS uuid), 'Cascade',
+       CAST(:user AS uuid), CAST(:user AS uuid), gen_random_uuid()
+  FROM generate_series(1, :rows)
+"""
+_EPOCH_UPDATES = sa.text(
+    "SELECT COALESCE((SELECT n_tup_upd FROM pg_stat_xact_user_tables WHERE relname = 'authz_versions'), 0)"
+)
+
+
+def test_deleting_a_user_behind_two_hundred_thousand_executions_bumps_once_within_the_bound(
+    record_property: Any,
+) -> None:
+    database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
+    _assert_safe_database_name(database_name)
+    database_url = _direct_database_url(database_name)
+    user = str(uuid4())
+
+    async def seed(connection: AsyncConnection) -> None:
+        await connection.execute(sa.text(_SEED_USER), {"user": user})
+        await connection.execute(sa.text(_SEED_EXECUTIONS), {"user": user, "rows": _CASCADE_ROWS})
+
+    async def delete_user() -> tuple[float, int, int, int]:
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.connect() as connection:
+                before = (await connection.execute(sa.text("SELECT version FROM authz_versions"))).scalar_one()
+                await connection.commit()
+                started = time.monotonic()
+                transaction = await connection.begin()
+                await connection.execute(sa.text("DELETE FROM users WHERE id = CAST(:user AS uuid)"), {"user": user})
+                # Fire the queued deferred events now, to count their bumps.
+                await connection.execute(sa.text("SET CONSTRAINTS ALL IMMEDIATE"))
+                bumps = (await connection.execute(_EPOCH_UPDATES)).scalar_one()
+                await transaction.commit()
+                elapsed = time.monotonic() - started
+                after = (await connection.execute(sa.text("SELECT version FROM authz_versions"))).scalar_one()
+                orphaned = (
+                    await connection.execute(sa.text("SELECT count(*) FROM executions WHERE executed_by IS NULL"))
+                ).scalar_one()
+                await connection.commit()
+                return elapsed, bumps, int(before != after), orphaned
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_create_database(database_name))
+        _upgrade(database_url, "head")
+        asyncio.run(_run_in_database(database_url, seed))
+
+        elapsed, bumps, changed, orphaned = asyncio.run(delete_user())
+    finally:
+        asyncio.run(_drop_database(database_name))
+
+    record_property("cascade_seconds", f"{elapsed:.2f}")
+    message = f"deleting a user behind {_CASCADE_ROWS} executions took {elapsed:.2f} s (bound {_CASCADE_SECONDS} s)"
+    print(message)
+    if _TIMING_FILE.parent.is_dir():
+        _TIMING_FILE.write_text(message + "\n")
+    assert orphaned == _CASCADE_ROWS
+    assert (bumps, changed) == (1, 1)
+    assert elapsed < _CASCADE_SECONDS, message
