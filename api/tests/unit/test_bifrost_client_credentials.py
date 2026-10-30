@@ -722,8 +722,10 @@ async def test_client_token_update_is_shared_with_async_and_sync_transports(
     assert token == "fresh-access-token"
     assert client._access_token == "fresh-access-token"
     assert client._sync_http.headers["Authorization"] == "Bearer fresh-access-token"
-    assert client._http is None
-    assert async_http.headers["Authorization"] == "Bearer stale-access-token"
+    # The open async client is updated in place, so a challenged request
+    # replays on the client it was sent with.
+    assert client._http is async_http
+    assert async_http.headers["Authorization"] == "Bearer fresh-access-token"
     await async_http.aclose()
     client._sync_http.close()
 
@@ -732,6 +734,7 @@ def test_sync_context_refreshes_expired_token_and_retries(
     isolated_credentials, monkeypatch
 ) -> None:
     from bifrost import client as client_mod
+    from bifrost._refreshing import RefreshingClient
 
     seen_authorization: list[str | None] = []
 
@@ -739,7 +742,13 @@ def test_sync_context_refreshes_expired_token_and_retries(
         authorization = request.headers.get("Authorization")
         seen_authorization.append(authorization)
         if authorization == "Bearer stale-access-token":
-            return httpx.Response(401, request=request)
+            return httpx.Response(
+                401,
+                headers={
+                    "WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"'
+                },
+                request=request,
+            )
         return httpx.Response(
             200,
             json={"organization": {"id": "org-1"}},
@@ -750,7 +759,8 @@ def test_sync_context_refreshes_expired_token_and_retries(
         "https://api.example.com", "stale-access-token"
     )
     client._sync_http.close()
-    client._sync_http = httpx.Client(
+    client._sync_http = RefreshingClient(
+        refresh=client._refresh_access_token_sync,
         base_url=client.api_url,
         headers={"Authorization": "Bearer stale-access-token"},
         transport=httpx.MockTransport(handler),

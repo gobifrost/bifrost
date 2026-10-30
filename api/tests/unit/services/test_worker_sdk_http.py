@@ -1479,8 +1479,8 @@ class TestEngineLocalTransportSelection:
         assert client._engine_http is not None
 
     @pytest.mark.asyncio
-    async def test_engine_local_401_does_not_refresh_or_replay(self):
-        """A local 401 surfaces; it never triggers network refresh/replay."""
+    async def test_engine_local_401_without_the_challenge_does_not_refresh_or_replay(self):
+        """A local 401 that is not the refresh challenge surfaces as it is."""
         from bifrost import config as bifrost_config
 
         server = WorkerSdkHttpServer()
@@ -1491,13 +1491,13 @@ class TestEngineLocalTransportSelection:
             _set_client(client)
 
             refresh_attempts: list[str] = []
-            original_refresh = client._refresh_and_update
+            original_refresh = client.refresh_access_token
 
-            async def _spy(observed: str | None = None) -> bool:
+            async def _spy(observed: str | None = None) -> str | None:
                 refresh_attempts.append("called")
                 return await original_refresh(observed)
 
-            client._refresh_and_update = _spy  # type: ignore[method-assign]
+            client.refresh_access_token = _spy  # type: ignore[method-assign]
             with pytest.raises(httpx.HTTPStatusError):
                 await bifrost_config.get("k", scope="global")
             assert refresh_attempts == []
