@@ -17,7 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
-from src.core.database import get_db
+from src.core.database import get_db, get_session_factory
 from src.core.s3_transport import S3Transport
 from shared.version import get_version
 
@@ -121,6 +121,17 @@ class S3HealthClient:
 
 _redis_health_connection = RedisHealthConnection()
 _s3_health_client = S3HealthClient()
+
+# Readiness checks the database, Redis and S3 after the process starts, until
+# they pass once, then reports that startup result without contacting them.
+# Kubernetes probes readiness every few seconds: re-checking shared
+# dependencies on each probe is idle load on them, and during a brief outage
+# every replica would turn unready together, so the Service would drop them
+# all and seconds of errors would become a full outage. /health/detailed still
+# checks live. Shutdown needs no unready state: Kubernetes removes a
+# terminating pod from the Service, and uvicorn stops listening before the
+# lifespan shuts down.
+_startup_components: dict[str, dict] | None = None
 
 
 class HealthCheck(BaseModel):
@@ -273,14 +284,24 @@ async def live_health_check() -> HealthCheck:
 
 
 @router.get("/ready", response_model=DetailedHealthCheck)
-async def ready_health_check(
-    response: Response,
-    db: AsyncSession = Depends(get_db, scope="function"),
-) -> DetailedHealthCheck:
+async def ready_health_check(response: Response) -> DetailedHealthCheck:
     """
     Readiness check for core API serving dependencies.
     """
-    return await _readiness_response(response, db)
+    global _startup_components
+    if _startup_components is not None:
+        return DetailedHealthCheck(
+            status="healthy",
+            timestamp=_now(),
+            environment=get_settings().environment,
+            components=_startup_components,
+        )
+
+    async with get_session_factory()() as db:
+        result = await _readiness_response(response, db)
+    if result.status == "healthy":
+        _startup_components = result.components
+    return result
 
 
 @router.get("/detailed", response_model=DetailedHealthCheck)

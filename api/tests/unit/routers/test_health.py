@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -10,6 +11,18 @@ from src.routers import health
 class DummyDB:
     async def execute(self, statement):
         return None
+
+
+@asynccontextmanager
+async def _dummy_session():
+    yield DummyDB()
+
+
+@pytest.fixture(autouse=True)
+def fresh_process(monkeypatch):
+    """Each test starts as a process whose readiness check has not passed yet."""
+    monkeypatch.setattr(health, "_startup_components", None)
+    monkeypatch.setattr(health, "get_session_factory", lambda: _dummy_session)
 
 
 def _settings(s3_configured: bool = True):
@@ -117,7 +130,7 @@ async def test_ready_returns_healthy_when_core_dependencies_pass(monkeypatch):
     monkeypatch.setattr(health, "build_health_components", _build_components)
 
     response = Response()
-    result = await health.ready_health_check(response, DummyDB())
+    result = await health.ready_health_check(response)
 
     assert response.status_code == 200
     assert result.status == "healthy"
@@ -145,10 +158,76 @@ async def test_ready_returns_503_when_required_dependency_fails(monkeypatch, com
     monkeypatch.setattr(health, "build_health_components", build_components)
 
     response = Response()
-    result = await health.ready_health_check(response, DummyDB())
+    result = await health.ready_health_check(response)
 
     assert response.status_code == 503
     assert result.status == "unhealthy"
+
+
+async def _unhealthy_database(db, settings):
+    components = await _build_components(db, settings)
+    components["database"] = {"status": "unhealthy", "type": "postgresql", "error": "ConnectionRefusedError"}
+    return components
+
+
+async def _fail_if_called(*args, **kwargs):
+    raise AssertionError("readiness should not contact dependencies once it has passed")
+
+
+def _no_session():
+    raise AssertionError("readiness should not open a database session once it has passed")
+
+
+@pytest.mark.asyncio
+async def test_ready_checks_dependencies_until_they_pass_once(monkeypatch):
+    monkeypatch.setattr(health, "get_settings", _settings)
+    monkeypatch.setattr(health, "build_health_components", _unhealthy_database)
+
+    response = Response()
+    result = await health.ready_health_check(response)
+    assert response.status_code == 503
+    assert result.components["database"]["status"] == "unhealthy"
+
+    monkeypatch.setattr(health, "build_health_components", _build_components)
+    response = Response()
+    result = await health.ready_health_check(response)
+    assert response.status_code == 200
+    assert result.status == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_ready_does_not_contact_dependencies_after_passing_once(monkeypatch):
+    monkeypatch.setattr(health, "get_settings", _settings)
+    monkeypatch.setattr(health, "build_health_components", _build_components)
+    await health.ready_health_check(Response())
+
+    # A later dependency outage must not turn every replica unready at once.
+    monkeypatch.setattr(health, "build_health_components", _fail_if_called)
+    monkeypatch.setattr(health, "check_database", _fail_if_called)
+    monkeypatch.setattr(health, "check_redis", _fail_if_called)
+    monkeypatch.setattr(health, "check_s3", _fail_if_called)
+    monkeypatch.setattr(health, "get_session_factory", _no_session)
+
+    response = Response()
+    result = await health.ready_health_check(response)
+
+    assert response.status_code == 200
+    assert result.status == "healthy"
+    assert result.components == await _build_components(None, None)
+
+
+@pytest.mark.asyncio
+async def test_detailed_checks_live_after_ready_has_passed(monkeypatch):
+    monkeypatch.setattr(health, "get_settings", _settings)
+    monkeypatch.setattr(health, "build_health_components", _build_components)
+    await health.ready_health_check(Response())
+
+    monkeypatch.setattr(health, "build_health_components", _unhealthy_database)
+    response = Response()
+    result = await health.detailed_health_check(response, DummyDB())
+
+    assert response.status_code == 503
+    assert result.components["database"]["status"] == "unhealthy"
 
 
 @pytest.mark.asyncio
@@ -158,7 +237,7 @@ async def test_s3_not_configured_does_not_fail_readiness(monkeypatch):
     monkeypatch.setattr(health, "check_redis", lambda settings: _healthy_component("redis", "redis"))
 
     response = Response()
-    result = await health.ready_health_check(response, DummyDB())
+    result = await health.ready_health_check(response)
 
     assert response.status_code == 200
     assert result.status == "healthy"

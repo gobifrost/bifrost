@@ -45,7 +45,7 @@ class TestHealthCheck:
         assert data["status"] == "healthy"
 
     def test_ready_health_check(self, e2e_client):
-        """Verify readiness probe checks core serving dependencies."""
+        """Verify readiness reports the core serving dependencies it found healthy."""
         response = e2e_client.get("/health/ready")
         assert response.status_code == 200
         data = response.json()
