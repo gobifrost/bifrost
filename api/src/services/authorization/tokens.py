@@ -527,15 +527,17 @@ def _now() -> int:
 
 
 @overload
-async def issue_access_token(subject: RuntimeSubject) -> IssuedAccessToken: ...
+async def issue_access_token(subject: RuntimeSubject) -> IssuedAccessToken:
+    """Mint a credential for an authorized live runtime."""
 
 
 @overload
-async def issue_access_token(subject: HumanSubject) -> IssuedHumanAccessToken: ...
+async def issue_access_token(subject: HumanSubject) -> IssuedHumanAccessToken:
+    """Mint a credential for an eligible human and durable session family."""
 
 
 async def issue_access_token(subject: RuntimeSubject | HumanSubject) -> IssuedAccessToken | IssuedHumanAccessToken:
-    """Mint a ``ver: 1`` access token for a live run.
+    """Mint a ``ver: 1`` access token for a live run or eligible human.
 
     Every fact and the epoch come from one read-only ``REPEATABLE READ``
     transaction on the primary, set before its first statement: read-only

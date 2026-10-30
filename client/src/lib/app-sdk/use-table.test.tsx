@@ -64,7 +64,7 @@ describe("useTable", () => {
     delete (globalThis as AuthGlobal).__BIFROST_PLATFORM_AUTH_V1__;
   });
 
-  it("recovers the snapshot after the session cookie lapses (v1 renewal)", async () => {
+  it("recovers the snapshot after an exact refresh challenge (v1 renewal)", async () => {
     const refreshAccessToken = vi.fn(async () => true);
     (globalThis as AuthGlobal).__BIFROST_PLATFORM_AUTH_V1__ = {
       getAccessToken: () => null,
@@ -76,7 +76,15 @@ describe("useTable", () => {
       "fetch",
       vi
         .fn()
-        .mockResolvedValueOnce(new Response('{"detail":"Not authenticated"}', { status: 401 }))
+        .mockResolvedValueOnce(
+          new Response('{"detail":"Refresh required"}', {
+            status: 401,
+            headers: {
+              "WWW-Authenticate":
+                'Bearer error="invalid_token", error_description="refresh_required"',
+            },
+          }),
+        )
         .mockResolvedValueOnce(makePage(["p1", "p2"], 2)),
     );
 

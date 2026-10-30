@@ -1004,6 +1004,8 @@ async def logout(
             try:
                 session_id = UUID(raw_session_id)
             except ValueError:
+                # A malformed refresh SID cannot replace the validated access
+                # token's session. Logout still revokes that proven family.
                 pass
 
     if session_id is not None:

@@ -206,7 +206,7 @@ async def test_revocation_after_refresh_candidate_mint_refuses_rotation(
         allow_mint.set()
 
         with pytest.raises(human_sessions.HumanSessionUnavailable):
-            await rotation
+            _ = await rotation
 
 
 async def test_access_candidate_mints_after_preflight_and_before_mutation_transaction(
@@ -255,6 +255,6 @@ async def test_cancelled_session_issue_rolls_back_its_flushed_registry_row(
         issue.cancel()
 
         with pytest.raises(asyncio.CancelledError):
-            await issue
+            _ = await issue
 
         assert await _active_session_count(async_engine, user.id) == 0
