@@ -15,14 +15,22 @@ import socket
 import ssl
 from asyncio import sleep
 from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
-from typing import TypeVar
+from typing import Protocol, TypeVar
 
 from sqlalchemy.exc import DBAPIError
 
 logger = logging.getLogger(__name__)
 
-S = TypeVar("S")
+
+class RetrySession(Protocol):
+    """The part of ``AsyncSession`` the retry loop manages."""
+
+    async def close(self) -> None: ...
+
+    async def invalidate(self) -> None: ...
+
+
+S = TypeVar("S", bound=RetrySession)
 T = TypeVar("T")
 
 # Class 08 is "connection exception"; 57P01-57P03 are the server shutting
@@ -47,6 +55,9 @@ _UNREACHABLE_ERRNOS = frozenset(
 RETRY_INITIAL_DELAY_SECONDS = 0.5
 RETRY_MAX_DELAY_SECONDS = 8.0
 RETRY_BUDGET_SECONDS = 60.0
+# Releasing an attempt's session never takes longer than this; asyncpg's
+# own graceful close gives up after 2 s and then drops the socket.
+CLEANUP_SECONDS = 2.0
 
 
 class RetryBudget:
@@ -99,8 +110,27 @@ def is_database_unavailable(exc: BaseException) -> bool:
     )
 
 
+async def _release(db: RetrySession, *, discard: bool) -> None:
+    """Hand back a session's connection within a bounded time.
+
+    After a failed, timed-out or cancelled attempt the connection's state is
+    unknown and the server may not answer, so it is discarded (invalidated)
+    rather than rolled back: a graceful rollback against an unreachable
+    server would wait on TCP, and SQLAlchemy shields a session's close from
+    cancellation. Either way cleanup stops after CLEANUP_SECONDS.
+    """
+    try:
+        async with asyncio.timeout(CLEANUP_SECONDS):
+            if discard:
+                await db.invalidate()
+            else:
+                await db.close()
+    except Exception:
+        logger.warning("Could not release a database session cleanly", exc_info=True)
+
+
 async def run_with_database_retry(
-    session_factory: Callable[[], AbstractAsyncContextManager[S]],
+    session_factory: Callable[[], S],
     unit: Callable[[S], Awaitable[T]],
     *,
     description: str,
@@ -117,7 +147,9 @@ async def run_with_database_retry(
     Errors that are not :func:`is_database_unavailable` are raised at once.
     Once ``budget`` is spent, the last attempt's error is raised (an attempt
     still in flight is cut off with ``TimeoutError``) and no write sharing
-    the budget makes another attempt. Cancellation is never caught.
+    the budget makes another attempt. Releasing each attempt's session is
+    bounded too, so the call returns within the budget plus
+    CLEANUP_SECONDS. Cancellation is never caught.
     """
     loop = asyncio.get_running_loop()
     deadline = budget.deadline()
@@ -126,11 +158,14 @@ async def run_with_database_retry(
     delay = RETRY_INITIAL_DELAY_SECONDS
     attempt = 1
     while True:
+        db = session_factory()
         try:
             async with asyncio.timeout_at(deadline):
-                async with session_factory() as db:
-                    return await unit(db)
-        except Exception as exc:
+                result = await unit(db)
+        except BaseException as exc:
+            await _release(db, discard=True)
+            if not isinstance(exc, Exception):
+                raise
             remaining = deadline - loop.time()
             if remaining <= 0 or not is_database_unavailable(exc):
                 raise
@@ -147,3 +182,6 @@ async def run_with_database_retry(
                 raise
             delay = min(delay * 2, RETRY_MAX_DELAY_SECONDS)
             attempt += 1
+        else:
+            await _release(db, discard=False)
+            return result

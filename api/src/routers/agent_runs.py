@@ -11,7 +11,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import desc, func, literal_column, or_, select, update
+from sqlalchemy import desc, func, literal_column, or_, select
 from sqlalchemy.orm import selectinload
 
 from shared.run_lineage import principal_lineage
@@ -69,6 +69,7 @@ from src.services.authorization.enforce import (
 from src.services.execution.agent_run_access import agent_run_visibility_conditions
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
+    request_agent_run_cancel,
     wait_for_agent_run_result,
 )
 from src.services.execution.dry_run import evaluate_against_prompt
@@ -635,35 +636,18 @@ async def cancel_agent_run(
         # Already cancelling — idempotent
         return {"run_id": str(run_id), "status": "cancelling"}
 
-    redis_client = get_redis_client()
-
-    if agent_run.status == "queued":
-        # Claim cancellation only while the run is still queued. If the worker
-        # wins this transition, refresh and continue through running cancel.
-        cancelled_at = datetime.now(timezone.utc)
-        cancel_result = await db.execute(
-            update(AgentRun)
-            .where(AgentRun.id == run_id, AgentRun.status == "queued")
-            .values(status="cancelled", completed_at=cancelled_at)
-            .returning(AgentRun.id)
-        )
-        if cancel_result.scalar_one_or_none() is None:
-            await db.refresh(agent_run)
-        else:
-            await db.commit()
-            return {"run_id": str(run_id), "status": "cancelled"}
-
-    if agent_run.status in TERMINAL_STATUSES:
+    cancel = await request_agent_run_cancel(db, run_id)
+    if not cancel.accepted:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot cancel agent run with status '{agent_run.status}'",
+            detail=f"Cannot cancel agent run with status '{cancel.status}'",
         )
+    if cancel.status == "cancelled":
+        return {"run_id": str(run_id), "status": "cancelled"}
 
-    # Running — set to cancelling and signal via Redis
-    agent_run.status = "cancelling"
-    agent_run.cancel_requested_at = datetime.now(timezone.utc)
-    await db.commit()
-
+    # Running — now cancelling; signal its worker via Redis
+    await db.refresh(agent_run)
+    redis_client = get_redis_client()
     await redis_client.set_agent_run_cancel_flag(str(run_id))
     logger.info(f"Set cancel flag for agent run {log_safe(run_id)}")
 

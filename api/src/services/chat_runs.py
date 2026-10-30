@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
@@ -42,6 +43,7 @@ from src.services.chat_attachments import ChatAttachmentError, ChatAttachmentSer
 from src.services.chat_errors import public_chat_error_message
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
+    request_agent_run_cancel,
     wait_for_agent_run_result,
 )
 
@@ -539,16 +541,18 @@ async def cancel_chat_run(
     if run.status == "cancelling":
         return ChatRunCancelResponse(run_id=run.id, status="cancelling")
 
-    if run.status == "queued":
-        run.status = "cancelled"
-        run.completed_at = datetime.now(timezone.utc)
-    else:
+    cancel = await request_agent_run_cancel(db, run.id)
+    if not cancel.accepted:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel chat run with status '{cancel.status}'",
+        )
+    new_status: Literal["cancelled", "cancelling"] = (
+        "cancelling" if cancel.status == "cancelling" else "cancelled"
+    )
+    if new_status == "cancelling":
         async with get_redis() as redis:
             await redis.setex(f"bifrost:agent_run:{run_id}:cancel", 3600, "1")
-        run.status = "cancelling"
-        run.cancel_requested_at = datetime.now(timezone.utc)
-
-    await db.commit()
 
     if run.conversation_id is None:
         raise RuntimeError("Chat run has no conversation")
@@ -557,15 +561,15 @@ async def cancel_chat_run(
         conversation_id=run.conversation_id,
         run_id=run.id,
         kind="run_status",
-        status=run.status,
+        status=new_status,
         payload=ChatStreamChunk(
             type="run_status",
             conversation_id=str(run.conversation_id),
-            run_status=run.status,
+            run_status=new_status,
         ),
     )
 
-    return ChatRunCancelResponse(run_id=run.id, status=run.status)
+    return ChatRunCancelResponse(run_id=run.id, status=new_status)
 
 
 async def _conversation_message_count(db: DbSession, conversation_id: UUID) -> int:

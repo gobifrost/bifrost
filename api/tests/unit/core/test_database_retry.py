@@ -22,13 +22,27 @@ REFUSED = ConnectionRefusedError(111, "Connect call failed ('10.96.0.12', 5432)"
 
 
 class FakeSession:
-    """Stands in for an AsyncSession used as ``async with factory() as db``."""
+    """Stands in for AsyncSession's ``close`` and ``invalidate``."""
 
-    async def __aenter__(self) -> FakeSession:
-        return self
+    def __init__(self) -> None:
+        self.released: str | None = None
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        return None
+    async def close(self) -> None:
+        self.released = "closed"
+
+    async def invalidate(self) -> None:
+        self.released = "invalidated"
+
+
+class StalledSession(FakeSession):
+    """A session whose connection's server stopped answering: releasing it
+    gracefully, or even invalidating it, never finishes."""
+
+    async def close(self) -> None:
+        await asyncio.Event().wait()
+
+    async def invalidate(self) -> None:
+        await asyncio.Event().wait()
 
 
 class FakeSessionFactory:
@@ -96,6 +110,8 @@ async def test_retries_in_a_fresh_session_until_the_database_answers():
     assert result == "written"
     assert seen == factory.sessions
     assert len(set(map(id, seen))) == 4
+    # Failed attempts drop their connection; the one that worked returns it.
+    assert [db.released for db in seen] == ["invalidated"] * 3 + ["closed"]
     assert [call.args[0] for call in sleep.await_args_list] == [0.5, 1.0, 2.0]
 
 
@@ -160,6 +176,24 @@ async def test_an_attempt_still_running_at_the_deadline_is_cut_off():
         await run_with_database_retry(
             factory, hung_unit, description="test write", budget=RetryBudget(0.05)
         )
+
+    assert loop.time() - started < 1
+
+
+@pytest.mark.asyncio
+async def test_a_session_whose_cleanup_stalls_does_not_hold_the_call_open():
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    async def hung_unit(db: StalledSession) -> str:
+        await asyncio.Event().wait()
+        return "never"
+
+    with patch("src.core.database_retry.CLEANUP_SECONDS", 0.05):
+        with pytest.raises(TimeoutError):
+            await run_with_database_retry(
+                StalledSession, hung_unit, description="test write", budget=RetryBudget(0.05)
+            )
 
     assert loop.time() - started < 1
 

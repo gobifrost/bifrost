@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Coroutine
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
@@ -74,6 +75,49 @@ def _chat_chunk_status(chunk_type: str) -> str:
         return "cancelled"
     return "failed"
 
+
+
+# The longest a chat run's terminal write waits for its partial assistant
+# message to be saved. The wait comes out of the run's retry budget.
+PARTIAL_MESSAGE_WAIT_SECONDS = 5.0
+# Partial-message saves no longer waited for, kept referenced until they end.
+_unawaited_partial_saves: set[asyncio.Task[Any]] = set()
+
+
+def _partial_save_ended(task: asyncio.Task[Any]) -> None:
+    _unawaited_partial_saves.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        logger.warning(
+            "Could not save a chat run's partial assistant message",
+            exc_info=task.exception(),
+        )
+
+
+async def _save_partial_message(
+    save: Coroutine[Any, Any, Any],
+    *,
+    run_id: str,
+    budget: RetryBudget,
+) -> None:
+    """Give an interrupted chat run's partial message a bounded chance to save.
+
+    The run's terminal write keeps the partial text in its output, so
+    recording the outcome never waits on this message: after
+    PARTIAL_MESSAGE_WAIT_SECONDS (or what is left of the run's budget) the
+    terminal write goes ahead and the save finishes, or fails, on its own.
+    A save that cannot reach the database could otherwise hold the run open
+    indefinitely, since its session's close is shielded from cancellation.
+    """
+    task = asyncio.ensure_future(save)
+    _unawaited_partial_saves.add(task)
+    task.add_done_callback(_partial_save_ended)
+    remaining = budget.deadline() - asyncio.get_running_loop().time()
+    await asyncio.wait({task}, timeout=max(0.0, min(PARTIAL_MESSAGE_WAIT_SECONDS, remaining)))
+    if not task.done():
+        logger.warning(
+            "Chat run %s: recording the outcome before its partial message is saved",
+            run_id,
+        )
 
 
 async def _load_acting_user(
@@ -977,23 +1021,16 @@ class AgentRunConsumer:
             except asyncio.CancelledError:
                 duration_ms = int((time.time() - start_time) * 1000)
                 if streamed_content and assistant_message_id is not None:
-                    # The run's terminal write below keeps the partial text in
-                    # its output, so recording the outcome never waits on
-                    # this message: a database outage here must not leave the
-                    # run live or turn a timeout into a generic failure.
-                    try:
-                        await executor._save_message(
+                    await _save_partial_message(
+                        executor._save_message(
                             conversation_id=conversation.id,
                             role=MessageRole.ASSISTANT,
                             content=streamed_content,
                             message_id=UUID(assistant_message_id),
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Chat run %s: could not save the partial assistant message",
-                            run_id,
-                            exc_info=True,
-                        )
+                        ),
+                        run_id=run_id,
+                        budget=terminal_budget,
+                    )
 
                 usage = executor._active_usage
                 if usage is not None:
