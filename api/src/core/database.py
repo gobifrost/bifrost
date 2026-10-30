@@ -67,7 +67,7 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
     return cleaned_url, connect_args
 
 
-def create_pool_engine(url: str, *, pool: str, pool_size: int, max_overflow: int, pool_timeout: int, echo: bool = False) -> AsyncEngine:
+def create_pool_engine(url: str, *, pool_size: int, max_overflow: int, pool_timeout: int, echo: bool = False) -> AsyncEngine:
     """An engine for one of the process's connection pools.
 
     There is no pre-ping. After a database or pooler restart, the first
@@ -81,9 +81,6 @@ def create_pool_engine(url: str, *, pool: str, pool_size: int, max_overflow: int
     own (PgBouncer ``client_idle_timeout``, disabled by default). A timeout
     shorter than ``pool_recycle`` would fail the first statement on every
     connection that sat idle that long.
-
-    Connections are tagged ``bifrost:<pool>`` so pg_stat_activity and the
-    pooler can tell the pools apart.
     """
     db_url, connect_args = _prepare_asyncpg_url(url)
     return create_async_engine(
@@ -94,7 +91,7 @@ def create_pool_engine(url: str, *, pool: str, pool_size: int, max_overflow: int
         pool_pre_ping=False,
         pool_timeout=pool_timeout,
         pool_recycle=1800,  # Recycle connections every 30 min
-        connect_args={**connect_args, "server_settings": {"application_name": f"bifrost:{pool}"}},
+        connect_args=connect_args,
     )
 
 
@@ -130,7 +127,6 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
 
         _engine = create_pool_engine(
             settings.database_url,
-            pool="main",
             pool_size=settings.database_pool_size,
             max_overflow=settings.database_max_overflow,
             pool_timeout=30,  # Fail fast when pool is exhausted
@@ -237,7 +233,6 @@ def _get_dispatch_session_factory() -> async_sessionmaker[AsyncSession]:
         settings = get_settings()
         _dispatch_engine = create_pool_engine(
             settings.database_url,
-            pool="dispatch",
             pool_size=settings.database_dispatch_pool_size,
             max_overflow=settings.database_dispatch_max_overflow,
             pool_timeout=30,
@@ -271,7 +266,6 @@ def _get_liveness_session_factory() -> async_sessionmaker[AsyncSession]:
         settings = get_settings()
         _liveness_engine = create_pool_engine(
             settings.database_url,
-            pool="liveness",
             pool_size=1,
             max_overflow=0,
             pool_timeout=10,

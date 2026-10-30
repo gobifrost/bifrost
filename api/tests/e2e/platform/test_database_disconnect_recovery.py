@@ -9,9 +9,9 @@ away can each still fail once.
 """
 
 import asyncio
+import contextlib
 import os
 import time
-import uuid
 
 import pytest
 import sqlalchemy as sa
@@ -28,8 +28,19 @@ def _direct_url() -> str:
     return url.set(drivername="postgresql+asyncpg", host="postgres", port=5432).render_as_string(hide_password=False)
 
 
-async def _terminate(application_name: str) -> list[bool]:
-    """Terminate every backend with this application name and wait until they have exited.
+async def _warm(engine, count: int) -> list[int]:
+    """Open ``count`` pool connections at once and return their backend pids.
+
+    Holding them together makes them distinct connections; leaving the block
+    returns them to the pool idle.
+    """
+    async with contextlib.AsyncExitStack() as stack:
+        connections = [await stack.enter_async_context(engine.connect()) for _ in range(count)]
+        return [int((await connection.execute(sa.text("select pg_backend_pid()"))).scalar_one()) for connection in connections]
+
+
+async def _terminate(pids: list[int]) -> list[bool]:
+    """Terminate these backends and wait until they have exited.
 
     pg_terminate_backend only signals the backend, so the next query could
     otherwise still reach a live connection.
@@ -40,16 +51,16 @@ async def _terminate(application_name: str) -> list[bool]:
             terminated = list(
                 (
                     await connection.execute(
-                        sa.text("select pg_terminate_backend(pid) from pg_stat_activity where application_name = :name"),
-                        {"name": application_name},
+                        sa.text("select pg_terminate_backend(pid) from unnest(cast(:pids as int[])) as pid"),
+                        {"pids": pids},
                     )
                 ).scalars()
             )
             deadline = time.monotonic() + 10
             while (
                 await connection.execute(
-                    sa.text("select count(*) from pg_stat_activity where application_name = :name"),
-                    {"name": application_name},
+                    sa.text("select count(*) from pg_stat_activity where pid = any(cast(:pids as int[]))"),
+                    {"pids": pids},
                 )
             ).scalar_one():
                 assert time.monotonic() < deadline, "terminated backends did not exit"
@@ -66,12 +77,11 @@ async def _select_one(engine) -> int:
 
 @pytest.mark.asyncio
 async def test_one_failed_statement_then_the_whole_pool_reconnects():
-    pool = f"disconnect-test-{uuid.uuid4().hex[:8]}"
-    engine = create_pool_engine(_direct_url(), pool=pool, pool_size=3, max_overflow=0, pool_timeout=10)
+    engine = create_pool_engine(_direct_url(), pool_size=3, max_overflow=0, pool_timeout=10)
     try:
         # Warm three idle connections.
-        await asyncio.gather(*(_select_one(engine) for _ in range(3)))
-        assert await _terminate(f"bifrost:{pool}") == [True, True, True]
+        pids = await _warm(engine, 3)
+        assert await _terminate(pids) == [True, True, True]
 
         with pytest.raises(DBAPIError) as failed:
             await _select_one(engine)
