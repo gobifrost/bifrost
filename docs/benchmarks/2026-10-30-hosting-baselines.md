@@ -434,7 +434,7 @@ the unchanged test receives terminal status and fetches the committed result
 while the same gate remains held. All 31 focused consumer/event/log-durability
 checks and API lint/type checks passed, and bounded final review found no
 actionable issue. Existing result-ready timing retains its boundary; notification
-timing is recorded separately. The protected queue remains pending, with no
+timing is recorded separately. The protected queue was pending at that local check, with no
 production deployment or claim that this explains the 33-second run.
 
 Two CodeQL review comments flagged direct task awaits in the new tests'
@@ -453,7 +453,10 @@ threads are resolved, and post-merge CI, Scorecard and CodeQL passed. Required
 Product Updates metadata activation is [PR #1152](https://github.com/gobifrost/bifrost/pull/1152):
 canonical validation and the actual image-preparation helper confirmed the
 approved Fixed summary in the bundle while retaining the authentication notice
-and prompt. The metadata-only PR is now in the protected queue. No production
+and prompt. PR #1152 merged at 22:06:52 UTC as
+`ad3ff6a6df1c97709c0fdbb3ef14f7eb3e5fe02e`; protected queue CI `41134480963`
+passed the full backend/client/E2E/browser/build gates. Post-merge CI,
+Scorecard and CodeQL also passed. No production
 deployment or full 33-second-regression resolution is claimed.
 
 The one-worker deployed-build concurrency diagnostic also completed:
@@ -538,8 +541,46 @@ were unchanged. Declared tenant component CPU reservation increased from
 explicit compute-versus-latency baseline, not a code optimization, memory
 improvement, node-packing result or cloud price. Full private comparison and
 limitations are in `notes/portal-worker-cpu-comparison-20261030.json`.
-The corresponding newer-runtime 2-CPU arm is predeclared separately and running
-under the same host lock; preserve both existing 650m results unchanged.
+The newer-runtime 2-CPU arm is also verified in
+`runs/import-portal-overlap-current-worker2cpu-r1`: 100 unique correct, traced
+actions, one worker pod/UID, three sampled graph children in both passes, no
+API replacement and verified cleanup at 22:09:35 UTC. It uses the same frozen
+profile and private fixture with newer runtime image `b46ffb19c`.
+
+| Newer frozen build, import graph | Sequential p50 / p95, ms | Three-submission burst p50 / p95, ms |
+|---|---:|---:|
+| 650m worker, pass 1 | 520.61 / 675.79 | 1504.38 / 1761.52 |
+| 2-CPU worker, pass 1 | 457.55 / 571.42 | 658.52 / 716.63 |
+| 650m worker, pass 2 | 535.47 / 654.13 | 1614.50 / 1657.65 |
+| 2-CPU worker, pass 2 | 466.89 / 531.10 | 639.37 / 698.04 |
+
+Its 2-CPU control sequential p50/p95 were 52.10/85.77 and 52.81/62.98 ms;
+burst values were 55.73/65.25 and 67.10/72.46 ms. Graph burst medians fell
+56.23% and 60.40% relative to the same newer image at 650m; sequential medians
+fell 12.11% and 12.81%. At 2 CPU, resolver-wall medians were 177.18/181.86 ms
+sequentially and 288.14/281.86 ms in bursts, with 25 calls per execution.
+Burst compile-wall medians were 84.79/84.87 ms, with 18 compiles unchanged.
+The remaining concurrency penalty is smaller at the production worker's CPU
+limit. This is not evidence of exponential growth or a full production replay.
+
+Idle working sets were worker 270.4, API 312.2, PostgreSQL 227.0, pooler 14.3,
+client 8.0 and Redis 6.1 MiB, total 838.0 MiB. The corresponding newer 650m
+arm had worker 273.8, API 315.6, PostgreSQL 239.3, pooler 14.6, client 8.4 and
+Redis 6.0 MiB, total 857.7 MiB. These idle samples do not establish a memory
+optimization; limits and declared reservations remain unchanged between each
+CPU pair. The two frozen runtimes also span multiple source changes, so their
+difference cannot be assigned to one commit. Idle database observations and
+all per-class CPU, RSS, working-set and private-child samples remain in the
+raw records.
+
+`notes/portal-current-worker-cpu-comparison-20261030.json` verifies the newer
+pair. `notes/portal-concurrency-matrix-20261030.json` reconciles all four cells:
+400 correct, traced actions; the same captured fixture; 25 lookups and 18
+compiles for every graph execution; actual worker CPU requests/limits of 650m
+or 2 with 2 GiB memory throughout; and verified cleanup. Each cell remains a
+single local import-only diagnostic; observer cost was not independently
+measured. The original workflow body, its SDK/provider fanout, browser
+delivery and 33-second outlier remain outside this diagnostic.
 
 ### Initial Import Pipeline Diagnostic
 

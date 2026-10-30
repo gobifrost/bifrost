@@ -1,11 +1,13 @@
 # Interactive Integration Benchmark
 
-Status: deployed/current private portal import diagnostics completed with
-40 sequential and 100 sequential/burst correct, traced actions each. Reviewing app result delivery is the urgent
-repair; hosting confirmation, soak and recovery work remain in the plan.
+Status: captured portal import diagnostics completed on two frozen runtimes
+at both 650m and 2 CPU: 400 correct, traced sequential/burst actions. Earlier
+sequential diagnostics remain retained. The app completion repair and its
+metadata activation are merged; production validation is separate. Hosting
+confirmation, soak and recovery work remain in the plan.
 The V2 browser/fake-integration fixture remains planned.
 
-## Immediate Priority: App Result Delivery
+## Immediate Priority: App Workflow Latency
 
 Workflows serve as APIs for apps, so verify the complete app-facing result
 path before accepting a platform latency improvement. Historical fixes
@@ -13,33 +15,34 @@ path before accepting a platform latency improvement. Historical fixes
 callers immediately after the authoritative completion transaction commits.
 That ordering survives the RabbitMQ retirement. V2 apps switched to async
 submission and WebSocket/GET result delivery in `082db6c5c` (#487). Their
-terminal execution notification still follows log acknowledgement/recovery,
+deployed terminal execution notification follows log acknowledgement/recovery,
 completion-event emission and derived aggregates. This leaves an observable
 post-commit dependency on bookkeeping despite the sync fix.
 
-Move the existing terminal notification after commit and sync-result wakeup,
-before follow-up bookkeeping. Preserve lease fencing, result/SDK-write/log
-durability, payload shape and existing transports. Verify blocked follow-up
-work cannot delay either async success or failure. One zero-job integration
-test should exercise the canonical consumer with real PostgreSQL, Redis,
-API WebSocket and result GET, holding metrics open while checking the result.
-Do not add a second execution path, client polling or detached work.
+PR #1151 moves the existing terminal notification after commit and sync-result
+wakeup, before follow-up bookkeeping. It preserves lease fencing,
+result/SDK-write/log durability, payload shape and existing transports.
+Focused checks verify blocked follow-up work cannot delay either async success
+or failure. One zero-job integration test exercises the canonical consumer
+with real PostgreSQL, Redis, API WebSocket and result GET, holding metrics
+open while checking the result. It adds no second execution path, client
+polling or detached work.
 
 This post-commit delivery gap is separate from the original 14.86 seconds
 between durable worker timestamps minus engine duration. Fixing it does not
 by itself explain that earlier interval or the 33-second outlier. Continue
 recording import, engine, completion commit and app delivery independently.
 
-The repair merged in PR #1151 as `700e6334f`: the unchanged real-transport test failed
-with metrics held on main, then passed after correction. All 31 focused
+The repair merged in PR #1151 as `700e6334f`: the unchanged real-transport test
+failed with metrics held on main, then passed after correction. All 31 focused
 consumer, event and log-durability checks, API quality and bounded final review
 passed. The protected merge queue then passed full backend/client tests,
 backend E2E, critical browser smoke, quality and candidate builds. Required
-metadata activation PR #1152 is queued after canonical validation and prepared
-bundle verification. Production validation remains separate; no deployment
-was performed.
+metadata activation PR #1152 merged as `ad3ff6a6d` after canonical validation,
+prepared bundle verification and the full protected queue. Production
+validation remains separate; no deployment was performed.
 
-The next import diagnostic uses `m-import-overlap`: the same full M catalog,
+The completed import diagnostics use `m-import-overlap`: the same full M catalog,
 private captured import graph and resource limits, but exactly one warm/max
 worker. Each of two passes has ten sequential executions and five rounds of
 three concurrent submissions for both graph and control, 100 executions total.
@@ -53,7 +56,12 @@ previous sequential results unchanged.
 The deployed-build arm now establishes import-specific concurrency sensitivity:
 graph worker-wall medians rose from 674/686 ms sequentially to 1737/1743 ms
 in three-submission bursts, while the small control remained near 50–63 ms.
-This is not evidence of exponential growth. The next arm,
+The newer-runtime 650m arm also completed all 100 correct, traced actions with
+verified cleanup. Its graph medians were 521/535 ms sequentially and
+1504/1615 ms in bursts; the control remained near 51–59 ms. The newer runtime
+improves the baseline while retaining import-heavy concurrency sensitivity.
+
+This is not evidence of exponential growth. The second CPU profile,
 `m-import-overlap-worker-2cpu`, changes only worker CPU from 650m to 2 and
 raises the namespace CPU quota from 4 to 5 so that the larger reservation
 can be admitted. Keep API/database limits, memory, workload and image fixed.
@@ -66,13 +74,22 @@ sequential medians fell about 4.9% to 641/653 ms. Burst compile-wall medians
 fell to 90/92 ms; resolver-call walls remained 655/696 ms. This supports a
 local worker-CPU contribution and leaves a separate source-loading cost to
 isolate. Tenant component CPU reservation increased from 3250m to 4600m;
-memory limits did not change. The newer-runtime 2-CPU arm is running under
-the same immutable profile/image/fixture checks and shared host lock.
-The newer-runtime arm also completed all 100 correct, traced actions with
-verified cleanup. Its graph medians were 521/535 ms sequentially and
-1504/1615 ms in bursts; the control remained near 51–59 ms. The newer runtime
-improves the baseline while retaining import-heavy concurrency sensitivity.
+memory limits did not change. The newer-runtime 2-CPU arm also completed all
+100 correct, traced actions with verified cleanup. Its sequential graph medians
+were 458/467 ms and burst medians 659/639 ms, 56–60% lower in bursts than
+the same image at 650m. All four cells retain the same 25 lookups and 18
+compiles per graph execution; actual resource requests/limits and 400 outcomes
+are reconciled in `notes/portal-concurrency-matrix-20261030.json` outside the
+repository. This establishes local CPU sensitivity, while leaving the full
+production outlier unresolved.
 
+The next urgent regression step is the existing planned interactive fixture:
+exercise the original shape of SDK/integration reads and bounded provider
+fanout through the shared fake service and V2 result transport. Keep worker
+CPU matched explicitly and retain the import-only controls. This will separate
+source loading, body/SDK/provider work, completion commit and app delivery
+without treating additional CPU allocation as a code optimization or replacing
+the original production observations.
 A source audit of deployed and newer completion paths found that the normal
 result handler removes the child from active processes before awaiting terminal
 bookkeeping. Byte-budget admission drops the workflow reservation on its next
