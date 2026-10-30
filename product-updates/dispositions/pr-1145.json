@@ -7,7 +7,7 @@
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1145",
-      "Program authorization: Jack (2026-10-29) approved fixing database-blip churn found by the capacity-harness pooler drills (#1142)."
+      "https://github.com/gobifrost/bifrost/issues/1142"
     ]
   }
 }
