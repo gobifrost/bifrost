@@ -148,3 +148,23 @@ bounded cloud/temporary-secret approval remains unanswered and shared-file
 ownership is not established. Reply digest:
 `4789ec990b55a75a9512d8d7b0cb5705d4f62a44aa02d30c69b4fbfed844d502`.
 No approval, shared ownership transfer or acceptance follows from that exchange.
+
+## Publication gate
+
+Verified origin/main is still `e611d31bbba3d7601980271c774cad5e821b1e97`.
+The tested contribution contains that base. Local source head before this gate
+record was `ed4c8ea66` (the only change after tested `d54161906` ignores the cf
+CLI cache without deleting it). A draft PR body was prepared with all incomplete
+acceptance gates explicit. There is no existing Pyodide PR or matching issue.
+
+`git push -u origin t3/cloudflare-pyodide-workflow-spike` failed:
+`Permission to gobifrost/bifrost.git denied to MTG-Thomas.` No remote branch,
+PR or normal CI evidence was created. No alternate credential, transport,
+identity or fork was tried. Publication needs an approved write path for the
+existing actor/target or a maintainer to publish the exact reviewed branch.
+
+At this stopping point, cloud spending/test-secret authorization remains
+unanswered, physical CPU termination remains unproven, and shared remote
+adapter ownership remains uncoordinated. More local passing tests do not remove
+these gates. The full backend goal is incomplete; no merge/deploy or maintainer
+acceptance is claimed.
