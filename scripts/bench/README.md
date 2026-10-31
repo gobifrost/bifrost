@@ -8,7 +8,9 @@ Saved portal/import baselines, offline verification, replay recipes and remainin
 completion gates: [baseline guide](../../docs/benchmarks/2026-10-31-benchmark-baseline-and-completion.md)
 and [machine-readable record](../../docs/benchmarks/baselines/portal-2026-10-31.json).
 The [storage and retention result](../../docs/benchmarks/2026-10-31-storage-retention-results.md)
-records the measured payload-shape difference and canonical deletion rehearsal.
+records the payload-shape difference and canonical deletion rehearsal. The
+[first full-seed SDK confirmation](../../docs/benchmarks/2026-10-31-capacity-confirmation-results.md)
+retains the correctness pass and host-invalid capacity window.
 Earlier design: `docs/superpowers/specs/2026-10-27-performance-benchmark-suite-design.md`.
 
 ```bash

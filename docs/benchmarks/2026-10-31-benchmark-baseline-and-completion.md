@@ -145,12 +145,13 @@ specific fix and regression coverage before the next diagnostic.
 
 These finish the existing deliverable; further memory reduction is not a gate.
 
-1. **Correctness and 4 GB capacity.** Reconcile the outstanding concurrent SDK
-   table-creation repair with current main, then freeze the candidate. The
-   earlier current-runtime confirmation had zero correct durable SDK results.
-   Run a fresh full-seed concurrent preflight and matched 8 GiB/4 decimal GB
-   capacity measurements. The first 4 GB attempt was invalid before traffic;
-   its startup-policy fix is source-verified, not a measured pass. Preserve
+1. **Correctness and 4 GB capacity.** The frozen concurrent table-creation
+   candidate passed its full-seed SDK preflight: 127/127 correct results. Its
+   first long confirmation reconciled 3,735/3,735 arrivals correctly, but
+   external host CPU and disk contention invalidated the capacity measurement;
+   [the complete outcome is retained](2026-10-31-capacity-confirmation-results.md).
+   A fresh declared host-attribution diagnostic and matched 8 GiB/4 decimal GB
+   capacity measurements remain necessary. Preserve
    correctness/latency/reliability/backlog gates and measure the whole tenant,
    including Postgres, Pooler and Redis.
 2. **Sustained mixed load.** Execute the immutable five-segment confirmation
