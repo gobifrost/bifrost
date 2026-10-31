@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+	getKubernetesStatus: vi.fn(),
 	getKubernetesExecution: vi.fn(),
 	updateKubernetesExecution: vi.fn(),
 	updateKubernetesPolicy: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock("@/services/kubernetes", async (importOriginal) => ({
 	).KubernetesRequestError,
 	getKubernetesExecution: (...args: unknown[]) =>
 		mocks.getKubernetesExecution(...args),
+	getKubernetesStatus: (...args: unknown[]) => mocks.getKubernetesStatus(...args),
 	updateKubernetesExecution: (...args: unknown[]) =>
 		mocks.updateKubernetesExecution(...args),
 	updateKubernetesPolicy: (...args: unknown[]) =>
@@ -61,10 +63,25 @@ const settings = {
 
 describe("KubernetesSettings", () => {
 	beforeEach(() => {
+		mocks.getKubernetesStatus.mockReset();
+		mocks.getKubernetesStatus.mockResolvedValue({ configured: true });
 		mocks.getKubernetesExecution.mockReset();
 		mocks.updateKubernetesExecution.mockReset();
 		mocks.updateKubernetesPolicy.mockReset();
 		mocks.getKubernetesExecution.mockResolvedValue(settings);
+	});
+
+	it("keeps scaling and concurrency editable without Kubernetes, while disabling pod controls", async () => {
+		mocks.getKubernetesStatus.mockResolvedValue({ configured: false });
+		render(<KubernetesSettings />);
+		expect(await screen.findByLabelText("Max Workers")).toBeEnabled();
+		expect(screen.getByText(/Kubernetes isolation is unavailable/)).toBeVisible();
+		expect(screen.getByLabelText("Isolate Build Jobs")).toBeDisabled();
+		expect(screen.getByLabelText("Max Isolated Pods")).toBeDisabled();
+		expect(screen.getByLabelText("App Deploys")).toBeDisabled();
+		for (const input of screen.getAllByLabelText("Max Parallel Runs")) {
+			expect(input).toBeEnabled();
+		}
 	});
 
 	it("shows the scaling and isolation policy", async () => {

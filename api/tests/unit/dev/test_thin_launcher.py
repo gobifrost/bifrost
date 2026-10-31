@@ -584,10 +584,17 @@ async def test_launcher_loads_both_templates_before_measuring_its_baseline(agent
 
 
 @pytest.mark.asyncio
-async def test_agent_run_forks_from_the_agent_template_and_reports_agent_exit(agent_templates) -> None:
+@pytest.mark.parametrize("handler", ["agent.run", "agent.summarize", "agent.summarize_backfill"])
+async def test_agent_task_forks_from_the_agent_template_and_reports_agent_exit(agent_templates, handler) -> None:
     socket = Mock(send=AsyncMock())
     launcher = _agent_launcher(socket)
     command = _agent_run_command()
+    summary = handler != "agent.run"
+    extra = {"handler": handler, "worker_id": str(launcher.identity.incarnation_id)} if summary else {}
+    if summary:
+        command["action"] = "agent_summary"
+        command["payload"].update(extra)
+        command["payload"]["message"]["claim_id"] = str(uuid4())
 
     await launcher.command(command, generation=1)
 
@@ -595,10 +602,11 @@ async def test_agent_run_forks_from_the_agent_template_and_reports_agent_exit(ag
     assert template is agent_templates[0] and template.profile == "agent" and template.starts == 1
     route_id, work_recv, result_send = template.forks[0]
     assert route_id == "agent-route"
-    assert work_recv.recv() == {"message": command["payload"]["message"]}
+    assert work_recv.recv() == {"message": command["payload"]["message"], **extra}
     assert _sent(socket)[0] == {"reply": "cmd-agent-route", "result": {"pid": os.getpid()}}
     assert launcher.inventory()["routes"] == [{
-        "route_id": "agent-route", "kind": "agent_run", "subject_id": "run-1",
+        "route_id": "agent-route", "kind": "agent_summary" if summary else "agent_run", "subject_id": "run-1",
+        **({"handler": handler, "claim_id": command["payload"]["message"]["claim_id"]} if summary else {}),
         "pid": os.getpid(), "memory_request_bytes": 32 * 1024 * 1024,
     }]
 
@@ -611,7 +619,8 @@ async def test_agent_run_forks_from_the_agent_template_and_reports_agent_exit(ag
         "error_type": None, "error": None,
     }
     assert list(launcher.pending_terminal_inventory.values()) == [{
-        "event_id": exit_event["_event_id"], "route_id": "agent-route", "kind": "agent_run",
+        "event_id": exit_event["_event_id"], "route_id": "agent-route", "kind": "agent_summary" if summary else "agent_run",
+        **({"handler": handler, "claim_id": command["payload"]["message"]["claim_id"]} if summary else {}),
         "subject_id": "run-1", "memory_request_bytes": 32 * 1024 * 1024,
     }]
     assert launcher.children == {}

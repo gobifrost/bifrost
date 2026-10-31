@@ -62,20 +62,39 @@ enabling automatic updates; queued manual jobs do not need draining.
 The API owns canonical execution control. During its lifespan, each API replica
 starts the remote-control host. When an authenticated physical launcher
 connects, that host constructs one canonical `PoolWorker` control instance for
-that launcher. It claims and reconciles workflows, supervised services, and
-local PlatformJobs, retaining the existing PostgreSQL fencing, result,
+that launcher. It claims and reconciles workflows, agent runs, summaries,
+supervised services, and local PlatformJobs, retaining the PostgreSQL fencing, result,
 cancellation, timeout, and memory-admission paths. The physical launcher is a
 small standard-library supervisor: it owns its process templates and child
 processes, reports their inventory and cgroup telemetry, and carries out
-commands from the API. It does not own ORM state or durable claim loops.
+commands from the API. The supervisor does not own durable claim loops. Its
+handler children retain their required database, Redis, and repository access.
 
-`ApiAgentExecutor` is separate. Each API process has one instance, admitted
-from that API process's measured memory, and it claims only `agent.run`,
-`agent.summarize`, and `agent.summarize_backfill`. It never starts a workflow,
-service, PlatformJob, Kubernetes-control, or package loop. Agent capacity is
-therefore an API capacity domain; workflow, service, and PlatformJob capacity
-belongs to the connected physical launcher that will execute them. Adding or
-warming physical workers does not add agent capacity.
+Agent runs, `agent.summarize`, and `agent.summarize_backfill` execute in separate
+children of the physical launcher's agent template. No summary executor runs in
+the API. Their memory reservations share that launcher's measured budget with
+workflows, services, and PlatformJobs. Each worker admits one live summary and
+one backfill summary at a time; backfills therefore cannot occupy the live
+summary slot. Additional capable launchers add capacity for both handlers.
+
+The hello advertises exact handler versions and the summary claim protocol.
+Older launchers retain workflow/agent-run eligibility, but cannot claim summary
+work. Upgrade the APIs and provide at least one capable launcher when rolling
+out remote summaries; otherwise summaries remain queued rather than executing
+in an API process.
+
+Each summary attempt carries its `ExecutionWorkerClaim` UUID into the child and
+reconnect inventory. Every short summary write transaction locks the physical
+worker before the run and then checks that exact claim. Regeneration replaces
+the dispatch and invalidates earlier claims, including attempts on the same
+worker. No database lock or connection is held over a provider request. A stale
+attempt may already have consumed provider tokens; its result cannot overwrite
+the current attempt. This is fencing, not exactly-once model execution.
+
+Backfill progress is aggregated from durable member outcomes instead of
+incrementing counters on delivery. Terminal replay and recovery after a child
+commits but exits before reporting therefore do not double count progress.
+Regeneration retains membership in an active backfill so the parent can finish.
 
 The supported `python -m src.worker.main` and `python -m src.scheduler.main`
 commands are retained. They now start the lightweight launcher while preserving
@@ -90,7 +109,8 @@ The remote-control host authenticates and fences launcher enrollment, then
 reconciles the launcher's inventory against durable rows before treating a
 child as live. A Kubernetes Job and Pod supply their UIDs automatically at
 enrollment; operators do not configure a separate enrollment system. A fenced
-API owner performs all durable callbacks. On a rolling API handoff, a launcher
+API owner performs canonical dispatch and lifecycle callbacks; children persist
+their typed results through ordinary handlers. On a rolling API handoff, a launcher
 keeps its children alive while a successor API replica authenticates and adopts
 its inventory. Losing a WebSocket therefore does not itself fail or kill
 children. A connected launcher can instead be asked to drain through the
@@ -237,6 +257,11 @@ loss only when its side effects are idempotent. Otherwise set
 
 ## Capacity and resource policy
 
+Physical worker provisioning also supports an explicitly selected external
+provider through the [external worker capacity protocol](external-worker-capacity.md).
+That adapter shares canonical demand, admission, and fencing; it does not
+introduce another job queue or status system.
+
 `PlatformJobPolicy` is an execution guardrail, not a second container scheduler.
 Every job type must declare a timeout, retry behavior, minimum memory headroom,
 and admission/hard memory ratios. The API control worker evaluates those values
@@ -251,10 +276,33 @@ and wall-clock duration, include operational margin, and exercise low-memory
 deferral and timeout behavior in tests. These measurements inform policy and
 deployment guidance; they are not per-job CPU or memory reservations.
 
-API agent execution is admitted separately from measured API memory. Do not use
-worker count, warm workers, or isolated-build capacity as agent capacity. Size
-API replicas and their memory limit for the agent work they are configured to
-serve, in addition to HTTP and control-host overhead.
+Agent execution and live/backfill summaries share physical-launcher admission
+with workflow, service, and local PlatformJob work. Worker count adds capacity
+for those handlers; API replicas need memory for HTTP and control-host overhead.
+The capacity controller includes pending supervised services using the same
+eligibility query as fenced service claiming. It excludes disabled, stopped,
+suppressed, backed-off, already-owned, inactive, and incorrectly scoped services;
+their declared or learned workflow memory request determines fit and sizing.
+Service organization changes synchronize the workflow and definition in one
+transaction and require the current attempt to stop first. They preserve
+operator lifecycle policy and do not restart a stopped service.
+
+Due local PlatformJobs contribute capacity demand even when no executor exists
+to mark them as waiting for memory. Planning reads job metadata, not payloads,
+and uses the same per-type concurrency override as claiming. Running and
+cancelling jobs on every backend occupy those limits and resource locks.
+Queued candidates occupy virtual places in claim priority order, so serial or
+resource-constrained backlogs do not create parallel capacity they cannot use.
+This is a read-only capacity prediction; the canonical claimant still acquires
+the transactional locks, lease, and memory reservation before execution.
+
+Memory fit does not imply that a limited handler has room. The owner-fenced
+worker heartbeat persists physical per-handler occupancy, including superseded
+tasks still exiting. Planning and claiming share the one-live-summary and
+one-backfill-summary limits. New workers add one slot for each; existing workers
+with unreported occupancy cannot cover summary demand. Live and backfill slots
+remain independent, and active reservations consume their handler slot as well
+as memory. This telemetry adds no job claim or execution authority.
 
 Every isolated (build-class) job type also persists an explainable
 `memory_required_bytes` from a learned memory profile: Solution deploys keyed
@@ -410,7 +458,8 @@ application environment is production.
 | Enqueue, progress, completion, notifications | `api/src/services/platform_jobs.py` |
 | Handler and policy contracts | `api/src/jobs/platform/base.py` |
 | Registered job types | `api/src/jobs/platform/registry.py` |
-| API agent executor | `api/src/worker/api_agent.py` |
+| Physical-launcher agent and summary dispatch | `api/src/worker/remote/agent_route.py` |
+| Agent and summary child runner | `api/src/jobs/agent_run_child.py` |
 | API remote-control host and launcher-specific `PoolWorker` | `api/src/worker/remote/host.py` |
 | Physical launcher and process supervisor | `api/src/worker/remote/launcher.py` |
 | Retained worker/scheduler launcher entrypoints | `api/src/worker/main.py`, `api/src/scheduler/main.py` |

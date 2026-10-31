@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +44,12 @@ from src.services.deployment_environment import (
     set_variables,
     unread_environment_variables,
 )
+from src.services.worker_pool.external_client import (
+    CapacityProtocolError,
+    CapacityProviderUnavailable,
+    ExternalCapacityClient,
+)
+from src.services.worker_pool.external_policy import validate_external_policy
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +90,13 @@ class KubernetesPolicy:
 class PlatformJobPolicyView(Protocol):
     job_type: str
     policy: PlatformJobPolicy
+
+
+def effective_job_max_concurrency(
+    definition: PlatformJobPolicyView, policy: KubernetesPolicy,
+) -> int | None:
+    """Resolve the same product concurrency policy for claims and capacity."""
+    return policy.max_concurrency.get(definition.job_type, definition.policy.max_concurrency)
 
 
 #: The scalar settings an admin edits on the page (and the import fills).
@@ -400,6 +414,27 @@ class KubernetesExecutionService:
             raise ValueError(f"A value is required for: {', '.join(missing)}")
 
         memory_request_mib = _memory_request_mib()
+        from src.config import get_settings
+
+        settings = get_settings()
+        profile = None
+        if settings.worker_capacity_url or settings.worker_capacity_token:
+            # Fetch before the policy advisory lock; a slow provider must not
+            # block other administrators while holding the settings lock.
+            try:
+                if not settings.worker_capacity_url or not settings.worker_capacity_token:
+                    raise ValueError("Incomplete capacity provider configuration")
+                async with httpx.AsyncClient() as http:
+                    client = ExternalCapacityClient(
+                        settings.worker_capacity_url,
+                        settings.worker_capacity_token.get_secret_value(),
+                        http=http,
+                    )
+                    profile = await client.profile()
+            except (httpx.HTTPError, CapacityProtocolError, ValueError) as exc:
+                raise CapacityProviderUnavailable(
+                    "Cannot verify capacity provider limits; worker settings were not saved"
+                ) from exc
 
         def mutate(payload: dict[str, Any]) -> bool:
             for name, value in changes.items():
@@ -407,6 +442,11 @@ class KubernetesExecutionService:
             validate_policy(
                 _policy_from(payload), memory_request_mib=memory_request_mib
             )
+            if profile is not None:
+                validate_external_policy(
+                    _policy_from(payload), profile,
+                    max_lifetime_seconds=settings.pool_max_lifetime_seconds,
+                )
             return bool(changes)
 
         await _merge(self.session, mutate, updated_by=updated_by)
@@ -415,10 +455,7 @@ class KubernetesExecutionService:
         self, definition: PlatformJobPolicyView
     ) -> int | None:
         """UI override wins when set, otherwise the code policy default."""
-        overrides = (await load_kubernetes_policy(self.session)).max_concurrency
-        if definition.job_type in overrides:
-            return overrides[definition.job_type]
-        return definition.policy.max_concurrency
+        return effective_job_max_concurrency(definition, await load_kubernetes_policy(self.session))
 
     async def describe(self, environ: Mapping[str, str]) -> KubernetesExecutionSettings:
         """Everything Settings -> Kubernetes shows."""

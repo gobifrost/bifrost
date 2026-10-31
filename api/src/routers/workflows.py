@@ -843,9 +843,12 @@ async def register_workflow(
     # 6b. Reconcile the service definition with the registered row: service
     # rows get an ensured definition; rows converting away from service are
     # parked (disabled + stopped) so stale desire can never launch them.
-    from src.services.service_lifecycle import sync_definition_for_registration
+    from src.services.service_lifecycle import ServiceConflictError, sync_definition_for_registration
 
-    await sync_definition_for_registration(db, workflow, created_by=user.email)
+    try:
+        await sync_definition_for_registration(db, workflow, created_by=user.email)
+    except ServiceConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     await emit_audit(
         db,
@@ -1153,6 +1156,14 @@ async def update_workflow(
         # Update tags if provided
         if request.tags is not None:
             workflow.tags = request.tags
+
+        if workflow.type == "service" and "organization_id" in request.model_fields_set:
+            from src.services.service_lifecycle import ServiceConflictError, sync_service_organization
+
+            try:
+                await sync_service_organization(db, workflow)
+            except ServiceConflictError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
         await db.commit()
         await db.refresh(workflow)

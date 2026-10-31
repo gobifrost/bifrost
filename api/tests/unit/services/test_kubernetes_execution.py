@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from pydantic import SecretStr
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.jobs.platform.application_deploy import (
@@ -29,6 +32,8 @@ from src.models.orm.config import SystemConfig
 from src.services import kubernetes_control
 from src.services import kubernetes_execution as kube
 from src.services import platform_jobs as service
+from shared.models import WorkerCapacityProfile
+from src.services.worker_pool.external_client import CapacityProtocolError, CapacityProviderUnavailable
 
 
 async def _clear(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -303,8 +308,81 @@ async def test_a_consistent_change_of_both_fields_is_accepted(
 def _memory_request(monkeypatch: pytest.MonkeyPatch, mib: int) -> None:
     monkeypatch.setattr(
         "src.config.get_settings",
-        lambda: SimpleNamespace(pool_worker_memory_request_mib=mib),
+        lambda: SimpleNamespace(
+            pool_worker_memory_request_mib=mib,
+            worker_capacity_url=None, worker_capacity_token=None,
+        ),
     )
+
+
+@pytest.fixture
+def external_provider(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    monkeypatch.setattr("src.config.get_settings", lambda: SimpleNamespace(
+        pool_worker_memory_request_mib=512,
+        worker_capacity_url="https://capacity.invalid",
+        worker_capacity_token=SecretStr("synthetic-capacity-token-" + "x" * 32),
+        pool_max_lifetime_seconds=900,
+    ))
+    profile = WorkerCapacityProfile(
+        protocol_version=1, scope="test-provider", worker_version="test-worker",
+        memory_limit_bytes=4096 * 2**20, max_workers=2, max_lifetime_seconds=900,
+    )
+    fetch = AsyncMock(return_value=profile)
+    monkeypatch.setattr(kube.ExternalCapacityClient, "profile", fetch)
+    return fetch
+
+
+async def test_external_policy_is_checked_before_lock_and_can_repair_incompatible_defaults(
+    db_session: AsyncSession, async_session_factory: async_sessionmaker[AsyncSession],
+    external_provider: AsyncMock,
+) -> None:
+    profile = external_provider.return_value
+
+    async def fetch():
+        async with async_session_factory() as other:
+            assert await other.scalar(text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"), {
+                "key": f"{kube.KUBERNETES_CONFIG_CATEGORY}/{kube.KUBERNETES_CONFIG_KEY}",
+            }), "Provider I/O must not hold the policy advisory lock"
+        return profile
+
+    external_provider.side_effect = fetch
+    await kube.KubernetesExecutionService(db_session).update_policy({
+        "worker_memory_mib": 4096, "largest_worker_mib": 4096, "max_workers": 2,
+    }, updated_by="admin")
+    policy = await kube.load_kubernetes_policy(db_session)
+    assert (policy.worker_memory_mib, policy.largest_worker_mib, policy.max_workers) == (4096, 4096, 2)
+    assert policy.idle_seconds == 300
+    external_provider.assert_awaited_once()
+
+
+async def test_external_policy_fetches_fresh_limits_and_rejects_without_changing_storage(
+    db_session: AsyncSession, external_provider: AsyncMock,
+) -> None:
+    svc = kube.KubernetesExecutionService(db_session)
+    await svc.update_policy({
+        "worker_memory_mib": 4096, "largest_worker_mib": 4096, "max_workers": 2,
+    }, updated_by="admin")
+    before = await kube._stored_payload(db_session)
+    external_provider.return_value = external_provider.return_value.model_copy(update={"max_workers": 1})
+    with pytest.raises(ValueError, match="max_workers.*provider limit"):
+        await svc.update_policy({"idle_seconds": 30}, updated_by="admin")
+    assert await kube._stored_payload(db_session) == before
+    assert external_provider.await_count == 2
+
+
+@pytest.mark.parametrize("failure", [
+    httpx.ReadTimeout("synthetic timeout with private origin"),
+    CapacityProtocolError("synthetic malformed capabilities"),
+])
+async def test_external_provider_failure_leaves_policy_unchanged(
+    db_session: AsyncSession, external_provider: AsyncMock, failure: Exception,
+) -> None:
+    external_provider.side_effect = failure
+    before = await kube._stored_payload(db_session)
+    with pytest.raises(CapacityProviderUnavailable, match="settings were not saved") as error:
+        await kube.KubernetesExecutionService(db_session).update_policy({"idle_seconds": 30}, updated_by="admin")
+    assert str(failure) not in str(error.value)
+    assert await kube._stored_payload(db_session) == before
 
 
 async def test_worker_memory_below_the_deployments_request_is_rejected(

@@ -43,10 +43,12 @@ class LostRuns:
     workflow_runs: list[UUID] = field(default_factory=list)
     # Agent runs it had claimed; announce_lost_runs ends those still live.
     agent_runs: list[UUID] = field(default_factory=list)
+    summary_runs: list[UUID] = field(default_factory=list)
 
     def extend(self, other: LostRuns) -> None:
         self.workflow_runs.extend(other.workflow_runs)
         self.agent_runs.extend(other.agent_runs)
+        self.summary_runs.extend(other.summary_runs)
 
 
 async def end_runs_of_lost_worker(
@@ -133,12 +135,18 @@ async def end_runs_of_lost_worker(
                 "agent_runs": len(agent_ids),
             },
         )
-    return LostRuns(workflow_runs=ended, agent_runs=agent_ids)
+    return LostRuns(workflow_runs=ended, agent_runs=agent_ids, summary_runs=summary_ids)
 
 
 async def announce_lost_runs(lost: LostRuns) -> None:
     """End a lost executor's live agent runs and wake every caller of its runs."""
     await announce_ended_runs(lost.workflow_runs)
+    from src.services.execution.summary_dispatch import report_unclaimed_summary
+
+    for run_id in lost.summary_runs:
+        # The child may have committed its result before it was lost, but not
+        # yet refreshed backfill progress. Canonical aggregation is replay-safe.
+        await report_unclaimed_summary(run_id, {}, EXECUTOR_LOST)
     for run_id in lost.agent_runs:
         try:
             await announce_ended_agent_run(run_id, EXECUTOR_LOST)

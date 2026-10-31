@@ -18,6 +18,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 from uuid import UUID
 
@@ -192,7 +193,7 @@ def _truncate(value: Any, max_len: int) -> str | None:
 
 
 async def summarize_run(
-    run_id: UUID, session_factory: Callable[[], AsyncSession]
+    run_id: UUID, session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]]
 ) -> None:
     """Summarize a completed run. Idempotent on ``summary_status='completed'``.
 

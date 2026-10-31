@@ -159,6 +159,37 @@ class TestSyncDown:
     """Tests for sync_down operation."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("restore", ["workspace", "checkpoint"])
+    async def test_empty_repository_survives_file_only_storage_round_trip(self, manager, tmp_path, restore):
+        import shutil
+
+        from git import Repo
+
+        source = tmp_path / "source"
+        Repo.init(source, initial_branch="main")
+        target = tmp_path / "fresh-worker"
+
+        async def download_files(_command):
+            for path in source.rglob("*"):
+                if path.is_file():
+                    destination = target / path.relative_to(source)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(path, destination)
+            assert not (target / ".git" / "objects").exists()
+            assert not (target / ".git" / "refs").exists()
+
+        with patch.object(manager, "_run_aws_cli", side_effect=download_files), \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
+            if restore == "workspace":
+                await manager.sync_down(target)
+            else:
+                await manager.restore_workspace_checkpoint(str(uuid4()), target)
+
+        restored = Repo(target)
+        assert restored.git.symbolic_ref("HEAD") == "refs/heads/main"
+        assert not restored.head.is_valid()
+
+    @pytest.mark.asyncio
     async def test_calls_aws_sync_with_correct_args(self, manager, tmp_path):
         with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run, \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):

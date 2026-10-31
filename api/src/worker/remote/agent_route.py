@@ -37,6 +37,7 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent, Conversation
 from src.services.execution.agent_run_dispatch import release_agent_run
 from src.services.execution.agent_run_service import announce_ended_agent_run
+from src.services.execution.summary_dispatch import fail_remote_summary, release_summary, report_unclaimed_summary
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,8 @@ class AgentTransport(Protocol):
 class AgentRoute:
     route_id: str
     run_id: UUID
+    handler: str = "agent.run"
+    claim_id: UUID | None = None
     exited: asyncio.Future[None] = field(
         default_factory=lambda: asyncio.get_running_loop().create_future()
     )
@@ -89,21 +92,26 @@ class RemoteAgentConsumer:
     def tracks(self, route_id: Any) -> bool:
         return isinstance(route_id, str) and route_id in self.routes
 
-    async def process_message(self, body: dict[str, Any]) -> None:
+    async def process_message(self, body: dict[str, Any], *, handler: str = "agent.run") -> None:
         """Launch one claimed run and wait until its child has ended."""
         run_id = UUID(str(body["run_id"]))
         dispatch_id = str(body["dispatch_id"])
         request_bytes = self.transport.memory_request_bytes(dispatch_id)
         if request_bytes is None:
             raise RuntimeError(f"Agent run {run_id} holds no memory reservation")
-        route = AgentRoute(route_id=f"agent:{run_id}:{uuid4()}", run_id=run_id)
+        if handler not in ("agent.run", "agent.summarize", "agent.summarize_backfill"):
+            raise ValueError(f"Unknown agent handler: {handler}")
+        claim_id = UUID(body["claim_id"]) if handler != "agent.run" else None
+        route = AgentRoute(route_id=f"agent:{run_id}:{uuid4()}", run_id=run_id, handler=handler, claim_id=claim_id)
         self.routes[route.route_id] = route
         try:
-            await self.transport.request("agent_run", {
+            await self.transport.request("agent_run" if handler == "agent.run" else "agent_summary", {
                 "route_id": route.route_id,
                 "run_id": str(run_id),
                 "message": body,
                 "memory_request_bytes": request_bytes,
+                **({"handler": handler} if handler != "agent.run" else {}),
+                **({"worker_id": str(self.worker_id)} if handler != "agent.run" else {}),
             })
         except (ConnectionError, TimeoutError):
             # The launcher may have forked before its reply was lost. Keep
@@ -112,22 +120,26 @@ class RemoteAgentConsumer:
         except MemoryError:
             # Refused before forking: the run waits for a worker with room.
             self.routes.pop(route.route_id, None)
-            await release_agent_run(
-                worker_id=self.worker_id, run_id=run_id, dispatch_id=UUID(dispatch_id)
-            )
+            if handler == "agent.run":
+                await release_agent_run(worker_id=self.worker_id, run_id=run_id, dispatch_id=UUID(dispatch_id))
+            else:
+                assert claim_id is not None
+                await release_summary(worker_id=self.worker_id, run_id=run_id, dispatch_id=UUID(dispatch_id), claim_id=claim_id)
             return
         except Exception as exc:
             self.routes.pop(route.route_id, None)
             logger.error("Launcher refused an agent run", extra={"run_id": str(run_id)}, exc_info=True)
-            await announce_ended_agent_run(run_id, f"{LAUNCH_ERROR}: {exc}")
+            await self._settle(route, f"{LAUNCH_ERROR}: {exc}")
             return
         await self.supervise(route)
 
-    def adopt(self, route_id: str, run_id: UUID) -> AgentRoute:
+    def adopt(self, route_id: str, run_id: UUID, *, handler: str = "agent.run", claim_id: UUID | None = None) -> AgentRoute:
         """Attach to a child an earlier owner launched."""
         route = self.routes.get(route_id)
         if route is None:
-            route = AgentRoute(route_id=route_id, run_id=run_id)
+            if handler != "agent.run" and claim_id is None:
+                raise ValueError("A summary route requires its canonical claim identity")
+            route = AgentRoute(route_id=route_id, run_id=run_id, handler=handler, claim_id=claim_id)
             self.routes[route_id] = route
         return route
 
@@ -153,7 +165,7 @@ class RemoteAgentConsumer:
             if now >= deadline:
                 reason = ("TimeoutError", f"Agent run exceeded its {timeout}s timeout")
             else:
-                if cancel_deadline is None and await get_redis_client().check_agent_run_cancel_flag(
+                if route.handler == "agent.run" and cancel_deadline is None and await get_redis_client().check_agent_run_cancel_flag(
                     str(route.run_id)
                 ):
                     cancel_deadline = now + CANCEL_GRACE_SECONDS
@@ -181,6 +193,8 @@ class RemoteAgentConsumer:
             detail = event.get("error") or event.get("error_type") or "exited abnormally"
             await self._settle(route, f"{EXIT_ERROR}: {detail}")
             return
+        if route.handler != "agent.run":
+            await report_unclaimed_summary(route.run_id, {}, "")
         self._resolve(route)
 
     async def reject_missing(self, inventory: dict[str, Any]) -> None:
@@ -217,7 +231,7 @@ class RemoteAgentConsumer:
                 # Retiring the launcher stops the child anyway.
                 logger.warning("Could not terminate an agent child at shutdown", exc_info=True)
             try:
-                await announce_ended_agent_run(route.run_id, error)
+                await self._record_failure(route, error)
             except Exception:
                 logger.exception(
                     "Could not end an agent run at shutdown", extra={"run_id": str(route.run_id)}
@@ -235,9 +249,16 @@ class RemoteAgentConsumer:
 
     async def _settle(self, route: AgentRoute, error: str) -> None:
         try:
-            await announce_ended_agent_run(route.run_id, error)
+            await self._record_failure(route, error)
         finally:
             self._resolve(route)
+
+    async def _record_failure(self, route: AgentRoute, error: str) -> None:
+        if route.handler == "agent.run":
+            await announce_ended_agent_run(route.run_id, error)
+        else:
+            assert route.claim_id is not None
+            await fail_remote_summary(worker_id=self.worker_id, run_id=route.run_id, claim_id=route.claim_id, reason=error)
 
     def _resolve(self, route: AgentRoute) -> None:
         self.routes.pop(route.route_id, None)

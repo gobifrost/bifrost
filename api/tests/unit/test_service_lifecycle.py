@@ -138,6 +138,54 @@ async def test_ensure_is_idempotent_and_preserves_policy(db_session):
 
 
 @pytest.mark.asyncio
+async def test_service_scope_sync_preserves_operator_policy(db_session):
+    definition, workflow = await _ensure(db_session, org_id=None)
+    org = await _ensure_org(db_session)
+    await service_lifecycle.stop_service(db_session, definition)
+    await service_lifecycle.update_policy(db_session, definition, restart_policy="never")
+    workflow.organization_id = org.id
+
+    again = await service_lifecycle.ensure_definition_for_workflow(
+        db_session, workflow, created_by="other@example.com",
+    )
+
+    assert again.id == definition.id
+    assert again.organization_id == org.id
+    assert again.desired_state == "stopped"
+    assert again.restart_policy == "never"
+
+
+@pytest.mark.asyncio
+async def test_service_scope_change_requires_current_attempt_to_stop(db_session):
+    definition, workflow = await _ensure(db_session)
+    attempt = await service_lifecycle.claim_eligible_service(
+        db_session, fits_bytes=AMPLE, worker_id="test",
+    )
+    assert attempt is not None
+    original_org = definition.organization_id
+    target = await _ensure_org(db_session)
+    workflow.organization_id = target.id
+
+    with pytest.raises(ServiceConflictError, match="Stop the service"):
+        await service_lifecycle.sync_service_organization(db_session, workflow)
+
+    assert definition.organization_id == original_org
+    assert attempt.stop_requested_at is None
+
+
+@pytest.mark.asyncio
+async def test_mismatched_service_scope_cannot_be_claimed(db_session):
+    definition, workflow = await _ensure(db_session)
+    workflow.organization_id = None
+    await db_session.flush()
+
+    assert await service_lifecycle.claim_eligible_service(
+        db_session, fits_bytes=AMPLE, worker_id="test",
+    ) is None
+    assert definition.organization_id is not None
+
+
+@pytest.mark.asyncio
 async def test_expired_remote_owner_cannot_claim_an_eligible_service(db_session):
     from src.worker.remote.fencing import LeaseRef, remote_owner_context
     from src.worker.remote.ownership import RemoteOwnerLease

@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, computed_field
+from pydantic import AliasChoices, Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +28,9 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    worker_capacity_url: str | None = Field(default=None, description="External physical-capacity provider HTTPS endpoint")
+    worker_capacity_token: SecretStr | None = Field(default=None, repr=False, exclude=True)
 
     # ==========================================================================
     # Environment

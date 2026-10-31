@@ -401,7 +401,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # ADDITIVE shared models; existing CLI contracts and minimum are unchanged.
     # Hosted App SDK provenance adds optional sdk_binding_api_major. Existing
     # clients can ignore the additive field; the CLI minimum remains unchanged.
-    "96bcbe77e663f3dfe4ac7b47ca592dce1de54c292252c5f5b020c57436095677"
+    # External worker-capacity protocol models are additive (2026-10-31).
+    # Removing only these three new shared models reproduces the preceding
+    # fingerprint exactly; no existing CLI request/response schema changed.
+    # The CLI minimum and frozen transition marker remain unchanged.
+    "46eb38222fdac731650a3edd5940afffa461d1ca351de41ddf2801be6a76160d"
 )
 
 

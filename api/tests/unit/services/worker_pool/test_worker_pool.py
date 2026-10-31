@@ -50,6 +50,8 @@ from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_ma
 GIB = 1024 * MIB
 
 SETTINGS = SimpleNamespace(
+    worker_capacity_url=None,
+    worker_capacity_token=None,
     kubernetes_job_namespace="test",
     kubernetes_job_image="api:test",
     kubernetes_job_configmap="config",
@@ -1239,6 +1241,7 @@ async def test_stale_remote_owner_cannot_control_its_replaced_worker(db) -> None
                 memory_pressured=False,
                 memory_budget_bytes=GIB,
                 memory_reserved_bytes=64 * MIB,
+                active_handler_counts={"agent.summarize": 1},
             )
             is None
         )
@@ -1257,6 +1260,7 @@ async def test_stale_remote_owner_cannot_control_its_replaced_worker(db) -> None
     assert worker.state == "ready"
     assert worker.active_runs == 0
     assert worker.runs_handled == 0
+    assert worker.active_handler_counts is None
     assert dispatch is None
 
 
@@ -1919,7 +1923,7 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:
     from src.services.platform_jobs import WAITING_FOR_MEMORY
 
     waiting = PlatformJob(
-        job_type="workspace.reindex", payload={}, requested_by_user_id=str(uuid4()),
+        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
         requested_by_email="person@contoso.example", requested_by_name="Contoso User",
         title="Contoso Reindex", memory_required_bytes=512 * MIB, phase=WAITING_FOR_MEMORY,
     )
@@ -2191,6 +2195,8 @@ def test_a_job_is_outdated_only_when_its_build_and_its_launcher_are_gone() -> No
     assert not live.outdated(job(launched_by=live_id)), "its launcher is live: never a loop"
     assert not live.outdated(job(state="starting")), "its build is unknown until admitted"
     assert not live.outdated(job(form="static")), "static executors roll with their Deployment"
+    assert not live.outdated(job(form="external", version="2.0", launched_by=live_id)), "current provider build stays ready"
+    assert not live.outdated(job(form="external", state="starting", launched_by=live_id)), "unadmitted resources do not rotate"
 
 
 async def test_live_controllers_expire_and_withdraw(db) -> None:  # type: ignore[no-untyped-def]

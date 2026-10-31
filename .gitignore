@@ -205,6 +205,8 @@ Desktop.ini
 
 AzuriteConfig
 .ruff_cache/
+# Cloudflare CLI local account selection and build cache
+/.cloudflare/
 .secrets
 *.zip
 home/
