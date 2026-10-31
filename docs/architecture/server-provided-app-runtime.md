@@ -47,7 +47,7 @@ its implementation into an App binding and a server-provided runtime.
 | React context, hooks, and rendering state | Authenticated requests and bounded auth recovery |
 | Header, theme controls, and presentation | WebSocket authentication, reconnect, and resubscribe |
 | Stable public SDK types and error classes | Table/file operations and response normalization |
-| Delegation to a scoped runtime client | Table snapshot reconciliation and event interpretation |
+| Pagination, snapshot refresh coalescing, and rendering | Table operations and stable SDK event normalization |
 | Runtime interface requirement | Workflow execution, streaming, terminal result handling |
 | Mapping runtime results to existing hook return values | User, organization, and branding resource normalization |
 
@@ -55,15 +55,20 @@ The runtime contains no React, React DOM, JSX, lucide, or host UI imports. An
 App continues to use its own React peer dependency and its own React root.
 
 Moving only HTTP and WebSocket primitives is insufficient. `useTable` and
-`useInfiniteTable` currently recognize `table_invalidated`; `useWorkflow`
-interprets execute responses and terminal execution states. Move those protocol
-decisions behind runtime operations as well. Hooks retain loading, error, and
-rendering behavior while observing stable runtime results.
+`useInfiniteTable` currently recognize `table_invalidated`; make those events
+an explicit stable SDK contract that the runtime produces, independent of future
+server frame names. Their existing refresh coalescing and pagination can stay
+in the binding. `useWorkflow` interprets execute responses and terminal
+execution states; move its request/stream/completion state machine into a plain
+runtime operation. Hooks retain loading, error, latest-run guards, and rendering
+behavior while observing stable runtime results.
 
-Keep the current filter validation and flattened row shape observable to Apps.
-The runtime owns filter-to-wire compilation and row normalization; their input
-and output behavior is part of v1 even though server expression/record formats
-are not. Cover this with the existing filter and table-hook regression cases.
+Keep current filter validation and flattened row shape observable to Apps.
+The binding may retain its pure filter/flattening helpers against the frozen SDK
+query and document shapes. The runtime translates those stable shapes to and
+from the current server expression/record formats. Cover this with existing
+filter and table-hook regression cases. Do not expose generated server DTO
+aliases as a supposedly stable interface that changes with each API build.
 
 Existing public calls such as `useTable`, `useWorkflowMutation`, `tables`, and
 `files` retain their documented signatures for the migration. Preserve public
@@ -102,9 +107,11 @@ interface AppRuntimeClientV1 {
 ```
 
 This is an architectural sketch, not the final exhaustive TypeScript contract.
-The implementation must inventory every export in `index.v2.ts` before freezing
-the first interface. Public query, result, subscription, cancellation, and error
-types belong to that interface; server wire DTOs remain internal to the runtime.
+The [public operation inventory](server-provided-app-runtime-contract-v1.md)
+records the current `index.v2.ts` surface. Match that inventory when freezing the
+first TypeScript interface. Public query, result, subscription, cancellation,
+and error types belong to that interface; server wire DTOs remain internal to
+the runtime.
 
 An App pins the runtime **interface**, while the instance selects the current
 implementation of that interface. There is no per-App database pointer to an
