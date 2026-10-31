@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
+    "outDir": "types",
+    "rootDir": "sdk_src",
+    "baseUrl": ".",
+    "paths": {
+      "@/lib/v1": ["sdk_src/v1.d.ts"]
+    }
+  },
+  "include": ["sdk_src/**/*.ts", "sdk_src/**/*.tsx"],
+  "exclude": ["sdk_src/**/*.test.ts", "sdk_src/**/*.test.tsx"]
+}

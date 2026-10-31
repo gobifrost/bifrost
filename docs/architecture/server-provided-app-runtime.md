@@ -1,7 +1,7 @@
 # Server-Hosted App SDK
 
 Date: 2026-10-30
-Status: Proposed design; no SDK delivery behavior has changed yet.
+Status: Implemented and locally verified; PR candidate, not released or deployed.
 
 ## Outcome
 
@@ -84,26 +84,41 @@ registry holds the factory, not a mutable current App, organization, token, or
 SDK instance. Preserve the existing provider and imperative-client behavior;
 hosting the SDK does not justify redesigning its public API.
 
-The binding must preserve every runtime export, including error constructors used
-with `instanceof`, and self-contained type declarations. An old binding and newer
-hosted SDK must continue to agree on that public surface. Future peer requirements
-or public API breaks need explicit migration; hosting does not eliminate them.
+The binding preserves the existing public exports and ships self-contained type
+declarations. Five small public error constructors stay in the binding and are
+supplied as factory peers, so SDK-thrown errors and App imports agree on
+`instanceof`. Hook and component exports are stable forwarding functions; their
+identity need not equal the private hosted implementation's functions. Their
+signatures and observable behavior remain the App-facing contract. Future React
+peer requirements or public API breaks need explicit migration.
 
 ## Loading and Local Development
 
-The factory must be ready before a binding synchronously forwards its exports.
-For deployed Apps, the host can load it before evaluating the App entry. For
-`bifrost app start` and `bifrost solution start`, the existing development proxy can
-load it before the Vite entry. Use the selected instance through the local proxy
-so local Solution workflow interception continues to work.
+The binding's `BifrostProvider` receives the existing `baseUrl`, loads the factory,
+and renders children inside the hosted provider only when ready. Child hooks
+remain synchronous. Loading and failure states are visible; failed loads do not
+silently render an empty App or choose an old bundled SDK. The host preloads the
+same factory before evaluating a deployed App entry, including cached entries.
 
-Direct `npm run dev` is also supported today. Its provider receives the API URL
-at render time, after module imports have evaluated. Factory injection alone does
-not solve that ordering. Resolve and test this mode before switching the package;
-do not silently require developers to edit App sources or discard direct Vite
-support. An asynchronous binding or integration with the existing scaffold's
-instance selection needs a separate, concrete proof of load ordering and export
-identity. This is a loader concern, not a reason to split the SDK's protocol code.
+This readiness provider also preserves direct `npm run dev` with a runtime-only
+API URL. A Vite 5.4.21 probe confirmed that top-level await fails both production
+build and dependency optimization with the unchanged scaffold's ES2020 targets.
+The readiness provider avoids raising those targets or changing App source/config.
+Production serves prebuilt JavaScript; it never runs a development server when an
+App opens.
+
+Imperative methods use the provider's selected SDK after configuration. Before a
+provider exists, preserve the existing same-origin default by loading lazily when
+called; do not guess a remote URL. A pending subscription returns cancellation
+immediately and must never open a socket after cancellation. A late same-origin
+load cannot overwrite the provider's later explicit selection. As before, a
+top-level call made before a remote provider exists cannot infer that provider's
+future API URL. This is an explicit boundary, not a new remote-origin fallback.
+
+The document shares factory selection by origin and public major across the
+host's and App's separately bundled loader copies. It never shares an instantiated
+SDK or App credentials. Both CLI preview commands continue through the selected
+instance's local proxy so local Solution workflow interception is preserved.
 
 Existing App source imports, provider props, and mount bootstrap should continue
 to work. Do not require App authors to pass a new runtime object. Preserve
@@ -127,17 +142,40 @@ JavaScript asset. The loader verifies the expected interface and artifact
 integrity before execution. Static assets contain no credentials or tenant data.
 Keep one delivery implementation for deployed Apps and local preview.
 
-Publish assets into an existing shared-storage abstraction before advertising
-hashes, so requests across serving replicas retrieve the same bytes. Retain
+Publish assets into the platform-owned `_platform/app-sdk/` shared-storage prefix
+before advertising hashes, so supporting replicas retrieve the same bytes. Retain
 advertised artifacts across rollouts; App deployment cleanup must not delete
-shared SDK assets. Verify endpoint readiness before migrating Apps during a
-rolling upgrade. This delivery work is independent of SDK behavior and does not
-require a new operations protocol.
+shared SDK assets. The descriptor is `/api/app-sdk/v1/manifest`; immutable scripts
+are `/api/app-sdk/assets/<sha256>.js` and register a content-derived factory ID.
+The descriptor separately hashes the final script, avoiding a self-referential
+registration key. Production images prebuild the artifact; a missing production
+artifact fails startup instead of compiling a replacement on a request.
 
-The instance selects the implementation; an App declares the binding interface
-it understands. The first version does not add a per-App pin to arbitrary old
-SDK packages. Such a pin would require the server to keep supporting those old
-packages' protocols. Do not introduce old bundled SDK fallbacks.
+There is no universal serving-replica membership source that proves an initial
+rolling upgrade has removed every API lacking these routes. During that first
+route introduction, a newly hosted App can show a load error until the ordinary
+instance upgrade finishes and its document reloads. Do not claim a nonexistent
+readiness gate, require draining, or hide this with an old SDK fallback. Shipping
+the routes in advance reduces this window but does not prove readiness when
+self-hosted operators skip intermediate releases. Later supported replicas share
+the retained artifact delivery contract.
+
+An App binding declares a public SDK API major; the instance selects the latest
+maintained implementation for that supported major. The first implementation
+serves major 1. A future genuinely breaking App-facing change introduces another
+major while existing Apps keep requesting their supported major. An ordinary
+instance upgrade must never silently advance that choice. Moving major requires
+an explicit binding/source migration and an App build.
+
+Supported majors use the same backend and receive current authentication and
+security behavior. This does not eliminate compatibility work: each major's
+promised semantics must remain implementable against the current backend. Keep
+an explicit supported-major matrix and contract tests. Removing an endpoint or
+capability that an older major needs requires preserving that behavior or an
+announced end-of-support migration. There is no arbitrary pin to frozen historical
+SDK releases, automatic major fallback, or separate backend API version required
+merely to host the SDK. The factory peer ABI has its own version, distinct from
+the public SDK major and the server wire contract.
 
 Load once for a document. A new document gets the current instance SDK; do not
 hot-swap hooks in a running tree, replay workflows, or force reload unsaved work.
@@ -153,8 +191,9 @@ migrated App appear stale or enqueue builds merely because its hash changed.
 Keep the App's original build fingerprint and build timestamp truthful.
 
 Use explicit build metadata to identify migrated bindings; legacy bundled Apps
-retain their current update checks until actually rebuilt. Carry trustworthy
-metadata through prebuilt archives too. Do not mark an old bundle as migrated
+retain their current update checks until actually rebuilt. Prebuilt archives
+carry CLI-produced metadata as the privileged deploy author's attestation,
+without independent JavaScript inspection. Do not mark an old bundle as migrated
 just because it was imported into a newer instance.
 
 Use the existing `application.sdk_update` PlatformJob for the one-time migration.
@@ -167,9 +206,22 @@ The **App SDK Upgrades** setting controls automatic binding rebuilds, including
 the migration. After migration, the hosted SDK follows the instance independently
 of this rebuild setting. Explain that distinction in its help text.
 
+The initial hosted-delivery change declares no automatic hosted migration. Manual
+SDK updates and new builds can adopt it after the normal instance upgrade; a
+later reviewed policy can permit automatic migration after dogfooding. Existing
+wire-contract automatic rules do not implicitly authorize this packaging change.
+
 Do not bump `sdk-contract.json` solely for packaging. It records breaking wire
 changes. Define a reviewed migration rule explicitly; the current automatic rule
 for wire contract 2 to 3 does not authorize arbitrary future migrations.
+
+Active deployments carry `sdk_binding_api_major`; null identifies a bundled SDK.
+`sdk_fingerprint` identifies the compiled binding after migration and must stay
+stable when only the hosted implementation changes. Status and automatic jobs
+ignore wire-contract changes for supported hosted majors. SDK-update job payload
+version 3 fences the expected and target binding major so older workers cannot
+claim this migration. Already queued manual jobs retain their original target
+semantics through exact historical payload schemas.
 
 Inline Apps already obtain platform exports from the host. Inspect their shared
 SDK consumers when changing packaging, but do not rebuild them or create a second

@@ -77,7 +77,7 @@ _METADATA = MappingProxyType(
                     execution_class="build",
                 ),
                 display_name="App SDK Rebuilds",
-                payload_version=2,
+                payload_version=3,
                 description="Rebuilds the web SDK and republishes affected apps in an isolated pod.",
             ),
             _metadata(

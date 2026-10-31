@@ -399,7 +399,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # unchanged; approval and denial use distinct routes. Fingerprint only.
     # App SDK upgrade settings and the historical manual-job model (2026-10-30).
     # ADDITIVE shared models; existing CLI contracts and minimum are unchanged.
-    "bcbd8e23fef2fa5c42671cd07e886c43a87601c0054439f721940f361b7dbe58"
+    # Hosted App SDK provenance adds optional sdk_binding_api_major. Existing
+    # clients can ignore the additive field; the CLI minimum remains unchanged.
+    "96bcbe77e663f3dfe4ac7b47ca592dce1de54c292252c5f5b020c57436095677"
 )
 
 

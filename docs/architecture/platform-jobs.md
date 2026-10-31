@@ -52,13 +52,12 @@ model before validating either a plain or encrypted payload. It does not
 transform stored payloads or make older schemas available to other job types.
 Unknown versions fail before a handler runs.
 
-`application.sdk_update` currently enqueues version 2 jobs, which include a
-pinned SDK target. Its definition also accepts already queued version 1 manual
-jobs through their strict legacy payload model. New workers can therefore
-finish those manual jobs with their original behavior, while older workers
-refuse version 2 jobs rather than ignoring the pin. Upgrade workers before
-enabling automatic updates; draining queued manual version 1 jobs is not
-required.
+`application.sdk_update` enqueues version 3 jobs, which pin the SDK target and
+binding API major. Its definition also accepts already queued version 1 and 2
+manual jobs through their exact historical payload models. New workers finish
+those jobs with their original targeting rules. Older workers refuse version 3
+jobs because they cannot enforce the binding-major fence. Upgrade workers before
+enabling automatic updates; queued manual jobs do not need draining.
 
 The API owns canonical execution control. During its lifespan, each API replica
 starts the remote-control host. When an authenticated physical launcher

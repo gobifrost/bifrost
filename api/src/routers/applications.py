@@ -208,6 +208,7 @@ async def application_to_public(
         sdk_package_version=application.sdk_package_version,
         sdk_fingerprint=application.sdk_fingerprint,
         sdk_contract_version=application.sdk_contract_version,
+        sdk_binding_api_major=application.sdk_binding_api_major,
         sdk_built_at=application.sdk_built_at,
         sdk_status=application_sdk_status(application, current_sdk),
         sdk_source_available=sdk_source_available(application),

@@ -14,6 +14,7 @@ def _app(
     sdk_package_version: str | None = "1.2.3",
     sdk_fingerprint: str | None = None,
     sdk_contract_version: int | None = 7,
+    sdk_binding_api_major: int | None = None,
     sdk_built_at: datetime | None = None,
 ):
     return SimpleNamespace(
@@ -24,6 +25,7 @@ def _app(
         sdk_package_version=sdk_package_version,
         sdk_fingerprint=sdk_fingerprint,
         sdk_contract_version=sdk_contract_version,
+        sdk_binding_api_major=sdk_binding_api_major,
         sdk_built_at=sdk_built_at,
     )
 
@@ -106,6 +108,40 @@ def test_sdk_status_is_unknown_when_current_fingerprint_is_missing() -> None:
     )
 
     assert application_sdk_status(_app(sdk_fingerprint="app-fp"), current) == "unknown"
+
+
+def test_hosted_binding_ignores_server_wire_and_implementation_changes() -> None:
+    from src.services.application_sdk_status import CurrentApplicationSdkMetadata, application_sdk_status
+
+    app = _app(
+        sdk_fingerprint="binding-fp", sdk_contract_version=3,
+        sdk_binding_api_major=1, sdk_built_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
+    )
+    for wire_version in (3, 4):
+        target = CurrentApplicationSdkMetadata(
+            package_version="2.0.0", fingerprint="binding-fp", contract_version=wire_version,
+            binding_api_major=1, supported_binding_api_majors=frozenset({1}),
+        )
+        assert application_sdk_status(app, target) == "current"
+
+
+def test_supported_sdk_major_does_not_require_silent_major_migration() -> None:
+    from src.services.application_sdk_status import CurrentApplicationSdkMetadata, application_sdk_status
+
+    app = _app(
+        sdk_fingerprint="major-one-binding", sdk_binding_api_major=1,
+        sdk_built_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
+    )
+    target = CurrentApplicationSdkMetadata(
+        package_version="2.0.0", fingerprint="major-two-binding", contract_version=9,
+        binding_api_major=2, supported_binding_api_majors=frozenset({1, 2}),
+    )
+    assert application_sdk_status(app, target) == "current"
+    unsupported = CurrentApplicationSdkMetadata(
+        package_version="3.0.0", fingerprint="major-two-binding", contract_version=10,
+        binding_api_major=2, supported_binding_api_majors=frozenset({2}),
+    )
+    assert application_sdk_status(app, unsupported) == "update_required"
 
 
 @pytest.mark.parametrize("contract_version", [2, 4])

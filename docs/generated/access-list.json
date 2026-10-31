@@ -1131,6 +1131,34 @@
     "reason": "one-hop named permission/reach decision in the route or shared service. Current original-user reach, named agent permission at the persisted organization, and resource sharing/private ownership."
   },
   {
+    "access_class": "public",
+    "boundary": null,
+    "current_gate": "none",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/app-sdk/assets/{fingerprint}.js",
+    "permission": null,
+    "reason": "Public immutable browser SDK factory; its content-addressed path and hash verification contain no tenant data."
+  },
+  {
+    "access_class": "public",
+    "boundary": null,
+    "current_gate": "none",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/app-sdk/v1/manifest",
+    "permission": null,
+    "reason": "Public browser SDK descriptor; it selects an immutable factory and contains no tenant data."
+  },
+  {
     "access_class": "permission",
     "boundary": "organization",
     "current_gate": "authenticated",

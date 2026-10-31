@@ -49,17 +49,32 @@ class AppSdkUpgradeConflict(ValueError):
 def automatic_upgrade_eligible(
     app: Application, target: CurrentApplicationSdkMetadata,
 ) -> bool:
+    if app.sdk_binding_api_major is not None:
+        # A server implementation change never authorizes a binding rebuild or
+        # a public SDK major migration.
+        return False
+    reviewed_contracts = (
+        target.automatic_hosted_migration_from
+        if target.binding_api_major is not None
+        else target.automatic_upgrade_from
+    )
     return (
         app.app_model == "standalone_v2"
         and app.active_deployment_id is not None
-        and app.sdk_contract_version in target.automatic_upgrade_from
-        and application_sdk_status(app, target) == "update_required"
+        and app.sdk_contract_version in reviewed_contracts
+        and application_sdk_status(app, target) in ("update_available", "update_required")
         and sdk_source_available(app)
     )
 
 
 def _automatic_key(app_id: UUID, target: CurrentApplicationSdkMetadata) -> str:
-    return f"automatic:{app_id}:{target.contract_version}:{target.fingerprint}"
+    return f"automatic:{app_id}:{_automatic_target_key(target)}"
+
+
+def _automatic_target_key(target: CurrentApplicationSdkMetadata) -> str:
+    if target.binding_api_major is not None:
+        return f"binding-{target.binding_api_major}:{target.fingerprint}"
+    return f"{target.contract_version}:{target.fingerprint}"
 
 
 async def active_solution_sdk_conflict(db: AsyncSession, solution_id: UUID) -> bool:
@@ -105,6 +120,10 @@ async def enqueue_application_sdk_upgrade(
     if (fresh.organization_id, fresh.solution_id) != original_scope:
         raise AppSdkUpgradeConflict("The App's ownership changed. Refresh and try again.")
     app = fresh
+    if app.sdk_binding_api_major is not None and app.sdk_binding_api_major != target.binding_api_major:
+        raise AppSdkUpgradeConflict(
+            "Changing an App's public SDK major requires an explicit source migration."
+        )
 
     key = _automatic_key(app.id, target) if automatic else str(app.id)
     if automatic:
@@ -138,9 +157,11 @@ async def enqueue_application_sdk_upgrade(
             expected_sdk_package_version=app.sdk_package_version,
             expected_sdk_fingerprint=app.sdk_fingerprint,
             expected_sdk_contract_version=app.sdk_contract_version,
+            expected_sdk_binding_api_major=app.sdk_binding_api_major,
             expected_sdk_built_at=app.sdk_built_at,
             target_sdk_fingerprint=target.fingerprint,
             target_sdk_contract_version=target.contract_version,
+            target_sdk_binding_api_major=target.binding_api_major,
             automatic_upgrade=automatic,
         ),
         dedupe_key=key,
@@ -167,14 +188,19 @@ async def enqueue_automatic_app_sdk_upgrades() -> ScheduledTaskOutcome:
         if not (await AppSdkUpgradeSettingsService(db).get_settings()).enabled:
             return ScheduledTaskOutcome(summary="Automatic App SDK upgrades are disabled")
         target = await asyncio.to_thread(current_sdk_metadata)
-        if not target.fingerprint or target.contract_version is None or not target.automatic_upgrade_from:
+        reviewed_contracts = (
+            target.automatic_hosted_migration_from
+            if target.binding_api_major is not None
+            else target.automatic_upgrade_from
+        )
+        if not target.fingerprint or target.contract_version is None or not reviewed_contracts:
             return ScheduledTaskOutcome(summary="No automatic App SDK transition is declared")
 
         # Exclude all previous attempts before limiting so terminal rows cannot
         # strand later apps behind the first batch after a leader restart.
         automatic_key = (
             "automatic:" + Application.id.cast(String)
-            + f":{target.contract_version}:{target.fingerprint}"
+            + f":{_automatic_target_key(target)}"
         )
         attempted = exists().where(
             PlatformJob.job_type == APPLICATION_SDK_UPDATE_DEFINITION.job_type,
@@ -189,7 +215,8 @@ async def enqueue_automatic_app_sdk_upgrades() -> ScheduledTaskOutcome:
             Application.sdk_fingerprint != "",
             Application.sdk_built_at.is_not(None),
             or_(Application.solution_id.is_(None), Application.repo_path.is_not(None)),
-            Application.sdk_contract_version.in_(target.automatic_upgrade_from),
+            Application.sdk_binding_api_major.is_(None),
+            Application.sdk_contract_version.in_(reviewed_contracts),
             ~attempted,
             ~exists().where(
                 PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),

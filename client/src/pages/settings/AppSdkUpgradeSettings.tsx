@@ -90,8 +90,10 @@ export function AppSdkUpgradeSettings() {
 					<CardTitle>App SDK Upgrades</CardTitle>
 				</div>
 				<CardDescription>
-					After an instance upgrade, update app SDKs when no app code changes
-					are needed. Progress and failures appear in Notifications.
+					Automatically rebuild eligible App SDK bindings when no App code
+					changes are needed. Hosted SDK fixes arrive from the instance on
+					reload, even when automatic rebuilds are off. Progress and failures
+					appear in Notifications.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">

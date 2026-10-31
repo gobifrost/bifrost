@@ -22,6 +22,15 @@ TARGET = CurrentApplicationSdkMetadata(
     automatic_upgrade_from=frozenset({9000}),
 )
 
+HOSTED_TARGET = CurrentApplicationSdkMetadata(
+    package_version="1.2.3",
+    fingerprint="hosted-target-fingerprint",
+    contract_version=9001,
+    automatic_upgrade_from=frozenset({9000}),
+    binding_api_major=1,
+    supported_binding_api_majors=frozenset({1}),
+)
+
 
 def _application(**changes):
     values = dict(
@@ -47,6 +56,44 @@ def test_only_reviewed_predecessors_with_complete_provenance_are_eligible(change
 
 def test_explicit_source_compatible_transition_is_eligible():
     assert upgrades.automatic_upgrade_eligible(_application(), TARGET)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"sdk_binding_api_major": 1},
+        {"sdk_binding_api_major": 1, "sdk_contract_version": 9001},
+        {"sdk_binding_api_major": 1, "sdk_fingerprint": HOSTED_TARGET.fingerprint},
+    ],
+)
+def test_hosted_apps_never_auto_rebuild_for_runtime_or_wire_changes(changes):
+    assert not upgrades.automatic_upgrade_eligible(_application(**changes), HOSTED_TARGET)
+
+
+def test_legacy_app_does_not_auto_migrate_to_hosted_binding_without_review():
+    assert not upgrades.automatic_upgrade_eligible(_application(), HOSTED_TARGET)
+
+
+def test_legacy_wire_rule_does_not_authorize_hosted_binding_migration():
+    target = CurrentApplicationSdkMetadata(
+        package_version="1.2.3",
+        fingerprint="hosted-target-fingerprint",
+        contract_version=9001,
+        automatic_upgrade_from=frozenset({9000}),
+        binding_api_major=1,
+        supported_binding_api_majors=frozenset({1}),
+        automatic_hosted_migration_from=frozenset(),
+    )
+
+    assert not upgrades.automatic_upgrade_eligible(_application(), target)
+
+
+def test_hosted_automatic_target_key_includes_binding_major_and_fingerprint():
+    app = _application()
+
+    assert upgrades._automatic_key(app.id, HOSTED_TARGET) == (
+        f"automatic:{app.id}:binding-1:hosted-target-fingerprint"
+    )
 
 
 @pytest_asyncio.fixture
@@ -164,3 +211,26 @@ async def test_active_manual_upgrade_defers_automatic_attempt_without_recording_
     await upgrades.enqueue_automatic_app_sdk_upgrades()
 
     assert len(await _jobs(admission)) == 2
+
+
+async def test_explicit_hosted_major_change_requires_source_migration(admission):
+    app = _application(sdk_binding_api_major=1)
+    admission.add(app)
+    await admission.flush()
+    target = CurrentApplicationSdkMetadata(
+        package_version="2.0.0",
+        fingerprint="binding-two-fingerprint",
+        contract_version=9002,
+        binding_api_major=2,
+        supported_binding_api_majors=frozenset({1, 2}),
+    )
+
+    with pytest.raises(upgrades.AppSdkUpgradeConflict, match="public SDK major"):
+        await upgrades.enqueue_application_sdk_upgrade(
+            admission,
+            app,
+            requested_by_user_id=uuid4(),
+            requested_by_email="admin@example.com",
+            requested_by_name="Admin",
+            target=target,
+        )

@@ -10,7 +10,7 @@ from src.jobs.platform.base import PlatformJobFailure
 
 
 def test_sdk_update_definition_is_registered_with_expected_policy() -> None:
-    from shared.models import ApplicationSdkUpdatePayloadV1
+    from shared.models import ApplicationSdkUpdatePayloadV1, ApplicationSdkUpdatePayloadV2
     from src.jobs.platform.application_sdk_update import (
         APPLICATION_SDK_UPDATE_DEFINITION,
         ApplicationSdkUpdatePayload,
@@ -21,10 +21,12 @@ def test_sdk_update_definition_is_registered_with_expected_policy() -> None:
 
     assert definition is APPLICATION_SDK_UPDATE_DEFINITION
     assert definition.job_type == "application.sdk_update"
-    assert definition.payload_version == 2
+    assert definition.payload_version == 3
     assert definition.payload_model is ApplicationSdkUpdatePayload
     assert definition.payload_model_for_version(1) is ApplicationSdkUpdatePayloadV1
-    assert definition.payload_model_for_version(3) is None
+    assert definition.payload_model_for_version(2) is ApplicationSdkUpdatePayloadV2
+    assert definition.payload_model_for_version(3) is ApplicationSdkUpdatePayload
+    assert definition.payload_model_for_version(4) is None
     assert definition.policy.timeout_seconds == 20 * 60
     assert definition.policy.max_attempts == 1
     assert definition.policy.max_concurrency == 1
@@ -49,6 +51,7 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
         sdk_package_version="1.0.0",
         sdk_fingerprint="old-fp",
         sdk_contract_version=1,
+        sdk_binding_api_major=None,
         sdk_built_at=built_at,
     )
     events: list[tuple[str, object]] = []
@@ -87,6 +90,8 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
         assert kwargs["source"].source_kind == "independent"
         assert kwargs["target_sdk_fingerprint"] == "target-fp"
         assert kwargs["target_sdk_contract_version"] == 3
+        assert kwargs["expected_sdk_binding_api_major"] is None
+        assert kwargs["target_sdk_binding_api_major"] == 1
         assert kwargs["automatic_upgrade"] is False
         assert kwargs["retain_previous_deployment"] is False
         return {"application_id": str(app_id), "deployment_id": str(new_id)}
@@ -107,6 +112,8 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
             expected_sdk_built_at=built_at,
             target_sdk_fingerprint="target-fp",
             target_sdk_contract_version=3,
+            expected_sdk_binding_api_major=None,
+            target_sdk_binding_api_major=1,
         ),
     )
 
@@ -258,6 +265,7 @@ async def test_shared_rebuild_preserves_active_on_failure_and_cleans_new_artifac
         sdk_package_version="old",
         sdk_fingerprint="old-fp",
         sdk_contract_version=1,
+        sdk_binding_api_major=None,
         sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     events: list[tuple[str, object]] = []
@@ -288,6 +296,7 @@ async def test_shared_rebuild_preserves_active_on_failure_and_cleans_new_artifac
             package_version="1.2.3",
             fingerprint="new-fp",
             contract_version=7,
+            binding_api_major=None,
         ),
     )
 
@@ -329,6 +338,7 @@ async def test_shared_rebuild_does_not_persist_solution_source(
         sdk_package_version=None,
         sdk_fingerprint=None,
         sdk_contract_version=None,
+        sdk_binding_api_major=None,
         sdk_built_at=None,
     )
     events: list[tuple[str, object]] = []
@@ -376,6 +386,7 @@ async def test_shared_rebuild_does_not_persist_solution_source(
             package_version="1.2.3",
             fingerprint="new-fp",
             contract_version=7,
+            binding_api_major=None,
         ),
     )
 
@@ -413,6 +424,7 @@ async def test_shared_rebuild_requires_fresh_activation_row_and_cleans_artifacts
         sdk_package_version="old",
         sdk_fingerprint="old-fp",
         sdk_contract_version=1,
+        sdk_binding_api_major=None,
         sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     events: list[tuple[str, object]] = []
@@ -458,6 +470,7 @@ async def test_shared_rebuild_requires_fresh_activation_row_and_cleans_artifacts
             package_version="1.2.3",
             fingerprint="new-fp",
             contract_version=7,
+            binding_api_major=None,
         ),
     )
 
@@ -509,6 +522,7 @@ async def test_shared_rebuild_activates_solution_app_with_core_update(
         sdk_package_version="old",
         sdk_fingerprint="old-fp",
         sdk_contract_version=1,
+        sdk_binding_api_major=None,
         sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     db_session.add(app)
@@ -547,6 +561,7 @@ async def test_shared_rebuild_activates_solution_app_with_core_update(
             package_version="1.2.3",
             fingerprint="new-fp",
             contract_version=7,
+            binding_api_major=None,
         ),
     )
 
@@ -599,6 +614,7 @@ async def test_shared_rebuild_stale_solution_pointer_cleans_new_artifacts(
         sdk_package_version="old",
         sdk_fingerprint="old-fp",
         sdk_contract_version=1,
+        sdk_binding_api_major=None,
         sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     db_session.add(app)
@@ -637,6 +653,7 @@ async def test_shared_rebuild_stale_solution_pointer_cleans_new_artifacts(
             package_version="1.2.3",
             fingerprint="new-fp",
             contract_version=7,
+            binding_api_major=None,
         ),
     )
 

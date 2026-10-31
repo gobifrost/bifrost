@@ -8,16 +8,23 @@ changes.
 
 ## Provenance and status
 
-Every successful V2 build records four values on the App:
+Every successful V2 build records SDK provenance on the App:
 
 - `sdk_package_version`: npm-safe Bifrost release version.
-- `sdk_fingerprint`: the first 16 hex characters of SHA-256 over the bundled
-  SDK bytes. Compatible source changes therefore become visible without a
-  manual version bump.
+- `sdk_fingerprint`: the first 16 hex characters of SHA-256 over the code
+  compiled into the App: the full SDK for legacy builds, the small binding after
+  hosted migration. Hosted implementation changes do not change this hash.
 - `sdk_contract_version`: the integer in
   `client/src/lib/app-sdk/sdk-contract.json`. Bump it only for a deliberately
   breaking SDK↔server wire-contract change.
-- `sdk_built_at`: when that SDK was activated for the App.
+- `sdk_built_at`: when that SDK build was activated for the App.
+- `sdk_binding_api_major`: the hosted public SDK major selected by the binding;
+  null identifies a legacy bundle. Supported majors keep working across server
+  wire-contract changes without an App rebuild.
+
+For prebuilt Solution archives, these fields are the privileged deploy author's
+attestation, normally emitted by the CLI from the installed SDK package. The
+server does not inspect prebuilt JavaScript to verify that stamp.
 
 The status contract is `current`, `update_available`, `update_required`,
 `unknown`, or `not_applicable`. Missing provenance is `unknown`; App list
@@ -53,8 +60,11 @@ considering at most 20 candidates per pass. It queues ordinary
 `application.sdk_update` PlatformJobs, whose progress appears in
 Notifications. An automatic attempt is eligible only for an active,
 source-built App with retained source that needs a transition explicitly
-approved by SDK metadata. The currently reviewed predecessor is contract 2 to
-contract 3 only.
+approved by SDK metadata. Legacy wire-transition rules do not authorize a
+hosted-binding migration. The initial hosted delivery release leaves
+`automatic_hosted_migration_from` empty while adoption is dogfooded through the
+existing manual **Update SDK** action after a normal instance upgrade. Migrated
+Apps are never automatically advanced to another public major.
 
 The scheduler attempts an App/target pair once, including failures. Use the
 existing manual **Update SDK** action to retry a failure. Automatic updates do
@@ -76,10 +86,11 @@ verify that same target before activation. They retain the prior deployment
 artifacts for recovery; failures leave the active deployment unchanged, and
 there is no automatic rollback.
 
-`application.sdk_update` uses payload version 2 for newly queued work. New
-workers also finish already queued version 1 manual updates with their original
-behavior, so those jobs do not need to be drained. A worker that predates
-version 2 refuses a pinned automatic job rather than ignoring its target.
+`application.sdk_update` uses payload version 3 for newly queued work, fencing
+the expected and target binding major as well as the fingerprint and wire
+contract. New workers retain the exact version 1 and 2 schemas for already queued
+manual jobs, with their original target semantics. Older workers cannot claim
+version 3 rather than silently ignoring its binding-major target.
 Upgrade workers before enabling automatic updates. A worker whose installed SDK
 does not match a job's pinned target also refuses it; enqueue the job again
 after workers are aligned.

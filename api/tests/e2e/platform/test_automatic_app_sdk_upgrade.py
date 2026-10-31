@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import zipfile
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -94,10 +95,15 @@ async def _store_source(app_id, deployment_id, files: dict[str, bytes]) -> None:
 
 
 async def test_automatic_upgrade_builds_once_and_keeps_recovery_artifacts(
-    e2e_client, platform_admin, async_session_factory
+    e2e_client, platform_admin, async_session_factory, monkeypatch
 ) -> None:
     """An eligible contract-2 App reaches current SDK through one live worker job."""
-    target = current_sdk_metadata()
+    # Exercise one explicitly reviewed transition without enabling the first
+    # hosted-delivery release's automatic migration policy for real instances.
+    from shared import application_sdk_upgrades
+
+    target = replace(current_sdk_metadata(), automatic_hosted_migration_from=frozenset({2}))
+    monkeypatch.setattr(application_sdk_upgrades, "current_sdk_metadata", lambda: target)
     assert target.contract_version == 3
     assert target.automatic_upgrade_from == frozenset({2})
     assert target.fingerprint
@@ -178,6 +184,7 @@ async def test_automatic_upgrade_builds_once_and_keeps_recovery_artifacts(
             assert str(updated.active_deployment_id) == new_deployment_id
             assert updated.sdk_fingerprint == target.fingerprint
             assert updated.sdk_contract_version == target.contract_version
+            assert updated.sdk_binding_api_major == target.binding_api_major == 1
 
             job_count = await db.scalar(
                 select(func.count()).where(
@@ -186,6 +193,13 @@ async def test_automatic_upgrade_builds_once_and_keeps_recovery_artifacts(
                 )
             )
         assert job_count == 1
+        manifest = e2e_client.get(
+            f"/api/applications/{app_id}/bundle-manifest",
+            headers=platform_admin.headers,
+        )
+        assert manifest.status_code == 200, manifest.text
+        assert manifest.json()["sdk_binding_api_major"] == 1
+        assert manifest.json()["entry"]
         assert await builder.read_dist(
             app_id, "index.html", deployment_id=old_deployment_id
         ) == (b"<main>old SDK</main>")

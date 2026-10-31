@@ -10,9 +10,12 @@ from uuid import UUID
 from shared.version import get_version
 from src.services.sdk_package import (
     sdk_automatic_upgrade_contracts,
+    sdk_automatic_hosted_migration_contracts,
+    sdk_binding_api_major,
     sdk_contract_version,
     sdk_fingerprint,
     sdk_package_version,
+    sdk_supported_binding_api_majors,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,9 @@ class CurrentApplicationSdkMetadata:
     fingerprint: str | None
     contract_version: int | None
     automatic_upgrade_from: frozenset[int] = frozenset()
+    binding_api_major: int | None = None
+    supported_binding_api_majors: frozenset[int] = frozenset()
+    automatic_hosted_migration_from: frozenset[int] = frozenset()
 
 
 class ApplicationSdkStatusInput(Protocol):
@@ -42,6 +48,7 @@ class ApplicationSdkStatusInput(Protocol):
     sdk_package_version: str | None
     sdk_fingerprint: str | None
     sdk_contract_version: int | None
+    sdk_binding_api_major: int | None
     sdk_built_at: object | None
 
 
@@ -53,6 +60,9 @@ def current_sdk_metadata() -> CurrentApplicationSdkMetadata:
         fingerprint=sdk_fingerprint(version),
         contract_version=sdk_contract_version(),
         automatic_upgrade_from=sdk_automatic_upgrade_contracts(),
+        binding_api_major=sdk_binding_api_major(),
+        supported_binding_api_majors=sdk_supported_binding_api_majors(),
+        automatic_hosted_migration_from=sdk_automatic_hosted_migration_contracts(),
     )
 
 
@@ -65,6 +75,8 @@ async def load_current_sdk_metadata() -> CurrentApplicationSdkMetadata:
             package_version=sdk_package_version(get_version()),
             fingerprint=None,
             contract_version=None,
+            binding_api_major=sdk_binding_api_major(),
+            supported_binding_api_majors=sdk_supported_binding_api_majors(),
         )
 
 
@@ -74,6 +86,19 @@ def application_sdk_status(
 ) -> ApplicationSdkStatus:
     if application.app_model == "inline_v1":
         return "not_applicable"
+    binding_major = application.sdk_binding_api_major
+    if binding_major is not None:
+        if binding_major not in current.supported_binding_api_majors:
+            return "update_required"
+        if not application.sdk_fingerprint or application.sdk_built_at is None:
+            return "unknown"
+        # Supported older majors remain supported; neither a new default major
+        # nor a newer server wire contract silently migrates their App code.
+        if binding_major != current.binding_api_major:
+            return "current"
+        if not current.fingerprint:
+            return "unknown"
+        return "current" if application.sdk_fingerprint == current.fingerprint else "update_available"
     if (
         not application.sdk_package_version
         or not application.sdk_fingerprint
@@ -86,6 +111,8 @@ def application_sdk_status(
     if application.sdk_contract_version != current.contract_version:
         return "update_required"
     if application.sdk_fingerprint == current.fingerprint:
+        if current.binding_api_major is not None:
+            return "update_available"
         return "current"
     return "update_available"
 
