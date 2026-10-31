@@ -329,11 +329,13 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
         current.result["admission_rejection"] = error.evidence()
         current.save()
         raise
+    current.save()
     current.result["setup"] = current.driver("setup", {
         "seed": profile["seed"], "backend": backend, "policy": profile["worker_policy"], "table_docs": profile["table_docs"],
         "import_fixture": fixture,
         "interactive_fixture": interactive,
     }, timeout_s=3600)
+    current.save()
     ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", json.dumps({"classes": _loadgen_classes(profile)})], timeout_s=900)
     check_destinations(cluster, ids)
     cluster.restart_api()
