@@ -8,6 +8,8 @@ REPORTING_TEST_IMAGE="${BIFROST_REPORTING_TEST_IMAGE:-node:24.13.0-bookworm-slim
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     --env npm_config_cache=/tmp/npm-cache \
+    --env XDG_CONFIG_HOME=/tmp/bifrost-reporting-config \
+    --env XDG_CACHE_HOME=/tmp/bifrost-reporting-cache \
     --env WRANGLER_SEND_METRICS=false \
     --env CI=1 \
     --mount "type=bind,src=$REPORTING_DIR,dst=/workspace" \
