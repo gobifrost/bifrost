@@ -3,6 +3,7 @@
 Repeatable measurements of one Bifrost build inside a constrained hosting
 envelope, on the worktree's own Kind cluster running the production images.
 Methodology (reviewed): `docs/plans/2026-10-29-capacity-benchmark-methodology.md`.
+Measurement definitions and hosting denominators: [measurement contract](../../docs/benchmarks/measurement-contract.md).
 Saved portal/import baselines, offline verification, replay recipes and remaining
 completion gates: [baseline guide](../../docs/benchmarks/2026-10-31-benchmark-baseline-and-completion.md)
 and [machine-readable record](../../docs/benchmarks/baselines/portal-2026-10-31.json).
@@ -117,3 +118,32 @@ failures in that denominator. Lifecycle gaps remain visible. PostgreSQL backend
 sessions are not application/pooler pool measurements; current S3 payloads
 are not physical allocation, retained versions, archives or billable storage.
 This is observational evidence, not another capacity certification.
+
+
+## Storage and Hosting Evidence
+
+Capacity steps now retain before/after storage frames. Soaks additionally retain
+five-minute frames with database/relation/index/TOAST sizes, retained WAL,
+PostgreSQL and object-store allocation, current object payload by fixed prefix,
+container logs and rotation settings, retention policies, row cardinalities,
+PostgreSQL waits, Pooler/Redis counters and pod network counter lifetimes.
+Generated WAL, retained WAL, physical disk and object payload are different
+measurements; overlapping sizes must not be added.
+
+`execution_rates` reports actual per-second event rates separately from the
+completion/arrival stability ratio. Its arrival cohort follows requests through
+drain, preserving acceptance ambiguity, duplicates, failures and late successes.
+`resource_usage` reports measured-window CPU/memory by component with coverage.
+
+The offline hosting calculator accepts a scenario with SHA-pinned capacity,
+campaign and optional soak artifacts:
+
+```bash
+python3 scripts/bench/hosting.py --scenario <scenario.json> --out <new-directory>
+```
+
+See `docs/benchmarks/hosting-scenarios.example.json` for the commercial input
+shape. Example assumptions are illustrative; unknown node prices, demand,
+provider spend and revenue are never silently treated as zero. The output
+includes `capacity-card.json` and `capacity-card.md`, with certification status,
+placement feasibility, retained storage, cost categories and missing inputs.

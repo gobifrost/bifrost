@@ -4,6 +4,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 
@@ -67,7 +68,9 @@ class StorageCollectionTest(unittest.TestCase):
 
     @patch.object(storage.time, "time", return_value=123.0)
     @patch.object(storage.subprocess, "run")
-    def test_collects_distinct_logical_and_physical_evidence(self, node_run: Mock, _now: Mock) -> None:
+    @patch.object(storage, "_policies", return_value={"run_retention": {"days": 30}})
+    @patch.object(storage, "_node_environment", return_value={"network": {"pods": []}})
+    def test_collects_distinct_logical_and_physical_evidence(self, _node: Mock, _policy: Mock, node_run: Mock, _now: Mock) -> None:
         cluster = self._cluster()
         node_run.return_value = Mock(returncode=0, stdout="12\n34\n", stderr="")
 
@@ -96,6 +99,7 @@ class StorageCollectionTest(unittest.TestCase):
         self.assertEqual(raw_calls[0].args[:2], ("get", "--raw"))
         self.assertIn("/api/v1/namespaces/bench-tenant/pods/bifrost-db-pooler-abc:9127/proxy/metrics", raw_calls[0].args)
         self.assertFalse(raw_calls[0].kwargs["namespaced"])
+        self.assertEqual(result["policies"]["run_retention"]["days"], 30)
 
     def test_unexpected_redis_info_gap_invalidates_the_frame(self) -> None:
         cluster = self._cluster()
@@ -170,7 +174,42 @@ class LogicalObjectMetricsTest(unittest.TestCase):
         self.assertNotIn("unknown/private-key", storage_metrics.TOP_LEVEL_PREFIXES)
 
     def test_retained_versions_are_explicitly_unmeasured_in_the_contract(self) -> None:
-        self.assertEqual(storage_metrics.TOP_LEVEL_PREFIXES, ("_apps/", "_repo/", "_audit/", "apps/", "workflows/", ".bifrost/"))
+        self.assertEqual(storage_metrics.TOP_LEVEL_PREFIXES, ("_apps/", "_repo/", "_audit/", "_application_artifacts/", "apps/", "workflows/", ".bifrost/"))
+
+
+class EnvironmentMetricsTest(unittest.TestCase):
+    def test_missing_network_counters_are_missing_not_zero(self) -> None:
+        cluster = Mock(identity=SimpleNamespace(node_name="verified-node"))
+        cluster.kubectl.side_effect = [json.dumps({"pods": [{"podRef": {"namespace": "bench-tenant", "uid": "uid"},
+                                                              "network": {"rxBytes": 4}}]}),
+                                      json.dumps({"kubeletconfig": {}})]
+        pod = storage._node_environment(cluster)["network"]["pods"][0]
+        self.assertEqual(pod["status"], "partial")
+        self.assertEqual(pod["missing_counters"], ["rxErrors", "txBytes", "txErrors"])
+        self.assertNotIn("txBytes", pod)
+
+    def test_network_keeps_uid_and_excludes_interfaces_and_unrelated_namespaces(self) -> None:
+        cluster = Mock(identity=SimpleNamespace(node_name="verified-node"))
+        cluster.kubectl.side_effect = [json.dumps({"pods": [
+            {"podRef": {"namespace": "bench-tenant", "name": "api", "uid": "uid-one"},
+             "network": {"rxBytes": 1, "txBytes": 2, "rxErrors": 0, "txErrors": 0, "time": "now", "interfaces": [{"secret": "omit"}]}},
+            {"podRef": {"namespace": "other", "name": "private", "uid": "omit"}},
+        ]}), json.dumps({"kubeletconfig": {"containerLogMaxSize": "10Mi", "containerLogMaxFiles": 5, "other": "omit"}})]
+        result = storage._node_environment(cluster)
+        self.assertEqual(result["network"]["pods"][0]["uid"], "uid-one")
+        self.assertEqual(result["network"]["pods"][0]["txBytes"], 2)
+        self.assertNotIn("omit", repr(result))
+        self.assertIn("not billable public egress", result["network"]["basis"])
+        self.assertEqual(result["container_log_rotation"], {"containerLogMaxSize": "10Mi", "containerLogMaxFiles": 5})
+
+    def test_retention_preserves_forever_and_rejects_unknown_default(self) -> None:
+        cluster = Mock()
+        cluster.api_pod.return_value = ("api", "uid")
+        cluster.exec_python.return_value = {"run_retention": {"days": None}}
+        self.assertIsNone(storage._policies(cluster)["run_retention"]["days"])
+        cluster.exec_python.return_value = {"run_retention": {}}
+        with self.assertRaisesRegex(RuntimeError, "invalid days"):
+            storage._policies(cluster)
 
 
 class RedisParserTest(unittest.TestCase):

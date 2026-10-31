@@ -59,7 +59,19 @@ select json_build_object(
       from pg_stat_activity where datname = current_database()
       group by coalesce(application_name, ''), state, wait_event_type, wait_event
     ) grouped
-  ), '[]'::json)
+  ), '[]'::json),
+  'cardinality', json_build_object(
+    'workflows_by_type', (select json_object_agg(type, count) from
+      (select type, count(*) from workflows group by type) counts),
+    'tables', (select count(*) from tables),
+    'documents', (select count(*) from documents),
+    'execution_rows', (select count(*) from executions),
+    'execution_log_rows', (select count(*) from execution_logs),
+    'agent_run_rows', (select count(*) from agent_runs),
+    'agent_step_rows', (select count(*) from agent_run_steps),
+    'ai_usage_rows', (select count(*) from ai_usage),
+    'audit_rows', (select count(*) from audit_logs)
+  )
 )
 """
 
@@ -312,6 +324,7 @@ def _postgres(cluster) -> dict:
     postgres = _single_pod(cluster, guard.TENANT_NS, "cnpg.io/cluster=bifrost-db", {"cnpg.io/cluster": "bifrost-db"}, name="Postgres", container="postgres")
     return {
         "database": database, "relations": observed.get("relations"), "connections": observed.get("connections"),
+        "cardinality": observed.get("cardinality"),
         "backup_retention": _backup_retention(cluster),
         "physical_volume": _du(cluster, guard.TENANT_NS, postgres, "postgres", data_directory, "Postgres"),
     }
@@ -328,6 +341,45 @@ def _object_storage(cluster) -> dict:
         "logical_current_payload": logical,
         "physical_volume": _du(cluster, guard.INFRA_NS, seaweed, "seaweedfs", "/data", "SeaweedFS"),
     }
+
+
+def _policies(cluster) -> dict:
+    pod, _uid = cluster.api_pod()
+    policy = _require_object(cluster.exec_python(pod, METRICS, ["retention-policy", "{}"],
+                                               timeout_s=90, namespace=guard.TENANT_NS), "retention policy")
+    days = _require_object(policy.get("run_retention"), "run retention").get("days", "missing")
+    if days is not None and (type(days) is not int or days < 30):
+        raise RuntimeError("canonical run retention policy returned invalid days")
+    return policy
+
+
+def _node_environment(cluster) -> dict:
+    """Bounded safe kubelet configuration/counters; no IPs, paths or log content."""
+    node = cluster.identity.node_name
+    summary = _require_object(json.loads(cluster.kubectl("get", "--raw", f"/api/v1/nodes/{node}/proxy/stats/summary",
+                                                       namespaced=False)), "kubelet summary")
+    config = _require_object(json.loads(cluster.kubectl("get", "--raw", f"/api/v1/nodes/{node}/proxy/configz",
+                                                      namespaced=False)), "kubelet config")
+    kubelet = _require_object(config.get("kubeletconfig"), "kubelet configz")
+    pods = []
+    for pod in summary.get("pods", []):
+        reference = pod.get("podRef", {})
+        if reference.get("namespace") not in (guard.TENANT_NS, guard.INFRA_NS):
+            continue
+        network = pod.get("network")
+        if not isinstance(network, dict):
+            pods.append({"namespace": reference["namespace"], "pod": reference.get("name"), "uid": reference.get("uid"),
+                         **_unmeasured("kubelet omitted pod network counters")})
+            continue
+        keys = ("rxBytes", "txBytes", "rxErrors", "txErrors")
+        counters = {key: _require_nonnegative_int(network[key], f"pod network {key}") for key in keys if key in network}
+        missing = sorted(set(keys) - counters.keys())
+        pods.append({"namespace": reference["namespace"], "pod": reference.get("name"), "uid": reference.get("uid"),
+                     "status": "partial" if missing else "observed", "missing_counters": missing,
+                     "at": network.get("time"), **counters})
+    return {"container_log_rotation": {key: kubelet.get(key) for key in ("containerLogMaxSize", "containerLogMaxFiles")},
+            "network": {"basis": "kubelet pod interface counters including inter-pod traffic; not billable public egress",
+                        "counter_identity": "pod UID; never subtract across replacement or counter regression", "pods": pods}}
 
 
 def collect(cluster) -> dict:
@@ -347,4 +399,6 @@ def collect(cluster) -> dict:
         "pgbouncer": _pgbouncer(cluster),
         "object_storage": _object_storage(cluster),
         "container_logs": _container_logs(cluster),
+        "policies": _policies(cluster),
+        "node_environment": _node_environment(cluster),
     }

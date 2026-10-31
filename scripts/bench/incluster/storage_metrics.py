@@ -18,7 +18,7 @@ from pathlib import Path
 # This is a reporting taxonomy, rather than a discovered list of keys.  Keep
 # ``other`` so every currently visible object is counted without publishing a
 # new key prefix in artifacts.
-TOP_LEVEL_PREFIXES = ("_apps/", "_repo/", "_audit/", "apps/", "workflows/", ".bifrost/")
+TOP_LEVEL_PREFIXES = ("_apps/", "_repo/", "_audit/", "_application_artifacts/", "apps/", "workflows/", ".bifrost/")
 
 
 def _empty_totals() -> dict[str, int]:
@@ -82,13 +82,29 @@ async def logical_objects() -> dict:
     }
 
 
+async def retention_policy() -> dict:
+    """Read the canonical policy, including its default, without exposing settings."""
+    from src.core.database import get_db_context
+    from src.services.artifact_retention import ArtifactRetentionSettingsService
+    from src.services.audit_retention.settings import AuditRetentionSettingsService
+    from src.services.run_retention.settings import RunRetentionSettingsService
+
+    async with get_db_context() as db:
+        policy = await RunRetentionSettingsService(db).get_settings()
+        audit = await AuditRetentionSettingsService(db).get_settings()
+        artifacts = await ArtifactRetentionSettingsService(db).get_settings()
+    return {"run_retention": policy.model_dump(),
+            "audit_retention": audit.model_dump(), "artifact_retention": artifacts.model_dump(),
+            "basis": "canonical retention settings services; declared policies are not evidence that cleanup ran"}
+
+
 def main() -> None:
     mode = sys.argv[1]
     # ``Cluster.exec_python`` writes JSON args to a file to avoid argv limits.
     json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-    if mode != "logical-objects":
+    if mode not in {"logical-objects", "retention-policy"}:
         raise ValueError(f"unsupported storage metric mode {mode!r}")
-    print(json.dumps(asyncio.run(logical_objects()), allow_nan=False))
+    print(json.dumps(asyncio.run(logical_objects() if mode == "logical-objects" else retention_policy()), allow_nan=False))
 
 
 if __name__ == "__main__":
