@@ -14,7 +14,6 @@ import fcntl
 import json
 import re
 import sys
-import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,7 +34,6 @@ from cluster import Cluster, image_id_digest  # noqa: E402
 APP_DRIVER = HERE / "incluster" / "interactive_app.py"
 LOCK_PATH = Path("/tmp/bifrost-capacity-host.lock")
 BROWSER_POD = "bench-browser-runner"
-BROWSER_CONFIG = "bench-browser-runner-config"
 _DIGEST_REF = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
 _LOCAL_IMAGE_REF = re.compile(r"^[a-z0-9][a-z0-9./:_-]*:[a-z0-9][a-z0-9._-]*$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -123,8 +121,8 @@ def load_build_cache_receipt(path: Path, cached_build_image: str) -> dict:
     }
 
 
-def browser_pod(image: str, config_name: str = BROWSER_CONFIG) -> dict:
-    """A finite 1 CPU/1 GiB runner outside the tenant's resource envelope."""
+def browser_pod(image: str) -> dict:
+    """A ready 1 CPU/1 GiB network anchor outside the tenant envelope."""
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -135,16 +133,13 @@ def browser_pod(image: str, config_name: str = BROWSER_CONFIG) -> dict:
         },
         "spec": {
             "restartPolicy": "Never",
+            "activeDeadlineSeconds": 1800,
             "automountServiceAccountToken": False,
             "containers": [{
                 "name": "browser",
                 "image": image,
                 "imagePullPolicy": "IfNotPresent",
-                "command": ["sh", "-c", "node /bench/driver.mjs \"$BENCH_CONFIG\""],
-                "env": [{
-                    "name": "BENCH_CONFIG",
-                    "valueFrom": {"configMapKeyRef": {"name": config_name, "key": "config"}},
-                }],
+                "command": ["sleep", "1800"],
                 "envFrom": [{"secretRef": {"name": "bench-infra"}}],
                 "resources": {
                     "requests": {"cpu": "1", "memory": "1Gi"},
@@ -166,25 +161,26 @@ def browser_config(app_slug: str) -> dict:
     }
 
 
-def _apply_browser_config(cluster: Cluster, config: dict) -> None:
-    rendered = cluster.kubectl(
-        "create", "configmap", BROWSER_CONFIG,
-        f"--from-literal=config={json.dumps(config, separators=(',', ':'))}",
-        "--dry-run=client", "-o", "json", "-n", guard.INFRA_NS, namespaced=False,
+def _wait_browser_ready(cluster: Cluster) -> None:
+    cluster.kubectl(
+        "wait", "--for=condition=Ready", f"pod/{BROWSER_POD}", "--timeout=300s",
+        namespace=guard.INFRA_NS,
     )
-    cluster.kubectl("apply", "-f", "-", input=rendered, namespaced=False)
 
 
-def _pod_terminal(cluster: Cluster, timeout_s: int = 1800) -> tuple[dict, str]:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        pod = json.loads(cluster.kubectl("get", "pod", BROWSER_POD, "-o", "json", namespace=guard.INFRA_NS))
-        phase = pod.get("status", {}).get("phase")
-        if phase in {"Succeeded", "Failed"}:
-            logs = cluster.kubectl("logs", BROWSER_POD, "-c", "browser", namespace=guard.INFRA_NS, check=False)
-            return pod, logs
-        time.sleep(1)
-    raise TimeoutError(f"browser runner pod did not finish within {timeout_s}s")
+def _browser_pod(cluster: Cluster) -> dict:
+    pod = json.loads(cluster.kubectl("get", "pod", BROWSER_POD, "-o", "json", namespace=guard.INFRA_NS))
+    if not isinstance(pod, dict):
+        raise RuntimeError("browser runner pod response is not an object")
+    return pod
+
+
+def _exec_browser_driver(cluster: Cluster, config: dict) -> str:
+    """Run the prepared driver in the already-ready browser pod's network namespace."""
+    return cluster.kubectl(
+        "exec", BROWSER_POD, "-c", "browser", "--", "node", "/bench/driver.mjs",
+        json.dumps(config, separators=(",", ":")), namespace=guard.INFRA_NS,
+    )
 
 
 def _browser_diagnostics(cluster: Cluster) -> dict[str, object]:
@@ -198,14 +194,6 @@ def _browser_diagnostics(cluster: Cluster) -> dict[str, object]:
         if isinstance(pod, dict):
             captured["pod"] = pod
     except (json.JSONDecodeError, TypeError, ValueError, RuntimeError):
-        pass
-    try:
-        logs = cluster.kubectl(
-            "logs", BROWSER_POD, "-c", "browser", namespace=guard.INFRA_NS, check=False
-        )
-        if isinstance(logs, str):
-            captured["logs"] = logs
-    except RuntimeError:
         pass
     return captured
 
@@ -227,7 +215,6 @@ def _runner_image_id(pod: dict) -> str:
 
 def _cleanup_browser(cluster: Cluster) -> None:
     cluster.kubectl("delete", "pod", BROWSER_POD, "-n", guard.INFRA_NS, "--ignore-not-found", "--wait=true", namespaced=False, check=False)
-    cluster.kubectl("delete", "configmap", BROWSER_CONFIG, "-n", guard.INFRA_NS, "--ignore-not-found", "--wait=true", namespaced=False, check=False)
 
 
 def _terminal_cleanup(cluster: Cluster, current: bench_run.Run, original_error: BaseException | None) -> None:
@@ -381,6 +368,12 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_image_id:
         cluster.verify()
         deploy.reset(cluster)
         bench_run._prepare(cluster, current, profile, None, api_image)
+        # Start the browser's network namespace before client TLS/build work so
+        # Chrome does not create a fresh network stack at the timing boundary.
+        browser_started = True
+        cluster.verify()
+        cluster.kubectl("apply", "-f", "-", input=json.dumps(browser_pod(browser_image)), namespaced=False)
+        _wait_browser_ready(cluster)
 
         tls = browser_preparation.prepare_tls(cluster)
         policy_original = _worker_policy(cluster, "read")
@@ -433,20 +426,23 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_image_id:
         config = browser_config(application["slug"])
         current.result["interactive"]["browser"] = {"config": config, "raw": {}}
         current.save()
-        browser_started = True
         cluster.verify()
-        _apply_browser_config(cluster, config)
-        cluster.kubectl("apply", "-f", "-", input=json.dumps(browser_pod(browser_image)), namespaced=False)
         before = cluster.container_stats(namespace=guard.INFRA_NS)
-        pod, logs = _pod_terminal(cluster)
-        _retain_browser_raw(current, {"pod": pod, "logs": logs})
+        try:
+            output = _exec_browser_driver(cluster, config)
+        except RuntimeError as error:
+            _retain_browser_raw(current, {"exec_stderr": str(error)})
+            raise
+        _retain_browser_raw(current, {"exec_stdout": output})
         after = cluster.container_stats(namespace=guard.INFRA_NS)
+        pod = _browser_pod(cluster)
+        _retain_browser_raw(current, {"pod": pod})
         runner = browser.runner_receipt(browser_base_image, _runner_image_id(pod), True)
         if runner["image_id"] != browser_image_id:
             raise RuntimeError("browser runner pod image ID differs from the preloaded runner receipt")
         runner["runner_image"] = browser_image
         runner["pod"] = {"name": BROWSER_POD, "uid": pod.get("metadata", {}).get("uid")}
-        runs = browser.decode_driver_output(logs)
+        runs = browser.decode_driver_output(output)
         _retain_browser_raw(current, {"runs": runs})
         browser.validate_run_matrix(runs)
         validated = [{**browser.validate_events(run["events"]), "variant": run["variant"], "ordinal": run["ordinal"], "stage": run["stage"], "outcome": run["outcome"]} for run in runs]
@@ -457,7 +453,7 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_image_id:
             "observed": validated,
             "durable_records": durable,
         })
-        if pod.get("status", {}).get("phase") != "Succeeded" or any(item["outcome"] != "success" for item in validated):
+        if any(item["outcome"] != "success" for item in validated):
             raise RuntimeError("browser runner completed with a terminal workflow failure")
         current.result["interactive"]["completed_at"] = _now()
         current.save()

@@ -137,6 +137,21 @@ def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict
     return records
 
 
+def await_reconciliation_deadline(requests: list[dict], deadlines: dict[str, float]) -> dict[str, float]:
+    """Wait once for the latest submitted request deadline before one outcomes read."""
+    latest = max(
+        ((request.get("sent") or request["scheduled"]) + deadlines[request["class"]] for request in requests),
+        default=time.time(),
+    )
+    observed = time.time()
+    if latest > observed:
+        time.sleep(latest - observed)
+    return {
+        "latest_deadline_epoch_s": latest,
+        "reconciliation_observed_epoch_s": time.time(),
+    }
+
+
 def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, disk: dict[str, str],
              window_s: float | None = None, confirm: bool = False, on_event: Callable[[dict], None] | None = None,
              cancel_driver: bool = False, checkpoint: Callable[[dict], None] | None = None) -> dict:
@@ -162,11 +177,12 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         if checkpoint is not None:
             checkpoint({"phase": "sent", "sent": sent})
         time.sleep(plan["drain_s"])
+        reconciliation = await_reconciliation_deadline(sent["requests"], plan["deadlines_s"])
     outcomes = cluster.exec_python("bench-driver", LOADGEN, ["outcomes", json.dumps({
         "requests": [{"id": r["id"], "class": r["class"]} for r in sent["requests"]], "io": plan.get("io"),
     })], timeout_s=600)
     if checkpoint is not None:
-        checkpoint({"phase": "outcomes", "sent": sent, "outcomes": outcomes})
+        checkpoint({"phase": "outcomes", "sent": sent, "outcomes": outcomes, "reconciliation": reconciliation})
     started = sent["started"]
     window = (plan["warmup_s"], plan["warmup_s"] + window_s)
     faults = {key: after - faults_before.get(key, 0) for key, after in cluster.tenant_faults().items()}
@@ -186,6 +202,10 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         "rate": rate, "seed": seed, "window_s": window_s, "confirm": confirm, "drift_limit_per_s": drift_limit, "overall": overall, "verdict": verdict, "validity": validity,
         "faults": faults, "driver_lag_p99_s": sent["driver_lag_p99_s"], "missing": outcomes["missing"],
         "records": records, "backlog": backlog,
+        "reconciliation": {
+            "scope": "epoch seconds; outcomes query follows the latest submitted request class deadline",
+            **reconciliation,
+        },
         "execution_rates": execution_rates.summarize(records, window),
         "sent": sent["requests"], "outcomes": outcomes,
         "host": host.intervals(started, started + duration + plan["drain_s"]),

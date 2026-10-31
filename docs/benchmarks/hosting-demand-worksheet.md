@@ -24,6 +24,15 @@ by placements; if it is fleet-wide, do not multiply the request volume. A
 passing capacity rate, if one exists, is a guard on the declared peak rate
 after explicit headroom; it is not a demand estimate.
 
+Record failed, cancelled, timed-out and retried attempts alongside successful
+requests. They can generate logs, retained results and provider charges without
+adding revenue. The synthetic soak normalizes growth by durable terminals,
+including failures, while the illustrative calculator scales by successful
+external-request demand. Use that projection only with an explicit comparable
+failure/retry mix; otherwise budget the extra attempts separately and leave the
+customer projection unpriced. Queued or unfinished work needs a separate stock
+and recovery assumption.
+
 ## 30-Day Data and Retention Inputs
 
 Keep billing stocks distinct. Generated WAL is a flow, retained WAL is a stock,
@@ -59,6 +68,14 @@ resources, reservations, HA minimum nodes, and idle/spare capacity must all be
 explicit before calculating node count. Observed runtime consumption is useful
 for comparison, but placement uses maximum permitted requests. No value in this
 table supports a tenant-density or per-customer-capacity claim.
+
+Builds need a separate placement and concurrency budget. The interactive
+fixture builds with execution workers drained, then restores the runtime policy
+before measuring app actions. That procedure does not establish app latency or
+capacity while builds and workflows compete for the same resources. Record
+maximum concurrent builds, their requested resources, queue delay, and whether
+they use shared or tenant nodes before pricing their headroom. Include scheduled
+platform maintenance and shared scheduler services in the same allocation.
 
 ## Monthly Cost Worksheet
 

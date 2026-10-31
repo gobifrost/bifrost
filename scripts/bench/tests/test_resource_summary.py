@@ -35,12 +35,41 @@ class ResourceSummaryTest(unittest.TestCase):
         self.assertEqual(worker["observed_window_fraction"], 1)
         self.assertEqual(worker["max_interval_cpu_cores"], 1)
 
-    def test_missing_memory_and_partial_sampling_remain_explicit(self) -> None:
+    def test_tenant_peaks_are_summed_only_within_the_same_interval_and_exclude_infra(self) -> None:
         usage = resource_summary.summarize([
+            {"at": 115, "seconds": 5, "pods": {
+                "bench-tenant/bifrost-api-a@api": pod(2, 100),
+                "bench-tenant/bifrost-worker-a@worker": pod(1, 50),
+                "bench-infra/bench-driver@driver": pod(40, 10_000),
+            }},
+            {"at": 120, "seconds": 5, "pods": {
+                "bench-tenant/bifrost-api-a@api": pod(0.2, 20),
+                "bench-tenant/bifrost-worker-a@worker": pod(3, 200),
+            }},
+        ], 100, (10, 20))["tenant"]
+        self.assertEqual(usage["max_interval_cpu_cores"], 3.2)
+        self.assertEqual(usage["charged_peak_bytes"], 220)
+        self.assertEqual(usage["working_set_peak_bytes"], 218)
+        self.assertEqual(usage["cpu_seconds"], 31)
+        self.assertEqual(usage["observed_uid_scoped_pods"], [
+            "bench-tenant/bifrost-api-a@api", "bench-tenant/bifrost-worker-a@worker",
+        ])
+
+    def test_missing_memory_and_partial_sampling_remain_explicit(self) -> None:
+        summary = resource_summary.summarize([
             {"at": 115, "seconds": 5, "pods": {"bench-tenant/redis-0@uid": {"cpu_cores": 0.1, "throttled_ratio": 0}}},
-        ], 100, (10, 20))["roles"]["redis"]
-        self.assertIsNone(usage["charged_peak_bytes"])
-        self.assertEqual(usage["observed_window_fraction"], 0.5)
+        ], 100, (10, 20))
+        self.assertIsNone(summary["roles"]["redis"]["charged_peak_bytes"])
+        self.assertEqual(summary["roles"]["redis"]["observed_window_fraction"], 0.5)
+        tenant = summary["tenant"]
+        self.assertIsNone(tenant["charged_peak_bytes"])
+        self.assertEqual(tenant["observed_window_fraction"], 0.5)
+        self.assertEqual(tenant["memory_coverage"], {
+            "observed_seconds": 0.0,
+            "observed_window_fraction": 0.0,
+            "complete_observed_samples": 0,
+            "missing_or_partial_observed_samples": 1,
+        })
 
 
 class HostSamplerTest(unittest.TestCase):

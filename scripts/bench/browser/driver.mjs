@@ -6,10 +6,25 @@ const batches = config.batches;
 if (!Array.isArray(batches) || !batches.length || batches.some(batch => !Array.isArray(batch) || batch.length !== 3)) {
   throw new Error("browser benchmark needs nonempty three-page observation batches");
 }
-const browser = await chromium.launch({ headless: true });
 const AUTH_PATHS = new Set(["/auth/status", "/auth/login", "/auth/me", "/auth/refresh", "/api/auth/refresh"]);
+const clientOrigin = new URL(config.client_url).origin;
+const browser = await chromium.launch({ headless: true });
 
-async function open({ variant, ordinal }) {
+function safePath(url) {
+  try { return new URL(url, clientOrigin).pathname; } catch { return "[invalid-url]"; }
+}
+
+function safeError(value) {
+  let text = String(value ?? "");
+  for (const secret of [process.env.BIFROST_DEFAULT_USER_EMAIL, process.env.BIFROST_DEFAULT_USER_PASSWORD]) {
+    if (secret) text = text.replaceAll(secret, "[redacted]");
+  }
+  return text
+    .replace(/https?:\/\/[^\s'\"]+/g, url => safePath(url))
+    .replace(/\?[^\s]*/g, "?[redacted]");
+}
+
+async function login(ordinal) {
   // The preparation receipt records the one-day benchmark certificate. The
   // observer must opt in explicitly; it never weakens ordinary SDK transport.
   const context = await browser.newContext({ baseURL: config.client_url, ignoreHTTPSErrors: true });
@@ -30,44 +45,46 @@ async function open({ variant, ordinal }) {
     }
     window.WebSocket = ObservedWebSocket;
   });
-  const authResponses = [];
-  const clientOrigin = new URL(config.client_url).origin;
+  const diagnostic = { ordinal, stage: "new", current_path: null, auth_statuses: [], failed_assets: [] };
   const onResponse = response => {
     try {
       const url = new URL(response.url());
       if (url.origin === clientOrigin && AUTH_PATHS.has(url.pathname)) {
-        const observed = { method: response.request().method(), path: url.pathname, status: response.status() };
-        authResponses.push(observed);
-        if (url.pathname === "/auth/login") {
-          void response.json().then(body => {
-            observed.login = {
-              access_token_present: typeof body.access_token === "string" && body.access_token.length > 0,
-              mfa_required: body.mfa_required === true,
-              mfa_setup_required: body.mfa_setup_required === true,
-            };
-          }).catch(() => {});
-        }
+        diagnostic.auth_statuses.push({ method: response.request().method(), path: url.pathname, status: response.status() });
       }
-    } catch {
-      // Only diagnostic response metadata is collected.
-    }
+    } catch {}
   };
+  const onFailed = request => diagnostic.failed_assets.push({ path: safePath(request.url()), error: safeError(request.failure()?.errorText) });
   page.on("response", onResponse);
-  await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill(process.env.BIFROST_DEFAULT_USER_EMAIL);
-  await page.getByLabel("Password", { exact: true }).fill(process.env.BIFROST_DEFAULT_USER_PASSWORD);
-  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  page.on("requestfailed", onFailed);
   try {
+    diagnostic.stage = "goto_login";
+    await page.goto("/login");
+    diagnostic.stage = "fill_email";
+    await page.getByLabel("Email", { exact: true }).fill(process.env.BIFROST_DEFAULT_USER_EMAIL);
+    diagnostic.stage = "fill_password";
+    await page.getByLabel("Password", { exact: true }).fill(process.env.BIFROST_DEFAULT_USER_PASSWORD);
+    diagnostic.stage = "click_sign_in";
+    await page.getByRole("button", { name: "Sign In", exact: true }).click();
+    diagnostic.stage = "wait_for_login_exit";
     await page.waitForURL(url => !url.pathname.startsWith("/login"));
-  } catch (error) {
-    const visibleAlertCount = await page.locator('[role="alert"]').count().catch(() => -1);
-    const currentPath = new URL(page.url()).pathname;
-    throw new Error(`browser login did not leave /login: ${JSON.stringify({ auth_responses: authResponses, current_path: currentPath, visible_alert_count: visibleAlertCount })}`, { cause: error });
-  } finally {
+    diagnostic.stage = "authenticated";
+  } catch {
+    diagnostic.current_path = safePath(page.url());
     page.off("response", onResponse);
+    page.off("requestfailed", onFailed);
+    await context.close();
+    throw new Error(`browser login did not complete: ${JSON.stringify(diagnostic)}`);
   }
-  await page.goto(`/apps/${config.app_slug}?variant=${variant}`);
-  return { variant, ordinal, context, page };
+  diagnostic.current_path = safePath(page.url());
+  page.off("response", onResponse);
+  page.off("requestfailed", onFailed);
+  return { context, page, ordinal, login: diagnostic };
+}
+
+async function visit(session, { variant, ordinal }) {
+  await session.page.goto(`/apps/${config.app_slug}?variant=${variant}`);
+  return { ...session, variant, ordinal };
 }
 
 async function measure(session, stage) {
@@ -86,17 +103,21 @@ async function measure(session, stage) {
 }
 
 try {
-  const runs = [];
-  for (const batch of batches) {
-    const sessions = await Promise.all(batch.map(open));
-    try {
-      runs.push(...await Promise.all(sessions.map(session => measure(session, "first_load"))));
-      runs.push(...await Promise.all(sessions.map(session => measure(session, "steady"))));
-    } finally {
-      await Promise.all(sessions.map(session => session.context.close()));
+  // Authenticate the three concurrent pages once. Each variant navigation is
+  // complete before timing starts, so cache fills and React page resets stay
+  // outside the action-to-render interval.
+  const sessions = await Promise.all(batches[0].map(({ ordinal }) => login(ordinal)));
+  try {
+    const runs = [];
+    for (const batch of batches) {
+      const pages = await Promise.all(batch.map((page, index) => visit(sessions[index], page)));
+      runs.push(...await Promise.all(pages.map(page => measure(page, "first_load"))));
+      runs.push(...await Promise.all(pages.map(page => measure(page, "steady"))));
     }
+    console.log(JSON.stringify({ runs, logins: sessions.map(session => session.login), context_count: sessions.length }));
+  } finally {
+    await Promise.all(sessions.map(session => session.context.close()));
   }
-  console.log(JSON.stringify({ runs }));
 } finally {
   await browser.close();
 }

@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "baseline_id": "sdk-confirmation-2026-10-31-m-experimental-v1",
+  "kind": "capacity-confirmation",
+  "status": "experimental_pass",
+  "runtime_scope": "unmerged experimental tablefix runtime; not deployed-platform capacity",
+  "candidate_sdk_confirmation_passed": true,
+  "production_capacity_certification": false,
+  "source": {
+    "private_result_path": "/home/jack/bifrost-bench-evidence/runs/capacity-sdk-attribution-20261031-r5/m-capacity/sdk-confirmation/result.json",
+    "streamed_raw_result_sha256": "db6fccca6971402d1a5f07a437c88661bb11805e989ed2495ad75f2f6383fd4d",
+    "declaration_path": "/home/jack/bifrost-bench-evidence/runs/capacity-sdk-attribution-20261031-r5/declaration.json",
+    "declaration_sha256": "e5abb5577d125e50b8d7be4e6809e390c812ec77de14a81730329a1e138547e9"
+  },
+  "immutable_chain": {
+    "harness_git_sha": "7288a2ba3d7360075360af370dd210909c268602",
+    "run_id": "sdk-confirmation",
+    "runtime_ready_record": "/home/jack/bifrost-bench-evidence/runs/load-current-d2f25fc48-r2.json",
+    "runtime_ready_record_sha256": "2e8b0190ead47d00aa21f8088aa5e5d7af1aaf9fb4893dd72b0fc8ecc851e0c4",
+    "runtime_api_tag": "bifrost-api:kind-a74e45295998-tablefix-d2f25fc48",
+    "runtime_api_host_id": "sha256:fac2a947ca81c8572c83ee6ece92384ccf39f8f4abd657646a8f69b2ba8042a8",
+    "runtime_api_config_id": "sha256:c6755075cd4117a161fd926b436a8874ac65ca6f9b27b57ddcfb748b0f3102a4",
+    "runtime_api_manifest_id": "sha256:c2104ce39d8970a22f5c1db2d59cd14fd8e53a75c1a2e41eb119e3339d5f9198",
+    "supervisor_sha256": "68c3dc7c93660f71a49098164a5de9a31b01c52b0b814fd40e1ce1053a1248c9"
+  },
+  "profile_name": "m-capacity",
+  "mix_name": "sdk-heavy",
+  "preflight": {
+    "status": "pass",
+    "correct": 127,
+    "accepted": 127,
+    "total": 127
+  },
+  "confirmation": {
+    "status": "pass",
+    "offered_rate_per_s": 3.90625,
+    "measured_window_start_s": 90,
+    "measured_window_end_s": 1048.464,
+    "measured_window_s": 958.464,
+    "capped": false,
+    "driver_lag_p99_s": 0.002172708511352539
+  },
+  "arrival_cohort": {
+    "scheduled": 3735,
+    "submitted": 3735,
+    "accepted_union": 3735,
+    "correct_by_deadline": 3735,
+    "correct_completed": 3735,
+    "correct_late": 0,
+    "durably_terminal": 3735,
+    "failed_terminal": 0,
+    "unfinished_durable": 0,
+    "duplicate_request_ids": 0
+  },
+  "measured_window": {
+    "correct_by_deadline_completed": 3736,
+    "correct_completed": 3736,
+    "durable_created": 3735,
+    "durably_terminal": 3736,
+    "http_accepted_responses": 3735,
+    "correct_completed_event_rate_per_s": 3.897903311965812,
+    "throughput_ratio": 1.0002677376171352,
+    "throughput_limit": 0.995,
+    "throughput_status": "pass"
+  },
+  "latency": {
+    "queue_p95_s": 0.3851439952850342,
+    "queue_p95_ci_low_s": 0.3660318851470947,
+    "queue_p95_ci_high_s": 0.4223480224609375,
+    "queue_p95_ci_half_width_s": 0.028158068656921387,
+    "queue_p95_limit_s": 2.0,
+    "queue_p95_status": "pass",
+    "e2e_p95_s": 0.6122498512268066,
+    "e2e_p95_ci_low_s": 0.5836951732635498,
+    "e2e_p95_ci_high_s": 0.6449143886566162,
+    "e2e_p95_ci_half_width_s": 0.030609607696533203,
+    "e2e_p95_limit_s": 1.5,
+    "e2e_p95_status": "pass"
+  },
+  "drift": {
+    "upper_per_s": 0.0003624181648075755,
+    "limit_per_s": 0.00390625,
+    "status": "pass"
+  },
+  "strict_reliability": {
+    "class": "wf-sdk",
+    "failure_upper_limit": 0.001,
+    "evidence_status": "pass",
+    "observations": 3735
+  },
+  "tenant_faults": {
+    "status": "pass",
+    "duplicate_executions": 0,
+    "evicted": 0,
+    "oom_killed": 0,
+    "quota_denials": 0,
+    "restarts": 0
+  },
+  "host_validity": {
+    "status": "valid",
+    "invalid_reasons": [],
+    "warnings": []
+  },
+  "worker_observation": {
+    "sampled_worker_count": 1,
+    "eligible_intervals": 189,
+    "observed_seconds": 949.09659075737,
+    "observed_window_fraction": 0.9902266446841936,
+    "working_set_peak_bytes": 382832640,
+    "charged_peak_bytes": 387911680
+  },
+  "declaration": {
+    "no_replacements_or_retries": true,
+    "sdk_only": true,
+    "sdk_purpose": "One same-rate host-attribution diagnostic per envelope; independent of mixed capacity.",
+    "mixed_offered_rate_per_s": 2.236,
+    "mixed_segments": 5,
+    "segment_window_s": 3600,
+    "soak_rate_fraction": 0.7,
+    "soak_window_s": 7200
+  },
+  "disposition": {
+    "mixed_capacity": "not measured",
+    "hosting_capacity": "not claimed",
+    "production_capacity": "not certified; runtime scope is unmerged experimental tablefix"
+  }
+}

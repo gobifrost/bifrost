@@ -95,6 +95,76 @@ class ConfirmationDecisionTest(unittest.TestCase):
         verdict.assert_called_once()
 
 
+class ReconciliationDeadlineTest(unittest.TestCase):
+    def _step(self, deadline_s: float, completed: float) -> tuple[dict, list[float], list[float]]:
+        clock = [1_000.0]
+        waits: list[float] = []
+        queried: list[float] = []
+        sent = {
+            "started": 1_000.0,
+            "requests": [{"id": "request", "class": "wf", "scheduled": 1_000.0, "sent": 1_000.0,
+                          "responded": 1_000.1, "http_status": 200, "error": None}],
+            "backlog": [], "driver_lag_p99_s": None,
+        }
+        outcomes = {"outcomes": {"request": {"correct": True, "completed": completed, "started": 1_000.2,
+                    "created": 1_000.1, "status": "Success", "error": None}}, "duplicates": {}, "missing": [], "rows": []}
+        cluster = Mock()
+        cluster.tenant_faults.return_value = {}
+        cluster.driver_sql.return_value = {"executions": [], "agent_runs": [], "execution_log_rows": 0}
+
+        def execute(_pod, _script, args, **_kwargs):
+            if args[0] == "step":
+                return sent
+            queried.append(clock[0])
+            return outcomes
+
+        cluster.exec_python.side_effect = execute
+
+        class Host:
+            snapshots: list[dict] = []
+
+            def __init__(self, *_args) -> None:
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args) -> None:
+                pass
+
+            def intervals(self, *_args) -> list[dict]:
+                return []
+
+        def sleep(seconds: float) -> None:
+            waits.append(seconds)
+            clock[0] += seconds
+
+        plan = {"mix": {"wf": 100}, "warmup_s": 0, "drain_s": 120, "window_min_s": 1,
+                "thresholds": {"drift_fraction": 0.001}, "deadlines_s": {"wf": deadline_s}}
+        with patch.object(search, "HostSampler", Host), \
+             patch.object(search.storage, "collect", return_value={}), \
+             patch.object(search.hostmetrics, "assess", return_value={"invalid": [], "warnings": []}), \
+             patch.object(search.capacity, "step_verdict", return_value={"overall": "pass"}), \
+             patch.object(search.time, "time", side_effect=lambda: clock[0]), \
+             patch.object(search.time, "sleep", side_effect=sleep):
+            result = search.run_step(cluster, {}, 1.0, plan, 1, {}, window_s=1)
+        return result, waits, queried
+
+    def test_agent_terminal_after_drain_is_reconciled_by_its_180_second_deadline(self) -> None:
+        result, waits, queried = self._step(180.0, 1_150.0)
+        self.assertEqual(waits, [120, 60])
+        self.assertEqual(queried, [1_180.0])
+        self.assertEqual(result["records"][0]["outcome"], "correct")
+        self.assertEqual(result["reconciliation"]["latest_deadline_epoch_s"], 1_180.0)
+        self.assertGreaterEqual(queried[0], result["reconciliation"]["latest_deadline_epoch_s"])
+
+    def test_sdk_deadline_before_the_fixed_drain_adds_no_reconciliation_wait(self) -> None:
+        result, waits, queried = self._step(60.0, 1_050.0)
+        self.assertEqual(waits, [120])
+        self.assertEqual(queried, [1_120.0])
+        self.assertEqual(result["records"][0]["outcome"], "correct")
+
+
 if __name__ == "__main__":
     unittest.main()
 

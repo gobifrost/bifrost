@@ -28,9 +28,9 @@ _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 def observation_batches() -> list[list[dict[str, int | str]]]:
     """Schedule each synthetic variant in a bounded three-page browser batch.
 
-    A batch represents the only concurrently-open pages.  The browser driver
-    runs both the first-load and steady action on those same authenticated
-    pages before closing them, then moves to the next variant.
+    Three authenticated pages are the only concurrent sessions. The driver
+    fully navigates them for each variant, then runs first-action and steady
+    actions together. Page setup and asset caching precede the timed actions.
     """
     return [
         [{"variant": variant, "ordinal": ordinal} for ordinal in range(PAGES_PER_VARIANT)]

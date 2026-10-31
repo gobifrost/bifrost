@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -77,12 +76,7 @@ def run(cluster: Cluster, ids: dict, rate: float, plan: dict, log_dir: Path | No
         })
         if on_progress is not None:
             on_progress(result)
-        latest_deadline = max(
-            ((request.get("sent") or request["scheduled"]) + plan["deadlines_s"][request["class"]]
-             for request in sent["requests"]), default=time.time()
-        )
-        if latest_deadline > time.time():
-            time.sleep(latest_deadline - time.time())
+        reconciliation = search.await_reconciliation_deadline(sent["requests"], plan["deadlines_s"])
         outcomes = cluster.exec_python("bench-driver", search.LOADGEN, ["outcomes", json.dumps({
             "requests": [{"id": request["id"], "class": request["class"]} for request in sent["requests"]],
             "io": plan.get("io"),
@@ -112,7 +106,7 @@ def run(cluster: Cluster, ids: dict, rate: float, plan: dict, log_dir: Path | No
             "no_tenant_faults": not any(value != 0 for value in faults.values()),
         }
         result.update({
-            "latest_deadline": latest_deadline, "required_classes": sorted(required_classes),
+            "latest_deadline": reconciliation["latest_deadline_epoch_s"], "required_classes": sorted(required_classes),
             "scheduled_classes": sorted(scheduled_classes), "submitted_classes": sorted(sent_classes),
             "records": records, "faults": faults, "checks": checks,
         })

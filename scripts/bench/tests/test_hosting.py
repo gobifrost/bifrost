@@ -45,7 +45,23 @@ def confirmation(*, overall: str = "pass", rate: float = 2.236) -> dict:
     return {
         "overall": overall, "rate": rate,
         "verdict": {"latency": {"wf-sdk": {"e2e_p95": {"status": "pass", "value": 0.2, "limit": 1.5}}}},
-        "execution_rates": {"total": {"event_rates_per_s": {"correct_completed": rate * 0.999}}},
+        "execution_rates": {
+            "total": {"event_rates_per_s": {"correct_completed": rate * 0.999}},
+            "by_class": {
+                "wf-sdk": {"event_rates_per_s": {"correct_completed": rate * 0.6}},
+                "agent-chat": {"event_rates_per_s": {"correct_completed": rate * 0.399}},
+            },
+            "by_kind": {
+                "workflow": {"event_rates_per_s": {"correct_completed": rate * 0.6}},
+                "agent": {"event_rates_per_s": {"correct_completed": rate * 0.399}},
+            },
+        },
+        "platform_activity": {
+            "seconds": 3600,
+            "executions": [{"type": "workflow", "status": "success", "count": 3600}],
+            "agent_runs": [{"status": "completed", "count": 1800}],
+            "execution_log_rows": 7200,
+        },
         "resource_usage": {"roles": {"worker": {"max_interval_cpu_cores": 0.4}}},
         "storage": {"before": {"frames": ["before"]}, "after": {"frames": ["after"]}},
     }
@@ -85,6 +101,8 @@ def soak() -> dict:
         "growth_per_1000_terminal": {"db_bytes_per_1000_terminal": 1024**2,
                                        "object_bytes_per_1000_terminal": 1024**2,
                                        "wal_generated_bytes_per_1000_terminal": 7},
+        "minute_metrics": [{"storage": {"database": {"wal_retained_bytes": 10}, "relations": [],
+                                           "container_logs": {"retained_bytes": 20}}}],
         "capacity_evidence": {"overall": "pass", "validity": {"invalid": []}},
         "object_storage": {"unmeasured": "cloud billing"},
     }
@@ -113,6 +131,9 @@ class HostingTest(unittest.TestCase):
             "pricing": {"node": {"monthly_unit_price_usd": node_price}, "volume": {"per_provisioned_gib_month_usd": 0.1},
                         "backup": {"per_retained_gib_month_usd": 0.05},
                         "kubernetes_control_plane_monthly_usd": 0,
+                        "commercial": {"billing_monthly_usd": 0, "support_monthly_usd": 0,
+                                       "labor_monthly_usd": 0, "taxes_monthly_usd": 0,
+                                       "payment_fees_monthly_usd": 0},
                         "model_provider": {"workflow_per_success_usd": 0.01, "agent_per_success_usd": 0.02},
                         "object_storage": {"base_monthly_usd": 5, "included_gib": 250,
                                            "extra_gib_month_usd": 0.02, "outbound_gib": 0, "included_outbound_gib": 1024,
@@ -129,12 +150,18 @@ class HostingTest(unittest.TestCase):
         self.assertEqual(card["certification"]["status"], "certified")
         self.assertEqual(card["workload_rates"]["configured_offered_rate_per_s"], 2.236)
         self.assertAlmostEqual(card["workload_rates"]["measured_correct_rate_per_s"], 2.236 * 0.999)
+        self.assertEqual(card["workload_rates"]["families"]["workflow"]["measurement_duration_s"], 18000)
+        self.assertAlmostEqual(card["workload_rates"]["families"]["agent_request"]["event_rates_per_s"]["correct_completed"], 2.236 * 0.399)
+        self.assertEqual(card["workload_rates"]["platform_activity"]["executions_by_type_and_status_per_s"]["workflow/success"], 1)
         observed = card["resource_capacity"]["actual_observed"]
         self.assertEqual(len(observed["by_segment"]), 5)
         self.assertEqual(observed["by_segment"][0]["latency"]["wf-sdk"]["e2e_p95"]["value"], 0.2)
         self.assertEqual(observed["soak_observation"]["status"], "observational")
         self.assertEqual(observed["soak_observation"]["database_generated_bytes_per_terminal"], 1024**2 / 1000)
         self.assertEqual(observed["soak_observation"]["object_generated_bytes_per_terminal"], 1024**2 / 1000)
+        self.assertEqual(observed["soak_observation"]["storage_evidence"]["generated_wal_flow"]["bytes_per_terminal"], 7 / 1000)
+        self.assertEqual(observed["soak_observation"]["storage_evidence"]["relations"]["status"], "raw_frames_available")
+        self.assertEqual(observed["soak_observation"]["storage_evidence"]["container_logs"]["frame_count"], 1)
         self.assertEqual(card["density"]["per_node"], 4)
         base = card["cost"]["by_demand"]["base"]
         self.assertEqual(base["nodes"], 2)
@@ -146,6 +173,9 @@ class HostingTest(unittest.TestCase):
         self.assertGreater(base["storage"]["object_storage"]["stored_gib"], 15)
         self.assertEqual(base["platform_subtotal_usd"], 112.6)
         self.assertEqual(base["combined_cost_usd"], 126.6)
+        self.assertEqual(base["all_in_cost_usd"], 126.6)
+        self.assertEqual(base["all_in_cost_status"], "complete")
+        self.assertAlmostEqual(base["margin_usd"], 73.4)
         self.assertAlmostEqual(base["platform_cost_per_success_usd"], 112.6 / 1200)
         self.assertAlmostEqual(base["combined_cost_per_success_usd"], 126.6 / 1200)
 
@@ -230,6 +260,60 @@ class HostingTest(unittest.TestCase):
         self.assertIsNone(base["combined_cost_usd"])
         self.assertEqual(base["all_in_cost_status"], "unsupported_pricing_inputs")
 
+    def test_missing_commercial_input_keeps_subtotal_but_withholds_all_in_margin(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            scenario = self.scenario(Path(raw))
+            scenario["pricing"]["commercial"]["labor_monthly_usd"] = None
+            card = hosting.build_card(scenario)
+        base = card["cost"]["by_demand"]["base"]
+        self.assertEqual(base["combined_cost_usd"], 126.6)
+        self.assertIsNone(base["all_in_cost_usd"])
+        self.assertEqual(base["all_in_cost_status"], "incomplete")
+        self.assertIsNone(base["margin_usd"])
+        self.assertIn("pricing.commercial.labor_monthly_usd", card["cost"]["missing_inputs"])
+
+    def test_documented_commercial_subtotal_completes_all_in_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            scenario = self.scenario(Path(raw))
+            scenario["pricing"]["commercial"] = {
+                "operations_commercial_subtotal_monthly_usd": 10,
+                "basis": "dated operations estimate",
+            }
+            card = hosting.build_card(scenario)
+        base = card["cost"]["by_demand"]["base"]
+        self.assertEqual(base["combined_cost_usd"], 126.6)
+        self.assertEqual(base["commercial_operations_cost_usd"], 10)
+        self.assertEqual(base["all_in_cost_usd"], 136.6)
+        self.assertAlmostEqual(base["margin_usd"], 63.4)
+
+    def test_missing_platform_activity_section_withholds_its_rate(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            scenario = self.scenario(directory)
+            artifact = campaign()
+            del artifact["segments"][0]["step"]["platform_activity"]["agent_runs"]
+            scenario["evidence"]["campaign"] = write_reference(directory / "partial-platform.json", artifact)
+            card = hosting.build_card(scenario)
+        activity = card["workload_rates"]["platform_activity"]
+        self.assertIsNone(activity["agent_runs_by_status_per_s"])
+        self.assertEqual(activity["coverage"]["agent_runs"]["coverage_status"], "partial")
+
+    def test_missing_platform_segment_does_not_shorten_the_expected_window(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            scenario = self.scenario(directory)
+            artifact = campaign()
+            del artifact["segments"][0]["step"]["platform_activity"]
+            scenario["evidence"]["campaign"] = write_reference(directory / "missing-platform.json", artifact)
+            card = hosting.build_card(scenario)
+        activity = card["workload_rates"]["platform_activity"]
+        self.assertIsNone(activity["executions_by_type_and_status_per_s"])
+        self.assertIsNone(activity["agent_runs_by_status_per_s"])
+        self.assertIsNone(activity["execution_log_rows_per_s"])
+        self.assertEqual(activity["coverage"]["executions"], {
+            "measurement_duration_s": 14400, "expected_duration_s": 18000, "coverage_status": "partial",
+        })
+
     def test_peak_demand_above_explicit_headroom_is_not_certified(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             scenario = self.scenario(Path(raw))
@@ -273,7 +357,11 @@ class HostingTest(unittest.TestCase):
                 sys.argv = old_argv
             card = json.loads((output / "capacity-card.json").read_text())
             self.assertEqual(card["kind"], "hosting-capacity-card")
-            self.assertIn("Hosting Capacity Card", (output / "capacity-card.md").read_text())
+            markdown = (output / "capacity-card.md").read_text()
+            self.assertIn("Hosting Capacity Card", markdown)
+            self.assertIn("Workload Rates", markdown)
+            self.assertIn("Capacity Headroom", markdown)
+            self.assertNotIn("workflows/s", markdown)
             with self.assertRaises(SystemExit):
                 hosting.main()
 

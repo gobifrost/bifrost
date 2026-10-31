@@ -150,7 +150,9 @@ measurements; overlapping sizes must not be added.
 `execution_rates` reports actual per-second event rates separately from the
 completion/arrival stability ratio. Its arrival cohort follows requests through
 drain, preserving acceptance ambiguity, duplicates, failures and late successes.
-`resource_usage` reports measured-window CPU/memory by component with coverage.
+`resource_usage` reports measured-window CPU/memory by component and a time-aligned
+observed-tenant aggregate, with sampling and memory coverage. Its peaks are
+lower bounds; missing or unsampled Pods prevent a complete-inventory claim.
 
 The offline hosting calculator uses a SHA-pinned, passing five-segment mixed
 campaign and optional matched soak. An additional standalone mixed confirmation
@@ -165,4 +167,9 @@ See `docs/benchmarks/hosting-scenarios.example.json` for the commercial input
 shape. Example assumptions are illustrative; unknown node prices, demand,
 provider spend and revenue are never silently treated as zero. The output
 includes `capacity-card.json` and `capacity-card.md`, with certification status,
-placement feasibility, retained storage, cost categories and missing inputs.
+placement feasibility, workflow/agent-request rates, nested platform activity,
+retained storage, cost categories and missing inputs. `combined_cost_usd` is
+the platform plus model-provider subtotal. All-in cost and margin additionally
+require explicit commercial operating costs, including explicit zeroes where
+applicable; see the example scenario. Missing activity measurements retain
+their coverage status instead of becoming zero rates.

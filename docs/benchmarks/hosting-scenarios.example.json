@@ -76,6 +76,14 @@
       "workflow_per_success_usd": null,
       "agent_per_success_usd": null,
       "note": "Keep model-provider spend separate from infrastructure and supply dated unit costs."
+    },
+    "commercial": {
+      "billing_monthly_usd": null,
+      "support_monthly_usd": null,
+      "labor_monthly_usd": null,
+      "taxes_monthly_usd": null,
+      "payment_fees_monthly_usd": null,
+      "note": "All five values must be supplied, including explicit zero where applicable, before all-in cost or margin is reported. A documented operations_commercial_subtotal_monthly_usd may be supplied instead."
     }
   },
   "demand": {
@@ -88,6 +96,7 @@
     "The five-segment campaign aggregate and passing pooled reliability are the primary mixed-capacity evidence. Do not substitute a standalone confirmation at another rate.",
     "Peak demand must not exceed confirmed_rate_utilization_fraction x the confirmed capacity rate; otherwise the card is not certified.",
     "Node billing is Ready-node time, monthly unit price x node count x ready-node month fraction, never pod utilization.",
+    "combined_cost_usd is the known platform and model-provider subtotal. all_in_cost_usd and margin require explicit commercial inputs; missing values remain null.",
     "The CLI requires a fresh output directory: python3 scripts/bench/hosting.py --scenario scenario.json --out /new/card."
   ]
 }

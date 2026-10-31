@@ -61,15 +61,17 @@ class InteractiveInputsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "fixture lock"):
                 interactive.load_build_cache_receipt(receipt, CACHED_BUILD)
 
-    def test_browser_pod_is_finite_infra_only_runner_with_secret_login(self) -> None:
+    def test_browser_pod_is_a_ready_network_anchor_without_configmap_input(self) -> None:
         manifest = interactive.browser_pod(RUNNER)
         self.assertEqual(manifest["metadata"]["namespace"], "bench-infra")
         self.assertEqual(manifest["spec"]["restartPolicy"], "Never")
+        self.assertEqual(manifest["spec"]["activeDeadlineSeconds"], 1800)
         container = manifest["spec"]["containers"][0]
         self.assertEqual(container["resources"]["limits"], {"cpu": "1", "memory": "1Gi"})
         self.assertEqual(container["image"], RUNNER)
+        self.assertEqual(container["command"], ["sleep", "1800"])
         self.assertEqual(container["envFrom"], [{"secretRef": {"name": "bench-infra"}}])
-        self.assertNotIn("BIFROST_DEFAULT_USER_PASSWORD", json.dumps(manifest))
+        self.assertNotIn("env", container)
 
     def test_durable_records_must_match_observed_ids_request_ids_and_variants(self) -> None:
         observed = [
@@ -146,7 +148,7 @@ class InteractiveRunTest(unittest.TestCase):
         self.assertEqual(reset.call_count, 2)
         cluster.kubectl.assert_called()
 
-    def test_matrix_failure_retains_raw_pod_logs_and_decoded_runs_before_cleanup(self) -> None:
+    def test_runner_is_ready_before_tls_and_executes_after_build_restoration(self) -> None:
         instances = []
 
         class Current:
@@ -165,7 +167,7 @@ class InteractiveRunTest(unittest.TestCase):
         pod = {"status": {"phase": "Succeeded", "containerStatuses": [{
             "name": "browser", "imageID": "docker-pullable://runner@" + DIGEST,
         }]}}
-        logs = '{"runs": []}\n'
+        output = '{"runs": []}\n'
         cluster = Mock()
         cluster.container_stats.return_value = []
         cluster.exec_python.return_value = {
@@ -179,22 +181,36 @@ class InteractiveRunTest(unittest.TestCase):
             destination.write_bytes(b"fixture")
             return {}
 
+        events: list[str] = []
+
+        def kubectl(*args: str, **_kwargs: object) -> str:
+            if args[:2] == ("apply", "-f"):
+                events.append("runner_apply")
+            elif args[0] == "wait":
+                events.append("runner_ready")
+            elif args[0] == "exec":
+                events.append("driver_exec")
+                return output
+            elif args[:2] == ("get", "pod"):
+                return json.dumps(pod)
+            return ""
+
+        cluster.kubectl.side_effect = kubectl
+
         with tempfile.TemporaryDirectory() as temporary, \
              patch.object(interactive.bench_run, "load_profile", return_value={"interactive_integration_diagnostic": True}), \
              patch.object(interactive, "Cluster", return_value=cluster), \
              patch.object(interactive.bench_run, "Run", Current), \
-             patch.object(interactive.bench_run, "_prepare"), \
+            patch.object(interactive.bench_run, "_prepare", side_effect=lambda *_args: events.append("prepare")), \
              patch.object(interactive.deploy, "reset"), \
-             patch.object(interactive.browser_preparation, "prepare_tls", return_value={}), \
+            patch.object(interactive.browser_preparation, "prepare_tls", side_effect=lambda *_args: events.append("tls") or {}), \
              patch.object(interactive, "_worker_policy", side_effect=[original_policy, {}, original_policy]), \
              patch.object(interactive.browser_preparation, "wait_for_worker_count", return_value={"live": 0, "ready": 0}), \
              patch.object(interactive.browser_preparation, "prepare_build_runtime", return_value=({}, {})), \
-             patch.object(interactive, "_restore_build_preparation", return_value={}), \
+            patch.object(interactive, "_restore_build_preparation", side_effect=lambda *_args: events.append("restored") or {}), \
              patch.object(interactive.browser, "write_source_zip", side_effect=write_source), \
-             patch.object(interactive.browser, "build_receipt", return_value={}), \
-             patch.object(interactive, "_apply_browser_config"), \
-             patch.object(interactive, "_pod_terminal", return_value=(pod, logs)), \
-             patch.object(interactive, "_cleanup_browser"), \
+            patch.object(interactive.browser, "build_receipt", return_value={}), \
+            patch.object(interactive, "_cleanup_browser") as browser_cleanup, \
              patch.object(interactive, "_durable_browser_records"):
             cache = Path(temporary) / "cache.json"
             cache.write_text(json.dumps({"image": RUNNER, "image_id": DIGEST, "cached_before_measurement": True}))
@@ -206,8 +222,11 @@ class InteractiveRunTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "expected exactly"):
                 interactive.run("m-interactive", "api", RUNNER, DIGEST, BASE, cache, CACHED_BUILD, build_cache, Path(temporary) / "out")
 
+        self.assertLess(events.index("runner_ready"), events.index("tls"))
+        self.assertLess(events.index("restored"), events.index("driver_exec"))
+        browser_cleanup.assert_called_once_with(cluster)
         self.assertEqual(instances[0].result["interactive"]["browser"]["raw"], {
-            "pod": pod, "logs": logs, "runs": [],
+            "exec_stdout": output, "pod": pod, "runs": [],
         })
 
     def test_application_metadata_failure_retains_accepted_deploy_job_receipt(self) -> None:

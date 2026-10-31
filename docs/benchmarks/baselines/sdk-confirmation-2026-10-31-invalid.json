@@ -104,5 +104,6 @@
     "causal_attribution": "not established",
     "mixed_capacity": "unmeasured",
     "soak": "unmeasured"
-  }
+  },
+  "runtime_scope": "Unmerged experimental table-uniqueness candidate; not a deployed-platform capacity baseline."
 }

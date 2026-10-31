@@ -246,23 +246,59 @@ def _soak_observation(soak: dict[str, Any] | None) -> tuple[dict[str, Any] | Non
     if status != "observational" or not isinstance(cleanup, dict) or cleanup.get("verified") is not True:
         return {"status": "invalid", "reason": "soak is not a completed observational run with verified cleanup"}, None
     growth = _object(soak.get("growth_per_1000_terminal"), "soak.growth_per_1000_terminal")
-    db = growth.get("db_bytes_per_1000_terminal")
-    objects = growth.get("object_bytes_per_1000_terminal")
-    if (type(db) not in (int, float) or type(objects) not in (int, float)
-            or not math.isfinite(float(db)) or not math.isfinite(float(objects)) or db < 0 or objects < 0):
-        return {"status": "incomplete", "growth_per_1000_terminal": growth,
-                "reason": "database/object growth is missing, non-finite, or negative; no long-run shrinkage assumption"}, None
-    generated = {"database_bytes_per_terminal": float(db) / 1000,
-                 "object_bytes_per_terminal": float(objects) / 1000}
-    return {"status": "observational", "growth_per_1000_terminal": growth,
-            "database_generated_bytes_per_terminal": generated["database_bytes_per_terminal"],
-            "object_generated_bytes_per_terminal": generated["object_bytes_per_terminal"],
-            "limit": "descriptive soak evidence; it does not certify capacity"}, generated
+    def per_terminal(name: str) -> dict[str, Any]:
+        value = growth.get(name)
+        if type(value) in (int, float) and math.isfinite(float(value)) and value >= 0:
+            return {"status": "observed", "bytes_per_terminal": float(value) / 1000}
+        return {"status": "unmeasured", "reason": f"soak omitted a finite nonnegative {name}"}
+
+    database, objects, wal = (per_terminal(name) for name in (
+        "db_bytes_per_1000_terminal", "object_bytes_per_1000_terminal", "wal_generated_bytes_per_1000_terminal",
+    ))
+    generated = None if database["status"] != "observed" or objects["status"] != "observed" else {
+        "database_bytes_per_terminal": database["bytes_per_terminal"],
+        "object_bytes_per_terminal": objects["bytes_per_terminal"],
+    }
+    minute_metrics = soak.get("minute_metrics")
+    storage_frame_count = sum(
+        1 for sample in minute_metrics if isinstance(sample, dict) and isinstance(sample.get("storage"), dict)
+    ) if isinstance(minute_metrics, list) else 0
+
+    def stock_frames(reason: str) -> dict[str, Any]:
+        if storage_frame_count:
+            return {"status": "raw_frames_available", "frame_count": storage_frame_count,
+                    "artifact_path": "soak result.json: minute_metrics[].storage", "reason": reason}
+        return {"status": "unmeasured", "reason": reason}
+
+    storage = {
+        "database_logical_growth": database,
+        "object_current_payload_growth": objects,
+        "generated_wal_flow": wal,
+        "retained_wal_stock": stock_frames("not projected from generated WAL; inspect retained-WAL storage frames"),
+        "relations": stock_frames("not projected; inspect per-relation frames without summing overlapping total/index/TOAST bytes"),
+        "container_logs": stock_frames("not projected; inspect storage frames and rotation policy"),
+    }
+    observation = {"status": "observational" if generated is not None else "incomplete",
+                   "growth_per_1000_terminal": growth, "storage_evidence": storage,
+                   "limit": "descriptive soak evidence; it does not certify capacity or project overlapping storage stocks"}
+    if generated is None:
+        observation["reason"] = "database/object growth is missing, non-finite, or negative; no long-run shrinkage assumption"
+    else:
+        observation.update({"database_generated_bytes_per_terminal": generated["database_bytes_per_terminal"],
+                            "object_generated_bytes_per_terminal": generated["object_bytes_per_terminal"]})
+    return observation, generated
 
 
 def _observed_rates(campaign: dict[str, Any], steps: list[dict[str, Any]]) -> dict[str, Any]:
     manifest = _object(campaign["campaign_manifest"], "campaign.campaign_manifest")
     weighted, duration, by_segment = 0.0, 0.0, []
+    grouped: dict[str, dict[str, dict[str, Any]]] = {"by_class": {}, "by_kind": {}}
+    platform: dict[str, dict[str, Any]] = {
+        "executions": {"counts": {}, "duration": 0.0, "complete": True},
+        "agent_runs": {"counts": {}, "duration": 0.0, "complete": True},
+        "execution_log_rows": {"count": 0.0, "duration": 0.0, "complete": True},
+    }
+    platform_duration = 0.0
     for index, step in enumerate(steps):
         rate = None
         rates = step.get("execution_rates")
@@ -276,10 +312,92 @@ def _observed_rates(campaign: dict[str, Any], steps: list[dict[str, Any]]) -> di
             weighted += rate * float(window)
             duration += float(window)
         by_segment.append({"index": index, "window_s": window, "measured_correct_rate_per_s": rate})
+        if not usable:
+            continue
+        for section in ("by_class", "by_kind"):
+            entries = rates.get(section) if isinstance(rates, dict) else None
+            if not isinstance(entries, dict):
+                continue
+            for name, evidence in entries.items():
+                event_rates = evidence.get("event_rates_per_s") if isinstance(evidence, dict) else None
+                if not isinstance(name, str) or not isinstance(event_rates, dict):
+                    continue
+                target = grouped[section].setdefault(name, {"duration": 0.0, "event_totals": {}, "event_durations": {}})
+                target["duration"] += float(window)
+                for event, event_rate in event_rates.items():
+                    if type(event_rate) in (int, float) and math.isfinite(float(event_rate)):
+                        target["event_totals"][event] = target["event_totals"].get(event, 0.0) + float(event_rate) * float(window)
+                        target["event_durations"][event] = target["event_durations"].get(event, 0.0) + float(window)
+        activity = step.get("platform_activity")
+        activity_seconds = activity.get("seconds") if isinstance(activity, dict) else None
+        if type(activity_seconds) in (int, float) and activity_seconds > 0:
+            platform_duration += float(activity_seconds)
+            for name, fields in (("executions", ("type", "status")), ("agent_runs", ("status",))):
+                rows = activity.get(name)
+                if not isinstance(rows, list):
+                    platform[name]["complete"] = False
+                    continue
+                platform[name]["duration"] += float(activity_seconds)
+                for row in rows:
+                    count = row.get("count") if isinstance(row, dict) else None
+                    labels = tuple(row.get(field) for field in fields) if isinstance(row, dict) else ()
+                    if type(count) is int and count >= 0 and all(isinstance(label, str) for label in labels):
+                        key = "/".join(labels)
+                        platform[name]["counts"][key] = platform[name]["counts"].get(key, 0.0) + count
+                    else:
+                        platform[name]["complete"] = False
+            rows = activity.get("execution_log_rows")
+            if type(rows) is int and rows >= 0:
+                platform["execution_log_rows"]["count"] += rows
+                platform["execution_log_rows"]["duration"] += float(activity_seconds)
+            else:
+                platform["execution_log_rows"]["complete"] = False
+
+    def summarize(entries: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        return {name: {
+            "measurement_duration_s": values["duration"],
+            "coverage_status": "complete" if values["duration"] == duration and all(
+                event_duration == duration for event_duration in values["event_durations"].values()
+            ) else "partial",
+            "event_measurement_duration_s": values["event_durations"],
+            "event_rates_per_s": {
+                event: total / values["event_durations"][event]
+                for event, total in values["event_totals"].items()
+                if values["event_durations"][event]
+            },
+        } for name, values in sorted(entries.items()) if values["duration"]}
+
+    def activity_rates(name: str) -> tuple[float | None, dict[str, float] | None, dict[str, Any]]:
+        values = platform[name]
+        complete = duration > 0 and platform_duration == duration and values["complete"] and values["duration"] == duration
+        coverage = {"measurement_duration_s": values["duration"],
+                    "expected_duration_s": duration,
+                    "coverage_status": "complete" if complete else "missing" if not values["duration"] else "partial"}
+        if not complete:
+            return None, None, coverage
+        if name == "execution_log_rows":
+            return values["count"] / platform_duration, None, coverage
+        return None, {key: count / platform_duration for key, count in sorted(values["counts"].items())}, coverage
+
+    family_rates = summarize(grouped["by_kind"])
+    log_rate, _, log_coverage = activity_rates("execution_log_rows")
+    _, execution_rates, execution_coverage = activity_rates("executions")
+    _, agent_rates, agent_coverage = activity_rates("agent_runs")
+    platform_activity = {"measurement_duration_s": platform_duration,
+                         "executions_by_type_and_status_per_s": execution_rates,
+                         "agent_runs_by_status_per_s": agent_rates,
+                         "execution_log_rows_per_s": log_rate,
+                         "coverage": {"executions": execution_coverage, "agent_runs": agent_coverage,
+                                      "execution_log_rows": log_coverage},
+                         "limit": "raw platform activity by type/status; it is not correctness evidence and is not inferred by subtracting request windows"}
     return {"configured_offered_rate_per_s": manifest["rate_per_s"],
             "measured_correct_rate_per_s": None if not duration else weighted / duration,
             "measurement_duration_s": duration, "by_segment": by_segment,
-            "limit": "duration-weighted correct completions across the five passing campaign segments; offered load remains separate"}
+            "by_class": summarize(grouped["by_class"]),
+            "families": {"workflow": family_rates.get("workflow"),
+                         "agent_request": family_rates.get("agent")},
+            "platform_activity": platform_activity,
+            "limit": "duration-weighted externally offered request rates; offered load remains separate from platform activity"}
 
 
 def _density(scenario: dict[str, Any], tenant: Resources, tenant_pods: int, tenant_pvcs: int, tenant_storage_gib: float) -> dict[str, Any]:
@@ -311,7 +429,7 @@ def _nullable_sum(values: list[float | None]) -> float | None:
 def _unsupported_pricing_keys(pricing: dict[str, Any]) -> list[str]:
     supported = {
         "node", "volume", "object_storage", "model_provider", "shared_infrastructure",
-        "backup",
+        "backup", "commercial",
         "kubernetes_control_plane_monthly_usd", "kubernetes_control_plane_note", "kubernetes_source",
         "shared_infrastructure_source",
     }
@@ -326,12 +444,30 @@ def _unsupported_pricing_keys(pricing: dict[str, Any]) -> list[str]:
         "model_provider": {"workflow_per_success_usd", "agent_per_success_usd", "note", "source", "accessed"},
         "shared_infrastructure": {"build", "observability", "regional_http_load_balancer", "network_load_balancer",
                                   "load_balancer", "network", "storage", "note", "source", "accessed"},
+        "commercial": {"billing_monthly_usd", "support_monthly_usd", "labor_monthly_usd", "taxes_monthly_usd",
+                       "payment_fees_monthly_usd", "operations_commercial_subtotal_monthly_usd", "basis", "note", "source", "accessed"},
     }
     for section, allowed in nested.items():
         value = pricing.get(section)
         if isinstance(value, dict):
             unsupported.update(f"{section}.{key}" for key in value if key not in allowed)
     return sorted(unsupported)
+
+
+def _commercial_cost(pricing: dict[str, Any]) -> tuple[float | None, list[str]]:
+    commercial = pricing.get("commercial")
+    if not isinstance(commercial, dict):
+        return None, ["pricing.commercial"]
+    subtotal = commercial.get("operations_commercial_subtotal_monthly_usd")
+    if subtotal is not None:
+        if not any(isinstance(commercial.get(key), str) and commercial[key] for key in ("basis", "note", "source")):
+            return None, ["pricing.commercial.basis"]
+        return _number(subtotal, "pricing.commercial.operations_commercial_subtotal_monthly_usd"), []
+    fields = ("billing_monthly_usd", "support_monthly_usd", "labor_monthly_usd", "taxes_monthly_usd", "payment_fees_monthly_usd")
+    missing = [f"pricing.commercial.{field}" for field in fields if field not in commercial or commercial[field] is None]
+    if missing:
+        return None, missing
+    return sum(_number(commercial[field], f"pricing.commercial.{field}") for field in fields), []
 
 
 def _costs(scenario: dict[str, Any], density: dict[str, Any], generated: dict[str, float] | None,
@@ -341,6 +477,8 @@ def _costs(scenario: dict[str, Any], density: dict[str, Any], generated: dict[st
     retention = _object(scenario.get("retention"), "retention")
     missing: list[str] = []
     unsupported = _unsupported_pricing_keys(pricing)
+    commercial_cost, commercial_missing = _commercial_cost(pricing)
+    missing.extend(commercial_missing)
     demand_basis = retention.get("demand_basis")
     if demand_basis not in {"fleet", "per_tenant"}:
         raise ValueError("retention.demand_basis must be fleet or per_tenant")
@@ -447,11 +585,13 @@ def _costs(scenario: dict[str, Any], density: dict[str, Any], generated: dict[st
             control_plane_cost = _number(control_plane, "pricing.kubernetes_control_plane_monthly_usd")
         platform_subtotal = None if unsupported else _nullable_sum([node_cost, volume_cost, backup_cost, object_storage_cost, shared_cost, control_plane_cost])
         combined = _nullable_sum([platform_subtotal, model_cost])
+        all_in_cost = None if unsupported else _nullable_sum([combined, commercial_cost])
         revenue = demand.get("revenue_monthly_usd")
-        margin = None if revenue is None or _number(revenue, f"demand.{name}.revenue_monthly_usd") <= 0 or combined is None else _number(revenue, f"demand.{name}.revenue_monthly_usd") - combined
+        margin = None if revenue is None or _number(revenue, f"demand.{name}.revenue_monthly_usd") <= 0 or all_in_cost is None else _number(revenue, f"demand.{name}.revenue_monthly_usd") - all_in_cost
         margin_percent = None if margin is None else margin / _number(revenue, f"demand.{name}.revenue_monthly_usd") * 100
         platform_cost_per_success = None if platform_subtotal is None or fleet_terminals <= 0 else platform_subtotal / fleet_terminals
         combined_cost_per_success = None if combined is None or fleet_terminals <= 0 else combined / fleet_terminals
+        all_in_cost_per_success = None if all_in_cost is None or fleet_terminals <= 0 else all_in_cost / fleet_terminals
         results[name] = {"successful_workflows_per_month": workflows, "successful_agent_requests_per_month": agents,
                          "fleet_successful_workflows_per_month": fleet_workflows, "fleet_successful_agent_requests_per_month": fleet_agents,
                          "fleet_terminal_successes_per_month": fleet_terminals, "retention_demand_basis": demand_basis,
@@ -469,9 +609,14 @@ def _costs(scenario: dict[str, Any], density: dict[str, Any], generated: dict[st
                          "object_storage_cost_usd": object_storage_cost,
                          "kubernetes_control_plane_cost_usd": control_plane_cost,
                          "backup_cost_usd": backup_cost, "platform_subtotal_usd": platform_subtotal,
-                         "combined_cost_usd": combined, "all_in_cost_status": "unsupported_pricing_inputs" if unsupported else "complete" if combined is not None else "incomplete",
+                         "combined_cost_usd": combined,
+                         "combined_cost_basis": "platform and model-provider subtotal; excludes commercial operations inputs",
+                         "commercial_operations_cost_usd": commercial_cost,
+                         "all_in_cost_usd": all_in_cost,
+                         "all_in_cost_status": "unsupported_pricing_inputs" if unsupported else "complete" if all_in_cost is not None else "incomplete",
                          "platform_cost_per_success_usd": platform_cost_per_success,
                          "combined_cost_per_success_usd": combined_cost_per_success,
+                         "all_in_cost_per_success_usd": all_in_cost_per_success,
                          "revenue_monthly_usd": revenue, "margin_usd": margin}
         results[name]["margin_percent"] = margin_percent
     return {"by_demand": results, "missing_inputs": sorted(set(missing)), "unsupported_pricing_keys": unsupported,
@@ -501,7 +646,8 @@ def build_card(scenario: dict[str, Any]) -> dict[str, Any]:
                      "execution_rates": step.get("execution_rates"), "storage_collector_frames": step.get("storage")}
                     for index, step in enumerate(steps)]
     return {"schema_version": 1, "kind": "hosting-capacity-card", "evidence": {"capacity": capacity_ref, "campaign": campaign_ref, "soak": soak_ref},
-            "certification": {"status": certification, "reasons": reasons}, "frozen": matched,
+            "certification": {"status": certification, "reasons": reasons,
+                              "scope": "local synthetic capacity gates; cloud calibration and recovery/availability guarantees remain separate"}, "frozen": matched,
             "resource_capacity": {"requested_quota": _object(profile["quota"], "capacity.profile.quota"),
                                   "max_component_requests": {"cpu_m": tenant.cpu_m, "memory_bytes": tenant.memory, "pods": pods, "pvcs": pvcs, "storage_gib": storage_gib},
                                   "actual_observed": {"by_segment": measurements,
@@ -522,8 +668,13 @@ def build_card(scenario: dict[str, Any]) -> dict[str, Any]:
 def markdown(card: dict[str, Any]) -> str:
     frozen = card["frozen"]
     lines = ["# Hosting Capacity Card", "", f"Certification: **{card['certification']['status']}**", "",
+             card["certification"]["scope"], "",
              f"Frozen profile/workload: `{frozen['profile_name']}` / `{frozen['mix_name']}`", "",
              "## Resource Capacity", "", "```json", json.dumps(card["resource_capacity"], indent=2, sort_keys=True), "```", "",
+             "## Workload Rates", "", "```json", json.dumps(card["workload_rates"], indent=2, sort_keys=True), "```", "",
+             "## Capacity Headroom", "", "```json", json.dumps({name: {
+                 key: values[key] for key in ("peak_rate_per_s", "confirmed_rate_headroom_ceiling_per_s", "capacity_status")
+             } for name, values in card["cost"]["by_demand"].items()}, indent=2, sort_keys=True), "```", "",
              "## Demand Costs", "", "```json", json.dumps(card["cost"], indent=2, sort_keys=True), "```"]
     return "\n".join(lines) + "\n"
 
