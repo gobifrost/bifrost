@@ -1,0 +1,15 @@
+{
+  "key": "pr:1164",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Concurrent workflow table creation preserves unique table names.",
+  "action_required": true,
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1164",
+      "Conditional upgrade notice proposed: installations with existing duplicate global or organization table names must resolve them before this non-destructive migration can proceed. The duplicate-data migration rehearsal proves refusal without mutation; a read-only October 31 production preflight found zero duplicate groups in either scope. Customer upgrade wording requires review before this draft PR is queued."
+    ]
+  }
+}

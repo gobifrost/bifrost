@@ -5,12 +5,13 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from shared.policies.probe import make_seed_admin_bypass
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
 from src.models.contracts.tables import TableCreate, TableUpdate
-from src.models.orm.tables import Table
+from src.models.orm.tables import Table, is_repo_table_name_conflict
 from src.repositories.org_scoped import OrgScopedRepository
 
 logger = logging.getLogger(__name__)
@@ -96,8 +97,14 @@ class TableRepository(OrgScopedRepository[Table]):
             created_by=created_by,
             access=access_json,
         )
-        self.session.add(table)
-        await self.session.flush()
+        try:
+            async with self.session.begin_nested():
+                self.session.add(table)
+                await self.session.flush()
+        except IntegrityError as exc:
+            if is_repo_table_name_conflict(exc):
+                raise ValueError(f"Table '{data.name}' already exists") from exc
+            raise
         await self.session.refresh(table)
 
         logger.info(f"Created table '{log_safe(data.name)}' in org {self.org_id}")
