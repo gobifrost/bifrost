@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,15 @@ import search  # noqa: E402
 
 def profile() -> dict:
     return {
+        "quota": {"cpu": "4", "memory": "8Gi"},
+        "components": {
+            "api": {"replicas": 1, "cpu": "1250m", "memory": "1280Mi"},
+            "postgres": {"cpu": "1", "memory": "2Gi"},
+        },
+        "worker_policy": {"warm_workers": 1, "max_workers": 2, "worker_memory_mib": 2048},
+        "worker_cpu": "650m",
+        "env": {"MALLOC_ARENA_MAX": "2"},
+        "fake_llm_latency_ms": 0,
         "capacity": {
             "seed": 11, "warmup_s": 2.0, "window_min_s": 3.0, "drain_s": 1.0,
             "deadlines_s": {"wf-noop": 10.0}, "disk": {"name": "disk", "id": "1:1"},
@@ -57,6 +67,40 @@ class RecoveryFixtureTest(unittest.TestCase):
         with recovery_run._recovery_loadgen():
             self.assertEqual(search.LOADGEN, recovery_run.RECOVERY_DRIVER)
         self.assertEqual(search.LOADGEN, original)
+
+
+class RecoveryArtifactTest(unittest.TestCase):
+    def test_initial_partial_artifact_has_run_contract_and_regenerates_report_for_infinite_failure_latency(self) -> None:
+        cluster = Mock()
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            recovery_run.bench_run, "environment", return_value=environment()
+        ):
+            out = Path(temporary) / "fresh"
+            artifact = recovery_run.Artifact(cluster, "m-capacity", profile(), "d3", 1.0, out, "candidate")
+            initial = json.loads((out / "result.json").read_text(encoding="utf-8"))
+            initial_report = (out / "report.md").read_text(encoding="utf-8")
+            self.assertEqual(initial["kind"], "recovery-drill")
+            self.assertEqual(initial["drill"], "d3")
+            self.assertIsNone(initial["api_pod_changes"])
+            self.assertIn("## Recovery Correctness", initial_report)
+            self.assertIn("status: **running**", initial_report)
+
+            artifact.result.update({
+                "status": "failed",
+                "result": {"timing_checks": {"normal_failure_latency_s": math.inf}},
+            })
+            artifact.save()
+
+            saved = json.loads((out / "result.json").read_text(encoding="utf-8"))
+            rendered = (out / "report.md").read_text(encoding="utf-8")
+        self.assertIsNone(saved["result"]["timing_checks"]["normal_failure_latency_s"])
+        self.assertEqual(saved["non_finite_numbers"], [{
+            "path": ["result", "timing_checks", "normal_failure_latency_s"],
+            "kind": "positive_infinity",
+        }])
+        self.assertIn("status: **failed**", rendered)
+        self.assertIn("Infinity", rendered)
+        self.assertNotEqual(initial_report, rendered)
 
 
 class RecoveryRunLifecycleTest(unittest.TestCase):

@@ -226,7 +226,7 @@ def _header(result: dict) -> list[str]:
         f"({profile['worker_cpu']}, {profile['worker_policy']['worker_memory_mib']} MiB); Postgres {components['postgres']['cpu']}, "
         f"{components['postgres']['memory']}; requests == limits",
         f"- Allocator env: `{profile['env']}`; fake model latency {profile['fake_llm_latency_ms']} ms per call",
-        f"- API pod replacements during run: {result['api_pod_changes']}",
+        f"- API pod replacements during run: {result['api_pod_changes'] if result.get('api_pod_changes') is not None else 'unmeasured'}",
     ]
 
 
@@ -326,7 +326,7 @@ def _storage_frames(steps: list[dict], periodic: list[dict] | None = None) -> li
             frame = step.get("storage", {}).get(phase)
             if frame:
                 frames.append((f"step {index + 1} {phase}", frame))
-    frames.extend(("periodic", sample["storage"]) for sample in (periodic or []) if sample.get("storage"))
+    frames.extend((sample.get("label", "periodic"), sample["storage"]) for sample in (periodic or []) if sample.get("storage"))
     if not frames:
         return []
     rows = ["## Storage Over Time", "",
@@ -345,6 +345,64 @@ def _storage_frames(steps: list[dict], periodic: list[dict] | None = None) -> li
                   logical.get("total", {}).get("object_bytes"), objects.get("physical_volume", {}).get("allocated_bytes"),
                   frame.get("container_logs", {}).get("retained_bytes"), frame.get("redis", {}).get("memory", {}).get("used_memory")]
         rows.append(f"| {label} | {frame['collected_at']:.3f} | " + " | ".join(mib(value) for value in values) + f" | {waiting} |")
+    return [*rows, ""]
+
+
+def _retention(result: dict) -> list[str]:
+    rows = ["## Storage Sizing and Retention Rehearsal", "",
+            f"Stage: **{result.get('stage', 'partial')}**. This isolated fixture is storage evidence, not a capacity or hosting-price certification.", "",
+            "Fixtures run in separate phases. Expected failures remain part of the retained history. Repetitive and seeded high-entropy payloads distinguish compression behavior; the fixture does not represent every customer workload.", ""]
+    if result.get("error"):
+        rows += [f"Invalid rehearsal: {result['error']}", ""]
+    if result.get("not_exercised"):
+        rows += [result["not_exercised"], ""]
+    settings = result.get("canonical_run_retention_settings")
+    if settings:
+        rows += [f"Canonical retention settings: `{json.dumps(settings, sort_keys=True)}`.", ""]
+    receipt = result.get("immutable_receipt")
+    if receipt:
+        rows += [f"Terminal records were retained before timestamp mutation: `{receipt['sha256']}` "
+                 f"({len(receipt['execution_ids'])} explicit fixture execution IDs).", ""]
+    sizes = result.get("before_backdate", {}).get("result_storage_by_case", {})
+    if sizes:
+        rows += ["| Fixture | Executions | Result Column Bytes | Payload UTF-8 Bytes |", "|---|---:|---:|---:|"]
+        for name, size in sizes.items():
+            rows.append(f"| {name} | {size['executions']} | {size['result_column_bytes']} | {size['payload_utf8_bytes']} |")
+        rows += ["", "Result column size is distinct from total heap/index/TOAST and allocated disk bytes.", ""]
+    frames = [{"label": "seeded", **result.get("before", {})}]
+    frames += [{"label": phase["case"], "storage": phase.get("storage_after")} for phase in result.get("fixture_phases", [])]
+    frames += [{"label": "before expiry", **result.get("before_retention", {})}, {"label": "after expiry", **result.get("after", {})}]
+    rows += _storage_frames([], frames)
+    for key in ("retention_dry_run", "retention_actual"):
+        job = result.get(key, {}).get("job", {})
+        if job:
+            rows += [f"- {key}: PlatformJob `{job.get('id')}`, status `{job.get('status')}`."]
+    rows += ["", result.get("method", {}).get("physical_limit", "DELETE and autovacuum need not shrink allocated PostgreSQL PVC bytes."),
+             "Audit/artifact cleanup and backup/restore are not exercised by this rehearsal. Pricing remains unmeasured.", ""]
+    return rows
+
+
+def _recovery(result: dict) -> list[str]:
+    found = result.get("result", {})
+    rows = ["## Recovery Correctness", "",
+            f"Drill: `{result.get('drill', 'unavailable')}`; status: **{result.get('status', 'partial')}**; stage: `{result.get('stage', 'initializing')}`.", "",
+            f"Offered diagnostic rate: {result.get('rate')} /s. This correctness drill does not certify sustained capacity.", ""]
+    if result.get("error"):
+        rows += [f"Invalid measurement: {result['error']}", ""]
+    proof = {key: found[key] for key in ("kind", "passed", "overall", "timing_checks", "assessment") if key in found}
+    effects = found.get("effects", {})
+    proof["effect_checks"] = {key: effects[key] for key in ("strict_effects", "terminal_and_loss") if key in effects}
+    deadlines = found.get("deadlines", {})
+    proof["deadline_checks"] = {key: deadlines[key] for key in ("normal_deadline", "recovery_deadline") if key in deadlines}
+    injector = found.get("injector", {})
+    proof["injector"] = {key: injector[key] for key in ("fault_at", "ready_at", "error", "injected_at") if key in injector}
+    rows += ["```json", json.dumps(proof, indent=2, default=str), "```", "",
+             "Raw accepted/unaccepted requests, durable records, append-only effects, exact fault target and lifecycle evidence are retained in result.json.", ""]
+    for name, gap in result.get("d7_d9", {}).items():
+        rows.append(f"- {name.upper()}: {gap}")
+    cleanup = result.get("cleanup")
+    if cleanup:
+        rows += ["", f"Cleanup evidence: `{json.dumps(cleanup, sort_keys=True)}`."]
     return [*rows, ""]
 
 
@@ -499,6 +557,10 @@ def render(result: dict) -> str:
                           json.dumps({k: v for k, v in found.items() if k != "step"}, indent=2, default=str), "```", ""])
     if result["kind"] == "soak":
         return "\n".join([*lines, *_soak(result)])
+    if result["kind"] == "retention-rehearsal":
+        return "\n".join([*lines, *_retention(result)])
+    if result["kind"] == "recovery-drill":
+        return "\n".join([*lines, *_recovery(result)])
     import_diagnostic = bool(result.get("imports_diagnostic"))
     lines += [
         f"Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes.",

@@ -28,8 +28,10 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "incluster"))
 
 import deploy  # noqa: E402
+import jsoncodec  # noqa: E402
 import recovery  # noqa: E402
 import recovery_driver  # noqa: E402
+import report  # noqa: E402
 import run as bench_run  # noqa: E402
 import search  # noqa: E402
 from cluster import Cluster  # noqa: E402
@@ -44,14 +46,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _atomic_write(path: Path, value: dict) -> None:
+def _atomic_write(path: Path, contents: bytes) -> None:
+    """Replace one artifact only after complete strict-JSON content reaches disk."""
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with open(temporary, "x", encoding="utf-8") as file:
-        json.dump(value, file, indent=2, allow_nan=False)
-        file.write("\n")
-        file.flush()
-        os.fsync(file.fileno())
-    os.replace(temporary, path)
+    try:
+        with open(temporary, "xb") as file:
+            file.write(contents)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 @contextmanager
@@ -76,10 +82,10 @@ class Artifact:
         out.mkdir(parents=True, exist_ok=False)
         self.cluster, self.out = cluster, out
         self.result = {
-            "schema_version": bench_run.jsoncodec.SCHEMA_VERSION, "kind": "recovery-drill", "run_id": out.name,
+            "schema_version": jsoncodec.SCHEMA_VERSION, "kind": "recovery-drill", "drill": kind, "run_id": out.name,
             "started_at": _now(), **bench_run.environment(cluster, api_image), "profile_name": profile_name,
             "profile": profile, "backend": "fake", "api_image_selected": api_image, "rate": rate,
-            "status": "running", "stage": "created", "deploy": None, "setup": None,
+            "api_pod_changes": None, "status": "running", "stage": "created", "deploy": None, "setup": None,
             "d7_d9": {
                 "d7": "unimplemented: stale worker requires worker-namespace packet drop, gated wf-io, lease-expiry and stale completion rejection proof",
                 "d8": "unimplemented: D3 during long work compared with D7; cancellation requested during DB outage must take effect within 30 s after recovery",
@@ -90,7 +96,9 @@ class Artifact:
         self.save()
 
     def save(self) -> None:
-        _atomic_write(self.out / "result.json", self.result)
+        encoded = jsoncodec.encode(self.result)
+        _atomic_write(self.out / "result.json", json.dumps(encoded, indent=2, allow_nan=False).encode("utf-8"))
+        _atomic_write(self.out / "report.md", report.render(encoded).encode("utf-8"))
 
     def event(self, stage: str, **evidence: object) -> None:
         event = {"at": _now(), "stage": stage, **evidence}
@@ -211,7 +219,8 @@ def _d6(cluster: Cluster, ids: dict, tokens: dict[str, str]) -> dict:
                                          outcomes["rows"], _effects_reader(cluster)([request_id]))
     owner_rows = [row for row in outcomes["rows"] if row.get("durable_id") == owned["execution_id"]]
     owner_terminal = len(owner_rows) == 1 and recovery._terminal(owner_rows[0])
-    passed = (assessment["lost_path_observed"] and assessment["loss_within_lease_plus_one_sweep"]
+    passed = (assessment["lost_path_observed"] and assessment["loss_not_before_heartbeat_timeout"]
+              and assessment["loss_within_heartbeat_plus_one_sweep"]
               and assessment["replacement_admitted"] and slot_release["released"] and owner_terminal
               and effects["strict_effects"])
     return {"kind": "busy-worker-kill", "submitted": submitted, "target": {"owned": owned, "pod": pod}, "kill": killed,

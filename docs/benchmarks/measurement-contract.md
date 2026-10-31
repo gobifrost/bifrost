@@ -30,7 +30,7 @@ reliability, backlog, tenant-fault and host-validity gates. Descriptive rates an
 latency distributions supplement those gates. A short smoke, incomplete sample
 or observational soak cannot certify a rate. The mixed confirmation plan uses
 five immutable one-hour segments, with pooled per-class reliability and all
-other gates retained per segment. The two-hour soak runs at 70% of a passing
+other gates retained per segment. Storage probes execute in the API pod and add observer CPU/memory during the soak; compare runs with the same probe cadence. Capacity storage frames sit outside the measured window. The two-hour soak runs at 70% of a passing
 mixed rate and records minute metrics plus five-minute storage frames.
 
 ## Reproducibility and Comparisons

@@ -130,22 +130,46 @@ class WorkerTargetTest(unittest.TestCase):
             result = recovery.kill_worker_process(cluster, owned, worker)
         self.assertEqual(result["pid"], 123)
         self.assertEqual(result["loss_bound_s"], 35.0)
+        self.assertEqual(result["loss_bound"], {
+            "source_version": "worker-liveness-v1",
+            "heartbeat_lost_after_seconds": 30.0,
+            "heartbeat_source": "api/src/services/worker_pool/liveness.py:HEARTBEAT_LOST_AFTER",
+            "controller_sweep_seconds": 5.0,
+            "controller_sweep_source": "api/src/services/worker_pool/controller.py:SWEEP_SECONDS",
+            "total_seconds": 35.0,
+        })
         self.assertEqual(run.call_args_list[1].args[0][-2:], ["-9", "123"])
 
     def test_d6_uses_first_sampling_times_for_loss_and_replacement_admission(self) -> None:
+        self.assertIn("extract(epoch from heartbeat_at)", recovery.WORKER_STATE_SQL)
+        self.assertIn("extract(epoch from statement_timestamp())", recovery.WORKER_STATE_SQL)
         cluster = Mock()
         cluster.driver_sql.return_value = [{"id": "old", "state": "ready"}, {"id": "already-ready", "state": "ready"}]
         sampler = recovery.WorkerRecoverySampler(cluster, "old")
         sampler.snapshot_before_kill()
         sampler.mark_killed(100.0)
-        sampler.observe([{"id": "old", "state": "lost", "end_reason": "heartbeat_timeout"}], observed_at=120.0)
+        sampler.observe([{"id": "old", "state": "lost", "end_reason": "heartbeat_timeout",
+                          "heartbeat_at_epoch": 90.0, "observed_db_epoch": 120.0}], observed_at=120.0)
         sampler.observe([{"id": "old", "state": "lost"}, {"id": "already-ready", "state": "ready"}], observed_at=121.0)
         self.assertIsNone(sampler.first_replacement_ready_at)
         sampler.observe([{"id": "old", "state": "lost"}, {"id": "new", "state": "ready"}], observed_at=122.0)
         result = recovery.worker_recovery_assessment({"killed_at": 100.0, "loss_bound_s": 35.0}, sampler.evidence())
-        self.assertTrue(result["loss_within_lease_plus_one_sweep"])
+        self.assertTrue(result["loss_within_heartbeat_plus_one_sweep"])
+        self.assertTrue(result["loss_not_before_heartbeat_timeout"])
         self.assertTrue(result["replacement_admitted"])
         self.assertEqual(result["lost_terminal_status"], "lost")
+        self.assertEqual(result["bound"]["source_version"], "worker-liveness-v1")
+        self.assertNotIn("owner_lease_seconds", result["bound"])
+
+    def test_d6_rejects_loss_observed_before_its_database_heartbeat_timeout(self) -> None:
+        result = recovery.worker_recovery_assessment(
+            {"killed_at": 100.0, "loss_bound_s": 35.0},
+            {"first_lost_at": 110.0, "first_lost_db_at": 119.0,
+             "first_lost": {"state": "lost", "heartbeat_at_epoch": 90.0},
+             "first_replacement_ready_at": None, "first_replacement": None,
+             "pre_kill_ready_worker_ids": []},
+        )
+        self.assertFalse(result["loss_not_before_heartbeat_timeout"])
 
     def test_d6_slot_release_requires_no_running_claim_on_killed_worker(self) -> None:
         cluster = Mock()

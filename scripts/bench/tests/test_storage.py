@@ -23,10 +23,10 @@ def pod(name: str, namespace: str, labels: dict[str, str], container: str) -> di
     }
 
 
-POSTGRES = pod("bifrost-db-1", "bench-tenant", {"cnpg.io/cluster": "bifrost-db"}, "postgres")
+POSTGRES = pod("bifrost-db-1", "bench-tenant", {"cnpg.io/cluster": "bifrost-db", "cnpg.io/podRole": "instance"}, "postgres")
 REDIS = pod("redis-0", "bench-tenant", {"app.kubernetes.io/name": "redis"}, "redis")
 SEAWEED = pod("seaweedfs-0", "bench-infra", {"app.kubernetes.io/name": "seaweedfs"}, "seaweedfs")
-POOLER = pod("bifrost-db-pooler-abc", "bench-tenant", {"cnpg.io/poolerName": "bifrost-db-pooler"}, "pgbouncer")
+POOLER = pod("bifrost-db-pooler-abc", "bench-tenant", {"cnpg.io/poolerName": "bifrost-db-pooler", "cnpg.io/cluster": "bifrost-db", "cnpg.io/podRole": "pooler"}, "pgbouncer")
 POOLER_METRICS = """# exporter comment
 cnpg_pgbouncer_lists_used_clients 3
 cnpg_pgbouncer_lists_used_servers 2
@@ -40,6 +40,19 @@ cnpg_pgbouncer_stats_total_wait_time{database=\"bifrost\"} 50
 
 
 class StorageCollectionTest(unittest.TestCase):
+    def test_database_selector_excludes_pooler_with_same_cluster_label(self) -> None:
+        cluster = Mock()
+        cluster.driver_sql.return_value = {"database": {"bytes": 1, "wal_retained_bytes": 1, "data_directory": "/data"}}
+        def select(*args, **_kwargs):
+            if args[:2] == ("get", "pods"):
+                selector = args[args.index("-l") + 1]
+                # Actual CNPG Pooler pods share cnpg.io/cluster with instances.
+                return json.dumps({"items": [POSTGRES] if "cnpg.io/podRole=instance" in selector else [POSTGRES, POOLER]})
+            return json.dumps({"spec": {}})
+        cluster.kubectl.side_effect = select
+        with patch.object(storage, "_du", return_value={"allocated_bytes": 1}):
+            self.assertEqual(storage._postgres(cluster)["database"]["bytes"], 1)
+
     def _cluster(self) -> Mock:
         cluster = Mock()
         cluster.driver_sql.return_value = {

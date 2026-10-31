@@ -321,7 +321,8 @@ def _postgres(cluster) -> dict:
     data_directory = database.pop("data_directory", None)
     if not isinstance(data_directory, str):
         raise RuntimeError("Postgres did not report an absolute data directory")
-    postgres = _single_pod(cluster, guard.TENANT_NS, "cnpg.io/cluster=bifrost-db", {"cnpg.io/cluster": "bifrost-db"}, name="Postgres", container="postgres")
+    postgres = _single_pod(cluster, guard.TENANT_NS, "cnpg.io/cluster=bifrost-db,cnpg.io/podRole=instance",
+                           {"cnpg.io/cluster": "bifrost-db", "cnpg.io/podRole": "instance"}, name="Postgres", container="postgres")
     return {
         "database": database, "relations": observed.get("relations"), "connections": observed.get("connections"),
         "cardinality": observed.get("cardinality"),

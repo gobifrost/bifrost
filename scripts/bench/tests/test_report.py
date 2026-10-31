@@ -58,6 +58,26 @@ RESULT = {
 
 
 class RenderTest(unittest.TestCase):
+    def test_recovery_report_exposes_correctness_and_missing_drills(self) -> None:
+        source = {key: value for key, value in RESULT.items() if key not in ("classes", "snapshots", "api_pod_changes")}
+        text = report.render({**source, "kind": "recovery-drill", "drill": "d6", "status": "failed",
+                              "result": {"passed": False, "assessment": {"lost_path_observed": False}},
+                              "d7_d9": {"d7": "unimplemented: stale attempt proof"}})
+        self.assertIn("## Recovery Correctness", text)
+        self.assertIn("does not certify sustained capacity", text)
+        self.assertIn('"lost_path_observed": false', text)
+        self.assertIn("D7: unimplemented", text)
+        self.assertNotIn("## Execution times", text)
+
+    def test_retention_report_cannot_appear_as_empty_execution_benchmark(self) -> None:
+        text = report.render({**RESULT, "kind": "retention-rehearsal", "stage": "complete",
+                              "before_backdate": {"result_storage_by_case": {"entropy": {
+                                  "executions": 20, "result_column_bytes": 90, "payload_utf8_bytes": 100}}}})
+        self.assertIn("## Storage Sizing and Retention Rehearsal", text)
+        self.assertIn("| entropy | 20 | 90 | 100 |", text)
+        self.assertIn("Pricing remains unmeasured", text)
+        self.assertNotIn("## Execution times", text)
+
     def test_storage_frames_preserve_distinct_sizes_and_missing_measurements(self) -> None:
         frame = {"collected_at": 10, "postgres": {"database": {"bytes": 2**20, "wal_retained_bytes": 2 * 2**20},
                   "physical_volume": {"allocated_bytes": 8 * 2**20}}, "pgbouncer": {"status": "unmeasured"}}

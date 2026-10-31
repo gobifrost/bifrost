@@ -23,9 +23,20 @@ import search
 RECOVERY_EFFECTS_VERSION = "recovery-effects-v1"
 FAULT_AT_S = 60.0
 API_RECOVERY_BOUND_S = 60.0
-OWNER_LEASE_S = 20.0
-ONE_SWEEP_S = 15.0  # api/src/worker/pool_main.py SWEEP_SECONDS
-WORKER_RECOVERY_BOUND_S = OWNER_LEASE_S + ONE_SWEEP_S
+# D6 kills a worker process.  Its loss path is the worker heartbeat, not the
+# remote-owner lease used by other recovery paths.  Keep this provenance with
+# the artifact so the 35-second bound does not conceal its two mechanisms.
+WORKER_HEARTBEAT_LOST_AFTER_S = 30.0  # api/src/services/worker_pool/liveness.py:HEARTBEAT_LOST_AFTER
+WORKER_CONTROLLER_SWEEP_S = 5.0  # api/src/services/worker_pool/controller.py:SWEEP_SECONDS
+WORKER_RECOVERY_BOUND_S = WORKER_HEARTBEAT_LOST_AFTER_S + WORKER_CONTROLLER_SWEEP_S
+WORKER_LOSS_BOUND_EVIDENCE = {
+    "source_version": "worker-liveness-v1",
+    "heartbeat_lost_after_seconds": WORKER_HEARTBEAT_LOST_AFTER_S,
+    "heartbeat_source": "api/src/services/worker_pool/liveness.py:HEARTBEAT_LOST_AFTER",
+    "controller_sweep_seconds": WORKER_CONTROLLER_SWEEP_S,
+    "controller_sweep_source": "api/src/services/worker_pool/controller.py:SWEEP_SECONDS",
+    "total_seconds": WORKER_RECOVERY_BOUND_S,
+}
 PRIMARY_LABELS = {"cnpg.io/cluster": "bifrost-db", "cnpg.io/instanceRole": "primary"}
 API_LABELS = {"app.kubernetes.io/name": "bifrost-api"}
 TERMINAL_STATUSES = {
@@ -247,12 +258,14 @@ def kill_worker_process(cluster, owned: dict, pod: dict) -> dict:
     subprocess.run(["docker", "exec", cluster.identity.node_name, "kill", "-9", str(pid)], check=True)
     return {"worker_id": owned["worker_id"], "execution_id": owned["execution_id"], "pod": pod["metadata"]["name"],
             "pod_uid": owned["pod_uid"], "container_id": container_id, "pid": pid, "killed_at": time.time(),
-            "loss_bound_s": WORKER_RECOVERY_BOUND_S}
+            "loss_bound_s": WORKER_RECOVERY_BOUND_S, "loss_bound": WORKER_LOSS_BOUND_EVIDENCE}
 
 
 WORKER_STATE_SQL = """
 select coalesce(json_agg(json_build_object('id', id::text, 'state', state,
-  'generation', remote_session_generation, 'reason', end_reason) order by id), '[]'::json)
+  'generation', remote_session_generation, 'reason', end_reason,
+  'heartbeat_at_epoch', extract(epoch from heartbeat_at),
+  'observed_db_epoch', extract(epoch from statement_timestamp())) order by id), '[]'::json)
 from execution_workers
 """
 
@@ -283,6 +296,7 @@ class WorkerRecoverySampler:
         self.interval_s = interval_s
         self.samples: list[dict] = []
         self.first_lost_at: float | None = None
+        self.first_lost_db_at: float | None = None
         self.first_replacement_ready_at: float | None = None
         self.first_lost: dict | None = None
         self.first_replacement: dict | None = None
@@ -328,6 +342,8 @@ class WorkerRecoverySampler:
         killed = next((worker for worker in workers if worker.get("id") == self.killed_worker_id), None)
         if self.first_lost_at is None and killed is not None and killed.get("state") == "lost":
             self.first_lost_at, self.first_lost = observed_at, killed
+            observed_db_at = killed.get("observed_db_epoch")
+            self.first_lost_db_at = float(observed_db_at) if isinstance(observed_db_at, (int, float)) else None
         replacement = next((worker for worker in workers if worker.get("id") not in self.pre_kill_ready_worker_ids
                             and worker.get("state") == "ready"), None)
         if self.first_replacement_ready_at is None and replacement is not None:
@@ -337,6 +353,7 @@ class WorkerRecoverySampler:
         return {"samples": self.samples, "killed_at": self.killed_at,
                 "pre_kill_ready_worker_ids": sorted(self.pre_kill_ready_worker_ids),
                 "first_lost_at": self.first_lost_at, "first_lost": self.first_lost,
+                "first_lost_db_at": self.first_lost_db_at,
                 "first_replacement_ready_at": self.first_replacement_ready_at,
                 "first_replacement": self.first_replacement}
 
@@ -353,22 +370,30 @@ class WorkerRecoverySampler:
 
 
 def worker_recovery_assessment(kill: dict, sampled: dict) -> dict:
-    """D6's loss clock uses sampling time, never a later reconciliation timestamp."""
+    """D6 keeps host observation timing and database heartbeat-clock proof separate."""
     lost_at = sampled.get("first_lost_at")
+    lost_db_at = sampled.get("first_lost_db_at")
     replacement_at = sampled.get("first_replacement_ready_at")
     lost = sampled.get("first_lost") if isinstance(sampled.get("first_lost"), dict) else {}
     replacement = sampled.get("first_replacement") if isinstance(sampled.get("first_replacement"), dict) else {}
+    last_db_heartbeat_at = lost.get("heartbeat_at_epoch")
+    heartbeat_timeout_elapsed = (
+        isinstance(lost_db_at, (int, float))
+        and isinstance(last_db_heartbeat_at, (int, float))
+        and lost_db_at - last_db_heartbeat_at >= WORKER_HEARTBEAT_LOST_AFTER_S
+    )
     return {
         "lost_path_observed": lost_at is not None and lost.get("state") == "lost",
         "lost_terminal_status": lost.get("state"),
         "first_lost": lost or None, "first_lost_at": lost_at,
+        "first_lost_db_at": lost_db_at, "last_db_heartbeat_at": last_db_heartbeat_at,
+        "loss_not_before_heartbeat_timeout": heartbeat_timeout_elapsed,
         "first_replacement": replacement or None, "first_replacement_ready_at": replacement_at,
         "replacement_admitted": replacement_at is not None and replacement.get("id") not in set(sampled.get("pre_kill_ready_worker_ids", [])),
         "loss_after_kill_seconds": None if lost_at is None else lost_at - kill["killed_at"],
         "replacement_after_kill_seconds": None if replacement_at is None else replacement_at - kill["killed_at"],
-        "loss_within_lease_plus_one_sweep": lost_at is not None and lost_at - kill["killed_at"] <= kill["loss_bound_s"],
-        "bound": {"owner_lease_seconds": OWNER_LEASE_S, "one_sweep_seconds": ONE_SWEEP_S,
-                  "total_seconds": kill["loss_bound_s"]},
+        "loss_within_heartbeat_plus_one_sweep": lost_at is not None and lost_at - kill["killed_at"] <= kill["loss_bound_s"],
+        "bound": kill.get("loss_bound", {**WORKER_LOSS_BOUND_EVIDENCE, "total_seconds": kill["loss_bound_s"]}),
     }
 
 
