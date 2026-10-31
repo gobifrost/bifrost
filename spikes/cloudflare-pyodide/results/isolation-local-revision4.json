@@ -1,0 +1,149 @@
+{
+  "runtime": "local-workerd",
+  "results": [
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-A",
+            "own_canary": "synthetic-8858da08-a0d8-4d1d-bb4b-6138d693a4f6"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-B",
+            "own_canary": "synthetic-916abd5c-5df0-49fa-9002-6ede007f3d70"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-A",
+            "own_canary": "synthetic-42fa9a49-a8bb-43a3-a70c-8b4f0086fbb4"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-B",
+            "own_canary": "synthetic-480ced5d-c333-41e7-8a14-9fa7af618ac3"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "egress"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "blocked": true,
+            "error_type": "AbortError"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "io",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "error_type": "Error",
+          "error": "Error: diagnostic cancellation"
+        },
+        "effects": [
+          "before"
+        ],
+        "abort_requested": true,
+        "cancel_input": true
+      }
+    },
+    {
+      "request": {
+        "action": "cpu",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "total": 199999990000000
+          }
+        },
+        "effects": [
+          "before",
+          "after"
+        ],
+        "abort_requested": false,
+        "cancel_input": true
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 name = "bifrost-pyodide-spike"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = ["httpx", "pydantic>=2.12", "python-dotenv", "pyyaml", "workers-runtime-sdk"]
+dependencies = ["httpx", "pydantic>=2.12", "python-dotenv", "pyyaml", "workers-runtime-sdk", "redis==7.4.0"]
 
 [dependency-groups]
 dev = ["workers-py==1.17.9"]

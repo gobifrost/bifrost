@@ -41,6 +41,11 @@ version = "6.0.3"
 wheels = [{ url = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyyaml-6.0.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl", hashes = { sha256 = "a05d2a48c13ed72a8c60c73b30b753a25c3a591bb66c15428b7e95e69a9e806f" } }]
 
 [[packages]]
+name = "redis"
+version = "7.4.0"
+wheels = [{ url = "https://files.pythonhosted.org/packages/74/3a/95deec7db1eb53979973ebd156f3369a72732208d1391cd2e5d127062a32/redis-7.4.0-py3-none-any.whl", upload-time = 2026-03-24T09:14:35Z, size = 409772, hashes = { sha256 = "a9c74a5c893a5ef8455a5adb793a31bb70feb821c86eccb62eebef5a19c429ec" } }]
+
+[[packages]]
 name = "typing-extensions"
 version = "4.16.0"
 wheels = [{ url = "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl", upload-time = 2026-07-02T08:40:04Z, size = 45571, hashes = { sha256 = "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8" } }]

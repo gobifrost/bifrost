@@ -1,0 +1,180 @@
+{
+  "runtime": "local-workerd",
+  "results": [
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-A",
+            "own_canary": "synthetic-15df9ede-85f1-453f-9836-acc62904e6c7",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-B",
+            "own_canary": "synthetic-45172ed3-d56a-482d-9fa4-6c4970c3bb84",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-A",
+            "own_canary": "synthetic-e8c56110-e87d-412c-92f6-f8054a08151e",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-B",
+            "own_canary": "synthetic-8390c2ff-e09f-4f7e-8f21-d9cd459318db",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "egress"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "blocked": true,
+            "error_type": "AbortError"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "io",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "error_type": "Error",
+          "error": "Error: diagnostic cancellation"
+        },
+        "effects": [
+          "before"
+        ],
+        "abort_requested": true,
+        "parent_canary_configured": true,
+        "cancel_input": true
+      }
+    },
+    {
+      "request": {
+        "action": "cpu",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "total": 199999990000000
+          }
+        },
+        "effects": [
+          "before",
+          "after"
+        ],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": true
+      }
+    }
+  ]
+}

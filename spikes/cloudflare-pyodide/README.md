@@ -5,8 +5,11 @@ in one shared Worker.** Real upstream `engine.execute()` and unmodified SDK
 integration reads/table writes ran in local Cloudflare workerd/Pyodide. This is
 not a production execution target or a completed remote-launcher implementation.
 
-Authority: gobifrost/bifrost at `e5da6d0c1fb751d4155b1b65458bfedfc2bec112`.
-All changes are in this companion directory; platform sources are unchanged.
+Historical spike authority: gobifrost/bifrost at `e5da6d0c1fb751d4155b1b65458bfedfc2bec112`.
+The follow-on backend work is reconciled with upstream `e611d31bbba3d7601980271c774cad5e821b1e97`.
+It adds two small engine/worker seams; see [current acceptance](IMPLEMENTATION.md)
+and [proposed physical contract](backend/CONTRACT.md). Historical measurements
+below do not establish acceptance of that backend.
 See [assessment.md](assessment.md), [experiments.md](experiments.md), and
 [raw evidence](results/). No production resources or credentials were used.
 
