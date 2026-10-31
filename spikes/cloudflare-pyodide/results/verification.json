@@ -1,0 +1,13 @@
+{
+  "artifact": "results/benchmark-sdk.json",
+  "assertions": "passed",
+  "warm_json_client_median_ms": 59.425200000001496,
+  "warm_json_samples": [
+    42.03150000000096,
+    50.74170000000049,
+    59.425200000001496,
+    65.23919999999998,
+    77.72539999999935
+  ],
+  "correctness": "fixed expected values asserted; negative results are boundaries, not successes"
+}

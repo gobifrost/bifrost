@@ -1,0 +1,821 @@
+{
+  "runtime": "Linux CPython engine-only; no pool/dispatch",
+  "results": [
+    {
+      "workload": "json_transform",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 7,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0.0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 8.033277998038102
+      },
+      "client_wall_ms": 8.044033995247446
+    },
+    {
+      "workload": "async_context",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "value": 7,
+          "execution_id": "00000000-0000-0000-0000-000000000001"
+        },
+        "duration_ms": 0,
+        "logs": [],
+        "variables": {
+          "value": 7
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0.0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "async_context",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 0.43976400047540665
+      },
+      "client_wall_ms": 0.4466620011953637
+    },
+    {
+      "workload": "workspace_import",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "workspace_result": 42
+        },
+        "duration_ms": 1,
+        "logs": [],
+        "variables": {},
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0.0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "workspace_import",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 2.2467949966085143
+      },
+      "client_wall_ms": 2.252129001135472
+    },
+    {
+      "workload": "http_orchestration",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "statuses": [
+            200,
+            200,
+            200
+          ]
+        },
+        "duration_ms": 487,
+        "logs": [],
+        "variables": {
+          "client": "<AsyncClient>",
+          "replies": [
+            "<Response>",
+            "<Response>",
+            "<Response>"
+          ]
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0.0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "http_orchestration",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 487.84864300250774
+      },
+      "client_wall_ms": 487.8561859950423
+    },
+    {
+      "workload": "integration_read",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Failed",
+        "result": null,
+        "duration_ms": 9,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:10:50.800508+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800527+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800530+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800532+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800534+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800536+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800537+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800550+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/fixtures.py\", line 35, in integration_read",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800552+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     data = await integrations.get(\"pyodide-spike\")",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800553+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800555+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/bifrost/integrations.py\", line 116, in get",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800563+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     client = get_client()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800565+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/bifrost/client.py\", line 1256, in get_client",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800566+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return BifrostClient.get_instance()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800568+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ~~~~~~~~~~~~~~~~~~~~~~~~~~^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800569+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/bifrost/client.py\", line 905, in get_instance",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800570+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     raise RuntimeError(",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800572+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]         \"Not logged in. Run 'bifrost login' to authenticate.\"",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800573+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     )",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800574+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] RuntimeError: Not logged in. Run 'bifrost login' to authenticate.",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800585+00:00",
+            "level": "error",
+            "message": "Execution error: integration_read",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.800655+00:00",
+            "level": "error",
+            "message": "RuntimeError: Not logged in. Run 'bifrost login' to authenticate.",
+            "source": "workflow"
+          }
+        ],
+        "variables": {},
+        "integration_calls": [],
+        "roi": null,
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "integration_read",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": "Not logged in. Run 'bifrost login' to authenticate.",
+        "error_type": "RuntimeError",
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 10.242103999189567
+      },
+      "client_wall_ms": 10.252781001327094
+    },
+    {
+      "workload": "table_update",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Failed",
+        "result": null,
+        "duration_ms": 15,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:10:50.816779+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816784+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816787+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816789+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816790+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816792+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816794+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816795+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/fixtures.py\", line 41, in table_update",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816797+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     doc = await tables.upsert(\"pyodide-spike\", id=\"probe\", data={\"value\": 42})",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816798+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816800+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/bifrost/tables.py\", line 413, in upsert",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816802+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     client = get_client()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816803+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/bifrost/client.py\", line 1256, in get_client",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816804+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return BifrostClient.get_instance()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816805+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ~~~~~~~~~~~~~~~~~~~~~~~~~~^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816807+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/spike/src/vendor/bifrost/client.py\", line 905, in get_instance",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816808+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     raise RuntimeError(",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816809+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]         \"Not logged in. Run 'bifrost login' to authenticate.\"",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816811+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     )",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816812+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] RuntimeError: Not logged in. Run 'bifrost login' to authenticate.",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.816821+00:00",
+            "level": "error",
+            "message": "Execution error: table_update",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.817058+00:00",
+            "level": "error",
+            "message": "RuntimeError: Not logged in. Run 'bifrost login' to authenticate.",
+            "source": "workflow"
+          }
+        ],
+        "variables": {},
+        "integration_calls": [],
+        "roi": null,
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "table_update",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": "Not logged in. Run 'bifrost login' to authenticate.",
+        "error_type": "RuntimeError",
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 16.845284997543786
+      },
+      "client_wall_ms": 16.85239699872909
+    },
+    {
+      "workload": "multi_step",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 10,
+          "sum": 135
+        },
+        "duration_ms": 1,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:10:50.819404+00:00",
+            "level": "warning",
+            "message": "structured log probe",
+            "source": "workflow"
+          }
+        ],
+        "variables": {
+          "fail": false,
+          "result": {
+            "count": 10,
+            "sum": 135
+          }
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0.0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "multi_step",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 1.8658740009414032
+      },
+      "client_wall_ms": 1.8730640003923327
+    },
+    {
+      "workload": "sync_json",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Failed",
+        "result": null,
+        "duration_ms": 0,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:10:50.821693+00:00",
+            "level": "error",
+            "message": "Execution error: sync_json",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822628+00:00",
+            "level": "error",
+            "message": "Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822641+00:00",
+            "level": "error",
+            "message": "  File \"/spike/src/vendor/src/services/execution/engine.py\", line 583, in execute",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822646+00:00",
+            "level": "error",
+            "message": "    result, captured_variables, captured_logs = await _execute_workflow_with_trace(",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822648+00:00",
+            "level": "error",
+            "message": "                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822650+00:00",
+            "level": "error",
+            "message": "    ...<5 lines>...",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822652+00:00",
+            "level": "error",
+            "message": "    )",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822653+00:00",
+            "level": "error",
+            "message": "    ^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822655+00:00",
+            "level": "error",
+            "message": "  File \"/spike/src/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822657+00:00",
+            "level": "error",
+            "message": "    result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822658+00:00",
+            "level": "error",
+            "message": "             ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822660+00:00",
+            "level": "error",
+            "message": "  File \"/spike/src/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822661+00:00",
+            "level": "error",
+            "message": "    return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822662+00:00",
+            "level": "error",
+            "message": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:10:50.822664+00:00",
+            "level": "error",
+            "message": "TypeError: 'dict' object can't be awaited",
+            "source": "workflow"
+          }
+        ],
+        "variables": {},
+        "integration_calls": [],
+        "roi": null,
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "sync_json",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": "'dict' object can't be awaited",
+        "error_type": "TypeError",
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 3.1604129981133156
+      },
+      "client_wall_ms": 3.1669009986217134
+    },
+    {
+      "workload": "io_timeout",
+      "body": {
+        "status": "HarnessError",
+        "error_type": "TimeoutError",
+        "error_message": "",
+        "probe_wall_ms": 50.76413099595811
+      },
+      "client_wall_ms": 50.771909998729825
+    },
+    {
+      "workload": "cpu_timeout",
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": "CPU completed before timeout callback could run",
+        "duration_ms": 150,
+        "logs": [],
+        "variables": {
+          "deadline": 52976.090275415
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0.0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "cpu_timeout",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 150.6569870034582
+      },
+      "client_wall_ms": 150.66677899449132
+    }
+  ]
+}

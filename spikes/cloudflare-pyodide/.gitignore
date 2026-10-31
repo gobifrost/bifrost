@@ -1,0 +1,7 @@
+.venv*/
+node_modules/
+.wrangler/
+python_modules/
+src/vendor/
+__pycache__/
+.dev.vars*

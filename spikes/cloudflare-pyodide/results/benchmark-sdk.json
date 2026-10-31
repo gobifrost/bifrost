@@ -1,0 +1,1457 @@
+{
+  "recorded_at": "2026-10-31T03:14:03.422Z",
+  "runtime": "local-workerd",
+  "cpu_ms": null,
+  "peak_isolate_memory_bytes": null,
+  "production_cold_start_ms": null,
+  "cost_per_1000": null,
+  "results": [
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 2679.9472,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 15,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 18.000125885009766
+      }
+    },
+    {
+      "workload": "async_context",
+      "http_status": 200,
+      "client_wall_ms": 36.586199999999735,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "value": 7,
+          "execution_id": "00000000-0000-0000-0000-000000000001"
+        },
+        "duration_ms": 1,
+        "logs": [],
+        "variables": {
+          "value": 7
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "async_context",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 8.00013542175293
+      }
+    },
+    {
+      "workload": "workspace_import",
+      "http_status": 200,
+      "client_wall_ms": 32.33899999999994,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "workspace_result": 42
+        },
+        "duration_ms": 4,
+        "logs": [],
+        "variables": {},
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "workspace_import",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 4.000186920166016
+      }
+    },
+    {
+      "workload": "http_orchestration",
+      "http_status": 200,
+      "client_wall_ms": 220.8708999999999,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "statuses": [
+            200,
+            200,
+            200
+          ]
+        },
+        "duration_ms": 165,
+        "logs": [],
+        "variables": {
+          "client": "<AsyncClient>",
+          "replies": [
+            "<Response>",
+            "<Response>",
+            "<Response>"
+          ]
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "http_orchestration",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 177.0002841949463
+      }
+    },
+    {
+      "workload": "integration_read",
+      "http_status": 200,
+      "client_wall_ms": 744.4196000000002,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "found": true,
+          "config": {
+            "answer": 42
+          }
+        },
+        "duration_ms": 697,
+        "logs": [],
+        "variables": {
+          "data": {
+            "integration_id": "9ef58f77-909a-4456-9602-c09804bea0a0",
+            "entity_id": null,
+            "entity_name": null,
+            "config": {
+              "answer": 42
+            },
+            "oauth": null,
+            "config_secret_keys": []
+          }
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "integration_read",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 697.0000267028809
+      }
+    },
+    {
+      "workload": "table_update",
+      "http_status": 200,
+      "client_wall_ms": 1515.8846000000012,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "written": {
+            "value": 42
+          },
+          "read": {
+            "value": 42
+          }
+        },
+        "duration_ms": 1480,
+        "logs": [],
+        "variables": {
+          "doc": {
+            "id": "probe",
+            "table_id": "aa91dec3-3edb-41a7-b330-092fd1e2dbd3",
+            "data": {
+              "value": 42
+            },
+            "created_at": "2026-10-31T03:11:59.607421+00:00",
+            "updated_at": "2026-10-31T03:13:58.462108+00:00",
+            "created_by": "00000000-0000-0000-0000-000000000002",
+            "updated_by": "00000000-0000-0000-0000-000000000002"
+          },
+          "read": {
+            "id": "probe",
+            "table_id": "aa91dec3-3edb-41a7-b330-092fd1e2dbd3",
+            "data": {
+              "value": 42
+            },
+            "created_at": "2026-10-31T03:11:59.607421+00:00",
+            "updated_at": "2026-10-31T03:13:58.462108+00:00",
+            "created_by": "00000000-0000-0000-0000-000000000002",
+            "updated_by": "00000000-0000-0000-0000-000000000002"
+          }
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "table_update",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 1480.9999465942383
+      }
+    },
+    {
+      "workload": "multi_step",
+      "http_status": 200,
+      "client_wall_ms": 473.34259999999995,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 10,
+          "sum": 135
+        },
+        "duration_ms": 452,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:13:59.604000+00:00",
+            "level": "warning",
+            "message": "structured log probe",
+            "source": "workflow"
+          }
+        ],
+        "variables": {
+          "fail": false,
+          "result": {
+            "count": 10,
+            "sum": 135
+          }
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "multi_step",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 452.0001411437988
+      }
+    },
+    {
+      "workload": "sync_json",
+      "http_status": 200,
+      "client_wall_ms": 154.8184000000001,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Failed",
+        "result": null,
+        "duration_ms": 1,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:13:59.665999+00:00",
+            "level": "error",
+            "message": "Execution error: sync_json",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.671000+00:00",
+            "level": "error",
+            "message": "Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.672000+00:00",
+            "level": "error",
+            "message": "  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 583, in execute",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.672999+00:00",
+            "level": "error",
+            "message": "    result, captured_variables, captured_logs = await _execute_workflow_with_trace(",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.673999+00:00",
+            "level": "error",
+            "message": "                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.675000+00:00",
+            "level": "error",
+            "message": "    ...<5 lines>...",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.676000+00:00",
+            "level": "error",
+            "message": "    )",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.676999+00:00",
+            "level": "error",
+            "message": "    ^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.678000+00:00",
+            "level": "error",
+            "message": "  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.679000+00:00",
+            "level": "error",
+            "message": "    result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.680000+00:00",
+            "level": "error",
+            "message": "             ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.680999+00:00",
+            "level": "error",
+            "message": "  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.681999+00:00",
+            "level": "error",
+            "message": "    return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.683000+00:00",
+            "level": "error",
+            "message": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:13:59.684000+00:00",
+            "level": "error",
+            "message": "TypeError: 'dict' object can't be awaited",
+            "source": "workflow"
+          }
+        ],
+        "variables": {},
+        "integration_calls": [],
+        "roi": null,
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "sync_json",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": "'dict' object can't be awaited",
+        "error_type": "TypeError",
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 53.00021171569824
+      }
+    },
+    {
+      "workload": "io_timeout",
+      "http_status": 200,
+      "client_wall_ms": 86.50930000000153,
+      "body": {
+        "status": "HarnessError",
+        "error_type": "TimeoutError",
+        "error_message": "",
+        "probe_wall_ms": 54.99982833862305
+      }
+    },
+    {
+      "workload": "cpu_timeout",
+      "http_status": 200,
+      "client_wall_ms": 170.45900000000074,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": "CPU completed before timeout callback could run",
+        "duration_ms": 150,
+        "logs": [],
+        "variables": {
+          "deadline": 1793416440.0120003
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "cpu_timeout",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 153.0003547668457
+      }
+    },
+    {
+      "workload": "secret_probe",
+      "http_status": 200,
+      "client_wall_ms": 1852.6983,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Failed",
+        "result": null,
+        "duration_ms": 1826,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:14:01.865999+00:00",
+            "level": "warning",
+            "message": "[REDACTED]",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.864999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.865999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.867000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.868000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.868999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.870000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.871000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.872000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/fixtures.py\", line 95, in secret_probe",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.872999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     raise ValueError(\"[REDACTED]\")",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.873999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] ValueError: [REDACTED]",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.875000+00:00",
+            "level": "error",
+            "message": "Execution error: secret_probe",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:01.876000+00:00",
+            "level": "error",
+            "message": "ValueError: [REDACTED]",
+            "source": "workflow"
+          }
+        ],
+        "variables": {},
+        "integration_calls": [],
+        "roi": null,
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "secret_probe",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": "[REDACTED]",
+        "error_type": "ValueError",
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 1827.9998302459717
+      }
+    },
+    {
+      "workload": "state_write",
+      "http_status": 200,
+      "client_wall_ms": 24.42369999999937,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": true,
+        "duration_ms": 1,
+        "logs": [],
+        "variables": {},
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "state_write",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 2.000093460083008
+      }
+    },
+    {
+      "workload": "state_read",
+      "http_status": 200,
+      "client_wall_ms": 15.664099999999962,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": "synthetic-execution-A",
+        "duration_ms": 2,
+        "logs": [],
+        "variables": {},
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "state_read",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 3.000020980834961
+      }
+    },
+    {
+      "workload": "multi_step",
+      "http_status": 200,
+      "client_wall_ms": 1075.2452000000012,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Failed",
+        "result": null,
+        "duration_ms": 1049,
+        "logs": [
+          {
+            "timestamp": "2026-10-31T03:14:02.976000+00:00",
+            "level": "warning",
+            "message": "structured log probe",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.975000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.976000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.976999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.977999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.979000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.980000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.980999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.982000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/fixtures.py\", line 53, in multi_step",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.983000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     raise ValueError(\"intentional failure\")",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.984000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] ValueError: intentional failure",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.984999+00:00",
+            "level": "error",
+            "message": "Execution error: multi_step",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-10-31T03:14:02.985999+00:00",
+            "level": "error",
+            "message": "ValueError: intentional failure",
+            "source": "workflow"
+          }
+        ],
+        "variables": {
+          "fail": true,
+          "result": {
+            "count": 10,
+            "sum": 135
+          }
+        },
+        "integration_calls": [],
+        "roi": null,
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "multi_step",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {
+            "fail": true
+          },
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": "intentional failure",
+        "error_type": "ValueError",
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 1050.0001907348633
+      }
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 42.03150000000096,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 22,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 23.999929428100586
+      },
+      "sample": 0,
+      "phase": "warm"
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 77.72539999999935,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 38,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 40.000200271606445
+      },
+      "sample": 1,
+      "phase": "warm"
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 59.425200000001496,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 28,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 30.99989891052246
+      },
+      "sample": 2,
+      "phase": "warm"
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 65.23919999999998,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 37,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 39.00003433227539
+      },
+      "sample": 3,
+      "phase": "warm"
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 50.74170000000049,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 20,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 19.999980926513672
+      },
+      "sample": 4,
+      "phase": "warm"
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 45.438500000000204,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 14,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 14.999866485595703
+      }
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 129.80669999999918,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 11,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 13.000011444091797
+      }
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 131.35620000000017,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 13,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 13.99993896484375
+      }
+    },
+    {
+      "workload": "json_transform",
+      "http_status": 200,
+      "client_wall_ms": 132.59170000000086,
+      "body": {
+        "execution_id": "00000000-0000-0000-0000-000000000001",
+        "status": "Success",
+        "result": {
+          "count": 1000,
+          "sum": 1498500
+        },
+        "duration_ms": 21,
+        "logs": [],
+        "variables": {
+          "size": 1000,
+          "rows": "<list: 26.9KB, truncated>"
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "execution_context": {
+          "user_id": "00000000-0000-0000-0000-000000000002",
+          "email": "probe@example.invalid",
+          "name": "Probe",
+          "scope": "GLOBAL",
+          "organization": null,
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 1800,
+          "workflow_name": "json_transform",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "http://localhost",
+          "parameters": {},
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "error_message": null,
+        "error_type": null,
+        "cached": false,
+        "cache_expires_at": null,
+        "probe_wall_ms": 20.999908447265625
+      }
+    }
+  ]
+}
