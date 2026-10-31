@@ -20,6 +20,7 @@
 -   [Quick Start](#quick-start)
 -   [Documentation](#documentation)
 -   [Security & Verification](#security--verification)
+-   [Usage Reporting](#usage-reporting)
 -   [Contributing](#contributing)
 -   [License](#license)
 
@@ -295,6 +296,15 @@ cosign verify-blob \
 Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/
 
 ---
+
+## Usage Reporting
+
+Production installations report a random installation ID, version, and daily
+workflow and agent run totals to `https://reports.gobifrost.com/usage` by default.
+Development, testing, and debug instances do not report. Set
+`BIFROST_USAGE_REPORTING_ENABLED=false` to exclude staging or cloned instances,
+or to permanently opt out. See [Usage Reporting](docs/runbooks/usage-reporting.md)
+for the complete payload, schedule, and privacy details.
 
 ## Contributing
 

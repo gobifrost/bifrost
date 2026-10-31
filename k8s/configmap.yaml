@@ -10,6 +10,8 @@ data:
   # Environment
   BIFROST_ENVIRONMENT: "production"
   BIFROST_DEBUG: "false"
+  # Disable on staging/database clones or to permanently opt out.
+  BIFROST_USAGE_REPORTING_ENABLED: "true"
   BIFROST_API_URL: "http://api:8000"
 
   # S3 Configuration (non-sensitive)

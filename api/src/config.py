@@ -42,6 +42,11 @@ class Settings(BaseSettings):
         description="Enable debug mode"
     )
 
+    usage_reporting_enabled: bool = Field(
+        default=True,
+        description="Send pseudonymous daily aggregate usage reports from production installations",
+    )
+
     product_updates_bundle_path: Path = Field(
         default=Path("/app/product-updates.bundle.json"),
         description="Immutable approved Product Updates bundle mounted into this API image",
