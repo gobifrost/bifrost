@@ -10,24 +10,37 @@ const refs: Record<string, string> = {
   shallow_list: "bench_wf_interactive_shallow_list", detail_hydration: "bench_wf_interactive_detail_hydration",
 };
 
-function BenchApp() {
+const SUCCESS_STATUSES = new Set(["Success", "CompletedWithErrors"]);
+const FAILURE_STATUSES = new Set(["Failed", "Timeout", "Cancelled"]);
+
+export function BenchApp() {
   const variant = new URLSearchParams(location.search).get("variant") ?? "control";
   const workflow = useWorkflow<Record<string, unknown>>(refs[variant]);
-  const renderedExecution = useRef<string | null>(null);
+  const invocationRequestId = useRef<string | null>(null);
+  const renderedRequestId = useRef<string | null>(null);
   useEffect(() => {
-    if (!workflow.executionId || !workflow.status || renderedExecution.current === workflow.executionId) return;
-    if (!["Success", "Failed", "CompletedWithErrors", "Timeout", "Cancelled"].includes(workflow.status)) return;
-    renderedExecution.current = workflow.executionId;
-    const frame = requestAnimationFrame(() => mark({ type: "render", execution_id: workflow.executionId!, status: workflow.status! }));
+    const requestId = invocationRequestId.current;
+    const { executionId, status } = workflow;
+    if (!requestId || !executionId || !status || renderedRequestId.current === requestId) return;
+    const successVisible = SUCCESS_STATUSES.has(status)
+      && workflow.data?.request_id === requestId;
+    const failureVisible = FAILURE_STATUSES.has(status) && workflow.error !== null;
+    if (!successVisible && !failureVisible) return;
+    const frame = requestAnimationFrame(() => {
+      if (renderedRequestId.current === requestId) return;
+      renderedRequestId.current = requestId;
+      mark({ type: "render", execution_id: executionId, status });
+    });
     return () => cancelAnimationFrame(frame);
   }, [workflow.status, workflow.executionId, workflow.data, workflow.error]);
   return <>
     <button aria-label="Run Browser Benchmark" onClick={() => {
       const requestId = crypto.randomUUID();
+      invocationRequestId.current = requestId;
       mark({ type: "invoke", request_id: requestId });
       void workflow.run({ bench_request_id: requestId });
     }}>Run Browser Benchmark</button>
-    <output aria-live="polite">{workflow.status ?? "Idle"}: {workflow.data ? JSON.stringify(workflow.data) : workflow.error?.message ?? ""}</output>
+    <output role="status" aria-live="polite">{workflow.status ?? "Idle"}: {workflow.data ? JSON.stringify(workflow.data) : workflow.error?.message ?? ""}</output>
   </>;
 }
 

@@ -1,11 +1,16 @@
 import { chromium } from "playwright";
 
 const config = JSON.parse(process.argv[2]);
-const variants = config.variants.flatMap(variant => Array.from({ length: config.repetitions ?? 3 }, () => variant));
+const batches = config.batches;
+if (!Array.isArray(batches) || !batches.length || batches.some(batch => !Array.isArray(batch) || batch.length !== 3)) {
+  throw new Error("browser benchmark needs nonempty three-page observation batches");
+}
 const browser = await chromium.launch({ headless: true });
 
-async function open(variant, ordinal) {
-  const context = await browser.newContext({ baseURL: config.client_url });
+async function open({ variant, ordinal }) {
+  // The preparation receipt records the one-day benchmark certificate. The
+  // observer must opt in explicitly; it never weakens ordinary SDK transport.
+  const context = await browser.newContext({ baseURL: config.client_url, ignoreHTTPSErrors: true });
   const page = await context.newPage();
   await page.addInitScript(() => {
     const record = (event) => (window.__BENCH_BROWSER_EVENTS__ ??= []).push({ ...event, t_ms: performance.now() });
@@ -63,13 +68,18 @@ async function measure(session, stage) {
   return { variant: session.variant, ordinal: session.ordinal, stage, outcome: failed ? "terminal_failure" : "success", events };
 }
 
-const sessions = [];
 try {
-  sessions.push(...await Promise.all(variants.map((variant, ordinal) => open(variant, ordinal))));
-  const first_load = await Promise.all(sessions.map(session => measure(session, "first_load")));
-  const steady = await Promise.all(sessions.map(session => measure(session, "steady")));
-  console.log(JSON.stringify({ runs: [...first_load, ...steady] }));
+  const runs = [];
+  for (const batch of batches) {
+    const sessions = await Promise.all(batch.map(open));
+    try {
+      runs.push(...await Promise.all(sessions.map(session => measure(session, "first_load"))));
+      runs.push(...await Promise.all(sessions.map(session => measure(session, "steady"))));
+    } finally {
+      await Promise.all(sessions.map(session => session.context.close()));
+    }
+  }
+  console.log(JSON.stringify({ runs }));
 } finally {
-  await Promise.all(sessions.map(session => session.context.close()));
   await browser.close();
 }

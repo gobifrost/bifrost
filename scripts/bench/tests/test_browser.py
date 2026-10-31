@@ -42,9 +42,29 @@ def streamed_events() -> list[dict]:
 
 
 class BrowserDiagnosticTest(unittest.TestCase):
+    def test_observation_batches_bound_browser_concurrency_per_variant(self) -> None:
+        batches = browser.observation_batches()
+        self.assertEqual(len(batches), len(browser.VARIANTS))
+        self.assertEqual([[item["variant"] for item in batch] for batch in batches], [
+            [variant, variant, variant] for variant in browser.VARIANTS
+        ])
+        self.assertEqual([[item["ordinal"] for item in batch] for batch in batches], [[0, 1, 2]] * 4)
+
+    def test_run_matrix_requires_both_stages_for_every_batched_page(self) -> None:
+        runs = [
+            {"variant": page["variant"], "ordinal": page["ordinal"], "stage": stage}
+            for batch in browser.observation_batches()
+            for page in batch
+            for stage in ("first_load", "steady")
+        ]
+        browser.validate_run_matrix(runs)
+        with self.assertRaisesRegex(ValueError, "expected"):
+            browser.validate_run_matrix(runs[:-1])
+
     def test_fixture_is_a_source_project_and_deterministic_archive(self) -> None:
         files = browser.source_files()
         self.assertIn("src/main.tsx", files)
+        self.assertNotIn("src/main.test.tsx", files)
         self.assertIn(b"useWorkflow", files["src/main.tsx"])
         with tempfile.TemporaryDirectory() as tmp:
             receipt = browser.write_source_zip(Path(tmp) / "fixture.zip", files)
@@ -148,6 +168,10 @@ class BrowserDiagnosticTest(unittest.TestCase):
                 "sha256:" + "b" * 64,
                 False,
             )
+
+    def test_driver_explicitly_records_its_self_signed_tls_opt_in(self) -> None:
+        driver = browser.DRIVER_PATH.read_text(encoding="utf-8")
+        self.assertIn("ignoreHTTPSErrors: true", driver)
 
 
 if __name__ == "__main__":

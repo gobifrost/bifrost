@@ -1,0 +1,16 @@
+# Built once before a browser measurement. The ordinary application.deploy
+# builder still invokes npm install and Vite; this only seeds its offline npm
+# cache with the exact fixture dependency closure.
+ARG API_IMAGE
+FROM ${API_IMAGE}
+USER root
+WORKDIR /tmp/browser-fixture-cache
+COPY fixture/package.json fixture/package-lock.json ./
+RUN mkdir -p /home/bifrost/.npm \
+    && chown -R bifrost:bifrost /home/bifrost/.npm /tmp/browser-fixture-cache
+USER bifrost
+ENV npm_config_cache=/home/bifrost/.npm
+RUN python -c 'from pathlib import Path; from shared.version import get_version; from src.services.sdk_package import build_sdk_tarball; Path("bifrost-sdk.tgz").write_bytes(build_sdk_tarball(get_version()))' \
+    && npm install --ignore-scripts --no-audit --no-fund --package-lock=false \
+    && rm -rf node_modules
+USER root

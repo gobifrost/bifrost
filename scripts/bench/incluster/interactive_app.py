@@ -111,10 +111,40 @@ async def records(execution_ids: list[str]) -> dict:
         await http.aclose()
 
 
+async def policy(action: str, values: dict | None = None) -> dict:
+    """Read or update the shared worker policy through its public API.
+
+    The benchmark uses this only while it prepares the one normal deploy.  It
+    must keep the policy in the tenant where worker and PlatformJob scheduling
+    already belong; no benchmark-specific scheduler path is introduced.
+    """
+    http = await _client()
+    try:
+        if action == "read":
+            settings = _check(await http.get("/api/admin/kubernetes/execution"), "read worker policy").json()
+            policy_values = settings.get("policy")
+            if not isinstance(policy_values, dict):
+                raise RuntimeError("Kubernetes execution settings have no policy")
+            return {"policy": policy_values}
+        if action == "update":
+            if not isinstance(values, dict) or not values:
+                raise ValueError("worker policy update needs values")
+            settings = _check(
+                await http.put("/api/admin/kubernetes/policy", json=values), "update worker policy"
+            ).json()
+            policy_values = settings.get("policy")
+            if not isinstance(policy_values, dict):
+                raise RuntimeError("updated Kubernetes execution settings have no policy")
+            return {"policy": policy_values}
+        raise ValueError(f"unknown policy action: {action}")
+    finally:
+        await http.aclose()
+
+
 def main() -> None:
     mode = sys.argv[1]
     args = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-    handler = {"deploy": deploy, "records": records}[mode]
+    handler = {"deploy": deploy, "records": records, "policy": policy}[mode]
     print(json.dumps(asyncio.run(handler(**args))))
 
 

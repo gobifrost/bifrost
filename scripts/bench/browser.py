@@ -15,12 +15,48 @@ from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 FIXTURE_ROOT = HERE / "browser" / "fixture"
+FIXTURE_LOCK = FIXTURE_ROOT / "package-lock.json"
 DRIVER_PATH = HERE / "browser" / "driver.mjs"
 VARIANTS = ("control", "same_body_graph", "shallow_list", "detail_hydration")
+PAGES_PER_VARIANT = 3
 PLAYWRIGHT_VERSION = "1.64.1"
 BROWSER_RUNNER_IMAGE = f"mcr.microsoft.com/playwright:v{PLAYWRIGHT_VERSION}-noble"
 TERMINAL_STATUSES = frozenset({"Success", "Failed", "CompletedWithErrors", "Timeout", "Cancelled"})
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def observation_batches() -> list[list[dict[str, int | str]]]:
+    """Schedule each synthetic variant in a bounded three-page browser batch.
+
+    A batch represents the only concurrently-open pages.  The browser driver
+    runs both the first-load and steady action on those same authenticated
+    pages before closing them, then moves to the next variant.
+    """
+    return [
+        [{"variant": variant, "ordinal": ordinal} for ordinal in range(PAGES_PER_VARIANT)]
+        for variant in VARIANTS
+    ]
+
+
+def fixture_lock_sha256() -> str:
+    """Return the exact npm dependency closure expected in the prepared cache."""
+    return hashlib.sha256(FIXTURE_LOCK.read_bytes()).hexdigest()
+
+
+def validate_run_matrix(runs: list[dict]) -> None:
+    """Require both observed actions for every page in the declared batches."""
+    expected = {
+        (page["variant"], page["ordinal"], stage)
+        for batch in observation_batches()
+        for page in batch
+        for stage in ("first_load", "steady")
+    }
+    actual = {
+        (run.get("variant"), run.get("ordinal"), run.get("stage"))
+        for run in runs
+    }
+    if actual != expected or len(runs) != len(expected):
+        raise ValueError(f"browser runner emitted {len(runs)} runs; expected exactly {len(expected)} batched observations")
 
 
 def source_files(root: Path = FIXTURE_ROOT) -> dict[str, bytes]:
@@ -31,7 +67,12 @@ def source_files(root: Path = FIXTURE_ROOT) -> dict[str, bytes]:
             continue
         relative = path.relative_to(root).as_posix()
         parsed = PurePosixPath(relative)
-        if relative.startswith(".") or "node_modules" in parsed.parts or "dist" in parsed.parts:
+        if (
+            relative.startswith(".")
+            or "node_modules" in parsed.parts
+            or "dist" in parsed.parts
+            or path.name.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx"))
+        ):
             continue
         files[relative] = path.read_bytes()
     required = {"package.json", "index.html", "src/main.tsx", "vite.config.ts"}
