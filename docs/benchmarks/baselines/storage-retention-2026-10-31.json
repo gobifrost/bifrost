@@ -70,5 +70,6 @@
     "Column bytes exclude other row fields, indexes, logs, WAL, and free space; storage views overlap.",
     "Immediate deletion does not establish long-term filesystem reclamation or reduce provisioned billing.",
     "Audit/artifact cleanup, backups/restore, retained object versions, and cloud IOPS/billing were not exercised."
-  ]
+  ],
+  "runtime_scope": "Unmerged experimental table-uniqueness candidate; supporting storage evidence, not an unmodified production-runtime baseline."
 }

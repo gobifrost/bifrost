@@ -6,6 +6,10 @@ Allocated PostgreSQL storage remained about 403 MiB immediately afterward.
 Deletion removes retained records; it does not immediately reduce provisioned
 volume cost or return PostgreSQL's allocated space to the filesystem.
 
+Runtime scope: this rehearsal used the unmerged table-uniqueness candidate
+proposed in PR #1164. It is experimental supporting storage evidence, separate
+from measurements of the unmodified captured production image.
+
 ## Measured Results
 
 This fresh `4gb-capacity` tenant contained the full seeded catalog, one API,

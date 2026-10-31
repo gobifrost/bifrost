@@ -4,6 +4,80 @@ Status: baseline and retention rehearsal saved; constrained capacity, soak, reco
 are incomplete. Accepting the roughly 277 MiB idle worker measurement does not
 freeze a memory target or end optimization.
 
+## Objective and Decision Boundary
+
+The deliverable answers what a namespace can handle, how its resource and storage
+use change with demand, and which assumptions are needed to budget hosting and
+margins. It consists of reproducible baseline records, one evidence-backed card
+per resource envelope, and a prioritized proposal for improvements. A valid
+failure is a result; a blocked capacity claim is not a reason to change the
+platform during measurement.
+
+The user clarified the scope on October 31: testing and findings first; discuss
+platform changes and their plan before implementation or merging. No new PR,
+platform implementation, merge or production deployment is part of the remaining
+benchmark work. PR #1164 remains an open draft with auto-merge disabled. Its
+experimental-image results remain separate from the deployed-platform baseline.
+The terminal-delivery fix and activation had already merged before this scope
+correction; the original portal replay records their resulting behavior.
+
+Remaining deployed-platform measurements use the exact captured production image
+`ghcr.io/gobifrost/bifrost-api@sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692`
+(source `e611d31bbba3d7601980271c774cad5e821b1e97`). This is a frozen baseline,
+not a claim about whichever build is newest later. Benchmark harness revisions
+and runtime revisions are recorded separately.
+
+The sequence is: original-issue replay; constrained correctness/capacity and
+browser timing; conditional sustained-load/storage and recovery evidence;
+namespace/cost cards; proposed fixes for discussion. Stop a scenario at its
+declared failure gate, preserve its raw evidence, and record dependent gates as
+blocked or unexercised. Do not retry until green, substitute an experimental
+runtime, relax acceptance thresholds, or implement a platform fix to continue.
+
+Worker scaling is an explicit part of constrained capacity: hold per-worker
+CPU/memory, shared-service allocations, runtime and workload fixed, vary the
+worker count, and report successful-throughput speedup, scaling efficiency,
+latency and total namespace resource/cost changes. Measure where gains flatten
+and identify the limiting component. The adaptive 4 GB versus 8 GiB comparison
+cannot establish this because it changes multiple allocations and actual worker
+counts. The fixed-count series needs its own declared profiles and gates; a
+failed representative correctness prerequisite blocks its capacity claim.
+
+Scale-from-zero is a separate required comparison: zero versus one warm worker
+at the same maximum worker count, per-worker resources and shared-service
+allocations. Record first-request and burst latency, worker launch/readiness,
+queue drain, time to usable capacity, return to zero after demand stops, and
+idle/startup/loaded namespace resource use. Confirm the source and deployment
+defaults rather than assuming zero warm workers is the deployed policy. A warm
+steady-state throughput result cannot stand in for a scale-from-zero result.
+
+The bounded proposed series keeps the 4 GB profile's fixed components at
+2,600m CPU and 1,568 MiB, with 650m CPU and 1,024 MiB per worker:
+
+| Worker Ceiling | Total CPU Requests/Limits | Total Memory Requests/Limits | Static Arm (Warm, Max) | Elastic Arms (Warm, Max) |
+|---:|---:|---:|---|---|
+| 1 | 3,250m | 2,592 MiB | (1, 1) | (0, 1) versus (1, 1) |
+| 2 | 3,900m | 3,616 MiB | (2, 2) | (0, 2) versus (1, 2) |
+| 4 | 5,200m | 5,664 MiB | (4, 4) | (0, 4) versus (1, 4) |
+
+The four-worker arm requires a larger declared quota and is not a 4 GB result.
+Before static timing, observe all N workers ready. Before cold timing, observe
+zero reserved/starting/ready/draining workers and zero active executions after
+setup. Keep images cached and label the measurement pod/process-cold, not
+uncached-node provisioning. Keep the idle observation longer than the configured
+cooldown and record the actual return to zero; the existing 120-second idle
+window cannot prove this with the 300-second source default.
+
+This series is a test proposal, not completed evidence. Existing five-second
+resource samples and request timestamps support consumption/latency reporting;
+worker state/readiness, active work, admission reservations and pod-lifetime
+resource accounting need additional benchmark observation before claiming
+precise time to capacity or scaling cost. No platform instrumentation change is
+authorized by this proposal. The source defaults at captured `e611d31bb` are
+one warm worker, maximum six, 2,048 MiB standard workers, 8,192 MiB largest
+workers, and 300 idle seconds; the effective live policy was not obtained in
+the optional read-only check and remains unknown.
+
 ## Saved Baseline
 
 The versioned [baseline record](baselines/portal-2026-10-31.json) retains two
@@ -123,6 +197,8 @@ deletion. Equal-sized repetitive and high-entropy result payloads differed by
 about 87 times in stored result-column size. These results establish fixture
 storage and deletion behavior; sustained growth, backups and cloud billing
 remain separate evidence.
+The rehearsal used the unmerged table-uniqueness candidate; it is supporting
+experimental storage evidence, not an unmodified production-runtime baseline.
 
 ## Remaining Completion Gates
 
@@ -145,13 +221,15 @@ specific fix and regression coverage before the next diagnostic.
 
 These finish the existing deliverable; further memory reduction is not a gate.
 
-1. **Correctness and 4 GB capacity.** The frozen concurrent table-creation
-   candidate passed its full-seed SDK preflight: 127/127 correct results. Its
-   first long confirmation reconciled 3,735/3,735 arrivals correctly, but
-   external host CPU and disk contention invalidated the capacity measurement;
-   [the complete outcome is retained](2026-10-31-capacity-confirmation-results.md).
-   A fresh declared host-attribution diagnostic and matched 8 GiB/4 decimal GB
-   capacity measurements remain necessary. Preserve
+1. **Correctness and constrained capacity.** The
+   [completed experimental SDK comparison](2026-10-31-sdk-resource-comparison.md)
+   reconciled 3,735/3,735 arrivals correctly in each envelope. The 4 decimal GB
+   result failed its 1.5-second end-to-end p95 gate at 2.154 seconds; M/8 GiB
+   passed the SDK-only gate at 0.612 seconds. Neither establishes production or
+   mixed capacity because the runtime includes unmerged PR #1164. The
+   [earlier host-invalid observation](2026-10-31-capacity-confirmation-results.md)
+   is retained separately. Run the declared checks on the unmodified captured
+   production image next. Preserve
    correctness/latency/reliability/backlog gates and measure the whole tenant,
    including Postgres, Pooler and Redis.
 2. **Sustained mixed load.** Execute the immutable five-segment confirmation
@@ -166,9 +244,10 @@ These finish the existing deliverable; further memory reduction is not a gate.
 4. **Soak and recovery.** Run the implemented two-hour soak at 70% of a passing
    mixed rate and complete the declared recovery evidence. Report memory and
    connection trends, database/generated-WAL/object growth, accepted work,
-   duplicate/lost effects and recovery bounds. Resolve the outstanding
-   database-effect guarantee and per-pool evidence before claiming those
-   drills passed. HA correctness remains a separate availability tier.
+   duplicate/lost effects and recovery bounds. Unresolved database-effect
+   guarantees and missing per-pool evidence prevent certification of the
+   affected drills; report them as findings for discussion. HA correctness
+   remains a separate availability tier.
 5. **Namespace capacity and cost report.** Produce a card for each measured
    envelope: requests/limits, idle/loaded consumption, sustainable successful
    rate by workload, p50/p95 latency, safe operating rate/headroom, storage
