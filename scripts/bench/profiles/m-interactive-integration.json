@@ -1,0 +1,14 @@
+{
+  "extends": "m",
+  "description": "Public synthetic interactive integration fixture in the unchanged M envelope. It uses only the in-cluster fake API and does not represent Halo latency, customer data, browser timing, or hosting capacity.",
+  "classes": [
+    "wf-interactive-control",
+    "wf-interactive-same-body-graph",
+    "wf-interactive-shallow-list",
+    "wf-interactive-detail-hydration"
+  ],
+  "sequential": 10,
+  "burst": 0,
+  "burst_rounds": 0,
+  "interactive_integration_diagnostic": true
+}

@@ -1,0 +1,13 @@
+{
+  "extends": "m-interactive-integration",
+  "description": "Three-submission overlap comparison for the same public interactive fixture and 650m M worker. This preserves the M envelope and is a local concurrency diagnostic only.",
+  "worker_policy": {
+    "warm_workers": 1,
+    "max_workers": 1,
+    "worker_memory_mib": 2048,
+    "largest_worker_mib": 2048
+  },
+  "sequential": 10,
+  "burst": 3,
+  "burst_rounds": 5
+}

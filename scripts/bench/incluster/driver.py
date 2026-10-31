@@ -21,6 +21,7 @@ import os
 import sys
 from pathlib import Path
 import time
+from uuid import uuid4
 
 import httpx
 
@@ -95,6 +96,10 @@ WORKFLOW_CLASSES = {
     "wf-large": "bench_wf_large",
     "wf-import-control": "bench_wf_import_control",
     "wf-import-graph": "bench_wf_import_graph",
+    "wf-interactive-control": "bench_wf_interactive_control",
+    "wf-interactive-same-body-graph": "bench_wf_interactive_same_body_graph",
+    "wf-interactive-shallow-list": "bench_wf_interactive_shallow_list",
+    "wf-interactive-detail-hydration": "bench_wf_interactive_detail_hydration",
 }
 AGENT_CLASSES = {
     "agent-chat": ("bench_agent_chat", "delegated"),
@@ -107,6 +112,7 @@ CHAT_AGENT = "bench_agent_chat"
 BACKENDS = {
     "fake": {"endpoint": "http://bench-fake-llm.bench-infra:8080/v1", "model": "bench-fake"},
 }
+FAKE_API_BASE = "http://bench-fake-api.bench-infra:8080"
 
 
 async def client() -> httpx.AsyncClient:
@@ -231,6 +237,39 @@ async def _write_import_fixture(http: httpx.AsyncClient, fixture: dict, known: d
     } | {"third_party_versions": {"requests": importlib.metadata.version("requests")}}
 
 
+async def _ensure_interactive_integration(http: httpx.AsyncClient) -> dict:
+    """Create the public fake-provider config used by the normal integrations SDK read."""
+    name = "Bench Synthetic Halo"
+    listed = _check(await http.get("/api/integrations"), "list integrations").json()
+    items = listed if isinstance(listed, list) else listed.get("items", [])
+    integration = next((item for item in items if item["name"] == name), None)
+    if integration is None:
+        integration = _check(await http.post("/api/integrations", json={
+            "name": name,
+            "description": "Public synthetic in-cluster benchmark integration; no credentials or customer data.",
+            "config_schema": [{"key": "base_url", "type": "string", "required": True}],
+        }), "create synthetic integration").json()
+    config = {"base_url": "http://bench-fake-api.bench-infra:8080"}
+    _check(await http.put(f"/api/integrations/{integration['id']}/config", json={"config": config}), "set synthetic integration config")
+    return {"id": integration["id"], "name": name, "config_keys": sorted(config)}
+
+
+async def _write_interactive_fixture(http: httpx.AsyncClient, fixture: dict, known: dict[str, str]) -> dict:
+    """Write and register the public interactive fixture through the standard editor path."""
+    files = fixture["files"]
+    for path, source in files.items():
+        _check(await http.put("/api/files/editor/content", json={"path": path, "content": source, "encoding": "utf-8"}), f"write {path}")
+    await _write_and_register(http, "workflows/bench_interactive_control.py", files["workflows/bench_interactive_control.py"],
+                              ["bench_wf_interactive_control"], known)
+    await _write_and_register(http, "workflows/bench_interactive_shared.py", files["workflows/bench_interactive_shared.py"],
+                              ["bench_wf_interactive_same_body_graph", "bench_wf_interactive_shallow_list", "bench_wf_interactive_detail_hydration"], known)
+    return {
+        key: fixture[key] for key in ("workload_version", "file_count", "source_bytes", "source_sha256")
+    } | {"third_party_versions": {
+        "httpx": importlib.metadata.version("httpx"), "requests": importlib.metadata.version("requests"),
+    }, "integration": await _ensure_interactive_integration(http)}
+
+
 async def _ensure_table(http: httpx.AsyncClient, docs: int) -> None:
     created = await http.post("/api/tables", json={"name": "bench_docs"})
     if created.status_code >= 300 and created.status_code != 409 and "exist" not in created.text.lower():
@@ -243,7 +282,8 @@ async def _ensure_table(http: httpx.AsyncClient, docs: int) -> None:
         _check(await http.post("/api/tables/bench_docs/documents/batch", json={"documents": batch[start:start + 500]}), "insert docs")
 
 
-async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int, import_fixture: dict | None = None) -> dict:
+async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int, import_fixture: dict | None = None,
+                interactive_fixture: dict | None = None) -> dict:
     http = await client()
     try:
         _check(await http.put("/api/admin/kubernetes/policy", json=policy), "set worker policy")
@@ -256,11 +296,14 @@ async def setup(seed: dict, backend: str | None, policy: dict, table_docs: int, 
         known = await _workflow_ids(http)
         imports = await _write_import_fixture(http, import_fixture, known) if import_fixture else None
         known = await _workflow_ids(http)
+        interactive = await _write_interactive_fixture(http, interactive_fixture, known) if interactive_fixture else None
+        known = await _workflow_ids(http)
         await _ensure_table(http, table_docs)
         model = await _configure_backend(http, backend) if backend else None
         await _ensure_agents(http, [known[name] for name in ("bench_tool_lookup", "bench_tool_count", "bench_tool_note")])
         seeded = sum(1 for name in known if name.startswith("seed_"))
-        return {"workflows": len(known), "seeded": seeded, "model": model, "import_fixture": imports}
+        return {"workflows": len(known), "seeded": seeded, "model": model, "import_fixture": imports,
+                "interactive_fixture": interactive}
     finally:
         await http.aclose()
 
@@ -318,6 +361,8 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burs
 
             async def submit() -> str:
                 body = {"workflow_id": workflow_id, "input_data": {}, "sync": False}
+                if name.startswith("wf-interactive-"):
+                    body["input_data"] = {"bench_request_id": str(uuid4())}
                 return _check(await http.post("/api/workflows/execute", json=body), "execute").json()["execution_id"]
         elif name in CHAT_CLASSES:
             _check(await http.put("/api/admin/ai/behavior", json={"agent_execution_mode": "delegated"}), "set execution mode")
@@ -356,7 +401,7 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burs
                 return str(_check(await http.post("/api/agent-runs/enqueue", json=body), "enqueue agent").json()["run_id"])
 
         sequential_records: list[dict] = []
-        include_result = name in {"wf-import-control", "wf-import-graph"}
+        include_result = name in {"wf-import-control", "wf-import-graph"} or name.startswith("wf-interactive-")
         for _ in range(sequential):
             sequential_records += await _wait_all(http, list_path, params, [await submit()], timeout_s, include_result)
         burst_records: list[dict] = []
@@ -368,9 +413,15 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burs
         await http.aclose()
 
 
+async def fake_api_spans() -> dict:
+    """Read only public fake-provider spans for result correlation after a class."""
+    async with httpx.AsyncClient(base_url=FAKE_API_BASE, timeout=30) as http:
+        return _check(await http.get("/spans"), "read fake API spans").json()
+
+
 def main() -> None:
     mode, args = sys.argv[1], json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-    handler = {"setup": setup, "run_class": run_class}[mode]
+    handler = {"setup": setup, "run_class": run_class, "fake_api_spans": fake_api_spans}[mode]
     print(json.dumps(asyncio.run(handler(**args))))
 
 
