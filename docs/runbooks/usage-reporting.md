@@ -41,8 +41,8 @@ The report contains exactly these fields:
 
 The installation ID is a random UUID stored in PostgreSQL's `system_configs`.
 It persists across restarts, upgrades, and API replicas. It is independent of
-customer accounts, domains, machine identifiers, and tenant IDs. It makes reports
-linkable across days, so these reports are pseudonymous.
+customer accounts, domains, machine identifiers, and tenant IDs. It lets us recognize reports
+from the same installation across days without receiving a customer identity.
 
 Counts cover the previous completed UTC day. Runs are assigned to the day they
 started, or their completion day when no start was recorded; queued runs that
