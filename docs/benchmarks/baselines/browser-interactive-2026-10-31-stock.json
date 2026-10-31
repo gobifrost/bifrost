@@ -1,0 +1,213 @@
+{
+  "schema_version": 1,
+  "baseline_id": "browser-interactive-2026-10-31-stock-r6",
+  "status": "observational browser timing; no capacity, p95, reliability, or cloud claim",
+  "units": {
+    "action_to_render_ms": "milliseconds",
+    "first_terminal_observed_to_render_ms": "milliseconds",
+    "summary_precision": "0.1 ms from one browser performance clock"
+  },
+  "private_evidence": {
+    "result_path": "/home/jack/bifrost-bench-evidence/runs/interactive-stock-20261031-r6/result.json",
+    "raw_result_sha256": "f55f47bffa9b9eb8da3301fbb50c02b85529e1305eee7d29e004bad4afd747a1",
+    "raw_browser_stdout_sha256": "2576754490a781b258c0299f86e738617fe98b727770a1f188bf4e6e5e0512af",
+    "raw_durable_evidence": "private source retains all 24 raw browser actions and their durable records",
+    "cleanup_verified_at": "2026-10-31T23:26:34+00:00"
+  },
+  "run": {
+    "id": "interactive-stock-20261031-r6",
+    "started_at": "2026-10-31T23:13:47+00:00",
+    "completed_at": "2026-10-31T23:23:50+00:00",
+    "outcomes": {
+      "actions": 24,
+      "successes": 24,
+      "durable_records_validated": 24,
+      "variants": 4,
+      "stages": [
+        "first_load",
+        "steady"
+      ],
+      "samples_per_cell": 3,
+      "first_terminal_transport": {
+        "streamed_ws": 24,
+        "scope": "first observed terminal transport; native ready/terminal checks may overlap"
+      }
+    }
+  },
+  "runtime_chain": {
+    "captured_production_api_worker_source": "e611d31bb",
+    "stock_runtime_registry_digest": "sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692",
+    "api_worker_deployed_cri_image_id": "sha256:b4e0f9b7650557e3c4d272da4ff48b667f04ba168488c99220719460c0db475b",
+    "harness_git_sha": "e62bad1dfbc0943eeb04610fc86d3f1e7651a708",
+    "build_cache": {
+      "receipt_path": "/home/jack/bifrost-bench-evidence/runs/stock-production-image-preparation-20261031-r1/build-cache-receipt.json",
+      "receipt_sha256": "18a06fa066f9cc69e23bb792048f03b042637a8ec46bebf666be2f0999be9d9c",
+      "image_id": "sha256:53be7873736b9c787f7df184525e9ca4ae56aa7b1570db074026cef522dddb70",
+      "method": "verified npm cache only on the exact stock runtime; no application or platform source copied from the experimental image"
+    },
+    "browser_runner_cache": {
+      "receipt_path": "/home/jack/bifrost-bench-evidence/runs/browser-r6-preparation-20261031-r1/browser-runner-cache-receipt.json",
+      "receipt_sha256": "8225770350aaa1638fba26bc6e4d12203ae1ece05854ad09d14e706db00903c5",
+      "image_id": "sha256:0ff283d4ef0f8ba8dbf8cbc063273a31cea67f94c0555b35a10644a8f41ea751"
+    },
+    "client_identity": {
+      "scope": "unchanged frozen benchmark client; separate from the captured production API/worker identity",
+      "host_image_id": "sha256:ebb8a6cf5cea2ae94a48a359b7244828c2f07850a41c7c662de14bb30e61f5ae",
+      "deployed_cri_image_id": "sha256:987345ae923ddbba9db4aa72512f8e1a48b0b6bd35a138574b2cd0df2e7059c2"
+    }
+  },
+  "profile_and_resources": {
+    "profile": "m-interactive-integration",
+    "tenant_m_components": {
+      "api": "1 x 1250m / 1280Mi",
+      "client": "1 x 100m / 128Mi",
+      "worker_policy": "warm 1, maximum 2; 650m CPU and 2048Mi per worker",
+      "postgres": "1 CPU / 2Gi",
+      "quota": "4 CPU / 8Gi",
+      "redis": "150m / 256Mi",
+      "pooler": "100m / 64Mi"
+    },
+    "browser_runner_outside_tenant_m": {
+      "requests": "1 CPU / 1Gi",
+      "limits": "1 CPU / 1Gi"
+    },
+    "pre_timing_restoration": {
+      "canonical_build_job": "succeeded",
+      "policy_restored": true,
+      "runtime_restored": true,
+      "workers_observed_live_and_ready": 1,
+      "scope": "an observation before timing, not a tenant resource time series"
+    }
+  },
+  "measurement": {
+    "first_load_definition": "first page action in that browser context; not scale-from-zero or cold-worker",
+    "action_to_render_definition": "action invocation to rendered success state",
+    "terminal_to_render_definition": "first terminal event observed to rendered success state on the same browser performance clock",
+    "terminal_to_render_limit": "does not bound database completion-to-terminal delivery",
+    "cells": [
+      {
+        "variant": "control",
+        "stage": "first_load",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 759.8,
+          "median": 910.6,
+          "max": 1210.5
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 19.0,
+          "max": 38.9
+        }
+      },
+      {
+        "variant": "control",
+        "stage": "steady",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 797.5,
+          "median": 1164.2,
+          "max": 1326.7
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 19.5,
+          "max": 29.7
+        }
+      },
+      {
+        "variant": "same_body_graph",
+        "stage": "first_load",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 4796.3,
+          "median": 5345.2,
+          "max": 5694.3
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 18.7,
+          "max": 44.8
+        }
+      },
+      {
+        "variant": "same_body_graph",
+        "stage": "steady",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 5096.8,
+          "median": 5280.4,
+          "max": 5462.9
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 30.0,
+          "max": 34.6
+        }
+      },
+      {
+        "variant": "shallow_list",
+        "stage": "first_load",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 4513.3,
+          "median": 4713.2,
+          "max": 5113.0
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 25.4,
+          "max": 33.5
+        }
+      },
+      {
+        "variant": "shallow_list",
+        "stage": "steady",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 3498.0,
+          "median": 3581.4,
+          "max": 3594.6
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 20.5,
+          "max": 32.8
+        }
+      },
+      {
+        "variant": "detail_hydration",
+        "stage": "first_load",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 4413.1,
+          "median": 4529.4,
+          "max": 4787.0
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 21.3,
+          "max": 25.9
+        }
+      },
+      {
+        "variant": "detail_hydration",
+        "stage": "steady",
+        "samples": 3,
+        "action_to_render_ms": {
+          "min": 4498.2,
+          "median": 4864.5,
+          "max": 5012.5
+        },
+        "first_terminal_observed_to_render_ms": {
+          "min": 20.3,
+          "max": 32.2
+        }
+      }
+    ],
+    "overall_first_terminal_observed_to_render_ms": {
+      "min": 18.7,
+      "max": 44.8
+    }
+  },
+  "limitations": [
+    "Three samples per cell support the reported wall-clock medians only.",
+    "The original 33-second outlier remains unattributed.",
+    "A prior R5/login failure and the separate setup-argument validation failure remain retained evidence; the latter ran no workload.",
+    "This run does not identify a network cause, show that a network issue was fixed, or estimate failure probability."
+  ],
+  "separate_invocation_disposition": "notes/browser-stock-r6-invocation-disposition.json"
+}

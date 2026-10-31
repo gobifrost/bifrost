@@ -69,6 +69,12 @@ explicit before calculating node count. Observed runtime consumption is useful
 for comparison, but placement uses maximum permitted requests. No value in this
 table supports a tenant-density or per-customer-capacity claim.
 
+For zero warm workers, retain the idle API, PostgreSQL, Pooler, Redis, client,
+storage and shared-service costs. Report idle worker savings and startup/burst
+costs separately. Translating released worker capacity into a smaller billed
+node fleet requires evidence about placement, other tenants and node scaling;
+worker scale-down alone does not establish the billing reduction.
+
 Builds need a separate placement and concurrency budget. The interactive
 fixture builds with execution workers drained, then restores the runtime policy
 before measuring app actions. That procedure does not establish app latency or

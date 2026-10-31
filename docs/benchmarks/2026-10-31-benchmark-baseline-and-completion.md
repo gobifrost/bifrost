@@ -61,6 +61,11 @@ The bounded proposed series keeps the 4 GB profile's fixed components at
 | 4 | 5,200m | 5,664 MiB | (4, 4) | (0, 4) versus (1, 4) |
 
 The four-worker arm requires a larger declared quota and is not a 4 GB result.
+Each worker can run multiple executions. In the elastic arms the maximum is a
+ceiling, not proof that demand required or the controller launched that many
+workers. Declare the burst before running, retain the observed worker/active-run
+timeline, and report an unreached ceiling without increasing the burst until the
+desired worker count appears. Static arms establish the fixed-count comparison.
 Before static timing, observe all N workers ready. Before cold timing, observe
 zero reserved/starting/ready/draining workers and zero active executions after
 setup. Keep images cached and label the measurement pod/process-cold, not
@@ -237,10 +242,16 @@ These finish the existing deliverable; further memory reduction is not a gate.
    candidate, not certified current capacity. A changed rate/design requires
    a new declared campaign. Keep every segment and per-class reliability
    evidence; incomplete samples cannot pass as capacity.
-3. **Interactive app latency.** Finish the planned deterministic fake-provider
-   fixture through the shared V2 result path. Exercise broad imports and
-   shallow/detailed reads under concurrency, from action through rendered
-   result. Retain the import matrix and live canary as separate controls.
+3. **Interactive app latency.** The
+   [stock R6 browser observation](2026-10-31-browser-setup-diagnostic.md#r6-stock-browser-observation)
+   completed 24/24 actions with validated durable records and verified cleanup.
+   It covers broad imports and shallow/detailed synthetic reads under concurrent
+   app actions. First terminal observation to render was 18.7–44.8 ms; broader
+   dependency cases still took several seconds overall. Three samples per cell
+   establish descriptive timings, not capacity or a p95. Retain the import
+   matrix and live canary as separate controls; the original 33-second outlier
+   remains unattributed. Fixed-count scaling and scale-from-zero remain separate
+   unmeasured scenarios.
 4. **Soak and recovery.** Run the implemented two-hour soak at 70% of a passing
    mixed rate and complete the declared recovery evidence. Report memory and
    connection trends, database/generated-WAL/object growth, accepted work,
