@@ -3,7 +3,7 @@
   "evidence": {
     "campaign": {"path": "/evidence/passed-campaign/campaign-result.json", "sha256": "replace-with-sha256"},
     "soak": {"path": "/evidence/passed-soak/soak-result.json", "sha256": "replace-with-sha256"},
-    "capacity": {"path": "/optional/evidence/standalone-capacity-result.json", "sha256": "replace-with-sha256", "note": "Optional only for a separate SDK capacity card; its exact rate, frozen profile, harness revision, and image chain must match the primary campaign."}
+    "capacity": null
   },
   "node": {
     "allocatable": {"cpu": "3890m", "memory": "6568244Ki"},

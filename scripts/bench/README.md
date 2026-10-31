@@ -135,8 +135,10 @@ completion/arrival stability ratio. Its arrival cohort follows requests through
 drain, preserving acceptance ambiguity, duplicates, failures and late successes.
 `resource_usage` reports measured-window CPU/memory by component with coverage.
 
-The offline hosting calculator accepts a scenario with SHA-pinned capacity,
-campaign and optional soak artifacts:
+The offline hosting calculator uses a SHA-pinned, passing five-segment mixed
+campaign and optional matched soak. An additional standalone mixed confirmation
+is optional and must match the campaign's rate and frozen inputs. SDK-heavy
+rates remain separate workload measurements in their benchmark reports:
 
 ```bash
 python3 scripts/bench/hosting.py --scenario <scenario.json> --out <new-directory>
