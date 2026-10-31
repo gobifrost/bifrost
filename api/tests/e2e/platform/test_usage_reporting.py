@@ -2,13 +2,14 @@
 
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
 from sqlalchemy import delete
 
-from shared.usage_reporting import get_or_create_installation_id, report_usage
+import shared.usage_reporting as usage_reporting
 from src.models.enums import ExecutionStatus
 from src.models.orm import AgentRun, Execution, SystemConfig, WorkflowRunDaily
 
@@ -28,8 +29,6 @@ def _frozen_datetime(now: datetime) -> type[datetime]:
 async def test_report_usage_persists_one_installation_id_counts_the_completed_utc_day_and_acks_once(
     async_session_factory, monkeypatch
 ) -> None:
-    import shared.usage_reporting as usage_reporting
-
     now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
     yesterday = now.date() - timedelta(days=1)
     start = datetime.combine(yesterday, datetime.min.time(), tzinfo=UTC)
@@ -123,9 +122,9 @@ async def test_report_usage_persists_one_installation_id_counts_the_completed_ut
 
     try:
         async with async_session_factory() as first_session:
-            installation_id = await get_or_create_installation_id(first_session)
+            installation_id = await usage_reporting.get_or_create_installation_id(first_session)
         async with async_session_factory() as fresh_session:
-            assert await get_or_create_installation_id(fresh_session) == installation_id
+            assert await usage_reporting.get_or_create_installation_id(fresh_session) == installation_id
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(request)
@@ -135,27 +134,18 @@ async def test_report_usage_persists_one_installation_id_counts_the_completed_ut
         real_async_client = httpx.AsyncClient
         monkeypatch.setattr(usage_reporting, "datetime", _frozen_datetime(now))
         monkeypatch.setattr(usage_reporting, "get_version", lambda: "v1.4.2")
-        monkeypatch.setattr(
-            usage_reporting,
-            "get_settings",
-            lambda: type(
-                "Settings",
-                (),
-                {
-                    "environment": "production",
-                    "debug": False,
-                    "usage_reporting_enabled": True,
-                },
-            )(),
+        settings = SimpleNamespace(
+            environment="production", debug=False, usage_reporting_enabled=True
         )
+        monkeypatch.setattr(usage_reporting, "get_settings", lambda: settings)
         monkeypatch.setattr(
             usage_reporting.httpx,
             "AsyncClient",
             lambda **kwargs: real_async_client(transport=transport, **kwargs),
         )
 
-        assert (await report_usage()).summary == "Usage report delivered"
-        assert (await report_usage()).summary == "Usage report already delivered"
+        assert (await usage_reporting.report_usage()).summary == "Usage report delivered"
+        assert (await usage_reporting.report_usage()).summary == "Usage report already delivered"
 
         assert len(requests) == 1
         assert requests[0].url == httpx.URL("https://reports.gobifrost.com/usage")

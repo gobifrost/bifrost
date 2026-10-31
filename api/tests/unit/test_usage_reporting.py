@@ -11,11 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from shared.models import UsageReport
-from shared.usage_reporting import (
-    collect_usage_report,
-    get_or_create_installation_id,
-    report_usage,
-)
+import shared.usage_reporting as usage_reporting
 
 
 class _FrozenDateTime(datetime):
@@ -80,7 +76,7 @@ async def test_collect_usage_report_emits_the_fixed_pseudonymous_payload_shape()
     db = MagicMock()
     db.execute = AsyncMock(side_effect=[_ScalarResult(2), _ScalarResult(3)])
 
-    report = await collect_usage_report(
+    report = await usage_reporting.collect_usage_report(
         db,
         now=datetime(2026, 10, 31, 12, tzinfo=UTC),
         installation_id=UUID("123e4567-e89b-42d3-a456-426614174000"),
@@ -140,7 +136,7 @@ async def test_existing_non_v4_installation_id_fails_closed() -> None:
     )
 
     with pytest.raises(ValueError, match="installation ID is invalid"):
-        await get_or_create_installation_id(db)
+        await usage_reporting.get_or_create_installation_id(db)
 
 
 @pytest.mark.asyncio
@@ -164,8 +160,6 @@ async def test_existing_non_v4_installation_id_fails_closed() -> None:
 async def test_report_usage_gate_skips_before_opening_a_database_or_network_connection(
     monkeypatch, settings
 ) -> None:
-    import shared.usage_reporting as usage_reporting
-
     forbidden = MagicMock(
         side_effect=AssertionError("disabled reporting must not use dependencies")
     )
@@ -173,7 +167,7 @@ async def test_report_usage_gate_skips_before_opening_a_database_or_network_conn
     monkeypatch.setattr(usage_reporting, "get_session_factory", forbidden)
     monkeypatch.setattr(usage_reporting.httpx, "AsyncClient", forbidden)
 
-    outcome = await report_usage()
+    outcome = await usage_reporting.report_usage()
 
     assert outcome.summary == "Usage reporting skipped"
     forbidden.assert_not_called()
@@ -184,8 +178,6 @@ async def test_report_usage_gate_skips_before_opening_a_database_or_network_conn
 async def test_report_usage_invalid_version_skips_before_opening_a_database_or_network_connection(
     monkeypatch, version
 ) -> None:
-    import shared.usage_reporting as usage_reporting
-
     forbidden = MagicMock(
         side_effect=AssertionError("invalid version must not use dependencies")
     )
@@ -200,7 +192,7 @@ async def test_report_usage_invalid_version_skips_before_opening_a_database_or_n
     monkeypatch.setattr(usage_reporting, "get_session_factory", forbidden)
     monkeypatch.setattr(usage_reporting.httpx, "AsyncClient", forbidden)
 
-    outcome = await report_usage()
+    outcome = await usage_reporting.report_usage()
 
     assert outcome.summary == "Usage reporting skipped"
     forbidden.assert_not_called()
@@ -210,8 +202,6 @@ async def test_report_usage_invalid_version_skips_before_opening_a_database_or_n
 async def test_report_usage_debugpy_gate_skips_before_opening_a_database_or_network_connection(
     monkeypatch,
 ) -> None:
-    import shared.usage_reporting as usage_reporting
-
     forbidden = MagicMock(
         side_effect=AssertionError("debug reporting must not use dependencies")
     )
@@ -226,7 +216,7 @@ async def test_report_usage_debugpy_gate_skips_before_opening_a_database_or_netw
     monkeypatch.setattr(usage_reporting, "get_session_factory", forbidden)
     monkeypatch.setattr(usage_reporting.httpx, "AsyncClient", forbidden)
 
-    outcome = await report_usage()
+    outcome = await usage_reporting.report_usage()
 
     assert outcome.summary == "Usage reporting skipped"
     forbidden.assert_not_called()
@@ -245,8 +235,6 @@ async def test_report_usage_debugpy_gate_skips_before_opening_a_database_or_netw
 async def test_report_usage_only_acknowledges_a_successful_no_content_delivery(
     monkeypatch, delivery, expected_summary
 ) -> None:
-    import shared.usage_reporting as usage_reporting
-
     db = MagicMock()
     client = _Client(delivery)
     acknowledgement = AsyncMock()
@@ -285,7 +273,7 @@ async def test_report_usage_only_acknowledges_a_successful_no_content_delivery(
 
     monkeypatch.setattr(usage_reporting.httpx, "AsyncClient", make_client)
 
-    outcome = await report_usage()
+    outcome = await usage_reporting.report_usage()
 
     assert outcome.summary == expected_summary
     assert client.posts == [

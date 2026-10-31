@@ -52,10 +52,14 @@ counts use retained agent runs. An idle installation can report zero counts.
 
 Reports exclude names, email addresses, organization IDs, domains, installation
 URLs, workflow source, prompts, inputs, outputs, credentials, and financial data.
-The receiving application stores the aggregate report and receipt time; it does
-not read or store source IP addresses or request metadata. Cloudflare necessarily
-processes network traffic to serve the endpoint; application behavior is not a
-promise that Cloudflare performs no provider-level traffic processing.
+Our reporting service stores only the aggregate report and a server-generated
+receipt time. It does not retain source IP addresses, user agents, referrers,
+request headers, or other request metadata. Worker request logging,
+observability, tracing, and Logpush are disabled.
+
+Cloudflare processes network traffic to serve the endpoint. This promise covers
+our reporting application and its configured logging; it does not claim that
+Cloudflare performs no provider-level traffic processing.
 
 ## Schedule and Delivery
 

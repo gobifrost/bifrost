@@ -401,7 +401,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # ADDITIVE shared models; existing CLI contracts and minimum are unchanged.
     # Hosted App SDK provenance adds optional sdk_binding_api_major. Existing
     # clients can ignore the additive field; the CLI minimum remains unchanged.
-    "96bcbe77e663f3dfe4ac7b47ca592dce1de54c292252c5f5b020c57436095677"
+    # Daily usage reporting (2026-10-31): UsageReport is newly discovered in
+    # shared.models. ADDITIVE: this outbound report does not alter any existing
+    # CLI/SDK request or response; MIN_CLI_VERSION stays unchanged.
+    "12b78b711bd4b00b41f4e53760d08591c82b16ec3fa62335887f7e7bbc3e60b9"
 )
 
 
