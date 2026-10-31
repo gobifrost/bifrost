@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import yaml
 
+from bifrost.decorator_validation import has_executable_declaration
+
 if TYPE_CHECKING:
     from bifrost.client import BifrostClient
 
@@ -110,6 +112,8 @@ def build_local_workflow_index(
 
 def discover_functions(
     workspace: Path,
+    *,
+    workflow_paths: set[str] | None = None,
 ) -> tuple[dict[str, Callable[..., Any]], dict[str, str]]:
     """Map ``path::function_name`` → callable for every decorated function.
 
@@ -123,12 +127,17 @@ def discover_functions(
     code passes to ``useWorkflow``). The workspace root is placed on
     ``sys.path`` so a function's ``from modules.x import y`` resolves against
     the solution root.
+
+    Only manifest targets and statically declared SDK entry points are imported.
+    Helpers load through normal Python dependencies; unrelated diagnostics and
+    test setup must not execute in (and monkeypatch) the preview process.
     """
     workspace = workspace.resolve()
     root_str = str(workspace)
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
 
+    workflow_paths = workflow_paths or set()
     out: dict[str, Callable[..., Any]] = {}
     failures: dict[str, str] = {}
     for py in sorted(workspace.rglob("*.py")):
@@ -136,6 +145,13 @@ def discover_functions(
         if any(part in _SKIP_DIRS for part in rel_parts):
             continue
         rel = py.relative_to(workspace).as_posix()
+        if rel not in workflow_paths:
+            try:
+                if not has_executable_declaration(py.read_text(encoding="utf-8"), path=rel):
+                    continue
+            except (OSError, SyntaxError, UnicodeError) as exc:
+                failures[rel] = f"{type(exc).__name__}: {exc}"
+                continue
         module, err = _load_module(py, rel)
         if err is not None:
             failures[rel] = err
@@ -226,14 +242,20 @@ class FunctionHost:
         self._index = LocalWorkflowIndex()
 
     def reload(self) -> None:
-        self._fns, self._failures = discover_functions(self._workspace)
+        manifest_error: str | None = None
         try:
             entries = _load_workflow_manifest_entries(self._workspace)
         except yaml.YAMLError as exc:
             # A mid-edit save must degrade to "no aliases + loud failure line",
             # never an exception — an escaped error kills the watcher thread.
-            self._failures[".bifrost/workflows.yaml"] = f"invalid YAML: {exc}"
+            manifest_error = f"invalid YAML: {exc}"
             entries = []
+        self._fns, self._failures = discover_functions(
+            self._workspace,
+            workflow_paths={str(entry["path"]) for entry in entries if entry.get("path")},
+        )
+        if manifest_error:
+            self._failures[".bifrost/workflows.yaml"] = manifest_error
         self._index = build_local_workflow_index(entries, set(self._fns), self._failures)
 
     def refs(self) -> list[str]:
