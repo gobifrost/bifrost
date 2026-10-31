@@ -35,3 +35,20 @@ artifacts. Local host load and SDK client setup vary; no reliable speedup or
 cost conclusion follows from the local samples. Cloud CPU is now measured; peak
 memory/cold-start, native extension breadth, run credential scope, persisted
 fencing and recovery remain open experiments.
+
+## Fresh-runtime follow-on, 2026-10-31
+
+| Hypothesis | Specific change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Current upstream worker needs a replacement workspace loader | Package actual worker/virtual_import/module_cache_sync plus pure-Python redis; `node backend/transport.test.mjs` | Synchronous RefreshingClient reaches explicit egress denial, `current-runtime-sync-transport.json`; no missing wheel or synchronous I/O blocker identified | Actual scoped module retrieval |
+| Caller abort stops CPU even if parent timer cannot run | Separate Node observer/event loop, enable_request_signal, forward inbound signal; `node backend/external-cancel.test.mjs` | Falsified locally. Abort requested after before callback; after effect still arrives ~1.8 s later, `external-cpu-cancel-local.json` | Approved bounded cloud reproduction; do not advertise physical cancellation |
+| External-abort harness invokes correctly | Initial loopback export called without Options | HTTP 500 before any event, `external-cpu-cancel-initial.json`; fixed by supplying props Options | One diagnosed new run, retained CPU failure |
+| Merged debug API is usable | Read health/logs, run actual SDK builder | Old anonymous SDK source volume lacks hosted-binding; after source sync, old dependency volume lacks lucide-react | Synced current SDK sources, npm ci from current lock; restarted only API after failed startup; health 200 |
+
+No cloud deployment or new credential was made. Dynamic Workers pricing page
+currently states daily creation billing began May 26, 2026; an older changelog
+still says it is not active. Use the current pricing page, not that stale note:
+https://developers.cloudflare.com/dynamic-workers/pricing/ . This is not an
+allowance or approval to spend. Official lifecycle references:
+https://developers.cloudflare.com/dynamic-workers/api-reference/ and
+https://developers.cloudflare.com/dynamic-workers/usage/limits/ .

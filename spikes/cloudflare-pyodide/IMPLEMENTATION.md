@@ -93,3 +93,28 @@ The concrete pending request is at most 20 fresh Workers, at most $0.10 incremen
 cost, and a temporary guarded test secret for at most 30 minutes on the existing
 isolated Worker. Eddie confirmed the allowance is not approved. No remote_pool.py
 changes were made; positive-PID/cgroup assumptions await shared seam coordination.
+
+## Follow-on evidence
+
+The entry now also admits two fixed negative diagnostics (no real credentials):
+`sync_transport` with no egress, and `invalid_credential` through a loopback binding
+restricted to one GET module path on the existing isolated debug API. It still
+does not admit arbitrary execution requests. `node backend/invalid-credential.test.mjs`
+passes against that real API: exactly one observed 401, real `run_execution`
+returns Failed/WorkflowLoadError, no workflow result, no token in output. The
+initial test incorrectly expected ExecutableNotFound; source inspection confirms
+the loader's denial raises WorkflowLoadError. Both observations are retained.
+
+`node backend/external-cancel.test.mjs` against port 8798 uses a separate Node
+observer. It fails: the caller abort fires after the child's before callback,
+but after arrives about 1.8 seconds later. This excludes delayed parent timers
+as the sole cause of the cancellation gap. `enable_request_signal` is enabled
+and the inbound signal is forwarded. It remains local evidence, not cloud proof.
+Start with `npx wrangler dev --config backend/wrangler.external-cancel-local.jsonc --port 8798`.
+The fixed observer is localhost:8800; do not deploy this local configuration.
+
+The debug API's pre-merge anonymous SDK volumes lacked current hosted-binding
+sources and lucide-react. Synced the current client SDK source into that API's
+SDK source volume, ran npm ci against its current lock in its dependency volume,
+and restarted only the API after the failed startup. Actual health readback is
+200. No unrelated stack, database authority or production resource was changed.

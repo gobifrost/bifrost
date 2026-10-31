@@ -51,3 +51,10 @@ untrusted Python or cancellation-equivalent first-class executor support.
 Cloud testing, genuine run-scoped SDK execution and canonical lifecycle adoption
 remain acceptance gates. Do not conceal these gaps by clearing globals, reporting
 an abort as termination, or adding a second execution queue.
+
+A second test moves the abort timer outside workerd and forwards the caller's
+abort signal. It still observes the later CPU effect after the caller disconnects.
+The synchronous cold-module HTTP client itself works under local Pyodide: the
+real worker requests a module from the real isolated API, which rejects a fixed
+invalid credential with 401. The worker preserves its existing WorkflowLoadError
+semantics. This is negative authentication evidence, not authorized SDK success.
