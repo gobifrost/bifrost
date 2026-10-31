@@ -1,0 +1,14 @@
+{
+  "key": "pr:1163",
+  "classification": "highlight",
+  "entry_ids": [
+    "c0959ccb-e319-4cba-9b98-1da422ba9700"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1163",
+      "Maintainer requested default-enabled production aggregate reporting with environment-based opt-out. Reviewed the notice against the exact seven-field payload, exclusion gates, and deployment instructions. General Writing and Humanizer applied; the copy states the consequential default and permanent opt-out without claiming anonymous data or verified users."
+    ]
+  }
+}

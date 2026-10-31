@@ -65,10 +65,12 @@ class TestSchedulerDiagnostics:
             "audit_archive",
             "workspace_bundle_preview_cleanup",
             "workflow_operation_usage_flush",
+            "usage_reporting",
             "logo_thumbnail_backfill",
             "execution_worker_cleanup",
         }
         assert set(tasks) == expected
+        assert tasks["usage_reporting"]["execution_mode"] == "leader"
         for task_id in (
             "oauth_token_refresh",
             "webhook_renewal",
