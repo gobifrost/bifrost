@@ -1,0 +1,83 @@
+{
+  "description": "Illustrative offline input only, not a customer quote. Replace every path and commercial assumption with dated evidence before use.",
+  "evidence": {
+    "capacity": {"path": "/evidence/passed-capacity/result.json", "sha256": "replace-with-sha256"},
+    "campaign": {"path": "/evidence/passed-campaign/campaign-result.json", "sha256": "replace-with-sha256"},
+    "soak": {"path": "/evidence/passed-soak/soak-result.json", "sha256": "replace-with-sha256"}
+  },
+  "node": {
+    "allocatable": {"cpu": "3890m", "memory": "6568244Ki"},
+    "other_requested": {"cpu": "0", "memory": "0"},
+    "reserve": {"cpu": "0", "memory": "0"},
+    "pods": 100,
+    "other_pods": 0,
+    "reserve_pods": 0,
+    "pvcs": 20,
+    "other_pvcs": 0,
+    "reserve_pvcs": 0,
+    "storage_gib": 1000,
+    "other_storage_gib": 0,
+    "reserve_storage_gib": 0,
+    "note": "Observed node allocatable resources, not advertised 4 CPU / 8 GB. A 3900m benchmark envelope does not fit this node before other requests."
+  },
+  "ha_min_nodes": 2,
+  "node_utilized_month_fraction": 1,
+  "retention": {
+    "initial_data_gib": 10,
+    "retention_days": 30,
+    "backup_copies": 1,
+    "retained_versions": 1,
+    "reserve_fraction": 0.2,
+    "note": "The calculator combines this with observed soak generated_bytes_per_terminal. It does not project a two-hour growth slope indefinitely or assume autovacuum shrinks files."
+  },
+  "pricing": {
+    "node": {
+      "monthly_unit_price_usd": null,
+      "note": "DigitalOcean Premium AMD s-4vcpu-8gb-amd price was not verified on the public price page at 2026-10-31; null propagates to node and combined cost."
+    },
+    "volume": {
+      "per_provisioned_gib_month_usd": 0.1,
+      "source": "https://docs.digitalocean.com/products/volumes/details/pricing/",
+      "accessed": "2026-10-31"
+    },
+    "object_storage": {
+      "base_monthly_usd": 5,
+      "stored_gib": 10,
+      "included_gib": 250,
+      "extra_gib_month_usd": 0.02,
+      "included_outbound_gib": 1024,
+      "outbound_gib": 0,
+      "extra_outbound_gib_usd": 0.01,
+      "request_fee_monthly_usd": null,
+      "source": "https://docs.digitalocean.com/products/spaces/details/pricing/",
+      "note": "No per-request fee was confirmed; retain null rather than inventing a charge."
+    },
+    "kubernetes_control_plane_monthly_usd": 0,
+    "kubernetes_control_plane_optional_monthly_usd": 40,
+    "kubernetes_source": "https://docs.digitalocean.com/products/kubernetes/details/pricing/",
+    "shared_infrastructure": {
+      "build": 0,
+      "observability": 0,
+      "regional_http_load_balancer": 12,
+      "network_load_balancer": 15,
+      "network": 0,
+      "storage": 0
+    },
+    "shared_infrastructure_source": "https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/",
+    "model_provider": {
+      "workflow_per_success_usd": null,
+      "agent_per_success_usd": null,
+      "note": "Keep model-provider spend separate from infrastructure and supply dated unit costs."
+    }
+  },
+  "demand": {
+    "low": {"successful_workflows_per_month": 1000, "successful_agent_requests_per_month": 100, "peak_rate_per_s": 1, "tenant_placements": 2, "revenue_monthly_usd": null},
+    "base": {"successful_workflows_per_month": 10000, "successful_agent_requests_per_month": 1000, "peak_rate_per_s": 5, "tenant_placements": 10, "revenue_monthly_usd": null},
+    "peak": {"successful_workflows_per_month": 100000, "successful_agent_requests_per_month": 10000, "peak_rate_per_s": 20, "tenant_placements": 50, "revenue_monthly_usd": null}
+  },
+  "notes": [
+    "Demand is explicit successful workflow/agent-request volume; it is never derived from a saturation rate.",
+    "Node billing is Ready-node time, monthly unit price x node count x utilized-month fraction, never pod utilization.",
+    "The CLI requires a fresh output directory: python3 scripts/bench/hosting.py --scenario scenario.json --out /new/card."
+  ]
+}
