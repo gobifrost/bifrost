@@ -184,6 +184,7 @@ class InteractiveRunTest(unittest.TestCase):
              patch.object(interactive, "Cluster", return_value=cluster), \
              patch.object(interactive.bench_run, "Run", Current), \
              patch.object(interactive.bench_run, "_prepare"), \
+             patch.object(interactive.deploy, "reset"), \
              patch.object(interactive.browser_preparation, "prepare_tls", return_value={}), \
              patch.object(interactive, "_worker_policy", side_effect=[original_policy, {}, original_policy]), \
              patch.object(interactive.browser_preparation, "wait_for_worker_count", return_value={"live": 0, "ready": 0}), \
