@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import hashlib
 import sys
+from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -74,9 +75,13 @@ class ResourceMetrics:
 class ExecutionResourceObserver(Protocol):
     """One observer per physical attempt; unknown measurements stay unknown."""
 
-    def start(self) -> None: ...
+    @abstractmethod
+    def start(self) -> None:
+        raise NotImplementedError
 
-    def finish(self) -> ResourceMetrics: ...
+    @abstractmethod
+    def finish(self) -> ResourceMetrics:
+        raise NotImplementedError
 
 
 class ProcessResourceObserver:

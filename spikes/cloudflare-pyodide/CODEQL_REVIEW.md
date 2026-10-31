@@ -63,3 +63,16 @@ SDK write or container restart is needed for this review verification.
 CodeQL must analyze the new head normally. Moving an intended data flow into a
 shared transport is not a suppression or evidence that it vanished. The original
 CPU-termination incompatibility and incomplete executor acceptance remain open.
+
+## Follow-up protocol findings 1823 and 1824
+
+Both comments identify ellipsis expression bodies on the resource-observer
+protocol methods in `api/src/services/execution/worker.py`. Replaced those
+placeholders with `@abstractmethod` methods that raise `NotImplementedError`.
+Structural implementations still supply start/finish normally, and concrete
+process accounting and unknown-provider metrics are unchanged. This is a source
+fix, not a suppression or alert dismissal. The existing runtime-metadata and
+workspace-isolation tests cover the affected call boundary.
+Verification: 7 focused tests passed through `./test.sh`; `./test.sh quality api`
+passed with zero Pyright errors/warnings and Ruff clean. No cloud redeployment
+or change to the historical runtime manifests was made.
