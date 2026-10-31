@@ -53,6 +53,9 @@ its implementation into an App binding and a server-provided runtime.
 
 The runtime contains no React, React DOM, JSX, lucide, or host UI imports. An
 App continues to use its own React peer dependency and its own React root.
+Ship self-contained declarations for the stable public interface with the
+binding package. They must not refer to host-only `@/` aliases or track changing
+generated server DTOs. The runtime adapter alone consumes generated wire types.
 
 Moving only HTTP and WebSocket primitives is insufficient. `useTable` and
 `useInfiniteTable` currently recognize `table_invalidated`; make those events
