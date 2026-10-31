@@ -13,6 +13,19 @@ records the payload-shape difference and canonical deletion rehearsal. The
 retains the correctness pass and host-invalid capacity window.
 Earlier design: `docs/superpowers/specs/2026-10-27-performance-benchmark-suite-design.md`.
 
+`host_attribution.py` is an optional read-only companion for diagnosing invalid
+host windows. Run it alongside a declared measurement with a fresh JSONL path,
+the profile's physical disk `major:minor`, and a bounded duration. It records
+disjoint Docker/VM cgroup CPU and disk deltas without reading process arguments
+or environments. `--include-user` also attempts user aggregates; unavailable
+`io.stat` files are explicit missing coverage. This host does not expose those
+user-slice I/O counters. The companion does not replace any acceptance gate.
+
+```bash
+python3 scripts/bench/host_attribution.py --device 259:0 --duration-s 3600 \
+  --include-user --out /tmp/host-attribution-new-run.jsonl
+```
+
 ```bash
 ./test.sh bench up                                    # cluster, images, CloudNativePG, tenant (profile m)
 ./test.sh bench run --profile m                       # execution classes: sequential + bursts, memory, DB
