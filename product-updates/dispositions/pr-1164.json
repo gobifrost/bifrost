@@ -1,15 +1,15 @@
 {
   "key": "pr:1164",
-  "classification": "other",
-  "entry_ids": [],
-  "category": "fix",
-  "summary": "Concurrent workflow table creation preserves unique table names.",
+  "classification": "highlight",
+  "entry_ids": [
+    "59f49170-08b6-4ae3-b7f5-8f06d15104b4"
+  ],
   "action_required": true,
   "review": {
     "status": "draft",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1164",
-      "Conditional upgrade notice proposed: installations with existing duplicate global or organization table names must resolve them before this non-destructive migration can proceed. The duplicate-data migration rehearsal proves refusal without mutation; a read-only October 31 production preflight found zero duplicate groups in either scope. Customer upgrade wording requires review before this draft PR is queued."
+      "Draft canonical upgrade notice at product-updates/drafts/pr-1164/entries/59f49170-08b6-4ae3-b7f5-8f06d15104b4.md: installations with existing duplicate global or organization table names must resolve them before this non-destructive migration can proceed. The duplicate-data migration rehearsal proves refusal without mutation; a read-only October 31 production preflight found zero duplicate groups in either scope. Awaiting explicit product/copy review."
     ]
   }
 }
