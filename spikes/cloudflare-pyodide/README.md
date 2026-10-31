@@ -136,6 +136,11 @@ Pyodide 314.0.7 / CPython 3.14.2 (see pylock); Linux CPython 3.14.8; global cf
 
 ## Cleanup
 
+For the subsequent real upstream worker + authorized SDK qualification in local
+workerd, see [authorized local setup and evidence](backend/AUTHORIZED-LOCAL.md).
+This proves actual API interaction locally; it does not transfer that proof to
+cloud deployment or canonical dispatch/terminal acceptance.
+
 The approved fresh-cloud experiment used 16 of 20 invocations and is retired:
 no public/previews, no remote secret binding, HTTP404. Verify retained artifacts
 with `node backend/verify-fresh-cloud.mjs` (expected exit 1 for physical-stop

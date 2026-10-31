@@ -11,7 +11,10 @@ from pathlib import Path
 root = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument("--current-runtime", action="store_true")
+parser.add_argument("--manifest")
 args = parser.parse_args()
+if args.manifest and Path(args.manifest).name != args.manifest:
+    raise ValueError("Manifest must be a file name")
 source = root / "backend/runtime-source" if args.current_runtime else root / "src"
 modules = {}
 hashes = {}
@@ -43,5 +46,5 @@ manifest = {"module_count": len(modules), "files": hashes,
 name = "runtime" if args.current_runtime else "engine"
 output = "generated-runtime.mjs" if args.current_runtime else "generated-modules.mjs"
 (root / "backend" / output).write_text("export default " + json.dumps(modules) + ";\n")
-(root / "results" / f"dynamic-{name}-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
+(root / "results" / (args.manifest or f"dynamic-{name}-manifest.json")).write_text(json.dumps(manifest,indent=2)+"\n")
 print(json.dumps({"modules":len(modules), "payload_sha256":manifest["payload_sha256"]}))

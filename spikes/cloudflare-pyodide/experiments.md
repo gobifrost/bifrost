@@ -74,3 +74,20 @@ all failed/uncertain attempts count and no request was automatically retried.
 stop incompatibilities while asserting the functional results. No missing native
 wheel was encountered; the actual blocker was pure-Python bootstrap order, then
 the provider lifecycle contract. No native-build/reimplementation claim follows.
+
+## Authorized local upstream worker and SDK
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Canonical run credentials work in fresh Pyodide | `node backend/run-authorized-local.mjs`, real disposable API and canonical protocol-2 issuer | Exit 0; worker Success; pinned helper/config/table write and independent value 70; `authorized-local-liveness.json` | Adopt canonical claim/terminal contract without fixture state mutation |
+| Tenant and run liveness remain authoritative | Cross-org request; then transition only fixture execution to terminal | 403 cross-tenant; same credential 200 then 401; after teardown 401 | Full attempt fencing and duplicate submission conformance |
+| Existing virtual resolver can retain pinned provenance | Verify resolver source bytes against admission manifest | 15 focused IO/module/resolver tests pass; Solution remapping explicitly refused | Qualify scoped Solution loading separately |
+
+Bounded failed attempts identified exact local fixture errors: config set returns
+204 (not 200), delete returns 200 (not 204), audit rows require exact-ID teardown,
+and table auto-create requires the exact `/api/tables` route as well as children.
+These were corrected without replacing SDK/auth behavior. Attempt 3 produced a
+successful report but PowerShell treated benign Docker stderr as failure; a new
+Node process wrapper and additional run-liveness experiment established exit 0.
+The earlier `authorized-local.json` receipt is preserved separately. Temporary
+test-network attachment and the dedicated Wrangler process were retired afterward.

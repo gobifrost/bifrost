@@ -4,8 +4,14 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import argparse
 
 here = Path(__file__).resolve().parent
+parser = argparse.ArgumentParser()
+parser.add_argument("--manifest", default="current-runtime-source.json")
+args = parser.parse_args()
+if Path(args.manifest).name != args.manifest:
+    raise ValueError("Manifest must be a file name")
 repo = here.parents[2]
 destination = here / "runtime-source"
 paths = list((repo / "api/bifrost").glob("*.py"))
@@ -29,5 +35,5 @@ for folder in ("src", "src/core", "src/sdk", "src/models", "src/services", "src/
 report = {"head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
           "source_files": manifest,
           "note": "Working source hashes bind uncommitted changes too; historical spike manifest is unchanged."}
-(here.parent / "results/current-runtime-source.json").write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8",newline="\n")
+(here.parent / "results" / args.manifest).write_text(json.dumps(report,indent=2)+"\n",encoding="utf-8",newline="\n")
 print(f"Prepared {len(paths)} current upstream source files")
