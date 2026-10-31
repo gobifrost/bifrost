@@ -1,0 +1,13 @@
+{
+  "key": "pr:1156",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal cached metadata activation of the already approved SDK rebuild repair summary in PR #1155; no additional runtime behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1156",
+      "Canonical validation and the actual image-preparation helper confirm #1155's approved Fixed summary is present. All 306 previous PR records, all 34 existing entries, and all 86 previous smaller-change summaries are preserved."
+    ]
+  }
+}
