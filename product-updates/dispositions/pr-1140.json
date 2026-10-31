@@ -1,0 +1,14 @@
+{
+  "key": "pr:1140",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Fresh Git workers can sync a fetched workspace without a second Fetch. Existing stale-checkout protections remain unchanged.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1140",
+      "Scoped review verified that bootstrap applies only to an empty working directory under the existing repository lock, with the storage fingerprint check unchanged. Real Docker acceptance passed 156 tests on current upstream, including native Sync overlapping running and queued executions, four bootstrap safety tests, all local Git consumers, real storage freshness, module isolation and manifest JIT. The host required a local AppArmor exception, so production-hardening qualification is not claimed. Existing stale checkouts still require explicit Fetch."
+    ]
+  }
+}
