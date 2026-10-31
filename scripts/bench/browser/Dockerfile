@@ -5,5 +5,5 @@ FROM ${PLAYWRIGHT_BASE_IMAGE}
 WORKDIR /bench
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --fund=false
-COPY driver.mjs ./driver.mjs
+COPY driver.mjs observer.mjs ./
 ENTRYPOINT ["node", "/bench/driver.mjs"]
