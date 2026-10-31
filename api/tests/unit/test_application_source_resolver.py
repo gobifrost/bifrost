@@ -239,6 +239,101 @@ async def test_solution_matching_captured_and_remapped_entries_is_rejected(
 
 
 @pytest.mark.asyncio
+async def test_solution_resolves_target_app_without_parsing_unrelated_legacy_agent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from bifrost.definition_validation import DefinitionValidationError
+    from src.services import application_source_resolver as resolver
+    from src.services.solutions.zip_install import preview_zip_path
+
+    solution_id = uuid4()
+    manifest_id = uuid4()
+    archive_path = tmp_path / "solution.zip"
+    archive_data = _workspace_zip(archive_path, app_ids=[manifest_id, uuid4()])
+    with zipfile.ZipFile(archive_path, "a") as archive:
+        archive.writestr(
+            ".bifrost/agents.yaml",
+            (
+                "agents:\n"
+                f"  {uuid4()}:\n"
+                f"    id: {uuid4()}\n"
+                "    name: Legacy agent\n"
+                "    llm_model: legacy-model\n"
+            ).encode(),
+        )
+    archive_data = archive_path.read_bytes()
+
+    class Storage:
+        async def copy_to_path(self, path):
+            path.write_bytes(archive_data)
+            return True
+
+    monkeypatch.setattr(resolver, "SolutionSourceArtifactStorage", lambda _sid: Storage())
+
+    with pytest.raises(DefinitionValidationError, match="llm_model"):
+        preview_zip_path(archive_path)
+
+    source = await resolver.resolve_application_source(
+        _app(app_id=solution_entity_id(solution_id, manifest_id), solution_id=solution_id)
+    )
+
+    assert source.files["src/main.tsx"] == b"export const target = true;\n"
+    assert source.dependencies == {"react": "^18.3.1"}
+
+
+@pytest.mark.asyncio
+async def test_solution_resolves_target_app_without_collecting_sibling_app_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from src.services import application_source_resolver as resolver
+
+    solution_id = uuid4()
+    target_manifest_id = uuid4()
+    sibling_manifest_id = uuid4()
+    archive_data = _zip(
+        tmp_path / "solution.zip",
+        {
+            "bifrost.solution.yaml": b"slug: sdk-pack\nname: SDK Pack\n",
+            ".bifrost/apps.yaml": (
+                "apps:\n"
+                f"  {target_manifest_id}:\n"
+                f"    id: {target_manifest_id}\n"
+                "    slug: target\n"
+                "    name: Target\n"
+                "    path: apps/target\n"
+                "    app_model: standalone_v2\n"
+                f"  {sibling_manifest_id}:\n"
+                f"    id: {sibling_manifest_id}\n"
+                "    slug: sibling\n"
+                "    name: Sibling\n"
+                "    path: apps/sibling\n"
+                "    app_model: standalone_v2\n"
+                "    logo: missing-logo.png\n"
+            ).encode(),
+            "apps/target/package.json": b'{"name":"target"}',
+            "apps/target/index.html": b"<div id='root'></div>",
+            "apps/target/src/main.tsx": b"export const target = true;\n",
+        },
+    ).read_bytes()
+
+    class Storage:
+        async def copy_to_path(self, path):
+            path.write_bytes(archive_data)
+            return True
+
+    monkeypatch.setattr(resolver, "SolutionSourceArtifactStorage", lambda _sid: Storage())
+
+    source = await resolver.resolve_application_source(
+        _app(
+            app_id=solution_entity_id(solution_id, target_manifest_id),
+            solution_id=solution_id,
+        )
+    )
+
+    assert source.files["src/main.tsx"] == b"export const target = true;\n"
+
+
+@pytest.mark.asyncio
 async def test_solution_source_resolver_reads_identical_duplicate_logo_without_writing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -279,7 +374,7 @@ async def test_solution_source_resolver_reads_identical_duplicate_logo_without_w
 
 
 @pytest.mark.asyncio
-async def test_solution_preview_runs_through_to_thread_with_exact_archive_path(
+async def test_solution_app_extraction_runs_through_to_thread_with_exact_archive_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from src.services import application_source_resolver as resolver
@@ -288,41 +383,48 @@ async def test_solution_preview_runs_through_to_thread_with_exact_archive_path(
     manifest_id = uuid4()
     app = _app(app_id=solution_entity_id(solution_id, manifest_id), solution_id=solution_id)
     archive_data = _workspace_zip(tmp_path / "solution.zip", app_ids=[manifest_id, uuid4()])
-    preview_calls: list[Path] = []
-    to_thread_calls: list[tuple[object, tuple[object, ...]]] = []
-    original_preview_zip_path = resolver.preview_zip_path
+    extraction_calls: list[Path] = []
+    to_thread_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+    original_extract = resolver.extract_solution_app_sources_from_zip_path
 
     class Storage:
         async def copy_to_path(self, path):
             path.write_bytes(archive_data)
             return True
 
-    def preview_spy(path: Path):
-        preview_calls.append(path)
-        return original_preview_zip_path(path)
+    def extraction_spy(path: Path, *, matches):
+        extraction_calls.append(path)
+        return original_extract(path, matches=matches)
 
     async def fake_to_thread(func, *args, **kwargs):
-        to_thread_calls.append((func, args))
+        to_thread_calls.append((func, args, kwargs))
         return func(*args, **kwargs)
 
     monkeypatch.setattr(resolver, "SolutionSourceArtifactStorage", lambda _sid: Storage())
-    monkeypatch.setattr(resolver, "preview_zip_path", preview_spy)
+    monkeypatch.setattr(
+        resolver, "extract_solution_app_sources_from_zip_path", extraction_spy
+    )
     monkeypatch.setattr(resolver.asyncio, "to_thread", fake_to_thread)
 
     await resolver.resolve_application_source(app)
 
     assert len(to_thread_calls) == 2
-    validate_func, validate_args = to_thread_calls[0]
+    validate_func, validate_args, validate_kwargs = to_thread_calls[0]
     assert validate_func is resolver.validate_solution_source_archive
     assert len(validate_args) == 1
     assert isinstance(validate_args[0], Path)
     assert validate_args[0].name == "source.zip"
-    called_func, called_args = to_thread_calls[1]
-    assert called_func is preview_spy
+    assert validate_kwargs == {
+        "max_members": resolver.SOLUTION_SOURCE_MAX_MEMBERS,
+        "max_expanded_bytes": resolver.SOLUTION_SOURCE_MAX_EXPANDED_BYTES,
+    }
+    called_func, called_args, called_kwargs = to_thread_calls[1]
+    assert called_func is extraction_spy
     assert len(called_args) == 1
     assert isinstance(called_args[0], Path)
     assert called_args[0].name == "source.zip"
-    assert preview_calls == [called_args[0]]
+    assert set(called_kwargs) == {"matches"}
+    assert extraction_calls == [called_args[0]]
 
 
 @pytest.mark.asyncio
@@ -383,11 +485,13 @@ async def test_solution_oversized_archive_is_rejected_before_preview(
             path.write_bytes(data)
             return True
 
-    def explode_preview(_path):
-        raise AssertionError("preview must not run after bounded validation fails")
+    def explode_extraction(*_args, **_kwargs):
+        raise AssertionError("App extraction must not run after bounded validation fails")
 
     monkeypatch.setattr(resolver, "SolutionSourceArtifactStorage", lambda _sid: Storage())
-    monkeypatch.setattr(resolver, "preview_zip_path", explode_preview)
+    monkeypatch.setattr(
+        resolver, "extract_solution_app_sources_from_zip_path", explode_extraction
+    )
     monkeypatch.setattr(resolver, "SOLUTION_SOURCE_MAX_EXPANDED_BYTES", 31)
 
     with pytest.raises(resolver.ApplicationSourceUnavailable) as exc:
@@ -416,11 +520,13 @@ async def test_solution_archive_member_count_is_rejected_before_preview(
             path.write_bytes(data)
             return True
 
-    def explode_preview(_path):
-        raise AssertionError("preview must not run after member-count validation fails")
+    def explode_extraction(*_args, **_kwargs):
+        raise AssertionError("App extraction must not run after member-count validation fails")
 
     monkeypatch.setattr(resolver, "SolutionSourceArtifactStorage", lambda _sid: Storage())
-    monkeypatch.setattr(resolver, "preview_zip_path", explode_preview)
+    monkeypatch.setattr(
+        resolver, "extract_solution_app_sources_from_zip_path", explode_extraction
+    )
     monkeypatch.setattr(resolver, "SOLUTION_SOURCE_MAX_MEMBERS", 2)
 
     with pytest.raises(resolver.ApplicationSourceUnavailable) as exc:

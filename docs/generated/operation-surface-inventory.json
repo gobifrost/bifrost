@@ -10197,7 +10197,7 @@
     "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 690,
+    "rest": 694,
     "sdk": 21
   },
   "schema_version": 1,
@@ -11712,6 +11712,20 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/app-sdk/assets/{fingerprint}.js",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/app-sdk/v1/manifest",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/applications/sdk/update",
@@ -12807,6 +12821,20 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/llms.txt",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/app-sdk-upgrades/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/maintenance/app-sdk-upgrades/settings",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

@@ -9,6 +9,7 @@ import { type PlatformJobUpdate, webSocketService } from "./websocket";
 class MockWebSocket {
 	static readonly OPEN = 1;
 	static urls: string[] = [];
+	static instances: MockWebSocket[] = [];
 	readonly readyState = MockWebSocket.OPEN;
 	onopen: ((event: Event) => void) | null = null;
 	onmessage: ((event: MessageEvent) => void) | null = null;
@@ -18,6 +19,7 @@ class MockWebSocket {
 
 	constructor(url: string) {
 		MockWebSocket.urls.push(url);
+		MockWebSocket.instances.push(this);
 		queueMicrotask(() => this.emit("open"));
 	}
 
@@ -33,7 +35,7 @@ class MockWebSocket {
 		this.emit("close", { code: 1000 } as CloseEvent);
 	}
 
-	private emit(type: string, event: Event = new Event(type)) {
+	emit(type: string, event: Event = new Event(type)) {
 		if (type === "open") this.onopen?.(event);
 		if (type === "close") this.onclose?.(event as CloseEvent);
 		for (const listener of this.listeners.get(type) ?? []) listener(event);
@@ -49,6 +51,7 @@ beforeEach(() => {
 	localStorage.clear();
 	sessionStorage.clear();
 	MockWebSocket.urls = [];
+	MockWebSocket.instances = [];
 	vi.stubGlobal("WebSocket", MockWebSocket);
 });
 
@@ -60,6 +63,20 @@ afterEach(async () => {
 });
 
 describe("platform WebSocket authentication", () => {
+	it("does not reconnect after a 4001 when session refresh fails", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+		const connected = socketService._connect(["notifications"]);
+		await vi.runAllTicks();
+		await connected;
+
+		MockWebSocket.instances[0].emit("close", { code: 4001 } as CloseEvent);
+		await vi.advanceTimersByTimeAsync(2_000);
+
+		expect(MockWebSocket.urls).toHaveLength(1);
+		vi.useRealTimers();
+	});
+
 	it("keeps the impersonation handshake free of a bearer query token", async () => {
 		localStorage.setItem(ACCESS_TOKEN_KEY, "operator-token");
 		setImpersonationToken("impersonated-token");

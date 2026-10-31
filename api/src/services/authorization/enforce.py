@@ -120,6 +120,8 @@ async def load_caller(db: AsyncSession, principal: UserPrincipal) -> Caller:
         return Caller(principal, None)
     if principal.runtime_authority is not None:
         return Caller(principal, principal.runtime_authority.run_user.ctx)
+    if principal.authorization_context is not None:
+        return Caller(principal, principal.authorization_context)
     if principal.engine_execution_id or principal.service_id or principal.service_attempt_id:
         return Caller(principal, None)
     try:

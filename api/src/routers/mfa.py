@@ -13,22 +13,13 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from src.core.cache import get_shared_redis
-from src.core.cache.keys import refresh_token_jti_key, TTL_REFRESH_TOKEN
 from src.core.auth import CurrentActiveUser, get_current_user_from_db
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.security import (
-    create_access_token,
-    create_refresh_token,
-    verify_password,
-)
+from src.core.security import verify_password
 from src.services.mfa_service import MFAService
-from src.services.user_provisioning import get_user_roles
 from shared.browser_impersonation import is_browser_impersonation
-from shared.external_access import (
-    resolve_provider_org_claim,
-)
+from shared.human_sessions import issue_human_session
 from shared.identities import refuse_identity_sign_in
 
 logger = logging.getLogger(__name__)
@@ -235,34 +226,14 @@ async def verify_mfa(
         extra={"user_id": str(user.id)}
     )
 
-    # Generate tokens for auto-login after MFA enrollment
     refuse_identity_sign_in(user)
-    db_roles = await get_user_roles(db, user.id)
-    roles = ["authenticated", *db_roles]
-
-    token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name or user.email.split("@")[0],
-        "is_superuser": user.is_superuser,
-        "is_external": bool(user.is_external),
-        "is_provider_org": await resolve_provider_org_claim(db, user),
-        "org_id": str(user.organization_id) if user.organization_id else None,
-        "roles": roles,
-    }
-
-    access_token = create_access_token(data=token_data)
-    refresh_token, jti = create_refresh_token(data={"sub": str(user.id)})
-
-    # Store JTI in Redis for revocation support
-    r = await get_shared_redis()
-    await r.setex(refresh_token_jti_key(str(user.id), jti), TTL_REFRESH_TOKEN, "1")
+    tokens = await issue_human_session(user.id)
 
     return MFAVerifyResponse(
         success=True,
         recovery_codes=recovery_codes,
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
     )
 
 

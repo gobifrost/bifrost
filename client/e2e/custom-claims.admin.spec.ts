@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "./fixtures/api-fixture";
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -31,7 +31,9 @@ async function assertOk(response: Response, label: string): Promise<void> {
 	}
 }
 
-async function createOrgSuperuser(): Promise<UserCredentials> {
+async function createOrgSuperuser(
+	adminApi: APIRequestContext,
+): Promise<UserCredentials> {
 	const credentials = loadCredentials();
 	const suffix = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 	const user = {
@@ -40,20 +42,19 @@ async function createOrgSuperuser(): Promise<UserCredentials> {
 		name: `Claims Admin ${suffix}`,
 	};
 
-	const createRes = await fetch(`${API_URL}/api/users`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${credentials.platform_admin.accessToken}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
+	const createRes = await adminApi.post("/api/users", {
+		data: {
 			email: user.email,
 			name: user.name,
 			organization_id: credentials.org1.id,
 			is_superuser: true,
-		}),
+		},
 	});
-	await assertOk(createRes, "create org superuser");
+	if (!createRes.ok()) {
+		throw new Error(
+			`create org superuser: ${createRes.status()} ${await createRes.text()}`,
+		);
+	}
 
 	const registerRes = await fetch(`${API_URL}/auth/register`, {
 		method: "POST",
@@ -151,8 +152,8 @@ async function createSourceTable(admin: UserCredentials): Promise<string> {
 	return tableName;
 }
 
-test("admin creates a Custom Claim from the Tables page", async ({ page }) => {
-	const admin = await createOrgSuperuser();
+test("admin creates a Custom Claim from the Tables page", async ({ page, api }) => {
+	const admin = await createOrgSuperuser(api);
 	const sourceTable = await createSourceTable(admin);
 	const claimName = `allowed_campus_ids_${Date.now()}`;
 	const query = JSON.stringify(

@@ -325,27 +325,8 @@ def agent_run_steps_stream_key(run_id: str) -> str:
 
 
 # =============================================================================
-# Authentication Keys (Refresh Token JTI, OAuth State, Rate Limiting)
+# Authentication Keys (OAuth State, Rate Limiting)
 # =============================================================================
-
-
-def refresh_token_jti_key(user_id: str, jti: str) -> str:
-    """
-    Key for an active refresh token JTI.
-
-    Structure: STRING with value "1" (existence check only)
-    TTL: 7 days (matches refresh token expiry)
-    """
-    return f"bifrost:auth:refresh:{user_id}:{jti}"
-
-
-def user_refresh_tokens_pattern(user_id: str) -> str:
-    """
-    Pattern to find all refresh tokens for a user (for revoke-all).
-
-    Use with KEYS or SCAN command.
-    """
-    return f"bifrost:auth:refresh:{user_id}:*"
 
 
 def oauth_state_key(state: str) -> str:
@@ -405,7 +386,6 @@ TTL_ACTIVE_EXECUTION = 3600  # 1 hour (recreated while the child is active)
 TTL_EMBED_EXECUTION = 86400  # 24 hours (embed session → execution link)
 
 # Auth TTLs
-TTL_REFRESH_TOKEN = 604800  # 7 days (matches refresh token expiry)
 TTL_OAUTH_STATE = 600  # 10 minutes
 TTL_RATE_LIMIT = 60  # 1 minute window
 TTL_DEVICE_CODE = 300  # 5 minutes (device authorization flow)

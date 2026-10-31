@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/api-fixture";
 
 test.describe("Scheduler diagnostics (platform admin)", () => {
 	test("shows capacity guidance and opens per-run logs", async ({ page }) => {

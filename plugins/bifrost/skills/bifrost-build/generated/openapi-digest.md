@@ -79,6 +79,8 @@
 | POST | `/api/agents/{agent_id}/tuning-session` |
 | POST | `/api/agents/{agent_id}/tuning-session/apply` |
 | POST | `/api/agents/{agent_id}/tuning-session/dry-run` |
+| GET | `/api/app-sdk/assets/{fingerprint}.js` |
+| GET | `/api/app-sdk/v1/manifest` |
 | GET | `/api/applications` |
 | POST | `/api/applications` |
 | POST | `/api/applications/sdk/update` |
@@ -322,6 +324,8 @@
 | GET | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | PUT | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | GET | `/api/llms.txt` |
+| GET | `/api/maintenance/app-sdk-upgrades/settings` |
+| PUT | `/api/maintenance/app-sdk-upgrades/settings` |
 | POST | `/api/maintenance/artifact-retention/cleanup` |
 | GET | `/api/maintenance/artifact-retention/settings` |
 | PUT | `/api/maintenance/artifact-retention/settings` |

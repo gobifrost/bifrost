@@ -323,7 +323,7 @@ async def test_the_runs_own_solution_gate_follows_the_claims_and_the_role_read_i
 async def test_mcp_tool_filtering_takes_the_run_users_roles_from_the_claims(
     async_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.services.mcp_server.auth import BifrostAuthProvider
+    from src.services.mcp_server.auth import BifrostAuthProvider, _RefreshRequired
 
     provider = BifrostAuthProvider(base_url="https://test.example.com")
     monkeypatch.setattr(provider, "_check_mcp_access", AsyncMock(return_value=True))
@@ -339,9 +339,9 @@ async def test_mcp_tool_filtering_takes_the_run_users_roles_from_the_claims(
 
         verified = await provider.verify_token(access)
         await _bump(async_engine)
-        stale = await provider.verify_token(access)
+        with pytest.raises(_RefreshRequired):
+            await provider.verify_token(access)
 
     assert verified is not None
     assert verified.claims["roles"] == [role.name]
     assert verified.claims["runtime_credential_id"] == str(run.id)
-    assert stale is None

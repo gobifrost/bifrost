@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 if TYPE_CHECKING:
+    from src.services.authorization.context import AuthorizationContext
     from src.services.authorization.runtime import RuntimeAuthority
 
 @dataclass
@@ -19,7 +20,8 @@ class UserPrincipal:
     Authenticated user principal.
 
     Represents an authenticated user with their identity and permissions.
-    Human sessions carry identity claims. Runtime sessions come from claims
+    Human sessions carry identity and authorization claims validated against
+    the primary authority epoch. Runtime sessions come from claims
     minted by ``tokens.issue_access_token`` and validated against the
     authority epoch and the run's liveness, or (legacy tokens and in-process
     callers) from current durable records. Authorization uses the canonical
@@ -85,6 +87,9 @@ class UserPrincipal:
     # (``tokens.authenticate_runtime_token``) and ``load_runtime_principal``.
     # No other transport claims populate it.
     runtime_authority: "RuntimeAuthority | None" = None
+    # Only the authenticated human claims resolver installs this context.
+    authorization_context: "AuthorizationContext | None" = None
+    auth_session_id: UUID | None = None
 
     @property
     def is_platform_admin(self) -> bool:

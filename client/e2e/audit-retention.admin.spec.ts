@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/api-fixture";
 
 test("previews the audit archive run from Maintenance", async ({ page }) => {
 	await page.goto("/settings/maintenance");

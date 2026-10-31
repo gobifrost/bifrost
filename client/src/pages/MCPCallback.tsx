@@ -20,6 +20,7 @@ import { useSearchParams } from "react-router-dom";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/api-client";
 
 export function MCPCallback() {
 	const [searchParams] = useSearchParams();
@@ -43,15 +44,15 @@ export function MCPCallback() {
 			}
 
 			try {
-				// Fetch the callback endpoint via XHR - Vite proxy handles this
-				// The server returns a JSON response with redirect_url when Accept: application/json
-				const response = await fetch(
+				// The server returns the refresh_required challenge before it consumes
+				// OAuth state, so authFetch can safely rotate a stale human session and
+				// replay this cookie-authenticated handoff.
+				const response = await authFetch(
 					`/mcp/callback?internal_state=${internalState}`,
 					{
 						headers: {
 							Accept: "application/json",
 						},
-						credentials: "include", // Include cookies for auth
 					},
 				);
 

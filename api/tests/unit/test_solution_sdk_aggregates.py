@@ -26,6 +26,7 @@ async def test_solution_sdk_list_aggregate_loads_current_metadata_once(monkeypat
             sdk_package_version="0.0.1",
             sdk_fingerprint="old",
             sdk_contract_version=1,
+            sdk_binding_api_major=None,
             sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
         SimpleNamespace(
@@ -38,6 +39,7 @@ async def test_solution_sdk_list_aggregate_loads_current_metadata_once(monkeypat
             sdk_package_version="1.0.0",
             sdk_fingerprint="current",
             sdk_contract_version=1,
+            sdk_binding_api_major=None,
             sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         ),
     ]

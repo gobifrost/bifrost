@@ -6,7 +6,7 @@
  * /chat/:conversationId.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 import { seedAgentViaPage } from "./setup/seed-agent";
 
 test.describe("Agent Detail — Start Chat (admin)", () => {

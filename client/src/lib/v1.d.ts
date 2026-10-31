@@ -393,6 +393,11 @@ export interface paths {
          *
          *     Rate limited: 10 requests per minute per IP address.
          *
+         *     A run refresh token (``type: run_refresh``, in the body) instead
+         *     re-evaluates its run and returns a new access token with the same run
+         *     refresh token: it is reusable and unrotated, sets no cookies, and is not
+         *     rate limited per IP, since many runs share a worker's address.
+         *
          *     Args:
          *         request: FastAPI request object
          *         token_data: Optional refresh token in body (API clients)
@@ -452,8 +457,8 @@ export interface paths {
          * Logout
          * @description Logout current user and revoke refresh token.
          *
-         *     Clears authentication cookies and revokes the current refresh token.
-         *     The access token will remain valid until expiry (30 minutes max).
+         *     Clears authentication cookies and revokes the current durable session.
+         *     Its epoch bump refuses prior access credentials on their next operation.
          *
          *     For API clients using Bearer auth, the refresh_token should be passed
          *     in the request body. For browser clients using cookies, the token is
@@ -493,8 +498,8 @@ export interface paths {
          *     - User wants to sign out everywhere
          *     - Password has been changed
          *
-         *     Note: Access tokens will remain valid until expiry (30 minutes max).
-         *     For immediate revocation, consider also changing the password.
+         *     Session revocation and the authority-epoch bump commit atomically, so
+         *     existing access tokens are refused before their next protected operation.
          *
          *     Args:
          *         response: FastAPI response (to clear current cookies)
@@ -7411,6 +7416,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/maintenance/app-sdk-upgrades/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get automatic App SDK upgrade settings */
+        get: operations["get_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_get"];
+        /** Update automatic App SDK upgrade settings */
+        put: operations["update_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/maintenance/artifact-retention/settings": {
         parameters: {
             query?: never;
@@ -7490,6 +7513,26 @@ export interface paths {
         };
         /** Preview which archived audit events an archive window would delete */
         get: operations["preview_audit_expiry_api_maintenance_audit_retention_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/authz/legacy-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List what still depends on legacy runtime credentials
+         * @description Live workflow executions and service attempts whose credentials are in the legacy format, and connected remote launchers that receive legacy credentials. The release that removes legacy runtime tokens refuses to install while either list is non-empty. Read-only.
+         */
+        get: operations["get_legacy_credential_status_api_maintenance_authz_legacy_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10390,6 +10433,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/app-sdk/v1/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Select the API instance's current factory without caching the pointer.
+         */
+        get: operations["get_manifest_api_app_sdk_v1_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/app-sdk/assets/{fingerprint}.js": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Asset
+         * @description Serve an exact immutable factory artifact from shared platform storage.
+         */
+        get: operations["get_asset_api_app_sdk_assets__fingerprint__js_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/applications/{app_id}/files": {
         parameters: {
             query?: never;
@@ -13237,6 +13320,25 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * AppSdkUpgradeSettings
+         * @description Platform-wide policy for automatic App SDK upgrades.
+         */
+        AppSdkUpgradeSettings: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+        };
+        /**
+         * AppSdkUpgradeSettingsUpdate
+         * @description Requested platform-wide App SDK upgrade policy.
+         */
+        AppSdkUpgradeSettingsUpdate: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** AppValidationIssue */
         AppValidationIssue: {
             /** Severity */
@@ -13262,6 +13364,44 @@ export interface components {
              * @default []
              */
             warnings: components["schemas"]["AppValidationIssue"][];
+        };
+        /**
+         * ApplicationBundleManifest
+         * @description Built App assets and the host contracts needed before entry evaluation.
+         */
+        ApplicationBundleManifest: {
+            /** Entry */
+            entry: string | null;
+            /** Css */
+            css: string | null;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "preview" | "live";
+            /** Dependencies */
+            dependencies: {
+                [key: string]: string;
+            };
+            /**
+             * Migrated
+             * @default false
+             */
+            migrated: boolean;
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * App Model
+             * @default inline_v1
+             * @enum {string}
+             */
+            app_model: "inline_v1" | "standalone_v2";
+            /** Runtime Contract */
+            runtime_contract?: "mount-v1" | null;
+            /** Sdk Binding Api Major */
+            sdk_binding_api_major?: number | null;
         };
         /**
          * ApplicationCreate
@@ -13464,6 +13604,11 @@ export interface components {
              * @description SDK/server contract version used for the active app build.
              */
             sdk_contract_version?: number | null;
+            /**
+             * Sdk Binding Api Major
+             * @description Hosted SDK public API major selected by the active app binding; null for a bundled SDK.
+             */
+            sdk_binding_api_major?: number | null;
             /**
              * Sdk Built At
              * @description When the active app build's SDK provenance was recorded.
@@ -20294,6 +20439,24 @@ export interface components {
             /** Collections */
             collections: components["schemas"]["HomeCollectionPublic"][];
         };
+        /**
+         * HostedAppSdkDescriptor
+         * @description The current immutable browser SDK factory for one binding API major.
+         */
+        HostedAppSdkDescriptor: {
+            /** Api Major */
+            api_major: number;
+            /** Factory Version */
+            factory_version: number;
+            /** Factory Id */
+            factory_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /** Integrity */
+            integrity: string;
+            /** Asset Url */
+            asset_url: string;
+        };
         /** IdentityBaseRole */
         IdentityBaseRole: {
             /**
@@ -21498,6 +21661,66 @@ export interface components {
             tool_call?: boolean | null;
             /** Reasoning Choices */
             reasoning_choices?: string[];
+        };
+        /**
+         * LegacyCredentialStatus
+         * @description What still depends on legacy runtime credentials.
+         *
+         *     The release that removes legacy runtime tokens (token PR1c) refuses to
+         *     install while either list is non-empty.
+         */
+        LegacyCredentialStatus: {
+            /** Live Runs */
+            live_runs: components["schemas"]["LegacyRuntimeRun"][];
+            /** Launchers */
+            launchers: components["schemas"]["LegacyLauncher"][];
+        };
+        /**
+         * LegacyLauncher
+         * @description A connected remote launcher that receives legacy-format credentials.
+         */
+        LegacyLauncher: {
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /** Hostname */
+            hostname?: string | null;
+            /** State */
+            state: string;
+            /**
+             * Credential Protocol
+             * @description The protocol its last hello reported; 1 when it reported none
+             */
+            credential_protocol: number;
+        };
+        /**
+         * LegacyRuntimeRun
+         * @description A live run still holding legacy-format runtime credentials.
+         */
+        LegacyRuntimeRun: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "workflow_execution" | "service_attempt";
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Name
+             * @description The workflow name, or the service attempt's service ID
+             */
+            name: string;
+            /** Status */
+            status: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Started At */
+            started_at?: string | null;
         };
         /**
          * LinkedAccountResponse
@@ -29814,6 +30037,10 @@ export interface components {
             sdk_fingerprint: string;
             /** Sdk Contract Version */
             sdk_contract_version: number;
+            /** Sdk Binding Api Major */
+            sdk_binding_api_major?: number | null;
+            /** Sdk Supported Binding Api Majors */
+            sdk_supported_binding_api_majors?: number[];
         };
         /**
          * VideoArtifactSpec
@@ -44530,6 +44757,59 @@ export interface operations {
             };
         };
     };
+    get_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSdkUpgradeSettings"];
+                };
+            };
+        };
+    };
+    update_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppSdkUpgradeSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSdkUpgradeSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_artifact_retention_settings_api_maintenance_artifact_retention_settings_get: {
         parameters: {
             query?: never;
@@ -44717,6 +44997,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_legacy_credential_status_api_maintenance_authz_legacy_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyCredentialStatus"];
                 };
             };
         };
@@ -50146,6 +50446,55 @@ export interface operations {
             };
         };
     };
+    get_manifest_api_app_sdk_v1_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostedAppSdkDescriptor"];
+                };
+            };
+        };
+    };
+    get_asset_api_app_sdk_assets__fingerprint__js_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fingerprint: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_app_files_api_applications__app_id__files_get: {
         parameters: {
             query?: {
@@ -50340,9 +50689,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApplicationBundleManifest"];
                 };
             };
             /** @description Validation Error */

@@ -12,6 +12,7 @@ import jwt
 import pytest
 from uuid import uuid4
 
+from tests.e2e.fixtures.setup import _login_user
 from tests.helpers.totp import generate_totp_code
 
 
@@ -339,47 +340,55 @@ class TestLogoutAndRevocation:
 
     def test_revoke_all_sessions(self, private_client, platform_admin):
         """Revoke-all should invalidate all refresh tokens."""
-        # Login to get fresh tokens
-        response = private_client.post(
-            "/auth/login",
-            data={
-                "username": platform_admin.email,
-                "password": platform_admin.password,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-
-        # Complete MFA if required
-        if data.get("mfa_required"):
-            totp_code = generate_totp_code(platform_admin.totp_secret)
-            mfa_response = private_client.post(
-                "/auth/mfa/login",
-                json={"mfa_token": data["mfa_token"], "code": totp_code},
+        try:
+            # Login to get fresh tokens
+            response = private_client.post(
+                "/auth/login",
+                data={
+                    "username": platform_admin.email,
+                    "password": platform_admin.password,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
-            assert mfa_response.status_code == 200
-            data = mfa_response.json()
+            assert response.status_code == 200
+            data = response.json()
 
-        access_token = data.get("access_token")
-        refresh_token = data.get("refresh_token")
-        assert access_token and refresh_token
+            # Complete MFA if required
+            if data.get("mfa_required"):
+                totp_code = generate_totp_code(platform_admin.totp_secret)
+                mfa_response = private_client.post(
+                    "/auth/mfa/login",
+                    json={"mfa_token": data["mfa_token"], "code": totp_code},
+                )
+                assert mfa_response.status_code == 200
+                data = mfa_response.json()
 
-        # Revoke all sessions
-        response = private_client.post(
-            "/auth/revoke-all",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        assert response.status_code == 200
-        revoke_data = response.json()
-        assert "sessions_revoked" in revoke_data
+            access_token = data.get("access_token")
+            refresh_token = data.get("refresh_token")
+            assert access_token and refresh_token
 
-        # Try to use refresh token (should fail)
-        response = private_client.post(
-            "/auth/refresh",
-            json={"refresh_token": refresh_token},
-        )
-        assert response.status_code == 401, "Refresh token should be revoked after revoke-all"
+            # Revoke all sessions, including the shared fixture's session family.
+            response = private_client.post(
+                "/auth/revoke-all",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            assert response.status_code == 200
+            revoke_data = response.json()
+            assert "sessions_revoked" in revoke_data
+
+            response = private_client.post(
+                "/auth/refresh",
+                json={"refresh_token": refresh_token},
+            )
+            assert response.status_code == 401, "Refresh token should be revoked after revoke-all"
+
+            response = private_client.get(
+                "/auth/me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            assert response.status_code == 401, "Access token should be refused after revoke-all"
+        finally:
+            _login_user(platform_admin)
 
 
 # NOTE: Rate limiting tests have been moved to test_security.py

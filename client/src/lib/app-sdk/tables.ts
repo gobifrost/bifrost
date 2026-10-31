@@ -1,6 +1,17 @@
 import type { components } from "@/lib/v1";
-import { getBifrostTransport, getPlatformAuth } from "./transport";
+import {
+  getBifrostTransport,
+  getPlatformAuth,
+  isRefreshRequiredChallenge,
+  REQUEST_REPLAY_BUDGET,
+} from "./transport";
 import { subscribeToTable } from "./ws-client";
+import {
+  TableAccessDeniedError,
+  TableNotFoundError,
+} from "./errors";
+
+export { TableAccessDeniedError, TableNotFoundError } from "./errors";
 
 // Transport state lives in ./transport (shared with the ws client); re-export
 // the setters/getters here so existing import sites keep working.
@@ -59,34 +70,6 @@ function withScope(path: string, scope?: string): string {
 }
 
 /**
- * Thrown when the server returns 403 — the policy denied the operation.
- * Distinct from `TableNotFoundError`: the table exists in this scope, the
- * caller just isn't allowed to perform this action on it.
- */
-export class TableAccessDeniedError extends Error {
-  constructor(message = "Access denied") {
-    super(message);
-    this.name = "TableAccessDeniedError";
-  }
-}
-
-/**
- * Thrown when the server returns 404 for a table-level operation — the table
- * does not exist in the requested scope. Distinct from `TableAccessDeniedError`:
- * the issue is that there's nothing to operate on, not that the caller is
- * forbidden from operating on it.
- *
- * For row-level reads/updates (`get`, `update`), 404 returns `null` instead of
- * throwing — the row may legitimately not exist and that's not an error.
- */
-export class TableNotFoundError extends Error {
-  constructor(message = "Table not found") {
-    super(message);
-    this.name = "TableNotFoundError";
-  }
-}
-
-/**
  * `null` sentinel = 404 result. Callers that want to distinguish "row missing"
  * from "table missing" should pass `throwOnNotFound: true` (used by ops where
  * the URL is table-level and 404 unambiguously means the table doesn't exist).
@@ -127,24 +110,36 @@ async function http<T>(
   // Capture the v1 bridge token before the request. A delayed 401 can arrive
   // after another request already renewed the cookie session; in that case the
   // changed token proves this request should retry once without renewing again.
-  const attemptedToken = usingProvider
+  let attemptedToken = usingProvider
     ? null
     : (getPlatformAuth()?.getAccessToken() ?? null);
   let r = await send();
-  // v1 apps run on the host's 30-minute session cookie, and nothing else in
-  // the app renews it. Renew through the host's single-flight refresh and
-  // retry once. A provider transport (v2) already does this in its fetchImpl.
-  if (r.status === 401 && !usingProvider) {
+  // v1 apps run on the host's session cookie. A provider transport (v2)
+  // handles the same refresh_required challenge in its authenticated fetch.
+  // A generic 401 might have been produced after an endpoint effect, so leave
+  // it to the caller without replaying it.
+  let remaining = REQUEST_REPLAY_BUDGET;
+  while (remaining > 0 && isRefreshRequiredChallenge(r) && !usingProvider) {
+    remaining -= 1;
     const auth = getPlatformAuth();
     if (auth?.canRefreshAccessToken()) {
       const freshToken = auth.getAccessToken();
       if (freshToken && freshToken !== attemptedToken) {
+        attemptedToken = freshToken;
         r = await send();
       } else if (await auth.refreshAccessToken()) {
+        attemptedToken = auth.getAccessToken();
         r = await send();
+      } else {
+        break;
       }
-      if (r.status === 401) auth.handleAuthenticationFailure();
+    } else {
+      break;
     }
+  }
+  if (isRefreshRequiredChallenge(r) && !usingProvider) {
+    const auth = getPlatformAuth();
+    if (auth?.canRefreshAccessToken()) auth.handleAuthenticationFailure();
   }
   if (r.status === 403) {
     const body = await r.text().catch(() => "");

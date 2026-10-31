@@ -9,7 +9,6 @@ Tests the BifrostAuthProvider class which implements OAuth 2.1 for MCP:
 Uses mocked dependencies for fast, isolated testing.
 """
 
-from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -35,18 +34,6 @@ def auth_provider() -> BifrostAuthProvider:
 
 
 @pytest.fixture
-def admin_token_payload() -> dict:
-    """Create a payload for a platform admin user."""
-    return {
-        "sub": str(uuid4()),
-        "email": "admin@platform.local",
-        "name": "Platform Admin",
-        "is_superuser": True,
-        "org_id": str(uuid4()),
-    }
-
-
-@pytest.fixture
 def regular_user_payload() -> dict:
     """Create a payload for a regular org user."""
     return {
@@ -59,24 +46,9 @@ def regular_user_payload() -> dict:
 
 
 @pytest.fixture
-def admin_access_token(admin_token_payload) -> str:
-    """Create a valid access token for a platform admin."""
-    return create_access_token(admin_token_payload)
-
-
-@pytest.fixture
 def regular_user_access_token(regular_user_payload) -> str:
     """Create a valid access token for a regular user."""
     return create_access_token(regular_user_payload)
-
-
-@pytest.fixture
-def expired_token(admin_token_payload) -> str:
-    """Create an expired access token."""
-    return create_access_token(
-        admin_token_payload,
-        expires_delta=timedelta(seconds=-1),  # Already expired
-    )
 
 
 # ==================== BifrostAuthProvider Tests ====================
@@ -297,4 +269,11 @@ async def test_browser_support_token_cannot_authenticate_mcp(auth_provider, regu
     })
     with patch.object(auth_provider, "_check_mcp_access", new_callable=AsyncMock) as access:
         assert await auth_provider.verify_token(token) is None
+    access.assert_not_awaited()
+
+
+async def test_legacy_human_token_cannot_authenticate_mcp(auth_provider, regular_user_access_token):
+    """Only the v1 human claim schema can establish a new MCP session."""
+    with patch.object(auth_provider, "_check_mcp_access", new_callable=AsyncMock) as access:
+        assert await auth_provider.verify_token(regular_user_access_token) is None
     access.assert_not_awaited()

@@ -82,7 +82,7 @@ async def test_app_status_source_export_and_single_update_enqueue(
     assert listed.status_code == 200, listed.text
     listed_app = next(a for a in listed.json()["applications"] if a["id"] == str(app.id))
     assert listed_app["sdk_fingerprint"] == "old-fingerprint"
-    assert listed_app["sdk_status"] == "update_available"
+    assert listed_app["sdk_status"] == "update_required"
     assert listed_app["sdk_source_available"] is True
 
     got = e2e_client.get(f"/api/applications/{app.slug}", headers=platform_admin.headers)
@@ -206,7 +206,7 @@ async def test_solution_sdk_status_and_update_enqueue_app_jobs(
     )
     assert status.status_code == 200, status.text
     assert status.json()["actionable_count"] == 1
-    assert status.json()["sdk_status"] == "update_available"
+    assert status.json()["sdk_status"] == "update_required"
 
     update = e2e_client.post(
         f"/api/solutions/{solution.id}/sdk/update", headers=platform_admin.headers
@@ -382,7 +382,7 @@ async def test_solution_list_and_get_include_sdk_aggregates(
 
     assert listed.status_code == 200, listed.text
     by_id = {item["id"]: item for item in listed.json()["solutions"]}
-    assert by_id[str(actionable_solution.id)]["sdk_status"] == "update_available"
+    assert by_id[str(actionable_solution.id)]["sdk_status"] == "update_required"
     assert by_id[str(actionable_solution.id)]["sdk_actionable_count"] == 1
     assert by_id[str(no_app_solution.id)]["sdk_status"] == "not_applicable"
     assert by_id[str(no_app_solution.id)]["sdk_actionable_count"] == 0
@@ -394,7 +394,7 @@ async def test_solution_list_and_get_include_sdk_aggregates(
     )
 
     assert got.status_code == 200, got.text
-    assert got.json()["sdk_status"] == "update_available"
+    assert got.json()["sdk_status"] == "update_required"
     assert got.json()["sdk_actionable_count"] == 1
     assert actionable_app.solution_id == actionable_solution.id
 

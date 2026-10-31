@@ -11,6 +11,10 @@
 import createClient from "openapi-fetch";
 import createQueryClient from "openapi-react-query";
 import type { paths } from "./v1";
+import {
+	isRefreshRequiredChallenge,
+	REQUEST_REPLAY_BUDGET,
+} from "./app-sdk/transport";
 import { parseApiError, ApiError, RateLimitError } from "./api-error";
 import {
 	ACCESS_TOKEN_KEY,
@@ -50,51 +54,6 @@ function isTransient5xx(status: number): boolean {
 
 function isIdempotent(method: string): boolean {
 	return IDEMPOTENT_METHODS.has(method.toUpperCase());
-}
-
-/**
- * Wrap a fetch operation with retry on transient 5xx (502/503/504) for
- * idempotent methods. Non-idempotent requests (POST/PATCH) pass through
- * unchanged.
- *
- * The `doFetch` callback MUST produce a fresh Request each call — if a
- * Request with a body is reused, its body stream will be consumed after
- * the first attempt.
- */
-async function withTransient5xxRetry(
-	method: string,
-	doFetch: () => Promise<Response>,
-): Promise<Response> {
-	if (!isIdempotent(method)) return doFetch();
-	let response = await doFetch();
-	for (const delay of RETRY_BACKOFF_MS) {
-		if (!isTransient5xx(response.status)) return response;
-		await new Promise((resolve) => setTimeout(resolve, delay));
-		response = await doFetch();
-	}
-	// Out of retries — caller sees the last 5xx.
-	return response;
-}
-
-/**
- * Continue retrying after an initial fetch already produced a transient 5xx.
- * Used in the openapi-fetch middleware paths where the framework fires the
- * first request for us, so we react to the response rather than wrapping the
- * full lifecycle.
- */
-async function retryAfterTransient5xx(
-	method: string,
-	baseRequest: Request,
-	initialResponse: Response,
-): Promise<Response> {
-	if (!isIdempotent(method)) return initialResponse;
-	let response = initialResponse;
-	for (const delay of RETRY_BACKOFF_MS) {
-		if (!isTransient5xx(response.status)) return response;
-		await new Promise((resolve) => setTimeout(resolve, delay));
-		response = await fetch(baseRequest.clone());
-	}
-	return response;
 }
 
 /**
@@ -167,17 +126,20 @@ type PlatformAuthGlobal = typeof globalThis & {
  * Uses HttpOnly cookie for refresh token (more secure than localStorage)
  * Returns true if successful, false if refresh failed
  */
-async function refreshAccessToken(): Promise<boolean> {
+async function refreshAccessToken(
+	options: { allowImpersonation?: boolean } = {},
+): Promise<boolean> {
 	// Support-session tokens deliberately have no refresh path. Refreshing the
 	// operator's cookie here would silently swap an expired impersonation into
 	// the operator identity and could replay a mutation under the wrong user.
-	if (isImpersonating()) return false;
+	if (isImpersonating() && !options.allowImpersonation) return false;
 	// Use lock to prevent concurrent refresh attempts
 	if (refreshPromise) {
 		return refreshPromise;
 	}
 
-	refreshPromise = (async () => {
+	const observedToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+	const refresh = async (): Promise<boolean> => {
 		try {
 			// POST to refresh endpoint - browser sends refresh_token cookie automatically
 			const res = await fetch("/api/auth/refresh", {
@@ -188,15 +150,36 @@ async function refreshAccessToken(): Promise<boolean> {
 			if (!res.ok) return false;
 
 			const data = await res.json();
+			// A logout or a newer login can win while the refresh response body is
+			// in flight. Publish only into the same local token generation that
+			// requested this rotation; bootstrap has no prior token (null) and
+			// retains its existing cookie-recovery behavior.
+			if (localStorage.getItem(ACCESS_TOKEN_KEY) !== observedToken) {
+				return false;
+			}
 			if (data.access_token) {
 				// Store access token in localStorage for proactive expiry checking
 				localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
+				window.dispatchEvent(new Event("bifrost:access-token-refreshed"));
 				return true;
 			}
 			return false;
 		} catch {
 			return false;
 		}
+	};
+
+	refreshPromise = (async () => {
+		// The one-use refresh JTI requires cross-tab serialization. Web Locks is
+		// required in Bifrost's supported secure browser context; without it we
+		// refuse rotation rather than risking a concurrent cookie redemption.
+		const locks = navigator.locks;
+		if (!locks) return false;
+		return locks.request("bifrost.auth.refresh", async () => {
+			const currentToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+			if (currentToken !== observedToken) return currentToken !== null;
+			return refresh();
+		});
 	})().finally(() => {
 		refreshPromise = null;
 	});
@@ -208,7 +191,8 @@ async function refreshAccessToken(): Promise<boolean> {
  * Retry a request after token refresh using current auth state.
  */
 async function retryRequestWithFreshAuth(request: Request): Promise<Response> {
-	const headers = new Headers(request.headers);
+	const source = _requestClones.get(request) ?? request;
+	const headers = new Headers(source.headers);
 	const token = getActiveToken();
 
 	if (token) {
@@ -216,9 +200,14 @@ async function retryRequestWithFreshAuth(request: Request): Promise<Response> {
 	} else {
 		headers.delete("Authorization");
 	}
+	if (requiresCsrf(source.method)) {
+		const csrfToken = getCsrfToken();
+		if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+		else headers.delete("X-CSRF-Token");
+	}
 
 	return fetch(
-		new Request(request, {
+		new Request(source.clone(), {
 			headers,
 			credentials: "same-origin",
 		}),
@@ -370,12 +359,10 @@ baseClient.use({
 			}
 		}
 
-		// Stash a pre-send clone so onResponse can replay this request on
-		// transient 5xx (idempotent methods only — POST/PATCH bodies would
-		// just hold memory we never use).
-		if (isIdempotent(request.method)) {
-			_requestClones.set(request, request.clone());
-		}
+		// Stash a pre-send clone so an exact refresh_required challenge can
+		// safely replay even a POST. The auth dependency emits it before any
+		// endpoint effect runs.
+		_requestClones.set(request, request.clone());
 
 		return request;
 	},
@@ -389,28 +376,13 @@ baseClient.use({
 			throw new RateLimitError(retryAfter);
 		}
 
-		if (response.status === 401)
-			return handleAuthResponse(request, response);
-
 		// 403 Forbidden = permission issue, don't redirect (user is authenticated)
 		// Let the calling code handle displaying an appropriate error message.
 		if (response.status === 403 && requiresCsrf(request.method)) {
 			refusedChangeListener?.();
 		}
 
-		// Retry transient 5xx (502/503/504) on idempotent methods. Rides
-		// through brief windows during a rolling API deploy where a pod is
-		// dropping out of the LB.
-		if (isTransient5xx(response.status) && isIdempotent(request.method)) {
-			const baseRequest = _requestClones.get(request) ?? request;
-			return retryAfterTransient5xx(
-				request.method,
-				baseRequest,
-				response,
-			);
-		}
-
-		return response;
+		return handleAuthResponse(request, response);
 	},
 });
 
@@ -457,36 +429,50 @@ async function handleAuthResponse(
 		throw new RateLimitError(retryAfter);
 	}
 
-	if (response.status === 401) {
-		const pathname = new URL(request.url, window.location.origin).pathname;
-		// Login failures and embed capabilities belong to their own callers.
-		if (
-			isEmbedSession() ||
-			isImpersonating() ||
-			AUTH_ENDPOINTS.some((ep) => pathname.startsWith(ep))
-		)
-			return response;
+	const pathname = new URL(request.url, window.location.origin).pathname;
+	if (
+		isEmbedSession() ||
+		isImpersonating() ||
+		AUTH_ENDPOINTS.some((ep) => pathname.startsWith(ep))
+	)
+		return response;
 
-		// A resource can reject otherwise valid credentials. Confirm the session
-		// through the identity endpoint before rotating tokens or leaving the page.
-		try {
-			const headers = new Headers();
-			const token = getActiveToken();
-			if (token) headers.set("Authorization", `Bearer ${token}`);
-			const session = await fetch("/auth/me", {
-				headers,
-				credentials: "same-origin",
-			});
-			if (session.status !== 401) return response;
-		} catch {
-			// An unavailable identity service is not proof that the session ended.
-			return response;
+	let remaining = REQUEST_REPLAY_BUDGET;
+	let transientRetries = 0;
+	let attemptedToken = request.headers.get("Authorization");
+	while (remaining > 0) {
+		if (isRefreshRequiredChallenge(response)) {
+			remaining -= 1;
+			const liveToken = getActiveToken();
+			const alreadyRefreshed =
+				liveToken !== null && attemptedToken !== `Bearer ${liveToken}`;
+			const refreshed = alreadyRefreshed || (await refreshAccessToken());
+			if (!refreshed) {
+				handleAuthFailure();
+				return response;
+			}
+			response = await retryRequestWithFreshAuth(request);
+			const currentToken = getActiveToken();
+			attemptedToken = currentToken ? `Bearer ${currentToken}` : null;
+			continue;
 		}
-		const refreshed = await refreshAccessToken();
-		if (refreshed) return retryRequestWithFreshAuth(request);
-		handleAuthFailure();
+
+		if (isTransient5xx(response.status) && isIdempotent(request.method)) {
+			remaining -= 1;
+			const delay =
+				RETRY_BACKOFF_MS[transientRetries] ?? RETRY_BACKOFF_MS.at(-1)!;
+			transientRetries += 1;
+			await new Promise((resolve) => setTimeout(resolve, delay));
+			response = await retryRequestWithFreshAuth(request);
+			const currentToken = getActiveToken();
+			attemptedToken = currentToken ? `Bearer ${currentToken}` : null;
+			continue;
+		}
+
+		return response;
 	}
 
+	if (isRefreshRequiredChallenge(response)) handleAuthFailure();
 	return response;
 }
 
@@ -517,28 +503,12 @@ export function withUserContext(userId: string) {
 				}
 			}
 
-			// Stash a pre-send clone for transient 5xx replay (idempotent
-			// methods only).
-			if (isIdempotent(request.method)) {
-				_requestClones.set(request, request.clone());
-			}
+			_requestClones.set(request, request.clone());
 
 			return request;
 		},
 		async onResponse({ request, response }) {
-			const finalResponse = await handleAuthResponse(request, response);
-			if (
-				isTransient5xx(finalResponse.status) &&
-				isIdempotent(request.method)
-			) {
-				const baseRequest = _requestClones.get(request) ?? request;
-				return retryAfterTransient5xx(
-					request.method,
-					baseRequest,
-					finalResponse,
-				);
-			}
-			return finalResponse;
+			return handleAuthResponse(request, response);
 		},
 	});
 
@@ -620,10 +590,6 @@ export async function authFetch(
 		credentials: "same-origin",
 	});
 
-	// Wrap the fetch + auth-handling in transient-5xx retry. Each attempt
-	// clones the assembled Request so any body stream is fresh.
-	return withTransient5xxRetry(method, async () => {
-		const response = await fetch(request.clone());
-		return handleAuthResponse(request.clone(), response);
-	});
+	_requestClones.set(request, request.clone());
+	return handleAuthResponse(request, await fetch(request.clone()));
 }

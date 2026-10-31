@@ -33,6 +33,11 @@ _MAINTENANCE = "src.jobs.platform.system_maintenance"
 
 SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
     ScheduledTaskDefinition(
+        "app_sdk_upgrades", "App SDK Upgrades", "At startup and every minute", "durable_job",
+        callback="shared.application_sdk_upgrades:enqueue_automatic_app_sdk_upgrades",
+        trigger_args={"minutes": 1}, run_at_startup=True,
+    ),
+    ScheduledTaskDefinition(
         "schedule_processor", "Process Schedule Sources", "Every minute",
         callback="src.jobs.schedulers.cron_scheduler:process_schedule_sources",
         trigger="cron", trigger_args={"minute": "*/1"},

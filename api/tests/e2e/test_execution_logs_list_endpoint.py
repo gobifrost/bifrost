@@ -34,8 +34,10 @@ class TestLogsListEndpoint:
     """Integration tests for GET /api/executions/logs endpoint."""
 
     @pytest.fixture(autouse=True)
-    def _persisted_callers(self, platform_admin, org1_user):
-        """Use users whose persisted roles and reach the API can resolve."""
+    def _persisted_callers(self, platform_admin, org1_user, human_minter):
+        """Obtain current human credentials before using the raw HTTP client."""
+        human_minter(platform_admin)
+        human_minter(org1_user)
         self.admin_headers = platform_admin.headers
         self.org_user_headers = org1_user.headers
 

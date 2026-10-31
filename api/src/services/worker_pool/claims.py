@@ -10,7 +10,6 @@ from uuid import UUID
 
 from sqlalchemy import exists, func, select, text, tuple_, update
 
-from shared.version import get_version
 from src.core.database import get_db_context, get_liveness_db_context
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
@@ -100,6 +99,7 @@ async def register_static_worker(
     hostname: str,
     supported_handlers: list[str] | None = None,
     incarnation_id: UUID | None = None,
+    version: str | None = None,
 ) -> UUID:
     """A long-running executor joins the pool as ``starting``.
 
@@ -107,6 +107,7 @@ async def register_static_worker(
     (and claims nothing) until ``mark_static_ready`` reports its measured
     budget. A remote physical launcher may supply its immutable incarnation
     UUID; this always creates a new row and never adopts or overwrites one.
+    ``version`` is the executor's reported build; missing reports stay unknown.
     """
     worker = ExecutionWorker(
         **({"id": incarnation_id} if incarnation_id is not None else {}),
@@ -120,7 +121,7 @@ async def register_static_worker(
             if supported_handlers is not None
             else [handler for handler, _version in SUPPORTED_HANDLERS]
         ),
-        version=get_version(),
+        version=version,
         heartbeat_at=func.now(),
     )
     async with get_db_context() as db:

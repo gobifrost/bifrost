@@ -453,3 +453,29 @@ def read_solution_definition(workspace: Path | str) -> SolutionDefinition:
         agent_transports=agent_transports,
         workflow_transports=workflow_transports,
     )
+
+
+def read_solution_apps(workspace: Path | str) -> list[dict[str, Any]]:
+    """Read and validate only the App manifest section of a Solution workspace.
+
+    SDK-only App rebuilds need their target App's retained source without
+    accepting or reconciling unrelated Solution entities.  Keep this narrow
+    reader on the same strict section parser as full Solution reads so App
+    metadata and package transport fields stay canonical.
+    """
+    root = Path(workspace)
+    path = _path(root, ".bifrost", "apps.yaml")
+    if path is None or not path.is_file():
+        return []
+
+    decoded = _read_solution_section("apps.yaml", path.read_text(encoding="utf-8"))
+    apps = decoded.get("apps", {})
+    transports = decoded.get("app_transports", {})
+    entries: list[dict[str, Any]] = []
+    for value in apps.values():
+        entry = value.model_dump(mode="json", by_alias=True, exclude_unset=True)
+        transport = transports.get(str(entry["id"]))
+        if transport is not None:
+            entry.update(transport.model_dump(mode="json", exclude_none=True))
+        entries.append(entry)
+    return entries

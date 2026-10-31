@@ -387,8 +387,6 @@ class WorkflowExecutionConsumer:
         durable_ms = (time.perf_counter() - completion_started) * 1000
 
         # Wake sync callers as soon as their result is durably committed.
-        # Everything below is terminal-event fan-out or
-        # cleanup and must not add latency to the request/response path.
         if is_sync:
             await self._redis_client.push_result(
                 execution_id=execution_id,
@@ -399,6 +397,18 @@ class WorkflowExecutionConsumer:
                 duration_ms=duration_ms,
             )
         result_ready_ms = (time.perf_counter() - completion_started) * 1000
+
+        # Async callers await this terminal status notification. It must be
+        # published after the durable commit (and sync handoff) but before any
+        # deferred log, event, aggregate, history, or cache follow-up work.
+        # The result itself stays in PostgreSQL; clients fetch it from the
+        # result endpoint instead of receiving a redundant payload here.
+        await publish_execution_update(
+            execution_id,
+            status.value,
+            {"duration_ms": duration_ms},
+        )
+        notification_ms = (time.perf_counter() - completion_started) * 1000
 
         if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
@@ -447,16 +457,6 @@ class WorkflowExecutionConsumer:
         )
         metrics_done_ms = (time.perf_counter() - completion_started) * 1000
 
-        # Pub/sub — no DB connection held.  The result is already persisted and
-        # execution clients fetch it from the result endpoint, so publishing it
-        # again needlessly serializes and transports large payloads through
-        # Redis and WebSocket connections.
-        await publish_execution_update(
-            execution_id,
-            status.value,
-            {"duration_ms": duration_ms},
-        )
-
         await publish_history_update(
             execution_id=execution_id,
             status=status.value,
@@ -478,13 +478,14 @@ class WorkflowExecutionConsumer:
         logger.debug(
             "Completion timing %s: metadata=%.1fms execution_update=%.1fms "
             "logs=%.1fms durable=%.1fms result_ready=%.1fms "
-            "metrics=%.1fms total=%.1fms",
+            "notification=%.1fms metrics=%.1fms total=%.1fms",
             execution_id[:8],
             metadata_read_ms,
             execution_update_ms,
             logs_flushed_ms,
             durable_ms,
             result_ready_ms,
+            notification_ms,
             metrics_done_ms,
             (time.perf_counter() - completion_started) * 1000,
         )
@@ -594,8 +595,7 @@ class WorkflowExecutionConsumer:
             await session.commit()
 
         # A sync failure is just as latency-sensitive as a success. Wake the
-        # caller once the authoritative failure is durable; aggregates and
-        # terminal fan-out are derived follow-up work.
+        # caller once the authoritative failure is durable.
         if is_sync:
             await self._redis_client.push_result(
                 execution_id=execution_id,
@@ -605,6 +605,18 @@ class WorkflowExecutionConsumer:
                 duration_ms=duration_ms,
             )
 
+        # Async callers await this terminal status notification. Publish it
+        # after the durable commit (and sync handoff) before every deferred
+        # log, event, aggregate, history, or cache follow-up.
+        await publish_execution_update(
+            execution_id,
+            status.value,
+            {"error": error, "errorType": error_type},
+        )
+
+        # Derived work begins only after the terminal status is available to
+        # both sync and async callers.
+        if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
 
         if log_receipt is not None:
@@ -624,13 +636,6 @@ class WorkflowExecutionConsumer:
             duration_ms=duration_ms,
             peak_memory_bytes=failure_metrics.get("peak_memory_bytes"),
             cpu_total_seconds=failure_metrics.get("cpu_total_seconds"),
-        )
-
-        # Pub/sub — no DB connection held
-        await publish_execution_update(
-            execution_id,
-            status.value,
-            {"error": error, "errorType": error_type},
         )
 
         completed_at = datetime.now(timezone.utc)

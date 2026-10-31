@@ -10,7 +10,7 @@
  * backend E2E at `api/tests/e2e/api/test_agent_management_m1.py`.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 import { seedAgentViaPage } from "./setup/seed-agent";
 
 test.describe("Agent Tuning (admin)", () => {

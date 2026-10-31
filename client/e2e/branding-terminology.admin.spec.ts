@@ -56,7 +56,7 @@ async function restoreBranding(
 	).toContain(response.status());
 }
 
-async function waitForBrandingUpdate(page: import("@playwright/test").Page) {
+async function waitForBrandingUpdate(page: import("./fixtures/api-fixture").Page) {
 	const response = await page.waitForResponse(
 		(response) =>
 			response.request().method() === "PUT" &&
@@ -68,7 +68,7 @@ async function waitForBrandingUpdate(page: import("@playwright/test").Page) {
 	).toBe(true);
 }
 
-async function waitForColorReset(page: import("@playwright/test").Page) {
+async function waitForColorReset(page: import("./fixtures/api-fixture").Page) {
 	const response = await page.waitForResponse(
 		(response) =>
 			response.request().method() === "DELETE" &&

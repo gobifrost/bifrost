@@ -985,8 +985,10 @@ class RemoteControlHost:
                     )
                 )
             if existing_static is None:
+                version = initial.get("version")
                 await register_static_worker(
                     hostname=hello.hostname,
+                    version=version if isinstance(version, str) else None,
                     incarnation_id=hello.incarnation_id,
                     supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
                 )
