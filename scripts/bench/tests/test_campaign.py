@@ -65,6 +65,8 @@ class MixedCampaignTest(unittest.TestCase):
             plan = campaign._resolved_plan(run.load_profile("m-capacity"))
 
             self.assertEqual(manifest["indices"], [0, 1, 2, 3, 4])
+            self.assertEqual(manifest["resolved_profile"], run.load_profile("m-capacity"))
+            self.assertEqual(campaign._sha256_value(manifest["resolved_profile"]), manifest["resolved_profile_sha256"])
             self.assertEqual(manifest["seeds"], [run.search.confirmation_seed(plan, index) for index in range(5)])
             self.assertEqual(cluster.verified, 1)
             image, revision = self._frozen_inputs()

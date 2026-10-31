@@ -226,6 +226,14 @@ class EnvironmentMetricsTest(unittest.TestCase):
 
 
 class RedisParserTest(unittest.TestCase):
+    def test_config_keys_are_not_required_to_follow_request_order(self) -> None:
+        cluster = Mock()
+        cluster.kubectl.side_effect = [json.dumps({"items": [REDIS]}),
+            "used_memory:1\nused_memory_rss:2\nmem_fragmentation_ratio:1\n", "connected_clients:1\nblocked_clients:0\n",
+            "total_connections_received:1\ntotal_commands_processed:1\ninstantaneous_ops_per_sec:1\nkeyspace_hits:1\nkeyspace_misses:1\nevicted_keys:0\nexpired_keys:0\n",
+            "maxmemory-policy\nnoeviction\nmaxmemory\n0\n"]
+        self.assertEqual(storage._redis(cluster)["configuration"], {"maxmemory_bytes": 0, "maxmemory_policy": "noeviction"})
+
     def test_rejects_non_finite_redis_info_values(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "non-finite"):
             storage._info("used_memory:nan\n", ("used_memory",), "memory")

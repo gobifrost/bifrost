@@ -213,13 +213,14 @@ def _redis(cluster) -> dict:
     memory = _info(execute("INFO", "memory"), ("used_memory", "used_memory_rss", "mem_fragmentation_ratio"), "memory")
     clients = _info(execute("INFO", "clients"), ("connected_clients", "blocked_clients"), "clients")
     stats = _info(execute("INFO", "stats"), ("total_connections_received", "total_commands_processed", "instantaneous_ops_per_sec", "keyspace_hits", "keyspace_misses", "evicted_keys", "expired_keys"), "stats")
-    config = execute("CONFIG", "GET", "maxmemory", "maxmemory-policy").splitlines()
-    if len(config) != 4 or config[0] != "maxmemory" or config[2] != "maxmemory-policy" or not config[1].isdigit() or not config[3]:
+    lines = execute("CONFIG", "GET", "maxmemory", "maxmemory-policy").splitlines()
+    config = dict(zip(lines[::2], lines[1::2]))
+    if len(lines) != 4 or set(config) != {"maxmemory", "maxmemory-policy"} or not config["maxmemory"].isdigit() or not config["maxmemory-policy"]:
         raise RuntimeError("Redis CONFIG GET returned an unexpected maxmemory policy shape")
     return {
         "status": "observed", "pod": pod["name"], "pod_uid": pod["uid"], "memory": memory,
         "clients": clients, "stats": stats,
-        "configuration": {"maxmemory_bytes": int(config[1]), "maxmemory_policy": config[3]},
+        "configuration": {"maxmemory_bytes": int(config["maxmemory"]), "maxmemory_policy": config["maxmemory-policy"]},
     }
 
 

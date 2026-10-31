@@ -154,6 +154,7 @@ def create_manifest(cluster: Cluster, profile_name: str, api_image: str, out: Pa
         "created_at": _utc_now(),
         "profile_name": profile_name,
         "resolved_profile_sha256": _sha256_value(profile),
+        "resolved_profile": profile,
         "harness_git_sha": harness_git_sha,
         "api_image": {**image, "provenance": provenance},
         "mix_name": MIX_NAME,
@@ -211,6 +212,11 @@ def load_manifest(path: Path) -> tuple[dict, str]:
 
 
 def _validate_manifest_evidence(manifest: dict) -> None:
+    if "resolved_profile" in manifest and (
+        type(manifest["resolved_profile"]) is not dict
+        or _sha256_value(manifest["resolved_profile"]) != manifest.get("resolved_profile_sha256")
+    ):
+        raise ValueError("embedded resolved profile does not match its frozen hash")
     mix = manifest.get("mix")
     if type(mix) is not dict or not mix:
         raise ValueError("campaign manifest mix must be a nonempty object")
