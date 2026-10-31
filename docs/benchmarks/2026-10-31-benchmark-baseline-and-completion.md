@@ -116,6 +116,23 @@ use the existing harness/A-B path and record every changed variable.
 
 ## Remaining Completion Gates
 
+### Collector Validation (October 31)
+
+The frozen `df605bb5e` diagnostic used the 4 GB resource envelope and a reduced
+65-workflow seed. All 129 measured-window submissions produced correct durable
+results, including 28 SDK workflows; there were no duplicate executions,
+restarts, OOMs, evictions or quota denials. All seven storage/environment probes
+completed. Raw storage frames, event/cohort rates and component resource coverage
+are retained in the private `runs/current-4gb-metrics-smoke-r5/` artifact.
+
+This is collector and correctness evidence only. A separate development stack
+was active, the observation window was 60 seconds, and its statistical gates
+did not pass. It establishes neither a sustainable rate nor a full-seed
+concurrency baseline. Earlier failed collector attempts are retained beside it:
+unnecessary optional workflow requirements, a Pooler matching the database label,
+and Redis returning configuration keys in a different order each received a
+specific fix and regression coverage before the next diagnostic.
+
 These finish the existing deliverable; further memory reduction is not a gate.
 
 1. **Correctness and 4 GB capacity.** Reconcile the outstanding concurrent SDK
