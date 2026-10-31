@@ -36,9 +36,11 @@ completion is 100%.
 
 An SDK-only rebuild of a Solution App extracts only that App from the retained
 Solution archive. It must not reconcile the Solution, touch Git or manifests,
-or mutate sibling entities. Batch actions enqueue one independently observable
-job per actionable App so the scheduler retains its normal admission control,
-resource protection, cancellation, and failure reporting.
+or mutate sibling entities. It validates the App manifest and archive safety
+without parsing unrelated entity manifests; full Solution preview and install
+still validate the complete Solution. Batch actions enqueue one independently
+observable job per actionable App so the scheduler retains its normal admission
+control, resource protection, cancellation, and failure reporting.
 
 ## Automatic App SDK Upgrades
 
@@ -59,9 +61,15 @@ existing manual **Update SDK** action to retry a failure. Automatic updates do
 not change authorization or add an authentication bypass.
 
 Automatic rebuilds require a valid retained `package-lock.json`. The compiler
-may refresh the vendored SDK lock entry, but refuses unrelated dependency
-changes. An App without a valid reproducible lockfile is left for a manual
-update or source redeploy.
+uses npm to prepare the vendored SDK entry, then copies only that entry and its
+root declaration into the retained lockfile. Other lockfile values stay pinned,
+including optional-package metadata that npm may normalize in its candidate.
+The retained non-SDK root declarations must match `package.json`, and `npm ci`
+must install the resulting lockfile successfully. The developer's retained
+lockfile need not already contain the platform-injected SDK. SDKs with their own
+normal, optional, or bundled dependency graph require a manual update. An App
+without a valid reproducible lockfile is left for a manual update or source
+redeploy.
 
 Automatic jobs pin the SDK fingerprint and contract before compilation, then
 verify that same target before activation. They retain the prior deployment
