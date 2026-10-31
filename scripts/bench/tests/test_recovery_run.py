@@ -27,6 +27,12 @@ def profile() -> dict:
     }
 
 
+def environment() -> dict:
+    return {"git_sha": "test", "images": {"api": {"tag": "candidate", "id": "sha256:test"}},
+            "kind_version": "kind", "cnpg_version": "cnpg", "host": {"cpus": 1, "load_average": [0.0, 0.0, 0.0]},
+            "external_nodes": []}
+
+
 class RecoveryFixtureTest(unittest.TestCase):
     def test_recovery_plan_reuses_capacity_timing_but_declares_one_fixture_class(self) -> None:
         plan = recovery_run.recovery_plan(profile(), 2.0)
@@ -61,24 +67,28 @@ class RecoveryRunLifecycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, \
              patch.object(recovery_run, "Cluster", return_value=cluster), \
              patch.object(recovery_run.bench_run, "load_profile", return_value=profile()), \
+             patch.object(recovery_run.bench_run, "environment", return_value=environment()), \
              patch.object(recovery_run.deploy, "reset") as reset, \
-             patch.object(recovery_run.bench_run, "_prepare", return_value={"workflows": {"wf-noop": "normal"}}), \
+             patch.object(recovery_run.bench_run, "_prepare", return_value={"workflows": {"wf-noop": "normal"}}) as prepare, \
              patch.object(recovery_run, "_fixture_ids", return_value=(ids, {"r": "t"}, {"append_only": True})), \
              patch.object(recovery_run.recovery, "d3", return_value=result) as d3:
             out = Path(temporary) / "fresh"
-            recovery_run.run("d3", "m-capacity", 1.0, out)
+            recovery_run.run("d3", "m-capacity", 1.0, out, "bifrost-api:candidate")
             saved = json.loads((out / "result.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["status"], "passed")
             self.assertEqual(saved["recovery_request_mapping"]["requests"], ids["recovery"]["requests"])
             self.assertEqual(reset.call_count, 2)
             self.assertTrue(saved["cleanup"]["verified"])
             self.assertEqual(d3.call_args.args[1], ids)
+            self.assertEqual(prepare.call_args.args[4], "bifrost-api:candidate")
+            self.assertEqual(saved["api_image_selected"], "bifrost-api:candidate")
 
     def test_runner_persists_error_then_performs_guarded_cleanup(self) -> None:
         cluster = Mock()
         with tempfile.TemporaryDirectory() as temporary, \
              patch.object(recovery_run, "Cluster", return_value=cluster), \
              patch.object(recovery_run.bench_run, "load_profile", return_value=profile()), \
+             patch.object(recovery_run.bench_run, "environment", return_value=environment()), \
              patch.object(recovery_run.deploy, "reset") as reset, \
              patch.object(recovery_run.bench_run, "_prepare", side_effect=RuntimeError("setup failed")):
             out = Path(temporary) / "fresh"

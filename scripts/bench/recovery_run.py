@@ -2,9 +2,10 @@
 """Guarded local recovery drills for D3, D5, and D6.
 
 This runner deliberately creates a fresh tenant and a fresh append-only effect
-fixture for each invocation.  D7--D9 remain unimplemented: there is no
-network-partition target proof (D7), no object-store outage injector (D8), or
-backup/restore fixture and recovery-point contract (D9).
+fixture for each invocation.  D7--D9 remain unimplemented: D7 needs the
+stale-worker packet-drop/gated-request proof; D8 needs the D3-versus-D7
+database-outage cancellation comparison; D9 needs the separate M-ha
+competing-controller correctness profile and leader-kill reconciliation proof.
 """
 
 from __future__ import annotations
@@ -70,14 +71,20 @@ def _host_lock() -> Iterator[None]:
 class Artifact:
     """Fresh result directory with append-only stage/error events."""
 
-    def __init__(self, cluster: Cluster, profile_name: str, profile: dict, kind: str, rate: float, out: Path) -> None:
+    def __init__(self, cluster: Cluster, profile_name: str, profile: dict, kind: str, rate: float, out: Path,
+                 api_image: str | None) -> None:
         out.mkdir(parents=True, exist_ok=False)
         self.cluster, self.out = cluster, out
         self.result = {
-            "kind": "recovery-drill", "drill": kind, "started_at": _now(), "profile_name": profile_name,
-            "profile": profile, "rate": rate, "status": "running", "stage": "created",
-            "d7_d9": {"d7": "unimplemented: no partition target proof", "d8": "unimplemented: no object-store outage injector",
-                        "d9": "unimplemented: no backup/restore recovery-point contract"},
+            "schema_version": bench_run.jsoncodec.SCHEMA_VERSION, "kind": "recovery-drill", "run_id": out.name,
+            "started_at": _now(), **bench_run.environment(cluster, api_image), "profile_name": profile_name,
+            "profile": profile, "backend": "fake", "api_image_selected": api_image, "rate": rate,
+            "status": "running", "stage": "created", "deploy": None, "setup": None,
+            "d7_d9": {
+                "d7": "unimplemented: stale worker requires worker-namespace packet drop, gated wf-io, lease-expiry and stale completion rejection proof",
+                "d8": "unimplemented: D3 during long work compared with D7; cancellation requested during DB outage must take effect within 30 s after recovery",
+                "d9": "unimplemented: M-ha competing-controller correctness-only profile, leader kill mid-reconcile, no orphan/duplicate Jobs and policy convergence within 15 s",
+            },
         }
         self._events = out / "events.jsonl"
         self.save()
@@ -203,18 +210,19 @@ def _d6(cluster: Cluster, ids: dict, tokens: dict[str, str]) -> dict:
             "passed": passed, "overall": "passed" if passed else "failed"}
 
 
-def run(kind: str, profile_name: str, rate: float, out: Path) -> Path:
+def run(kind: str, profile_name: str, rate: float, out: Path, api_image: str | None = None) -> Path:
     profile = bench_run.load_profile(profile_name)
     plan = recovery_plan(profile, rate)
     cluster = Cluster()
     cluster.verify()
-    artifact = Artifact(cluster, profile_name, profile, kind, rate, out)
+    artifact = Artifact(cluster, profile_name, profile, kind, rate, out, api_image)
     failure: BaseException | None = None
     try:
         artifact.event("reset-before-setup")
         deploy.reset(cluster)
-        normal_ids = bench_run._prepare(cluster, artifact, profile, "fake")
+        normal_ids = bench_run._prepare(cluster, artifact, profile, "fake", api_image)
         artifact.result["normal_integration_setup"] = {"workflow_classes": sorted(normal_ids["workflows"]), "complete": True}
+        artifact.result["runtime_api_image"] = artifact.result.get("api_image_provenance")
         nonce = uuid.uuid4().hex
         ids, tokens, fixture = _fixture_ids(cluster, plan, rate, nonce)
         artifact.result.update({"stage": "fixture-ready", "fixture": fixture,
@@ -259,10 +267,11 @@ def main() -> None:
     parser.add_argument("--kind", choices=("d3", "d5", "d6"), required=True)
     parser.add_argument("--profile", default="m-capacity")
     parser.add_argument("--rate", type=float, required=True)
+    parser.add_argument("--api-image", help="local API image tag; retained before deployment and verified after setup")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     with _host_lock():
-        print(run(args.kind, args.profile, args.rate, args.out))
+        print(run(args.kind, args.profile, args.rate, args.out, args.api_image))
 
 
 if __name__ == "__main__":
