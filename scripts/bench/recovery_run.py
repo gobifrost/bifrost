@@ -2,10 +2,9 @@
 """Guarded local recovery drills for D3, D5, and D6.
 
 This runner deliberately creates a fresh tenant and a fresh append-only effect
-fixture for each invocation.  D7--D9 remain unimplemented: D7 needs the
-stale-worker packet-drop/gated-request proof; D8 needs the D3-versus-D7
-database-outage cancellation comparison; D9 needs the separate M-ha
-competing-controller correctness profile and leader-kill reconciliation proof.
+fixture for each invocation.  D7--D9 use ``recovery_extended.py`` and are not
+exercised here. Its D9 subset explicitly leaves targeted active-controller
+identity and per-replica policy acknowledgement unmeasured.
 """
 
 from __future__ import annotations
@@ -87,9 +86,9 @@ class Artifact:
             "profile": profile, "backend": "fake", "api_image_selected": api_image, "rate": rate,
             "api_pod_changes": None, "status": "running", "stage": "created", "deploy": None, "setup": None,
             "d7_d9": {
-                "d7": "unimplemented: stale worker requires worker-namespace packet drop, gated wf-io, lease-expiry and stale completion rejection proof",
-                "d8": "unimplemented: D3 during long work compared with D7; cancellation requested during DB outage must take effect within 30 s after recovery",
-                "d9": "unimplemented: M-ha competing-controller correctness-only profile, leader kill mid-reconcile, no orphan/duplicate Jobs and policy convergence within 15 s",
+                "d7": "not exercised here: recovery_extended.py measures worker-namespace packet drop and stale attempts",
+                "d8": "not exercised here: recovery_extended.py measures cancellation requested during a database outage",
+                "d9": "separate M-ha subset in recovery_extended.py; targeted active-controller identity and per-replica acknowledgement remain unmeasured",
             },
         }
         self._events = out / "events.jsonl"
