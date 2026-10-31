@@ -70,10 +70,13 @@ React external. Apps should not need to provide whatever new icon exports the
 instance's SDK happens to use. Include additional React peer modules only when
 the actual dependency graph needs them.
 
-One possible build is an esbuild CommonJS bundle inside a static factory with a
-lexical dependency resolver for the supplied peers. This is generated JavaScript,
-not browser `eval` or `new Function`. The feasibility probe must establish the
-packaging mechanism before implementation commits to it.
+The packaging probe used an esbuild CommonJS bundle inside a static factory with
+a lexical dependency resolver for the supplied peers. This is generated
+JavaScript, not browser `eval` or `new Function`. The unchanged `index.v2.ts`
+bundled with only React and its JSX runtime external, including the SDK's icons.
+Server rendering passed with a copied App React distinct from the host's React;
+two factory instances retained separate context and transport headers. This
+proves packaging feasibility, not browser loading or local-development readiness.
 
 Each App binding creates its own SDK instance. Module globals, React contexts,
 transport defaults, and subscriptions stay inside that instance. The shared
