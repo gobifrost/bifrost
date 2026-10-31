@@ -482,7 +482,7 @@ def _restart_step(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate:
     return step, injector.join(310), None
 
 
-def d3(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate: float, effects: list[dict],
+def d3(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate: float, effects: list[dict] | Callable[[list[str]], list[dict]],
        effect_tokens: dict[str, str]) -> dict:
     """D3 primary restart during fresh append-only workload traffic."""
     cluster.verify()
@@ -499,7 +499,8 @@ def d3(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate: float, eff
         return {**result, "step": step, "overall": "invalid", "passed": False,
                 "effect_token_error": f"missing predeclared recovery effect tokens for {len(missing)} requests"}
     requests = [{**request, "effect_token": effect_tokens[request["id"]]} for request in step["sent"]]
-    effects_result = effect_assessment(requests, step["outcomes"]["rows"], effects)
+    effect_rows = effects([request["id"] for request in requests]) if callable(effects) else effects
+    effects_result = effect_assessment(requests, step["outcomes"]["rows"], effect_rows)
     ready_at = injected.get("ready_at")
     deadlines = (recovery_deadlines(requests, step["outcomes"]["rows"], ready_at, plan["deadlines_s"])
                  if isinstance(ready_at, (int, float)) else None)
