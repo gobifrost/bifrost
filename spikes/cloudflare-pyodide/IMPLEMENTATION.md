@@ -232,3 +232,22 @@ Decision: YELLOW for trusted fixed short execution; RED for first-class arbitrar
 untrusted execution under required termination guarantees. Genuine run-scoped
 SDK identity, pinned workspace adoption, canonical dispatch/result/recovery,
 physical stop and upstream publication remain incomplete.
+
+## Approved fork publication
+
+Thomas explicitly approved public personal fork `MTG-Thomas/bifrost-upstream`
+and publication through the existing MTG-Thomas identity. Created repository
+1441017913; readback confirms public=true, fork=true, parent/source both
+gobifrost/bifrost. Fork main matches upstream
+`e611d31bbba3d7601980271c774cad5e821b1e97`. Initial feature branch readback was
+`28f8e06e5f71319fe22bf3c2de85ec8e81369dc7`.
+
+Draft upstream PR: https://github.com/gobifrost/bifrost/pull/1161 . Base is main;
+head is MTG-Thomas:t3/cloudflare-pyodide-workflow-spike. This supersedes the
+publication blocker via the authorized fork route, not upstream write access.
+No company fork, old repository redirect, Actions control or security setting
+was changed. Product Updates disposition is a draft omit proposal, not an
+approval as Thomas. Backend acceptance remains incomplete; do not merge it.
+
+Exact Eddie delivery c92c79c8-6916-471c-beb9-3ab785e08244 acknowledged through
+the existing caller for native run ordinal 6; acknowledgment is not completion.
