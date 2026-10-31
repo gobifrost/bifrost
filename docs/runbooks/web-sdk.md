@@ -16,19 +16,22 @@ The source of truth is `client/src/lib/app-sdk/`. The installable package entry
 is `client/src/lib/app-sdk/index.v2.ts`; it intentionally exports only the
 self-contained SDK surface that can run outside the main Bifrost client.
 
-During the API image build, those sources are copied into
-`api/src/services/sdk_package/sdk_src/`. At runtime,
-`api/src/services/sdk_package/build_sdk.js` bundles that source into one ESM
-file, keeping `react`, `react-dom`, and `lucide-react` external peer
-dependencies. The `/api/sdk/download` endpoint returns a gzip npm tarball with:
+The API image builds the complete SDK as a static JavaScript factory. Its
+provider, hooks, components, and HTTP/WebSocket clients remain together. The
+factory uses the App's own React and JSX runtime, with a separate SDK instance
+for each binding. Icons are bundled into the hosted artifact.
 
-- package name: `bifrost`
-- package version: the running Bifrost version coerced to npm semver
-- package entry: `dist/index.mjs`
-- peer dependencies: React, React DOM, and lucide-react
+The `/api/sdk/download` npm tarball contains a small binding, shared public error
+constructors, and self-contained TypeScript declarations. Its React-facing
+exports keep the existing `bifrost` imports. `BifrostProvider` obtains the hosted
+factory before rendering its children; the platform preloads that factory before
+mounting deployed Apps. No App source or Vite target change is required.
 
-This mirrors `/api/cli/download/bifrost-cli.tar.gz`: the SDK is tied to the
-instance that served it.
+The instance serves the current implementation for public SDK API major 1 at
+`/api/app-sdk/v1/manifest`. The uncached descriptor selects an immutable,
+integrity-checked script under `/api/app-sdk/assets/<sha256>.js`. Shared platform
+storage retains advertised scripts across instance rollouts. Opening an App
+loads static JavaScript; it never starts npm, an App build, or a dev server.
 
 ## Local Apps
 
@@ -98,16 +101,23 @@ archive. These retained artifacts make an SDK-only rebuild possible without a
 full redeploy; `.env*`, installed dependencies, generated output, caches, and VCS data are
 excluded.
 
-A deployed bundle remains immutable until it is redeployed or rebuilt. By
-default, an instance upgrade does not rebuild it. An administrator can update
-an App manually, or opt in to **App SDK Upgrades** in Maintenance for the
-reviewed automatic transition in
-[Application SDK updates](application-sdk-update.md). That setting queues
-source-compatible rebuilds as PlatformJobs.
+A deployed App bundle remains immutable until redeployed or rebuilt. Existing
+bundled-SDK Apps need one **Update SDK** build to adopt server delivery. After
+migration, compatible hosted SDK fixes take effect on document reload without
+changing the App deployment or rebuilding its Solution. Already open documents
+retain their loaded code until reload; there is no live hook replacement.
 
-Prebuilt disconnected Solution packages are different: if a bundle ships a
-ready `dist/`, the platform skips the server-side Vite build. In that case the
-SDK version is whatever the bundle was built with.
+The **App SDK Upgrades** setting controls reviewed automatic binding rebuilds.
+It does not pin the hosted implementation. The initial hosted-delivery release
+does not declare an automatic migration; update Apps manually after the normal
+instance upgrade while that migration is dogfooded. See
+[Application SDK updates](application-sdk-update.md).
+
+Prebuilt disconnected Solution packages carry the binding major and build
+metadata recorded by their CLI build. The server treats this as the privileged
+deploy author's attestation; it does not inspect the JavaScript to prove it.
+A legacy prebuilt bundle stays legacy; importing it onto a new instance does
+not change its embedded SDK.
 
 ## App Mount Lifecycle
 
@@ -162,22 +172,22 @@ Do not add cache-busting queries to the entry or disable Vite code splitting.
 
 ## Versioning Contract
 
-There is no independently published web SDK version stream today. The package
-version follows the Bifrost instance version returned by `shared.version`.
-Deployed Apps also record a fingerprint of the built SDK bytes and a separately
-managed wire-contract version.
+The npm binding package version follows the Bifrost instance release version.
+Its public SDK API major is a separate identity. The App records the major it
+uses, and the instance supplies the latest maintained implementation for that
+supported major. The first hosted API major is 1.
 
-Practical consequences:
+An ordinary instance upgrade never silently advances an App's public major.
+Genuinely breaking changes to App-facing arguments or results require a new
+major and an explicit App code/binding migration. Supported majors use the same
+backend and retain their promised behavior, including current security checks.
+They are maintained interfaces, not frozen copies of old server protocols.
 
-- App authors should let the CLI/server inject the selected instance's SDK, not depend on `bifrost@latest`.
-- SDK changes ship with the Bifrost deployment that contains them.
-- Local Apps update through `app start` or `solution sdk update`.
-- Deployed source-built Apps update when an administrator explicitly runs an
-  SDK update or redeploys the App or Solution. They can also use the opt-in
-  automatic setting for an explicitly reviewed source-compatible transition.
-- Breaking SDK surface changes should be treated as Bifrost release changes and
-  documented in release notes, because apps consume the SDK from their host
-  instance.
+The App's stored fingerprint describes the binding actually compiled into it.
+A hosted implementation or server wire-contract change must not mark a supported
+binding stale or automatically enqueue another App build. Raw `authedFetch`
+paths and App-authored workflow result schemas still belong to App code; hosting
+the SDK does not rewrite arbitrary requests or business schemas.
 
 ## Header Ownership
 
@@ -244,6 +254,7 @@ active organizations. Set `enabled: false` to defer loading, or
 `includeInactive: true` to request disabled organizations too. Server-side
 permissions remain authoritative; a refused request appears in `error`.
 
-These hooks are compatible SDK additions. Existing deployed Apps need an
-explicit SDK update or redeploy to import them; the wire-contract version is
-unchanged.
+These hooks are compatible SDK additions. Apps need a binding/package update
+and an App build when their source starts importing newly added exports. Existing
+imports receive compatible implementation fixes from the hosted SDK on reload.
+The wire-contract version changes only for an intentional wire break.

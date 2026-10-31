@@ -206,6 +206,41 @@ class TestSdkStalenessWarningHelper:
         assert severity == "warn"
         assert "bifrost solution sdk update" in message
 
+    def test_supported_hosted_binding_ignores_wire_contract_mismatch(self):
+        result = sdk_staleness_warning(
+            "old", "new", 1, 2,
+            installed_binding_api_major=1,
+            server_binding_api_major=1,
+            supported_binding_api_majors=[1],
+        )
+
+        assert result is not None
+        message, severity = result
+        assert severity == "warn"
+        assert "binding update available" in message.lower()
+        assert "incompatible" not in message.lower()
+
+    def test_supported_older_hosted_binding_does_not_offer_default_major_upgrade(self):
+        assert sdk_staleness_warning(
+            "old", "new", 1, 2,
+            installed_binding_api_major=1,
+            server_binding_api_major=2,
+            supported_binding_api_majors=[1, 2],
+        ) is None
+
+    def test_unsupported_hosted_binding_is_breaking(self):
+        result = sdk_staleness_warning(
+            "old", "new", 1, 1,
+            installed_binding_api_major=1,
+            server_binding_api_major=2,
+            supported_binding_api_majors=[2],
+        )
+
+        assert result is not None
+        message, severity = result
+        assert severity == "breaking"
+        assert "does not support App SDK major 1" in message
+
 
 def _start_workspace(tmp_path, monkeypatch):
     """Minimal bound-workspace fixture mirroring test_solution_dev_command.py's

@@ -6,6 +6,12 @@ import {
   REQUEST_REPLAY_BUDGET,
 } from "./transport";
 import { subscribeToTable } from "./ws-client";
+import {
+  TableAccessDeniedError,
+  TableNotFoundError,
+} from "./errors";
+
+export { TableAccessDeniedError, TableNotFoundError } from "./errors";
 
 // Transport state lives in ./transport (shared with the ws client); re-export
 // the setters/getters here so existing import sites keep working.
@@ -61,34 +67,6 @@ function withScope(path: string, scope?: string): string {
   if (!effective) return path;
   const sep = path.includes("?") ? "&" : "?";
   return `${path}${sep}scope=${encodeURIComponent(effective)}`;
-}
-
-/**
- * Thrown when the server returns 403 — the policy denied the operation.
- * Distinct from `TableNotFoundError`: the table exists in this scope, the
- * caller just isn't allowed to perform this action on it.
- */
-export class TableAccessDeniedError extends Error {
-  constructor(message = "Access denied") {
-    super(message);
-    this.name = "TableAccessDeniedError";
-  }
-}
-
-/**
- * Thrown when the server returns 404 for a table-level operation — the table
- * does not exist in the requested scope. Distinct from `TableAccessDeniedError`:
- * the issue is that there's nothing to operate on, not that the caller is
- * forbidden from operating on it.
- *
- * For row-level reads/updates (`get`, `update`), 404 returns `null` instead of
- * throwing — the row may legitimately not exist and that's not an error.
- */
-export class TableNotFoundError extends Error {
-  constructor(message = "Table not found") {
-    super(message);
-    this.name = "TableNotFoundError";
-  }
 }
 
 /**

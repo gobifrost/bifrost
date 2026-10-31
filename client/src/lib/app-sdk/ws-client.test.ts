@@ -177,6 +177,30 @@ describe("subscribeToTable", () => {
 		expect(MockWebSocket.instances).toHaveLength(1);
 		unsubscribe();
 	});
+
+	it("waits for a tokenless CLI renewal acknowledgement before reconnecting", async () => {
+		let acknowledge!: (success: boolean) => void;
+		const refreshAccessToken = vi.fn(() => new Promise<boolean>((resolve) => { acknowledge = resolve; }));
+		const handleAuthenticationFailure = vi.fn();
+		(globalThis as typeof globalThis & {
+			__BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge;
+		}).__BIFROST_PLATFORM_AUTH_V1__ = {
+			getAccessToken: () => null,
+			canRefreshAccessToken: () => true,
+			refreshAccessToken,
+			handleAuthenticationFailure,
+		};
+		const unsubscribe = subscribeToTable("table-1", null, () => {});
+		MockWebSocket.instances[0].emit("close", { code: 4001 });
+		expect(refreshAccessToken).toHaveBeenCalledOnce();
+		expect(MockWebSocket.instances).toHaveLength(1);
+		acknowledge(true);
+		await Promise.resolve();
+		expect(MockWebSocket.instances).toHaveLength(2);
+		expect(new URL(MockWebSocket.instances[1].url).searchParams.has("token")).toBe(false);
+		expect(handleAuthenticationFailure).not.toHaveBeenCalled();
+		unsubscribe();
+	});
 });
 
 describe("buildWsUrl", () => {

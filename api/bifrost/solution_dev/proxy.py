@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import hmac
 import json
 import re
 import time
@@ -159,6 +160,7 @@ def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
     app[_LOCAL_EXECUTION_CONTEXT] = _execution_context.get()
 
     app.router.add_get(_DEV_SESSION_PATH, _dev_session_handler)
+    app.router.add_post(f"{_DEV_SESSION_PATH}/refresh", _dev_session_refresh_handler)
     app.router.add_post("/api/workflows/execute", _execute_handler)
     app.router.add_route("*", "/ws/{tail:.*}", _ws_handler)
     app.router.add_route("*", "/api/{tail:.*}", _api_proxy_handler)
@@ -376,11 +378,41 @@ async def _dev_session_handler(request: web.Request) -> web.Response:
     )
 
 
+async def _dev_session_refresh_handler(request: web.Request) -> web.Response:
+    """Acknowledge CLI renewal without returning a bearer to the browser."""
+    cfg: DevProxyConfig = request.app[_CFG]
+    if not hmac.compare_digest(request.headers.get("X-Bifrost-Dev-Session", "").encode(), cfg.session_id.encode()):
+        return web.Response(status=403, headers={"Cache-Control": "no-store"})
+    if not await _refresh_cli_token(cfg, cfg.token):
+        response = _dev_auth_expired_json_response()
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    return web.Response(status=204, headers={"Cache-Control": "no-store"})
+
+
 def _dev_recovery_script(session_id: str) -> str:
     encoded_session_id = json.dumps(session_id)
     return f"""<script data-bifrost-dev-recovery>
 (() => {{
   const sessionId = {encoded_session_id};
+  let refreshPromise = null;
+  globalThis.__BIFROST_PLATFORM_AUTH_V1__ = {{
+    getAccessToken: () => null,
+    canRefreshAccessToken: () => true,
+    refreshAccessToken: () => {{
+      if (!refreshPromise) {{
+        refreshPromise = fetch("{_DEV_SESSION_PATH}/refresh", {{
+          method: "POST",
+          cache: "no-store",
+          headers: {{ "X-Bifrost-Dev-Session": sessionId }},
+        }}).then(response => response.status === 204)
+          .catch(() => false)
+          .finally(() => {{ refreshPromise = null; }});
+      }}
+      return refreshPromise;
+    }},
+    handleAuthenticationFailure: () => window.location.reload(),
+  }};
   const checkSession = async () => {{
     try {{
       const response = await fetch("{_DEV_SESSION_PATH}", {{ cache: "no-store" }});
@@ -755,14 +787,19 @@ async def _ws_proxy(
             # that result unread emits "Task exception was never retrieved"
             # during an otherwise clean `app start` / `solution start` stop.
             await asyncio.gather(*done, *pending, return_exceptions=True)
+            # The browser SDK owns bounded auth recovery on 4001. Preserve
+            # that signal instead of turning every upstream close into 1000.
+            close_code = ws_client.close_code or 1000
+            if close_code in {1005, 1006, 1015}:
+                close_code = 1011
             await ws_client.close()
-            await ws_server.close()
+            await ws_server.close(code=close_code)
     except aiohttp.WSServerHandshakeError as exc:
         if not mark_auth_expired_on_401 or exc.status != 401:
             raise
         request.app[_CFG].auth_expired = True
         await ws_server.close(
-            code=aiohttp.WSCloseCode.POLICY_VIOLATION,
+            code=4001,
             message=b"authentication expired",
         )
     finally:

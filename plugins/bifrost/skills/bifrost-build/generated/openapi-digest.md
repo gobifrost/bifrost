@@ -79,6 +79,8 @@
 | POST | `/api/agents/{agent_id}/tuning-session` |
 | POST | `/api/agents/{agent_id}/tuning-session/apply` |
 | POST | `/api/agents/{agent_id}/tuning-session/dry-run` |
+| GET | `/api/app-sdk/assets/{fingerprint}.js` |
+| GET | `/api/app-sdk/v1/manifest` |
 | GET | `/api/applications` |
 | POST | `/api/applications` |
 | POST | `/api/applications/sdk/update` |

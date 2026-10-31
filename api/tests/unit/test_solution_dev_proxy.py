@@ -1143,7 +1143,7 @@ async def test_websocket_auth_rejection_blocks_stale_reconnects_and_recovers(pat
             )
             close_message = await rejected_socket.receive()
             assert close_message.type == aiohttp.WSMsgType.CLOSE
-            assert rejected_socket.close_code == aiohttp.WSCloseCode.POLICY_VIOLATION
+            assert rejected_socket.close_code == 4001
             assert cfg.auth_expired is True
             assert record["ws_tokens"] == ["stale-token"]
 
@@ -1216,6 +1216,9 @@ async def test_browser_session_reload_signal_changes_after_same_origin_restart()
         assert first_session == {"session_id": first_cfg.session_id}
         assert second_session == {"session_id": second_cfg.session_id}
         assert "data-bifrost-dev-recovery" in first_page.text
+        assert "__BIFROST_PLATFORM_AUTH_V1__" in first_page.text
+        assert "getAccessToken: () => null" in first_page.text
+        assert first_cfg.token not in first_page.text
         assert first_cfg.session_id in first_page.text
         assert "window.location.reload()" in first_page.text
         assert "data-bifrost-dev-recovery" in second_page.text
@@ -1336,6 +1339,72 @@ async def test_vite_proxy_returns_502_when_vite_is_down():
             r = await c.get(f"http://127.0.0.1:{dev_port}/")
         assert r.status_code == 502
         assert "vite" in r.json()["detail"].lower()
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
+async def test_dev_session_refresh_requires_its_session_and_returns_no_bearer():
+    calls = []
+
+    async def refresh(observed):
+        calls.append(observed)
+        return "renewed-cli-bearer"
+
+    cfg = DevProxyConfig(
+        upstream_url="http://127.0.0.1:1", token="initial-cli-bearer",
+        app_id="A", org_id=None, refresh_token=refresh,
+    )
+    port = _free_port()
+    runner = await _serve(build_dev_app(cfg, _StubHost(set()), "http://127.0.0.1:1"), port)
+    try:
+        async with httpx.AsyncClient() as client:
+            url = f"http://127.0.0.1:{port}/__bifrost_dev/session/refresh"
+            for headers in ({}, {"X-Bifrost-Dev-Session": "another-session"}):
+                denied = await client.post(url, headers=headers)
+                assert denied.status_code == 403
+            assert calls == []
+            accepted = await client.post(url, headers={"X-Bifrost-Dev-Session": cfg.session_id})
+            assert accepted.status_code == 204
+            assert accepted.text == ""
+            assert accepted.headers["cache-control"] == "no-store"
+            assert calls == ["initial-cli-bearer"]
+            assert cfg.token == "renewed-cli-bearer"
+            assert not cfg.auth_expired
+
+            async def expired(_observed):
+                return None
+
+            cfg.refresh_token = expired
+            failed = await client.post(url, headers={"X-Bifrost-Dev-Session": cfg.session_id})
+            assert failed.status_code == 401
+            assert "renewed-cli-bearer" not in failed.text
+            assert cfg.auth_expired
+    finally:
+        await runner.cleanup()
+
+
+async def test_upstream_auth_expiry_close_is_preserved_for_browser_sdk():
+    async def expired(request):
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        await socket.close(code=4001)
+        return socket
+
+    upstream = web.Application()
+    upstream.router.add_get("/ws/expired", expired)
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(upstream, up_port)
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}", token="initial-token", app_id="A", org_id=None,
+    )
+    dev_runner = await _serve(build_dev_app(cfg, _StubHost(set()), "http://127.0.0.1:1"), dev_port)
+    try:
+        async with aiohttp.ClientSession() as session:
+            socket = await session.ws_connect(f"http://127.0.0.1:{dev_port}/ws/expired")
+            message = await socket.receive()
+            assert message.type == aiohttp.WSMsgType.CLOSE
+            assert socket.close_code == 4001
     finally:
         await dev_runner.cleanup()
         await up_runner.cleanup()

@@ -32,6 +32,7 @@ def _application() -> SimpleNamespace:
         sdk_package_version=None,
         sdk_fingerprint=None,
         sdk_contract_version=None,
+        sdk_binding_api_major=None,
         sdk_built_at=None,
     )
 

@@ -44,10 +44,12 @@ async def rebuild_application_from_source(
     expected_sdk_package_version: str | None = None,
     expected_sdk_fingerprint: str | None = None,
     expected_sdk_contract_version: int | None = None,
+    expected_sdk_binding_api_major: int | None = None,
     expected_sdk_built_at: datetime | None = None,
     enforce_expected_state: bool = False,
     target_sdk_fingerprint: str | None = None,
     target_sdk_contract_version: int | None = None,
+    target_sdk_binding_api_major: int | None = None,
     retain_previous_deployment: bool = False,
     automatic_upgrade: bool = False,
 ) -> dict[str, str]:
@@ -74,6 +76,7 @@ async def rebuild_application_from_source(
                 sdk_metadata,
                 target_sdk_fingerprint=target_sdk_fingerprint,
                 target_sdk_contract_version=target_sdk_contract_version,
+                target_sdk_binding_api_major=target_sdk_binding_api_major,
             )
             build_kwargs = {"require_lockfile": True} if automatic_upgrade else {}
             dist = await asyncio.to_thread(
@@ -137,6 +140,7 @@ async def rebuild_application_from_source(
                 activation_sdk_metadata,
                 target_sdk_fingerprint=target_sdk_fingerprint,
                 target_sdk_contract_version=target_sdk_contract_version,
+                target_sdk_binding_api_major=target_sdk_binding_api_major,
             )
             if (
                 automatic_upgrade
@@ -164,6 +168,7 @@ async def rebuild_application_from_source(
                     expected_sdk_package_version=expected_sdk_package_version,
                     expected_sdk_fingerprint=expected_sdk_fingerprint,
                     expected_sdk_contract_version=expected_sdk_contract_version,
+                    expected_sdk_binding_api_major=expected_sdk_binding_api_major,
                     expected_sdk_built_at=expected_sdk_built_at,
                 )
             old_deployment_id = app.active_deployment_id
@@ -174,6 +179,7 @@ async def rebuild_application_from_source(
                 "sdk_package_version": activation_sdk_metadata.package_version,
                 "sdk_fingerprint": activation_sdk_metadata.fingerprint,
                 "sdk_contract_version": activation_sdk_metadata.contract_version,
+                "sdk_binding_api_major": activation_sdk_metadata.binding_api_major,
                 "sdk_built_at": deployed_at,
             }
             if app.solution_id is None:
@@ -190,6 +196,7 @@ async def rebuild_application_from_source(
                     expected_sdk_package_version=expected_sdk_package_version,
                     expected_sdk_fingerprint=expected_sdk_fingerprint,
                     expected_sdk_contract_version=expected_sdk_contract_version,
+                    expected_sdk_binding_api_major=expected_sdk_binding_api_major,
                     expected_sdk_built_at=expected_sdk_built_at,
                 )
         activated = True
@@ -262,6 +269,7 @@ async def _activate_solution_app(
     expected_sdk_package_version: str | None,
     expected_sdk_fingerprint: str | None,
     expected_sdk_contract_version: int | None,
+    expected_sdk_binding_api_major: int | None,
     expected_sdk_built_at: datetime | None,
 ) -> None:
     stmt = (
@@ -279,6 +287,7 @@ async def _activate_solution_app(
             Application.sdk_package_version == expected_sdk_package_version,
             Application.sdk_fingerprint == expected_sdk_fingerprint,
             Application.sdk_contract_version == expected_sdk_contract_version,
+            Application.sdk_binding_api_major == expected_sdk_binding_api_major,
             Application.sdk_built_at == expected_sdk_built_at,
         )
     result = await db.execute(stmt)
@@ -300,6 +309,7 @@ def _assert_expected_state(
     expected_sdk_package_version: str | None,
     expected_sdk_fingerprint: str | None,
     expected_sdk_contract_version: int | None,
+    expected_sdk_binding_api_major: int | None,
     expected_sdk_built_at: datetime | None,
 ) -> None:
     if app.active_deployment_id != expected_active_deployment_id:
@@ -311,6 +321,7 @@ def _assert_expected_state(
         "sdk_package_version": expected_sdk_package_version,
         "sdk_fingerprint": expected_sdk_fingerprint,
         "sdk_contract_version": expected_sdk_contract_version,
+        "sdk_binding_api_major": expected_sdk_binding_api_major,
         "sdk_built_at": expected_sdk_built_at,
     }
     for field, value in expected.items():
@@ -326,6 +337,7 @@ def _assert_target_sdk_metadata(
     *,
     target_sdk_fingerprint: str | None,
     target_sdk_contract_version: int | None,
+    target_sdk_binding_api_major: int | None = None,
 ) -> None:
     """Fence an SDK update to the version pinned when its job was enqueued."""
     if target_sdk_fingerprint is None and target_sdk_contract_version is None:
@@ -338,6 +350,7 @@ def _assert_target_sdk_metadata(
     if (
         sdk_metadata.fingerprint != target_sdk_fingerprint
         or sdk_metadata.contract_version != target_sdk_contract_version
+        or sdk_metadata.binding_api_major != target_sdk_binding_api_major
     ):
         raise PlatformJobFailure(
             "app_sdk_target_mismatch",

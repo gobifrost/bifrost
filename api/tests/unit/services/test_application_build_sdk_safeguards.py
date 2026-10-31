@@ -428,6 +428,7 @@ def _app(*, active_deployment_id, fingerprint="old-fp"):
         sdk_package_version="1.0.0",
         sdk_fingerprint=fingerprint,
         sdk_contract_version=1,
+        sdk_binding_api_major=None,
         sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
 
@@ -441,8 +442,11 @@ def _source() -> ResolvedApplicationSource:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fingerprint,major", [("wrong", 1), ("target", 2)])
 async def test_target_sdk_mismatch_before_compile_never_builds_or_activates(
     monkeypatch: pytest.MonkeyPatch,
+    fingerprint: str,
+    major: int,
 ) -> None:
     from src.services import application_build
 
@@ -457,7 +461,7 @@ async def test_target_sdk_mismatch_before_compile_never_builds_or_activates(
         application_build,
         "current_sdk_metadata",
         lambda: SimpleNamespace(
-            package_version="2.0.0", fingerprint="wrong", contract_version=2
+            package_version="2.0.0", fingerprint=fingerprint, contract_version=2, binding_api_major=major,
         ),
     )
 
@@ -468,6 +472,7 @@ async def test_target_sdk_mismatch_before_compile_never_builds_or_activates(
             source=_source(),
             target_sdk_fingerprint="target",
             target_sdk_contract_version=2,
+            target_sdk_binding_api_major=1,
         )
 
     assert raised.value.code == "app_sdk_target_mismatch"
@@ -486,10 +491,10 @@ async def test_target_sdk_mismatch_before_activation_cleans_new_artifacts(
     metadata = iter(
         [
             SimpleNamespace(
-                package_version="2.0.0", fingerprint="target", contract_version=2
+                package_version="2.0.0", fingerprint="target", contract_version=2, binding_api_major=None
             ),
             SimpleNamespace(
-                package_version="2.0.0", fingerprint="different", contract_version=2
+                package_version="2.0.0", fingerprint="different", contract_version=2, binding_api_major=None
             ),
         ]
     )
@@ -608,7 +613,7 @@ async def test_automatic_upgrade_keeps_previous_artifacts_and_respects_setting(
         application_build,
         "current_sdk_metadata",
         lambda: SimpleNamespace(
-            package_version="2.0.0", fingerprint="target", contract_version=2
+            package_version="2.0.0", fingerprint="target", contract_version=2, binding_api_major=None
         ),
     )
 
@@ -677,7 +682,7 @@ async def test_automatic_upgrade_disabled_before_activation_keeps_old_active(
         application_build,
         "current_sdk_metadata",
         lambda: SimpleNamespace(
-            package_version="2.0.0", fingerprint="target", contract_version=2
+            package_version="2.0.0", fingerprint="target", contract_version=2, binding_api_major=None
         ),
     )
 

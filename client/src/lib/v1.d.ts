@@ -10433,6 +10433,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/app-sdk/v1/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Select the API instance's current factory without caching the pointer.
+         */
+        get: operations["get_manifest_api_app_sdk_v1_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/app-sdk/assets/{fingerprint}.js": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Asset
+         * @description Serve an exact immutable factory artifact from shared platform storage.
+         */
+        get: operations["get_asset_api_app_sdk_assets__fingerprint__js_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/applications/{app_id}/files": {
         parameters: {
             query?: never;
@@ -13326,6 +13366,44 @@ export interface components {
             warnings: components["schemas"]["AppValidationIssue"][];
         };
         /**
+         * ApplicationBundleManifest
+         * @description Built App assets and the host contracts needed before entry evaluation.
+         */
+        ApplicationBundleManifest: {
+            /** Entry */
+            entry: string | null;
+            /** Css */
+            css: string | null;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "preview" | "live";
+            /** Dependencies */
+            dependencies: {
+                [key: string]: string;
+            };
+            /**
+             * Migrated
+             * @default false
+             */
+            migrated: boolean;
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * App Model
+             * @default inline_v1
+             * @enum {string}
+             */
+            app_model: "inline_v1" | "standalone_v2";
+            /** Runtime Contract */
+            runtime_contract?: "mount-v1" | null;
+            /** Sdk Binding Api Major */
+            sdk_binding_api_major?: number | null;
+        };
+        /**
          * ApplicationCreate
          * @description Input for creating an application.
          */
@@ -13526,6 +13604,11 @@ export interface components {
              * @description SDK/server contract version used for the active app build.
              */
             sdk_contract_version?: number | null;
+            /**
+             * Sdk Binding Api Major
+             * @description Hosted SDK public API major selected by the active app binding; null for a bundled SDK.
+             */
+            sdk_binding_api_major?: number | null;
             /**
              * Sdk Built At
              * @description When the active app build's SDK provenance was recorded.
@@ -20355,6 +20438,24 @@ export interface components {
             resources: components["schemas"]["HomeResource"][];
             /** Collections */
             collections: components["schemas"]["HomeCollectionPublic"][];
+        };
+        /**
+         * HostedAppSdkDescriptor
+         * @description The current immutable browser SDK factory for one binding API major.
+         */
+        HostedAppSdkDescriptor: {
+            /** Api Major */
+            api_major: number;
+            /** Factory Version */
+            factory_version: number;
+            /** Factory Id */
+            factory_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /** Integrity */
+            integrity: string;
+            /** Asset Url */
+            asset_url: string;
         };
         /** IdentityBaseRole */
         IdentityBaseRole: {
@@ -29936,6 +30037,10 @@ export interface components {
             sdk_fingerprint: string;
             /** Sdk Contract Version */
             sdk_contract_version: number;
+            /** Sdk Binding Api Major */
+            sdk_binding_api_major?: number | null;
+            /** Sdk Supported Binding Api Majors */
+            sdk_supported_binding_api_majors?: number[];
         };
         /**
          * VideoArtifactSpec
@@ -50341,6 +50446,55 @@ export interface operations {
             };
         };
     };
+    get_manifest_api_app_sdk_v1_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostedAppSdkDescriptor"];
+                };
+            };
+        };
+    };
+    get_asset_api_app_sdk_assets__fingerprint__js_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fingerprint: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_app_files_api_applications__app_id__files_get: {
         parameters: {
             query?: {
@@ -50535,9 +50689,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApplicationBundleManifest"];
                 };
             };
             /** @description Validation Error */

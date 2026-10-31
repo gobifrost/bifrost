@@ -10197,7 +10197,7 @@
     "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 692,
+    "rest": 694,
     "sdk": 21
   },
   "schema_version": 1,
@@ -11708,6 +11708,20 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/agents/{agent_id}/tuning-session/dry-run",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/app-sdk/assets/{fingerprint}.js",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/app-sdk/v1/manifest",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

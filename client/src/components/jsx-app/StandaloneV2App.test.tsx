@@ -18,9 +18,17 @@ const orgScopeState = vi.hoisted(() => ({
 const authState = vi.hoisted(() => ({ isPlatformAdmin: false }));
 
 const { mockAuthFetch } = vi.hoisted(() => ({ mockAuthFetch: vi.fn() }));
+const { mockPreloadHostedSdkFactory } = vi.hoisted(() => ({
+	mockPreloadHostedSdkFactory: vi.fn(),
+}));
 
 vi.mock("@/lib/api-client", () => ({
 	authFetch: (...args: unknown[]) => mockAuthFetch(...args),
+}));
+
+vi.mock("@/lib/app-sdk/hosted-loader", () => ({
+	preloadHostedSdkFactory: (...args: unknown[]) =>
+		mockPreloadHostedSdkFactory(...args),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -45,6 +53,7 @@ function props(entry: string) {
 		baseUrl: "/api/applications/app-1/dist",
 		appOrgId: null as string | null,
 		runtimeContract: "mount-v1" as const,
+		sdkBindingApiMajor: null as number | null,
 	};
 }
 
@@ -104,6 +113,8 @@ beforeEach(() => {
 	delete window.__BIFROST_APP__;
 	delete window.__BIFROST_APP_MODULES__;
 	mockAuthFetch.mockReset();
+	mockPreloadHostedSdkFactory.mockReset();
+	mockPreloadHostedSdkFactory.mockResolvedValue(undefined);
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const appendChild = document.head.appendChild.bind(document.head);
 	vi.spyOn(document.head, "appendChild").mockImplementation(
@@ -130,6 +141,21 @@ afterEach(() => {
 });
 
 describe("StandaloneV2App", () => {
+	it("preloads a migrated app's hosted SDK before evaluating its entry", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		let releaseSdk!: () => void;
+		mockPreloadHostedSdkFactory.mockReturnValue(
+			new Promise<void>((resolve) => {
+				releaseSdk = resolve;
+			}),
+		);
+		render(<StandaloneV2App {...props("hosted-sdk")} sdkBindingApiMajor={1} />);
+
+		expect(mockPreloadHostedSdkFactory).toHaveBeenCalledWith(window.location.origin);
+		expect(appendedScripts).toHaveLength(0);
+		releaseSdk();
+		await waitFor(() => expect(moduleScript("hosted-sdk")).toBeDefined());
+	});
 	it("loads the immutable entry and stylesheet through canonical URLs", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
 		render(
