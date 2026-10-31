@@ -36,7 +36,7 @@ alongside the AST graph. No claim of compatibility follows from graph membership
 | HTTPX 0.28.1 | Works with runtime-supplied package | Async HTTPS fanout and synchronous HTTPS both returned 200. Pylock selects Cloudflare/Pyodide wheel. This does not imply arbitrary socket libraries work. |
 | Pydantic 2.14.2 / pydantic-core 2.50.2 | Works with wasm wheel | Real SDK DTOs validated on actual operations. Native Linux wheels cannot simply be copied. |
 | JSON, asyncio sleep/gather, bundled dynamic Python import | Works unchanged in tested cases | JSON transform, three HTTPS requests, deferred import of `workspace_helper`. Not Redis-backed workspace resolution. |
-| `virtual_import.py` | Substantial adapter required | Current loader uses `module_cache_sync`, threading and server-backed lookup. Prototype only bundles a workspace module; it does not reproduce cold `_repo` resolution, versioning or import cache semantics. |
+| `virtual_import.py` | Pure Python; closure/runtime untested | Child `module_cache_sync` already supports scoped SDK HTTP without direct Redis/S3. Eager redis imports and thread-local assumptions need testing before claiming an adapter is necessary. Prototype only proves a bundled workspace import. |
 | `async_executor.py`, workflow consumer | Remain upstream | Durable dispatch/DB/Redis/authorization are not shipped. No alternative authoritative queue created. |
 | `worker_sdk_http.py` | OS server incompatible in isolate | Parent FastAPI/uvicorn Unix-socket service remains server-side. Ordinary API transport succeeds; private parent socket is unavailable. |
 | `pool_main.py`, template process, launcher | Fundamentally incompatible unchanged | Linux child processes, signals, /proc CPU/memory sampling, admission and process termination do not map to Python Worker execution. |
@@ -49,6 +49,11 @@ provides exactly the one used field. It does not issue authority, reconstruct
 settings, alter results or replace engine behavior. Namespace scaffolding and
 standalone decorator selection are intentional packaging differences. All are
 material to reproducibility and must be maintained against the pinned upstream.
+
+For subsequent unsupported dependencies, follow
+[native-first dependency qualification](dependency-qualification.md). Distinguish
+missing wheels from OS-contract incompatibility; attempt a native PyEmscripten
+build for compilable candidates before considering replacement code.
 
 ## Control plane: A versus B
 

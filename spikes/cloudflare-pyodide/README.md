@@ -10,6 +10,10 @@ All changes are in this companion directory; platform sources are unchanged.
 See [assessment.md](assessment.md), [experiments.md](experiments.md), and
 [raw evidence](results/). No production resources or credentials were used.
 
+Unsupported dependency work follows [native-first qualification](dependency-qualification.md):
+classify, build if compilable, run relevant package tests under Pyodide, then
+verify actual cloud execution. Missing-wheel and OS-contract failures are distinct.
+
 ## Reproduce
 
 Requirements: Docker, Python 3.13+ for source preparation, Node 24+, Git Bash on
