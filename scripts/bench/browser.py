@@ -127,18 +127,23 @@ def build_receipt(source: dict, accepted: dict, job: dict, application: dict) ->
         "sdk_package_version",
         "sdk_fingerprint",
         "sdk_contract_version",
-        "sdk_binding_api_major",
         "sdk_built_at",
-        "active_deployment_id",
     )
     if any(application.get(field) in (None, "") for field in fields):
         raise ValueError("deployed app is missing SDK or deployment provenance")
+    # ApplicationPublic exposes SDK stamps; the deployment UUID is returned
+    # by the successful application.deploy job rather than the metadata DTO.
+    result = job.get("result")
+    if (not isinstance(result, dict) or not result.get("deployment_id")
+            or not result.get("application_id")
+            or str(result["application_id"]) != str(application.get("id"))):
+        raise ValueError("deployment result does not identify the observed application")
     return {
         "source": {key: source[key] for key in ("file_count", "source_bytes", "source_sha256", "archive_sha256", "archive_bytes")},
         "deploy": {
             "job_id": str(accepted_job_id),
             "status": job["status"],
-            "active_deployment_id": application["active_deployment_id"],
+            "active_deployment_id": result["deployment_id"],
         },
         "build": {
             "execution_backend": job["execution_backend"],
@@ -150,7 +155,8 @@ def build_receipt(source: dict, accepted: dict, job: dict, application: dict) ->
             "memory_peak_bytes": job.get("memory_peak_bytes"),
             "memory_limit_bytes": job.get("memory_limit_bytes"),
         },
-        "sdk": {field: application[field] for field in fields[:-1]},
+        "sdk": {**{field: application[field] for field in fields},
+                "sdk_binding_api_major": application.get("sdk_binding_api_major")},
         "browser_driver_sha256": hashlib.sha256(DRIVER_PATH.read_bytes()).hexdigest(),
     }
 
@@ -218,19 +224,17 @@ def validate_events(events: list[dict]) -> dict:
     subscriptions = [index for index, event in enumerate(events) if event.get("type") == "subscribe"]
     if post_terminal:
         path_label = "inline_post"
+    elif terminal_gets and (not stream_terminal or terminal_gets[0] < stream_terminal[0]):
+        path_label = "immediate_get"
     elif stream_terminal:
-        terminal_index = stream_terminal[-1]
-        if len(stream_terminal) != 1 or len(subscriptions) != 1:
-            raise ValueError("streamed workflow needs one observed subscription and terminal frame")
+        terminal_index = stream_terminal[0]
+        if not subscriptions:
+            raise ValueError("streamed workflow needs an observed subscription")
         if not (positions["post"] < subscriptions[0] < terminal_index):
             raise ValueError("streamed workflow events are not POST, subscribe, terminal ordered")
-        if len(terminal_gets) != 1 or terminal_gets[0] <= terminal_index:
+        if not any(index > terminal_index for index in terminal_gets):
             raise ValueError("streamed workflow terminal frame was not followed by the SDK detail GET")
         path_label = "streamed_ws"
-    elif terminal_gets:
-        if len(terminal_gets) != 1:
-            raise ValueError("immediate SDK read observed more than one terminal GET")
-        path_label = "immediate_get"
     else:
         raise ValueError("browser run did not observe a terminal SDK transport path")
     renders = [index for index, event in enumerate(events) if event.get("type") == "render"]
@@ -240,8 +244,10 @@ def validate_events(events: list[dict]) -> dict:
         "execution_id": execution_id,
         "request_id": request_id,
         "transport_path": path_label,
+        "transport_scope": "first observed terminal transport; native ready/terminal checks may overlap",
+        "terminal_get_count": len(terminal_gets),
         "events": events,
-        "browser_wall_ms": events[-1]["t_ms"] - events[0]["t_ms"],
+        "browser_wall_ms": events[renders[-1] if renders else -1]["t_ms"] - events[0]["t_ms"],
     }
 
 

@@ -415,6 +415,7 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_image_id:
             "source": source,
             "accepted": app.get("accepted"),
             "job": app.get("job"),
+            "application": app.get("application"),
         }
         application_read_error = app.get("application_read_error")
         if application_read_error is not None:

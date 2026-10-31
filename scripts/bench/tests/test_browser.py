@@ -122,6 +122,20 @@ class BrowserDiagnosticTest(unittest.TestCase):
         self.assertEqual(browser.validate_events(inline)["transport_path"], "inline_post")
         self.assertEqual(browser.validate_events(immediate_get)["transport_path"], "immediate_get")
 
+    def test_native_overlapping_terminal_checks_do_not_extend_render_latency(self) -> None:
+        events = streamed_events()
+        events.append({"type": "get", "t_ms": 7.0, "execution_id": "e", "status": "Success",
+                       "method": "GET", "path": "/api/executions/e"})
+        receipt = browser.validate_events(events)
+        self.assertEqual(receipt["terminal_get_count"], 2)
+        self.assertEqual(receipt["browser_wall_ms"], 5.0)
+
+    def test_ready_check_can_observe_terminal_before_the_websocket_frame(self) -> None:
+        events = streamed_events()
+        events.insert(4, {"type": "get", "t_ms": 3.5, "execution_id": "e", "status": "Success",
+                          "method": "GET", "path": "/api/executions/e"})
+        self.assertEqual(browser.validate_events(events)["transport_path"], "immediate_get")
+
     def test_build_receipt_requires_completed_deploy_and_sdk_provenance(self) -> None:
         files = browser.source_files()
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,9 +149,10 @@ class BrowserDiagnosticTest(unittest.TestCase):
             "started_at": "start",
             "completed_at": "end",
             "memory_required_bytes": 1,
+            "result": {"application_id": "app", "deployment_id": "deploy"},
         }
         application = {
-            "active_deployment_id": "deploy",
+            "id": "app",
             "sdk_package_version": "v",
             "sdk_fingerprint": "hash",
             "sdk_contract_version": 3,
@@ -147,6 +162,12 @@ class BrowserDiagnosticTest(unittest.TestCase):
         receipt = browser.build_receipt(source, {"job_id": "accepted"}, job, application)
         self.assertEqual(receipt["sdk"]["sdk_contract_version"], 3)
         self.assertEqual(receipt["build"]["execution_backend"], "kubernetes")
+        self.assertEqual(receipt["deploy"]["active_deployment_id"], "deploy")
+        application["sdk_binding_api_major"] = None
+        bundled = browser.build_receipt(source, {"job_id": "accepted"}, job, application)
+        self.assertIsNone(bundled["sdk"]["sdk_binding_api_major"])
+        with self.assertRaisesRegex(ValueError, "observed application"):
+            browser.build_receipt(source, {"job_id": "accepted"}, job, {**application, "id": "other"})
         with self.assertRaisesRegex(ValueError, "IDs differ"):
             browser.build_receipt(source, {"job_id": "other"}, job, application)
 

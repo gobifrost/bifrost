@@ -269,6 +269,7 @@ class InteractiveRunTest(unittest.TestCase):
             "source": {"archive_sha256": "fixture"},
             "accepted": {"job_id": "deploy-job"},
             "job": {"id": "deploy-job", "status": "succeeded"},
+            "application": None,
             "application_read_error": "RuntimeError: read deployed application failed: HTTP 404",
         })
 
