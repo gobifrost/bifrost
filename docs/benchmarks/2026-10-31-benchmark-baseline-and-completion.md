@@ -1,6 +1,6 @@
 # Portal Baseline Replay and Capacity Benchmark Completion
 
-Status: baseline saved; constrained capacity, soak, recovery and hosting report
+Status: baseline and retention rehearsal saved; constrained capacity, soak, recovery and hosting report
 are incomplete. Accepting the roughly 277 MiB idle worker measurement does not
 freeze a memory target or end optimization.
 
@@ -113,6 +113,16 @@ bursts of three per class and two passes. Compare phases/passes separately.
 The 2-CPU allocation also requires the recorded CPU quota increase. These are
 import diagnostics, not the 4 GB hosting profile. New source/image experiments
 use the existing harness/A-B path and record every changed variable.
+
+## Storage Retention Rehearsal (October 31)
+
+The [fresh local retention rehearsal](2026-10-31-storage-retention-results.md)
+passed: the canonical job deleted all 42 aged fixture executions and their 329
+log rows. PostgreSQL allocated bytes remained about 403 MiB immediately after
+deletion. Equal-sized repetitive and high-entropy result payloads differed by
+about 87 times in stored result-column size. These results establish fixture
+storage and deletion behavior; sustained growth, backups and cloud billing
+remain separate evidence.
 
 ## Remaining Completion Gates
 
