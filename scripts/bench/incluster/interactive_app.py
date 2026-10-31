@@ -71,7 +71,20 @@ async def deploy(source_b64: str, name: str, slug: str, timeout_s: int = 900) ->
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"application.deploy PlatformJob {job_id} did not finish within {timeout_s}s")
             await asyncio.sleep(1)
-        application = _check(await http.get(f"/api/applications/{app['id']}"), "read deployed application").json()
+        app_slug = app.get("slug")
+        if not isinstance(app_slug, str) or not app_slug:
+            raise RuntimeError("created standalone app did not return a slug")
+        try:
+            application = _check(
+                await http.get(f"/api/applications/{app_slug}"), "read deployed application"
+            ).json()
+        except (RuntimeError, ValueError, httpx.HTTPError) as error:
+            return {
+                "accepted": accepted,
+                "job": job,
+                "application": None,
+                "application_read_error": f"{type(error).__name__}: {error}",
+            }
         return {"accepted": accepted, "job": job, "application": application}
     finally:
         await http.aclose()

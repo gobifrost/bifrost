@@ -132,7 +132,7 @@ class InteractiveRunTest(unittest.TestCase):
              patch.object(interactive, "Cluster", return_value=cluster), \
              patch.object(interactive.bench_run, "Run", Current), \
              patch.object(interactive.deploy, "reset") as reset, \
-             patch.object(interactive.bench_run, "run_classes", side_effect=RuntimeError("setup failed")):
+             patch.object(interactive.bench_run, "_prepare", side_effect=RuntimeError("setup failed")):
             cache = Path(temporary) / "cache.json"
             cache.write_text(json.dumps({"image": RUNNER, "image_id": DIGEST, "cached_before_measurement": True}))
             build_cache = Path(temporary) / "build-cache.json"
@@ -183,8 +183,7 @@ class InteractiveRunTest(unittest.TestCase):
              patch.object(interactive.bench_run, "load_profile", return_value={"interactive_integration_diagnostic": True}), \
              patch.object(interactive, "Cluster", return_value=cluster), \
              patch.object(interactive.bench_run, "Run", Current), \
-             patch.object(interactive.deploy, "reset"), \
-             patch.object(interactive.bench_run, "run_classes"), \
+             patch.object(interactive.bench_run, "_prepare"), \
              patch.object(interactive.browser_preparation, "prepare_tls", return_value={}), \
              patch.object(interactive, "_worker_policy", side_effect=[original_policy, {}, original_policy]), \
              patch.object(interactive.browser_preparation, "wait_for_worker_count", return_value={"live": 0, "ready": 0}), \
@@ -208,6 +207,68 @@ class InteractiveRunTest(unittest.TestCase):
 
         self.assertEqual(instances[0].result["interactive"]["browser"]["raw"], {
             "pod": pod, "logs": logs, "runs": [],
+        })
+
+    def test_application_metadata_failure_retains_accepted_deploy_job_receipt(self) -> None:
+        instances = []
+
+        class Current:
+            def __init__(self, *_args: object) -> None:
+                self.result: dict = {}
+                instances.append(self)
+
+            def save(self) -> None:
+                return None
+
+        profile = {"interactive_integration_diagnostic": True}
+        original_policy = {
+            "warm_workers": 1, "max_workers": 1, "worker_memory_mib": 2048,
+            "largest_worker_mib": 2048, "idle_seconds": 300,
+            "isolated_jobs_enabled": False, "max_isolated_pods": 1,
+        }
+        cluster = Mock()
+        cluster.exec_python.return_value = {
+            "accepted": {"job_id": "deploy-job"},
+            "job": {"id": "deploy-job", "status": "succeeded"},
+            "application": None,
+            "application_read_error": "RuntimeError: read deployed application failed: HTTP 404",
+        }
+
+        def write_source(destination: Path, _files: dict[str, bytes]) -> dict:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"fixture")
+            return {"archive_sha256": "fixture"}
+
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(interactive.bench_run, "load_profile", return_value=profile), \
+             patch.object(interactive, "Cluster", return_value=cluster), \
+             patch.object(interactive.bench_run, "Run", Current), \
+             patch.object(interactive.bench_run, "_prepare") as prepare, \
+             patch.object(interactive.deploy, "reset"), \
+             patch.object(interactive.browser_preparation, "prepare_tls", return_value={}), \
+             patch.object(interactive, "_worker_policy", side_effect=[original_policy, {}]), \
+             patch.object(interactive.browser_preparation, "wait_for_worker_count", return_value={"live": 0, "ready": 0}), \
+             patch.object(interactive.browser_preparation, "prepare_build_runtime", return_value=({}, {})), \
+             patch.object(interactive, "_restore_build_preparation", return_value={}), \
+             patch.object(interactive.browser, "write_source_zip", side_effect=write_source), \
+             patch.object(interactive.browser, "build_receipt") as build_receipt:
+            cache = Path(temporary) / "cache.json"
+            cache.write_text(json.dumps({"image": RUNNER, "image_id": DIGEST, "cached_before_measurement": True}))
+            build_cache = Path(temporary) / "build-cache.json"
+            build_cache.write_text(json.dumps({
+                "image": CACHED_BUILD, "image_id": DIGEST, "cached_before_measurement": True,
+                "fixture_lock_sha256": interactive.browser.fixture_lock_sha256(),
+            }))
+            with self.assertRaisesRegex(RuntimeError, "could not read deployed application metadata"):
+                interactive.run("m-interactive", "api", RUNNER, DIGEST, BASE, cache, CACHED_BUILD, build_cache, Path(temporary) / "out")
+
+        prepare.assert_called_once_with(cluster, instances[0], profile, None, "api")
+        build_receipt.assert_not_called()
+        self.assertEqual(instances[0].result["interactive"]["build"], {
+            "source": {"archive_sha256": "fixture"},
+            "accepted": {"job_id": "deploy-job"},
+            "job": {"id": "deploy-job", "status": "succeeded"},
+            "application_read_error": "RuntimeError: read deployed application failed: HTTP 404",
         })
 
     def test_terminal_cleanup_resets_namespaces_after_success(self) -> None:
@@ -272,6 +333,60 @@ class InteractiveAppPolicyTest(unittest.TestCase):
         self.assertEqual(client.calls, [
             ("GET", "/api/admin/kubernetes/execution", None),
             ("PUT", "/api/admin/kubernetes/policy", {"warm_workers": 0}),
+        ])
+
+
+class InteractiveAppDeployTest(unittest.TestCase):
+    def test_deploy_reads_by_created_slug_after_normal_deploy_job(self) -> None:
+        class Response:
+            status_code = 200
+            text = ""
+
+            def __init__(self, body: dict) -> None:
+                self.body = body
+
+            def json(self) -> dict:
+                return self.body
+
+        class Client:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            async def post(self, path: str, **_kwargs: object) -> Response:
+                self.calls.append(("POST", path))
+                if path == "/api/applications":
+                    return Response({"id": "application-id", "slug": "created-browser-app"})
+                if path != "/api/applications/application-id/deploy":
+                    raise AssertionError(path)
+                return Response({"job_id": "deploy-job"})
+
+            async def get(self, path: str) -> Response:
+                self.calls.append(("GET", path))
+                if path == "/api/platform-jobs/deploy-job":
+                    return Response({"id": "deploy-job", "status": "succeeded"})
+                if path != "/api/applications/created-browser-app":
+                    raise AssertionError(path)
+                return Response({"id": "application-id", "slug": "created-browser-app"})
+
+            async def aclose(self) -> None:
+                return None
+
+        client = Client()
+
+        async def fake_client() -> Client:
+            return client
+
+        with patch.object(interactive_app, "_client", fake_client):
+            result = asyncio.run(interactive_app.deploy("Zml4dHVyZQ==", "Fixture", "requested-slug"))
+
+        self.assertEqual(result["accepted"], {"job_id": "deploy-job"})
+        self.assertEqual(result["job"], {"id": "deploy-job", "status": "succeeded"})
+        self.assertEqual(result["application"]["slug"], "created-browser-app")
+        self.assertEqual(client.calls, [
+            ("POST", "/api/applications"),
+            ("POST", "/api/applications/application-id/deploy"),
+            ("GET", "/api/platform-jobs/deploy-job"),
+            ("GET", "/api/applications/created-browser-app"),
         ])
 
 

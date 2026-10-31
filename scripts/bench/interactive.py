@@ -339,7 +339,7 @@ def _restore_build_preparation(
 
 def run(profile_name: str, api_image: str, browser_image: str, browser_image_id: str, browser_base_image: str,
         cache_receipt: Path, cached_build_image: str, build_cache_receipt: Path, out: Path) -> Path:
-    """Run the normal fixture classes plus the real deployed-app browser path.
+    """Prepare normal fixtures once, then measure the real deployed-app browser path.
 
     Callers must hold :func:`host_lock`; this lets tests exercise the
     orchestration without taking a global host lock.
@@ -370,20 +370,17 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_image_id:
             "build_cache_receipt": build_cache,
             "build_cache_image_provenance": build_image_provenance,
             "build_preparation": None,
-            "backend_classes": None,
             "browser": None,
         },
     })
     current.save()
     browser_started = False
     try:
-        # A reset is deliberately before the established class runner: it owns
-        # the normal fixture/editor/SDK setup and retains its own durable data.
+        # The browser path only needs the normal fixture/editor/SDK setup.  It
+        # deliberately does not run the backend workload classes a second time.
         cluster.verify()
         deploy.reset(cluster)
-        backend_out = out / "backend-classes"
-        bench_run.run_classes(profile_name, None, backend_out, api_image)
-        current.result["interactive"]["backend_classes"] = str(backend_out)
+        bench_run._prepare(cluster, current, profile, None, api_image)
 
         tls = browser_preparation.prepare_tls(cluster)
         policy_original = _worker_policy(cluster, "read")
@@ -414,11 +411,25 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_image_id:
             restoration = _restore_build_preparation(cluster, runtime_previous, policy_original)
             current.result["interactive"]["build_preparation"]["restoration"] = restoration
             current.save()
-        build = browser.build_receipt(source, app["accepted"], app["job"], app["application"])
+        current.result["interactive"]["build"] = {
+            "source": source,
+            "accepted": app.get("accepted"),
+            "job": app.get("job"),
+        }
+        application_read_error = app.get("application_read_error")
+        if application_read_error is not None:
+            current.result["interactive"]["build"]["application_read_error"] = application_read_error
+            current.save()
+            raise RuntimeError(f"could not read deployed application metadata: {application_read_error}")
+        application = app.get("application")
+        if not isinstance(application, dict):
+            current.save()
+            raise RuntimeError("application.deploy helper returned no deployed application metadata")
+        build = browser.build_receipt(source, app["accepted"], app["job"], application)
         current.result["interactive"]["build"] = build
         current.save()
 
-        config = browser_config(app["application"]["slug"])
+        config = browser_config(application["slug"])
         current.result["interactive"]["browser"] = {"config": config, "raw": {}}
         current.save()
         browser_started = True
