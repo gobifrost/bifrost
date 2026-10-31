@@ -10,7 +10,7 @@ The preflight deliberately preserves every existing row. Operators must
 resolve any duplicate live _repo/ names before the indexes can be restored.
 
 Revision ID: 20261031_table_name_unique
-Revises: 20261031_authz_claims_gate
+Revises: 20261031_app_sdk_binding
 Create Date: 2026-10-31
 """
 
@@ -23,7 +23,7 @@ from alembic import op
 
 
 revision: str = "20261031_table_name_unique"
-down_revision: Union[str, None] = "20261031_authz_claims_gate"
+down_revision: Union[str, None] = "20261031_app_sdk_binding"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

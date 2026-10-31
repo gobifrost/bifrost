@@ -21,6 +21,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.policies.probe import make_seed_admin_bypass
 from shared.sdk_table_metadata import (
@@ -205,6 +206,55 @@ class TestCreateService:
             )
         assert exc.value.status_code == 409
         assert exc.value.detail == f"Table '{name}' already exists"
+
+    async def test_concurrent_create_returns_one_conflict(
+        self, db_session, async_session_factory, monkeypatch
+    ):
+        """The database uniqueness race keeps the SDK's 409 contract."""
+        import asyncio
+
+        org = await _seed_org(db_session)
+        await db_session.commit()
+        name = _table_name("concurrent")
+        barrier = asyncio.Barrier(2)
+        original_execute = AsyncSession.execute
+
+        async def synchronized_execute(session, statement, *args, **kwargs):
+            result = await original_execute(session, statement, *args, **kwargs)
+            if (
+                getattr(statement, "is_select", False)
+                and Table.__table__ in statement.get_final_froms()
+            ):
+                await barrier.wait()
+            return result
+
+        monkeypatch.setattr(AsyncSession, "execute", synchronized_execute)
+
+        async def create_in_own_session():
+            async with async_session_factory() as session:
+                return await create_sdk_table(
+                    session,
+                    name=name,
+                    table_schema=None,
+                    description=None,
+                    org_id=org.id,
+                    caller=_caller(org.id),
+                    solution_present=False,
+                )
+
+        outcomes = await asyncio.gather(
+            create_in_own_session(), create_in_own_session(), return_exceptions=True
+        )
+
+        assert sum(not isinstance(outcome, BaseException) for outcome in outcomes) == 1
+        conflicts = [
+            outcome
+            for outcome in outcomes
+            if isinstance(outcome, SDKTableMetadataError)
+        ]
+        assert len(conflicts) == 1
+        assert conflicts[0].status_code == 409
+        assert conflicts[0].detail == f"Table '{name}' already exists"
 
     async def test_create_same_name_other_org_allowed(self, db_session):
         org_a = await _seed_org(db_session)

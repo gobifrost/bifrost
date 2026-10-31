@@ -13,7 +13,6 @@ import unicodedata
 from uuid import uuid4
 
 from sqlalchemy import delete, func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.tables import Document, Table
@@ -149,7 +148,8 @@ class TestTableRepositoryIntegration:
 
         The barrier makes both repositories finish their absence check before
         either insert flushes. One writer commits; PostgreSQL must reject the
-        other at the restored partial unique index.
+        other at the restored partial unique index and the repository must
+        surface the established duplicate-table error.
         """
         from src.models.contracts.tables import TableCreate
 
@@ -183,7 +183,10 @@ class TestTableRepositoryIntegration:
                 create_in_own_session(), create_in_own_session(), return_exceptions=True
             )
             assert sum(not isinstance(outcome, BaseException) for outcome in outcomes) == 1
-            assert sum(isinstance(outcome, IntegrityError) for outcome in outcomes) == 1
+            assert sum(
+                isinstance(outcome, ValueError) and "already exists" in str(outcome)
+                for outcome in outcomes
+            ) == 1
             assert await db_session.scalar(
                 select(func.count()).select_from(Table).where(
                     Table.organization_id == test_org.id,

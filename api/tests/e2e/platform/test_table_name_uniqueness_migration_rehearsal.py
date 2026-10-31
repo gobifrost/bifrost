@@ -30,7 +30,10 @@ from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
 
 pytestmark = pytest.mark.e2e
 
-LEGACY_REVISION = "20261031_authz_claims_gate"
+# The migration must extend the current Alembic head rather than create a
+# second head.  Starting the rehearsal here still recreates the schema after
+# ``orphaned_at`` and its dependent partial indexes were removed.
+LEGACY_REVISION = "20261031_app_sdk_binding"
 MIGRATION_REVISION = "20261031_table_name_unique"
 REPO_INDEXES = {
     "ix_tables_org_name_unique",

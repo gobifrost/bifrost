@@ -19,9 +19,31 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
+
+
+_REPO_TABLE_NAME_UNIQUE_INDEXES = frozenset(
+    {"ix_tables_org_name_unique", "ix_tables_global_name_unique"}
+)
+
+
+def is_repo_table_name_conflict(error: IntegrityError) -> bool:
+    """Whether PostgreSQL rejected a duplicate live ``_repo/`` table name."""
+    database_error = error.orig
+    constraint_name = getattr(database_error, "constraint_name", None)
+    if constraint_name is None:
+        diagnostic = getattr(database_error, "diag", None)
+        constraint_name = getattr(diagnostic, "constraint_name", None)
+    if constraint_name is None:
+        # SQLAlchemy's asyncpg adapter exposes the driver exception as its
+        # cause; only that driver exception carries PostgreSQL's constraint.
+        driver_error = getattr(database_error, "__cause__", None)
+        constraint_name = getattr(driver_error, "constraint_name", None)
+    return constraint_name in _REPO_TABLE_NAME_UNIQUE_INDEXES
+
 
 if TYPE_CHECKING:
     from src.models.orm.organizations import Organization
