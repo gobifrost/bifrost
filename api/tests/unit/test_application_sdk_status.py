@@ -95,6 +95,20 @@ def test_sdk_status_matrix() -> None:
     )
 
 
+def test_legacy_compatible_sdk_can_opt_in_to_hosted_delivery_without_being_required() -> None:
+    from src.services.application_sdk_status import CurrentApplicationSdkMetadata, application_sdk_status
+
+    legacy = _app(
+        sdk_fingerprint="bundled-sdk", sdk_contract_version=3,
+        sdk_built_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
+    )
+    hosted = CurrentApplicationSdkMetadata(
+        package_version="1.4.2", fingerprint="hosted-binding", contract_version=3,
+        binding_api_major=1, supported_binding_api_majors=frozenset({1}),
+    )
+    assert application_sdk_status(legacy, hosted) == "update_available"
+
+
 def test_sdk_status_is_unknown_when_current_fingerprint_is_missing() -> None:
     from src.services.application_sdk_status import (
         CurrentApplicationSdkMetadata,

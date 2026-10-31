@@ -1,9 +1,27 @@
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BifrostProvider, useBifrostContext } from "bifrost";
 
 function App() {
-  const context = useBifrostContext();
-  return <main><h1>Hosted SDK Content</h1><output aria-label="SDK Theme">{context.theme}</output></main>;
+  const { authedFetch, theme } = useBifrostContext();
+  const [connection, setConnection] = useState("Connecting");
+
+  useEffect(() => {
+    let active = true;
+    void authedFetch("/api/auth/me").then(
+      (response) => {
+        if (active) setConnection(response.ok ? "Connected" : "Connection failed");
+      },
+      () => {
+        if (active) setConnection("Connection failed");
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [authedFetch]);
+
+  return <main><h1>Hosted SDK Content</h1><output aria-label="SDK Theme">{theme}</output><output aria-label="SDK Connection">{connection}</output></main>;
 }
 
 export function mount(element: HTMLElement, bootstrap: Record<string, unknown>) {
