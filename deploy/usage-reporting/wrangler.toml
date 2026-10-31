@@ -1,0 +1,31 @@
+name = "bifrost-usage-reporting"
+main = "src/index.ts"
+compatibility_date = "2026-10-30"
+account_id = "63010638da9f673be42cd88f5c738a40"
+workers_dev = false
+preview_urls = false
+logpush = false
+
+routes = [
+  { pattern = "reports.gobifrost.com", custom_domain = true }
+]
+
+[observability]
+enabled = false
+
+[observability.logs]
+enabled = false
+invocation_logs = false
+persist = false
+
+[observability.traces]
+enabled = false
+
+[observability.issues]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bifrost-usage-reporting"
+database_id = "c786651d-26f5-48b1-a48e-9ce0742e3505"
+migrations_dir = "migrations"

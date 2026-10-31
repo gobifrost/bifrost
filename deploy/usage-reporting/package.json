@@ -1,0 +1,21 @@
+{
+  "name": "bifrost-usage-reporting",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "check": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261031.1",
+    "miniflare": "5.20261023.3-beta",
+    "typescript": "5.9.3",
+    "wrangler": "4.156.0"
+  }
+}

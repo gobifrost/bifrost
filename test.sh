@@ -21,6 +21,7 @@
 # Quality checks:
 #   ./test.sh quality api               Run API pyright + ruff inside Docker.
 #   ./test.sh quality repo              Run local repository CI hygiene checks.
+#   ./test.sh reporting                 Test the Cloudflare usage receiver in Docker.
 #
 # Client tests:
 #   ./test.sh client unit               Vitest on the host (no stack).
@@ -41,6 +42,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# The hosted receiver is independent of the application stack and its secrets.
+if [ "${1:-}" = "reporting" ]; then
+    shift
+    exec "$SCRIPT_DIR/scripts/test-usage-reporting.sh" "$@"
+fi
 
 # Kubernetes uses an isolated kubeconfig and local fixtures, never Compose secrets.
 if [ "${1:-}" = "kubernetes" ]; then
