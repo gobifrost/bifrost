@@ -2,7 +2,7 @@
   "key": "pr:1156",
   "classification": "omit",
   "entry_ids": [],
-  "reason": "Internal cached metadata activation of the already approved SDK rebuild repair summary in PR #1155; no additional runtime behavior.",
+  "reason": "Internal cached metadata activation of the already approved SDK rebuild repair summary in PR #1155, plus a CI-only test timing repair; no additional runtime behavior.",
   "review": {
     "status": "approved",
     "evidence": [
