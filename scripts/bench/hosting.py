@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,10 @@ def _object(value: object, label: str) -> dict[str, Any]:
     return value
 
 
+def _sha256_value(value: object) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
 def _load_reference(value: object, label: str) -> tuple[dict[str, Any], dict[str, str]]:
     reference = _object(value, label)
     path = reference.get("path")
@@ -46,7 +51,9 @@ def _load_reference(value: object, label: str) -> tuple[dict[str, Any], dict[str
     data = Path(path).read_bytes()
     digest = hashlib.sha256(data).hexdigest()
     expected = reference.get("sha256")
-    if expected is not None and expected != digest:
+    if not isinstance(expected, str) or len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+        raise ValueError(f"{label}.sha256 must pin the immutable artifact")
+    if expected != digest:
         raise ValueError(f"{label} sha256 does not match")
     try:
         loaded = json.loads(data)
@@ -82,14 +89,13 @@ def _profile_occupancy(profile: dict[str, Any]) -> tuple[Resources, int, int, fl
     return total, int(_number(quota["pods"], "quota.pods")), int(_number(quota["pvcs"], "quota.pvcs")), storage_bytes / GIB
 
 
-def _status(capacity: dict[str, Any], campaign: dict[str, Any], soak: dict[str, Any] | None) -> tuple[str, list[str]]:
+def _status(capacity: dict[str, Any], campaign: dict[str, Any]) -> tuple[str, list[str]]:
     reasons: list[str] = []
-    confirmations = capacity.get("confirmations")
     sustainable = capacity.get("sustainable_rate")
-    if not isinstance(confirmations, list) or not any(item.get("overall") == "pass" for item in confirmations if isinstance(item, dict)):
-        reasons.append("capacity artifact has no passing confirmation")
     if type(sustainable) not in (int, float) or sustainable <= 0:
         reasons.append("capacity artifact has no positive sustainable_rate")
+    elif _confirmed_step(capacity) is None:
+        reasons.append("capacity artifact has no passing confirmation at sustainable_rate")
     segments = campaign.get("segments")
     if not isinstance(segments, list) or not segments:
         reasons.append("campaign has no segment references")
@@ -97,36 +103,139 @@ def _status(capacity: dict[str, Any], campaign: dict[str, Any], soak: dict[str, 
     # provided in the same object by the caller after campaign reconciliation.
     if campaign.get("overall") != "pass":
         reasons.append("campaign overall is not pass")
-    if soak is None:
-        reasons.append("soak evidence is missing")
-    elif soak.get("overall") != "pass":
-        reasons.append("soak overall is not pass")
     return ("certified" if not reasons else "not_certified"), reasons
 
 
+def _image_provenance(result: dict[str, Any], label: str) -> dict[str, Any]:
+    # Capacity-search results retain this at the result root.  The
+    # confirmation-only runner additionally snapshots it under each setup.
+    provenance = result.get("api_image_provenance")
+    if isinstance(provenance, dict):
+        return provenance
+    for setup_name in ("steady_setup", "confirmation_setup"):
+        setup = result.get(setup_name)
+        if isinstance(setup, dict) and isinstance(setup.get("api_image_provenance"), dict):
+            return setup["api_image_provenance"]
+    raise ValueError(f"{label} requires API image provenance captured by the harness")
+
+
+def _image_tag(result: dict[str, Any], label: str) -> str:
+    tag = result.get("api_image")
+    if isinstance(tag, str) and tag:
+        return tag
+    images = _object(result.get("images"), f"{label}.images")
+    api = _object(images.get("api"), f"{label}.images.api")
+    tag = api.get("tag")
+    if not isinstance(tag, str) or not tag:
+        raise ValueError(f"{label} requires a selected API image tag")
+    return tag
+
+
+def _same_commit(left: object, right: object) -> bool:
+    """Accept the harness's clean short/full SHA forms, never a dirty label."""
+    if not isinstance(left, str) or not isinstance(right, str):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{7,40}", left) or not re.fullmatch(r"[0-9a-f]{7,40}", right):
+        return False
+    return left.startswith(right) or right.startswith(left)
+
+
+def _immutable_provenance(value: object, label: str) -> dict[str, Any]:
+    provenance = _object(value, label)
+    chain = _object(provenance.get("node"), f"{label}.node")
+    immutable = {
+        "tag": provenance.get("tag"), "host_id": provenance.get("host_id"),
+        "node": chain, "cri_config_id": provenance.get("cri_config_id"),
+    }
+    if not all(immutable[key] for key in ("tag", "host_id", "cri_config_id")):
+        raise ValueError(f"{label} lacks immutable API image-chain fields")
+    api_pod = provenance.get("api_pod")
+    if api_pod is not None:
+        pod = _object(api_pod, f"{label}.api_pod")
+        # Pod name/UID are intentionally dynamic.  The harness already proves
+        # image_id is in its OCI chain; retain the stable digest-to-CRI check.
+        if pod.get("digest") != immutable["cri_config_id"]:
+            raise ValueError(f"{label}.api_pod digest does not match the selected CRI config")
+    return immutable
+
+
 def _matched_evidence(capacity: dict[str, Any], campaign: dict[str, Any], soak: dict[str, Any] | None) -> dict[str, Any]:
+    manifest = _object(campaign.get("campaign_manifest"), "campaign.campaign_manifest")
+    manifest_hash = campaign.get("campaign_manifest_sha256")
+    if not isinstance(manifest_hash, str) or manifest_hash != _sha256_value(manifest):
+        raise ValueError("campaign aggregate does not pin its immutable manifest")
     profile = capacity.get("profile_name")
     mix = capacity.get("mix_name")
     if not isinstance(profile, str) or not isinstance(mix, str):
         raise ValueError("capacity artifact requires profile_name and mix_name")
-    if campaign.get("profile_name") != profile or campaign.get("mix_name") != mix:
+    if manifest.get("profile_name") != profile or manifest.get("mix_name") != mix:
         raise ValueError("capacity and campaign frozen profile/workload do not match")
+    resolved_profile = _object(capacity.get("profile"), "capacity.profile")
+    if manifest.get("resolved_profile_sha256") != _sha256_value(resolved_profile):
+        raise ValueError("capacity profile does not match the campaign's frozen profile hash")
+    profile_capacity = _object(resolved_profile.get("capacity"), "capacity.profile.capacity")
+    mixes = _object(profile_capacity.get("mixes"), "capacity.profile.capacity.mixes")
+    if mixes.get(mix) != manifest.get("mix"):
+        raise ValueError("capacity workload mix does not match the campaign's frozen mix")
+    if not _same_commit(capacity.get("git_sha"), manifest.get("harness_git_sha")):
+        raise ValueError("capacity harness identity does not match the campaign")
+    image = _object(manifest.get("api_image"), "campaign.campaign_manifest.api_image")
+    manifest_provenance = _immutable_provenance(image.get("provenance"), "campaign API image provenance")
+    if (_image_tag(capacity, "capacity") != image.get("tag")
+            or _immutable_provenance(_image_provenance(capacity, "capacity"), "capacity API image provenance") != manifest_provenance):
+        raise ValueError("capacity API image provenance does not match the campaign")
+    if soak is not None:
+        if soak.get("profile_name") != profile or soak.get("campaign_manifest_sha256") != manifest_hash:
+            raise ValueError("soak frozen profile/workload does not match capacity")
+        if not _same_commit(soak.get("git_sha"), manifest.get("harness_git_sha")) or _image_tag(soak, "soak") != image.get("tag"):
+            raise ValueError("soak harness or API image identity does not match the campaign")
+        soak_provenance = _immutable_provenance(_image_provenance(soak, "soak"), "soak API image provenance")
+        if soak_provenance != manifest_provenance:
+            raise ValueError("soak API image provenance does not match the campaign")
     rate = capacity.get("sustainable_rate")
     if type(rate) not in (int, float) or rate <= 0:
         rate = None
-    if soak is not None:
-        if soak.get("profile_name") != profile or soak.get("mix_name") != mix:
-            raise ValueError("soak frozen profile/workload does not match capacity")
-        if rate is not None and soak.get("rate_per_s") != rate * 0.7:
-            raise ValueError("soak rate is not 70% of the confirmed capacity rate")
-    return {"profile_name": profile, "mix_name": mix, "confirmed_rate_per_s": rate}
+    return {"profile_name": profile, "mix_name": mix, "confirmed_rate_per_s": rate,
+            "campaign_manifest_sha256": manifest_hash, "harness_git_sha": manifest["harness_git_sha"],
+            "api_image": image}
+
+
+def _confirmed_step(capacity: dict[str, Any]) -> dict[str, Any] | None:
+    rate = capacity.get("sustainable_rate")
+    if type(rate) not in (int, float) or rate <= 0:
+        return None
+    matches = [step for step in capacity.get("confirmations", [])
+               if isinstance(step, dict) and step.get("overall") == "pass" and step.get("rate") == rate]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _soak_observation(soak: dict[str, Any] | None) -> tuple[dict[str, Any] | None, float | None]:
+    """Return descriptive soak evidence; it never upgrades capacity certification."""
+    if soak is None:
+        return None, None
+    status = soak.get("status")
+    cleanup = soak.get("cleanup")
+    if status != "observational" or not isinstance(cleanup, dict) or cleanup.get("verified") is not True:
+        return {"status": "invalid", "reason": "soak is not a completed observational run with verified cleanup"}, None
+    growth = _object(soak.get("growth_per_1000_terminal"), "soak.growth_per_1000_terminal")
+    db = growth.get("db_bytes_per_1000_terminal")
+    objects = growth.get("object_bytes_per_1000_terminal")
+    if (type(db) not in (int, float) or type(objects) not in (int, float)
+            or not math.isfinite(float(db)) or not math.isfinite(float(objects)) or db < 0 or objects < 0):
+        return {"status": "incomplete", "growth_per_1000_terminal": growth,
+                "reason": "database/object growth is missing, non-finite, or negative; no long-run shrinkage assumption"}, None
+    generated = (float(db) + float(objects)) / 1000
+    return {"status": "observational", "growth_per_1000_terminal": growth,
+            "generated_bytes_per_terminal": generated,
+            "limit": "descriptive soak evidence; it does not certify capacity"}, generated
 
 
 def _observed_rates(capacity: dict[str, Any]) -> dict[str, Any]:
     offered = capacity.get("sustainable_rate")
     if type(offered) not in (int, float) or offered <= 0:
         offered = None
-    rates = capacity.get("execution_rates")
+    step = _confirmed_step(capacity)
+    rates = step.get("execution_rates") if step else None
     if not isinstance(rates, dict):
         return {"configured_offered_rate_per_s": offered, "measured_correct_rate_per_s": None,
                 "limit": "execution_rates missing; offered rate is not measured correct throughput"}
@@ -163,11 +272,34 @@ def _nullable_sum(values: list[float | None]) -> float | None:
     return None if any(value is None for value in values) else sum(value for value in values if value is not None)
 
 
+def _unsupported_pricing_keys(pricing: dict[str, Any]) -> list[str]:
+    supported = {
+        "node", "volume", "object_storage", "model_provider", "shared_infrastructure",
+        "kubernetes_control_plane_monthly_usd", "kubernetes_control_plane_note", "kubernetes_source",
+        "shared_infrastructure_source",
+    }
+    unsupported = {key for key in pricing if key not in supported}
+    nested = {
+        "node": {"monthly_unit_price_usd", "note", "source", "accessed"},
+        "volume": {"per_provisioned_gib_month_usd", "note", "source", "accessed"},
+        "object_storage": {"base_monthly_usd", "stored_gib", "included_gib", "extra_gib_month_usd",
+                           "outbound_gib", "included_outbound_gib", "extra_outbound_gib_usd",
+                           "request_fee_monthly_usd", "note", "source", "accessed"},
+        "model_provider": {"workflow_per_success_usd", "agent_per_success_usd", "note", "source", "accessed"},
+    }
+    for section, allowed in nested.items():
+        value = pricing.get(section)
+        if isinstance(value, dict):
+            unsupported.update(f"{section}.{key}" for key in value if key not in allowed)
+    return sorted(unsupported)
+
+
 def _costs(scenario: dict[str, Any], density: dict[str, Any], generated_bytes: float | None) -> dict[str, Any]:
     pricing = _object(scenario.get("pricing"), "pricing")
     demands = _object(scenario.get("demand"), "demand")
     retention = _object(scenario.get("retention"), "retention")
     missing: list[str] = []
+    unsupported = _unsupported_pricing_keys(pricing)
     results: dict[str, Any] = {}
     for name in ("low", "base", "peak"):
         demand = _object(demands.get(name), f"demand.{name}")
@@ -225,7 +357,13 @@ def _costs(scenario: dict[str, Any], density: dict[str, Any], generated_bytes: f
         shared_cost = _nullable_sum([_number(value, f"pricing.shared_infrastructure.{key}") if value is not None else None for key, value in shared.items()])
         if not shared:
             missing.append("pricing.shared_infrastructure (build/observability/LB/network/storage categories)")
-        combined = _nullable_sum([node_cost, volume_cost, object_storage_cost, model_cost, shared_cost])
+        control_plane = pricing.get("kubernetes_control_plane_monthly_usd")
+        if control_plane is None:
+            control_plane_cost = None
+            missing.append("pricing.kubernetes_control_plane_monthly_usd")
+        else:
+            control_plane_cost = _number(control_plane, "pricing.kubernetes_control_plane_monthly_usd")
+        combined = _nullable_sum([node_cost, volume_cost, object_storage_cost, model_cost, shared_cost, control_plane_cost])
         revenue = demand.get("revenue_monthly_usd")
         margin = None if revenue is None or _number(revenue, f"demand.{name}.revenue_monthly_usd") <= 0 or combined is None else _number(revenue, f"demand.{name}.revenue_monthly_usd") - combined
         margin_percent = None if margin is None else margin / _number(revenue, f"demand.{name}.revenue_monthly_usd") * 100
@@ -235,9 +373,11 @@ def _costs(scenario: dict[str, Any], density: dict[str, Any], generated_bytes: f
                          "basis": "initial data plus explicit per-terminal generation and retention/backup/version reserves; not extrapolated from a two-hour slope"},
                          "model_provider_cost_usd": model_cost, "shared_infrastructure_cost_usd": shared_cost,
                          "object_storage_cost_usd": object_storage_cost,
+                         "kubernetes_control_plane_cost_usd": control_plane_cost,
                          "combined_cost_usd": combined, "revenue_monthly_usd": revenue, "margin_usd": margin}
         results[name]["margin_percent"] = margin_percent
-    return {"by_demand": results, "missing_inputs": sorted(set(missing)), "node_billing_basis": "Ready node time: monthly node price × node count × utilized month fraction, never pod utilization"}
+    return {"by_demand": results, "missing_inputs": sorted(set(missing)), "unsupported_pricing_keys": unsupported,
+            "node_billing_basis": "Ready node time: monthly node price × node count × utilized month fraction, never pod utilization"}
 
 
 def build_card(scenario: dict[str, Any]) -> dict[str, Any]:
@@ -249,21 +389,24 @@ def build_card(scenario: dict[str, Any]) -> dict[str, Any]:
     if evidence.get("soak") is not None:
         soak, soak_ref = _load_reference(evidence["soak"], "evidence.soak")
     matched = _matched_evidence(capacity, campaign, soak)
-    certification, reasons = _status(capacity, campaign, soak)
+    certification, reasons = _status(capacity, campaign)
     tenant, pods, pvcs, storage_gib = _profile_occupancy(_object(capacity.get("profile"), "capacity.profile"))
-    resources = capacity.get("resource_summary")
-    storage = soak.get("storage") if soak else None
-    generated = storage.get("generated_bytes_per_terminal") if isinstance(storage, dict) else None
-    if generated is not None:
-        generated = _number(generated, "soak.storage.generated_bytes_per_terminal")
+    step = _confirmed_step(capacity)
+    soak_observation, generated = _soak_observation(soak)
     density = _density(scenario, tenant, pods, pvcs, storage_gib)
     return {"schema_version": 1, "kind": "hosting-capacity-card", "evidence": {"capacity": capacity_ref, "campaign": campaign_ref, "soak": soak_ref},
             "certification": {"status": certification, "reasons": reasons}, "frozen": matched,
             "resource_capacity": {"requested_quota": _object(capacity["profile"]["quota"], "capacity.profile.quota"),
                                   "max_component_requests": {"cpu_m": tenant.cpu_m, "memory_bytes": tenant.memory, "pods": pods, "pvcs": pvcs, "storage_gib": storage_gib},
-                                  "actual_observed": {"resource_summary": resources, "latency": capacity.get("latency"),
-                                                      "execution_rates": capacity.get("execution_rates"), "storage": storage,
-                                                      "recovery_limitations": soak.get("recovery") if soak else None}},
+                                  "actual_observed": {"resource_usage": step.get("resource_usage") if step else None,
+                                                      "latency": _object(step.get("verdict"), "confirmation.verdict").get("latency") if step else None,
+                                                      "execution_rates": step.get("execution_rates") if step else None,
+                                                      "storage_collector_frames": step.get("storage") if step else None,
+                                                      "soak_observation": soak_observation,
+                                                      "recovery_limitations": None if soak is None else {
+                                                          "capacity_evidence": soak.get("capacity_evidence"),
+                                                          "object_storage": soak.get("object_storage"),
+                                                      }}},
             "workload_rates": _observed_rates(capacity), "density": density,
             "cost": _costs(scenario, density, generated),
             "limitations": ["Node allocatable resources are observed input, not advertised SKU capacity.",

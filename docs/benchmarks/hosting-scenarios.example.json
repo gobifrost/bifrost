@@ -53,8 +53,8 @@
       "note": "No per-request fee was confirmed; retain null rather than inventing a charge."
     },
     "kubernetes_control_plane_monthly_usd": 0,
-    "kubernetes_control_plane_optional_monthly_usd": 40,
     "kubernetes_source": "https://docs.digitalocean.com/products/kubernetes/details/pricing/",
+    "kubernetes_control_plane_note": "Default control plane is modeled at $0. Set this explicit input to $40 when selecting DigitalOcean Kubernetes HA control plane pricing.",
     "shared_infrastructure": {
       "build": 0,
       "observability": 0,
