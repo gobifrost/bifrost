@@ -1,0 +1,124 @@
+{
+  "max_invocations": 20,
+  "incremental_usd_cap": 0.1,
+  "reservations": [
+    {
+      "ordinal": 1,
+      "at": "2026-10-31T15:41:26.846Z",
+      "request": {
+        "action": "state",
+        "marker": "cloud-tenant-A"
+      }
+    },
+    {
+      "ordinal": 2,
+      "at": "2026-10-31T15:41:28.647Z",
+      "request": {
+        "action": "state",
+        "marker": "cloud-tenant-B"
+      }
+    },
+    {
+      "ordinal": 3,
+      "at": "2026-10-31T15:41:30.059Z",
+      "request": {
+        "action": "state",
+        "marker": "cloud-parallel-A"
+      }
+    },
+    {
+      "ordinal": 4,
+      "at": "2026-10-31T15:41:30.061Z",
+      "request": {
+        "action": "state",
+        "marker": "cloud-parallel-B"
+      }
+    },
+    {
+      "ordinal": 5,
+      "at": "2026-10-31T15:41:31.197Z",
+      "request": {
+        "action": "egress"
+      }
+    },
+    {
+      "ordinal": 6,
+      "at": "2026-10-31T15:41:32.387Z",
+      "request": {
+        "action": "io",
+        "cancel": true
+      }
+    },
+    {
+      "ordinal": 7,
+      "at": "2026-10-31T15:41:33.732Z",
+      "request": {
+        "action": "cpu",
+        "cancel": true
+      }
+    },
+    {
+      "ordinal": 8,
+      "at": "2026-10-31T15:44:07.835Z",
+      "request": {
+        "fixture": "transform"
+      }
+    },
+    {
+      "ordinal": 9,
+      "at": "2026-10-31T15:44:14.697Z",
+      "request": {
+        "fixture": "async"
+      }
+    },
+    {
+      "ordinal": 10,
+      "at": "2026-10-31T15:44:22.026Z",
+      "request": {
+        "fixture": "failure"
+      }
+    },
+    {
+      "ordinal": 11,
+      "at": "2026-10-31T15:45:36.864Z",
+      "request": {
+        "fixture": "transform"
+      }
+    },
+    {
+      "ordinal": 12,
+      "at": "2026-10-31T15:46:43.205Z",
+      "request": {
+        "fixture": "transform"
+      }
+    },
+    {
+      "ordinal": 13,
+      "at": "2026-10-31T15:46:47.273Z",
+      "request": {
+        "fixture": "async"
+      }
+    },
+    {
+      "ordinal": 14,
+      "at": "2026-10-31T15:46:51.069Z",
+      "request": {
+        "fixture": "failure"
+      }
+    },
+    {
+      "ordinal": 15,
+      "at": "2026-10-31T15:47:50.640Z",
+      "request": {
+        "action": "cpu_limit"
+      }
+    },
+    {
+      "ordinal": 16,
+      "at": "2026-10-31T15:48:44.066Z",
+      "request": {
+        "action": "cpu_catch"
+      }
+    }
+  ]
+}

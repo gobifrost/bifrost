@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import logging
 import hashlib
-import resource
 import sys
+from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Protocol
 
 # Install virtual import hook IMMEDIATELY at module load time.
 # This must happen before any workspace imports (e.g., from shared import ...)
@@ -64,12 +64,34 @@ def _set_process_engine_credentials(context_data: dict[str, Any]) -> bool:
 class ResourceMetrics:
     """Resource usage metrics captured during execution."""
     # Memory metrics (bytes)
-    peak_memory_bytes: int  # Maximum RSS during execution
-    peak_process_rss_bytes: int  # One-shot child process high-water RSS
+    peak_memory_bytes: int | None  # None when the provider cannot measure it
+    peak_process_rss_bytes: int | None  # One-shot child high-water RSS, if known
     # CPU metrics (seconds)
-    cpu_user_seconds: float  # User-mode CPU time
-    cpu_system_seconds: float  # Kernel-mode CPU time
-    cpu_total_seconds: float  # Total CPU time (user + system)
+    cpu_user_seconds: float | None  # User-mode CPU time, if known
+    cpu_system_seconds: float | None  # Kernel-mode CPU time, if known
+    cpu_total_seconds: float | None  # Total CPU time, if known
+
+
+class ExecutionResourceObserver(Protocol):
+    """One observer per physical attempt; unknown measurements stay unknown."""
+
+    @abstractmethod
+    def start(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def finish(self) -> ResourceMetrics:
+        raise NotImplementedError
+
+
+class ProcessResourceObserver:
+    """Existing Linux/macOS process accounting, unchanged for default callers."""
+
+    def start(self) -> None:
+        self._start = _get_resource_usage()
+
+    def finish(self) -> ResourceMetrics:
+        return _capture_metrics(*self._start)
 
 
 def _get_resource_usage() -> tuple[int, float, float]:
@@ -78,6 +100,8 @@ def _get_resource_usage() -> tuple[int, float, float]:
     Returns:
         Tuple of (max_rss_bytes, user_cpu_seconds, system_cpu_seconds)
     """
+    import resource
+
     usage = resource.getrusage(resource.RUSAGE_SELF)
     # ru_maxrss is in KB on Linux, bytes on macOS
     # Normalize to bytes
@@ -114,7 +138,13 @@ def _capture_metrics(start_rss: int, start_utime: float, start_stime: float) -> 
     )
 
 
-async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict[str, Any]:
+async def run_execution(
+    execution_id: str,
+    context_data: dict[str, Any],
+    *,
+    resource_observer: ExecutionResourceObserver | None = None,
+    public_url: str | None = None,
+) -> dict[str, Any]:
     """
     Run the actual execution.
 
@@ -136,7 +166,8 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
     start_time = datetime.now(timezone.utc)
 
     # Capture starting resource usage
-    start_rss, start_utime, start_stime = _get_resource_usage()
+    observer = resource_observer if resource_observer is not None else ProcessResourceObserver()
+    observer.start()
     # The loaded workflow's code version; its memory is learned per version.
     code_hash: str | None = None
 
@@ -242,7 +273,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                     )
 
             if workflow_func is None:
-                metrics = _capture_metrics(start_rss, start_utime, start_stime)
+                metrics = observer.finish()
                 # Use the actual error if available, otherwise fall back to generic message
                 error_msg = load_error or f"Executable '{name}' not found"
                 error_type = "WorkflowLoadError" if load_error else "ExecutableNotFound"
@@ -274,6 +305,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
         # Build execution request
         request = ExecutionRequest(
             execution_id=execution_id,
+            public_url=public_url,
             caller=caller,
             organization=org,
             func=workflow_func,
@@ -309,7 +341,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
         exec_result = await execute(request)
 
         # Capture resource metrics after execution
-        metrics = _capture_metrics(start_rss, start_utime, start_stime)
+        metrics = observer.finish()
 
         # Convert result to dict for serialization
         return {
@@ -341,7 +373,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
         e.__traceback__ = None  # Free frame references to prevent memory leaks
 
         # Still capture metrics even on failure
-        metrics = _capture_metrics(start_rss, start_utime, start_stime)
+        metrics = observer.finish()
 
         return {
             "status": ExecutionStatus.FAILED.value,

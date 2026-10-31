@@ -1,0 +1,13 @@
+{
+  "key": "pr:1161",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Experimental Cloudflare Python execution tooling and internal runtime metadata seams; no supported customer-facing executor or production rollout is added.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1161",
+      "Author proposal only; maintainer review is pending and first-class executor acceptance remains incomplete."
+    ]
+  }
+}

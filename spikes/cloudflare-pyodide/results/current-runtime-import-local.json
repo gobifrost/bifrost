@@ -1,0 +1,4 @@
+{
+  "status": 200,
+  "body": "{\"worker_imported\": true, \"http_module_path_available\": true, \"unknown_metrics\": {\"peak_memory_bytes\": null, \"peak_process_rss_bytes\": null, \"cpu_user_seconds\": null, \"cpu_system_seconds\": null, \"cpu_total_seconds\": null}}"
+}

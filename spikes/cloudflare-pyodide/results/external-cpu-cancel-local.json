@@ -1,0 +1,19 @@
+{
+  "runtime": "local-workerd",
+  "external_abort_requested": true,
+  "observation_window_ms": 15000,
+  "events": [
+    {
+      "event": "before",
+      "elapsed_ms": 9710.96327
+    },
+    {
+      "event": "after",
+      "elapsed_ms": 11519.686287
+    }
+  ],
+  "outcome": {
+    "error_type": "string",
+    "error": "external diagnostic abort"
+  }
+}
