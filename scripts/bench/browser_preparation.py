@@ -80,6 +80,28 @@ def tls_workload_documents() -> tuple[dict[str, Any], dict[str, Any]]:
     return service, deployment
 
 
+def patch_tls_workload(cluster: Any, service: dict[str, Any], deployment: dict[str, Any]) -> None:
+    """Replace only the client fields TLS observation requires.
+
+    The tenant deployment was originally created with client-side apply.  A
+    second partial apply would treat omitted previously-managed fields (image,
+    resources, lifecycle, and template metadata) as deletions.  JSON Patch
+    keeps those product fields intact while changing the listener contract.
+    """
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    template = deployment["spec"]["template"]["spec"]
+    service_patch = [{"op": "replace", "path": "/spec/ports", "value": service["spec"]["ports"]}]
+    deployment_patch = [
+        {"op": "replace", "path": "/spec/template/spec/containers/0/ports", "value": container["ports"]},
+        {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe", "value": container["livenessProbe"]},
+        {"op": "replace", "path": "/spec/template/spec/containers/0/readinessProbe", "value": container["readinessProbe"]},
+        {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts", "value": container["volumeMounts"]},
+        {"op": "add", "path": "/spec/template/spec/volumes", "value": template["volumes"]},
+    ]
+    cluster.kubectl("patch", "service", "client", "--type=json", "-p", json.dumps(service_patch))
+    cluster.kubectl("patch", "deployment", "bifrost-client", "--type=json", "-p", json.dumps(deployment_patch))
+
+
 def build_runtime_patch(image: str) -> dict[str, str]:
     """Environment read by the normal isolated PlatformJob builder.
 
@@ -256,8 +278,7 @@ def prepare_tls(cluster: Any) -> dict[str, Any]:
         cert, _ = _certificate(cluster, directory)
         _configmap(cluster, TLS_CONFIGMAP, config)
         service, deployment = tls_workload_documents()
-        _apply(cluster, service)
-        _apply(cluster, deployment)
+        patch_tls_workload(cluster, service, deployment)
         certificate_sha256 = hashlib.sha256(cert.read_bytes()).hexdigest()
     cluster.kubectl("rollout", "restart", "deployment/bifrost-api")
     cluster.kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=300s")

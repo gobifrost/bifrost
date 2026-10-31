@@ -1,0 +1,26 @@
+{
+  "description": "M-ha correctness-only envelope; never a capacity result.",
+  "quota": {"cpu": "4", "memory": "8Gi", "storage": "50Gi", "pods": 20, "pvcs": 4},
+  "components": {
+    "api": {"replicas": 2, "cpu": "750m", "memory": "1Gi"},
+    "client": {"replicas": 1, "cpu": "100m", "memory": "128Mi"},
+    "redis": {"cpu": "150m", "memory": "256Mi"},
+    "postgres": {"cpu": "1", "memory": "2Gi", "storage": "20Gi"},
+    "pooler": {"cpu": "100m", "memory": "64Mi"}
+  },
+  "worker_policy": {"warm_workers": 1, "max_workers": 2, "worker_memory_mib": 1536, "largest_worker_mib": 1536},
+  "worker_cpu": "500m",
+  "env": {"MALLOC_ARENA_MAX": "2"},
+  "classes": ["wf-noop"],
+  "sequential": 1,
+  "burst": 1,
+  "burst_rounds": 1,
+  "timeout_s": 300,
+  "settle_s": 20,
+  "idle_s": 120,
+  "idle_db_s": 60,
+  "seed": {"workflow": 1100, "tool": 701, "data_provider": 50},
+  "table_docs": 200,
+  "fake_llm_latency_ms": 0,
+  "correctness_only": true
+}

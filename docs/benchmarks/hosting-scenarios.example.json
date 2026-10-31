@@ -1,9 +1,9 @@
 {
   "description": "Illustrative offline input only, not a customer quote. Replace every path and commercial assumption with dated evidence before use.",
   "evidence": {
-    "capacity": {"path": "/evidence/passed-capacity/result.json", "sha256": "replace-with-sha256"},
     "campaign": {"path": "/evidence/passed-campaign/campaign-result.json", "sha256": "replace-with-sha256"},
-    "soak": {"path": "/evidence/passed-soak/soak-result.json", "sha256": "replace-with-sha256"}
+    "soak": {"path": "/evidence/passed-soak/soak-result.json", "sha256": "replace-with-sha256"},
+    "capacity": {"path": "/optional/evidence/standalone-capacity-result.json", "sha256": "replace-with-sha256", "note": "Optional only for a separate SDK capacity card; its exact rate, frozen profile, harness revision, and image chain must match the primary campaign."}
   },
   "node": {
     "allocatable": {"cpu": "3890m", "memory": "6568244Ki"},
@@ -21,14 +21,19 @@
     "note": "Observed node allocatable resources, not advertised 4 CPU / 8 GB. A 3900m benchmark envelope does not fit this node before other requests."
   },
   "ha_min_nodes": 2,
-  "node_utilized_month_fraction": 1,
+  "ready_node_month_fraction": 1,
+  "confirmed_rate_utilization_fraction": 0.7,
   "retention": {
-    "initial_data_gib": 10,
+    "demand_basis": "fleet",
+    "initial_database_data_gib_per_tenant": 10,
+    "initial_object_data_gib_per_tenant": 0,
+    "database_volume_provisioned_gib_per_tenant": 20,
+    "database_volume_minimum_gib_per_tenant": 20,
+    "backup_retained_gib_per_tenant": 0,
+    "object_versions_retained_gib_per_tenant": 0,
     "retention_days": 30,
-    "backup_copies": 1,
-    "retained_versions": 1,
     "reserve_fraction": 0.2,
-    "note": "The calculator combines this with observed soak generated_bytes_per_terminal. It does not project a two-hour growth slope indefinitely or assume autovacuum shrinks files."
+    "note": "Per-tenant stocks are multiplied by placements. Fleet demand is used once; choose per_tenant only when each placement receives the supplied monthly demand. Database PVC billing uses the explicit provisioned size, never logical used bytes. Retained stock projects per-terminal growth from a two-hour synthetic soak across assumed demand and retention; it is illustrative until representative demand and retention are measured."
   },
   "pricing": {
     "node": {
@@ -40,9 +45,12 @@
       "source": "https://docs.digitalocean.com/products/volumes/details/pricing/",
       "accessed": "2026-10-31"
     },
+    "backup": {
+      "per_retained_gib_month_usd": null,
+      "note": "Supply a dated retained-backup GiB price when backup_retained_gib_per_tenant is nonzero; null keeps backup cost unknown."
+    },
     "object_storage": {
       "base_monthly_usd": 5,
-      "stored_gib": 10,
       "included_gib": 250,
       "extra_gib_month_usd": 0.02,
       "included_outbound_gib": 1024,
@@ -77,7 +85,9 @@
   },
   "notes": [
     "Demand is explicit successful workflow/agent-request volume; it is never derived from a saturation rate.",
-    "Node billing is Ready-node time, monthly unit price x node count x utilized-month fraction, never pod utilization.",
+    "The five-segment campaign aggregate and passing pooled reliability are the primary mixed-capacity evidence. Do not substitute a standalone confirmation at another rate.",
+    "Peak demand must not exceed confirmed_rate_utilization_fraction x the confirmed capacity rate; otherwise the card is not certified.",
+    "Node billing is Ready-node time, monthly unit price x node count x ready-node month fraction, never pod utilization.",
     "The CLI requires a fresh output directory: python3 scripts/bench/hosting.py --scenario scenario.json --out /new/card."
   ]
 }

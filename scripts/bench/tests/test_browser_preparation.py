@@ -34,6 +34,23 @@ class BrowserPreparationTest(unittest.TestCase):
         self.assertIn({"name": "bench-client-tls", "secret": {"secretName": "bench-client-tls"}}, deployment["spec"]["template"]["spec"]["volumes"])
         self.assertEqual(browser_preparation.TLS_ORIGIN, "https://client.bench-tenant")
 
+    def test_tls_workload_patch_preserves_the_existing_client_image_and_resources(self) -> None:
+        cluster = Mock()
+        service, deployment = browser_preparation.tls_workload_documents()
+        browser_preparation.patch_tls_workload(cluster, service, deployment)
+        service_patch = json.loads(cluster.kubectl.call_args_list[0].args[-1])
+        deployment_patch = json.loads(cluster.kubectl.call_args_list[1].args[-1])
+        self.assertEqual(service_patch, [{"op": "replace", "path": "/spec/ports", "value": service["spec"]["ports"]}])
+        paths = {operation["path"] for operation in deployment_patch}
+        self.assertEqual(paths, {
+            "/spec/template/spec/containers/0/ports",
+            "/spec/template/spec/containers/0/livenessProbe",
+            "/spec/template/spec/containers/0/readinessProbe",
+            "/spec/template/spec/containers/0/volumeMounts",
+            "/spec/template/spec/volumes",
+        })
+        self.assertFalse(any("image" in operation or "resources" in operation for operation in deployment_patch))
+
     def test_build_runtime_patch_is_tenant_scoped_offline_and_has_equal_cpu(self) -> None:
         patch = browser_preparation.build_runtime_patch("bifrost-api:kind-a74e45295998-current")
         self.assertEqual(patch["BIFROST_KUBERNETES_JOB_IMAGE"], "bifrost-api:kind-a74e45295998-current")
