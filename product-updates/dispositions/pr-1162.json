@@ -1,0 +1,10 @@
+{
+  "key": "pr:1162",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal hosted usage-receiver infrastructure; this change does not enable reporting or change existing Bifrost installation behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1162"]
+  }
+}
