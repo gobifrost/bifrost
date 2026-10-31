@@ -118,3 +118,33 @@ sources and lucide-react. Synced the current client SDK source into that API's
 SDK source volume, ran npm ci against its current lock in its dependency volume,
 and restarted only the API after the failed startup. Actual health readback is
 200. No unrelated stack, database authority or production resource was changed.
+
+## Provider contract qualification
+
+The existing canonical remote adapter suite and new explicit boundary tests pass
+17 tests via `./test.sh tests/unit/dev/test_pyodide_remote_boundary.py tests/unit/dev/test_thin_remote_pool.py -v`.
+This verifies the existing adapter's unit contracts for stale results, lost launch
+ACK, reconnect preservation, result-before-ACK and callback replay. It does not
+prove a Cloudflare provider implements those contracts. Unknown memory and a
+non-process handle are explicitly refused by current admission. No shared
+remote_pool.py implementation was changed and no PID or memory value fabricated.
+
+`node --test backend/module-response.test.mjs` passes seven integrity tests. The
+new response check recomputes SHA-256 over UTF-8 source, binds path and upstream
+hash to an expected trusted artifact digest, bounds the streamed response, and
+passes non-200 auth/error responses through without replay. It is wired into the
+negative API diagnostic with no approved digest, so unexpected successful source
+is rejected before loading. Supplying an approved full-workspace manifest from
+canonical dispatch and executing it under genuine runtime identity remain open;
+this helper does not create authorization or certify arbitrary dependencies.
+The guarded real-API denial check still passes after installing the check;
+`current-runtime-invalid-credential-guarded.json` records its separate result.
+`./test.sh quality api` passes with zero Pyright errors/warnings and Ruff clean
+for this increment. Normal GitHub CI and maintainer acceptance remain unrun.
+
+Eddie milestone/conflict report `29930c64-e541-4130-862a-0d396d476412` received a
+reply and was acknowledged for native run ordinal 4. Eddie reconfirmed that the
+bounded cloud/temporary-secret approval remains unanswered and shared-file
+ownership is not established. Reply digest:
+`4789ec990b55a75a9512d8d7b0cb5705d4f62a44aa02d30c69b4fbfed844d502`.
+No approval, shared ownership transfer or acceptance follows from that exchange.

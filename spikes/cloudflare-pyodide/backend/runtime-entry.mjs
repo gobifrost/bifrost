@@ -1,5 +1,6 @@
 import {runtimeCode} from './runtime-code.mjs';
 import {WorkerEntrypoint} from 'cloudflare:workers';
+import {verifyModuleResponse} from './module-response.mjs';
 const observations=new Map();
 
 export class RejectedApi extends WorkerEntrypoint {
@@ -14,7 +15,9 @@ export class RejectedApi extends WorkerEntrypoint {
       headers:{Authorization:'Bearer synthetic-invalid-runtime-token'},redirect:'manual',
     });
     observations.get(this.ctx.props.id)?.push(response.status);
-    return response;
+    // This negative diagnostic has no approved workspace artifact. An unexpected
+    // success must not execute code; a real API 401 passes through unchanged.
+    return verifyModuleResponse(response,url.pathname.slice('/api/sdk/modules/'.length),undefined);
   }
 }
 
