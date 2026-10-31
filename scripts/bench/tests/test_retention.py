@@ -131,6 +131,30 @@ class RetentionTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "did not delete"):
             retention._assert_state({"execution_ids": ids, "execution_count": 1, "execution_log_count": 0}, ids, deleted=True)
 
+    def test_failure_is_saved_before_namespace_cleanup_can_block(self) -> None:
+        current = Mock()
+        current.result = {}
+        saved = []
+        current.save.side_effect = lambda: saved.append(dict(current.result))
+        reset_count = 0
+
+        def reset(_cluster):
+            nonlocal reset_count
+            reset_count += 1
+            if reset_count == 2:
+                self.assertEqual(saved[-1]["stage"], "exception")
+                self.assertEqual(saved[-1]["error"], "RuntimeError: fixture setup failed")
+
+        with tempfile.TemporaryDirectory() as raw, \
+             patch.object(retention, "Cluster", return_value=Mock()), \
+             patch.object(retention.run, "load_profile", return_value={}), \
+             patch.object(retention.run, "Run", return_value=current), \
+             patch.object(retention.run, "_prepare", side_effect=RuntimeError("fixture setup failed")), \
+             patch.object(retention.deploy, "reset", side_effect=reset):
+            with self.assertRaisesRegex(RuntimeError, "fixture setup failed"):
+                retention.rehearse("m", "candidate:local", Path(raw) / "evidence")
+        self.assertTrue(current.result["cleanup"]["verified"])
+
     def test_execute_submits_signature_safe_inputs_and_validates_terminal_payload(self) -> None:
         fixture = self._fixture_module()
         submitted: list[dict] = []

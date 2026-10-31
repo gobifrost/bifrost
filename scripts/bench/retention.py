@@ -209,6 +209,7 @@ def rehearse(profile_name: str, api_image: str, out: Path) -> Path:
     except BaseException as error:
         failure = error
         current.result.update({"stage": "exception", "error": f"{type(error).__name__}: {error}"})
+        current.save()
     finally:
         try:
             deploy.reset(cluster)
