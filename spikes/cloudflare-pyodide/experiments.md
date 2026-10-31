@@ -91,3 +91,24 @@ successful report but PowerShell treated benign Docker stderr as failure; a new
 Node process wrapper and additional run-liveness experiment established exit 0.
 The earlier `authorized-local.json` receipt is preserved separately. Temporary
 test-network attachment and the dedicated Wrangler process were retired afterward.
+
+## Canonical transport contract preparation
+
+The continuation delivery `4da716b5-ecda-4b98-a3c9-f317cba986dd` was acknowledged
+against current run 15; its queue had no pending question/request. The Containers
+owner remains in its separate worktree. No shared remote_pool/host/launcher
+implementation was edited and no live cloud test was started.
+
+| Hypothesis | Change / command | Observation | Next experiment |
+|---|---|---|---|
+| Existing PostgreSQL session fences can protect a companion physical-route journal | `./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q` | First six tests pass, including concurrent duplicate reservation and stale commit fencing; expanded qualification recorded separately | Bind canonical claim acquisition and full consumer receipt reconciliation |
+| Docker qualification can load only the companion under test | Initial directory mount, `./test.sh quality api` | Pyright zero errors; Ruff exposed pre-existing runtime-runner E402 from mounting the entire backend | Narrowed read-only mount to attempt_journal.py, not lint exclusions or bootstrap changes |
+
+The journal is transport state only and retains acknowledged route tombstones
+until irreversible launcher retirement. Capacity is bounded and fails closed.
+No logical cancellation operation is offered as physical termination. The real
+engine/SDK proof at 08f149c99 is retained, not rerun as this increment's deliverable.
+Expanded final qualification: nine tests passed in 8.23 seconds, raw
+`results/attempt-journal-junit.xml`, including the real canonical execution
+repository write and rejection of a subsequent overwrite. This does not prove
+the full workflow consumer's log/event/claim-release effects.

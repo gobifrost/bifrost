@@ -1,0 +1,21 @@
+{
+    "baseline_head":  "08f149c995f3ea00d3ff0c9f913ed8e6a162207f",
+    "environment":  "isolated Docker PostgreSQL test stack bifrost-test-79c5c14e",
+    "test_command":  "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q",
+    "tests":  9,
+    "failures":  0,
+    "errors":  0,
+    "skipped":  0,
+    "duration_seconds":  8.23,
+    "physical_launch":  "deterministic fixture callback, not Cloudflare",
+    "canonical_authority":  "actual upstream ownership, transactional fence, execution repository",
+    "full_consumer_completion_verified":  false,
+    "physical_termination_verified":  false,
+    "cloud_invocations":  0,
+    "source_sha256":  {
+                          "journal":  "080864458af92a81a5aef5cd86163110442dafbed5e6698a4869de09c56d7e41",
+                          "tests":  "31b21158e58b29f6afe0a4811a5c1d52c8cba137e17a72bd7180124b313b5145"
+                      },
+    "quality_command":  "./test.sh quality api",
+    "quality_result":  "exit 0; Pyright 0 errors/0 warnings; Ruff all checks passed"
+}
