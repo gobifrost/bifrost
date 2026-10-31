@@ -29,13 +29,13 @@ async function open(variant, ordinal) {
       if (request.method === "POST" && path === "/api/workflows/execute") {
         const response = await nativeFetch(...args);
         const body = await response.clone().json();
-        if (body.execution_id) record({ type: "post", execution_id: body.execution_id, method: "POST", path });
+        if (body.execution_id) record({ type: "post", execution_id: body.execution_id, status: body.status, method: "POST", path });
         return response;
       }
       const response = await nativeFetch(...args);
-      if (request.method === "GET" && path.startsWith("/api/executions/")) {
+      if (request.method === "GET" && /^\/api\/executions\/[^/]+$/.test(path)) {
         const body = await response.clone().json();
-        if (body.status === "Success") record({ type: "detail", execution_id: path.split("/").at(-1), method: "GET", path });
+        if (typeof body.status === "string") record({ type: "get", execution_id: path.split("/").at(-1), status: body.status, method: "GET", path });
       }
       return response;
     };
@@ -52,7 +52,9 @@ async function open(variant, ordinal) {
 async function measure(session, stage) {
   await session.page.evaluate(() => { window.__BENCH_BROWSER_EVENTS__ = []; });
   await session.page.getByLabel("Run Browser Benchmark").click();
-  await session.page.waitForFunction(() => window.__BENCH_BROWSER_EVENTS__?.some(event => event.type === "render"));
+  await session.page.waitForFunction(() => window.__BENCH_BROWSER_EVENTS__?.some(event =>
+    (event.type === "post" || event.type === "get") && ["Success", "Failed", "CompletedWithErrors", "Timeout", "Cancelled"].includes(event.status)
+  ));
   const events = await session.page.evaluate(() => window.__BENCH_BROWSER_EVENTS__);
   return { variant: session.variant, ordinal: session.ordinal, stage, events };
 }
