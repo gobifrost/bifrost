@@ -13,7 +13,7 @@ import interactive  # noqa: E402
 
 
 DIGEST = "sha256:" + "a" * 64
-RUNNER = "registry.local/bifrost-browser@" + DIGEST
+RUNNER = "bifrost-bench-browser:kind-a74e45295998"
 BASE = "mcr.microsoft.com/playwright:v1.64.1-noble@" + DIGEST
 
 
@@ -21,13 +21,13 @@ class InteractiveInputsTest(unittest.TestCase):
     def test_requires_exact_browser_digest_and_matching_preload_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             receipt = Path(temporary) / "cache.json"
-            receipt.write_text(json.dumps({"image": RUNNER, "cached_before_measurement": True, "loaded_at": "before"}))
-            self.assertEqual(interactive._exact_digest(RUNNER, "browser image"), RUNNER)
-            self.assertEqual(interactive.load_cache_receipt(receipt, RUNNER)["image"], RUNNER)
+            receipt.write_text(json.dumps({"image": RUNNER, "image_id": DIGEST, "cached_before_measurement": True, "loaded_at": "before"}))
+            self.assertEqual(interactive._prepared_image(RUNNER, DIGEST), (RUNNER, DIGEST))
+            self.assertEqual(interactive.load_cache_receipt(receipt, RUNNER, DIGEST)["image"], RUNNER)
             with self.assertRaisesRegex(ValueError, "exact image"):
                 interactive._exact_digest("registry.local/browser:latest", "browser image")
             with self.assertRaisesRegex(ValueError, "does not prove"):
-                interactive.load_cache_receipt(receipt, BASE)
+                interactive.load_cache_receipt(receipt, RUNNER, "sha256:" + "b" * 64)
 
     def test_browser_pod_is_finite_infra_only_runner_with_secret_login(self) -> None:
         manifest = interactive.browser_pod(RUNNER)
@@ -64,9 +64,9 @@ class InteractiveRunTest(unittest.TestCase):
              patch.object(interactive.bench_run, "load_profile", return_value={}), \
              patch.object(interactive, "Cluster") as cluster:
             cache = Path(temporary) / "cache.json"
-            cache.write_text(json.dumps({"image": RUNNER, "cached_before_measurement": True}))
+            cache.write_text(json.dumps({"image": RUNNER, "image_id": DIGEST, "cached_before_measurement": True}))
             with self.assertRaisesRegex(ValueError, "interactive_integration_diagnostic"):
-                interactive.run("m", "api", RUNNER, BASE, cache, Path(temporary) / "out")
+                interactive.run("m", "api", RUNNER, DIGEST, BASE, cache, Path(temporary) / "out")
         cluster.assert_not_called()
 
     def test_error_after_cluster_mutation_resets_guarded_namespaces(self) -> None:
@@ -86,12 +86,35 @@ class InteractiveRunTest(unittest.TestCase):
              patch.object(interactive.deploy, "reset") as reset, \
              patch.object(interactive.bench_run, "run_classes", side_effect=RuntimeError("setup failed")):
             cache = Path(temporary) / "cache.json"
-            cache.write_text(json.dumps({"image": RUNNER, "cached_before_measurement": True}))
+            cache.write_text(json.dumps({"image": RUNNER, "image_id": DIGEST, "cached_before_measurement": True}))
             with self.assertRaisesRegex(RuntimeError, "setup failed"):
-                interactive.run("m-interactive", "api", RUNNER, BASE, cache, Path(temporary) / "out")
-        self.assertGreaterEqual(cluster.verify.call_count, 3)
+                interactive.run("m-interactive", "api", RUNNER, DIGEST, BASE, cache, Path(temporary) / "out")
+        self.assertGreaterEqual(cluster.verify.call_count, 4)
         self.assertEqual(reset.call_count, 2)
         cluster.kubectl.assert_called()
+
+    def test_terminal_cleanup_resets_namespaces_after_success(self) -> None:
+        current = Mock()
+        current.result = {"interactive": {}}
+        cluster = Mock()
+        with patch.object(interactive, "_cleanup_browser") as browser_cleanup, \
+             patch.object(interactive.deploy, "reset") as reset:
+            interactive._terminal_cleanup(cluster, current, None)
+        browser_cleanup.assert_called_once_with(cluster)
+        reset.assert_called_once_with(cluster)
+        self.assertEqual(current.result["interactive"]["cleanup"]["namespaces"], {"verified": True})
+        self.assertEqual(cluster.verify.call_count, 3)
+
+    def test_terminal_cleanup_preserves_body_error_when_cleanup_fails(self) -> None:
+        current = Mock()
+        current.result = {"interactive": {}}
+        cluster = Mock()
+        with patch.object(interactive, "_cleanup_browser", side_effect=RuntimeError("browser cleanup failed")), \
+             patch.object(interactive.deploy, "reset", side_effect=RuntimeError("namespace cleanup failed")):
+            interactive._terminal_cleanup(cluster, current, RuntimeError("body failed"))
+        receipt = current.result["interactive"]["cleanup"]
+        self.assertFalse(receipt["browser_resources"]["verified"])
+        self.assertFalse(receipt["namespaces"]["verified"])
 
 
 if __name__ == "__main__":

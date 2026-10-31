@@ -36,6 +36,8 @@ LOCK_PATH = Path("/tmp/bifrost-capacity-host.lock")
 BROWSER_POD = "bench-browser-runner"
 BROWSER_CONFIG = "bench-browser-runner-config"
 _DIGEST_REF = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
+_LOCAL_IMAGE_REF = re.compile(r"^[a-z0-9][a-z0-9./:_-]*:[a-z0-9][a-z0-9._-]*$")
+_IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 @contextmanager
@@ -63,15 +65,34 @@ def _exact_digest(reference: str, label: str) -> str:
     return reference
 
 
-def load_cache_receipt(path: Path, browser_image: str) -> dict:
+def _prepared_image(reference: str, image_id: str) -> tuple[str, str]:
+    """A loaded local tag paired with the immutable config digest it resolves to.
+
+    Kind's ``load docker-image`` preserves a local tag, not a registry manifest
+    ref, so putting ``repo@config-digest`` in a Pod would be an invalid promise.
+    Keep the selected tag and its Docker/CRI config digest as one receipt.
+    """
+    if not _LOCAL_IMAGE_REF.fullmatch(reference):
+        raise ValueError("prepared browser image must be an explicit local name:tag")
+    if not _IMAGE_ID.fullmatch(image_id):
+        raise ValueError("prepared browser image ID must be a 64-hex sha256 digest")
+    return reference, image_id
+
+
+def load_cache_receipt(path: Path, browser_image: str, browser_image_id: str) -> dict:
     """Refuse a run unless the prepared runner was loaded before measurement."""
     try:
         receipt = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"could not read browser cache receipt: {error}") from error
-    if not isinstance(receipt, dict) or receipt.get("image") != browser_image or receipt.get("cached_before_measurement") is not True:
+    if (not isinstance(receipt, dict) or receipt.get("image") != browser_image
+            or receipt.get("image_id") != browser_image_id
+            or receipt.get("cached_before_measurement") is not True):
         raise ValueError("browser cache receipt does not prove the selected image was loaded before measurement")
-    return {"image": receipt["image"], "cached_before_measurement": True, "loaded_at": receipt.get("loaded_at")}
+    return {
+        "image": receipt["image"], "image_id": receipt["image_id"],
+        "cached_before_measurement": True, "loaded_at": receipt.get("loaded_at"),
+    }
 
 
 def browser_pod(image: str, config_name: str = BROWSER_CONFIG) -> dict:
@@ -139,6 +160,46 @@ def _cleanup_browser(cluster: Cluster) -> None:
     cluster.kubectl("delete", "configmap", BROWSER_CONFIG, "-n", guard.INFRA_NS, "--ignore-not-found", "--wait=true", namespaced=False, check=False)
 
 
+def _terminal_cleanup(cluster: Cluster, current: bench_run.Run, original_error: BaseException | None) -> None:
+    """Remove every benchmark namespace after either terminal outcome.
+
+    Cleanup failure is durable evidence.  It becomes the outcome only when the
+    benchmark body succeeded, so it cannot hide the failure that triggered
+    cleanup in the first place.
+    """
+    receipt: dict[str, object] = {"started_at": _now(), "browser_resources": None, "namespaces": None, "errors": []}
+    errors: list[BaseException] = []
+    try:
+        cluster.verify()
+        _cleanup_browser(cluster)
+        receipt["browser_resources"] = {"verified": True}
+    except BaseException as error:
+        errors.append(error)
+        receipt["browser_resources"] = {"verified": False, "error": f"{type(error).__name__}: {error}"}
+    try:
+        cluster.verify()
+        deploy.reset(cluster)
+        cluster.verify()
+        receipt["namespaces"] = {"verified": True}
+    except BaseException as error:
+        errors.append(error)
+        receipt["namespaces"] = {"verified": False, "error": f"{type(error).__name__}: {error}"}
+    receipt["finished_at"] = _now()
+    current.result["interactive"]["cleanup"] = receipt
+    receipt["errors"] = [f"{type(item).__name__}: {item}" for item in errors]
+    try:
+        current.save()
+    except BaseException as error:
+        errors.append(error)
+        receipt["errors"] = [f"{type(item).__name__}: {item}" for item in errors]
+        try:
+            current.save()
+        except BaseException:
+            pass
+    if errors and original_error is None:
+        raise errors[0]
+
+
 def _durable_browser_records(cluster: Cluster, validated: list[dict]) -> list[dict]:
     requested = [item["execution_id"] for item in validated]
     durable = cluster.exec_python("bench-driver", APP_DRIVER, ["records", json.dumps({"execution_ids": requested})], timeout_s=300)["records"]
@@ -166,7 +227,7 @@ def _durable_browser_records(cluster: Cluster, validated: list[dict]) -> list[di
     return durable
 
 
-def run(profile_name: str, api_image: str, browser_image: str, browser_base_image: str,
+def run(profile_name: str, api_image: str, browser_image: str, browser_image_id: str, browser_base_image: str,
         cache_receipt: Path, out: Path) -> Path:
     """Run the normal fixture classes plus the real deployed-app browser path.
 
@@ -176,11 +237,11 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_base_imag
     profile = bench_run.load_profile(profile_name)
     if not profile.get("interactive_integration_diagnostic"):
         raise ValueError("interactive browser benchmark requires an interactive_integration_diagnostic profile")
-    browser_image = _exact_digest(browser_image, "browser image")
+    browser_image, browser_image_id = _prepared_image(browser_image, browser_image_id)
     browser_base_image = _exact_digest(browser_base_image, "Playwright base image")
     if not browser_base_image.startswith(f"{browser.BROWSER_RUNNER_IMAGE}@"):
         raise ValueError("Playwright base image must use the benchmark's pinned Playwright version")
-    cache = load_cache_receipt(cache_receipt, browser_image)
+    cache = load_cache_receipt(cache_receipt, browser_image, browser_image_id)
     if out.exists():
         raise ValueError(f"interactive output already exists: {out}")
 
@@ -191,6 +252,7 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_base_imag
         "interactive": {
             "started_at": _now(),
             "browser_image": browser_image,
+            "browser_image_id": browser_image_id,
             "playwright_base_image": browser_base_image,
             "cache_receipt": cache,
             "backend_classes": None,
@@ -198,7 +260,6 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_base_imag
         },
     })
     current.save()
-    failed = True
     try:
         # A reset is deliberately before the established class runner: it owns
         # the normal fixture/editor/SDK setup and retains its own durable data.
@@ -231,6 +292,8 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_base_imag
         pod, logs = _pod_terminal(cluster)
         after = cluster.container_stats(namespace=guard.INFRA_NS)
         runner = browser.runner_receipt(browser_base_image, _runner_image_id(pod), True)
+        if runner["image_id"] != browser_image_id:
+            raise RuntimeError("browser runner pod image ID differs from the preloaded runner receipt")
         runner["runner_image"] = browser_image
         runner["pod"] = {"name": BROWSER_POD, "uid": pod.get("metadata", {}).get("uid")}
         runs = browser.decode_driver_output(logs)
@@ -245,7 +308,6 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_base_imag
         }
         if pod.get("status", {}).get("phase") != "Succeeded" or any(item["outcome"] != "success" for item in validated):
             raise RuntimeError("browser runner completed with a terminal workflow failure")
-        failed = False
         current.result["interactive"]["completed_at"] = _now()
         current.save()
         return out
@@ -254,28 +316,21 @@ def run(profile_name: str, api_image: str, browser_image: str, browser_base_imag
         current.save()
         raise
     finally:
-        try:
-            cluster.verify()
-            _cleanup_browser(cluster)
-        finally:
-            if failed:
-                cluster.verify()
-                deploy.reset(cluster)
-                current.result["interactive"]["namespace_cleanup"] = {"verified": True, "at": _now()}
-                current.save()
+        _terminal_cleanup(cluster, current, sys.exc_info()[1])
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", default="m-interactive-integration")
     parser.add_argument("--api-image", required=True)
-    parser.add_argument("--browser-image", required=True, help="prepared browser runner image pinned by exact digest")
+    parser.add_argument("--browser-image", required=True, help="prepared local browser runner image name:tag")
+    parser.add_argument("--browser-image-id", required=True, help="prepared browser runner's exact sha256 config digest")
     parser.add_argument("--browser-base-image", required=True, help="pinned mcr Playwright base image digest used to build the runner")
     parser.add_argument("--browser-cache-receipt", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     with host_lock():
-        print(run(args.profile, args.api_image, args.browser_image, args.browser_base_image, args.browser_cache_receipt, args.out), flush=True)
+        print(run(args.profile, args.api_image, args.browser_image, args.browser_image_id, args.browser_base_image, args.browser_cache_receipt, args.out), flush=True)
 
 
 if __name__ == "__main__":
