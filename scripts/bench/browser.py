@@ -157,10 +157,13 @@ def validate_events(events: list[dict]) -> dict:
         for event in events[positions["post"] + 1 :]
     ):
         raise ValueError("browser transport events are not correlated to one execution")
-    safe_keys = {"type", "t_ms", "execution_id", "status", "method", "path", "channel"}
+    safe_keys = {"type", "t_ms", "execution_id", "request_id", "status", "method", "path", "channel"}
     if any(set(event) - safe_keys for event in events):
         raise ValueError("browser event includes unsafe payload context")
     post_terminal = post.get("status") in TERMINAL_STATUSES
+    request_id = events[positions["invoke"]].get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        raise ValueError("browser invocation is missing its generated request ID")
     stream_terminal = [
         index
         for index, event in enumerate(events)
@@ -194,6 +197,7 @@ def validate_events(events: list[dict]) -> dict:
         raise ValueError("browser render preceded the workflow POST")
     return {
         "execution_id": execution_id,
+        "request_id": request_id,
         "transport_path": path_label,
         "events": events,
         "browser_wall_ms": events[-1]["t_ms"] - events[0]["t_ms"],

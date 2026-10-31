@@ -11,7 +11,7 @@ import browser  # noqa: E402
 
 def streamed_events() -> list[dict]:
     return [
-        {"type": "invoke", "t_ms": 1.0},
+        {"type": "invoke", "t_ms": 1.0, "request_id": "request-e"},
         {
             "type": "post",
             "t_ms": 2.0,
@@ -56,16 +56,21 @@ class BrowserDiagnosticTest(unittest.TestCase):
     def test_event_validation_classifies_streamed_sdk_path_and_safe_fields(self) -> None:
         receipt = browser.validate_events(streamed_events())
         self.assertEqual(receipt["execution_id"], "e")
+        self.assertEqual(receipt["request_id"], "request-e")
         self.assertEqual(receipt["transport_path"], "streamed_ws")
         self.assertEqual(receipt["browser_wall_ms"], 5.0)
         bad = streamed_events()
         bad[3]["payload"] = "not allowed"
         with self.assertRaises(ValueError):
             browser.validate_events(bad)
+        missing_request = streamed_events()
+        missing_request[0].pop("request_id")
+        with self.assertRaisesRegex(ValueError, "generated request ID"):
+            browser.validate_events(missing_request)
 
     def test_event_validation_accepts_sdk_fast_paths_without_synthetic_events(self) -> None:
         inline = [
-            {"type": "invoke", "t_ms": 1},
+            {"type": "invoke", "t_ms": 1, "request_id": "request-inline"},
             {
                 "type": "post",
                 "t_ms": 2,
@@ -76,7 +81,7 @@ class BrowserDiagnosticTest(unittest.TestCase):
             },
         ]
         immediate_get = [
-            {"type": "invoke", "t_ms": 1},
+            {"type": "invoke", "t_ms": 1, "request_id": "request-get"},
             {
                 "type": "post",
                 "t_ms": 2,

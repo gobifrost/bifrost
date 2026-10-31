@@ -8,8 +8,7 @@ async function open(variant, ordinal) {
   const context = await browser.newContext({ baseURL: config.client_url });
   const page = await context.newPage();
   await page.addInitScript(() => {
-    const events = (window.__BENCH_BROWSER_EVENTS__ ??= []);
-    const record = (event) => events.push({ ...event, t_ms: performance.now() });
+    const record = (event) => (window.__BENCH_BROWSER_EVENTS__ ??= []).push({ ...event, t_ms: performance.now() });
     const NativeWebSocket = window.WebSocket;
     class ObservedWebSocket extends NativeWebSocket {
       send(data) {
@@ -18,7 +17,7 @@ async function open(variant, ordinal) {
       }
       constructor(...args) {
         super(...args);
-        this.addEventListener("message", event => { try { const frame = JSON.parse(String(event.data)); if (frame.type === "execution_update" && frame.status === "Success") record({ type: "terminal", execution_id: frame.executionId, status: frame.status }); } catch {} });
+        this.addEventListener("message", event => { try { const frame = JSON.parse(String(event.data)); if (frame.type === "execution_update" && ["Success", "Failed", "CompletedWithErrors", "Timeout", "Cancelled"].includes(frame.status)) record({ type: "terminal", execution_id: frame.executionId, status: frame.status }); } catch {} });
       }
     }
     window.WebSocket = ObservedWebSocket;
@@ -52,11 +51,16 @@ async function open(variant, ordinal) {
 async function measure(session, stage) {
   await session.page.evaluate(() => { window.__BENCH_BROWSER_EVENTS__ = []; });
   await session.page.getByLabel("Run Browser Benchmark").click();
-  await session.page.waitForFunction(() => window.__BENCH_BROWSER_EVENTS__?.some(event =>
-    (event.type === "post" || event.type === "get") && ["Success", "Failed", "CompletedWithErrors", "Timeout", "Cancelled"].includes(event.status)
-  ));
+  await session.page.waitForFunction(() => {
+    const events = window.__BENCH_BROWSER_EVENTS__ ?? [];
+    if (events.some(event => event.type === "render" && event.status === "Success")) return true;
+    return events.some(event => (event.type === "post" || event.type === "get" || event.type === "terminal")
+      && ["Failed", "CompletedWithErrors", "Timeout", "Cancelled"].includes(event.status));
+  });
   const events = await session.page.evaluate(() => window.__BENCH_BROWSER_EVENTS__);
-  return { variant: session.variant, ordinal: session.ordinal, stage, events };
+  const failed = events.some(event => (event.type === "post" || event.type === "get" || event.type === "terminal")
+    && ["Failed", "CompletedWithErrors", "Timeout", "Cancelled"].includes(event.status));
+  return { variant: session.variant, ordinal: session.ordinal, stage, outcome: failed ? "terminal_failure" : "success", events };
 }
 
 const sessions = [];

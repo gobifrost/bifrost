@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+"""Standalone authenticated V2 browser benchmark for the public interactive fixture.
+
+The CLI owns the same host lock as capacity work.  It resets only the guarded
+Kind namespaces, invokes the established interactive workflow fixture harness,
+then deploys one independent V2 App through the normal source-zip API before
+opening browser pages from a prepared in-cluster runner image.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import fcntl
+import json
+import re
+import sys
+import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator
+from uuid import uuid4
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+import browser  # noqa: E402
+import deploy  # noqa: E402
+import guard  # noqa: E402
+import integration_diagnostic  # noqa: E402
+import run as bench_run  # noqa: E402
+from cluster import Cluster, image_id_digest  # noqa: E402
+
+APP_DRIVER = HERE / "incluster" / "interactive_app.py"
+LOCK_PATH = Path("/tmp/bifrost-capacity-host.lock")
+BROWSER_POD = "bench-browser-runner"
+BROWSER_CONFIG = "bench-browser-runner-config"
+_DIGEST_REF = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
+
+
+@contextmanager
+def host_lock() -> Iterator[None]:
+    """Acquire the canonical benchmark lock exactly once, at the CLI boundary."""
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOCK_PATH.open("a+", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("another benchmark holds the capacity host lock") from error
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _exact_digest(reference: str, label: str) -> str:
+    if not _DIGEST_REF.fullmatch(reference):
+        raise ValueError(f"{label} must be an exact image reference with a 64-hex sha256 digest")
+    return reference
+
+
+def load_cache_receipt(path: Path, browser_image: str) -> dict:
+    """Refuse a run unless the prepared runner was loaded before measurement."""
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"could not read browser cache receipt: {error}") from error
+    if not isinstance(receipt, dict) or receipt.get("image") != browser_image or receipt.get("cached_before_measurement") is not True:
+        raise ValueError("browser cache receipt does not prove the selected image was loaded before measurement")
+    return {"image": receipt["image"], "cached_before_measurement": True, "loaded_at": receipt.get("loaded_at")}
+
+
+def browser_pod(image: str, config_name: str = BROWSER_CONFIG) -> dict:
+    """A finite 1 CPU/1 GiB runner outside the tenant's resource envelope."""
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": BROWSER_POD,
+            "namespace": guard.INFRA_NS,
+            "labels": {"app.kubernetes.io/name": BROWSER_POD, "bifrost.dev/bench": "browser"},
+        },
+        "spec": {
+            "restartPolicy": "Never",
+            "automountServiceAccountToken": False,
+            "containers": [{
+                "name": "browser",
+                "image": image,
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["sh", "-c", "node /bench/driver.mjs \"$BENCH_CONFIG\""],
+                "env": [{
+                    "name": "BENCH_CONFIG",
+                    "valueFrom": {"configMapKeyRef": {"name": config_name, "key": "config"}},
+                }],
+                "envFrom": [{"secretRef": {"name": "bench-infra"}}],
+                "resources": {
+                    "requests": {"cpu": "1", "memory": "1Gi"},
+                    "limits": {"cpu": "1", "memory": "1Gi"},
+                },
+            }],
+        },
+    }
+
+
+def _apply_browser_config(cluster: Cluster, config: dict) -> None:
+    rendered = cluster.kubectl(
+        "create", "configmap", BROWSER_CONFIG,
+        f"--from-literal=config={json.dumps(config, separators=(',', ':'))}",
+        "--dry-run=client", "-o", "json", "-n", guard.INFRA_NS, namespaced=False,
+    )
+    cluster.kubectl("apply", "-f", "-", input=rendered, namespaced=False)
+
+
+def _pod_terminal(cluster: Cluster, timeout_s: int = 1800) -> tuple[dict, str]:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        pod = json.loads(cluster.kubectl("get", "pod", BROWSER_POD, "-o", "json", namespace=guard.INFRA_NS))
+        phase = pod.get("status", {}).get("phase")
+        if phase in {"Succeeded", "Failed"}:
+            logs = cluster.kubectl("logs", BROWSER_POD, "-c", "browser", namespace=guard.INFRA_NS, check=False)
+            return pod, logs
+        time.sleep(1)
+    raise TimeoutError(f"browser runner pod did not finish within {timeout_s}s")
+
+
+def _runner_image_id(pod: dict) -> str:
+    statuses = [item for item in pod.get("status", {}).get("containerStatuses", []) if item.get("name") == "browser"]
+    if len(statuses) != 1 or not isinstance(statuses[0].get("imageID"), str):
+        raise RuntimeError("browser runner pod has no immutable browser container image ID")
+    return image_id_digest(statuses[0]["imageID"])
+
+
+def _cleanup_browser(cluster: Cluster) -> None:
+    cluster.kubectl("delete", "pod", BROWSER_POD, "-n", guard.INFRA_NS, "--ignore-not-found", "--wait=true", namespaced=False, check=False)
+    cluster.kubectl("delete", "configmap", BROWSER_CONFIG, "-n", guard.INFRA_NS, "--ignore-not-found", "--wait=true", namespaced=False, check=False)
+
+
+def _durable_browser_records(cluster: Cluster, validated: list[dict]) -> list[dict]:
+    requested = [item["execution_id"] for item in validated]
+    durable = cluster.exec_python("bench-driver", APP_DRIVER, ["records", json.dumps({"execution_ids": requested})], timeout_s=300)["records"]
+    by_id = {row["id"]: row for row in durable}
+    if set(by_id) != set(requested):
+        raise RuntimeError("durable browser records do not match observed execution IDs")
+    for item in validated:
+        row = by_id[item["execution_id"]]
+        result = row.get("result")
+        if not isinstance(result, dict) or result.get("request_id") != item["request_id"]:
+            raise RuntimeError("durable browser result does not match its generated request ID")
+        if result.get("variant") != item["variant"]:
+            raise RuntimeError("durable browser result variant differs from its page variant")
+    for variant in browser.VARIANTS:
+        variant_records = [
+            by_id[item["execution_id"]]
+            for item in validated
+            if item["variant"] == variant
+        ]
+        if not variant_records:
+            continue
+        evidence = integration_diagnostic.validate_execution_records(variant_records, variant)
+        if evidence["overall"] != "pass":
+            raise RuntimeError(f"durable browser records fail the {variant} fixture contract: {evidence['failures']}")
+    return durable
+
+
+def run(profile_name: str, api_image: str, browser_image: str, browser_base_image: str,
+        cache_receipt: Path, out: Path) -> Path:
+    """Run the normal fixture classes plus the real deployed-app browser path.
+
+    Callers must hold :func:`host_lock`; this lets tests exercise the
+    orchestration without taking a global host lock.
+    """
+    profile = bench_run.load_profile(profile_name)
+    if not profile.get("interactive_integration_diagnostic"):
+        raise ValueError("interactive browser benchmark requires an interactive_integration_diagnostic profile")
+    browser_image = _exact_digest(browser_image, "browser image")
+    browser_base_image = _exact_digest(browser_base_image, "Playwright base image")
+    if not browser_base_image.startswith(f"{browser.BROWSER_RUNNER_IMAGE}@"):
+        raise ValueError("Playwright base image must use the benchmark's pinned Playwright version")
+    cache = load_cache_receipt(cache_receipt, browser_image)
+    if out.exists():
+        raise ValueError(f"interactive output already exists: {out}")
+
+    cluster = Cluster()
+    cluster.verify()
+    current = bench_run.Run(cluster, "interactive", profile_name, profile, None, out, api_image)
+    current.result.update({
+        "interactive": {
+            "started_at": _now(),
+            "browser_image": browser_image,
+            "playwright_base_image": browser_base_image,
+            "cache_receipt": cache,
+            "backend_classes": None,
+            "browser": None,
+        },
+    })
+    current.save()
+    failed = True
+    try:
+        # A reset is deliberately before the established class runner: it owns
+        # the normal fixture/editor/SDK setup and retains its own durable data.
+        cluster.verify()
+        deploy.reset(cluster)
+        backend_out = out / "backend-classes"
+        bench_run.run_classes(profile_name, None, backend_out, api_image)
+        current.result["interactive"]["backend_classes"] = str(backend_out)
+
+        source = browser.write_source_zip(out / "browser-fixture.zip", browser.source_files())
+        app = cluster.exec_python("bench-driver", APP_DRIVER, ["deploy", json.dumps({
+            "source_b64": base64.b64encode((out / "browser-fixture.zip").read_bytes()).decode("ascii"),
+            "name": "Bench Browser Interactive Fixture",
+            "slug": f"bench-browser-{uuid4().hex[:12]}",
+        })], timeout_s=1200)
+        build = browser.build_receipt(source, app["accepted"], app["job"], app["application"])
+        current.result["interactive"]["build"] = build
+        current.save()
+
+        config = {
+            "client_url": "http://client.bench-tenant",
+            "app_slug": app["application"]["slug"],
+            "variants": list(browser.VARIANTS),
+            "repetitions": 3,
+        }
+        cluster.verify()
+        _apply_browser_config(cluster, config)
+        cluster.kubectl("apply", "-f", "-", input=json.dumps(browser_pod(browser_image)), namespaced=False)
+        before = cluster.container_stats(namespace=guard.INFRA_NS)
+        pod, logs = _pod_terminal(cluster)
+        after = cluster.container_stats(namespace=guard.INFRA_NS)
+        runner = browser.runner_receipt(browser_base_image, _runner_image_id(pod), True)
+        runner["runner_image"] = browser_image
+        runner["pod"] = {"name": BROWSER_POD, "uid": pod.get("metadata", {}).get("uid")}
+        runs = browser.decode_driver_output(logs)
+        validated = [{**browser.validate_events(run["events"]), "variant": run["variant"], "ordinal": run["ordinal"], "stage": run["stage"], "outcome": run["outcome"]} for run in runs]
+        durable = _durable_browser_records(cluster, validated)
+        current.result["interactive"]["browser"] = {
+            "config": config,
+            "runner": runner,
+            "cgroup": {"before": before, "after": after},
+            "observed": validated,
+            "durable_records": durable,
+        }
+        if pod.get("status", {}).get("phase") != "Succeeded" or any(item["outcome"] != "success" for item in validated):
+            raise RuntimeError("browser runner completed with a terminal workflow failure")
+        failed = False
+        current.result["interactive"]["completed_at"] = _now()
+        current.save()
+        return out
+    except BaseException as error:
+        current.result["interactive"]["error"] = f"{type(error).__name__}: {error}"
+        current.save()
+        raise
+    finally:
+        try:
+            cluster.verify()
+            _cleanup_browser(cluster)
+        finally:
+            if failed:
+                cluster.verify()
+                deploy.reset(cluster)
+                current.result["interactive"]["namespace_cleanup"] = {"verified": True, "at": _now()}
+                current.save()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", default="m-interactive-integration")
+    parser.add_argument("--api-image", required=True)
+    parser.add_argument("--browser-image", required=True, help="prepared browser runner image pinned by exact digest")
+    parser.add_argument("--browser-base-image", required=True, help="pinned mcr Playwright base image digest used to build the runner")
+    parser.add_argument("--browser-cache-receipt", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    args = parser.parse_args()
+    with host_lock():
+        print(run(args.profile, args.api_image, args.browser_image, args.browser_base_image, args.browser_cache_receipt, args.out), flush=True)
+
+
+if __name__ == "__main__":
+    main()
