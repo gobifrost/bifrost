@@ -298,9 +298,12 @@ class MinuteSamplerContractTest(unittest.TestCase):
         cluster.exec_python.return_value = {"object_count": 3, "object_bytes": 40}
         current = SimpleNamespace(_save_lock=threading.RLock(), result={}, raw=Mock())
 
-        sample = soak.MinuteSampler(cluster, "bifrost-api-test", current).sample()
+        with patch.object(soak.storage, "collect", return_value={"schema_version": 1}) as collect:
+            sample = soak.MinuteSampler(cluster, "bifrost-api-test", current).sample()
 
         self.assertEqual(sample["connection_states"], [{"state": "idle", "connections": 2}])
+        self.assertEqual(sample["storage"], {"schema_version": 1})
+        collect.assert_called_once_with(cluster)
         cluster.driver_sql.assert_called_once_with(soak.CONNECTION_STATES_SQL)
         cluster.exec_python.assert_called_once_with(
             "bifrost-api-test", soak.METRICS, ["objects", "{}"], timeout_s=60, namespace=soak.guard.TENANT_NS,

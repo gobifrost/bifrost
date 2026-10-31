@@ -45,7 +45,7 @@ class Client:
             }]})
         return Response({
             "execution_id": "run-1", "status": "Success",
-            "created_at": "2026-10-30T12:00:00Z", "started_at": "2026-10-30T12:00:01Z",
+            "created_at": None, "started_at": "2026-10-30T12:00:01Z",
             "completed_at": "2026-10-30T12:00:02Z", "duration_ms": 17,
             "result": {"ok": True, "endpoint": "https://imports.invalid/fixture", "signature": "import-fixture-v1"},
         })
@@ -57,6 +57,7 @@ class WaitAllTest(unittest.TestCase):
         records = asyncio.run(driver._wait_all(client, "/api/executions", {}, ["run-1"], 1, include_result=True))
         self.assertEqual(client.calls, ["/api/executions", "/api/executions/run-1"])
         self.assertEqual(records[0]["duration_ms"], 17)
+        self.assertEqual(records[0]["created_at"], "2026-10-30T12:00:00Z")
         self.assertEqual(records[0]["result"]["signature"], "import-fixture-v1")
 
     def test_normal_class_keeps_list_only_wait_path(self) -> None:

@@ -170,7 +170,7 @@ class LogicalObjectMetricsTest(unittest.TestCase):
         self.assertNotIn("unknown/private-key", storage_metrics.TOP_LEVEL_PREFIXES)
 
     def test_retained_versions_are_explicitly_unmeasured_in_the_contract(self) -> None:
-        self.assertEqual(storage_metrics.TOP_LEVEL_PREFIXES, ("_apps/", "_repo/", "apps/", "workflows/", ".bifrost/"))
+        self.assertEqual(storage_metrics.TOP_LEVEL_PREFIXES, ("_apps/", "_repo/", "_audit/", "apps/", "workflows/", ".bifrost/"))
 
 
 class RedisParserTest(unittest.TestCase):

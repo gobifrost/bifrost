@@ -47,6 +47,16 @@ class RunHarnessTest(unittest.TestCase):
     selected = "bifrost-api:selected"
     default_images = {"api": "bifrost-api:default", "client": "bifrost-client:default"}
 
+    def test_deployed_images_record_actual_infra_identity_without_environment(self) -> None:
+        cluster = Mock()
+        cluster.kubectl.side_effect = [json.dumps({"items": []}), json.dumps({"items": [{
+            "metadata": {"name": "bench-driver", "uid": "uid"},
+            "spec": {"containers": [{"name": "driver", "image": "older-api", "env": [{"secret": "never-report"}]}]},
+            "status": {"containerStatuses": [{"name": "driver", "imageID": "sha256:actual"}]},
+        }]})]
+        self.assertEqual(run.deployed_images(cluster), [{"namespace": "bench-infra", "pod": "bench-driver", "uid": "uid",
+                         "container": "driver", "image": "older-api", "image_id": "sha256:actual"}])
+
     def test_failed_confirmation_saves_strict_json_and_regenerates_unbounded_latency(self) -> None:
         cluster = FakeCluster()
         step = _step(3.90625, "fail")
@@ -159,6 +169,7 @@ class RunHarnessTest(unittest.TestCase):
         cluster.image_provenance.return_value = {"verified": True}
         cluster.exec_python.return_value = {"connections": {}}
         cluster.api_image_evidence.return_value = {"pod": "api"}
+        cluster.kubectl.return_value = '{"items": []}'
         current = SimpleNamespace(
             result={},
             driver=Mock(return_value={"import_fixture": run.import_diagnostic.fixture_metadata(fixture)}),
@@ -455,6 +466,7 @@ class RunHarnessTest(unittest.TestCase):
         }
         cluster.image_provenance.return_value = provenance
         cluster.api_image_evidence.return_value = {"image_id": "containerd://sha256:config", "digest": "sha256:config"}
+        cluster.kubectl.return_value = '{"items": []}'
         cluster.exec_python.return_value = {"connections": {}}
         current = SimpleNamespace(
             result={"images": {"api": {"id": "sha256:host"}}},

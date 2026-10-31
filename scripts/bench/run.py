@@ -39,6 +39,7 @@ import deploy  # noqa: E402
 import drills  # noqa: E402
 import guard  # noqa: E402
 import import_diagnostic  # noqa: E402
+import integration_diagnostic  # noqa: E402
 import jsoncodec  # noqa: E402
 import preflight  # noqa: E402
 import report  # noqa: E402
@@ -91,6 +92,19 @@ def environment(cluster: Cluster, api_image: str | None = None) -> dict:
         "host": {"cpus": os.cpu_count(), "load_average": os.getloadavg()},
         "external_nodes": cluster.external_nodes(),
     }
+
+
+def deployed_images(cluster: Cluster) -> list[dict]:
+    """Actual tenant/collector image identities; selected API does not imply infra provenance."""
+    records = []
+    for namespace in (guard.TENANT_NS, guard.INFRA_NS):
+        pods = json.loads(cluster.kubectl("get", "pods", "-o", "json", namespace=namespace))["items"]
+        for pod in pods:
+            identities = {item["name"]: item.get("imageID") for item in pod.get("status", {}).get("containerStatuses", [])}
+            for container in pod["spec"]["containers"]:
+                records.append({"namespace": namespace, "pod": pod["metadata"]["name"], "uid": pod["metadata"]["uid"],
+                                "container": container["name"], "image": container["image"], "image_id": identities.get(container["name"])})
+    return records
 
 
 def up(profile: dict) -> None:
@@ -304,6 +318,10 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     current.result["api_image_provenance"] = cluster.image_provenance(selected_api_image, host_id)
     if fixture is not None:
         current.result["import_fixture"] = import_diagnostic.fixture_metadata(fixture)
+    interactive = integration_diagnostic.fixture_manifest() if profile.get("interactive_integration_diagnostic") else None
+    if interactive is not None:
+        integration_diagnostic.validate_fixture_manifest(interactive)
+        current.result["interactive_fixture"] = integration_diagnostic.fixture_metadata(interactive)
     current.save()
     try:
         current.result["deploy"] = deploy.apply(cluster, profile, selected_api_image)
@@ -314,11 +332,13 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     current.result["setup"] = current.driver("setup", {
         "seed": profile["seed"], "backend": backend, "policy": profile["worker_policy"], "table_docs": profile["table_docs"],
         "import_fixture": fixture,
+        "interactive_fixture": interactive,
     }, timeout_s=3600)
     ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", "{}"], timeout_s=900)
     check_destinations(cluster, ids)
     cluster.restart_api()
     current.result["api_image_provenance"]["api_pod"] = cluster.api_image_evidence(current.result["api_image_provenance"])
+    current.result["deployed_images"] = deployed_images(cluster)
     current.save()
     current.expected_api_uid = None
     time.sleep(profile["settle_s"])
@@ -367,11 +387,25 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None, api_im
                 "worker_children": stats.worker_children(sampler.samples),
                 "raw": records,
             }
+            # Persist terminal records before any optional collector can fail.
+            current.result["classes"].append(entry)
+            current.save()
+            if profile.get("interactive_integration_diagnostic"):
+                try:
+                    provider = current.driver("fake_api_spans", {}, timeout_s=60)
+                    entry["interactive_integration"] = integration_diagnostic.correlate_provider_spans(
+                        raw_records, provider["spans"], integration_diagnostic.CLASS_VARIANTS[name],
+                    )
+                except Exception as error:
+                    entry["interactive_integration"] = {"overall": "invalid", "error": f"{type(error).__name__}: {error}"}
+                diagnostic = current.result.setdefault("interactive_integration", {"overall": "pass", "groups": []})
+                diagnostic["groups"].append({"class": name, "pass": pass_number, **entry["interactive_integration"]})
+                if entry["interactive_integration"]["overall"] != "pass":
+                    diagnostic["overall"] = "invalid"
+                current.save()
             imports_diagnostic = profile.get("imports_diagnostic")
             if imports_diagnostic:
                 # Save raw terminal records before log capture, settling, or counter reads.
-                current.result["classes"].append(entry)
-                current.save()
                 execution = import_diagnostic.validate_execution_records(raw_records)
                 try:
                     trace = import_diagnostic.capture(
@@ -406,8 +440,6 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None, api_im
                 db_window = stats.db_delta(db_before, cluster.db_counters(), time.monotonic() - started)
             except stats.DbCounterWindowError as error:
                 entry["db_window_error"] = _counter_window_error(error)
-                if not imports_diagnostic:
-                    current.result["classes"].append(entry)
                 current.save()
                 raise
             entry.update({
@@ -415,8 +447,6 @@ def run_classes(profile_name: str, backend: str | None, out: Path | None, api_im
                 "db_window": db_window,
                 "db_top_tables": stats.top_tables(db_window["tables"], 8),
             })
-            if not imports_diagnostic:
-                current.result["classes"].append(entry)
             current.snapshot(f"{name} (pass {pass_number})")
     idle_rate = capture_idle_db(current, profile)
     # Net each class of the steady idle rate, measured once nothing else is running.

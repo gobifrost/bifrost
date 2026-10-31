@@ -30,13 +30,16 @@ import deploy  # noqa: E402
 import jsoncodec  # noqa: E402
 import run as bench_run  # noqa: E402
 import search  # noqa: E402
+import report  # noqa: E402
 import soak_metrics  # noqa: E402
+import storage  # noqa: E402
 from cluster import Cluster, role_for_pod  # noqa: E402
 import guard  # noqa: E402
 
 SOAK_WINDOW_S = 2 * 60 * 60
 POST_START_S = 30 * 60
 METRIC_INTERVAL_S = 60.0
+STORAGE_INTERVAL_S = 5 * 60
 # This is also the capacity-search lock: a soak consumes the same host and
 # tenant resources.  ``main`` owns it; callers of public ``run`` must already
 # hold this canonical lock and must not nest it.
@@ -147,10 +150,12 @@ class SoakRun(bench_run.Run):
             file.write(_encoded(self.result))
             file.flush()
             os.fsync(file.fileno())
+        _atomic_replace(self.out / "report.md", report.render(self.result).encode())
 
     def save(self) -> None:
         with self._save_lock:
             _atomic_replace(self.out / "result.json", _encoded(self.result))
+            _atomic_replace(self.out / "report.md", report.render(self.result).encode())
 
     def raw(self, kind: str, value: dict, *, save: bool) -> None:
         entry = {"at": time.time(), "kind": kind, "value": value}
@@ -176,6 +181,7 @@ class MinuteSampler:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.started = False
+        self.last_storage_sample = 0.0
 
     def start(self) -> None:
         if self._thread is not None:
@@ -192,6 +198,9 @@ class MinuteSampler:
         if not isinstance(connections, list) or not isinstance(objects, dict):
             raise RuntimeError("soak metrics did not return the expected aggregate shapes")
         sample = {"at": time.time(), "connection_states": connections, **objects}
+        if sample["at"] - self.last_storage_sample >= STORAGE_INTERVAL_S:
+            sample["storage"] = storage.collect(self.cluster)
+            self.last_storage_sample = sample["at"]
         # The driver checkpoint callback can serialize concurrently.  Keep the
         # list, result reference, raw frame, and resulting checkpoint atomic.
         with self.current._save_lock:
@@ -227,7 +236,7 @@ def _slopes(host: list[dict], started_at: float) -> dict[str, object]:
     )
     for path, evidence in observed.items():
         evidence["role"] = role_for_pod(path.rsplit("/", 1)[-1])
-        evidence["identity"] = "namespace/name only; pod UID unavailable; same-name replacement unresolved"
+        evidence["identity"] = "namespace/name@pod-UID" if "@" in path else "legacy namespace/name only; replacement unresolved"
         if evidence["coverage"] != "observed":
             evidence["lifecycle"] = "missing_post_window_coverage"
         elif evidence["seen_before_post_window"]:
@@ -239,10 +248,10 @@ def _slopes(host: list[dict], started_at: float) -> dict[str, object]:
         post_start_s=POST_START_S, include=_tenant_path,
     )
     for evidence in roles.values():
-        evidence["lifecycle_limit"] = "role totals use namespace/name samples; pod UID replacement is unresolved"
+        evidence["lifecycle_limit"] = "role totals can change with worker count; inspect individual UID lifetimes and sample coverage"
     return {
         "scope": "tenant namespace pods only; benchmark infrastructure excluded",
-        "identity_limit": "HostSampler keys are namespace/name, not pod UID; same-name replacement is unresolved",
+        "identity_limit": "new HostSampler keys include pod UIDs; missing samples remain missing, not zero",
         "per_pod": observed,
         "per_role": roles,
     }
@@ -301,8 +310,9 @@ def run(manifest_path: Path, out: Path) -> Path:
         "drain_s": plan["drain_s"],
         "object_storage": {
             "scope": "visible current S3 object payload bytes/count; outside tenant quota and not free",
-            "unmeasured": "versions, archive storage, backend allocation, compression, replication, and billing",
+            "unmeasured": "version attribution, compression, replication, cloud billing; see periodic storage frames for local allocation",
         },
+        "storage_interval_s": STORAGE_INTERVAL_S,
         "minute_metrics": [],
         "raw_counts": {},
     })

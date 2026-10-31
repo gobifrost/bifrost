@@ -127,7 +127,7 @@ def _database(result: dict) -> list[str]:
     lines = [
         "## Database", "",
         ("Idle counters are measured before load; the all-phases load window includes warmup, measurement and drain."
-         if result["kind"] == "capacity" else
+         if result["kind"] in {"capacity", "soak"} else
          "Per-run figures in the table above cover each class's sequential and burst runs, net of the idle rate measured at the end of the run."),
         "WAL LSN advance includes segment switches and padding. Generated WAL is the cluster-wide "
         "`pg_stat_wal.wal_bytes` counter. Neither measures WAL files retained on disk or archive storage.",
@@ -256,7 +256,7 @@ def _capacity(result: dict) -> list[str]:
             rows.append("Raw sent/durable evidence and bounded API/worker log tails are retained with the result JSON; the long confirmation was not run.")
     rows += [
         "",
-        "| Offered /s | Window s | Result | Throughput | Drift upper /s | Worst class e2e p95 s | Failures | Invalid / warnings |",
+        "| Offered /s | Window s | Result | Completion/Arrival Ratio | Drift upper /s | Worst class e2e p95 s | Failures | Invalid / warnings |",
         "|---:|---:|---|---:|---:|---:|---:|---|",
     ]
     for step in [*result.get("steps", []), *result.get("confirmations", [])]:
@@ -273,7 +273,79 @@ def _capacity(result: dict) -> list[str]:
             f"{'' if throughput is None else f'{throughput:.4f}'} | {'' if drift is None else f'{drift:.4f}'} | "
             f"{'' if worst is None else f'{worst:.2f}'} | {failures} | {notes} |"
         )
+    rows += ["", "Completion/arrival ratio is a stability gate, not executions per second. It may exceed 1 when warm-up work completes in the measured window.", ""]
+    steps = [*result.get("steps", []), *result.get("confirmations", [])]
+    rows += _execution_rates(steps) + _resource_usage(steps) + _storage_frames(steps)
     return [*rows, "", *_baseline_memory(result), *_runtime_memory(result), *_database(result)]
+
+
+def _execution_rates(steps: list[dict]) -> list[str]:
+    rows: list[str] = []
+    for index, step in enumerate(steps):
+        measured = step.get("execution_rates")
+        if measured is None:
+            continue
+        rows += [f"### Execution Rates — Step {index + 1}", "", measured["event_semantics"],
+                 "Rates count top-level benchmark requests; nested agent tools are additional platform work.", "",
+                 "| Class | Scheduled /s | Sent /s | HTTP Accepted /s | Durable Created /s | Terminal /s | Correct /s | Correct By Deadline /s |",
+                 "|---|---:|---:|---:|---:|---:|---:|---:|"]
+        for name, data in [("Total", measured["total"]), *measured["by_class"].items()]:
+            rates = data["event_rates_per_s"]
+            cells = [rates[key] for key in ("scheduled", "sent", "http_accepted_responses", "durable_created",
+                                            "durably_terminal", "correct_completed", "correct_by_deadline_completed")]
+            rows.append(f"| {name} | " + " | ".join(f"{value:.4f}" for value in cells) + " |")
+        rows += ["", measured["cohort_semantics"], "",
+                 "| Class | Arrivals | Accepted Union | HTTP Only | Durable Only | Correct On Time | Correct Late | Failed Terminal | Unfinished | Duplicate IDs |",
+                 "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for name, data in [("Total", measured["total"]), *measured["by_class"].items()]:
+            cohort = data["arrival_cohort"]
+            cells = [cohort[key] for key in ("scheduled", "accepted_union", "http_only", "durable_only",
+                                             "correct_by_deadline", "correct_late", "failed_terminal", "unfinished_durable", "duplicate_request_ids")]
+            rows.append(f"| {name} | " + " | ".join(str(value) for value in cells) + " |")
+        rows += ["", "Latency follows the arrival cohort through drain, including late correct terminals. Missing timestamps are not zeroes.", "",
+                 "| Class | Span | Observed / Missing | p50 / p95 / Max Seconds |", "|---|---|---:|---:|"]
+        for name, data in [("Total", measured["total"]), *measured["by_class"].items()]:
+            for span, dist in data.get("observed_latency_s", {}).items():
+                values = " / ".join("unmeasured" if dist[key] is None else f"{dist[key]:.4f}" for key in ("p50", "p95", "max"))
+                rows.append(f"| {name} | {span} | {dist['observed']} / {dist['missing']} | {values} |")
+        activity = step.get("platform_activity")
+        if activity:
+            rows += ["", "Platform terminal counts include nested tools. Status counts do not establish expected-output correctness.", "",
+                     "| Family | Type | Status | Terminal Count |", "|---|---|---|---:|"]
+            for family in ("executions", "agent_runs"):
+                for item in activity.get(family, []):
+                    rows.append(f"| {family} | {item.get('type', '')} | {item['status']} | {item['count']} |")
+            rows += ["", f"Execution log rows written in the measured window: {activity.get('execution_log_rows', 'unmeasured')}."]
+    return [*rows, ""] if rows else []
+
+
+def _storage_frames(steps: list[dict], periodic: list[dict] | None = None) -> list[str]:
+    frames = []
+    for index, step in enumerate(steps):
+        for phase in ("before", "after"):
+            frame = step.get("storage", {}).get(phase)
+            if frame:
+                frames.append((f"step {index + 1} {phase}", frame))
+    frames.extend(("periodic", sample["storage"]) for sample in (periodic or []) if sample.get("storage"))
+    if not frames:
+        return []
+    rows = ["## Storage Over Time", "",
+            "Frames include warmup and drain. Database logical size, retained WAL, allocated data directories and object payloads overlap; do not add them. Allocated local bytes are not cloud provisioned or billable storage. Raw frames retain relation/index/TOAST sizes, tuple estimates, vacuum timestamps, connections/waits, Redis and Pooler counters, and declared backup retention.", "",
+            "| Phase | Epoch Seconds | Database MiB | Retained WAL MiB | PostgreSQL Allocated MiB | Visible Object Payload MiB | Object Store Allocated MiB | Container Logs MiB | Redis Used MiB | Pooler Waiting / Max Wait Seconds |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"]
+    def mib(value: object) -> str:
+        return "unmeasured" if value is None else f"{value / 2**20:.3f}"
+    for label, frame in frames:
+        pg, objects = frame.get("postgres", {}), frame.get("object_storage", {})
+        database, pooler = pg.get("database", {}), frame.get("pgbouncer", {})
+        logical = objects.get("logical_current_payload", {})
+        waiting = (f"{pooler.get('pools', {}).get('cl_waiting', 'unmeasured')} / {pooler.get('max_wait_seconds', 'unmeasured')}"
+                   if pooler.get("status") == "observed" else "unmeasured")
+        values = [database.get("bytes"), database.get("wal_retained_bytes"), pg.get("physical_volume", {}).get("allocated_bytes"),
+                  logical.get("total", {}).get("object_bytes"), objects.get("physical_volume", {}).get("allocated_bytes"),
+                  frame.get("container_logs", {}).get("retained_bytes"), frame.get("redis", {}).get("memory", {}).get("used_memory")]
+        rows.append(f"| {label} | {frame['collected_at']:.3f} | " + " | ".join(mib(value) for value in values) + f" | {waiting} |")
+    return [*rows, ""]
 
 
 def _baseline_memory(result: dict) -> list[str]:
@@ -288,6 +360,67 @@ def _baseline_memory(result: dict) -> list[str]:
             rows.append(f"| {snapshot['label']} | {container['pod']} | "
                         f"{container['working_set_mib']:.1f} | {container['rss_mib']:.1f} |")
     return [*rows, ""]
+
+
+def _resource_usage(steps: list[dict]) -> list[str]:
+    rows: list[str] = []
+    for index, step in enumerate(steps):
+        usage = step.get("resource_usage")
+        if not usage:
+            continue
+        rows += [f"## Component Resources — Step {index + 1}", "", usage["limits"], "",
+                 "CPU means cover observed intervals; coverage below 100% is missing evidence, not zero usage.", "",
+                 "| Role | Mean CPU Cores | Peak Interval Cores | Peak Pod Throttle Ratio | Charged Peak MiB | Working Set Peak MiB | Observed Window |",
+                 "|---|---:|---:|---:|---:|---:|---:|"]
+        for role, data in sorted(usage["roles"].items()):
+            charged = "unmeasured" if data["charged_peak_bytes"] is None else f"{data['charged_peak_bytes'] / 2**20:.1f}"
+            working = "unmeasured" if data["working_set_peak_bytes"] is None else f"{data['working_set_peak_bytes'] / 2**20:.1f}"
+            rows.append(f"| {role} | {data['mean_cpu_cores_observed']:.3f} | {data['max_interval_cpu_cores']:.3f} | "
+                        f"{data['max_pod_throttled_ratio']:.3f} | {charged} | {working} | {data['observed_window_fraction']:.1%} |")
+    return [*rows, ""] if rows else []
+
+
+def _soak(result: dict) -> list[str]:
+    rows = ["## Observational Soak", "",
+            f"Status: **{result.get('status', 'partial')}**, stage `{result.get('stage', 'initializing')}`. "
+            "This run observes sustained operation; it does not certify a new capacity rate.", "",
+            f"Confirmed mixed offered rate: {result.get('confirmed_mixed_rate_per_s')} /s; "
+            f"soak offered rate: {result.get('rate_per_s')} /s; measured duration: {result.get('measured_window_s')} seconds.", "",
+            f"Source campaign: `{result.get('campaign_manifest_sha256', 'unavailable')}`.", ""]
+    if result.get("error"):
+        rows += [f"Invalid measurement: {result['error']}", ""]
+    terminal = result.get("terminal_counts")
+    if terminal:
+        rows += [f"Durably terminal: {terminal['durably_terminal']}; correct successes: {terminal['correct_successes']}; "
+                 f"unfinished durable records: {terminal['unfinished']}.", ""]
+    growth = result.get("growth_per_1000_terminal")
+    if growth:
+        rows += ["### Growth Per 1,000 Durable Terminal Requests", "",
+                 "Includes successful and failed terminals; signed changes preserve reclamation. "
+                 "Database size, generated WAL and visible object payloads are distinct measurements.", "",
+                 "| Counter | Signed Change |", "|---|---:|"]
+        for name, value in growth.items():
+            rows.append(f"| {name} | {'unmeasured' if value is None else f'{value:.1f}'} |")
+    memory = result.get("host_memory_slopes", {})
+    if memory:
+        rows += ["", "### Memory Trends After 30 Minutes", "", memory["identity_limit"], "",
+                 "Descriptive OLS slopes; role totals can rise when worker count changes. Inspect lifecycle and coverage.", "",
+                 "| Role | Samples | Charged Memory Slope MiB/Hour | Coverage |", "|---|---:|---:|---|"]
+        for role, evidence in sorted(memory.get("per_role", {}).items()):
+            slope = evidence["slope_bytes_per_hour"]
+            rows.append(f"| {role} | {evidence['sample_count']} | "
+                        f"{'unmeasured' if slope is None else f'{slope / 2**20:.3f}'} | {evidence['coverage']} |")
+    connections = result.get("connection_stability")
+    if connections:
+        rows += ["", "### Connection Sampling", "", connections["scope"], "",
+                 f"Samples: {connections['samples']}; coverage: {connections['coverage']}. "
+                 "Periodic storage frames additionally retain PostgreSQL waits, Redis and Pooler evidence.", ""]
+    step = result.get("step")
+    if step:
+        rows += _execution_rates([step]) + _resource_usage([step])
+        rows += _runtime_memory({"confirmations": [step]})
+    rows += _storage_frames([step] if step else [], result.get("minute_metrics", []))
+    return [*rows, *_baseline_memory(result), *_database(result)]
 
 
 def _runtime_memory(result: dict) -> list[str]:
@@ -364,6 +497,8 @@ def render(result: dict) -> str:
         found = result.get("drill") or {}
         return "\n".join([*lines, "## Drill", "", f"API image `{result['api_image']}`.", "", "```json",
                           json.dumps({k: v for k, v in found.items() if k != "step"}, indent=2, default=str), "```", ""])
+    if result["kind"] == "soak":
+        return "\n".join([*lines, *_soak(result)])
     import_diagnostic = bool(result.get("imports_diagnostic"))
     lines += [
         f"Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes.",
@@ -373,6 +508,10 @@ def render(result: dict) -> str:
         lines += [*_imports_diagnostic(result), *_import_costs(result["classes"])]
     else:
         lines += ["## Execution times", "", *_classes_table(result["classes"]), ""]
+    if result.get("interactive_integration"):
+        lines += ["## Synthetic Integration Validation", "",
+                  "Matches the saved import graph's file count and byte budget; synthetic contents and provider delays do not reproduce Halo CPU or network behavior.", "",
+                  f"Provider-span and terminal-output correlation: **{result['interactive_integration']['overall']}**. Raw per-request spans and validation failures are retained in result.json.", ""]
     lines += [
         "## Memory after each step",
         "",

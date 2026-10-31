@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Callable
 
 import capacity
+import execution_rates
 import hostmetrics
+import resource_summary
+import storage
 from cluster import Cluster
 
 HERE = Path(__file__).resolve().parent
@@ -51,6 +54,7 @@ class HostSampler:
         for name in cluster.external_nodes():
             self.nodes[f"external:{name}"] = hostmetrics.node_cgroup(name)
         self.snapshots: list[dict] = []
+        self.error: BaseException | None = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
@@ -59,10 +63,18 @@ class HostSampler:
         for namespace, name, uid in self.cluster.bench_pods():
             path = hostmetrics.pod_cgroup(self.nodes["bench"], uid)
             if path is not None:
-                paths[f"{namespace}/{name}"] = path
+                # A replacement with the same pod name is a different counter
+                # lifetime. Keep its UID in the key so deltas never span it.
+                paths[f"{namespace}/{name}@{uid}"] = path
         return paths
 
     def _loop(self) -> None:
+        try:
+            self._sample()
+        except BaseException as error:
+            self.error = error
+
+    def _sample(self) -> None:
         pods = self._pods()
         refreshed = time.monotonic()
         while not self._stop.is_set():
@@ -78,6 +90,8 @@ class HostSampler:
     def __exit__(self, *exc: object) -> None:
         self._stop.set()
         self._thread.join()
+        if self.error is not None:
+            raise RuntimeError("host resource sampler failed; measurement is invalid") from self.error
 
     def intervals(self, start: float, end: float) -> list[dict]:
         inside = [snap for snap in self.snapshots if start <= snap["at"] <= end]
@@ -89,8 +103,9 @@ def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict
     records = []
     for request in sent:
         found = outcomes["outcomes"].get(request["id"])
-        deadline = (request["sent"] or request["scheduled"]) + deadlines[request["class"]]
-        if found and found["correct"] and found["completed"] is not None and found["completed"] <= deadline:
+        deadline = (request["sent"] if request["sent"] is not None else request["scheduled"]) + deadlines[request["class"]]
+        duplicate_rows = max(0, outcomes.get("duplicates", {}).get(request["id"], 1) - 1)
+        if found and found["correct"] and not duplicate_rows and request["sent"] is not None and found["completed"] is not None and found["completed"] <= deadline:
             outcome = "correct"
         elif found and found["completed"] is None and request["sent"] is not None:
             outcome = "unfinished"
@@ -102,8 +117,17 @@ def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict
             "scheduled_s": request["scheduled"] - started,
             "sent_s": None if request["sent"] is None else request["sent"] - started,
             "admission_s": None if request["responded"] is None or request["sent"] is None else request["responded"] - request["sent"],
-            "completed_s": found["completed"] - started if outcome == "correct" else None,
-            "queue_s": found["started"] - found["created"] if outcome == "correct" and found["started"] else None,
+            "responded_s": None if request["responded"] is None else request["responded"] - started,
+            "created_s": found["created"] - started if found and found.get("created") is not None else None,
+            "started_s": found["started"] - started if found and found.get("started") is not None else None,
+            "completed_s": found["completed"] - started if found and found.get("completed") is not None else None,
+            "queue_s": found["started"] - found["created"] if found and found.get("started") is not None and found.get("created") is not None else None,
+            "durable_found": found is not None,
+            "durable_id": (found or {}).get("durable_id"),
+            "output_correct": (found or {}).get("correct", False),
+            "duplicate_durable_rows": duplicate_rows,
+            "deadline_s": deadline - started,
+            "deadline_met": found["completed"] <= deadline if found and found.get("completed") is not None else None,
             "outcome": outcome,
             "status": found["status"] if found else None,
             "http_status": request["http_status"],
@@ -122,6 +146,7 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
     thresholds = plan["thresholds"]
     drift_limit = thresholds["drift_fraction"] * rate if confirm else rate * RAMP_DRIFT_SECONDS / window_s
     duration = plan["warmup_s"] + window_s
+    storage_before = storage.collect(cluster)
     faults_before = cluster.tenant_faults()
     with HostSampler(cluster, disk) as host:
         step_args = {
@@ -161,11 +186,23 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         "rate": rate, "seed": seed, "window_s": window_s, "confirm": confirm, "drift_limit_per_s": drift_limit, "overall": overall, "verdict": verdict, "validity": validity,
         "faults": faults, "driver_lag_p99_s": sent["driver_lag_p99_s"], "missing": outcomes["missing"],
         "records": records, "backlog": backlog,
+        "execution_rates": execution_rates.summarize(records, window),
+        "sent": sent["requests"], "outcomes": outcomes,
         "host": host.intervals(started, started + duration + plan["drain_s"]),
     }
-    if on_event is not None:
-        result["sent"] = sent["requests"]
-        result["outcomes"] = outcomes
+    result["resource_usage"] = resource_summary.summarize(result["host"], started, window)
+    successful = result["execution_rates"]["total"]["event_counts"]["correct_completed"]
+    for usage in result["resource_usage"]["roles"].values():
+        usage["observed_cpu_ms_per_correct_completion"] = usage["cpu_seconds"] * 1000 / successful if successful else None
+    result["platform_activity"] = {
+        "scope": "all platform completions in measured window, including nested tool executions; statuses do not prove output correctness",
+        "seconds": window_s,
+        **cluster.driver_sql(execution_rates.platform_activity_sql(started + window[0], started + window[1])),
+    }
+    result["storage"] = {
+        "scope": "before warm-up through drain and durable reconciliation; collection timestamps retained",
+        "before": storage_before, "after": storage.collect(cluster),
+    }
     return result
 
 

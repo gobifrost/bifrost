@@ -58,6 +58,37 @@ RESULT = {
 
 
 class RenderTest(unittest.TestCase):
+    def test_storage_frames_preserve_distinct_sizes_and_missing_measurements(self) -> None:
+        frame = {"collected_at": 10, "postgres": {"database": {"bytes": 2**20, "wal_retained_bytes": 2 * 2**20},
+                  "physical_volume": {"allocated_bytes": 8 * 2**20}}, "pgbouncer": {"status": "unmeasured"}}
+        text = "\n".join(report._storage_frames([{"storage": {"before": frame}}]))
+        self.assertIn("| step 1 before | 10.000 | 1.000 | 2.000 | 8.000 | unmeasured", text)
+        self.assertIn("do not add them", text)
+        self.assertIn("not cloud provisioned or billable", text)
+
+    def test_rate_report_includes_late_latency_and_nested_platform_work(self) -> None:
+        import execution_rates
+        record = {"id": "a", "class": "wf-sdk", "scheduled_s": 10, "sent_s": 10,
+                  "completed_s": 19, "outcome": "failed", "output_correct": True, "status": "Success", "deadline_met": False}
+        text = "\n".join(report._execution_rates([{"execution_rates": execution_rates.summarize([record], (10, 20)),
+               "platform_activity": {"executions": [{"type": "tool", "status": "Success", "count": 3}], "execution_log_rows": 5}}]))
+        self.assertIn("9.0000 / 9.0000 / 9.0000", text)
+        self.assertIn("| executions | tool | Success | 3 |", text)
+        self.assertIn("Execution log rows written in the measured window: 5", text)
+
+    def test_soak_report_exposes_signed_growth_and_is_not_new_capacity(self) -> None:
+        text = report.render({**RESULT, "kind": "soak", "status": "observational", "stage": "complete",
+                              "terminal_counts": {"durably_terminal": 20, "correct_successes": 19, "unfinished": 0},
+                              "growth_per_1000_terminal": {"db_bytes_per_1000_terminal": -1000, "object_bytes_per_1000_terminal": None},
+                              "host_memory_slopes": {"identity_limit": "UID lifetimes retained", "per_role": {
+                                  "worker": {"slope_bytes_per_hour": 2**20, "sample_count": 90, "coverage": "observed"}}}})
+        self.assertIn("## Observational Soak", text)
+        self.assertIn("does not certify a new capacity rate", text)
+        self.assertIn("| db_bytes_per_1000_terminal | -1000.0 |", text)
+        self.assertIn("| object_bytes_per_1000_terminal | unmeasured |", text)
+        self.assertIn("| worker | 90 | 1.000 | observed |", text)
+        self.assertNotIn("## Execution times", text)
+
     def test_report_names_every_class_and_the_build(self) -> None:
         text = report.render(RESULT)
         self.assertIn("`wf-noop`", text)

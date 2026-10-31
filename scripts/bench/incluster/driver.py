@@ -334,7 +334,12 @@ async def _wait_all(http: httpx.AsyncClient, list_path: str, params: dict, ids: 
     for run_id in ids:
         row = found.get(run_id, {"status": "TimedOutInBench"})
         if include_result and row.get("status") == "Success":
-            row = _check(await http.get(f"/api/executions/{run_id}"), f"read execution {run_id}").json()
+            details = _check(await http.get(f"/api/executions/{run_id}"), f"read execution {run_id}").json()
+            if details.get("execution_id") != run_id or details.get("status") != row["status"]:
+                raise RuntimeError("terminal detail identity/status differs from the observed list record")
+            # The summary carries created_at; the detail DTO currently omits
+            # that value. Read its payload without discarding the timeline.
+            row = {**row, "result": details.get("result")}
         records.append({
             "id": run_id, "status": row.get("status"), "created_at": row.get("created_at"),
             "started_at": row.get("started_at"), "completed_at": row.get("completed_at"),

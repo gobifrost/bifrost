@@ -54,6 +54,7 @@ class ConfirmationDecisionTest(unittest.TestCase):
                     "duplicates": {}, "missing": [], "rows": []}
         checkpoints: list[dict] = []
         cluster = Mock()
+        cluster.driver_sql.return_value = {"executions": [], "agent_runs": [], "execution_log_rows": 0}
         cluster.tenant_faults.return_value = {}
         command = Mock()
         command.result.side_effect = lambda _timeout, on_event: on_event({"event": "started"}) or sent
@@ -80,6 +81,7 @@ class ConfirmationDecisionTest(unittest.TestCase):
             "thresholds": {"drift_fraction": 0.001}, "deadlines_s": {"wf": 60},
         }
         with patch.object(search, "HostSampler", Host), \
+             patch.object(search.storage, "collect", return_value={"schema_version": 1}), \
              patch.object(search.hostmetrics, "assess", return_value={"invalid": [], "warnings": []}), \
              patch.object(search.capacity, "step_verdict", return_value={"overall": "pass"}) as verdict, \
              patch.object(search.time, "sleep"):

@@ -18,7 +18,7 @@ from pathlib import Path
 # This is a reporting taxonomy, rather than a discovered list of keys.  Keep
 # ``other`` so every currently visible object is counted without publishing a
 # new key prefix in artifacts.
-TOP_LEVEL_PREFIXES = ("_apps/", "_repo/", "apps/", "workflows/", ".bifrost/")
+TOP_LEVEL_PREFIXES = ("_apps/", "_repo/", "_audit/", "apps/", "workflows/", ".bifrost/")
 
 
 def _empty_totals() -> dict[str, int]:
