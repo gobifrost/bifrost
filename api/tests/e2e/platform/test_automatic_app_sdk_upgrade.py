@@ -28,7 +28,6 @@ from src.models.orm.applications import Application
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.application_sdk_status import current_sdk_metadata
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
-from src.services.sdk_package import build_sdk_tarball
 from src.services.solutions.app_build import SolutionAppBuilder
 from tests.e2e.platform.thin_live_helpers import wait_for_job
 
@@ -38,12 +37,11 @@ _SETTINGS_PATH = "/api/maintenance/app-sdk-upgrades/settings"
 
 
 def _automatic_upgrade_source() -> dict[str, bytes]:
-    """Build retained source with a lockfile matching the worker's SDK tarball."""
+    """Retain the developer's lockfile; the platform injects its SDK at build time."""
     package = {
         "name": "automatic-sdk-upgrade-live",
         "private": True,
         "dependencies": {
-            "bifrost": "file:./bifrost-sdk.tgz",
             "lucide-react": "^1.61.0",
             "react": "18.3.1",
             "react-dom": "18.3.1",
@@ -53,9 +51,6 @@ def _automatic_upgrade_source() -> dict[str, bytes]:
     with tempfile.TemporaryDirectory(prefix="bifrost-auto-sdk-lock-") as tmp:
         workdir = Path(tmp)
         (workdir / "package.json").write_text(json.dumps(package))
-        (workdir / "bifrost-sdk.tgz").write_bytes(
-            build_sdk_tarball(current_sdk_metadata().package_version)
-        )
         subprocess.run(
             [
                 "npm",
