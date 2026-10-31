@@ -66,6 +66,10 @@ claimed.
 
 ## Reproduction and Evidence
 
+The [versioned scalar baseline](baselines/storage-retention-2026-10-31.json)
+retains exact counts, sizes, fixture/runtime identities and raw artifact hashes.
+Its scalar values were reconciled against the final retained result.
+
 Run from the guarded measurement worktree at clean harness
 `963b328339d96d44b74547505da8731a6c63d0da`, with the retained candidate image:
 

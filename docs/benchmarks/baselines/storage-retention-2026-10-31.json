@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "baseline_id": "storage-retention-2026-10-31-v1",
+  "kind": "storage-retention-rehearsal",
+  "capacity_certification": false,
+  "harness_git_sha": "963b328339d96d44b74547505da8731a6c63d0da",
+  "runtime_api_image": "bifrost-api:kind-a74e45295998-tablefix-d2f25fc48",
+  "runtime_api_host_id": "sha256:fac2a947ca81c8572c83ee6ece92384ccf39f8f4abd657646a8f69b2ba8042a8",
+  "profile_name": "4gb-capacity",
+  "fixture_source_sha256": "d754d66bf3cc88e3e217e01ed982a063a58254b68b49f2d236f7f99645dadf1f",
+  "retention_days": 30,
+  "cases": {
+    "entropy_5mb": {
+      "executions": 20,
+      "payload_utf8_bytes": 100000000,
+      "result_column_bytes": 100001518
+    },
+    "repetitive_5mb": {
+      "executions": 20,
+      "payload_utf8_bytes": 100000000,
+      "result_column_bytes": 1146375
+    },
+    "small_failed": {
+      "executions": 1,
+      "payload_utf8_bytes": 0,
+      "result_column_bytes": 0
+    },
+    "small_success": {
+      "executions": 1,
+      "payload_utf8_bytes": 0,
+      "result_column_bytes": 71
+    }
+  },
+  "before_execution_count": 42,
+  "before_execution_log_count": 329,
+  "after_execution_count": 0,
+  "after_execution_log_count": 0,
+  "dry_run": {
+    "status": "succeeded",
+    "eligible_workflow_runs": 42
+  },
+  "actual_run": {
+    "status": "succeeded",
+    "workflow_runs_deleted": 42
+  },
+  "storage": {
+    "database_before_bytes": 40549399,
+    "database_after_bytes": 146816023,
+    "pg_allocated_before_bytes": 216137728,
+    "pg_allocated_after_bytes": 423071744,
+    "object_before": {
+      "object_bytes": 1981658,
+      "object_count": 42
+    },
+    "object_after": {
+      "object_bytes": 1981658,
+      "object_count": 42
+    }
+  },
+  "evidence": {
+    "private_directory": "/home/jack/bifrost-bench-evidence/runs/retention-current-20261031-r1",
+    "result_sha256": "6c5f84206352eddd4faf06faf6a82184182399061de8c09d9de73a1e2d5058d3",
+    "terminal_receipt_sha256": "a971088ca02586d3e39fce22b0d1dcf333bcda6132dc01455f32b2f9acab5532",
+    "terminal_receipt_bytes": 200453046
+  },
+  "cleanup_verified": true,
+  "finished_at": "2026-10-31T20:19:10+00:00",
+  "limitations": [
+    "Forty-two synthetic executions with twenty observations per large-result shape; not a capacity or customer-workload sample.",
+    "Column bytes exclude other row fields, indexes, logs, WAL, and free space; storage views overlap.",
+    "Immediate deletion does not establish long-term filesystem reclamation or reduce provisioned billing.",
+    "Audit/artifact cleanup, backups/restore, retained object versions, and cloud IOPS/billing were not exercised."
+  ]
+}
