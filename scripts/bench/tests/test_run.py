@@ -47,6 +47,12 @@ class RunHarnessTest(unittest.TestCase):
     selected = "bifrost-api:selected"
     default_images = {"api": "bifrost-api:default", "client": "bifrost-client:default"}
 
+    def test_constrained_smoke_preserves_full_envelope_and_declares_reduced_catalog(self) -> None:
+        full, smoke = run.load_profile("4gb-capacity"), run.load_profile("4gb-capacity-smoke")
+        for field in ("quota", "components", "worker_cpu", "worker_policy", "capacity"):
+            self.assertEqual(full[field], smoke[field])
+        self.assertLess(sum(smoke["seed"].values()), sum(full["seed"].values()))
+
     def test_deployed_images_record_actual_infra_identity_without_environment(self) -> None:
         cluster = Mock()
         cluster.kubectl.side_effect = [json.dumps({"items": []}), json.dumps({"items": [{

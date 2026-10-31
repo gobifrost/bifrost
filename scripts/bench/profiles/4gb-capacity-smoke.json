@@ -1,0 +1,7 @@
+{
+  "extends": "4gb-capacity",
+  "description": "Collector and SDK-path smoke in the unchanged 4 decimal GB runtime envelope. Reduced catalog and short window; never a capacity certification.",
+  "seed": {"workflow": 50, "tool": 10, "data_provider": 5},
+  "table_docs": 50,
+  "settle_s": 5
+}

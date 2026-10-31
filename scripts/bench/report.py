@@ -231,8 +231,9 @@ def _header(result: dict) -> list[str]:
 
 
 def _capacity(result: dict) -> list[str]:
+    diagnostic = result.get("not_capacity_certification") is True
     rows = [
-        "## Fixed-rate confirmation" if result.get("mode") == "confirmation-only" else "## Capacity search",
+        "## Short Diagnostic" if diagnostic else ("## Fixed-rate confirmation" if result.get("mode") == "confirmation-only" else "## Capacity search"),
         "",
         f"**Sustainable rate (confirmed): {result.get('sustainable_rate') or 'none confirmed'}**"
         + (" per second, within the strict drift tolerance and a 0.1 % per-class failure bound." if result.get("sustainable_rate") else "."),
@@ -245,6 +246,8 @@ def _capacity(result: dict) -> list[str]:
          + (f"; stopped: {result['stopped']}" if result.get("stopped") else "")),
         "",
     ]
+    if diagnostic:
+        rows += ["This short run validates the workload and measurement pipeline. It does not certify sustainable capacity.", ""]
     preflight = result.get("preflight")
     if preflight:
         rows += [
