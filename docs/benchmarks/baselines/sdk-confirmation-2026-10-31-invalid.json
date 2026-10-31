@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "baseline_id": "sdk-confirmation-2026-10-31-invalid-v1",
+  "kind": "capacity-confirmation",
+  "status": "invalid",
+  "capacity_certification": false,
+  "source": {
+    "private_result_path": "/home/jack/bifrost-bench-evidence/runs/capacity-completion-matrix-20261031-r4/4gb-capacity/sdk-confirmation/result.json",
+    "streamed_raw_result_sha256": "194c07260f558b6cc1667d94bd167e94f84fda3cb169037f63cb45ffcbecabd9",
+    "declaration_path": "/home/jack/bifrost-bench-evidence/runs/capacity-completion-matrix-20261031-r4/declaration.json",
+    "declaration_sha256": "7e67269db31f86f65dbf6fb4ca4a39ffe21fe569b3244338c8250b9e33871108"
+  },
+  "immutable_chain": {
+    "harness_git_sha": "963b328339d96d44b74547505da8731a6c63d0da",
+    "invocation_id": "af20659a43ad4556a714278a70365aa3",
+    "runtime_ready_record": "/home/jack/bifrost-bench-evidence/runs/load-current-d2f25fc48-r2.json",
+    "runtime_ready_record_sha256": "2e8b0190ead47d00aa21f8088aa5e5d7af1aaf9fb4893dd72b0fc8ecc851e0c4",
+    "runtime_api_tag": "bifrost-api:kind-a74e45295998-tablefix-d2f25fc48",
+    "runtime_api_host_id": "sha256:fac2a947ca81c8572c83ee6ece92384ccf39f8f4abd657646a8f69b2ba8042a8",
+    "runtime_api_config_id": "sha256:c6755075cd4117a161fd926b436a8874ac65ca6f9b27b57ddcfb748b0f3102a4",
+    "runtime_api_manifest_id": "sha256:c2104ce39d8970a22f5c1db2d59cd14fd8e53a75c1a2e41eb119e3339d5f9198",
+    "supervisor_sha256": "025adcf98748e56aebd618f06379e2171dd5b7db59be22786a7503ed154bf7b3"
+  },
+  "profile_name": "4gb-capacity",
+  "mix_name": "sdk-heavy",
+  "preflight": {
+    "status": "pass",
+    "correct": 127,
+    "accepted": 127,
+    "total": 127
+  },
+  "confirmation": {
+    "offered_rate_per_s": 3.90625,
+    "measured_window_start_s": 90,
+    "measured_window_end_s": 1048.464,
+    "measured_window_s": 958.464
+  },
+  "arrival_cohort": {
+    "scheduled": 3735,
+    "submitted": 3735,
+    "accepted_union": 3735,
+    "correct_by_deadline": 3735,
+    "correct_completed": 3735,
+    "correct_late": 0,
+    "durably_terminal": 3735,
+    "failed_terminal": 0,
+    "unfinished_durable": 0,
+    "duplicate_request_ids": 0
+  },
+  "measured_window": {
+    "correct_by_deadline_completed": 3533,
+    "correct_completed": 3533,
+    "durable_created": 3735,
+    "durably_terminal": 3533,
+    "http_accepted_responses": 3735,
+    "correct_completed_event_rate_per_s": 3.686106103098291,
+    "throughput_ratio": 0.9459170013386881,
+    "throughput_limit": 0.995,
+    "throughput_status": "fail"
+  },
+  "latency": {
+    "queue_p95_s": 37.37995100021362,
+    "queue_p95_ci_low_s": 36.48300504684448,
+    "queue_p95_ci_high_s": 38.61265802383423,
+    "queue_p95_ci_half_width_s": 1.064826488494873,
+    "queue_p95_limit_s": 2.0,
+    "queue_p95_status": "fail",
+    "e2e_p95_s": 38.26425623893738,
+    "e2e_p95_ci_low_s": 37.19931745529175,
+    "e2e_p95_ci_high_s": 39.158880949020386,
+    "e2e_p95_ci_half_width_s": 0.9797817468643188,
+    "e2e_p95_limit_s": 1.5,
+    "e2e_p95_status": "fail"
+  },
+  "tenant_faults": {
+    "status": "pass",
+    "duplicate_executions": 0,
+    "evicted": 0,
+    "oom_killed": 0,
+    "quota_denials": 0,
+    "restarts": 0
+  },
+  "host_validity": {
+    "status": "invalid",
+    "invalid_reasons": [
+      "external CPU above 1.5 cores in 36/189 intervals",
+      "external disk I/O above its share of the window"
+    ],
+    "warnings": [
+      "possible external memory pressure (unproven)"
+    ]
+  },
+  "declaration": {
+    "no_automatic_retries": true,
+    "mixed_offered_rate_per_s": 2.236,
+    "mixed_segments": 5,
+    "segment_window_s": 3600,
+    "soak_rate_fraction": 0.7,
+    "soak_window_s": 7200
+  },
+  "disposition": {
+    "sustainable_capacity": "not established",
+    "upper_bound": "not established",
+    "causal_attribution": "not established",
+    "mixed_capacity": "unmeasured",
+    "soak": "unmeasured"
+  }
+}

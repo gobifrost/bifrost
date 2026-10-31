@@ -26,11 +26,16 @@ cores in 36 of 189 intervals, and external disk I/O exceeded its allowed share
 of the window. The artifact also records possible external memory pressure as
 unproven. These host conditions prevent a capacity conclusion.
 
-Both worker pods remained present in the aggregate samples. Their settled
-working sets were 267.7 MiB and 268.0 MiB, respectively, which is a balanced
-worker observation. The collected evidence does not attribute individual
+Both worker pods remained present in the aggregate samples. Settled process
+private-memory observations (`private_mib`) were 267.7 MiB and 268.0 MiB;
+these are not whole-Pod working sets or allocation limits. The collected
+evidence does not attribute individual
 executions or latency to a worker process, so it cannot support a
 per-process-causality claim.
+
+The [scalar baseline](baselines/sdk-confirmation-2026-10-31-invalid.json)
+preserves exact rates, latency intervals, fault counts and image identities for
+future comparisons, with capacity certification explicitly false.
 
 ## Provenance
 
