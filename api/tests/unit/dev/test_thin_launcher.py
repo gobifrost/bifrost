@@ -149,6 +149,78 @@ async def test_fatal_launcher_exits_instead_of_reconnecting() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_bootstrap_exits_without_reusing_an_authenticated_identity() -> None:
+    socket = Mock()
+    launcher = _launcher(socket)
+    launcher.hello = AsyncMock()
+    launcher.start = AsyncMock(side_effect=RuntimeError("agent template database unavailable"))
+    launcher.stop = AsyncMock()
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        yield socket
+
+    with (
+        patch("websockets.asyncio.client.connect", new=connect),
+        patch("src.worker.remote.launcher.Launcher", return_value=launcher) as factory,
+        patch("src.worker.remote.launcher.load_launcher_identity", return_value=launcher.identity),
+        patch("src.worker.remote.launcher._receive_control_commands", new=AsyncMock()) as receive,
+        patch("src.worker.remote.launcher.asyncio.sleep", new=AsyncMock(side_effect=AssertionError("bootstrap must not retry"))),
+        patch.object(asyncio.get_running_loop(), "add_signal_handler"),
+        patch.dict("os.environ", {"BIFROST_SECRET_KEY": "test-secret"}),
+    ):
+        assert await run_launcher() == 1
+
+    factory.assert_called_once()
+    launcher.hello.assert_awaited_once()
+    launcher.stop.assert_awaited_once()
+    receive.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_lost_initial_welcome_preserves_the_hello_sequence() -> None:
+    first = Mock(send=AsyncMock(), recv=AsyncMock(side_effect=ConnectionError("welcome lost")))
+    second = Mock(send=AsyncMock(), recv=AsyncMock(return_value=json.dumps({
+        "event": "welcome", "session_generation": 2,
+    })))
+    launcher = _launcher(first)
+    launcher.start, launcher.stop, launcher.send = (AsyncMock() for _ in range(3))
+    launcher.inventory = Mock(return_value={})
+    sockets = iter((first, second))
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        try:
+            socket = next(sockets)
+        except StopIteration:
+            raise asyncio.CancelledError("unexpected third connection") from None
+        yield socket
+
+    async def receive(*_args):
+        launcher.retired.set()
+        return None
+
+    with (
+        patch("websockets.asyncio.client.connect", new=connect),
+        patch("src.worker.remote.launcher.Launcher", return_value=launcher) as factory,
+        patch("src.worker.remote.launcher.load_launcher_identity", return_value=launcher.identity),
+        patch("src.worker.remote.launcher._receive_control_commands", new=receive),
+        patch("src.worker.remote.launcher.asyncio.sleep", new=AsyncMock()),
+        patch.object(asyncio.get_running_loop(), "add_signal_handler"),
+        patch.dict("os.environ", {"BIFROST_SECRET_KEY": "test-secret"}),
+    ):
+        assert await run_launcher() == 0
+
+    factory.assert_called_once()
+    launcher.start.assert_awaited_once()
+    launcher.stop.assert_awaited_once()
+    first_hello = json.loads(first.send.await_args.args[0])["hello"]
+    second_hello = json.loads(second.send.await_args.args[0])["hello"]
+    assert (first_hello["hello_sequence"], second_hello["hello_sequence"]) == (1, 2)
+    assert first_hello["nonce"] != second_hello["nonce"]
+
+
+@pytest.mark.asyncio
 async def test_monitor_waits_for_intentional_template_replacement() -> None:
     launcher = _launcher(Mock())
     launcher.template = Mock(is_alive=Mock(return_value=False))

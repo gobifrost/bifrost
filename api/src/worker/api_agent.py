@@ -7,6 +7,7 @@ on remote workers (``worker.remote.agent_route``).
 
 from __future__ import annotations
 
+from shared.version import get_version
 from src.services.memory_requests import MemoryBudget
 from src.services.worker_pool.claims import register_static_worker
 from src.worker.admission import Admission
@@ -32,6 +33,7 @@ class ApiAgentExecutor(PoolWorker):
         """The FastAPI lifespan owns database initialization and shutdown."""
         self.incarnation_id = await register_static_worker(
             hostname="api-agent",
+            version=get_version(),
             supported_handlers=[handler for handler, _version in API_AGENT_HANDLERS],
         )
         return True
