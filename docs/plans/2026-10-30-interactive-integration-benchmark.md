@@ -3,8 +3,11 @@
 Status: captured portal import diagnostics completed on two frozen runtimes
 at both 650m and 2 CPU: 400 correct, traced sequential/burst actions. Earlier
 sequential diagnostics remain retained. The app completion repair and its
-metadata activation are merged; production validation is separate. Hosting
-confirmation, soak and recovery work remain in the plan.
+metadata activation are merged and now observed in production. Six original
+read-only CLI/API/WebSocket replays on October 31 succeeded with identical
+caller/inputs, stable pods and completion-to-result under 0.513 seconds even
+with the clock-uncertainty bound. Browser timing, hosting confirmation, soak
+and recovery work remain in the plan.
 The V2 browser/fake-integration fixture remains planned.
 
 ## Immediate Priority: App Workflow Latency
@@ -15,8 +18,8 @@ path before accepting a platform latency improvement. Historical fixes
 callers immediately after the authoritative completion transaction commits.
 That ordering survives the RabbitMQ retirement. V2 apps switched to async
 submission and WebSocket/GET result delivery in `082db6c5c` (#487). Their
-deployed terminal execution notification follows log acknowledgement/recovery,
-completion-event emission and derived aggregates. This leaves an observable
+October 28 deployed terminal execution notification followed log acknowledgement/recovery,
+completion-event emission and derived aggregates. This left an observable
 post-commit dependency on bookkeeping despite the sync fix.
 
 PR #1151 moves the existing terminal notification after commit and sync-result
@@ -39,8 +42,16 @@ consumer, event and log-durability checks, API quality and bounded final review
 passed. The protected merge queue then passed full backend/client tests,
 backend E2E, critical browser smoke, quality and candidate builds. Required
 metadata activation PR #1152 merged as `ad3ff6a6d` after canonical validation,
-prepared bundle verification and the full protected queue. Production
-validation remains separate; no deployment was performed.
+prepared bundle verification and the full protected queue. The October 30
+investigation performed no deployment. A later independent production rollout
+is now verified at source `e611d31bb`, including the repair, and six October 31
+original-workflow replays observed no multi-second post-execution stall.
+The detailed read took 9.129 seconds alone and 10.005 seconds concurrently,
+versus the original 32.856 seconds. Pre-engine overhead remains variable:
+2.414 seconds on the first shallow load and about 0.81 seconds per workflow
+in the concurrent group. Preserve all of these baselines; no portal browser
+timing or single-commit causal claim is established. See the ledger's
+October 31 Production Recheck and private `portal-original-recheck-20261031`.
 
 The completed import diagnostics use `m-import-overlap`: the same full M catalog,
 private captured import graph and resource limits, but exactly one warm/max

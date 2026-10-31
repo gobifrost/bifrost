@@ -5,6 +5,77 @@ are reproducibility evidence; they are not calibrated cloud capacity or a
 customer hosting quote. Raw artifacts stay outside git under
 `/home/jack/bifrost-bench-evidence/`.
 
+## October 31 Production Recheck
+
+At the user's request, reran the original shallow site list, contact picker
+and detailed site list sequentially, then all three together. All six completed
+successfully with the original caller and exact input hashes. Each site read
+returned 88 sites and each contact read returned 50 items. The simultaneous
+group's worker starts spanned 0.258 seconds, with all three worker intervals
+overlapping for 1.310 seconds. No workflow or deployment was changed.
+
+The running API and worker use `1.4.2-dev.1793422955`, source
+`e611d31bbba3d7601980271c774cad5e821b1e97`, digest
+`sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692`.
+The source registry tag matches the observed digest, and the source contains
+the merged completion repair `700e6334f` (#1151). API and worker pod identities
+and restart counts stayed unchanged throughout. API limits remain 1 CPU/1 GiB;
+worker limits remain 2 CPU/2 GiB. These limits are not memory-usage samples.
+The site entry's 3,299 bytes and SHA-256 `ea1c233e...` match the earlier source.
+The contact entry's current hash is captured privately; its historical full
+source and the complete dependency versions are not established by this check.
+
+| Workflow | Original supplied worker wall, s | October 31 alone, s | October 31 together, s |
+|---|---:|---:|---:|
+| Shallow site list | 7.600 | 2.887 | 1.568 |
+| Contact picker | 11.037 | 2.260 | 1.915 |
+| Detailed site list | 32.856 | 9.129 | 10.005 |
+
+| Replay | Worker wall, s | Engine, s | Outside engine, s | Completion timestamp to terminal frame, s |
+|---|---:|---:|---:|---:|
+| Shallow, alone | 2.887 | 0.401 | 2.486 | 0.045 |
+| Contact, alone | 2.260 | 0.942 | 1.318 | 0.044 |
+| Detailed, alone | 9.129 | 8.435 | 0.694 | 0.051 |
+| Shallow, together | 1.568 | 0.646 | 0.922 | 0.080 |
+| Contact, together | 1.915 | 0.943 | 0.972 | 0.130 |
+| Detailed, together | 10.005 | 9.111 | 0.894 | 0.046 |
+
+The API-matched CLI was observed at its existing asynchronous POST,
+WebSocket receive/close and result GET boundaries. No retries, close policy
+or server behavior were changed. The final result was fetched 0.144–0.361
+seconds after the terminal frame, or 0.188–0.491 seconds after the worker's
+completion timestamp. Reusing one transient read-only exec stream for clock
+probes bounds worker-minus-client offset to -0.0190/+0.0219 seconds without
+assuming symmetric transport; this assumes clock stability during the short
+replay/probe window. Even the conservative upper bound from recorded
+completion to fetched result is 0.513 seconds. The completion timestamp
+precedes durable commit, so this includes commit and transport rather than
+isolating notification publication. No multi-second post-execution stall
+was observed in these six runs.
+
+Client WebSocket close took 0.044–0.198 seconds. Whole CLI commands took
+4.016/3.337/10.316 seconds sequentially and 2.743/3.359/11.452 seconds together;
+these include CLI startup, submission, subscription, close and final fetch.
+They are not portal-click timings. No browser was attached in this session;
+a V2 UI click path was not measured.
+
+Pre-engine work remains observable: child-processing to workflow-loaded log
+spans were 2.414/1.259/0.618 seconds sequentially and
+0.806/0.809/0.811 seconds together. These overlap the outside-engine residual
+and must not be added to it. The slower first load remains retained; do not
+attribute it to cold pod startup, since the worker incarnation was stable.
+Full original-workflow latency is better in this live sample, but multiple
+platform changes, provider conditions and cache/background state are not
+controlled. This does not isolate one causal commit or explain the original
+33-second outlier.
+
+Private receipts, original input hashes, source hashes, per-execution CPU and
+memory fields, HTTP/WebSocket traces and selected correlated worker logs are
+under `notes/portal-original-recheck-20261031/`, with the reconciled six-case
+receipt in `analysis.json`. Older results remain unchanged. Only the three
+read-only portal workflows were replayed; the script-result write callback
+and potentially mutating job-status control were not replayed.
+
 ## Scope and interpretation
 
 - The practical runtime target is 4 decimal GB: 4,000,000,000 bytes, about
