@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
 import { expect, test } from "./fixtures/api-fixture";
 

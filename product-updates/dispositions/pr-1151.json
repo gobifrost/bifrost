@@ -1,0 +1,14 @@
+{
+  "key": "pr:1151",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Apps receive workflow completion before follow-up bookkeeping.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1151",
+      "Reviewed durable commit and synchronous handoff before app notification, unchanged payloads, stale-result fencing and this concise Fixed summary. The unchanged real-transport regression failed with metrics held on main, then passed after correction; all 31 focused checks and API lint/type checks passed. Bounded final review found no actionable issues."
+    ]
+  }
+}

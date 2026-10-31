@@ -191,6 +191,10 @@ class ApplicationPublic(ApplicationBase):
         default=None,
         description="SDK/server contract version used for the active app build.",
     )
+    sdk_binding_api_major: int | None = Field(
+        default=None,
+        description="Hosted SDK public API major selected by the active app binding; null for a bundled SDK.",
+    )
     sdk_built_at: datetime | None = Field(
         default=None,
         description="When the active app build's SDK provenance was recorded.",

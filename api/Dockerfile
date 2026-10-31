@@ -110,7 +110,7 @@ RUN cd /app/src/services/app_bundler && npm ci --omit=dev
 # /api/sdk/download can bundle + serve the installable `bifrost` package without
 # the client/ tree at runtime. A unit test enforces this file list stays in sync.
 COPY api/src/services/sdk_package/package.json api/src/services/sdk_package/package-lock.json /app/src/services/sdk_package/
-COPY api/src/services/sdk_package/build_sdk.js /app/src/services/sdk_package/
+COPY api/src/services/sdk_package/build_sdk.js api/src/services/sdk_package/build_types.js api/src/services/sdk_package/tsconfig.types.json /app/src/services/sdk_package/
 RUN cd /app/src/services/sdk_package && npm ci --omit=dev
 COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/tables.ts \
@@ -130,11 +130,20 @@ COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/branding-theme.ts \
      client/src/lib/app-sdk/brand-palette.ts \
      client/src/lib/app-sdk/bifrost-header.tsx \
+     client/src/lib/app-sdk/errors.ts \
+     client/src/lib/app-sdk/hosted-binding.tsx \
+     client/src/lib/app-sdk/hosted-contract.ts \
+     client/src/lib/app-sdk/hosted-loader.ts \
      /app/src/services/sdk_package/sdk_src/
+COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.v2.ts
 COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.ts
+COPY client/src/lib/v1.d.ts /app/src/services/sdk_package/sdk_src/v1.d.ts
 # Contract version stamp (read directly by Python, not bundled by esbuild) —
 # see sdk_contract_version() in sdk_package/__init__.py.
 COPY client/src/lib/app-sdk/sdk-contract.json /app/src/services/sdk_package/sdk_src/sdk-contract.json
+RUN mkdir -p /app/artifacts/app-sdk \
+    && node /app/src/services/sdk_package/build_sdk.js hosted \
+      /app/src/services/sdk_package/sdk_src /app/artifacts/app-sdk/hosted-v1.js
 
 # Create non-root user
 RUN useradd -m -u 1000 bifrost && \

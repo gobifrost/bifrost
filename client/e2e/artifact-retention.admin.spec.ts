@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/api-fixture";
 
 test.describe("Artifact retention settings", () => {
 	test("configures retention and queues cleanup", async ({ page }, testInfo) => {

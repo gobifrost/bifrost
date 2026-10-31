@@ -54,7 +54,7 @@ async def reset_user_mfa(session: AsyncSession, caller: Caller, user_id: UUID) -
             the caller's own account, 409 when the user has no password and
             no linked SSO account but has passkeys (they would be locked out).
     """
-    from src.routers.auth import revoke_all_user_refresh_tokens
+    from shared.human_sessions import revoke_all_human_sessions_in_transaction
 
     operation_reach(caller, RESET_OPERATION)
     if user_id == caller.principal.user_id:
@@ -95,7 +95,7 @@ async def reset_user_mfa(session: AsyncSession, caller: Caller, user_id: UUID) -
     user.updated_at = datetime.now(timezone.utc)
     await session.flush()
 
-    sessions_revoked = await revoke_all_user_refresh_tokens(str(user.id))
+    sessions_revoked = await revoke_all_human_sessions_in_transaction(session, user.id)
     result = UserMfaResetResponse(
         totp_removed=totp_removed,
         recovery_codes_removed=recovery_codes_removed,

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 from src.services.memory_requests import MIB
 from src.worker.admission import Admission
@@ -26,6 +28,19 @@ def test_api_agent_executor_advertises_only_summaries() -> None:
         ("agent.summarize_backfill", 1),
     )
     assert not executor.hosts_remote_work
+
+
+async def test_api_agent_executor_registers_its_own_build() -> None:
+    executor = ApiAgentExecutor(_admission())
+    worker_id = uuid4()
+    with (
+        patch("src.worker.api_agent.get_version", return_value="api-build"),
+        patch("src.worker.api_agent.register_static_worker", new=AsyncMock(return_value=worker_id)) as register,
+    ):
+        assert await executor._initialize_runtime()
+
+    assert executor.incarnation_id == worker_id
+    assert register.await_args.kwargs["version"] == "api-build"
 
 
 def test_api_agent_executor_shares_the_supplied_api_admission() -> None:

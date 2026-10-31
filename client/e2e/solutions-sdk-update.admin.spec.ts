@@ -7,7 +7,7 @@
  */
 
 import { test, expect } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 const NOW = "2026-09-12T12:00:00Z";
 const SOLUTION_ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";

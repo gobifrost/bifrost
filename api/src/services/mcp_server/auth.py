@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import secrets
+from datetime import datetime, timezone
 from typing import Any
 
 from mcp.server.auth.provider import AccessToken
@@ -27,13 +28,13 @@ from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from pydantic import Field
 from starlette.middleware import Middleware as StarletteMiddleware
 from starlette.middleware.authentication import AuthenticationMiddleware
+from starlette.authentication import AuthenticationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from shared.external_access import (
-    resolve_provider_org_claim,
-)
+from shared.auth_cookies import read_access_cookie
+from shared.human_sessions import HumanSessionUnavailable, issue_human_session, rotate_human_session
 from shared.identities import is_identity
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,20 @@ class MCPAccessToken(AccessToken):
     """SDK token with Bifrost identity claims for tool execution."""
 
     claims: dict[str, Any] = Field(default=...)
+
+
+class _RefreshRequired(AuthenticationError):
+    """An authentication refusal that can be repaired before any tool effect."""
+
+
+def _authentication_error(_connection, error: AuthenticationError) -> Response:
+    from src.core.auth import REFRESH_REQUIRED_CHALLENGE
+
+    return JSONResponse(
+        {"error": "invalid_token", "error_description": "refresh_required"},
+        status_code=401,
+        headers={"WWW-Authenticate": REFRESH_REQUIRED_CHALLENGE if isinstance(error, _RefreshRequired) else "Bearer"},
+    )
 
 
 def _secret_hmac(message: str) -> str:
@@ -312,7 +327,9 @@ class BifrostAuthProvider:
         """
         from shared.browser_impersonation import IMPERSONATION_COOKIE_NAME
         from src.core.cache import get_shared_redis
+        from src.core.database import get_db_context
         from src.core.security import decode_token
+        from src.services.authorization.tokens import authenticate_human_token, parse_human_claims
 
         if request.cookies.get(IMPERSONATION_COOKIE_NAME):
             return JSONResponse(
@@ -337,10 +354,8 @@ class BifrostAuthProvider:
                 status_code=400
             )
 
-        oauth_data = json.loads(oauth_data_json)
-
         # Get access token from cookie (set by Bifrost login)
-        access_token = request.cookies.get("access_token")
+        access_token = read_access_cookie(request.cookies)
         if not access_token:
             # User not logged in - redirect back to login
             # DON'T delete state yet - we need it when user comes back after login
@@ -348,12 +363,13 @@ class BifrostAuthProvider:
             login_url = f"{self.base_url}/login?return_to={callback_url}"
             return RedirectResponse(url=login_url, status_code=302)
 
-        # Clean up state only after we've confirmed user is authenticated
-        await r.delete(_mcp_state_key(internal_state))
-
         # Validate the access token
         payload = decode_token(access_token, expected_type="access")
         if payload is None:
+            from src.core.auth import _refresh_fixes
+
+            if _refresh_fixes(access_token):
+                return _authentication_error(request, _RefreshRequired())
             return JSONResponse(
                 {"error": "access_denied", "error_description": "Invalid or expired session"},
                 status_code=401
@@ -365,6 +381,23 @@ class BifrostAuthProvider:
                 status_code=403,
             )
 
+        claims = parse_human_claims(payload)
+        if claims is None:
+            return JSONResponse(
+                {"error": "access_denied", "error_description": "Invalid or expired session"},
+                status_code=401,
+            )
+        async with get_db_context() as db:
+            result = await authenticate_human_token(db, claims)
+        if result.refresh_required:
+            return _authentication_error(request, _RefreshRequired())
+        if result.principal is None:
+            return JSONResponse(
+                {"error": "access_denied", "error_description": "Invalid or expired session"},
+                status_code=401,
+            )
+        principal = result.principal
+
         # Check MCP access permissions (only gates on the master enabled switch)
         if not await self._check_mcp_access(payload):
             return JSONResponse(
@@ -372,16 +405,21 @@ class BifrostAuthProvider:
                 status_code=403
             )
 
+        # Authentication challenges must leave state untouched. Only the
+        # authenticated winner consumes the binding and creates a code.
+        consumed_state = await r.getdel(_mcp_state_key(internal_state))
+        if consumed_state is None:
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "OAuth session expired"}, status_code=400,
+            )
+        oauth_data = json.loads(consumed_state)
+
         # Generate authorization code
         auth_code = secrets.token_urlsafe(32)
 
         # Store auth code with user info and PKCE challenge
         auth_code_data = {
-            "user_id": payload.get("sub"),
-            "email": payload.get("email"),
-            "name": payload.get("name"),
-            "is_superuser": payload.get("is_superuser", False),
-            "org_id": payload.get("org_id"),
+            "user_id": str(principal.user_id),
             "code_challenge": oauth_data["code_challenge"],
             "redirect_uri": oauth_data["redirect_uri"],
             "client_id": oauth_data["client_id"],
@@ -399,7 +437,7 @@ class BifrostAuthProvider:
         state = oauth_data["state"]
         redirect_url = f"{redirect_uri}?code={auth_code}&state={state}"
 
-        logger.info(f"MCP OAuth: Issuing auth code for user {payload.get('email')}")
+        logger.info(f"MCP OAuth: Issuing auth code for user {principal.email}")
 
         # If client requests JSON (from fetch in React component), return URL instead of redirect
         # This is needed because Vite's proxy only works for XHR, not browser navigations
@@ -419,7 +457,6 @@ class BifrostAuthProvider:
         """
         from src.core.cache import get_shared_redis
         from src.core.database import get_db_context
-        from src.core.security import create_access_token, create_refresh_token
         from src.repositories.users import UserRepository
 
         # Parse form data
@@ -441,7 +478,7 @@ class BifrostAuthProvider:
             # Get auth code data from Redis
             r = await get_shared_redis()
             code_key = _mcp_auth_code_key(code)
-            auth_code_data_json = await r.get(code_key)
+            auth_code_data_json = await r.getdel(code_key)
 
             if not auth_code_data_json:
                 return JSONResponse(
@@ -449,14 +486,17 @@ class BifrostAuthProvider:
                     status_code=400
                 )
 
-            # Delete auth code (one-time use)
-            await r.delete(code_key)
-
             auth_code_data = _open_auth_code_record(code, auth_code_data_json)
             if auth_code_data is None:
                 return JSONResponse(
                     {"error": "invalid_grant", "error_description": "Invalid or expired authorization code"},
                     status_code=400
+                )
+
+            if client_id != auth_code_data.get("client_id"):
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "client_id mismatch"},
+                    status_code=400,
                 )
 
             # Validate redirect_uri matches
@@ -486,36 +526,27 @@ class BifrostAuthProvider:
                 user_repo = UserRepository(db)
                 user = await user_repo.get_by_id(user_id)
 
-                if not user or is_identity(user):
+                if not user or not user.is_active or is_identity(user):
                     return JSONResponse(
                         {"error": "invalid_grant", "error_description": "User not found"},
                         status_code=400
                     )
 
-                # Create tokens with full user context. The is_external claim
-                # (EXT-1) is neutralized for bypass principals at this mint —
-                # without it every MCP-OAuth token defaulted to is_external=False
-                # (LEAK #1), re-opening the global tier to external users.
-                token_data = {
-                    "sub": str(user.id),
-                    "email": user.email,
-                    "name": user.name,
-                    "is_superuser": user.is_superuser,
-                    "is_external": bool(user.is_external),
-                    "is_provider_org": await resolve_provider_org_claim(db, user),
-                    "org_id": str(user.organization_id) if user.organization_id else None,
-                    "type": "access",
-                }
-                access_token = create_access_token(data=token_data)
-                refresh_token, _jti = create_refresh_token(data={"sub": str(user.id)})
+            try:
+                tokens = await issue_human_session(user.id)
+            except HumanSessionUnavailable:
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "User not found"},
+                    status_code=400,
+                )
 
-            logger.info(f"MCP OAuth: Token issued for user {auth_code_data['email']}")
+            logger.info("MCP OAuth: Token issued for user %s", user_id)
 
             return JSONResponse({
-                "access_token": access_token,
+                "access_token": tokens.access_token,
                 "token_type": "Bearer",
-                "expires_in": 1800,  # 30 minutes
-                "refresh_token": refresh_token,
+                "expires_in": max(0, int((tokens.expires_at - datetime.now(timezone.utc)).total_seconds())),
+                "refresh_token": tokens.refresh_token,
                 "scope": auth_code_data.get("scope", "mcp:access"),
             })
 
@@ -528,47 +559,19 @@ class BifrostAuthProvider:
                     status_code=400
                 )
 
-            # Validate and rotate refresh token
-            from src.core.security import decode_token
-
-            payload = decode_token(refresh_token, expected_type="refresh")
-            if payload is None:
+            try:
+                tokens = await rotate_human_session(refresh_token)
+            except HumanSessionUnavailable:
                 return JSONResponse(
                     {"error": "invalid_grant", "error_description": "Invalid refresh token"},
-                    status_code=400
+                    status_code=400,
                 )
 
-            user_id = payload.get("sub")
-
-            async with get_db_context() as db:
-                user_repo = UserRepository(db)
-                user = await user_repo.get_by_id(user_id)
-
-                if not user or is_identity(user):
-                    return JSONResponse(
-                        {"error": "invalid_grant", "error_description": "User not found"},
-                        status_code=400
-                    )
-
-                # Create new tokens (carry the is_external claim — LEAK #1).
-                token_data = {
-                    "sub": str(user.id),
-                    "email": user.email,
-                    "name": user.name,
-                    "is_superuser": user.is_superuser,
-                    "is_external": bool(user.is_external),
-                    "is_provider_org": await resolve_provider_org_claim(db, user),
-                    "org_id": str(user.organization_id) if user.organization_id else None,
-                    "type": "access",
-                }
-                access_token = create_access_token(data=token_data)
-                new_refresh_token, _jti = create_refresh_token(data={"sub": str(user.id)})
-
             return JSONResponse({
-                "access_token": access_token,
+                "access_token": tokens.access_token,
                 "token_type": "Bearer",
-                "expires_in": 1800,
-                "refresh_token": new_refresh_token,
+                "expires_in": max(0, int((tokens.expires_at - datetime.now(timezone.utc)).total_seconds())),
+                "refresh_token": tokens.refresh_token,
                 "scope": "mcp:access",
             })
 
@@ -678,10 +681,19 @@ class BifrostAuthProvider:
             load_runtime_principal,
             log_legacy_runtime_token_accepted,
         )
-        from src.services.authorization.tokens import authenticate_runtime_token, parse_runtime_claims
+        from src.services.authorization.tokens import (
+            authenticate_human_token,
+            authenticate_runtime_token,
+            parse_human_claims,
+            parse_runtime_claims,
+        )
 
         payload = decode_token(token, expected_type="access")
         if payload is None:
+            from src.core.auth import _refresh_fixes
+
+            if _refresh_fixes(token):
+                raise _RefreshRequired()
             logger.info("MCP auth: decode_token returned None (invalid/expired JWT)")
             return None
         if payload.get("impersonated_by_user_id") or payload.get("impersonation_session_id"):
@@ -704,10 +716,24 @@ class BifrostAuthProvider:
                 return None
             async with get_db_context() as db:
                 result = await authenticate_runtime_token(db, claims)
+            if result.refresh_required:
+                raise _RefreshRequired()
             if result.principal is None:
                 return None
             runtime_principal = result.principal
             # Tool filtering follows the run user's roles, carried by the claims.
+            runtime_role_names = [role.name for role in claims.usr.roles]
+        else:
+            claims = parse_human_claims(payload)
+            if claims is None:
+                return None
+            async with get_db_context() as db:
+                result = await authenticate_human_token(db, claims)
+            if result.refresh_required:
+                raise _RefreshRequired()
+            if result.principal is None:
+                return None
+            runtime_principal = result.principal
             runtime_role_names = [role.name for role in claims.usr.roles]
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")
@@ -805,7 +831,7 @@ class BifrostAuthProvider:
         find an authenticated user.
         """
         return [
-            StarletteMiddleware(AuthenticationMiddleware, backend=BearerAuthBackend(self)),
+            StarletteMiddleware(AuthenticationMiddleware, backend=BearerAuthBackend(self), on_error=_authentication_error),
             StarletteMiddleware(AuthContextMiddleware),
         ]
 

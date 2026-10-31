@@ -24,6 +24,7 @@ from enum import Enum
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, status
+from shared.models import ApplicationBundleManifest
 
 from src.core.auth import Context, CurrentUser
 from src.core.log_safety import log_safe
@@ -552,6 +553,7 @@ async def render_app(
 
 @render_router.get(
     "/bundle-manifest",
+    response_model=ApplicationBundleManifest,
     summary="Get the bundle manifest for an app (esbuild path)",
 )
 async def get_bundle_manifest(
@@ -617,6 +619,7 @@ async def get_bundle_manifest(
             "organization_id": str(app.organization_id) if app.organization_id else None,
             "app_model": "standalone_v2",
             "runtime_contract": runtime_contract,
+            "sdk_binding_api_major": app.sdk_binding_api_major,
         }
 
     import json as _json

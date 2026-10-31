@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect } from "./fixtures/api-fixture";
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { test, type AuthedApi } from "./fixtures/api-fixture";
@@ -79,14 +79,12 @@ function minimalSolutionZip(slug: string): Buffer {
 
 async function deploySolution(
 	api: AuthedApi,
-	page: Page,
 	solutionId: string,
 	slug: string,
 ) {
-	const response = await page.context().request.post(
+	const response = await api.post(
 		`/api/solutions/${solutionId}/deploy?force=true`,
 		{
-			headers: await api.csrfHeader(),
 			multipart: {
 				file: {
 					name: "solution.zip",
@@ -165,7 +163,7 @@ test.describe("Solution backup export (admin)", () => {
 		solutionId = solution.id;
 
 		try {
-			await deploySolution(api, page, solutionId, slug);
+			await deploySolution(api, solutionId, slug);
 			await seedSolutionFile(api, solutionId);
 
 			await page.goto(`/solutions/${solutionId}?tab=exports&from=docs`);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient, authFetch, setRefusedChangeListener } from "./api-client";
 import {
 	ACCESS_TOKEN_KEY,
+	clearAuthTokens,
 	setImpersonationToken,
 } from "./auth-token";
 
@@ -16,11 +17,60 @@ type TestPlatformAuthGlobal = typeof globalThis & {
 	__BIFROST_PLATFORM_AUTH_V1__?: TestPlatformAuthBridge;
 };
 
+function installSerialWebLocks(): () => void {
+	const previousLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+	let tail = Promise.resolve();
+	const request = vi.fn(
+		async <T>(_name: string, callback: () => Promise<T>): Promise<T> => {
+			const previous = tail;
+			let release!: () => void;
+			tail = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			await previous;
+			try {
+				return await callback();
+			} finally {
+				release();
+			}
+		},
+	);
+	Object.defineProperty(navigator, "locks", {
+		configurable: true,
+		value: { request },
+	});
+	return () => {
+		if (previousLocks) Object.defineProperty(navigator, "locks", previousLocks);
+		else delete (navigator as unknown as { locks?: unknown }).locks;
+	};
+}
+
+let restoreWebLocks: (() => void) | null = null;
+
+beforeEach(() => {
+	restoreWebLocks = installSerialWebLocks();
+});
+
+afterEach(() => {
+	restoreWebLocks?.();
+	restoreWebLocks = null;
+});
+
 /**
  * Build a mock Response with a given status and an empty body.
  */
 function mockResponse(status: number): Response {
 	return new Response(null, { status });
+}
+
+function refreshRequiredResponse(): Response {
+	return new Response(null, {
+		status: 401,
+		headers: {
+			"WWW-Authenticate":
+				'Bearer error="invalid_token", error_description="refresh_required"',
+		},
+	});
 }
 
 /**
@@ -30,10 +80,10 @@ function mockResponse(status: number): Response {
  * JWT shape: header.payload.signature (signature is unverified by the
  * client). The payload is `{exp: <far-future>}`.
  */
-function buildFakeToken(): string {
+function buildFakeToken(marker = ""): string {
 	const farFuture = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365;
 	const header = btoa(JSON.stringify({ alg: "none", typ: "JWT" }));
-	const payload = btoa(JSON.stringify({ exp: farFuture }));
+	const payload = btoa(JSON.stringify({ exp: farFuture, marker }));
 	return `${header}.${payload}.sig`;
 }
 
@@ -61,7 +111,7 @@ describe("V2 app platform auth bridge", () => {
 
 		const first = bridge!.refreshAccessToken();
 		const second = bridge!.refreshAccessToken();
-		expect(fetchMock).toHaveBeenCalledTimes(1);
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 		releaseRefresh();
 
 		await expect(Promise.all([first, second])).resolves.toEqual([
@@ -70,6 +120,87 @@ describe("V2 app platform auth bridge", () => {
 		]);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 		expect(bridge!.getAccessToken()).toBe(refreshedToken);
+	});
+
+	it("adopts a token refreshed by another tab while waiting for the browser lock", async () => {
+		const refreshedToken = buildFakeToken();
+		const request = vi.fn(async (_name: string, callback: () => Promise<boolean>) => {
+			localStorage.setItem(ACCESS_TOKEN_KEY, refreshedToken);
+			return callback();
+		});
+		Object.defineProperty(navigator, "locks", {
+			configurable: true,
+			value: { request },
+		});
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const bridge = (globalThis as TestPlatformAuthGlobal)
+			.__BIFROST_PLATFORM_AUTH_V1__;
+
+		await expect(bridge!.refreshAccessToken()).resolves.toBe(true);
+		expect(request).toHaveBeenCalledWith("bifrost.auth.refresh", expect.any(Function));
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("refuses refresh when Web Locks are unavailable", async () => {
+		delete (navigator as unknown as { locks?: unknown }).locks;
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const bridge = (globalThis as TestPlatformAuthGlobal)
+			.__BIFROST_PLATFORM_AUTH_V1__;
+
+		await expect(bridge!.refreshAccessToken()).resolves.toBe(false);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("treats a token cleared while waiting for the lock as an ended session", async () => {
+		const request = vi.fn(async (_name: string, callback: () => Promise<boolean>) => {
+			localStorage.removeItem(ACCESS_TOKEN_KEY);
+			return callback();
+		});
+		Object.defineProperty(navigator, "locks", {
+			configurable: true,
+			value: { request },
+		});
+		localStorage.setItem(ACCESS_TOKEN_KEY, buildFakeToken());
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		const bridge = (globalThis as TestPlatformAuthGlobal)
+			.__BIFROST_PLATFORM_AUTH_V1__;
+
+		await expect(bridge!.refreshAccessToken()).resolves.toBe(false);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("does not publish a refresh that completes after logout", async () => {
+		const token = buildFakeToken("before-logout");
+		localStorage.setItem(ACCESS_TOKEN_KEY, token);
+		let resolveJson!: (value: { access_token: string }) => void;
+		const body = new Promise<{ access_token: string }>((resolve) => {
+			resolveJson = resolve;
+		});
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: () => body,
+		} as Response);
+		vi.stubGlobal("fetch", fetchMock);
+		const refreshed = vi.fn();
+		window.addEventListener("bifrost:access-token-refreshed", refreshed);
+		const bridge = (globalThis as TestPlatformAuthGlobal)
+			.__BIFROST_PLATFORM_AUTH_V1__;
+
+		try {
+			const refresh = bridge!.refreshAccessToken();
+			await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+			clearAuthTokens();
+			resolveJson({ access_token: buildFakeToken("should-not-publish") });
+
+			await expect(refresh).resolves.toBe(false);
+			expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
+			expect(refreshed).not.toHaveBeenCalled();
+		} finally {
+			window.removeEventListener("bifrost:access-token-refreshed", refreshed);
+		}
 	});
 });
 
@@ -213,6 +344,22 @@ describe("authFetch transient 5xx retry", () => {
 		expect(response.status).toBe(200);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
+
+	it("shares the three-replay budget between refresh recovery and transient retries", async () => {
+		fetchMock
+			.mockResolvedValueOnce(refreshRequiredResponse())
+			.mockResolvedValueOnce(mockJsonResponse(200, { access_token: buildFakeToken() }))
+			.mockResolvedValueOnce(mockResponse(503))
+			.mockResolvedValueOnce(mockResponse(503))
+			.mockResolvedValueOnce(mockResponse(503));
+
+		const responsePromise = authFetch("/api/test");
+		await flushRetries();
+
+		await expect(responsePromise).resolves.toMatchObject({ status: 503 });
+		// Initial request + refresh + two remaining retries after the challenge.
+		expect(fetchMock).toHaveBeenCalledTimes(5);
+	});
 });
 
 /**
@@ -309,7 +456,7 @@ describe("apiClient (openapi-fetch middleware) transient 5xx retry", () => {
 });
 
 describe.each(["authFetch", "apiClient"] as const)(
-	"%s session versus route denial",
+	"%s authentication challenges",
 	(kind) => {
 		let fetchMock: ReturnType<typeof vi.fn>;
 		let token: string;
@@ -334,14 +481,11 @@ describe.each(["authFetch", "apiClient"] as const)(
 							fetch: fetchMock,
 						} as never)
 					).response;
-		it("keeps a valid session when one route returns 401", async () => {
-			fetchMock
-				.mockResolvedValueOnce(mockResponse(401))
-				.mockResolvedValueOnce(mockJsonResponse(200, { id: "user" }));
+		it("does not replay a generic 401", async () => {
+			fetchMock.mockResolvedValueOnce(mockResponse(401));
 			expect((await call()).status).toBe(401);
 			expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe(token);
-			expect(fetchMock).toHaveBeenCalledTimes(2);
-			expect(fetchMock.mock.calls[1][0]).toBe("/auth/me");
+			expect(fetchMock).toHaveBeenCalledTimes(1);
 		});
 		it("leaves 403 permission failures to the page", async () => {
 			fetchMock.mockResolvedValueOnce(mockResponse(403));
@@ -349,17 +493,9 @@ describe.each(["authFetch", "apiClient"] as const)(
 			expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe(token);
 			expect(fetchMock).toHaveBeenCalledTimes(1);
 		});
-		it("does not sign out when session verification is unavailable", async () => {
+		it("refreshes and retries only after the exact challenge", async () => {
 			fetchMock
-				.mockResolvedValueOnce(mockResponse(401))
-				.mockRejectedValueOnce(new TypeError("Network unavailable"));
-			expect((await call()).status).toBe(401);
-			expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe(token);
-		});
-		it("refreshes and retries when identity also rejects the token", async () => {
-			fetchMock
-				.mockResolvedValueOnce(mockResponse(401))
-				.mockResolvedValueOnce(mockResponse(401))
+				.mockResolvedValueOnce(refreshRequiredResponse())
 				.mockResolvedValueOnce(
 					mockJsonResponse(200, { access_token: token }),
 				)
@@ -367,16 +503,69 @@ describe.each(["authFetch", "apiClient"] as const)(
 					mockJsonResponse(200, { version: "1.0" }),
 				);
 			expect((await call()).status).toBe(200);
-			expect(fetchMock.mock.calls[2][0]).toBe("/api/auth/refresh");
-			expect(fetchMock).toHaveBeenCalledTimes(4);
+			expect(fetchMock.mock.calls[1][0]).toBe("/api/auth/refresh");
+			expect(fetchMock).toHaveBeenCalledTimes(3);
 		});
-		it("clears a session rejected by both identity and refresh", async () => {
-			fetchMock.mockImplementation(async () => mockResponse(401));
+		it("clears a session when a challenged refresh fails", async () => {
+			fetchMock
+				.mockResolvedValueOnce(refreshRequiredResponse())
+				.mockResolvedValueOnce(mockResponse(401));
 			expect((await call()).status).toBe(401);
 			expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
 		});
 	},
 );
+
+it("replays a challenged POST once before its endpoint effect runs", async () => {
+	const token = buildFakeToken();
+	localStorage.setItem(ACCESS_TOKEN_KEY, token);
+	let requests = 0;
+	let effects = 0;
+	const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+		if (String(input) === "/api/auth/refresh")
+			return mockJsonResponse(200, { access_token: token });
+		requests += 1;
+		if (requests === 1) return refreshRequiredResponse();
+		effects += 1;
+		return mockJsonResponse(200, { created: true });
+	});
+	vi.stubGlobal("fetch", fetchMock);
+
+	await expect(authFetch("/api/widgets", { method: "POST", body: "{}" })).resolves.toMatchObject({ status: 200 });
+	expect(effects).toBe(1);
+	expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it("refreshes again when a second epoch challenge follows a rotated token", async () => {
+	const firstToken = buildFakeToken("first");
+	const secondToken = buildFakeToken("second");
+	const thirdToken = buildFakeToken("third");
+	localStorage.setItem(ACCESS_TOKEN_KEY, firstToken);
+	const seenAuthorizations: string[] = [];
+	let endpointAttempts = 0;
+	const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+		if (typeof input === "string" && input === "/api/auth/refresh") {
+			return Response.json({
+				access_token: seenAuthorizations.length === 1 ? secondToken : thirdToken,
+			});
+		}
+		const headers = input instanceof Request ? input.headers : new Headers(init?.headers);
+		seenAuthorizations.push(headers.get("Authorization") ?? "");
+		endpointAttempts += 1;
+		return endpointAttempts < 3
+			? refreshRequiredResponse()
+			: mockJsonResponse(200, { ok: true });
+	});
+	vi.stubGlobal("fetch", fetchMock);
+
+	await expect(authFetch("/api/epoch-sensitive")).resolves.toMatchObject({ status: 200 });
+	expect(seenAuthorizations).toEqual([
+		`Bearer ${firstToken}`,
+		`Bearer ${secondToken}`,
+		`Bearer ${thirdToken}`,
+	]);
+	expect(fetchMock.mock.calls.filter(([input]) => input === "/api/auth/refresh")).toHaveLength(2);
+});
 
 describe("impersonation authentication failures", () => {
 	afterEach(() => {

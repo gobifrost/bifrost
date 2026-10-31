@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures/api-fixture";
-import type { APIResponse } from "@playwright/test";
+import type { APIResponse } from "./fixtures/api-fixture";
 
 const RUN_ID = Date.now();
 const AGENT_NAME = `HOME-01 launch agent ${RUN_ID}`;

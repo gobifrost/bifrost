@@ -88,11 +88,12 @@ async def _callback(
     monkeypatch.setattr(OAuthService, "find_user_by_oauth", lookup)
     monkeypatch.setattr(OAuthService, "link_oauth_account", AsyncMock())
     monkeypatch.setattr(oauth_sso, "ensure_user_provisioned", provision)
-    monkeypatch.setattr(oauth_sso, "get_user_roles", AsyncMock(return_value=[]))
-    monkeypatch.setattr(oauth_sso, "resolve_provider_org_claim", AsyncMock(return_value=False))
-    monkeypatch.setattr(oauth_sso, "create_access_token", lambda data: "access-token")
-    monkeypatch.setattr(oauth_sso, "create_refresh_token", lambda data: ("refresh-token", "jti"))
-    monkeypatch.setattr(oauth_sso, "_set_oauth_auth_cookies", lambda *args: None)
+    monkeypatch.setattr(
+        oauth_sso,
+        "issue_human_session",
+        AsyncMock(return_value=SimpleNamespace(access_token="access-token", refresh_token="refresh-token")),
+    )
+    monkeypatch.setattr(oauth_sso, "set_auth_cookies", lambda *args: None)
     if reject_validation:
         monkeypatch.setattr(
             OAuthService,

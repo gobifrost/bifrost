@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page } from "./fixtures/api-fixture";
 import {
 	expect,
 	grantWorkspaceAppPolicy,

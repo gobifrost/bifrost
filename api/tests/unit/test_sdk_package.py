@@ -13,6 +13,7 @@ stages the same files from the client tree so it still validates the bundler.
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import shutil
 import tarfile
@@ -40,6 +41,10 @@ _SRC_FILES = [
     "branding-theme.ts",
     "brand-palette.ts",
     "bifrost-header.tsx",
+    "errors.ts",
+    "hosted-binding.tsx",
+    "hosted-contract.ts",
+    "hosted-loader.ts",
 ]
 
 
@@ -47,7 +52,12 @@ def _ensure_sdk_src() -> bool:
     """Make sure sdk_src/ holds the SDK source + index.ts barrel. Returns False
     if neither the image copy nor the client tree is available (skip)."""
     dst = _SDK_SERVICE / "sdk_src"
-    if (dst / "index.ts").is_file():
+    if (
+        (dst / "index.ts").is_file()
+        and (dst / "index.v2.ts").is_file()
+        and (dst / "hosted-binding.tsx").is_file()
+        and (dst / "v1.d.ts").is_file()
+    ):
         return True
     # stage from the client tree (mirrors the Dockerfile COPY)
     candidates = [
@@ -61,6 +71,8 @@ def _ensure_sdk_src() -> bool:
     for f in _SRC_FILES:
         shutil.copy(client / f, dst / f)
     shutil.copy(client / "index.v2.ts", dst / "index.ts")
+    shutil.copy(client / "index.v2.ts", dst / "index.v2.ts")
+    shutil.copy(client.parents[1] / "v1.d.ts", dst / "v1.d.ts")
     shutil.copy(client / "sdk-contract.json", dst / "sdk-contract.json")
     return True
 
@@ -80,7 +92,14 @@ def test_build_sdk_tarball_cached_per_version(monkeypatch):
         calls.append(workdir)
         return b"//bundle"
 
+    def _fake_types(workdir: Path) -> Path:
+        types = workdir / "types"
+        types.mkdir()
+        (types / "hosted-binding.d.ts").write_text("export {}\n")
+        return types
+
     monkeypatch.setattr(sdkpkg, "_bundle", _fake_bundle)
+    monkeypatch.setattr(sdkpkg, "_build_types", _fake_types)
     try:
         first = sdkpkg.build_sdk_tarball("v9.9.9")
         second = sdkpkg.build_sdk_tarball("v9.9.9")
@@ -100,6 +119,13 @@ def test_sdk_package_version_matches_tarball_package_json(monkeypatch):
     sdkpkg._built_bundle.cache_clear()
     monkeypatch.setattr(sdkpkg, "_bundle", lambda workdir: b"//bundle")
     monkeypatch.setattr(sdkpkg, "sdk_contract_version", lambda: 7)
+    def _types_dir(workdir: Path) -> Path:
+        types = workdir / "types"
+        types.mkdir(exist_ok=True)
+        (types / "hosted-binding.d.ts").write_text("export {}\n")
+        return types
+
+    monkeypatch.setattr(sdkpkg, "_build_types", _types_dir)
 
     try:
         version = "v1.2-3-gabc1234"
@@ -135,6 +161,7 @@ def test_build_sdk_tarball_shape_and_exports():
         names = tar.getnames()
         assert "package/package.json" in names
         assert "package/dist/index.mjs" in names
+        assert "package/types/hosted-binding.d.ts" in names
 
         pkg_file = tar.extractfile("package/package.json")
         assert pkg_file is not None
@@ -142,10 +169,12 @@ def test_build_sdk_tarball_shape_and_exports():
         assert pkg["name"] == "bifrost"
         # git-describe "v1.2-3-gabc1234" has no patch component → coerced to 1.2.0.
         assert pkg["version"] == "1.2.0"
-        # No runtime deps — the SDK is fetch + React + lucide (all peers) only.
+        # No runtime deps — the binding shares the App's React singleton.
         assert "dependencies" not in pkg or not pkg["dependencies"]
         assert "react" in pkg["peerDependencies"]
-        assert "lucide-react" in pkg["peerDependencies"]
+        assert "lucide-react" not in pkg["peerDependencies"]
+        assert pkg["bifrost"]["binding_api_major"] == 1
+        assert pkg["types"] == "types/hosted-binding.d.ts"
 
         bundle_file = tar.extractfile("package/dist/index.mjs")
         assert bundle_file is not None
@@ -156,6 +185,26 @@ def test_build_sdk_tarball_shape_and_exports():
             "useUser", "RequireRole", "useBranding", "useOrganizations",
         ):
             assert sym in bundle, f"{sym} missing from bundle"
-        # React + lucide stay external (imported, not inlined).
+        # React stays external so the binding shares the App's singleton.
         assert 'from "react"' in bundle
-        assert 'from "lucide-react"' in bundle
+
+
+@pytest.mark.e2e
+def test_hosted_factory_is_static_and_content_addressed(tmp_path: Path):
+    assert _ensure_sdk_src(), "SDK source must be staged in the Docker test image"
+    assert (_SDK_SERVICE / "node_modules" / "esbuild").exists(), "SDK factory toolchain must be installed"
+
+    import src.services.sdk_package as sdkpkg
+
+    output = tmp_path / "hosted-v1.js"
+    sdkpkg._build_hosted_factory(output)
+    artifact = sdkpkg._read_hosted_artifact(output)
+
+    source = output.read_text()
+    assert "__BIFROST_APP_SDK_FACTORIES_V1__" in source
+    assert "createSdk(peers)" in source
+    assert "new Function" not in source
+    assert "eval(" not in source
+    assert "??=" not in source
+    assert artifact.fingerprint == hashlib.sha256(output.read_bytes()).hexdigest()
+    assert artifact.factory_id in source

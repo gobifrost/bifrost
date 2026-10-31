@@ -314,16 +314,17 @@ async def _current_table_policy_user(user: UserPrincipal, table_id: str) -> User
         table = await db.get(TableOrm, table_uuid)
         if caller is None or table is None or not user_reach(caller).covers(table.organization_id):
             return None
-        role_rows = (
-            await db.execute(
-                select(Role.id, Role.name)
-                .join(UserRole, UserRole.role_id == Role.id)
-                .where(UserRole.user_id == caller.ctx.user_id)
-            )
-        ).all()
         policy_user = _fresh_table_policy_user(caller.principal)
-        policy_user.role_ids = [row.id for row in role_rows]
-        policy_user.role_names = [row.name for row in role_rows]
+        if user.authorization_context is None:
+            role_rows = (
+                await db.execute(
+                    select(Role.id, Role.name)
+                    .join(UserRole, UserRole.role_id == Role.id)
+                    .where(UserRole.user_id == caller.ctx.user_id)
+                )
+            ).all()
+            policy_user.role_ids = [row.id for row in role_rows]
+            policy_user.role_names = [row.name for row in role_rows]
         policy_user.roles = list(policy_user.role_names)
         return policy_user
 
@@ -793,9 +794,17 @@ async def _handle_file_message(
 
 
 async def _current_ws_caller(db, user: UserPrincipal):
-    """Reload the original caller and current role state before a live read."""
+    """Use human facts after the socket's epoch check; reload other callers.
+
+    Connection authentication and the input/delivery guard validate the human
+    epoch before these resource checks. Rebuilding its roles here would add
+    a second authority source after that shared boundary.
+    """
     try:
-        return await refresh_caller(db, await load_caller(db, user))
+        caller = await load_caller(db, user)
+        if user.authorization_context is not None:
+            return caller
+        return await refresh_caller(db, caller)
     except CallerUnavailable:
         return None
 
@@ -1018,7 +1027,15 @@ async def _delivery_allowed(user: UserPrincipal, channel: str, payload: dict[str
 
 
 async def _require_live_impersonation(websocket: WebSocket, user: UserPrincipal) -> None:
-    """Recheck support-session authority before receiving or delivering data."""
+    """Recheck human expiry/epoch or support-session liveness before any data."""
+    if user.authorization_context is not None:
+        # Reauthenticate the original handshake credential. An epoch change,
+        # logout or expiry closes this socket before its next sensitive event;
+        # the browser refreshes and reconnects with its current cookies.
+        if await get_current_user_ws(websocket) is None:
+            await websocket.close(code=4001, reason="Authentication refresh required")
+            raise WebSocketDisconnect(code=4001)
+        return
     if not is_browser_impersonation(user):
         return
     try:

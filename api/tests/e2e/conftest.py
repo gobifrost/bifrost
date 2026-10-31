@@ -20,11 +20,13 @@ import os
 import re
 import uuid
 
-import pytest
 import httpx
+import pytest
+from bifrost._refreshing import RefreshingClient, refresh_extensions
 
 # Re-export so existing ``from tests.e2e.conftest import poll_until`` still works.
 from tests.helpers.polling import poll_until  # noqa: F401
+from tests.e2e.fixtures.users import E2EUser
 
 
 # E2E test API URL (from docker-compose.test.yml)
@@ -79,7 +81,7 @@ def e2e_api_url():
     return E2E_API_URL
 
 
-def _legacy_deploy_body_to_zip(client: httpx.Client, solution_id: str, headers, body: dict) -> bytes:
+def _legacy_deploy_body_to_zip(client: "_E2EClient", solution_id: str, headers, body: dict) -> bytes:
     """Package legacy test deploy JSON as the production workspace zip."""
     from src.models.orm.solutions import Solution
     from src.services.solutions.deploy import SolutionBundle
@@ -138,13 +140,59 @@ class _E2EClient:
     def __getattr__(self, name: str):
         return getattr(self._client, name)
 
-    def post(self, path: str, *args, **kwargs):
+    @staticmethod
+    def _fixture_bearer(headers) -> str | None:
+        if not headers:
+            return None
+        authorization = httpx.Headers(headers).get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            return authorization[7:]
+        return None
+
+    def _refresh_fixture_user(self, challenged_access_token: str | None) -> str | None:
+        """Rotate only the matching fixture user's real human session."""
+        user = E2EUser.user_for_access_token(challenged_access_token)
+        if user is None or not user.refresh_token:
+            return None
+
+        response = httpx.post(
+            f"{str(self._client.base_url).rstrip('/')}/auth/refresh",
+            json={"refresh_token": user.refresh_token},
+            timeout=60.0,
+        )
+        if response.status_code != 200:
+            return None
+        token_data = response.json()
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+        if not isinstance(access_token, str) or not isinstance(refresh_token, str):
+            return None
+        user.set_tokens(access_token, refresh_token)
+        return access_token
+
+    def request(self, method: str, url, **kwargs):
+        """Use production challenge refresh for registered fixture credentials."""
+        bearer = self._fixture_bearer(kwargs.get("headers"))
+        if E2EUser.user_for_access_token(bearer) is not None:
+            kwargs["extensions"] = refresh_extensions(kwargs.get("extensions"))
+        return self._client.request(method, url, **kwargs)
+
+    def get(self, url, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def options(self, url, **kwargs):
+        return self.request("OPTIONS", url, **kwargs)
+
+    def head(self, url, **kwargs):
+        return self.request("HEAD", url, **kwargs)
+
+    def post(self, path: str, **kwargs):
         match = _SOLUTION_DEPLOY_RE.match(path)
         if match and "json" in kwargs and "files" not in kwargs:
             body = kwargs.pop("json") or {}
             solution_id = match.group(1)
             headers = kwargs.get("headers")
-            zip_bytes = _legacy_deploy_body_to_zip(self._client, solution_id, headers, body)
+            zip_bytes = _legacy_deploy_body_to_zip(self, solution_id, headers, body)
             params = dict(kwargs.pop("params", {}) or {})
             if body.get("force"):
                 params["force"] = "true"
@@ -158,7 +206,16 @@ class _E2EClient:
             kwargs["files"] = {
                 "file": ("deploy.zip", zip_bytes, "application/zip"),
             }
-        return self._client.post(path, *args, **kwargs)
+        return self.request("POST", path, **kwargs)
+
+    def put(self, url, **kwargs):
+        return self.request("PUT", url, **kwargs)
+
+    def patch(self, url, **kwargs):
+        return self.request("PATCH", url, **kwargs)
+
+    def delete(self, url, **kwargs):
+        return self.request("DELETE", url, **kwargs)
 
 
 @pytest.fixture(scope="session")
@@ -168,8 +225,41 @@ def e2e_client():
 
     Provides a configured httpx client for making requests to the API.
     """
-    with httpx.Client(base_url=E2E_API_URL, timeout=60.0) as client:
-        yield _E2EClient(client)
+    e2e: _E2EClient | None = None
+
+    def refresh(challenged_access_token: str | None) -> str | None:
+        assert e2e is not None
+        return e2e._refresh_fixture_user(challenged_access_token)
+
+    with RefreshingClient(
+        base_url=E2E_API_URL,
+        timeout=60.0,
+        refresh=refresh,
+    ) as client:
+        e2e = _E2EClient(client)
+        yield e2e
+
+
+@pytest.fixture(scope="session")
+def human_minter(e2e_client):
+    """Refresh an E2E fixture user's signed human credential pair.
+
+    WebSocket clients and ``requests`` callers do not pass through
+    :class:`RefreshingClient`, so they must obtain a current credential before
+    opening a connection or constructing their request headers.  This uses the
+    same single-use refresh endpoint as the production SDK and records both
+    replacement tokens on the fixture user for later challenge-driven callers.
+    """
+
+    def _mint(user: E2EUser) -> E2EUser:
+        previous_access_token = user.access_token
+        assert previous_access_token is not None, f"{user.email} has no access token"
+        access_token = e2e_client._refresh_fixture_user(previous_access_token)
+        assert access_token is not None, f"Failed to refresh signed human credential for {user.email}"
+        assert user.refresh_token is not None, f"Refresh did not return a replacement token for {user.email}"
+        return user
+
+    return _mint
 
 
 @pytest.fixture

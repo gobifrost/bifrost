@@ -97,6 +97,19 @@ def actor_from_token_payload(
     if payload is None:
         return None
 
+    if "ver" in payload and "credential_kind" not in payload:
+        from src.services.authorization.tokens import parse_human_claims
+
+        claims = parse_human_claims(payload)
+        if claims is None:
+            return None
+        return ActorContext(
+            user_id=claims.usr.id, organization_id=claims.usr.org,
+            email=claims.usr.email, name=claims.usr.name,
+            ip_address=ip_address, user_agent=user_agent, source="http",
+            surface=resolve_self_reported_surface(surface_header),
+        )
+
     email = payload.get("email")
     name = payload.get("name")
     impersonated_by_user_id = _uuid_or_none(payload.get("impersonated_by_user_id"))

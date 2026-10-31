@@ -24,7 +24,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src.core.auth import Context, CurrentUser
@@ -55,15 +55,15 @@ from src.jobs.platform.application_deploy import (
     APPLICATION_DEPLOY_DEFINITION,
     ApplicationDeployPayload,
 )
-from src.jobs.platform.application_sdk_update import (
-    APPLICATION_SDK_UPDATE_DEFINITION,
-    ApplicationSdkUpdatePayload,
+from shared.application_sdk_upgrades import (
+    AppSdkUpgradeConflict,
+    active_solution_sdk_conflict,
+    enqueue_application_sdk_upgrade,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.applications import Application
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.platform_jobs import (
-    ACTIVE_PLATFORM_JOB_STATUSES,
     enqueue_platform_job,
     ensure_platform_job_notification,
     publish_platform_job_update,
@@ -208,6 +208,7 @@ async def application_to_public(
         sdk_package_version=application.sdk_package_version,
         sdk_fingerprint=application.sdk_fingerprint,
         sdk_contract_version=application.sdk_contract_version,
+        sdk_binding_api_major=application.sdk_binding_api_major,
         sdk_built_at=application.sdk_built_at,
         sdk_status=application_sdk_status(application, current_sdk),
         sdk_source_available=sdk_source_available(application),
@@ -230,26 +231,7 @@ def _sdk_update_action_skip_reason(
 
 
 async def _active_solution_job_exists(ctx: Context, solution_id: UUID) -> bool:
-    return (
-        await ctx.db.execute(
-            select(PlatformJob.id)
-            .where(
-                PlatformJob.resource_lock_key == f"solution:{solution_id}",
-                PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none() is not None
-
-
-async def _lock_solution_operation(ctx: Context, solution_id: UUID) -> None:
-    await ctx.db.execute(
-        text(
-            "SELECT pg_advisory_xact_lock("
-            "hashtext('bifrost:solution-operation:' || :solution_id))"
-        ),
-        {"solution_id": str(solution_id)},
-    )
+    return await active_solution_sdk_conflict(ctx.db, solution_id)
 
 
 async def _enqueue_sdk_update_for_application(
@@ -259,39 +241,17 @@ async def _enqueue_sdk_update_for_application(
     application: Application,
     response: Response | None = None,
 ) -> tuple[PlatformJobAccepted, PlatformJob]:
-    if application.solution_id is not None:
-        await _lock_solution_operation(ctx, application.solution_id)
-        if await _active_solution_job_exists(ctx, application.solution_id):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A Solution deployment is already in progress for this App.",
-            )
-
-    job, reused = await enqueue_platform_job(
-        ctx.db,
-        APPLICATION_SDK_UPDATE_DEFINITION,
-        ApplicationSdkUpdatePayload(
-            application_id=application.id,
-            expected_active_deployment_id=application.active_deployment_id,
-            expected_sdk_package_version=application.sdk_package_version,
-            expected_sdk_fingerprint=application.sdk_fingerprint,
-            expected_sdk_contract_version=application.sdk_contract_version,
-            expected_sdk_built_at=application.sdk_built_at,
-        ),
-        dedupe_key=str(application.id),
-        resource_lock_key=f"application:{application.id}",
-        organization_id=application.organization_id,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email or "Unknown",
-        resource_type="application",
-        resource_id=str(application.id),
-        title=f"Updating SDK for {application.name}",
-        action_url=f"/apps/{application.slug}",
-        memory_profile_key=build_resource_memory_profile_key(
-            APPLICATION_SDK_UPDATE_DEFINITION.job_type, application.id
-        ),
-    )
+    try:
+        result = await enqueue_application_sdk_upgrade(
+            ctx.db, application,
+            requested_by_user_id=user.user_id,
+            requested_by_email=user.email,
+            requested_by_name=user.name or user.email or "Unknown",
+        )
+    except AppSdkUpgradeConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    assert result is not None  # A manual request is never suppressed by automatic policy.
+    job, reused = result
     if reused and job.requested_by_user_id != str(user.user_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

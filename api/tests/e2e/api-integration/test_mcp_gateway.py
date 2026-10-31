@@ -77,10 +77,11 @@ def _call_gateway(token: str, name: str, arguments: dict) -> dict:
 @pytest.mark.e2e
 class TestMCPAgentGateway:
     @pytest.fixture(autouse=True, scope="class")
-    def gateway_fixture(self, request, platform_admin):
+    def gateway_fixture(self, request, platform_admin, human_minter):
         suffix = uuid.uuid4().hex[:8]
         function_name = f"gateway_echo_{suffix}"
         path = f"workflows/{function_name}.py"
+        human_minter(platform_admin)
         token = platform_admin.access_token
         assert token is not None
         headers = _api_headers(token)
@@ -149,23 +150,38 @@ class TestMCPAgentGateway:
 
         yield
 
+        human_minter(platform_admin)
+        headers = _api_headers(platform_admin.access_token)
         requests.delete(
             f"{TEST_API_URL}/api/agents/{agent_id}",
             headers=headers,
         )
+        human_minter(platform_admin)
+        headers = _api_headers(platform_admin.access_token)
         requests.delete(
             f"{TEST_API_URL}/api/agents/{delegated_agent_id}",
             headers=headers,
         )
+        human_minter(platform_admin)
+        headers = _api_headers(platform_admin.access_token)
         requests.delete(
             f"{TEST_API_URL}/api/workflows/{workflow_id}",
             headers=headers,
         )
+        human_minter(platform_admin)
+        headers = _api_headers(platform_admin.access_token)
         requests.delete(
             f"{TEST_API_URL}/api/files/editor",
             headers=headers,
             params={"path": path},
         )
+
+    @pytest.fixture(autouse=True)
+    def _refresh_gateway_credentials(self, platform_admin, human_minter):
+        """Direct MCP requests bypass the SDK's challenge-refresh client."""
+        human_minter(platform_admin)
+        type(self).token = platform_admin.access_token
+        type(self).headers = _api_headers(platform_admin.access_token)
 
     def test_default_and_agent_scoped_surfaces_are_distinct(self):
         initialize = _mcp_request(

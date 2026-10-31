@@ -1,0 +1,13 @@
+{
+  "key": "pr:1154",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal cached metadata activation of the already approved App SDK Upgrades announcement in PR #1153; no additional customer-facing behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1154",
+      "Canonical Product Updates validation and the actual image-preparation helper confirm the approved #1153 highlight is present. All 304 prior verified PR records and all 33 previous approved entries, including the authentication notice and prompt, are preserved unchanged."
+    ]
+  }
+}

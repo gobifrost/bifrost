@@ -1,14 +1,15 @@
 """Tests for claims preserved at the FastMCP authentication boundary."""
 
-from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 from pydantic import ValidationError
 
 from src.services.mcp_server.auth import BifrostAuthProvider, MCPAccessToken
 from src.services.mcp_server.server import MCPContext
-from src.services.mcp_server.tools._http_bridge import _token_from_context
+from src.services.mcp_server.tools._http_bridge import _human_subject
 
 
 def test_mcp_access_token_rejects_missing_claims():
@@ -48,61 +49,52 @@ def test_mcp_access_token_preserves_policy_claims():
     assert token.claims == claims
 
 
-@pytest.mark.asyncio
-async def test_verify_token_preserves_canonical_scope_bypass_claims():
-    user_id = uuid4()
-    org_id = uuid4()
-    payload = {
-        "sub": str(user_id),
-        "email": "provider@example.com",
-        "name": "Provider User",
-        "is_superuser": False,
-        "is_provider_org": True,
-        "is_external": False,
-        "org_id": str(org_id),
-        "exp": 1234567890,
-    }
+def test_http_bridge_human_subject_ignores_copied_context_flags():
+    from src.services.authorization.tokens import HumanSubject
+    context = MCPContext(user_id=uuid4(), org_id=uuid4(), is_provider_org=True, is_platform_admin=True)
+    assert _human_subject(context) == HumanSubject(context.user_id)
+
+
+async def test_mcp_human_verification_preserves_flags_roles_and_challenges_before_a_tool_effect():
+    from httpx import ASGITransport, AsyncClient
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+    from src.core.auth import REFRESH_REQUIRED_CHALLENGE
+    from src.services.authorization.tokens import _encode_claims
+    from tests.helpers.human_tokens import human_claims
+
+    claims = human_claims(organization_id=uuid4(), provider=True, external=True)
+    token = _encode_claims(claims)
+    db = AsyncMock()
+    rows = MagicMock()
+    rows.scalar_one_or_none.return_value = int(claims.av)
+    db.execute.return_value = rows
+
+    @asynccontextmanager
+    async def db_context():
+        yield db
+
     provider = BifrostAuthProvider(base_url="http://test")
+    effects: list[str] = []
 
-    with (
-        patch("src.core.security.decode_token", return_value=payload),
-        patch.object(provider, "_check_mcp_access", new=AsyncMock(return_value=True)),
-        patch.object(provider, "_get_user_roles", new=AsyncMock(return_value=[])),
-    ):
-        token = await provider.verify_token("encoded.jwt")
+    async def tool(_request):
+        effects.append("ran")
+        return JSONResponse({})
 
-    assert token is not None
-    assert token.claims["is_superuser"] is False
-    assert token.claims["is_provider_org"] is True
-
-
-def test_http_bridge_fallback_preserves_provider_org_claim():
-    from src.core.security import decode_token
-
-    context = MCPContext(
-        user_id=uuid4(),
-        org_id=uuid4(),
-        is_provider_org=True,
-        user_email="provider@example.com",
-    )
-
-    payload = decode_token(_token_from_context(context), expected_type="access")
-
-    assert payload is not None
-    assert payload["is_provider_org"] is True
-
-
-def test_agent_bridge_token_preserves_run_id_and_external_account_flag():
-    from src.core.security import decode_token
-
-    person, run = uuid4(), uuid4()
-    context = MCPContext(
-        user_id=person, org_id=uuid4(), run_user_id=person, agent_run_id=str(run),
-        is_external=True, is_provider_org=True,
-    )
-    payload = decode_token(_token_from_context(context), expected_type="access")
-    assert payload is not None
-    assert payload["sub"] == str(person)
-    assert payload["engine_agent_run_id"] == str(run)
-    assert payload["engine_run_user_id"] == str(person)
-    assert payload["is_external"] is True
+    with patch("src.core.database.get_db_context", db_context), patch.object(
+        provider, "_check_mcp_access", AsyncMock(return_value=True)
+    ), patch.object(provider, "_get_user_roles", AsyncMock(side_effect=AssertionError("claims supply roles"))):
+        verified = await provider.verify_token(token)
+        assert verified is not None
+        assert verified.claims["is_provider_org"] is True
+        assert verified.claims["is_external"] is True
+        assert verified.claims["is_superuser"] is False
+        assert verified.claims["roles"] == []
+        rows.scalar_one_or_none.return_value = int(claims.av) + 1
+        app = Starlette(routes=[Route("/tools", tool, methods=["POST"])], middleware=provider.get_middleware())
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+            response = await client.post("/tools", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == REFRESH_REQUIRED_CHALLENGE
+        assert effects == []

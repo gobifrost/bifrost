@@ -42,11 +42,14 @@ class TestMCPRefreshAfterRegister:
     """A workflow registered via POST /api/workflows/register must appear in
     MCP tools/list immediately, without an API restart."""
 
-    def test_registered_tool_appears_in_mcp_tools_list_immediately(self, platform_admin):
+    def test_registered_tool_appears_in_mcp_tools_list_immediately(
+        self, platform_admin, human_minter
+    ):
         suffix = uuid.uuid4().hex[:8]
         path = f"workflows/test_mcp_refresh_{suffix}.py"
         function_name = f"test_mcp_refresh_{suffix}"
 
+        human_minter(platform_admin)
         admin_h = platform_admin.headers
         mcp_h = _mcp_headers(platform_admin.headers)
 
@@ -168,27 +171,33 @@ async def {function_name}(message: str) -> dict:
             assert "message" in invalid_call_payload["result"]["content"][0]["text"]
         finally:
             if agent_id:
+                human_minter(platform_admin)
                 requests.delete(
                     f"{TEST_API_URL}/api/agents/{agent_id}",
-                    headers=admin_h,
+                    headers=platform_admin.headers,
                 )
             if workflow_id:
+                human_minter(platform_admin)
                 requests.delete(
                     f"{TEST_API_URL}/api/workflows/{workflow_id}",
-                    headers=admin_h,
+                    headers=platform_admin.headers,
                 )
+            human_minter(platform_admin)
             requests.delete(
                 f"{TEST_API_URL}/api/files/editor",
-                headers=admin_h,
+                headers=platform_admin.headers,
                 params={"path": path},
             )
 
-    def test_updated_workflow_name_replaces_mcp_tool_name_immediately(self, platform_admin):
+    def test_updated_workflow_name_replaces_mcp_tool_name_immediately(
+        self, platform_admin, human_minter
+    ):
         suffix = uuid.uuid4().hex[:8]
         path = f"workflows/test_mcp_rename_{suffix}.py"
         function_name = f"test_mcp_rename_{suffix}"
         renamed_tool_name = f"renamed_tool_{suffix}"
 
+        human_minter(platform_admin)
         admin_h = platform_admin.headers
         mcp_h = _mcp_headers(platform_admin.headers)
 
@@ -261,17 +270,20 @@ def {function_name}(message: str) -> dict:
             assert function_name not in tool_names
         finally:
             if agent_id:
+                human_minter(platform_admin)
                 requests.delete(
                     f"{TEST_API_URL}/api/agents/{agent_id}",
-                    headers=admin_h,
+                    headers=platform_admin.headers,
                 )
             if workflow_id:
+                human_minter(platform_admin)
                 requests.delete(
                     f"{TEST_API_URL}/api/workflows/{workflow_id}",
-                    headers=admin_h,
+                    headers=platform_admin.headers,
                 )
+            human_minter(platform_admin)
             requests.delete(
                 f"{TEST_API_URL}/api/files/editor",
-                headers=admin_h,
+                headers=platform_admin.headers,
                 params={"path": path},
             )

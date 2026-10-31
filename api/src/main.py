@@ -29,6 +29,7 @@ from src.routers.app_code_files import router as app_code_files_router
 from src.routers.app_code_files import render_router as app_render_router
 from src.routers.app_embed_secrets import router as app_embed_secrets_router
 from src.routers.applications import router as applications_router
+from src.routers.app_sdk_runtime import router as app_sdk_runtime_router
 from src.routers.audit import router as audit_router
 from src.routers.auth import router as auth_router
 from src.routers.authorization import router as authorization_router
@@ -153,6 +154,14 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await initialize_shared_redis()
     logger.info("Redis cache connection established")
+
+    # This is intentionally before any readiness-bearing API work: the
+    # descriptor must never advertise a factory that another replica cannot
+    # retrieve from shared storage.
+    from src.services.sdk_package import publish_current_hosted_sdk_artifact
+
+    artifact = await publish_current_hosted_sdk_artifact()
+    logger.info("Published hosted App SDK artifact %s", artifact.fingerprint)
 
     # Register dynamic workflow endpoints for OpenAPI documentation
     logger.info("Registering workflow endpoints...")
@@ -497,6 +506,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_sources_router)
     app.include_router(app_embed_secrets_router)
     app.include_router(applications_router)
+    app.include_router(app_sdk_runtime_router)
     app.include_router(app_code_files_router)
     app.include_router(app_render_router)
     app.include_router(dependencies_router)

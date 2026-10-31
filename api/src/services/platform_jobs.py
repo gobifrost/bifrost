@@ -343,6 +343,7 @@ async def ensure_platform_job_notification(
 
     notification = await get_notification_service().create_notification(
         user_id=job.requested_by_user_id,
+        for_admins=job.requested_by_user_id == "system",
         request=NotificationCreate(
             category=NotificationCategory.SYSTEM,
             title=job.title,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
@@ -288,12 +289,14 @@ async def test_one_api_agent_executor_starts_once_per_api_host() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reported", ["1.0.0-old", None])
-async def test_a_job_pod_is_admitted_with_the_build_its_launcher_runs(reported) -> None:
+@pytest.mark.parametrize("form", ["job", "static"])
+async def test_a_worker_is_admitted_with_the_build_its_launcher_runs(reported, form) -> None:
     socket = Mock(accept=AsyncMock(), send_text=AsyncMock())
     hello = Hello(
         launcher_id=LEASE.launcher_id,
         incarnation_id=LEASE.worker_id,
-        job_uid="job", pod_uid="pod", hostname="runner-0", form="job",
+        job_uid="job" if form == "job" else None,
+        pod_uid="pod" if form == "job" else None, hostname="runner-0", form=form,
         issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
     )
     initial = {
@@ -303,16 +306,25 @@ async def test_a_job_pod_is_admitted_with_the_build_its_launcher_runs(reported) 
     if reported is not None:
         initial["version"] = reported
     socket.receive_text = AsyncMock(return_value=json.dumps(initial))
+
+    @asynccontextmanager
+    async def database():
+        yield Mock(scalar=AsyncMock(return_value=None))
+
     with (
         patch("src.worker.remote.host.get_settings", return_value=Mock(secret_key="secret", memory_pressure_threshold=.85)),
         patch("src.worker.remote.host.admit_worker", new_callable=AsyncMock) as admit,
+        patch("src.worker.remote.host.register_static_worker", new_callable=AsyncMock) as register,
+        patch("src.worker.remote.host.get_liveness_db_context", new=database),
         patch("src.worker.remote.host.acquire_remote_owner", new_callable=AsyncMock, return_value=LEASE),
         patch("src.worker.remote.host.ApiExecutor"),
         patch("src.worker.remote.host.RemoteSession", return_value=Mock(task=Mock())),
     ):
         await RemoteControlHost().connect(socket)
 
-    assert admit.await_args.kwargs["version"] == reported
+    registered = admit if form == "job" else register
+    assert registered.await_args.kwargs["version"] == reported
+    (register if form == "job" else admit).assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -30,8 +30,9 @@ class TestMCPProtocol:
     """Test MCP JSON-RPC 2.0 protocol endpoint."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def _ensure_agent_with_tools(self, platform_admin):
+    def _ensure_agent_with_tools(self, platform_admin, human_minter):
         """Create an agent with system tools so MCP tools/list returns results."""
+        human_minter(platform_admin)
         headers = platform_admin.headers
 
         resp = requests.post(
@@ -56,10 +57,17 @@ class TestMCPProtocol:
 
         yield
 
+        human_minter(platform_admin)
         requests.delete(
             f"{TEST_API_URL}/api/agents/{agent_id}",
-            headers=headers,
+            headers=platform_admin.headers,
         )
+
+    @pytest.fixture(autouse=True)
+    def _refresh_human_credentials(self, platform_admin, org1_user, human_minter):
+        """Direct HTTP MCP calls do not receive SDK challenge refreshes."""
+        human_minter(platform_admin)
+        human_minter(org1_user)
 
     def test_mcp_requires_auth(self):
         """POST /mcp without auth should return 401."""

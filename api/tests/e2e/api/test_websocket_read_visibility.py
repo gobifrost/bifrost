@@ -27,6 +27,16 @@ async def _subscribe(ws, channel):
     return json.loads(msg)
 
 
+def _connect_as_human(ws_url, user, human_minter):
+    """Open a WebSocket with a newly minted signed human credential."""
+    human_minter(user)
+    assert user.access_token is not None
+    return connect(
+        ws_url,
+        additional_headers={"Authorization": f"Bearer {user.access_token}"},
+    )
+
+
 @pytest.mark.e2e
 class TestAgentRunChannelVisibility:
     async def test_owner_can_subscribe_others_denied(
@@ -37,6 +47,7 @@ class TestAgentRunChannelVisibility:
         org1_user,
         org2_user,
         db_session: AsyncSession,
+        human_minter,
     ):
         run_id = uuid4()
         run = AgentRun(
@@ -52,28 +63,19 @@ class TestAgentRunChannelVisibility:
         ws_url = f"{e2e_ws_url}/ws/connect"
         try:
             # Owner can subscribe.
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, org1_user, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)  # connected
                 resp = await _subscribe(ws, f"agent-run:{run_id}")
                 assert resp["type"] == "subscribed", resp
 
             # A different regular user (not the caller) is denied.
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org2_user.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, org2_user, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"agent-run:{run_id}")
                 assert resp["type"] == "error", resp
 
             # Bypass principal (platform admin) can subscribe to any run.
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {platform_admin.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, platform_admin, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"agent-run:{run_id}")
                 assert resp["type"] == "subscribed", resp
@@ -86,21 +88,16 @@ class TestAgentRunChannelVisibility:
         e2e_ws_url,
         platform_admin,
         org1_user,
+        human_minter,
     ):
         ws_url = f"{e2e_ws_url}/ws/connect"
 
-        async with connect(
-            ws_url,
-            additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
-        ) as ws:
+        async with _connect_as_human(ws_url, org1_user, human_minter) as ws:
             await asyncio.wait_for(ws.recv(), timeout=5)
             resp = await _subscribe(ws, "agent-runs")
             assert resp["type"] == "subscribed", resp
 
-        async with connect(
-            ws_url,
-            additional_headers={"Authorization": f"Bearer {platform_admin.access_token}"},
-        ) as ws:
+        async with _connect_as_human(ws_url, platform_admin, human_minter) as ws:
             await asyncio.wait_for(ws.recv(), timeout=5)
             resp = await _subscribe(ws, "agent-runs")
             assert resp["type"] == "subscribed", resp
@@ -114,6 +111,7 @@ class TestEventSourceChannelVisibility:
         platform_admin,
         org1_user,
         db_session: AsyncSession,
+        human_minter,
     ):
         ws_url = f"{e2e_ws_url}/ws/connect"
         source = EventSource(
@@ -126,18 +124,12 @@ class TestEventSourceChannelVisibility:
         await db_session.commit()
 
         try:
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, org1_user, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"event-source:{source.id}")
                 assert resp["type"] == "error", resp
 
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {platform_admin.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, platform_admin, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"event-source:{source.id}")
                 assert resp["type"] == "subscribed", resp
@@ -155,6 +147,7 @@ class TestAppChannelVisibility:
         platform_admin,
         org1,
         org1_user,
+        human_minter,
     ):
         slug = f"ws-draft-{uuid4().hex[:8]}"
         create = e2e_client.post(
@@ -174,18 +167,12 @@ class TestAppChannelVisibility:
             ws_url = f"{e2e_ws_url}/ws/connect"
             # Even the app's own org member does not get the draft channel —
             # it's bypass-only (authoring surface).
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, org1_user, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"app:draft:{app_id}")
                 assert resp["type"] == "error", resp
 
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {platform_admin.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, platform_admin, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"app:draft:{app_id}")
                 assert resp["type"] == "subscribed", resp
@@ -200,6 +187,7 @@ class TestAppChannelVisibility:
         org1,
         org1_user,
         org2_user,
+        human_minter,
     ):
         slug = f"ws-live-{uuid4().hex[:8]}"
         create = e2e_client.post(
@@ -218,19 +206,13 @@ class TestAppChannelVisibility:
         try:
             ws_url = f"{e2e_ws_url}/ws/connect"
             # Same-org member can access the live channel.
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, org1_user, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"app:live:{app_id}")
                 assert resp["type"] == "subscribed", resp
 
             # A user in a different org cannot.
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org2_user.access_token}"},
-            ) as ws:
+            async with _connect_as_human(ws_url, org2_user, human_minter) as ws:
                 await asyncio.wait_for(ws.recv(), timeout=5)
                 resp = await _subscribe(ws, f"app:live:{app_id}")
                 assert resp["type"] == "error", resp

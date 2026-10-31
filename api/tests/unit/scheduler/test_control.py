@@ -62,6 +62,7 @@ def _control(lease: FakeLease, **kwargs) -> ControlPlane:
 # The schedule each system task had in the scheduler before control was
 # extracted. Moving control between hosts must not add, drop or retime any.
 LEGACY_SCHEDULES = {
+    "app_sdk_upgrades": ("interval", {"minutes": 1}, True),
     "schedule_processor": ("cron", {"minute": "*/1"}, False),
     "summary_backfill_reconciliation": ("interval", {"seconds": 60}, True),
     "deferred_execution_promoter": ("interval", {"seconds": 60}, True),

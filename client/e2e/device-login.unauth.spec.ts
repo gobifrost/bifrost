@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 import { readFileSync } from "node:fs";
 import type { UserCredentials } from "./fixtures/users";
 import { generateTOTP } from "./setup/totp";

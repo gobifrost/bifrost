@@ -1620,6 +1620,7 @@ def _installed_sdk_build_metadata(app_dir: pathlib.Path) -> dict[str, str | int]
     package_version = package.get("version")
     fingerprint = stamp.get("fingerprint") if isinstance(stamp, dict) else None
     contract_version = stamp.get("contract") if isinstance(stamp, dict) else None
+    binding_api_major = stamp.get("binding_api_major") if isinstance(stamp, dict) else None
     if (
         not isinstance(package_version, str)
         or not package_version
@@ -1627,12 +1628,14 @@ def _installed_sdk_build_metadata(app_dir: pathlib.Path) -> dict[str, str | int]
         or not fingerprint
         or not isinstance(contract_version, int)
         or isinstance(contract_version, bool)
+        or (binding_api_major is not None and (type(binding_api_major) is not int or binding_api_major < 1))
     ):
         return None
     return {
         "package_version": package_version,
         "fingerprint": fingerprint,
         "contract_version": contract_version,
+        **({"binding_api_major": binding_api_major} if binding_api_major is not None else {}),
     }
 
 
@@ -2994,10 +2997,10 @@ def start_cmd(
                     "— see the npm output above."
                 )
 
-    async def _fetch_server_version() -> tuple[str | None, int | None]:
+    async def _fetch_server_version() -> tuple[str | None, int | None, int | None, list[int]]:
         resp = await client.get("/api/version")
         if resp.status_code != 200:
-            return None, None
+            return None, None, None, []
         data = resp.json()
         fp = data.get("sdk_fingerprint")
         fp = fp if isinstance(fp, str) else None
@@ -3007,21 +3010,28 @@ def start_cmd(
             fp = None
         contract = data.get("sdk_contract_version")
         contract = contract if isinstance(contract, int) else None
-        return fp, contract
+        major = data.get("sdk_binding_api_major")
+        major = major if type(major) is int else None
+        supported = data.get("sdk_supported_binding_api_majors", [])
+        supported = supported if isinstance(supported, list) and all(type(item) is int for item in supported) else []
+        return fp, contract, major, supported
 
     try:
-        server_fp, server_contract = asyncio.run(_fetch_server_version())
+        server_fp, server_contract, server_binding_major, supported_binding_majors = asyncio.run(_fetch_server_version())
     except Exception:
         # The staleness check must never block `start`: network errors, an
         # old server without this field, bad JSON, or anything else the
         # server does wrong all degrade to "no warning", not a crash.
-        server_fp, server_contract = None, None
+        server_fp, server_contract, server_binding_major, supported_binding_majors = None, None, None, []
 
     warning = sdk_staleness_warning(
         installed_sdk_fingerprint(chosen.app_dir),
         server_fp,
         installed_sdk_contract(chosen.app_dir),
         server_contract,
+        installed_binding_api_major=installed_sdk_binding_api_major(chosen.app_dir),
+        server_binding_api_major=server_binding_major,
+        supported_binding_api_majors=supported_binding_majors,
     )
     if warning is not None:
         message, severity = warning
@@ -3353,11 +3363,22 @@ def installed_sdk_fingerprint(app_dir: pathlib.Path) -> str | None:
     return fingerprint if isinstance(fingerprint, str) else None
 
 
+def installed_sdk_binding_api_major(app_dir: pathlib.Path) -> int | None:
+    """Read the public major from the installed binding, not a server wire version."""
+    metadata = _installed_sdk_build_metadata(app_dir)
+    value = metadata.get("binding_api_major") if metadata else None
+    return value if type(value) is int and value > 0 else None
+
+
 def sdk_staleness_warning(
     installed_fp: str | None,
     server_fp: str | None,
     installed_contract: int | None,
     server_contract: int | None,
+    *,
+    installed_binding_api_major: int | None = None,
+    server_binding_api_major: int | None = None,
+    supported_binding_api_majors: list[int] | None = None,
 ) -> tuple[str, str] | None:  # (message, severity: "warn"|"breaking") or None
     """Decide whether `solution start` should warn that the locally-installed
     web SDK is stale relative to the server. Pure/no-network — callers own
@@ -3373,6 +3394,16 @@ def sdk_staleness_warning(
         # server's own toolchain couldn't compute a fingerprint — no signal,
         # so stay silent rather than nag.
         return None
+    if installed_binding_api_major is not None:
+        if installed_binding_api_major not in (supported_binding_api_majors or []):
+            return (
+                f"This instance does not support App SDK major {installed_binding_api_major}. "
+                "Use a compatible instance or migrate the App's SDK major explicitly.",
+                "breaking",
+            )
+        if installed_binding_api_major != server_binding_api_major or installed_fp == server_fp:
+            return None
+        return ("App SDK binding update available. Run: bifrost solution sdk update", "warn")
     if installed_fp is not None and installed_fp == server_fp:
         return None  # nothing changed -> never prompts
 

@@ -1131,6 +1131,34 @@
     "reason": "one-hop named permission/reach decision in the route or shared service. Current original-user reach, named agent permission at the persisted organization, and resource sharing/private ownership."
   },
   {
+    "access_class": "public",
+    "boundary": null,
+    "current_gate": "none",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/app-sdk/assets/{fingerprint}.js",
+    "permission": null,
+    "reason": "Public immutable browser SDK factory; its content-addressed path and hash verification contain no tenant data."
+  },
+  {
+    "access_class": "public",
+    "boundary": null,
+    "current_gate": "none",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/app-sdk/v1/manifest",
+    "permission": null,
+    "reason": "Public browser SDK descriptor; it selects an immutable factory and contains no tenant data."
+  },
+  {
     "access_class": "permission",
     "boundary": "organization",
     "current_gate": "authenticated",
@@ -4638,6 +4666,34 @@
     "path": "/api/llms.txt",
     "permission": null,
     "reason": "Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook)."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "evaluator",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/maintenance/app-sdk-upgrades/settings",
+    "permission": "platform.read",
+    "reason": "Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "evaluator",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "PUT",
+    "operation_id": null,
+    "path": "/api/maintenance/app-sdk-upgrades/settings",
+    "permission": "platform.readwrite",
+    "reason": "Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent."
   },
   {
     "access_class": "permission",
@@ -9026,7 +9082,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9071,7 +9126,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9132,7 +9186,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9218,12 +9271,8 @@
     "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
@@ -9278,12 +9327,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
@@ -9326,7 +9371,6 @@
     "current_gate": "none",
     "inline_checks": [
       "is_platform_admin",
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9399,7 +9443,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9457,12 +9500,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",
@@ -9521,7 +9560,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9566,8 +9604,6 @@
     "boundary": null,
     "current_gate": "none",
     "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
       "is_superuser"
     ],
     "inline_effect": "no_caller_effect",
@@ -9737,10 +9773,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "GET",
@@ -9767,12 +9801,8 @@
     "access_class": "public",
     "boundary": null,
     "current_gate": "none",
-    "inline_checks": [
-      "is_platform_admin",
-      "is_provider_org",
-      "is_superuser"
-    ],
-    "inline_effect": "no_caller_effect",
+    "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "POST",

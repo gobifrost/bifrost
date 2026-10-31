@@ -66,7 +66,7 @@ function escapeRegExp(value: string) {
 }
 
 async function chooseTool(
-	page: import("@playwright/test").Page,
+	page: import("./fixtures/api-fixture").Page,
 	pickerName: string,
 	toolId: string,
 ) {
@@ -81,7 +81,7 @@ async function chooseTool(
 }
 
 async function removeSelectedTool(
-	page: import("@playwright/test").Page,
+	page: import("./fixtures/api-fixture").Page,
 	toolId: string,
 	sectionTitle: "Allowed Tools" | "Blocked Tools",
 ) {

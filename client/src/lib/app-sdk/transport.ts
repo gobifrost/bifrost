@@ -62,6 +62,25 @@ export interface PlatformAuthBridge {
 	handleAuthenticationFailure: () => void;
 }
 
+// This is the sole 401 response that proves the auth dependency rejected a
+// credential before an endpoint could run. A bare 401 can be an application
+// response after an effect, so it must never cause an automatic replay.
+export const REFRESH_REQUIRED_WWW_AUTHENTICATE =
+	'Bearer error="invalid_token", error_description="refresh_required"';
+
+// Every logical client call gets the same bounded recovery budget, shared by
+// auth refresh replays and the host client's existing transient 5xx replays.
+export const REQUEST_REPLAY_BUDGET = 3;
+
+export function isRefreshRequiredChallenge(
+	response: Pick<Response, "status" | "headers">,
+): boolean {
+	return (
+		response.status === 401 &&
+		response.headers.get("WWW-Authenticate") === REFRESH_REQUIRED_WWW_AUTHENTICATE
+	);
+}
+
 type PlatformAuthGlobal = typeof globalThis & {
 	__BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge;
 };

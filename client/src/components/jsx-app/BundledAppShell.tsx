@@ -21,6 +21,7 @@
  */
 
 import type * as React from "react";
+import type { components } from "@/lib/v1";
 import { useEffect, useState } from "react";
 import { authFetch } from "@/lib/api-client";
 import { setDefaultAppScope } from "@/lib/app-sdk/tables";
@@ -122,29 +123,7 @@ function registerUserDepImportMap(dependencies: Record<string, string>): void {
 	document.head.appendChild(script);
 }
 
-export interface BundleManifest {
-	// null for a standalone_v2 app with no built dist yet; a string otherwise.
-	entry: string | null;
-	css: string | null;
-	base_url: string;
-	mode: "preview" | "live";
-	dependencies: Record<string, string>;
-	// Server set to true iff the first-view auto-migration rewrote files
-	// under _repo/<app>/. Surfaced as a dismissible info banner so the
-	// developer knows to pull on next workspace sync.
-	migrated?: boolean;
-	// Org-scoped apps carry their organization id; global apps have null.
-	// Mirrors how org-scoped workflows always run as their org regardless
-	// of who triggered them.
-	organization_id?: string | null;
-	// Render model: 'inline_v1' (legacy — this component fetches + renders the
-	// bundle inline) | 'standalone_v2' (the app is a normal React project served
-	// as its own dist/index.html and mounted standalone). Absent => inline_v1.
-	app_model?: "inline_v1" | "standalone_v2";
-	// Explicit lifecycle contract for standalone_v2. Absent/null is a legacy
-	// side-effect entry retained for compatibility.
-	runtime_contract?: StandaloneV2RuntimeContract;
-}
+export type BundleManifest = components["schemas"]["ApplicationBundleManifest"];
 
 interface BundledAppShellProps {
 	appId: string;
@@ -342,6 +321,7 @@ export function BundledAppShell({
 		css: string | null;
 		baseUrl: string;
 		runtimeContract: StandaloneV2RuntimeContract;
+		sdkBindingApiMajor: number | null;
 	} | null>(() => {
 		const manifest = initiallyPrepared?.manifest;
 		if (manifest?.app_model !== "standalone_v2" || !manifest.entry) {
@@ -352,6 +332,7 @@ export function BundledAppShell({
 			css: manifest.css,
 			baseUrl: manifest.base_url,
 			runtimeContract: manifest.runtime_contract ?? null,
+			sdkBindingApiMajor: manifest.sdk_binding_api_major ?? null,
 		};
 	});
 	// Reset the v2 mount DURING RENDER when the app changes (React's "adjust
@@ -446,6 +427,8 @@ export function BundledAppShell({
 								baseUrl: manifest.base_url,
 								runtimeContract:
 									manifest.runtime_contract ?? null,
+								sdkBindingApiMajor:
+									manifest.sdk_binding_api_major ?? null,
 							});
 							setAppModel("standalone_v2");
 							return "standalone_v2";
@@ -517,6 +500,7 @@ export function BundledAppShell({
 							css: manifest.css,
 							baseUrl: manifest.base_url,
 							runtimeContract: manifest.runtime_contract ?? null,
+							sdkBindingApiMajor: manifest.sdk_binding_api_major ?? null,
 						});
 						setAppModel("standalone_v2");
 						return "standalone_v2";
@@ -698,6 +682,7 @@ export function BundledAppShell({
 				baseUrl={v2Mount.baseUrl}
 				appOrgId={appOrgId}
 				runtimeContract={v2Mount.runtimeContract}
+				sdkBindingApiMajor={v2Mount.sdkBindingApiMajor}
 			/>
 		);
 	}

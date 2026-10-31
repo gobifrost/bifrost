@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import select, update
 
+from shared.browser_impersonation import is_browser_impersonation
 from src.core.auth import CurrentUser
 from src.core.security import verify_password, get_password_hash
 from src.core.database import AsyncSession, get_db
@@ -25,6 +26,15 @@ router = APIRouter(prefix="/api/profile", tags=["Profile"])
 # Allowed image types for avatar upload
 ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg"}
 MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2MB
+
+
+def _refuse_impersonation_password_change(current_user: CurrentUser) -> None:
+    """Keep temporary support sessions from changing durable credentials."""
+    if is_browser_impersonation(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Exit impersonation before changing password",
+        )
 
 
 # =============================================================================
@@ -255,6 +265,8 @@ async def change_password(
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
 ) -> None:
     """Change or set user's password."""
+    _refuse_impersonation_password_change(current_user)
+
     # Load user to verify current password
     stmt = select(User).where(User.id == current_user.user_id)
     result = await db.execute(stmt)
@@ -286,6 +298,9 @@ async def change_password(
         .where(User.id == current_user.user_id)
         .values(hashed_password=new_hashed)
     )
+    from shared.human_sessions import revoke_all_human_sessions_in_transaction
+
+    await revoke_all_human_sessions_in_transaction(db, current_user.user_id)
     await db.commit()
 
     if user.hashed_password:

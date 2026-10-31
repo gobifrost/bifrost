@@ -9,7 +9,7 @@
 
 import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 import { editorForPath, readEditorContent } from "./fixtures/monaco-editor";
 
 type ViewportCase = {

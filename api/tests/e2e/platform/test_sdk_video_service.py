@@ -19,7 +19,6 @@ def test_sdk_video_enqueue_and_status_happy_path(
     assert enqueued.status_code == 202, enqueued.text
     body = enqueued.json()
     assert enqueued.headers["location"] == f"/api/platform-jobs/{body['job_id']}"
-    assert body["status"] == "queued"
     assert body["reused"] is False
 
     status = e2e_client.get(

@@ -1,13 +1,7 @@
-"""
-LEAK #1 failing-first proof: the MCP OAuth token endpoint minted access tokens
-WITHOUT the is_external claim, so every MCP-OAuth session was is_external=False
-(the verifier reads payload.get("is_external", False)). Both the
-authorization_code and refresh_token grants must stamp
-``is_external = user.is_external``.
-"""
+"""MCP OAuth delegates human credential minting to the shared session service."""
 
-import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -17,131 +11,78 @@ import pytest
 from src.services.mcp_server.auth import BifrostAuthProvider, _seal_auth_code_record
 
 
-def _external_user():
+@asynccontextmanager
+async def _fake_db_ctx(db):
+    yield db
+
+
+def _session_tokens() -> SimpleNamespace:
     return SimpleNamespace(
-        id=uuid4(),
-        email="guest@portal.example",
-        name="Guest",
-        is_superuser=False,
-        is_external=True,
-        organization_id=uuid4(),
-        identity_kind=None,
+        access_token="minted.jwt",
+        refresh_token="refresh.jwt",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
     )
 
 
-@asynccontextmanager
-async def _fake_db_ctx(_db):
-    yield _db
-
-
-def _patches(captured: dict, user):
-    """Patch every external dependency of _token at its source module."""
-    db = AsyncMock()
-
-    def _capture_access(data=None, **_kw):
-        captured["token_data"] = data
-        return "minted.jwt"
-
-    user_repo = MagicMock()
-    user_repo.get_by_id = AsyncMock(return_value=user)
-
-    return [
-        patch("src.core.security.create_access_token", side_effect=_capture_access),
-        patch(
-            "src.core.security.create_refresh_token",
-            return_value=("refresh.jwt", "jti"),
-        ),
-        patch(
-            "src.core.database.get_db_context",
-            lambda: _fake_db_ctx(db),
-        ),
-        patch(
-            "src.repositories.users.UserRepository",
-            return_value=user_repo,
-        ),
-    ]
-
-
 @pytest.mark.asyncio
-async def test_auth_code_grant_stamps_is_external():
-    user = _external_user()
-    captured: dict = {}
+async def test_auth_code_grant_issues_a_shared_human_session():
+    user = SimpleNamespace(id=uuid4(), is_active=True, identity_kind=None)
+    verifier = "verifier"
+    import base64
+    import hashlib
 
-    provider = BifrostAuthProvider(base_url="http://test")
-
-    # Redis: return the stored auth-code data, then accept delete.
-    auth_code_data = {
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    code_data = {
         "user_id": str(user.id),
-        "email": user.email,
-        "name": user.name,
-        "is_superuser": False,
-        "org_id": str(user.organization_id),
-        "code_challenge": "chal",
+        "email": "guest@portal.example",
+        "name": "Guest",
+        "code_challenge": challenge,
         "redirect_uri": "http://cb",
         "client_id": "c",
         "scope": "mcp:access",
     }
     redis = AsyncMock()
-    redis.get = AsyncMock(return_value=json.dumps(auth_code_data))
+    redis.getdel = AsyncMock(return_value=_seal_auth_code_record("thecode", code_data))
     redis.delete = AsyncMock()
-
-    form = {
+    request = MagicMock()
+    request.form = AsyncMock(return_value={
         "grant_type": "authorization_code",
         "code": "thecode",
         "redirect_uri": "http://cb",
-        "code_verifier": "verifier",
+        "code_verifier": verifier,
         "client_id": "c",
-    }
-    request = MagicMock()
-    request.form = AsyncMock(return_value=form)
+    })
+    db = AsyncMock()
+    user_repo = MagicMock()
+    user_repo.get_by_id = AsyncMock(return_value=user)
+    issue = AsyncMock(return_value=_session_tokens())
 
-    ctx = _patches(captured, user)
-    # PKCE check compares sha256(verifier) to the stored challenge; patch the
-    # stored challenge to match the verifier so we exercise the mint path.
-    import base64
-    import hashlib
+    with (
+        patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=redis)),
+        patch("src.core.database.get_db_context", lambda: _fake_db_ctx(db)),
+        patch("src.repositories.users.UserRepository", return_value=user_repo),
+        patch("src.services.mcp_server.auth.issue_human_session", issue),
+    ):
+        response = await BifrostAuthProvider(base_url="http://test")._token(request)
 
-    expected = base64.urlsafe_b64encode(
-        hashlib.sha256("verifier".encode()).digest()
-    ).rstrip(b"=").decode()
-    auth_code_data["code_challenge"] = expected
-    redis.get = AsyncMock(return_value=_seal_auth_code_record("thecode", auth_code_data))
-
-    with patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=redis)):
-        for p in ctx:
-            p.start()
-        try:
-            await provider._token(request)
-        finally:
-            for p in ctx:
-                p.stop()
-
-    assert "token_data" in captured, "create_access_token was never called"
-    assert captured["token_data"].get("is_external") is True
+    assert response.status_code == 200
+    issue.assert_awaited_once_with(user.id)
 
 
 @pytest.mark.asyncio
-async def test_refresh_grant_stamps_is_external():
-    user = _external_user()
-    captured: dict = {}
-
-    provider = BifrostAuthProvider(base_url="http://test")
-
-    form = {"grant_type": "refresh_token", "refresh_token": "rt"}
+async def test_refresh_grant_returns_invalid_grant_when_shared_rotation_refuses():
     request = MagicMock()
-    request.form = AsyncMock(return_value=form)
+    request.form = AsyncMock(return_value={"grant_type": "refresh_token", "refresh_token": "legacy"})
 
-    ctx = _patches(captured, user)
+    from shared.human_sessions import HumanSessionUnavailable
+
     with patch(
-        "src.core.security.decode_token", return_value={"sub": str(user.id)}
+        "src.services.mcp_server.auth.rotate_human_session",
+        new=AsyncMock(side_effect=HumanSessionUnavailable("reauthentication is required")),
     ):
-        for p in ctx:
-            p.start()
-        try:
-            await provider._token(request)
-        finally:
-            for p in ctx:
-                p.stop()
+        response = await BifrostAuthProvider(base_url="http://test")._token(request)
 
-    assert "token_data" in captured, "create_access_token was never called"
-    assert captured["token_data"].get("is_external") is True
+    assert response.status_code == 400
+    assert b'"error":"invalid_grant"' in response.body

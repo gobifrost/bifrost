@@ -322,18 +322,15 @@ test.describe("deployed solution runtime contract", () => {
 		const sid = (await sol.json()).id;
 		createdSolutionId = sid;
 
-		const dep = await page
-			.context()
-			.request.post(`/api/solutions/${sid}/deploy`, {
-				headers: await api.csrfHeader(),
-				multipart: {
-					file: {
-						name: "solution.zip",
-						mimeType: "application/zip",
-						buffer: workspaceZip(),
-					},
+		const dep = await api.post(`/api/solutions/${sid}/deploy`, {
+			multipart: {
+				file: {
+					name: "solution.zip",
+					mimeType: "application/zip",
+					buffer: workspaceZip(),
 				},
-			});
+			},
+		});
 		expect(dep.status(), await dep.text()).toBe(202);
 		const jobId = (await dep.json()).deploy_job_id;
 		await expect

@@ -35,6 +35,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     """
 
     from src.services.authorization.enforce import PermissionDenied
+    from shared.human_sessions import HumanSessionUnavailable
+
+    @app.exception_handler(HumanSessionUnavailable)
+    async def human_session_handler(request: Request, exc: HumanSessionUnavailable) -> JSONResponse:
+        return JSONResponse(
+            status_code=401, content={"detail": "Authentication is no longer available. Sign in again."},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     @app.exception_handler(PermissionDenied)
     async def named_permission_handler(
@@ -257,16 +265,10 @@ def install_request_context_middleware(app: FastAPI) -> None:
 
                     claims = parse_runtime_claims(payload)
                     runtime_principal = None if claims is None else attribution_principal(claims)
-            if payload:
-                user_id = payload.get("sub", "")
-                user_name = (
-                    payload.get("name") or payload.get("email") or user_id
-                )
-                set_request_user(
-                    RequestUser(user_id=user_id, user_name=user_name)
-                )
-            else:
-                set_request_user(None)
+            # ``RequestUser`` is installed from the actor below. In
+            # particular, modern human credentials keep identity under the
+            # signed compressed ``usr`` claim rather than top-level fields.
+            set_request_user(None)
         except Exception:
             payload = None
             set_request_user(None)
@@ -283,7 +285,6 @@ def install_request_context_middleware(app: FastAPI) -> None:
             actor = actor_from_runtime_principal(
                 runtime_principal, ip_address=ip_address, user_agent=user_agent,
             )
-            set_request_user(RequestUser(user_id=str(runtime_principal.user_id), user_name=runtime_principal.name))
         else:
             actor = actor_from_token_payload(
                 payload,
@@ -303,6 +304,15 @@ def install_request_context_middleware(app: FastAPI) -> None:
                 user_agent=user_agent,
                 surface=resolve_self_reported_surface(surface_header),
             )
+        elif actor.user_id is not None:
+            set_request_user(
+                RequestUser(
+                    user_id=str(actor.user_id),
+                    user_name=actor.name or actor.email or str(actor.user_id),
+                )
+            )
+        else:
+            set_request_user(None)
         actor_token = set_actor(actor)
         scope_token = set_request_scope(request.scope)
         # Audit collection never replaces the authentication dependency.

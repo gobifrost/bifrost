@@ -175,38 +175,18 @@ class TestHttpBridgeTypedRuntimeMint:
         assert _runtime_subject(self._ctx(credential_id)) == RuntimeSubject("agent_run", credential_id)
 
     def test_a_runtime_context_never_mints_a_people_token(self):
-        from src.services.mcp_server.tools._http_bridge import _token_from_context
+        from src.services.mcp_server.tools._http_bridge import _human_subject
 
-        with pytest.raises(ValueError, match="issue_access_token"):
-            _token_from_context(self._ctx(uuid4()))
+        with pytest.raises(ValueError, match="runtime subject"):
+            _human_subject(self._ctx(uuid4()))
 
 
-class TestHttpBridgeMintCarriesTheAgentRunUser:
-    def _claims(self, token: str) -> dict:
-        import base64
-        import json
-
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload))
-
-    def test_fallback_mint_carries_the_run_user(self):
+class TestHttpBridgeHumanSubject:
+    def test_human_subject_carries_no_copied_privilege_flags_or_lineage(self):
+        from src.services.authorization.tokens import HumanSubject
         from src.services.mcp_server.server import MCPContext
-        from src.services.mcp_server.tools._http_bridge import _token_from_context
+        from src.services.mcp_server.tools._http_bridge import _human_subject
 
-        run_user = uuid4()
-        context = MCPContext(user_id=uuid4(), org_id=uuid4(), run_user_id=run_user)
-
-        claims = self._claims(_token_from_context(context))
-
-        assert claims["engine_run_user_id"] == str(run_user)
-        assert claims["engine_started_by_user_id"] == str(run_user)
-
-    def test_fallback_mint_without_a_run_user_has_no_lineage_claims(self):
-        from src.services.mcp_server.server import MCPContext
-        from src.services.mcp_server.tools._http_bridge import _token_from_context
-
-        claims = self._claims(_token_from_context(MCPContext(user_id=uuid4(), org_id=uuid4())))
-
-        assert "engine_run_user_id" not in claims
-        assert "engine_started_by_user_id" not in claims
+        user_id = uuid4()
+        context = MCPContext(user_id=user_id, org_id=uuid4(), run_user_id=uuid4(), is_platform_admin=True)
+        assert _human_subject(context) == HumanSubject(user_id)

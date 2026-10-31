@@ -1,4 +1,15 @@
 import { getBifrostTransport } from "./transport";
+import {
+	FileAccessDeniedError,
+	FileNotFoundError,
+	FilePolicyError,
+} from "./errors";
+
+export {
+	FileAccessDeniedError,
+	FileNotFoundError,
+	FilePolicyError,
+} from "./errors";
 
 export { getBifrostTransport, setBifrostTransport } from "./transport";
 
@@ -99,27 +110,6 @@ async function errorText(response: Response): Promise<string> {
 		// Plain text response.
 	}
 	return text;
-}
-
-export class FileAccessDeniedError extends Error {
-	constructor(message = "Access denied") {
-		super(message);
-		this.name = "FileAccessDeniedError";
-	}
-}
-
-export class FileNotFoundError extends Error {
-	constructor(message = "File not found") {
-		super(message);
-		this.name = "FileNotFoundError";
-	}
-}
-
-export class FilePolicyError extends Error {
-	constructor(message = "File policy error") {
-		super(message);
-		this.name = "FilePolicyError";
-	}
 }
 
 async function http<T>(
