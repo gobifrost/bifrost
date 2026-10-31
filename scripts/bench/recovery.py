@@ -10,20 +10,29 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 import time
-from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
 
 import guard
 import search
 
 
 RECOVERY_EFFECTS_VERSION = "recovery-effects-v1"
+FAULT_AT_S = 60.0
 API_RECOVERY_BOUND_S = 60.0
 OWNER_LEASE_S = 20.0
 ONE_SWEEP_S = 15.0  # api/src/worker/pool_main.py SWEEP_SECONDS
 WORKER_RECOVERY_BOUND_S = OWNER_LEASE_S + ONE_SWEEP_S
 PRIMARY_LABELS = {"cnpg.io/cluster": "bifrost-db", "cnpg.io/instanceRole": "primary"}
 API_LABELS = {"app.kubernetes.io/name": "bifrost-api"}
+TERMINAL_STATUSES = {
+    "workflow": {"Success", "Failed", "Timeout", "Stuck", "CompletedWithErrors", "Cancelled"},
+    "agent": {"completed", "failed", "cancelled"},
+}
+HERE = Path(__file__).resolve().parent
+RECOVERY_DRIVER = HERE / "incluster" / "recovery_driver.py"
 
 
 def _ready(pod: dict, container: str | None = None) -> bool:
@@ -38,7 +47,8 @@ def _ready(pod: dict, container: str | None = None) -> bool:
 
 
 def _one_pod(cluster, selector: str, labels: dict[str, str], *, kind: str, container: str) -> dict:
-    found = json.loads(cluster.kubectl("get", "pods", "-l", selector, "-o", "json"))["items"]
+    found = [pod for pod in json.loads(cluster.kubectl("get", "pods", "-l", selector, "-o", "json"))["items"]
+             if pod.get("metadata", {}).get("deletionTimestamp") is None]
     if len(found) != 1:
         raise RuntimeError(f"expected exactly one {kind} target, found {len(found)}")
     pod = found[0]
@@ -112,52 +122,82 @@ def effect_assessment(requests: list[dict], durable_rows: list[dict], effects: l
     for row in effects:
         appended.setdefault(row["bench_request_id"], []).append(row)
     per_request: dict[str, dict] = {}
+    submitted_unaccepted: list[dict] = []
     terminal_and_loss = True
     strict_effects = True
     for request in requests:
         request_id = request["id"]
         rows = durable.get(request_id, [])
-        accepted = bool(rows) or (isinstance(request.get("http_status"), int) and 200 <= request["http_status"] < 300)
+        http_accepted = isinstance(request.get("http_status"), int) and 200 <= request["http_status"] < 300
+        accepted = http_accepted or len(rows) == 1
         records = appended.get(request_id, [])
         expected = request.get("effect_token")
         matching = [row for row in records if row.get("effect_token") == expected]
-        terminal = len(rows) == 1 and bool(rows[0].get("terminal"))
+        terminal = _terminal(rows[0]) if len(rows) == 1 else False
         effect_ok = not accepted or (len(matching) == 1 and len(records) == 1)
         if accepted and not terminal:
             terminal_and_loss = False
         if not effect_ok:
             strict_effects = False
         per_request[request_id] = {
-            "accepted": accepted, "durable_entities": rows, "effects": records,
+            "submitted": True, "accepted": accepted,
+            "accepted_by": "http-2xx" if http_accepted else "one-durable-entity" if len(rows) == 1 else None,
+            "durable_entities": rows, "effects": records,
             "effect_token": expected, "effect_count": len(records), "matching_effect_count": len(matching),
             "terminal": terminal, "strict_effect": effect_ok,
         }
-    return {"per_request": per_request, "terminal_and_loss": terminal_and_loss, "strict_effects": strict_effects}
+        if not accepted:
+            submitted_unaccepted.append({"request": request, "durable_entities": rows, "effects": records})
+    return {"per_request": per_request, "submitted_unaccepted": submitted_unaccepted,
+            "terminal_and_loss": terminal_and_loss, "strict_effects": strict_effects}
+
+
+def _terminal(row: dict) -> bool:
+    """Canonical loadgen outcomes have status/completed, never a synthetic terminal flag."""
+    return (isinstance(row.get("completed"), (int, float))
+            and row.get("status") in TERMINAL_STATUSES.get(row.get("kind"), set()))
 
 
 def recovery_deadlines(requests: list[dict], rows: list[dict], db_ready_at: float, deadlines_s: dict[str, float]) -> dict:
     """Preserve normal send-time SLOs and D3's post-ready recovery clock."""
-    by_id = {row["request_id"]: row for row in rows}
+    by_id: dict[str, list[dict]] = {}
+    for row in rows:
+        by_id.setdefault(row["request_id"], []).append(row)
     evidence: dict[str, dict] = {}
     normal = recovery = True
+    submitted_unaccepted: list[dict] = []
     for request in requests:
-        row = by_id.get(request["id"])
+        matching = by_id.get(request["id"], [])
+        row = matching[0] if len(matching) == 1 else None
+        http_accepted = isinstance(request.get("http_status"), int) and 200 <= request["http_status"] < 300
+        accepted = http_accepted or len(matching) == 1
+        if not accepted:
+            submitted_unaccepted.append({"request": request, "durable_entities": matching})
+            evidence[request["id"]] = {"accepted": False, "durable_entities": matching,
+                                        "normal_deadline_met": None, "recovery_deadline_met": None}
+            continue
         sent = request.get("sent")
         if not isinstance(sent, (int, float)) or row is None:
             normal = recovery = False
-            evidence[request["id"]] = {"normal_deadline_met": False, "recovery_deadline_met": False}
+            evidence[request["id"]] = {"accepted": True, "durable_entities": matching,
+                                        "normal_deadline_met": False, "recovery_deadline_met": False}
             continue
         deadline = sent + deadlines_s[request["class"]]
         completed = row.get("completed")
-        terminal = bool(row.get("terminal")) and isinstance(completed, (int, float))
+        terminal = _terminal(row)
         normal_ok = terminal and completed <= deadline
-        recovery_deadline = max(deadline, db_ready_at + deadlines_s[request["class"]]) if sent < db_ready_at else deadline
+        # A request already terminal before the database came back had no recovery
+        # delay.  It keeps its ordinary deadline instead of receiving an extension.
+        recovery_deadline = (max(deadline, db_ready_at + deadlines_s[request["class"]])
+                             if sent < db_ready_at and not (terminal and completed <= db_ready_at) else deadline)
         recovery_ok = terminal and completed <= recovery_deadline
         normal &= normal_ok
         recovery &= recovery_ok
-        evidence[request["id"]] = {"normal_deadline": deadline, "normal_deadline_met": normal_ok,
+        evidence[request["id"]] = {"accepted": True, "durable_entities": matching,
+                                    "normal_deadline": deadline, "normal_deadline_met": normal_ok,
                                     "recovery_deadline": recovery_deadline, "recovery_deadline_met": recovery_ok}
-    return {"per_request": evidence, "normal_send_time_slo": normal, "recovery_deadline": recovery}
+    return {"per_request": evidence, "submitted_unaccepted": submitted_unaccepted,
+            "normal_send_time_slo": normal, "recovery_deadline": recovery}
 
 
 BUSY_WORKER_SQL = """
@@ -209,37 +249,281 @@ def kill_worker_process(cluster, owned: dict, pod: dict) -> dict:
             "loss_bound_s": WORKER_RECOVERY_BOUND_S}
 
 
-def worker_recovery_assessment(kill: dict, worker_after: dict | None, replacement: dict | None, *, observed_at: float) -> dict:
-    """D6's explicit lost-path/replacement-admission result, never inferred from a pod list alone."""
-    lost = worker_after is not None and worker_after.get("state") == "lost"
-    replacement_ready = replacement is not None and replacement.get("state") == "ready"
-    elapsed = observed_at - kill["killed_at"]
-    return {"lost_path_observed": lost, "worker_after": worker_after, "replacement": replacement,
-            "replacement_admitted": replacement_ready, "observed_after_seconds": elapsed,
-            "loss_within_lease_plus_one_sweep": lost and elapsed <= kill["loss_bound_s"],
-            "bound": {"owner_lease_seconds": OWNER_LEASE_S, "one_sweep_seconds": ONE_SWEEP_S,
-                      "total_seconds": kill["loss_bound_s"]}}
+WORKER_STATE_SQL = """
+select coalesce(json_agg(json_build_object('id', id::text, 'state', state,
+  'generation', remote_session_generation, 'reason', end_reason) order by id), '[]'::json)
+from execution_workers
+"""
 
 
-def d3(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate: float, effects: list[dict]) -> dict:
-    """One D3 frame; caller supplies fresh recovery-workload IDs and effects after reconciliation."""
+class WorkerRecoverySampler:
+    """Capture first observed loss and replacement admission while D6 is running."""
+
+    def __init__(self, cluster, killed_worker_id: str, *, interval_s: float = 1.0) -> None:
+        self.cluster = cluster
+        self.killed_worker_id = killed_worker_id
+        self.interval_s = interval_s
+        self.samples: list[dict] = []
+        self.first_lost_at: float | None = None
+        self.first_replacement_ready_at: float | None = None
+        self.first_lost: dict | None = None
+        self.first_replacement: dict | None = None
+        self.error: str | None = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="bench-d6-recovery-sampler")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> dict:
+        self._stop.set()
+        self._thread.join(10)
+        if self._thread.is_alive():
+            raise RuntimeError("D6 recovery sampler did not stop")
+        if self.error is not None:
+            raise RuntimeError(f"D6 recovery sampler failed: {self.error}")
+        return self.evidence()
+
+    def observe(self, workers: list[dict], *, observed_at: float) -> None:
+        snapshot = {"observed_at": observed_at, "workers": workers}
+        self.samples.append(snapshot)
+        killed = next((worker for worker in workers if worker.get("id") == self.killed_worker_id), None)
+        if self.first_lost_at is None and killed is not None and killed.get("state") == "lost":
+            self.first_lost_at, self.first_lost = observed_at, killed
+        replacement = next((worker for worker in workers if worker.get("id") != self.killed_worker_id and worker.get("state") == "ready"), None)
+        if self.first_replacement_ready_at is None and replacement is not None:
+            self.first_replacement_ready_at, self.first_replacement = observed_at, replacement
+
+    def evidence(self) -> dict:
+        return {"samples": self.samples, "first_lost_at": self.first_lost_at, "first_lost": self.first_lost,
+                "first_replacement_ready_at": self.first_replacement_ready_at,
+                "first_replacement": self.first_replacement}
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.is_set():
+                workers = self.cluster.driver_sql(WORKER_STATE_SQL)
+                if not isinstance(workers, list):
+                    raise RuntimeError("worker-state query did not return a list")
+                self.observe(workers, observed_at=time.time())
+                self._stop.wait(self.interval_s)
+        except Exception as error:  # noqa: BLE001 - sampler failures invalidate D6 evidence
+            self.error = f"{type(error).__name__}: {error}"
+
+
+def worker_recovery_assessment(kill: dict, sampled: dict) -> dict:
+    """D6's loss clock uses sampling time, never a later reconciliation timestamp."""
+    lost_at = sampled.get("first_lost_at")
+    replacement_at = sampled.get("first_replacement_ready_at")
+    return {
+        "lost_path_observed": lost_at is not None,
+        "first_lost": sampled.get("first_lost"), "first_lost_at": lost_at,
+        "first_replacement": sampled.get("first_replacement"), "first_replacement_ready_at": replacement_at,
+        "replacement_admitted": replacement_at is not None,
+        "loss_after_kill_seconds": None if lost_at is None else lost_at - kill["killed_at"],
+        "replacement_after_kill_seconds": None if replacement_at is None else replacement_at - kill["killed_at"],
+        "loss_within_lease_plus_one_sweep": lost_at is not None and lost_at - kill["killed_at"] <= kill["loss_bound_s"],
+        "bound": {"owner_lease_seconds": OWNER_LEASE_S, "one_sweep_seconds": ONE_SWEEP_S,
+                  "total_seconds": kill["loss_bound_s"]},
+    }
+
+
+class RestartInjector:
+    """One restart fault scheduled from real loadgen frames, with persisted injector failure."""
+
+    def __init__(self, cluster, *, selector: Callable, kind: str, delay_s: float,
+                 ready: Callable[[dict, threading.Event], dict], preflight: Callable[[dict], dict] | None = None) -> None:
+        self.cluster, self.selector, self.kind = cluster, selector, kind
+        self.delay_s, self.ready, self.preflight = delay_s, ready, preflight
+        self.state: dict = {"kind": kind, "status": "waiting"}
+        self._wake, self._cancel = threading.Event(), threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"bench-{kind}-injector")
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def observe(self, frame: dict) -> None:
+        if self.state.get("status") in {"error", "timeout"}:
+            raise RuntimeError(self.state.get("error", f"{self.kind} injector failed"))
+        if frame.get("event") == "started" and "driver_started_at" not in self.state:
+            self.state["driver_started_at"] = float(frame["started"])
+            self.state["scheduled_fault_at"] = self.state["driver_started_at"] + self.delay_s
+        elif frame.get("event") == "request_sent" and "first_request_sent_at" not in self.state:
+            self.state["first_request_sent_at"] = float(frame["sent"])
+            self.state["first_request_id"] = frame["request_id"]
+        self._wake.set()
+
+    def cancel(self, reason: str) -> None:
+        self.state.setdefault("cancel_reason", reason)
+        self._cancel.set()
+        self._wake.set()
+
+    def join(self, timeout_s: float) -> dict:
+        self._thread.join(timeout_s)
+        if self._thread.is_alive():
+            self.cancel("injector timeout")
+            self._thread.join(5)
+            self.state["status"] = "timeout"
+        return self.state
+
+    def _wait_for(self, predicate: Callable[[], bool], deadline: float, message: str) -> None:
+        while not predicate():
+            if self._cancel.is_set():
+                raise RuntimeError(self.state.get("cancel_reason", "injector cancelled"))
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(message)
+            self._wake.wait(min(remaining, 0.2))
+            self._wake.clear()
+
+    def _run(self) -> None:
+        try:
+            self._wait_for(lambda: "driver_started_at" in self.state, time.time() + 60, "driver did not emit started")
+            scheduled = self.state["scheduled_fault_at"]
+            self._wait_for(lambda: time.time() >= scheduled, scheduled + 60, "fault wait exceeded its schedule")
+            self._wait_for(lambda: "first_request_sent_at" in self.state, time.time() + 60, "no request was sent before fault")
+            self.cluster.verify()
+            target = self.selector(self.cluster)
+            if self.preflight is not None:
+                self.state["preflight"] = self.preflight(target)
+            injected = delete_exact(self.cluster, target, self.selector, kind=self.kind)
+            self.state.update(injected)
+            self.state["delete_uid_precondition"] = target["metadata"]["uid"]
+            self.state["status"] = "deleted"
+            self.state.update(self.ready(injected, self._cancel))
+            self.state["status"] = "ready"
+        except Exception as error:  # noqa: BLE001 - observable injection error invalidates measurement
+            if self.state.get("status") != "timeout":
+                self.state["status"] = "error"
+            self.state["error"] = f"{type(error).__name__}: {error}"
+
+
+def _probe(cluster, mode: str) -> dict:
+    result = cluster.exec_python("bench-driver", RECOVERY_DRIVER, [mode, "{}"], timeout_s=30)
+    if not result.get("ok"):
+        raise RuntimeError(f"{mode} probe did not report ok")
+    return result
+
+
+def wait_d3_ready(cluster, injected: dict, cancelled: threading.Event) -> dict:
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        if cancelled.is_set():
+            raise RuntimeError("injector cancelled while CNPG recovered")
+        try:
+            replacement = cnpg_primary(cluster)
+            proof = replacement_proof(injected["old_uid"], replacement, ready_at=time.time(),
+                                      fault_at=injected["fault_at"], bound_s=API_RECOVERY_BOUND_S)
+            if proof["uid_changed"] and proof["ready"]:
+                proof["pooler_db_probe"] = _probe(cluster, "pooler-db-ready")
+                return proof
+        except RuntimeError:
+            pass
+        time.sleep(1)
+    raise TimeoutError("CNPG replacement did not become ready through the Pooler route")
+
+
+def wait_d5_ready(cluster, injected: dict, cancelled: threading.Event) -> dict:
+    deadline = time.time() + API_RECOVERY_BOUND_S
+    old_deleting = False
+    old_uid_observation: dict | None = None
+    quota_while_old_terminating: dict | None = None
+    while time.time() < deadline:
+        if cancelled.is_set():
+            raise RuntimeError("injector cancelled while API recovered")
+        raw = cluster.kubectl("get", "pod", injected["pod"], "-o", "json", check=False)
+        if raw.strip():
+            old = json.loads(raw)
+            old_deleting = old.get("metadata", {}).get("uid") == injected["old_uid"] and bool(old.get("metadata", {}).get("deletionTimestamp"))
+            old_uid_observation = {"uid": old.get("metadata", {}).get("uid"),
+                                   "deletion_timestamp": old.get("metadata", {}).get("deletionTimestamp")}
+            if old_deleting and quota_while_old_terminating is None:
+                quota = json.loads(cluster.kubectl("get", "resourcequota", "tenant-envelope", "-o", "json"))
+                quota_while_old_terminating = quota.get("status", {})
+        try:
+            replacement = api_target(cluster)
+            proof = replacement_proof(injected["old_uid"], replacement, ready_at=time.time(),
+                                      fault_at=injected["fault_at"], bound_s=API_RECOVERY_BOUND_S)
+            if proof["uid_changed"] and proof["ready"]:
+                proof["api_health_probe"] = _probe(cluster, "api-ready")
+                quota = json.loads(cluster.kubectl("get", "resourcequota", "tenant-envelope", "-o", "json"))
+                proof["old_uid_observed_terminating"] = old_deleting
+                proof["old_uid_observation"] = old_uid_observation
+                proof["quota_while_old_terminating"] = quota_while_old_terminating
+                proof["quota_during_replacement"] = quota.get("status", {})
+                return proof
+        except RuntimeError:
+            pass
+        time.sleep(1)
+    raise TimeoutError("API replacement did not become ready within its recovery bound")
+
+
+def _timing_checks(step: dict, plan: dict, injected: dict) -> dict[str, bool]:
+    fault_at = injected.get("fault_at")
+    started = step.get("started")
+    end = None if started is None else started + plan["warmup_s"] + step["window_s"]
+    return {"fault_inside_offered_window": fault_at is not None and started is not None and started <= fault_at <= end,
+            "pre_fault_request_sent": injected.get("first_request_sent_at") is not None and fault_at is not None
+            and injected["first_request_sent_at"] < fault_at}
+
+
+def _restart_step(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate: float, selector: Callable,
+                  kind: str, ready: Callable[[dict, threading.Event], dict], preflight: Callable[[dict], dict] | None = None) -> tuple[dict | None, dict, str | None]:
+    injector = RestartInjector(cluster, selector=selector, kind=kind, delay_s=plan["warmup_s"] + FAULT_AT_S,
+                               ready=ready, preflight=preflight)
+    injector.start()
+    try:
+        step = search.run_step(cluster, ids, rate, plan, plan["seed"], disk, on_event=injector.observe, cancel_driver=True)
+    except Exception as error:  # noqa: BLE001 - preserve the reason; do not turn a partial run into a pass
+        injector.cancel("step failed")
+        return None, injector.join(10), f"{type(error).__name__}: {error}"
+    if "fault_at" not in injector.state:
+        injector.cancel("step ended before fault injection")
+    return step, injector.join(310), None
+
+
+def d3(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate: float, effects: list[dict],
+       effect_tokens: dict[str, str]) -> dict:
+    """D3 primary restart during fresh append-only workload traffic."""
     cluster.verify()
-    target = cnpg_primary(cluster)
-    injection = delete_exact(cluster, target, cnpg_primary, kind="CNPG primary")
-    step = search.run_step(cluster, ids, rate, plan, plan["seed"], disk)
-    assessment = effect_assessment(step["sent"], step["outcomes"]["rows"], effects)
-    return {"kind": "cnpg-primary-restart", "workload_version": RECOVERY_EFFECTS_VERSION,
-            "target": injection, "step": step, "effects": assessment,
-            "passed": False, "claim": "unresolved until replacement readiness and recovery deadlines are captured"}
+    step, injected, error = _restart_step(cluster, ids, plan, disk, rate=rate, selector=cnpg_primary,
+                                           kind="CNPG primary", ready=lambda injected, cancelled: wait_d3_ready(cluster, injected, cancelled))
+    result = {"kind": "cnpg-primary-restart", "workload_version": RECOVERY_EFFECTS_VERSION,
+              "injector": injected, "step_error": error}
+    if step is None:
+        return {**result, "overall": "invalid", "passed": False}
+    if injected.get("status") != "ready":
+        return {**result, "step": step, "overall": "invalid", "passed": False}
+    missing = [request["id"] for request in step["sent"] if request["id"] not in effect_tokens]
+    if missing:
+        return {**result, "step": step, "overall": "invalid", "passed": False,
+                "effect_token_error": f"missing predeclared recovery effect tokens for {len(missing)} requests"}
+    requests = [{**request, "effect_token": effect_tokens[request["id"]]} for request in step["sent"]]
+    effects_result = effect_assessment(requests, step["outcomes"]["rows"], effects)
+    ready_at = injected.get("ready_at")
+    deadlines = (recovery_deadlines(requests, step["outcomes"]["rows"], ready_at, plan["deadlines_s"])
+                 if isinstance(ready_at, (int, float)) else None)
+    timing = _timing_checks(step, plan, injected)
+    passed = (injected.get("status") == "ready" and all(timing.values())
+              and bool(injected.get("within_bound")) and effects_result["terminal_and_loss"]
+              and effects_result["strict_effects"] and deadlines is not None and deadlines["recovery_deadline"])
+    return {**result, "step": step, "effects": effects_result, "deadlines": deadlines, "timing_checks": timing,
+            "passed": passed, "overall": "passed" if passed else "failed"}
 
 
 def d5(cluster, ids: dict, plan: dict, disk: dict[str, str], *, rate: float) -> dict:
-    """One D5 restart frame; readiness evidence is supplied by the caller's probe loop."""
+    """D5 API restart during open-loop load, with UID, health, and quota evidence."""
     cluster.verify()
-    target = api_target(cluster)
-    preflight = api_restart_preflight(cluster, target)
-    injection = delete_exact(cluster, target, api_target, kind="API")
-    step = search.run_step(cluster, ids, rate, plan, plan["seed"], disk)
-    return {"kind": "api-restart", "target": injection, "preflight": preflight, "step": step,
-            "recovery_bound_seconds": API_RECOVERY_BOUND_S, "passed": False,
-            "claim": "unresolved until replacement UID/readiness and terminating-pod quota evidence are captured"}
+    step, injected, error = _restart_step(cluster, ids, plan, disk, rate=rate, selector=api_target,
+                                           kind="API", preflight=lambda target: api_restart_preflight(cluster, target),
+                                           ready=lambda injected, cancelled: wait_d5_ready(cluster, injected, cancelled))
+    result = {"kind": "api-restart", "injector": injected, "step_error": error,
+              "recovery_bound_seconds": API_RECOVERY_BOUND_S}
+    if step is None:
+        return {**result, "overall": "invalid", "passed": False}
+    if injected.get("status") != "ready":
+        return {**result, "step": step, "overall": "invalid", "passed": False}
+    timing = _timing_checks(step, plan, injected)
+    passed = injected.get("status") == "ready" and bool(injected.get("within_bound")) and all(timing.values())
+    return {**result, "step": step, "timing_checks": timing, "passed": passed,
+            "overall": "passed" if passed else "failed"}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -63,7 +64,10 @@ class TargetProofTest(unittest.TestCase):
 class EffectsAndDeadlinesTest(unittest.TestCase):
     def test_zero_or_duplicate_effects_fail_strict_effects_even_when_terminal(self) -> None:
         requests = [{"id": "zero", "http_status": 202, "effect_token": "a"}, {"id": "double", "http_status": 202, "effect_token": "b"}]
-        rows = [{"request_id": "zero", "terminal": True}, {"request_id": "double", "terminal": True}]
+        rows = [
+            {"request_id": "zero", "kind": "workflow", "status": "Success", "completed": 4.0},
+            {"request_id": "double", "kind": "workflow", "status": "Success", "completed": 4.0},
+        ]
         effects = [{"bench_request_id": "double", "effect_token": "b"}, {"bench_request_id": "double", "effect_token": "b"}]
         result = recovery.effect_assessment(requests, rows, effects)
         self.assertTrue(result["terminal_and_loss"])
@@ -72,10 +76,38 @@ class EffectsAndDeadlinesTest(unittest.TestCase):
 
     def test_db_recovery_clock_does_not_replace_normal_send_time_slo(self) -> None:
         requests = [{"id": "r", "class": "wf", "sent": 10.0}]
-        rows = [{"request_id": "r", "terminal": True, "completed": 35.0}]
+        rows = [{"request_id": "r", "kind": "workflow", "status": "Success", "completed": 35.0}]
         result = recovery.recovery_deadlines(requests, rows, db_ready_at=30.0, deadlines_s={"wf": 10.0})
         self.assertFalse(result["normal_send_time_slo"])
         self.assertTrue(result["recovery_deadline"])
+
+    def test_unaccepted_submission_is_preserved_but_does_not_gate_recovery_deadline(self) -> None:
+        result = recovery.recovery_deadlines(
+            [{"id": "network-error", "class": "wf", "sent": 10.0, "http_status": None}], [],
+            db_ready_at=20.0, deadlines_s={"wf": 10.0},
+        )
+        self.assertTrue(result["normal_send_time_slo"])
+        self.assertTrue(result["recovery_deadline"])
+        self.assertEqual(result["submitted_unaccepted"][0]["request"]["id"], "network-error")
+
+    def test_duplicate_durable_id_is_invalid_without_last_row_wins(self) -> None:
+        request = {"id": "same", "class": "wf", "sent": 10.0, "http_status": 202, "effect_token": "t"}
+        rows = [
+            {"request_id": "same", "kind": "workflow", "status": "Success", "completed": 12.0},
+            {"request_id": "same", "kind": "workflow", "status": "Success", "completed": 13.0},
+        ]
+        effects = [{"bench_request_id": "same", "effect_token": "t"}]
+        self.assertFalse(recovery.effect_assessment([request], rows, effects)["terminal_and_loss"])
+        deadline = recovery.recovery_deadlines([request], rows, db_ready_at=11.0, deadlines_s={"wf": 10.0})
+        self.assertFalse(deadline["normal_send_time_slo"])
+
+    def test_pre_ready_terminal_does_not_get_a_recovery_deadline_extension(self) -> None:
+        result = recovery.recovery_deadlines(
+            [{"id": "before", "class": "wf", "sent": 10.0, "http_status": 202}],
+            [{"request_id": "before", "kind": "workflow", "status": "Success", "completed": 15.0}],
+            db_ready_at=30.0, deadlines_s={"wf": 10.0},
+        )
+        self.assertEqual(result["per_request"]["before"]["recovery_deadline"], 20.0)
 
 
 class WorkerTargetTest(unittest.TestCase):
@@ -100,13 +132,55 @@ class WorkerTargetTest(unittest.TestCase):
         self.assertEqual(result["loss_bound_s"], 35.0)
         self.assertEqual(run.call_args_list[1].args[0][-2:], ["-9", "123"])
 
-    def test_d6_preserves_lease_plus_one_sweep_bound_and_replacement_admission(self) -> None:
-        result = recovery.worker_recovery_assessment(
-            {"killed_at": 100.0, "loss_bound_s": 35.0}, {"state": "lost", "end_reason": "heartbeat_timeout"},
-            {"state": "ready", "id": "replacement"}, observed_at=134.0,
-        )
+    def test_d6_uses_first_sampling_times_for_loss_and_replacement_admission(self) -> None:
+        sampler = recovery.WorkerRecoverySampler(Mock(), "old")
+        sampler.observe([{"id": "old", "state": "ready"}], observed_at=101.0)
+        sampler.observe([{"id": "old", "state": "lost", "end_reason": "heartbeat_timeout"}], observed_at=120.0)
+        sampler.observe([{"id": "old", "state": "lost"}, {"id": "new", "state": "ready"}], observed_at=121.0)
+        result = recovery.worker_recovery_assessment({"killed_at": 100.0, "loss_bound_s": 35.0}, sampler.evidence())
         self.assertTrue(result["loss_within_lease_plus_one_sweep"])
         self.assertTrue(result["replacement_admitted"])
+
+
+class RestartInjectorTest(unittest.TestCase):
+    def test_injector_cannot_delete_before_started_and_request_sent(self) -> None:
+        cluster, selector = Mock(), Mock()
+        target = pod("api-old", "old", recovery.API_LABELS, "api")
+        selector.return_value = target
+        injector = recovery.RestartInjector(
+            cluster, selector=selector, kind="API", delay_s=0.0,
+            ready=lambda _injected, _cancelled: {"ready_at": time.time(), "within_bound": True},
+        )
+        with patch.object(recovery, "delete_exact", return_value={"pod": "api-old", "old_uid": "old", "fault_at": time.time()}):
+            injector.start()
+            selector.assert_not_called()
+            injector.observe({"event": "started", "started": time.time()})
+            selector.assert_not_called()
+            injector.observe({"event": "request_sent", "sent": time.time(), "request_id": "r"})
+            result = injector.join(1)
+        self.assertEqual(result["status"], "ready")
+        selector.assert_called_once_with(cluster)
+
+    def test_injector_error_is_saved_as_invalid_evidence(self) -> None:
+        selector = Mock(side_effect=RuntimeError("target unavailable"))
+        injector = recovery.RestartInjector(
+            Mock(), selector=selector, kind="API", delay_s=0.0,
+            ready=Mock(),
+        )
+        injector.start()
+        injector.observe({"event": "started", "started": time.time()})
+        injector.observe({"event": "request_sent", "sent": time.time(), "request_id": "r"})
+        result = injector.join(1)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("target unavailable", result["error"])
+
+    def test_d5_marks_a_completed_step_invalid_when_injector_failed(self) -> None:
+        cluster = Mock()
+        step = {"started": 1.0, "window_s": 10.0}
+        with patch.object(recovery, "_restart_step", return_value=(step, {"status": "error", "error": "delete failed"}, None)):
+            result = recovery.d5(cluster, {}, {"seed": 1, "warmup_s": 1.0}, {}, rate=1.0)
+        self.assertEqual(result["overall"], "invalid")
+        self.assertFalse(result["passed"])
 
 
 class WorkloadDeclarationTest(unittest.TestCase):
@@ -117,6 +191,7 @@ class WorkloadDeclarationTest(unittest.TestCase):
         self.assertNotIn("upsert", declared["source"].lower())
         self.assertNotIn("on conflict", declared["source"].lower())
         self.assertEqual(recovery_driver.effect_token("request"), recovery_driver.effect_token("request"))
+        self.assertIn("/health/detailed", Path(recovery_driver.__file__).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

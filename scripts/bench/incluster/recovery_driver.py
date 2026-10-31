@@ -7,7 +7,12 @@ The host collector queries only rows for generated benchmark request IDs.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
+import os
+import sys
+from pathlib import Path
 
 
 WORKLOAD_VERSION = "recovery-effects-v1"
@@ -38,3 +43,39 @@ def declaration() -> dict:
     """The exact fresh workload/table identity a recovery runner must declare."""
     return {"workload_version": WORKLOAD_VERSION, "workflow_name": "bench_wf_recovery_effects_v1",
             "table": EFFECT_TABLE, "append_only": True, "source": WORKFLOW_SOURCE}
+
+
+async def pooler_db_ready() -> dict:
+    """Exercise the API's configured Pooler-backed database route without reading its URL or credentials."""
+    import httpx
+
+    base = os.environ["BENCH_API_URL"].rstrip("/")
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{base}/health/detailed")
+    body = response.json()
+    database = body.get("components", {}).get("database", {})
+    return {"ok": response.status_code == 200 and body.get("status") == "healthy" and database.get("status") == "healthy",
+            "http_status": response.status_code, "database_status": database.get("status")}
+
+
+async def api_ready() -> dict:
+    """Confirm the replacement API can serve its normal readiness endpoint."""
+    import httpx
+
+    base = os.environ["BENCH_API_URL"].rstrip("/")
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        health = await client.get(f"{base}/health")
+        response = await client.get(f"{base}/health/ready")
+    body = response.json()
+    return {"ok": health.status_code == 200 and response.status_code == 200 and body.get("status") == "healthy",
+            "health_http_status": health.status_code, "ready_http_status": response.status_code}
+
+
+def main() -> None:
+    mode, _args = sys.argv[1], json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    handler = {"pooler-db-ready": pooler_db_ready, "api-ready": api_ready}[mode]
+    print(json.dumps(asyncio.run(handler())))
+
+
+if __name__ == "__main__":
+    main()
