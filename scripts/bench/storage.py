@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import math
+import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -63,6 +65,20 @@ select json_build_object(
 
 REDIS_LABELS = {"app.kubernetes.io/name": "redis"}
 SEAWEED_LABELS = {"app.kubernetes.io/name": "seaweedfs"}
+POOLER_LABELS = {"cnpg.io/poolerName": "bifrost-db-pooler"}
+_PROMETHEUS_LINE = re.compile(r"^(cnpg_pgbouncer_(?:lists|pools|stats)_[a-z_]+)(?:\{[^}]*\})?\s+([^\s]+)$")
+_POOL_GAUGES = (
+    "cl_active", "cl_active_cancel_req", "cl_cancel_req", "cl_waiting", "cl_waiting_cancel_req",
+    "sv_active", "sv_active_cancel", "sv_idle", "sv_login", "sv_tested", "sv_used", "sv_wait_cancels",
+)
+_LIST_GAUGES = ("free_clients", "free_servers", "login_clients", "pools", "used_clients", "used_servers")
+_STAT_COUNTERS = ("total_wait_time", "total_xact_count", "total_query_count")
+_REQUIRED_POOLER_METRICS = frozenset({
+    "cnpg_pgbouncer_pools_cl_active", "cnpg_pgbouncer_pools_cl_waiting",
+    "cnpg_pgbouncer_pools_sv_active", "cnpg_pgbouncer_pools_sv_idle",
+    "cnpg_pgbouncer_pools_maxwait", "cnpg_pgbouncer_lists_used_clients",
+    "cnpg_pgbouncer_lists_used_servers", "cnpg_pgbouncer_stats_total_wait_time",
+})
 
 
 def _unmeasured(reason: str) -> dict[str, str]:
@@ -106,21 +122,55 @@ def _du(cluster, namespace: str, pod: dict, container: str, path: str, component
     """Allocated and apparent bytes for one data directory, never a host-wide scan."""
     if not path.startswith("/") or "\n" in path or "\x00" in path:
         raise RuntimeError(f"{component} data directory is unsafe")
-    command = (
-        'allocated=$(du -sk -- "$1" | awk \'NR == 1 {print $1}\'); '
-        'apparent=$(du -sk --apparent-size -- "$1" | awk \'NR == 1 {print $1}\'); '
-        'case "$allocated:$apparent" in (*[!0-9:]*|:) exit 64;; esac; '
-        'printf "%s %s\\n" "$allocated" "$apparent"'
-    )
-    output = cluster.kubectl("exec", pod["name"], "-c", container, "--", "sh", "-ec", command, "bench-storage", path,
-                             namespace=namespace).strip().split()
-    if len(output) != 2 or any(not value.isdigit() for value in output):
-        raise RuntimeError(f"{component} du returned an invalid size response")
-    allocated_kib, apparent_kib = (int(value) for value in output)
+    def bytes_for(*arguments: str, unit: int, metric: str) -> int:
+        # One kubectl exec per du invocation: a shell pipeline can otherwise
+        # return awk's success after du itself failed.
+        output = cluster.kubectl("exec", pod["name"], "-c", container, "--", *arguments, path,
+                                 namespace=namespace).strip().splitlines()
+        if len(output) != 1:
+            raise RuntimeError(f"{component} {metric} du returned an invalid line count")
+        fields = output[0].split(maxsplit=1)
+        if len(fields) != 2 or not fields[0].isdigit():
+            raise RuntimeError(f"{component} {metric} du returned an invalid size response")
+        return int(fields[0]) * unit
+
+    # The benchmark's currently cached SeaweedFS image carries BusyBox 1.37,
+    # whose explicit ``-b`` option is apparent bytes.  ``-k`` is allocated
+    # KiB. Postgres supports these same invocations, keeping measurements
+    # comparable without a runtime fallback branch.
+    allocated_bytes = bytes_for("du", "-sk", unit=1024, metric="allocated")
+    apparent_bytes = bytes_for("du", "-bs", unit=1, metric="apparent")
     return {
         "status": "observed", "pod": pod["name"], "pod_uid": pod["uid"], "path": path,
-        "allocated_bytes": allocated_kib * 1024, "apparent_bytes": apparent_kib * 1024,
-        "basis": "du -sk and du -sk --apparent-size inside the exact benchmark pod",
+        "allocated_bytes": allocated_bytes, "apparent_bytes": apparent_bytes,
+        "basis": "separate exact-pod du -sk allocated KiB and du -bs apparent bytes",
+    }
+
+
+def _container_logs(cluster) -> dict:
+    """Count only benchmark pod log files on the verified single Kind node.
+
+    Kubernetes stores current and rotated container files below ``/var/log/pods``.
+    The command prints sizes only; no log content or file paths leave the node.
+    """
+    command = (
+        "find /var/log/pods -type f \\( "
+        "-path '/var/log/pods/bench-tenant_*/*/*.log*' -o "
+        "-path '/var/log/pods/bench-infra_*/*/*.log*' \\) -printf '%s\\n'"
+    )
+    completed = subprocess.run(
+        ["docker", "exec", cluster.identity.node_name, "sh", "-ec", command],
+        capture_output=True, text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"Kind node benchmark log measurement failed: {completed.stderr.strip()[-1000:]}")
+    sizes = completed.stdout.splitlines()
+    if any(not size.isdigit() for size in sizes):
+        raise RuntimeError("Kind node benchmark log measurement returned a non-byte size")
+    return {
+        "status": "observed", "retained_bytes": sum(int(size) for size in sizes), "files": len(sizes),
+        "scope": "current and rotated /var/log/pods files for bench-tenant_* and bench-infra_* only",
+        "basis": "verified Kind node find -printf size; no log contents or file paths retained",
     }
 
 
@@ -159,6 +209,81 @@ def _redis(cluster) -> dict:
         "clients": clients, "stats": stats,
         "configuration": {"maxmemory_bytes": int(config[1]), "maxmemory_policy": config[3]},
     }
+
+
+def _parse_pgbouncer_metrics(text: str) -> dict:
+    """Aggregate the Pooler's safe exporter metrics while dropping all labels.
+
+    The exporter includes database/user labels.  They are intentionally never
+    retained, because benchmark artifacts need aggregate connection pressure,
+    not account or database identities.
+    """
+    values: dict[str, list[float]] = {}
+    invalid: list[str] = []
+    for line in text.splitlines():
+        matched = _PROMETHEUS_LINE.fullmatch(line)
+        if matched is None:
+            continue
+        name, raw_value = matched.groups()
+        try:
+            value = float(raw_value)
+        except ValueError:
+            invalid.append(name)
+            continue
+        if not math.isfinite(value):
+            invalid.append(name)
+            continue
+        values.setdefault(name, []).append(value)
+    present = set(values)
+    missing = sorted(_REQUIRED_POOLER_METRICS - present)
+    if missing or invalid:
+        details = []
+        if missing:
+            details.append(f"required exporter metrics missing: {missing}")
+        if invalid:
+            details.append(f"exporter metrics had invalid numeric values: {sorted(set(invalid))}")
+        return _unmeasured("; ".join(details))
+
+    def summed(prefix: str, names: tuple[str, ...]) -> dict[str, int | float]:
+        result: dict[str, int | float] = {}
+        for name in names:
+            observed = values.get(f"{prefix}{name}")
+            if observed is not None:
+                total = math.fsum(observed)
+                result[name] = int(total) if total.is_integer() else total
+        return result
+
+    waits = values["cnpg_pgbouncer_pools_maxwait"]
+    return {
+        "status": "observed",
+        "lists": summed("cnpg_pgbouncer_lists_", _LIST_GAUGES),
+        "pools": summed("cnpg_pgbouncer_pools_", _POOL_GAUGES),
+        "max_wait_seconds": max(waits),
+        "stats": summed("cnpg_pgbouncer_stats_", _STAT_COUNTERS),
+        "labels": "stripped; values aggregate every exporter pool/database/user series",
+        "application_pool_checkout": _unmeasured(
+            "Pooler exporter does not expose normal application-pool checkout state",
+        ),
+    }
+
+
+def _pgbouncer(cluster) -> dict:
+    pooler = _single_pod(
+        cluster, guard.TENANT_NS, "cnpg.io/poolerName=bifrost-db-pooler", POOLER_LABELS,
+        name="PgBouncer", container="pgbouncer",
+    )
+    metrics = cluster.kubectl(
+        "get", "--raw", f"/api/v1/namespaces/{guard.TENANT_NS}/pods/{pooler['name']}:9127/proxy/metrics",
+        namespaced=False,
+    )
+    result = _parse_pgbouncer_metrics(metrics)
+    result["pod"] = pooler["name"]
+    result["pod_uid"] = pooler["uid"]
+    result["basis"] = "CloudNativePG PgBouncer exporter endpoint 9127; Prometheus labels stripped before retention"
+    result.setdefault("application_pool_checkout", _unmeasured(
+        "Pooler exporter does not expose normal application-pool checkout state",
+    ))
+    return result
 
 
 def _backup_retention(cluster) -> dict:
@@ -219,7 +344,7 @@ def collect(cluster) -> dict:
         "scope": {"tenant_namespace": guard.TENANT_NS, "infra_namespace": guard.INFRA_NS},
         "postgres": _postgres(cluster),
         "redis": _redis(cluster),
-        "pgbouncer": _unmeasured("benchmark harness has no safe authenticated PgBouncer administration transport"),
+        "pgbouncer": _pgbouncer(cluster),
         "object_storage": _object_storage(cluster),
-        "container_logs": _unmeasured("no approved Kind-node container-log path allowlist for retained-byte measurement"),
+        "container_logs": _container_logs(cluster),
     }
