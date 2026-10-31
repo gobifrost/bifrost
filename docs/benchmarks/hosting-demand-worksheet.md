@@ -24,6 +24,12 @@ by placements; if it is fleet-wide, do not multiply the request volume. A
 passing capacity rate, if one exists, is a guard on the declared peak rate
 after explicit headroom; it is not a demand estimate.
 
+Record burst frequency, active hours and the distribution of idle gaps as
+additional demand inputs; these remain `null` until supplied or measured.
+For an elastic pool, traffic arriving within the idle cooldown can keep workers
+running even when the configured warm minimum is zero. Monthly request totals
+and peak rate alone cannot determine worker lifetime or cold-start frequency.
+
 Record failed, cancelled, timed-out and retried attempts alongside successful
 requests. They can generate logs, retained results and provider charges without
 adding revenue. The synthetic soak normalizes growth by durable terminals,

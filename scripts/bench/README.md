@@ -26,6 +26,43 @@ python3 scripts/bench/host_attribution.py --device 259:0 --duration-s 3600 \
   --include-user --out /tmp/host-attribution-new-run.jsonl
 ```
 
+## Worker timeline sampler
+
+`worker_timeline.py` is a standalone read-only JSONL sampler for elastic
+worker-policy experiments with a maximum of 1, 2, or 4 workers and a declared
+warm count from zero through that maximum. The declared arms label the evidence
+only; this command does not change worker policy, trigger scaling, acquire the
+host mutation lock, start a stack, or wait for quota. It first verifies the
+existing guarded Kind cluster and reads only the `bench-tenant` worker
+lifecycle, aggregate unfinished work, worker Pod lifecycle/resources, and
+whitelisted `tenant-envelope` quota fields.
+
+```bash
+python3 scripts/bench/worker_timeline.py --out /tmp/worker-timeline-elastic-2.jsonl \
+  --duration-s 900 --max-workers 2 --warm-workers 1
+```
+
+The output path must be new; frames are append-flushed as they are observed.
+The default interval is five seconds. Every frame records wall and monotonic
+bounds, and database, Pod, and quota snapshots are sequential rather than
+atomic. Each read-only database or Kubernetes probe has a five-second deadline
+by default (`--probe-timeout-s`), recorded in the session frame. `active_runs`
+and memory budgets are database-reported heartbeat state, not exact child
+concurrency. Missing aggregate-work evidence remains
+`unmeasured`, never zero. The sampler has no capacity, p95, reliability, cloud,
+or scaling conclusion. Its policy-default source reference is `e611d31bb`, not
+observed runtime identity; the safe Pod image and image-ID fields provide the
+actual image evidence. Slow probes report missed intervals and skip catch-up
+bursts. Select the experiment's runtime separately.
+The observation duration starts after initial guard verification; an in-flight
+frame can finish after that duration, within its individual probe deadlines.
+Failure frames preserve completed safe snapshots and identify the failed probe.
+Treat a zero-worker observation as evidence only when the same frame shows no
+live worker database states, no live worker Pods and observed zero unfinished
+work; a missing snapshot cannot establish zero.
+
+## Benchmark Commands
+
 ```bash
 ./test.sh bench up                                    # cluster, images, CloudNativePG, tenant (profile m)
 ./test.sh bench run --profile m                       # execution classes: sequential + bursts, memory, DB

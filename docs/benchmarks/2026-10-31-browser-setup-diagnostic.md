@@ -66,6 +66,12 @@ and CRI image identity
 `sha256:987345ae923ddbba9db4aa72512f8e1a48b0b6bd35a138574b2cd0df2e7059c2`.
 These identities do not establish that the entire local stack was production.
 
+The single isolated build reported 42.304 seconds from start to completion and
+492,269,568 bytes (about 469.5 MiB) of peak memory in its job telemetry, against a
+2 GiB memory limit. Execution workers were drained for the build. This is a
+separate build observation; it does not establish whole-pod memory or capacity
+while builds and workflows compete.
+
 The browser runner had its own 1 CPU / 1 GiB request and limit outside the
 tenant M envelope. The M profile configured one warm worker and a maximum of
 two; the restoration check observed one live and ready worker before timing,

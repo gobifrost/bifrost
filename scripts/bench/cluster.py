@@ -273,11 +273,13 @@ class Cluster:
         self.image = f"bifrost-api:kind-{self.identity.worktree_hash}"
 
     def kubectl(self, *args: str, input: str | None = None, check: bool = True, namespaced: bool = True,
-                namespace: str | None = None) -> str:
+                namespace: str | None = None, timeout_s: float | None = None) -> str:
         command = ["kubectl", "--kubeconfig", str(self.kubeconfig), "--context", self.context]
         if namespaced:
             command += ["-n", namespace or self.namespace]
-        completed = subprocess.run([*command, *args], input=input, capture_output=True, text=True)
+        completed = subprocess.run(
+            [*command, *args], input=input, capture_output=True, text=True, timeout=timeout_s,
+        )
         if check and completed.returncode != 0:
             raise RuntimeError(f"kubectl {' '.join(args)} failed: {completed.stderr.strip()}")
         return completed.stdout
@@ -471,14 +473,17 @@ class Cluster:
             "quota_denials": sum(e.get("count") or 1 for e in events if e.get("reason") == "FailedCreate" and "exceeded quota" in e.get("message", "")),
         }
 
-    def driver_sql(self, sql: str) -> object:
+    def driver_sql(self, sql: str, *, timeout_s: float = 3600) -> object:
         """Run one read-only query from the infrastructure driver pod (never inside a tenant pod)."""
-        return self.exec_python("bench-driver", Path(__file__).resolve().parent / "incluster" / "loadgen.py", ["sql", json.dumps({"sql": sql})])["value"]
+        return self.exec_python(
+            "bench-driver", Path(__file__).resolve().parent / "incluster" / "loadgen.py",
+            ["sql", json.dumps({"sql": sql})], timeout_s=timeout_s,
+        )["value"]
 
     def db_counters(self) -> dict:
         return parse_db_counters(json.dumps(self.driver_sql(DB_COUNTERS_SQL)))
 
-    def exec_python(self, pod: str, script: Path, args: list[str], timeout_s: int = 3600, namespace: str = guard.INFRA_NS) -> dict:
+    def exec_python(self, pod: str, script: Path, args: list[str], timeout_s: float = 3600, namespace: str = guard.INFRA_NS) -> dict:
         """Run ``script`` with the pod's Python as ``script MODE ARGS_FILE`` and return its last JSON line.
 
         ``args`` is ``[mode, json]``. The script and the JSON both travel on

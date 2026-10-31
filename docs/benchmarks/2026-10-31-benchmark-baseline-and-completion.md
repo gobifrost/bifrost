@@ -72,6 +72,10 @@ setup. Keep images cached and label the measurement pod/process-cold, not
 uncached-node provisioning. Keep the idle observation longer than the configured
 cooldown and record the actual return to zero; the existing 120-second idle
 window cannot prove this with the 300-second source default.
+Read back the effective worker policy, including idle seconds, before and after
+each experiment; profile labels and source defaults do not prove the stored
+runtime setting. Preserve the worker lifetime after bursts and distinguish
+traffic inside versus beyond that cooldown when estimating idle cost.
 
 This series is a test proposal, not completed evidence. Existing five-second
 resource samples and request timestamps support consumption/latency reporting;

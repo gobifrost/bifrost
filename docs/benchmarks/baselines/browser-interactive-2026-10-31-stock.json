@@ -76,7 +76,19 @@
       "policy_restored": true,
       "runtime_restored": true,
       "workers_observed_live_and_ready": 1,
-      "scope": "an observation before timing, not a tenant resource time series"
+      "scope": "an observation before timing, not a tenant resource time series",
+      "build_observation": {
+        "completed_at": "2026-10-31T23:22:31.532553Z",
+        "created_at": "2026-10-31T23:21:48.254745Z",
+        "execution_backend": "kubernetes",
+        "memory_limit_bytes": 2147483648,
+        "memory_peak_bytes": 492269568,
+        "memory_required_bytes": 536870912,
+        "memory_start_bytes": 118816768,
+        "started_at": "2026-10-31T23:21:49.229005Z",
+        "reported_running_duration_s": 42.303548,
+        "scope": "Single build job telemetry, separate from browser timing; does not measure build/execution concurrency or whole-pod memory."
+      }
     }
   },
   "measurement": {

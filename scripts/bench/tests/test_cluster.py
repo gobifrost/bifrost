@@ -51,6 +51,24 @@ class StatsSummaryTest(unittest.TestCase):
         self.assertEqual(cluster.role_for_pod("postgres-0"), "infra")
 
 
+class ProbeDeadlineTest(unittest.TestCase):
+    def test_status_probe_passes_its_deadline_to_kubectl(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.kubeconfig = Path("/tmp/bench-probe-kubeconfig")
+        instance.context = "kind-bench-test"
+        instance.namespace = "bench-tenant"
+        with patch.object(cluster.subprocess, "run", return_value=Mock(returncode=0, stdout="{}")) as run:
+            self.assertEqual(instance.kubectl("get", "pods", timeout_s=2.5), "{}")
+        self.assertEqual(run.call_args.kwargs["timeout"], 2.5)
+
+    def test_database_probe_passes_its_deadline_to_the_existing_driver(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.exec_python = Mock(return_value={"value": {"workers": []}})
+        self.assertEqual(instance.driver_sql("select 1", timeout_s=2.5), {"workers": []})
+        self.assertEqual(instance.exec_python.call_args.kwargs["timeout_s"], 2.5)
+        self.assertEqual(instance.exec_python.call_args.args[0], "bench-driver")
+
+
 class DbCountersTest(unittest.TestCase):
     def test_parse_db_counters(self) -> None:
         raw = ('{"xact": 12, "rows_written": 3, "wal_bytes": 4096, '
