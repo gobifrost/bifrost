@@ -334,7 +334,7 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
         "import_fixture": fixture,
         "interactive_fixture": interactive,
     }, timeout_s=3600)
-    ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", "{}"], timeout_s=900)
+    ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", json.dumps({"classes": _loadgen_classes(profile)})], timeout_s=900)
     check_destinations(cluster, ids)
     cluster.restart_api()
     current.result["api_image_provenance"]["api_pod"] = cluster.api_image_evidence(current.result["api_image_provenance"])
@@ -343,6 +343,27 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     current.expected_api_uid = None
     time.sleep(profile["settle_s"])
     return ids
+
+
+def _loadgen_classes(profile: dict) -> list[str]:
+    """The explicit subset that this profile will submit through open-loop loadgen."""
+    if profile.get("imports_diagnostic"):
+        classes = profile.get("classes", [])
+        if not isinstance(classes, list) or any(not isinstance(name, str) for name in classes):
+            raise ValueError("imports diagnostic profile needs an explicit class list")
+        return sorted(set(classes))
+    if profile.get("interactive_integration_diagnostic"):
+        return []
+    capacity = profile.get("capacity")
+    mixes = capacity.get("mixes") if isinstance(capacity, dict) else None
+    if not isinstance(mixes, dict):
+        return []
+    classes: set[str] = set()
+    for mix in mixes.values():
+        if not isinstance(mix, dict) or any(not isinstance(name, str) for name in mix):
+            raise ValueError("capacity profile mixes must map workload classes to weights")
+        classes.update(mix)
+    return sorted(classes)
 
 
 def run_classes(profile_name: str, backend: str | None, out: Path | None, api_image: str | None = None,

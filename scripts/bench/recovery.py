@@ -12,6 +12,7 @@ import json
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -256,6 +257,23 @@ from execution_workers
 """
 
 
+def worker_slot_release(cluster, worker_id: str) -> dict:
+    """Prove the killed worker no longer holds a running execution claim."""
+    try:
+        canonical = str(uuid.UUID(worker_id))
+    except (TypeError, ValueError, AttributeError) as error:
+        raise RuntimeError("durable worker target has an invalid worker ID") from error
+    rows = cluster.driver_sql(f"""
+        select coalesce(json_agg(json_build_object('execution_id', e.id::text, 'status', e.status) order by e.created_at), '[]'::json)
+        from executions e
+        join execution_worker_claims c on c.subject_id = e.id and c.family = 'workflow_execution'
+        where c.worker_id = '{canonical}'::uuid and e.status = 'Running'
+    """)
+    if not isinstance(rows, list):
+        raise RuntimeError("worker slot-release query did not return a list")
+    return {"worker_id": canonical, "running_claims": rows, "released": not rows}
+
+
 class WorkerRecoverySampler:
     """Capture first observed loss and replacement admission while D6 is running."""
 
@@ -268,12 +286,30 @@ class WorkerRecoverySampler:
         self.first_replacement_ready_at: float | None = None
         self.first_lost: dict | None = None
         self.first_replacement: dict | None = None
+        self.pre_kill_ready_worker_ids: set[str] = set()
+        self.killed_at: float | None = None
         self.error: str | None = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="bench-d6-recovery-sampler")
 
     def start(self) -> None:
         self._thread.start()
+
+    def snapshot_before_kill(self) -> dict:
+        """Freeze ready workers before destruction so an existing slot cannot count as replacement."""
+        workers = self.cluster.driver_sql(WORKER_STATE_SQL)
+        if not isinstance(workers, list):
+            raise RuntimeError("worker-state query did not return a list")
+        self.pre_kill_ready_worker_ids = {worker["id"] for worker in workers
+                                          if isinstance(worker.get("id"), str) and worker.get("state") == "ready"}
+        snapshot = {"observed_at": time.time(), "phase": "pre-kill", "workers": workers}
+        self.samples.append(snapshot)
+        return snapshot
+
+    def mark_killed(self, killed_at: float) -> None:
+        if not isinstance(killed_at, (int, float)):
+            raise RuntimeError("D6 kill has no timestamp")
+        self.killed_at = float(killed_at)
 
     def stop(self) -> dict:
         self._stop.set()
@@ -285,17 +321,22 @@ class WorkerRecoverySampler:
         return self.evidence()
 
     def observe(self, workers: list[dict], *, observed_at: float) -> None:
-        snapshot = {"observed_at": observed_at, "workers": workers}
+        snapshot = {"observed_at": observed_at, "phase": "post-kill" if self.killed_at is not None else "pre-kill", "workers": workers}
         self.samples.append(snapshot)
+        if self.killed_at is None or observed_at < self.killed_at:
+            return
         killed = next((worker for worker in workers if worker.get("id") == self.killed_worker_id), None)
         if self.first_lost_at is None and killed is not None and killed.get("state") == "lost":
             self.first_lost_at, self.first_lost = observed_at, killed
-        replacement = next((worker for worker in workers if worker.get("id") != self.killed_worker_id and worker.get("state") == "ready"), None)
+        replacement = next((worker for worker in workers if worker.get("id") not in self.pre_kill_ready_worker_ids
+                            and worker.get("state") == "ready"), None)
         if self.first_replacement_ready_at is None and replacement is not None:
             self.first_replacement_ready_at, self.first_replacement = observed_at, replacement
 
     def evidence(self) -> dict:
-        return {"samples": self.samples, "first_lost_at": self.first_lost_at, "first_lost": self.first_lost,
+        return {"samples": self.samples, "killed_at": self.killed_at,
+                "pre_kill_ready_worker_ids": sorted(self.pre_kill_ready_worker_ids),
+                "first_lost_at": self.first_lost_at, "first_lost": self.first_lost,
                 "first_replacement_ready_at": self.first_replacement_ready_at,
                 "first_replacement": self.first_replacement}
 
@@ -315,11 +356,14 @@ def worker_recovery_assessment(kill: dict, sampled: dict) -> dict:
     """D6's loss clock uses sampling time, never a later reconciliation timestamp."""
     lost_at = sampled.get("first_lost_at")
     replacement_at = sampled.get("first_replacement_ready_at")
+    lost = sampled.get("first_lost") if isinstance(sampled.get("first_lost"), dict) else {}
+    replacement = sampled.get("first_replacement") if isinstance(sampled.get("first_replacement"), dict) else {}
     return {
-        "lost_path_observed": lost_at is not None,
-        "first_lost": sampled.get("first_lost"), "first_lost_at": lost_at,
-        "first_replacement": sampled.get("first_replacement"), "first_replacement_ready_at": replacement_at,
-        "replacement_admitted": replacement_at is not None,
+        "lost_path_observed": lost_at is not None and lost.get("state") == "lost",
+        "lost_terminal_status": lost.get("state"),
+        "first_lost": lost or None, "first_lost_at": lost_at,
+        "first_replacement": replacement or None, "first_replacement_ready_at": replacement_at,
+        "replacement_admitted": replacement_at is not None and replacement.get("id") not in set(sampled.get("pre_kill_ready_worker_ids", [])),
         "loss_after_kill_seconds": None if lost_at is None else lost_at - kill["killed_at"],
         "replacement_after_kill_seconds": None if replacement_at is None else replacement_at - kill["killed_at"],
         "loss_within_lease_plus_one_sweep": lost_at is not None and lost_at - kill["killed_at"] <= kill["loss_bound_s"],

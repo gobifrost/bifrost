@@ -487,6 +487,8 @@ class RunHarnessTest(unittest.TestCase):
         cluster.restart_api.assert_called_once()
         cluster.api_image_evidence.assert_called_once_with(provenance)
         self.assertEqual(current.result["api_image_provenance"]["api_pod"]["digest"], "sha256:config")
+        loadgen_payload = json.loads(cluster.exec_python.call_args.args[2][1])
+        self.assertEqual(loadgen_payload["classes"], ["agent-chat", "agent-tools", "wf-io", "wf-noop", "wf-sdk"])
         self.assertEqual(current.save.call_count, 2)
         self.assertNotIn("admission_rejection", current.result)
         self.assertIsNone(current.expected_api_uid)

@@ -183,11 +183,15 @@ def _d6(cluster: Cluster, ids: dict, tokens: dict[str, str]) -> dict:
         "hold_s": recovery.WORKER_RECOVERY_BOUND_S + 30,
     })], timeout_s=60)
     owned, pod = _wait_busy_worker(cluster)
+    if owned["execution_id"] != submitted["durable_id"]:
+        raise RuntimeError("D6 durable busy owner does not belong to the submitted recovery request")
     sampler = recovery.WorkerRecoverySampler(cluster, owned["worker_id"])
+    pre_kill = sampler.snapshot_before_kill()
     sampler.start()
     failure: BaseException | None = None
     try:
         killed = recovery.kill_worker_process(cluster, owned, pod)
+        sampler.mark_killed(killed["killed_at"])
         deadline = time.monotonic() + recovery.WORKER_RECOVERY_BOUND_S + 10
         while time.monotonic() < deadline:
             if sampler.first_lost_at is not None and sampler.first_replacement_ready_at is not None:
@@ -201,12 +205,18 @@ def _d6(cluster: Cluster, ids: dict, tokens: dict[str, str]) -> dict:
     if failure is not None:  # pragma: no cover - the raise above is the observable failure path
         raise failure
     assessment = recovery.worker_recovery_assessment(killed, sampled)
+    slot_release = recovery.worker_slot_release(cluster, owned["worker_id"])
     outcomes = cluster.exec_python("bench-driver", RECOVERY_DRIVER, ["outcomes", json.dumps({"requests": [{"id": request_id}]})], timeout_s=600)
     effects = recovery.effect_assessment([{**submitted, "id": request_id, "class": RECOVERY_CLASS, "sent": submitted["submitted_at"], "effect_token": token}],
                                          outcomes["rows"], _effects_reader(cluster)([request_id]))
-    passed = assessment["loss_within_lease_plus_one_sweep"] and assessment["replacement_admitted"] and effects["strict_effects"]
+    owner_rows = [row for row in outcomes["rows"] if row.get("durable_id") == owned["execution_id"]]
+    owner_terminal = len(owner_rows) == 1 and recovery._terminal(owner_rows[0])
+    passed = (assessment["lost_path_observed"] and assessment["loss_within_lease_plus_one_sweep"]
+              and assessment["replacement_admitted"] and slot_release["released"] and owner_terminal
+              and effects["strict_effects"])
     return {"kind": "busy-worker-kill", "submitted": submitted, "target": {"owned": owned, "pod": pod}, "kill": killed,
-            "sampling": sampled, "assessment": assessment, "outcomes": outcomes, "effects": effects,
+            "pre_kill": pre_kill, "sampling": sampled, "assessment": assessment, "slot_release": slot_release,
+            "outcomes": outcomes, "owner_terminal": owner_terminal, "effects": effects,
             "passed": passed, "overall": "passed" if passed else "failed"}
 
 

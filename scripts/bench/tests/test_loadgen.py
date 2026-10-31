@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
 import sys
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # The generator runs on the Bifrost image; stand in for its two third-party imports.
 for name in ("asyncpg", "httpx"):
@@ -13,6 +15,37 @@ _SPEC = importlib.util.spec_from_file_location("loadgen", Path(__file__).resolve
 assert _SPEC and _SPEC.loader
 loadgen = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(loadgen)
+
+
+class _Response:
+    def __init__(self, status_code: int, value: object) -> None:
+        self.status_code, self._value, self.text = status_code, value, "failure"
+
+    def json(self) -> object:
+        return self._value
+
+
+class _Session:
+    def __init__(self, workflows: list[dict], agents: list[dict]) -> None:
+        self.workflows, self.agents = workflows, agents
+        self.calls: list[tuple[str, str]] = []
+        self.http = self
+
+    async def login(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+    async def request(self, method: str, path: str, **_kwargs: object) -> _Response:
+        self.calls.append((method, path))
+        if path == "/api/workflows":
+            return _Response(200, self.workflows)
+        if path == "/api/agents":
+            return _Response(200, self.agents)
+        if path == "/api/admin/ai/connections":
+            return _Response(200, [{"name": "fake", "endpoint": "http://fake"}])
+        return _Response(500, {})
 
 
 class ScheduleTest(unittest.TestCase):
@@ -58,6 +91,29 @@ class OutcomeRowsTest(unittest.TestCase):
         self.assertEqual([row["durable_id"] for row in result["rows"]], ["execution-a", "execution-b"])
         self.assertEqual(result["duplicates"], {"request-a": 2})
         self.assertEqual(result["outcomes"]["request-a"]["durable_id"], "execution-a")
+
+
+class PrepareTest(unittest.TestCase):
+    def test_ordinary_capacity_does_not_require_import_workflows(self) -> None:
+        session = _Session([{"name": "bench_wf_noop", "id": "noop"}, {"name": "bench_wf_sdk", "id": "sdk"}], [])
+        with patch.object(loadgen, "Session", return_value=session):
+            result = asyncio.run(loadgen.prepare(["wf-noop", "wf-sdk"]))
+        self.assertEqual(result["workflows"], {"wf-noop": "noop", "wf-sdk": "sdk"})
+        self.assertEqual(result["agents"], {})
+        self.assertNotIn(("PUT", "/api/files/editor/content"), session.calls)
+
+    def test_import_workflows_are_required_when_explicitly_selected(self) -> None:
+        session = _Session([], [])
+        with patch.object(loadgen, "Session", return_value=session):
+            with self.assertRaisesRegex(SystemExit, "bench_wf_import_control"):
+                asyncio.run(loadgen.prepare(["wf-import-control", "wf-import-graph"]))
+
+    def test_agent_only_plan_requires_only_the_selected_agent(self) -> None:
+        session = _Session([], [{"name": "bench_agent_chat", "id": "chat"}])
+        with patch.object(loadgen, "Session", return_value=session):
+            result = asyncio.run(loadgen.prepare(["agent-chat"]))
+        self.assertEqual(result["workflows"], {})
+        self.assertEqual(result["agents"], {"agent-chat": "chat"})
 
 
 if __name__ == "__main__":

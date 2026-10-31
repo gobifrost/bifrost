@@ -112,12 +112,23 @@ def _rows(listed: object) -> list[dict]:
     return []
 
 
-async def prepare() -> dict:
+async def prepare(classes: list[str]) -> dict:
+    """Resolve only the explicit workload classes planned by this benchmark run."""
+    if not isinstance(classes, list) or any(not isinstance(name, str) for name in classes):
+        raise SystemExit("loadgen prepare requires an explicit list of workload classes")
+    if len(set(classes)) != len(classes):
+        raise SystemExit("loadgen prepare workload classes must be unique")
+    supported = set(WORKFLOW_CLASSES) | set(AGENT_CLASSES)
+    unknown = sorted(set(classes) - supported)
+    if unknown:
+        raise SystemExit(f"loadgen does not support declared workload classes: {unknown}")
+    required_workflows = {name: WORKFLOW_CLASSES[name] for name in classes if name in WORKFLOW_CLASSES}
+    required_agents = {name: AGENT_CLASSES[name] for name in classes if name in AGENT_CLASSES}
     session = Session()
     try:
         await session.login()
         workflows = {row["name"]: row["id"] for row in _rows(_check(await session.request("GET", "/api/workflows"), "list workflows").json())}
-        if "bench_wf_io" not in workflows:
+        if "wf-io" in required_workflows and "bench_wf_io" not in workflows:
             _check(await session.request("PUT", "/api/files/editor/content", json={
                 "path": "workflows/bench_load.py", "content": LOAD_SOURCE, "encoding": "utf-8",
             }), "write bench_load.py")
@@ -126,14 +137,14 @@ async def prepare() -> dict:
                 raise SystemExit(f"register bench_wf_io failed: HTTP {response.status_code} {response.text[:300]}")
             workflows = {row["name"]: row["id"] for row in _rows(_check(await session.request("GET", "/api/workflows"), "list workflows").json())}
         agents = {row["name"]: row["id"] for row in _rows(_check(await session.request("GET", "/api/agents"), "list agents").json())}
-        missing = [name for name in WORKFLOW_CLASSES.values() if name not in workflows]
-        missing += [name for name, _ in AGENT_CLASSES.values() if name not in agents]
+        missing = [name for name in required_workflows.values() if name not in workflows]
+        missing += [name for name, _ in required_agents.values() if name not in agents]
         if missing:
-            raise SystemExit(f"bench entities missing (run the class setup first): {missing}")
+            raise SystemExit(f"declared benchmark entities missing (run the matching setup first): {missing}")
         connections = _check(await session.request("GET", "/api/admin/ai/connections"), "list connections").json()
         return {
-            "workflows": {cls: workflows[name] for cls, name in WORKFLOW_CLASSES.items()},
-            "agents": {cls: agents[name] for cls, (name, _) in AGENT_CLASSES.items()},
+            "workflows": {cls: workflows[name] for cls, name in required_workflows.items()},
+            "agents": {cls: agents[name] for cls, (name, _) in required_agents.items()},
             "connections": {connection["name"]: connection.get("endpoint") or "" for connection in connections},
         }
     finally:

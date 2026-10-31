@@ -133,13 +133,26 @@ class WorkerTargetTest(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0][-2:], ["-9", "123"])
 
     def test_d6_uses_first_sampling_times_for_loss_and_replacement_admission(self) -> None:
-        sampler = recovery.WorkerRecoverySampler(Mock(), "old")
-        sampler.observe([{"id": "old", "state": "ready"}], observed_at=101.0)
+        cluster = Mock()
+        cluster.driver_sql.return_value = [{"id": "old", "state": "ready"}, {"id": "already-ready", "state": "ready"}]
+        sampler = recovery.WorkerRecoverySampler(cluster, "old")
+        sampler.snapshot_before_kill()
+        sampler.mark_killed(100.0)
         sampler.observe([{"id": "old", "state": "lost", "end_reason": "heartbeat_timeout"}], observed_at=120.0)
-        sampler.observe([{"id": "old", "state": "lost"}, {"id": "new", "state": "ready"}], observed_at=121.0)
+        sampler.observe([{"id": "old", "state": "lost"}, {"id": "already-ready", "state": "ready"}], observed_at=121.0)
+        self.assertIsNone(sampler.first_replacement_ready_at)
+        sampler.observe([{"id": "old", "state": "lost"}, {"id": "new", "state": "ready"}], observed_at=122.0)
         result = recovery.worker_recovery_assessment({"killed_at": 100.0, "loss_bound_s": 35.0}, sampler.evidence())
         self.assertTrue(result["loss_within_lease_plus_one_sweep"])
         self.assertTrue(result["replacement_admitted"])
+        self.assertEqual(result["lost_terminal_status"], "lost")
+
+    def test_d6_slot_release_requires_no_running_claim_on_killed_worker(self) -> None:
+        cluster = Mock()
+        cluster.driver_sql.return_value = []
+        result = recovery.worker_slot_release(cluster, "123e4567-e89b-12d3-a456-426614174000")
+        self.assertTrue(result["released"])
+        self.assertIn("execution_worker_claims", cluster.driver_sql.call_args.args[0])
 
 
 class RestartInjectorTest(unittest.TestCase):
