@@ -30,12 +30,23 @@ class Default(WorkerEntrypoint):
             await asyncio.sleep(0.25)
             await self.env.EFFECTS.record("after")
             return Response.json({"completed": True})
-        if action == "cpu":
+        if action in ("cpu", "cpu_limit"):
             await self.env.EFFECTS.record("before")
             total = 0
-            for value in range(20000000):
+            for value in range(200000000 if action == "cpu_limit" else 20000000):
                 total += value
             await self.env.EFFECTS.record("after")
+            return Response.json({"total": total})
+        if action == "cpu_catch":
+            await self.env.EFFECTS.record("before")
+            total = 0
+            try:
+                for value in range(200000000):
+                    total += value
+            except BaseException as exc:
+                await self.env.EFFECTS.record("caught")
+                await self.env.EFFECTS.record("after")
+                return Response.json({"caught": type(exc).__name__})
             return Response.json({"total": total})
         if action == "egress":
             from workers import fetch

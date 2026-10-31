@@ -6,7 +6,7 @@ const observations = new Map();
 export class Effects extends WorkerEntrypoint {
   record(event) {
     const value = String(event);
-    if (!['before','after'].includes(value)) throw new TypeError('Invalid probe event');
+    if (!['before','after','caught'].includes(value)) throw new TypeError('Invalid probe event');
     const observation = observations.get(this.ctx.props.id);
     if (observation) {
       observation.records.push(value);
@@ -17,12 +17,14 @@ export class Effects extends WorkerEntrypoint {
 
 export default {
   async fetch(request, env, ctx) {
-    if (env.LOCAL_PROBE !== 'true' && (!env.SPIKE_AUTH || request.headers.get('X-Spike-Auth') !== env.SPIKE_AUTH)) {
+    if (env.LOCAL_PROBE !== 'true' && (!env.SPIKE_AUTH ||
+        !(Date.now() < Number(env.SPIKE_EXPIRES_AT)) ||
+        request.headers.get('X-Spike-Auth') !== env.SPIKE_AUTH)) {
       return new Response('Private diagnostic only', {status:403});
     }
     if (request.method !== 'POST') return new Response('POST required', {status:405});
     const body = await request.json();
-    if (!['state','io','cpu','egress'].includes(body.action)) return new Response('Unsupported', {status:422});
+    if (!['state','io','cpu','cpu_limit','cpu_catch','egress'].includes(body.action)) return new Response('Unsupported', {status:422});
     if (observations.size >= 8) return new Response('Probe capacity exceeded', {status:429});
     const id = crypto.randomUUID();
     const records = [];

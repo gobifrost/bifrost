@@ -58,3 +58,10 @@ The synchronous cold-module HTTP client itself works under local Pyodide: the
 real worker requests a module from the real isolated API, which rejects a fixed
 invalid credential with 401. The worker preserves its existing WorkflowLoadError
 semantics. This is negative authentication evidence, not authorized SDK success.
+
+The bounded authorized cloud experiment subsequently confirmed fresh-isolate
+state separation and execution of current upstream engine fixtures. CPU abort
+still permits after effects. Cloudflare's CpuLimitExceeded exception can itself
+be caught by Python code, which then emits another effect. Neither a request
+abort nor this exception alone proves an uncatchable physical stop. See
+`results/fresh-cloud-verification.json`; full executor acceptance remains false.

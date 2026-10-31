@@ -52,3 +52,25 @@ https://developers.cloudflare.com/dynamic-workers/pricing/ . This is not an
 allowance or approval to spend. Official lifecycle references:
 https://developers.cloudflare.com/dynamic-workers/api-reference/ and
 https://developers.cloudflare.com/dynamic-workers/usage/limits/ .
+
+## Approved cloud continuation
+
+Thomas then explicitly approved 20 fresh Workers / $0.10 / 30-minute temporary
+authentication on the existing isolated resource, with no BiFrost credentials.
+The preceding no-cloud statement is historical. Used 16 reserved invocations;
+all failed/uncertain attempts count and no request was automatically retried.
+
+| Hypothesis | Specific change / command | Observed result / artifact | Next step |
+|---|---|---|---|
+| Fresh isolate repairs cross-run contamination | cf isolation-cloud mode; `node backend/cloud-isolation.mjs` | Four sequential/parallel canaries clean, egress denied, `isolation-cloud-fresh.json` | Preserve fresh boundary; not full executor acceptance |
+| Cloud CPU cancellation differs from local | Same started CPU fixture and parent abort timer in actual cloud | Falsified: both effects, timer not fired before result | Require external physical-stop contract |
+| Current engine closure works in cloud | Package actual current closure and fixed engine fixtures | First 3 calls HTTP 500; one captured PythonError shows virtual hook intercepting Cloudflare helper | Move runtime imports before installing hook |
+| Import order is the smallest blocker | Import Workers before upstream bootstrap; redeploy diagnosed revision | Transform/context/async and structured log/ValueError pass, `engine-cloud-fresh.json` | Genuine authorized SDK/control adoption remains open |
+| CPU budget is a stop receipt | Finite longer loop with cpuMs=1000 | CpuLimitExceeded observed, only before effect | Attempt hostile catch before claiming termination |
+| Guest cannot catch provider stop | Fixed catch-BaseException fixture | Catches CpuLimitExceeded and emits caught/after, `cpu-catch-cloud-fresh.json` | Material RED boundary for required untrusted physical stop |
+| Cleanup removes exposure | cf private deployment, secret delete, API/readback | No public/previews/logs, empty secrets, HTTP404, `fresh-cleanup-readback.json` | Local temp-secret deletion denied by automatic review; no bypass |
+
+`node backend/verify-fresh-cloud.mjs` intentionally exits 1 for the two physical
+stop incompatibilities while asserting the functional results. No missing native
+wheel was encountered; the actual blocker was pure-Python bootstrap order, then
+the provider lifecycle contract. No native-build/reimplementation claim follows.

@@ -1,13 +1,15 @@
 import { defineConfig } from "cf/config";
 
-export default defineConfig(({mode}) => mode === 'isolation' ? {
+export default defineConfig(({mode}) => ['isolation','isolation-cloud','engine-cloud'].includes(mode ?? '') ? {
 	worker: {
 		name: 'bifrost-pyodide-spike-ddf316c1',
-		entrypoint: 'backend/isolation-entry.mjs',
+		entrypoint: mode === 'engine-cloud' ? 'backend/cloud-engine-entry.mjs' : 'backend/isolation-entry.mjs',
 		compatibilityDate: '2026-10-30',
-		workersDev: false,
+		workersDev: mode === 'isolation-cloud' || mode === 'engine-cloud',
 		previewUrls: false,
-		env: {LOADER: {type: 'worker-loader'}, LOCAL_PROBE: {type: 'text', value: 'false'}},
+		env: {LOADER: {type: 'worker-loader'}, LOCAL_PROBE: {type: 'text', value: 'false'},
+			SPIKE_EXPIRES_AT: {type:'text',value:process.env.SPIKE_EXPIRES_AT ?? '0'},
+			PARENT_CANARY: {type:'text',value:'synthetic-supervisor-only'}},
 		limits: {cpuMs: 1000},
 		observability: {enabled: false},
 	},

@@ -1,0 +1,41 @@
+﻿{
+  "id": "dbc367a0d3344411ab7af349a390d882",
+  "name": "bifrost-pyodide-spike-ddf316c1",
+  "tags": [],
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "redact_query_string": false,
+    "logs": {
+      "enabled": false,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true,
+      "destinations": []
+    },
+    "traces": {
+      "enabled": false,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "destinations": []
+    }
+  },
+  "logpush": false,
+  "created_on": "2026-10-31T03:20:15.012033Z",
+  "updated_on": "2026-10-31T15:49:15.092824Z",
+  "deployed_on": "2026-10-31T15:49:18.987613Z",
+  "references": {
+    "workers": [],
+    "domains": [],
+    "dispatch_namespace_outbounds": [],
+    "durable_objects": [],
+    "queues": []
+  },
+  "subdomain": {
+    "enabled": false,
+    "previews_enabled": false,
+    "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev",
+    "preview_url_suffix": "-bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev"
+  },
+  "tail_consumers": []
+}

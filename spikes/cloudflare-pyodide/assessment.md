@@ -8,6 +8,23 @@ untrusted workflows. The latter is a material incompatibility, not a tuning task
 There is deployed-Cloudflare evidence for the non-SDK subset; there is no
 production acceptance or deployed SDK-to-Bifrost evidence.
 
+The authorized fresh-isolate follow-on also remains **RED for first-class
+arbitrary untrusted execution**: cloud CPU cancellation permits later effects,
+and a Python workflow can catch Cloudflare's CpuLimitExceeded and emit another
+effect. Fresh isolates repair the observed state-sharing problem, but do not
+provide the required physical-stop contract. Current upstream engine fixtures
+run successfully in fresh cloud isolates without a fake settings module. They
+use synthetic context and do not establish genuine run-scoped SDK authorization.
+See `IMPLEMENTATION.md` and `results/fresh-cloud-verification.json` for this
+separate tested increment; the historical sections below retain their scope.
+
+Retain arbitrary/CPU-heavy workflows, services and agents on Linux until an
+independently enforced provider termination mechanism is verified. A trusted,
+digest-approved short I/O profile remains a possible follow-on; approval must
+precede effects, and canonical credentials/attempt/result/recovery still need
+integration. Do not infer eligibility from an AST scan or imports alone. A second
+queue, self-reported stopped state, or catchable exception is not a substitute.
+
 `results/benchmark-sdk.json` contains five requested workload families plus
 context/import/error probes. `verify.mjs ... --sdk` asserts expected values,
 including integration config `{answer:42}` and table write/read `{value:42}`.

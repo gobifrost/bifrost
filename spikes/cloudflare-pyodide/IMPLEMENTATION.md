@@ -168,3 +168,67 @@ unanswered, physical CPU termination remains unproven, and shared remote
 adapter ownership remains uncoordinated. More local passing tests do not remove
 these gates. The full backend goal is incomplete; no merge/deploy or maintainer
 acceptance is claimed.
+
+## Authorized fresh-cloud experiment (2026-10-31)
+
+Thomas explicitly approved at most 20 fresh Python Workers, $0.10 incremental
+usage and temporary guarded authentication for at most 30 minutes on the existing
+isolated Worker. No BiFrost credential or production resource was authorized.
+The prior approval blocker is superseded for this bounded experiment only.
+
+Used cf 1.0.0-beta.22 and the existing authenticated account. The harness reserves
+each request in `results/fresh-cloud-budget.json` before transmission, never
+automatically retries, and counts uncertain/failed requests. Consumed 16 of 20.
+Server expiry was `1793463072953` (16:11:12.953 UTC); public invocation began
+around 15:41 UTC and retirement readback completed at 15:51 UTC.
+
+Actual cloud results:
+
+- Four sequential/concurrent fresh Python interpreters passed builtins, module,
+  environment and temporary-file contamination checks. Parent-binding positive
+  control was present and absent from the child. Egress was denied.
+- I/O abort observed only before. CPU abort observed before/after and completed
+  before the supervisor timer fired. This is now cloud evidence.
+- Current upstream engine transformation/context and async fixtures succeeded;
+  deliberate ValueError and structured log were preserved. Synthetic context
+  only: no SDK authorization or canonical attempt acceptance is claimed.
+- Initial engine attempts failed during bootstrap. Captured PythonError showed
+  Cloudflare's `_pyodide_entrypoint_helper` lookup being intercepted after the
+  upstream virtual importer was installed. Importing Workers before installing
+  that hook fixed the prototype without engine/SDK reimplementation or fake auth.
+- A longer loop raised `introspection.CpuLimitExceeded` with no after effect.
+  A hostile fixture then caught that exception and emitted caught/after effects.
+  This provider exception is not an uncatchable physical-stop receipt.
+
+`node backend/verify-fresh-cloud.mjs` confirms functional/isolation observations
+and intentionally exits 1 for the physical-cancellation incompatibilities.
+Failed and successful observations are separate artifacts. Engine upload was
+14,580.31 KiB / 4,124.04 KiB gzip. Supervisor validation startup was 1 ms, not
+Python run startup. Fresh current-engine client wall times were about 3.7-4.1 s,
+including network/initialization. CPU ms and peak memory were not measured.
+
+At published per-creation rates, 16 potentially billable creations estimate
+$0.032 before CPU/requests and included allocation; this is not an invoice.
+Fresh creation alone is up to $2 per 1,000 executions before CPU/requests or
+included allocation. No equivalent full Linux executor cost comparison exists.
+
+Version receipts:
+
+- isolation: `5d55880e-ec51-4c0f-938b-833096fd4ddb`
+- initial engine: `7518d138-8251-436d-b32a-44b84a0a37ec`
+- captured bootstrap failure: `82ede251-96a4-4b8d-81e7-7cd249d24698`
+- corrected current engine: `11aed8eb-c28e-4d2d-86a6-71a977baabf6`
+- uncaught CPU limit: `13d72a73-ee73-4ea6-9525-8d40137f98a6`
+- hostile catch: `03460cde-9d4f-4942-a68f-93adb8624358`
+- private retirement upload: `1c4abba7-4fc8-4e37-b5d9-99aef8c68b13`
+
+Cleanup readback confirms workers.dev=false, previews=false, observability=false,
+no secret bindings, and public HTTP 404. Active configuration has expiry zero.
+Automatic approval review rejected deleting the local temporary secret JSON;
+it remains in OS temp, its remote binding is removed, and no alternate deletion
+or overwrite was attempted. No remaining cloud invocation is scheduled.
+
+Decision: YELLOW for trusted fixed short execution; RED for first-class arbitrary
+untrusted execution under required termination guarantees. Genuine run-scoped
+SDK identity, pinned workspace adoption, canonical dispatch/result/recovery,
+physical stop and upstream publication remain incomplete.

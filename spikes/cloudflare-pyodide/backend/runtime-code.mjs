@@ -33,14 +33,14 @@ class Default(WorkerEntrypoint):
         return Response.json(await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"]))
 `;
 
-export function runtimeCode(outbound=null) {
+export function runtimeCode(outbound=null,entrypoint=main) {
   const modules={};
   for(const [name,value] of Object.entries(packaged)) {
     modules[name]=value.base64 === undefined ? value : {
       data:Uint8Array.from(atob(value.base64),c=>c.charCodeAt(0)).buffer,
     };
   }
-  modules['main.py']={py:main};
+  modules['main.py']={py:entrypoint};
   return {compatibilityDate:'2026-10-30',compatibilityFlags:['python_workers'],mainModule:'main.py',
     modules,env:{},globalOutbound:outbound,limits:{cpuMs:1000,subRequests:4}};
 }

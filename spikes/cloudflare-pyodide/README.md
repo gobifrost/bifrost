@@ -1,7 +1,7 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
 **YELLOW for fixed, trusted, short workflows. RED for arbitrary untrusted Python
-in one shared Worker.** Real upstream `engine.execute()` and unmodified SDK
+under the current termination contract, including fresh isolates.** Real upstream `engine.execute()` and unmodified SDK
 integration reads/table writes ran in local Cloudflare workerd/Pyodide. This is
 not a production execution target or a completed remote-launcher implementation.
 
@@ -10,6 +10,9 @@ The follow-on backend work is reconciled with upstream `e611d31bbba3d7601980271c
 It adds two small engine/worker seams; see [current acceptance](IMPLEMENTATION.md)
 and [proposed physical contract](backend/CONTRACT.md). Historical measurements
 below do not establish acceptance of that backend.
+The approved fresh-cloud follow-on executed the current engine successfully,
+but CPU cancellation still permits later effects and the provider CPU exception
+can be caught. See the final section of [IMPLEMENTATION.md](IMPLEMENTATION.md).
 See [assessment.md](assessment.md), [experiments.md](experiments.md), and
 [raw evidence](results/). No production resources or credentials were used.
 
@@ -127,6 +130,16 @@ Pyodide 314.0.7 / CPython 3.14.2 (see pylock); Linux CPython 3.14.8; global cf
 1.0.0-beta.22 (migration's locked local cf package is beta.26).
 
 ## Cleanup
+
+The approved fresh-cloud experiment used 16 of 20 invocations and is retired:
+no public/previews, no remote secret binding, HTTP404. Verify retained artifacts
+with `node backend/verify-fresh-cloud.mjs` (expected exit 1 for physical-stop
+incompatibility) and `node backend/fresh-cleanup-readback.mjs`. Replaying a live
+experiment requires current authority; do not reset `fresh-cloud-budget.json`.
+`isolation-cloud` and `engine-cloud` modes require an explicit future
+`SPIKE_EXPIRES_AT` Unix-millisecond environment value and a secrets file passed
+to cf deploy. The default expiry is zero (fail closed). `isolation` mode retires
+public access. Never put a BiFrost credential into these diagnostic modes.
 
 ```powershell
 docker stop bifrost-pyodide-ddf316c1
