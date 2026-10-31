@@ -165,7 +165,7 @@ async def test_real_canonical_result_write_is_claim_fenced_and_cannot_be_overwri
     try:
         task = await journal.dispatch(lease, "route", str(execution_id),
                                       AsyncMock(return_value={"value": 70}))
-        await task
+        assert await task == {"value": 70}
 
         async def accept(_route, subject, result):
             async with async_session_factory() as session:
@@ -217,6 +217,6 @@ async def test_running_route_cannot_be_acknowledged_or_cleaned_up(owner):
             await journal.retire()
     finally:
         release.set()
-        await task
+        assert await task == {"status": "Success"}
     assert await journal.reconcile_terminal(lease, "route", accept)
     await journal.retire()

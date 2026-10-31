@@ -76,3 +76,17 @@ workspace-isolation tests cover the affected call boundary.
 Verification: 7 focused tests passed through `./test.sh`; `./test.sh quality api`
 passed with zero Pyright errors/warnings and Ruff clean. No cloud redeployment
 or change to the historical runtime manifests was made.
+
+## Follow-up fixture findings 1832 and 1833
+
+Both comments point to bare `await task` expressions in the journal tests.
+The awaits synchronize physical-fixture completion and propagate failures; they
+must remain. Strengthened both statements to assert their exact returned values
+(`{"value": 70}` and `{"status": "Success"}`), making the intended observable
+contract explicit. No suppression or alert dismissal was applied.
+
+All six journal tests passed through `./test.sh` in 6.43 seconds; raw receipt:
+`results/attempt-journal-codeql-junit.xml`. The prior nine-test receipt and source
+hashes remain historical evidence for the earlier implementation. This change
+modifies only assertions, not the journal or platform implementation. Fresh
+CodeQL analysis must establish the disposition on the new head.
