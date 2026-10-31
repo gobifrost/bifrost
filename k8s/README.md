@@ -278,6 +278,7 @@ is lost.
 |------|---------|-------------|
 | `BIFROST_ENVIRONMENT` | `production` | Environment name |
 | `BIFROST_DEBUG` | `false` | Debug mode |
+| `BIFROST_USAGE_REPORTING_ENABLED` | `true` | Daily production installation and aggregate run reporting; set `false` to exclude staging/clones or permanently opt out. See [Usage Reporting](../docs/runbooks/usage-reporting.md). |
 | `BIFROST_S3_BUCKET` | (required) | S3 bucket name for workspace storage |
 | `BIFROST_S3_REGION` | `us-east-1` | S3 region |
 | `BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | JWT access token TTL |

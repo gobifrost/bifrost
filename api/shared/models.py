@@ -1,11 +1,40 @@
 """Small shared request and response models used outside a single API domain."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+
+
+SEMVER_PATTERN = (
+    r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
+    r"(?:-(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*))"
+    r"(?:\.(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*)))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+
+
+class UsageReport(BaseModel):
+    """Pseudonymous aggregate activity for one completed UTC day."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    installation_id: UUID
+    version: str = Field(min_length=5, max_length=128, pattern=SEMVER_PATTERN)
+    period: date
+    workflow_runs: int = Field(ge=0, le=1_000_000_000)
+    agent_runs: int = Field(ge=0, le=1_000_000_000)
+    environment: Literal["production"] = "production"
+
+    @field_validator("installation_id")
+    @classmethod
+    def require_v4_installation_id(cls, value: UUID) -> UUID:
+        if value.version != 4:
+            raise ValueError("installation_id must be a UUIDv4")
+        return value
 
 
 class BrowserImpersonationTokenResponse(BaseModel):

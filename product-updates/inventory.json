@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "087ffade922de931d2a57bd8a72531f8240e15f7",
-  "collected_at": "2026-10-31T04:45:56Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...087ffade922de931d2a57bd8a72531f8240e15f7",
+  "target_ref": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
+  "collected_at": "2026-10-31T19:34:44Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...55f66591ac3b75e952ec27aae74e6789e5d92efa",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2181,6 +2181,20 @@
       "subject": "Serve App SDK updates from the instance (#1158)",
       "prs": [
         1158
+      ]
+    },
+    {
+      "sha": "e611d31bbba3d7601980271c774cad5e821b1e97",
+      "subject": "docs(product-updates): activate hosted SDK delivery (#1159)",
+      "prs": [
+        1159
+      ]
+    },
+    {
+      "sha": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
+      "subject": "Report daily aggregate installation usage (#1163)",
+      "prs": [
+        1163
       ]
     }
   ],
@@ -6236,6 +6250,32 @@
       "merge_commit": "087ffade922de931d2a57bd8a72531f8240e15f7",
       "body": "## Summary\n\nApp bundles currently freeze the SDK's transport and authentication code, so compatible SDK fixes require rebuilding each App. New builds install a small binding and load the existing full SDK from the instance as prebuilt JavaScript. The App keeps its own React, public imports, provider props, and error constructors. After one SDK update, compatible implementation changes arrive on document reload with the App's deployment unchanged.\n\nFactories are built into the API image, published to shared storage before readiness, and loaded through an uncached descriptor plus immutable SHA-256/SRI assets. Factory selection is shared per document/origin/major; SDK state and credentials stay inside each App binding. Production does not run a development server when an App opens.\n\nBinding provenance flows through source builds, CLI prebuilds, activation, status, and bundle manifests. Version 3 SDK-update jobs fence the binding major and retain exact historical schemas for already queued manual jobs. Supported hosted majors ignore server wire-only staleness; changing the public major requires an explicit migration. The initial automatic hosted-migration declaration is empty, so adoption starts with manual Update SDK after an ordinary instance upgrade. Existing automatic-upgrade settings are preserved.\n\nThe CLI preview proxy also forwards expiry close code 4001 and exposes a nonce-protected, tokenless acknowledgement through its existing auth bridge so refresh/reconnect remains functional. Authentication expiry and authorization checks are unchanged.\n\n## Validation\n\n- Focused backend units and DTO/CLI/MCP/skill tripwires: 542 passed, zero skips; JUnit verified.\n- Focused client units: 134 passed across ten files; TypeScript and ESLint passed (one existing seed-review-pack console warning).\n- API Pyright/Ruff: passed.\n- Full PR unit CI exposed six stale App/metadata fixtures and two endpoint-inventory tripwires. Updated fixtures, regenerated inventory, and all 47 focused correction/status checks passed; the full suite must pass again on this head.\n- Existing one-job worker migration: passed (10.82 s call, 3.19 s setup); proves build/activation, hosted manifest provenance, and retained recovery artifacts.\n- Browser legacy/hosted/reloaded-SDK journey: passed (21.3 s including authentication setup). A bundled wire-contract-3 SDK makes a real authenticated API request without loading a hosted artifact. The hosted App then uses the real first artifact and an integrity-valid simulated compatible update; App entry bytes and build stamps stay unchanged. This does not claim arbitrary old wire contracts remain supported.\n- React 18.3.1 factory probe with distinct host React 19.2.0: provider/hooks/header/Lucide and separate App/org transport headers passed.\n- Independent Astra implementation, lifecycle, and Product Updates copy review: approved, no remaining P1/P2 findings.\n\nFull backend, Vitest, and Playwright suites were not run locally; the protected merge queue remains the complete-suite gate. The first introduction of hosted endpoints can show a load error if a newly migrated App reaches an older API replica before an ordinary upgrade finishes; reload after upgrade. Prebuilt metadata is the privileged deploy author's attestation, without JavaScript inspection.\n\n## Product Updates\n\n- [x] Highlight \u2014 \u201cSDK Updates Without App Rebuilds\u201d; entry `a978b8c0-cde0-4b05-bf6d-7cb333ed914a`, with source PR and contributor verified from GitHub.\n\n<details>\n<summary>Exact focused commands</summary>\n\n```bash\n./test.sh tests/unit/test_sdk_package.py tests/unit/test_sdk_package_fingerprint.py tests/unit/test_sdk_automatic_upgrade_contracts.py tests/unit/test_hosted_sdk_artifact.py tests/unit/test_application_sdk_status.py tests/unit/jobs/test_application_sdk_update.py tests/unit/shared/test_automatic_app_sdk_upgrades.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/test_solution_app_deploy.py tests/unit/test_solution_start_sdk_warning.py tests/unit/test_cli_solution_deploy_phases.py tests/unit/routers/test_app_code_files.py tests/unit/test_solution_dev_proxy.py tests/unit/test_dto_flags.py tests/unit/test_contract_version.py tests/unit/test_mcp_thin_wrapper.py tests/unit/test_cli_surface_smoke.py tests/unit/test_skill_appendix_fresh.py -v\n./test.sh tests/unit/jobs/test_application_deploy.py tests/unit/routers/test_application_job_memory_profiles.py tests/unit/services/test_operation_inventory.py tests/unit/test_solution_id_on_public_models.py tests/unit/test_solution_sdk_aggregates.py tests/unit/test_application_sdk_status.py -v\n./test.sh quality api\n./test.sh client unit src/lib/app-sdk/hosted-loader.test.ts src/lib/app-sdk/hosted-binding.test.tsx src/lib/app-sdk/hosted-contract.test.ts src/lib/app-sdk/errors.test.ts src/lib/app-sdk/tables.test.ts src/lib/app-sdk/files.test.ts src/lib/app-sdk/ws-client.test.ts src/components/jsx-app/StandaloneV2App.test.tsx src/components/jsx-app/BundledAppShell.test.tsx src/pages/settings/AppSdkUpgradeSettings.test.tsx\nnpm --prefix client run tsc\nnpm --prefix client run lint\n./test.sh tests/e2e/platform/test_automatic_app_sdk_upgrade.py::test_automatic_upgrade_builds_once_and_keeps_recovery_artifacts -v --durations=0\n./test.sh client e2e e2e/hosted-app-sdk.admin.spec.ts\npython3 scripts/check_skill_mirrors.py\n```\n\n</details>\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1158"
+    },
+    {
+      "number": 1159,
+      "title": "docs(product-updates): activate hosted SDK delivery",
+      "url": "https://github.com/gobifrost/bifrost/pull/1159",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T05:14:30Z",
+      "merge_commit": "e611d31bbba3d7601980271c774cad5e821b1e97",
+      "body": "## Summary\n\nRefresh the cumulative verified Product Updates inventory through merged #1158. The approved \u201cSDK Updates Without App Rebuilds\u201d entry is now included in the prepared image bundle, while #1157\u2019s approved routine-fix summary is included automatically.\n\nThe refreshed inventory preserves every prior record and adds #1156\u2013#1158. This PR changes Product Updates metadata only; image preparation regenerates runtime output during the build.\n\n## Validation\n\n- `python3 scripts/product_updates.py validate --content-dir product-updates --inventory product-updates/inventory.json --dispositions product-updates/dispositions.json --target 087ffade922de931d2a57bd8a72531f8240e15f7`\n- `python3 -m scripts.prepare_product_updates_image --target 087ffade922de931d2a57bd8a72531f8240e15f7`\n- `python3 -m unittest scripts.test_product_updates scripts.test_release_gate`\n- Verified the prepared bundle retains prior entries and smaller summaries, includes #1158's approved entry, and includes #1157's approved summary.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1159"
+    },
+    {
+      "number": 1163,
+      "title": "Report daily aggregate installation usage",
+      "url": "https://github.com/gobifrost/bifrost/pull/1163",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T19:34:06Z",
+      "merge_commit": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
+      "body": "Production installations now report a persistent random installation ID, build version, and previous-day workflow and agent run totals to `https://reports.gobifrost.com/usage` by default. Development, testing, debug, and unversioned builds are excluded. `BIFROST_USAGE_REPORTING_ENABLED=false` excludes staging/database clones and provides a permanent opt-out.\n\nThe existing elected scheduler checks at startup and hourly. PostgreSQL stores the installation identity and the last successfully reported UTC day. Only HTTP 204 marks delivery complete; a failed delivery remains eligible for the next check. The fixed seven-field payload excludes customer identities and content. Reports remain unauthenticated and self-reported, as requested. The reporting application retains no source IP addresses, user agents, referrers, or request headers; Worker request logging is disabled. Cloudflare provider-level processing is described separately in the runbook.\n\nDocker Compose and Kubernetes expose the environment setting. The README and usage-reporting runbook document the exact payload, defaults, clone behavior, and Cloudflare privacy boundary. Receiver source remains in the separate private infrastructure repository.\n\n## Validation\n\n- `./test.sh quality api` \u2014 Pyright and Ruff pass.\n- `./test.sh tests/unit/test_usage_reporting.py tests/unit/scheduler/test_control.py tests/unit/services/test_scheduler_diagnostics.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 41 passed, zero skipped. The PostgreSQL happy path uses an HTTP mock transport; no reports are sent to the public receiver. The integration case takes about 0.1 seconds.\n- `./test.sh quality repo` \u2014 repository checks run with a temporary GitHub CONNECT tunnel after the host resolver failed; TLS verification stays enabled and no host DNS settings are changed.\n- `./test.sh tests/unit/test_usage_reporting.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 83 passed after the test-style cleanup and additive contract fingerprint refresh; existing CLI/SDK shapes and minimum CLI version are unchanged.\n- `./test.sh tests/e2e/platform/test_scheduler_diagnostics.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 five passed after adding the reporting task to the live diagnostics catalogue expectation; request calls take under 0.3 seconds, with about 6.6 seconds spent in existing authenticated-user fixture setup.\n- Receiver: `BIFROST_REPORTING_TEST_IMAGE=bifrost-test-client-check:latest ./test.sh usage-reporting` in the private infrastructure repo \u2014 all seven Worker/D1 tests, TypeScript checks, and dry-run build pass.\n- Full backend, frontend, and browser suites were not run locally. No frontend or API route/CLI contract changed.\n\n## Product Updates\n\n- [x] Highlight \u2014 Daily Installation Usage Reporting; canonical entry `c0959ccb-e319-4cba-9b98-1da422ba9700` documents the reporting default and permanent opt-out.\n\nCloses #1165.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1163"
     }
   ]
 }

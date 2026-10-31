@@ -146,6 +146,7 @@ services:
       # Core
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
       BIFROST_DEBUG: ${BIFROST_DEBUG:-false}
+      BIFROST_USAGE_REPORTING_ENABLED: ${BIFROST_USAGE_REPORTING_ENABLED:-true}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
       # Database (via PgBouncer for connection pooling)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
