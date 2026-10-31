@@ -34,8 +34,21 @@ FIXTURE = HERE / "incluster" / "retention_fixture.py"
 LOCK_PATH = Path("/tmp/bifrost-capacity-host.lock")
 
 
-def _json_hash(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+def _write_receipt(out: Path, records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create once, fsync, then hash the exact raw terminal evidence before mutation."""
+    path = out / "fixture-terminal-receipt.json"
+    contents = json.dumps({"terminal_records": records}, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(contents)
+            file.flush()
+            os.fsync(file.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": len(contents),
+            "created_at": _utc_now()}
 
 
 def _utc_now() -> str:
@@ -73,6 +86,16 @@ def _expected_ids(records: dict[str, Any]) -> list[str]:
     if len(ids) != len(terminal) or any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(ids):
         raise RuntimeError("fixture terminal records do not contain unique execution IDs")
     return sorted(ids)
+
+
+def _retention_days(settings: dict[str, Any]) -> int | None:
+    configured = _object(settings.get("settings"), "run-retention settings.settings")
+    days = configured.get("days")
+    if days is None:
+        return None
+    if type(days) is not int or days < 30:
+        raise RuntimeError("canonical run-retention settings returned invalid days")
+    return days
 
 
 def _assert_state(observed: dict[str, Any], ids: list[str], *, deleted: bool) -> None:
@@ -134,29 +157,52 @@ def rehearse(profile_name: str, api_image: str, out: Path) -> Path:
         current.result["source_hashes"] = {"retention_fixture.py": hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
                                            "fixture_workflow": fixture.get("fixture", {}).get("source_sha256")}
         current.result["before"] = {"storage": storage.collect(cluster)}
+        canonical_settings = _fixture(cluster, "bench-driver", "settings", {})
+        retention_days = _retention_days(canonical_settings)
+        current.result["canonical_run_retention_settings"] = canonical_settings
+        if retention_days is None:
+            current.result.update({
+                "stage": "not_exercised",
+                "not_exercised": "canonical run retention is keep_forever; no policy mutation or simulated deletion was performed",
+                "after": {"storage": storage.collect(cluster)},
+            })
+            return out
         current.result["stage"] = "fixture_execute"
         current.save()
-        records = _fixture(cluster, "bench-driver", "execute", {
-            "workflow_ids": _object(fixture.get("workflow_ids"), "fixture.workflow_ids"),
-        }, timeout_s=3600)
+        workflow_ids = _object(fixture.get("workflow_ids"), "fixture.workflow_ids")
+        phase_records: list[dict[str, Any]] = []
+        current.result["fixture_phases"] = []
+        for case in ("small_success", "small_failed", "repetitive_5mb", "entropy_5mb"):
+            records = _fixture(cluster, "bench-driver", "execute", {"workflow_ids": workflow_ids, "case": case}, timeout_s=3600)
+            phase_records.extend(records.get("terminal_records", []))
+            phase = {"case": case, "records": records, "storage_after": storage.collect(cluster)}
+            current.result["fixture_phases"].append(phase)
+            current.save()
+        records = {"terminal_records": phase_records}
         execution_ids = _expected_ids(records)
-        receipt = _json_hash(records)
+        case_by_id = {item["execution_id"]: item["case"] for item in phase_records if isinstance(item, dict)}
+        if len(case_by_id) != len(execution_ids):
+            raise RuntimeError("fixture terminal records do not retain one case per execution ID")
+        receipt = _write_receipt(out, phase_records)
         current.result["fixture_records"] = records
-        current.result["immutable_receipt"] = {"sha256": receipt, "created_at": _utc_now(), "execution_ids": execution_ids}
+        current.result["immutable_receipt"] = {**receipt, "execution_ids": execution_ids}
         current.save()
         api_pod = _api_pod(cluster)
-        before_backdate = _fixture(cluster, api_pod, "inspect", {"ids": execution_ids})
+        before_backdate = _fixture(cluster, api_pod, "inspect", {"ids": execution_ids, "case_by_id": case_by_id})
         _assert_state(before_backdate, execution_ids, deleted=False)
         current.result["before_backdate"] = before_backdate
-        current.result["backdate"] = _fixture(cluster, api_pod, "backdate", {"ids": execution_ids, "receipt_sha256": receipt})
-        current.result["before_retention"] = {"storage": storage.collect(cluster), "fixture": _fixture(cluster, api_pod, "inspect", {"ids": execution_ids})}
+        current.result["backdate"] = _fixture(cluster, api_pod, "backdate", {
+            "ids": execution_ids, "receipt_sha256": receipt["sha256"], "age_days": retention_days + 1,
+        })
+        current.result["before_retention"] = {"storage": storage.collect(cluster), "fixture": _fixture(
+            cluster, api_pod, "inspect", {"ids": execution_ids, "case_by_id": case_by_id})}
         current.result["stage"] = "retention_dry_run"
         current.save()
         current.result["retention_dry_run"] = _fixture(cluster, "bench-driver", "maintenance", {"dry_run": True})
         current.result["stage"] = "retention_actual"
         current.save()
         current.result["retention_actual"] = _fixture(cluster, "bench-driver", "maintenance", {"dry_run": False})
-        after_fixture = _fixture(cluster, api_pod, "inspect", {"ids": execution_ids})
+        after_fixture = _fixture(cluster, api_pod, "inspect", {"ids": execution_ids, "case_by_id": case_by_id})
         _assert_state(after_fixture, execution_ids, deleted=True)
         current.result["after"] = {"storage": storage.collect(cluster), "fixture": after_fixture}
         current.result["stage"] = "complete"
