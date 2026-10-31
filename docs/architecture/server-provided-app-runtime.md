@@ -300,6 +300,11 @@ source isolation, dependency pins, target checks, atomic activation, failure
 history, and admission controls. No full Solution reconciliation is needed.
 Approve the migration globally only after verifying the unchanged public SDK
 surface; do not inspect individual App logic to infer compatibility.
+The existing **App SDK Upgrades** setting controls automatic binding rebuilds,
+including this migration. Once an App adopts the runtime, that runtime follows
+the instance independently of the rebuild toggle. Turning the setting off does
+not pin old authentication/protocol code. Explain this distinction in the
+setting's help text and upgrade documentation.
 The migration must preserve source files and the current bootstrap fields
 (`baseUrl`, `token`, `orgScope`, `appId`, `solutionId`, theme, and logout). It may
 replace the injected SDK and generated build output; it must not edit an App's
