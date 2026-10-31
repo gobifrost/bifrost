@@ -236,6 +236,16 @@ that response immediately, preserving errors and results, without opening an
 execution stream or polling a nonexistent execution. This behavior belongs in
 the workflow client contract alongside ordinary server execution.
 
+The CLI proxy also needs an explicit host-auth adapter for the runtime. Replacing
+the token on an upstream handshake is insufficient when a socket closes with
+4001 and the browser has no platform refresh bridge. Extend the existing local
+dev-session boundary to confirm/renew CLI authentication and report success or
+expiry without exposing credentials. The proxy can supply the same stable auth
+callbacks as the host. Reconnect after a positive renewal result; failed CLI
+renewal keeps the existing explained login-required outcome. Test actual expiry
+through both preview modes rather than assuming HTTP renewal proves socket
+renewal.
+
 Disconnected prebuilt Solution archives can carry the thin binding but still
 need a compatible runtime on the destination instance. Their metadata must
 declare the runtime interface; do not falsely stamp an old monolithic prebuilt
