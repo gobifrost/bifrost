@@ -1,0 +1,445 @@
+{
+  "schema_version": 1,
+  "baseline_id": "portal-2026-10-31-v1",
+  "status": "observational latency and controlled import diagnostics; no current constrained capacity certified",
+  "units": {
+    "duration_ms": "ms",
+    "time_suffix_s": "seconds",
+    "memory_suffix_bytes": "bytes",
+    "working_set_suffix_mib": "MiB = 1048576 bytes"
+  },
+  "private_bundle": "/home/jack/bifrost-bench-evidence/baselines/portal-2026-10-31-v1",
+  "private_file_manifest_sha256": "eec08b73a9a173d951e61b66b87a5dfd3234398f10cb39cd55bec5ca9abc87eb",
+  "reproduction_guide": "../2026-10-31-benchmark-baseline-and-completion.md",
+  "live": {
+    "recorded_at": "2026-10-31T15:10:41.632760+00:00",
+    "runtime_source": "e611d31bbba3d7601980271c774cad5e821b1e97",
+    "runtime_image_digest": "sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692",
+    "cli_version": "1.4.2-dev.1793422955",
+    "api_limits": {
+      "cpu": "1",
+      "memory": "1Gi"
+    },
+    "worker_limits": {
+      "cpu": "2",
+      "memory": "2Gi"
+    },
+    "design": "one shallow/contact/detail sequential group, then one simultaneous group; no retries",
+    "raw_result_sha256": "934870eebc22519eb46a0252fe00643b717dea09bf76687a95791001a2332378",
+    "analysis_sha256": "a1ef898ea74fb0d54ed9edcb64b9f2784799745530303aa983f079d3346d619b",
+    "same_caller_and_inputs": true,
+    "stable_api_worker_pods": true,
+    "worker_start_spread_s": 0.258014,
+    "all_three_worker_overlap_s": 1.309522,
+    "clock_offset_worker_minus_client_s": [
+      -0.019021,
+      0.02186
+    ],
+    "rows": [
+      {
+        "case": "shallow",
+        "group": "sequential",
+        "replay_of": "09853fac-7006-4594-af15-63cd59f61c63",
+        "client_whole_s": 4.016011548228562,
+        "execution_id": "a26291dd-0062-4d8c-8a71-23eb94baba4e",
+        "status": "Success",
+        "duration_ms": 401,
+        "cpu_total_seconds": 0.4173,
+        "peak_memory_bytes": 30141440,
+        "process_rss_bytes": 86478848,
+        "result_list_counts": {
+          "sites": 88
+        },
+        "worker_wall_s": 2.886705,
+        "outside_engine_residual_s": 2.4857050000000003,
+        "completed_timestamp_to_frame_s": 0.044548,
+        "websocket_close_s": 0.04826200380921364,
+        "frame_to_result_fetch_s": 0.14369915053248405,
+        "completed_timestamp_to_result_fetch_s": 0.188248,
+        "clock_bounded_completion_to_result_s": [
+          0.169227,
+          0.210108
+        ]
+      },
+      {
+        "case": "contact",
+        "group": "sequential",
+        "replay_of": "5d701e0b-298f-4df1-82bd-1f10fe778685",
+        "client_whole_s": 3.336873071268201,
+        "execution_id": "f8596a4d-bfeb-413d-84f4-5dd9e023f4f2",
+        "status": "Success",
+        "duration_ms": 942,
+        "cpu_total_seconds": 0.4613,
+        "peak_memory_bytes": 35111936,
+        "process_rss_bytes": 91455488,
+        "result_list_counts": {
+          "items": 50
+        },
+        "worker_wall_s": 2.259613,
+        "outside_engine_residual_s": 1.317613,
+        "completed_timestamp_to_frame_s": 0.04395,
+        "websocket_close_s": 0.04945348668843508,
+        "frame_to_result_fetch_s": 0.1463301507756114,
+        "completed_timestamp_to_result_fetch_s": 0.19028,
+        "clock_bounded_completion_to_result_s": [
+          0.171259,
+          0.21214
+        ]
+      },
+      {
+        "case": "detail",
+        "group": "sequential",
+        "replay_of": "655a1a05-df8a-4155-9637-ab13d713d364",
+        "client_whole_s": 10.315772999078035,
+        "execution_id": "986a4a9a-75ce-48ce-be57-d0c29065dd4a",
+        "status": "Success",
+        "duration_ms": 8435,
+        "cpu_total_seconds": 4.2045,
+        "peak_memory_bytes": 73341952,
+        "process_rss_bytes": 123641856,
+        "result_list_counts": {
+          "sites": 88
+        },
+        "worker_wall_s": 9.129238,
+        "outside_engine_residual_s": 0.6942380000000004,
+        "completed_timestamp_to_frame_s": 0.051085,
+        "websocket_close_s": 0.046987214125692844,
+        "frame_to_result_fetch_s": 0.2682035565376282,
+        "completed_timestamp_to_result_fetch_s": 0.319288,
+        "clock_bounded_completion_to_result_s": [
+          0.300267,
+          0.341148
+        ]
+      },
+      {
+        "case": "shallow",
+        "group": "overlap",
+        "replay_of": "09853fac-7006-4594-af15-63cd59f61c63",
+        "client_whole_s": 2.743402671068907,
+        "execution_id": "ab1527c2-4bf9-4378-9e33-a9ed36b38b8b",
+        "status": "Success",
+        "duration_ms": 646,
+        "cpu_total_seconds": 0.4314,
+        "peak_memory_bytes": 21627904,
+        "process_rss_bytes": 86478848,
+        "result_list_counts": {
+          "sites": 88
+        },
+        "worker_wall_s": 1.567536,
+        "outside_engine_residual_s": 0.921536,
+        "completed_timestamp_to_frame_s": 0.079815,
+        "websocket_close_s": 0.055664741434156895,
+        "frame_to_result_fetch_s": 0.17282851040363312,
+        "completed_timestamp_to_result_fetch_s": 0.252643,
+        "clock_bounded_completion_to_result_s": [
+          0.233622,
+          0.274503
+        ]
+      },
+      {
+        "case": "contact",
+        "group": "overlap",
+        "replay_of": "5d701e0b-298f-4df1-82bd-1f10fe778685",
+        "client_whole_s": 3.358808849938214,
+        "execution_id": "c7a00ab1-4d99-46ec-91bc-cdc00bee7531",
+        "status": "Success",
+        "duration_ms": 943,
+        "cpu_total_seconds": 0.4497,
+        "peak_memory_bytes": 36929536,
+        "process_rss_bytes": 91426816,
+        "result_list_counts": {
+          "items": 50
+        },
+        "worker_wall_s": 1.915012,
+        "outside_engine_residual_s": 0.972012,
+        "completed_timestamp_to_frame_s": 0.130028,
+        "websocket_close_s": 0.1983695738017559,
+        "frame_to_result_fetch_s": 0.3609828734770417,
+        "completed_timestamp_to_result_fetch_s": 0.491011,
+        "clock_bounded_completion_to_result_s": [
+          0.47198999999999997,
+          0.512871
+        ]
+      },
+      {
+        "case": "detail",
+        "group": "overlap",
+        "replay_of": "655a1a05-df8a-4155-9637-ab13d713d364",
+        "client_whole_s": 11.451546563766897,
+        "execution_id": "78810417-825f-4fce-968e-e33c65b8e894",
+        "status": "Success",
+        "duration_ms": 9111,
+        "cpu_total_seconds": 3.9851,
+        "peak_memory_bytes": 77672448,
+        "process_rss_bytes": 123142144,
+        "result_list_counts": {
+          "sites": 88
+        },
+        "worker_wall_s": 10.004857,
+        "outside_engine_residual_s": 0.8938569999999988,
+        "completed_timestamp_to_frame_s": 0.045749,
+        "websocket_close_s": 0.04355109483003616,
+        "frame_to_result_fetch_s": 0.20797648467123508,
+        "completed_timestamp_to_result_fetch_s": 0.253726,
+        "clock_bounded_completion_to_result_s": [
+          0.234705,
+          0.275586
+        ]
+      }
+    ],
+    "limitations": [
+      "Live provider, complete dependencies, caches and background work are uncontrolled.",
+      "One sample per cell: no significance, percentile or capacity claim.",
+      "CLI/API/WebSocket timing excludes browser render.",
+      "Outside-engine includes pre-engine work; completion timestamp precedes durable commit.",
+      "Cold pod startup was not exercised; clocks assumed stable during replay/probe."
+    ]
+  },
+  "controlled_import": {
+    "recorded_at": "2026-10-30T22:10:28.784375+00:00",
+    "unique_correct_traced_per_arm": 100,
+    "total": 400,
+    "fixture": {
+      "file_count": 20,
+      "source_bytes": 411390,
+      "source_sha256": "e4e59e45d8a23726666f285b4979bbc88e3a85deb5b73d8b34eb839e18263881",
+      "version": "private-portal-import-only-v1"
+    },
+    "rows": [
+      {
+        "run": "import-portal-overlap-prod-c2-r1",
+        "runtime_source": "f8bcf75ab6056cff689073126434ef67fbb9fc43",
+        "image_id": "sha256:e5fb30234b15b0f34b35e94d148df776dc5cdb7955077ecfc8fb13ebcc478ad0",
+        "harness_sha": "74faa9aab",
+        "worker_resources": {
+          "limits": {
+            "cpu": "650m",
+            "memory": "2Gi"
+          },
+          "requests": {
+            "cpu": "650m",
+            "memory": "2Gi"
+          }
+        },
+        "graph": [
+          {
+            "pass": 1,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 674.368,
+              "p95_ms": 816.675
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 1737.305,
+              "p95_ms": 1860.379
+            }
+          },
+          {
+            "pass": 2,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 686.086,
+              "p95_ms": 730.165
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 1743.129,
+              "p95_ms": 1994.04
+            }
+          }
+        ],
+        "idle_working_set_mib": {
+          "client": 9.3,
+          "pooler": 14.9,
+          "postgres": 241.5,
+          "redis": 8.3,
+          "worker": 270.3,
+          "api": 336.5
+        },
+        "idle_total_working_set_mib": 880.8,
+        "result_sha256": "ca09aeb75df6a414fabede73b375357d38497e72380fdc5bc847d2f7e9e975e7"
+      },
+      {
+        "run": "import-portal-overlap-prod-c2-worker2cpu-r1",
+        "runtime_source": "f8bcf75ab6056cff689073126434ef67fbb9fc43",
+        "image_id": "sha256:e5fb30234b15b0f34b35e94d148df776dc5cdb7955077ecfc8fb13ebcc478ad0",
+        "harness_sha": "2bacf728f",
+        "worker_resources": {
+          "limits": {
+            "cpu": "2",
+            "memory": "2Gi"
+          },
+          "requests": {
+            "cpu": "2",
+            "memory": "2Gi"
+          }
+        },
+        "graph": [
+          {
+            "pass": 1,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 641.479,
+              "p95_ms": 729.397
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 1017.517,
+              "p95_ms": 1187.005
+            }
+          },
+          {
+            "pass": 2,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 652.519,
+              "p95_ms": 783.018
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 1060.56,
+              "p95_ms": 1227.646
+            }
+          }
+        ],
+        "idle_working_set_mib": {
+          "redis": 6.0,
+          "worker": 268.3,
+          "api": 336.2,
+          "pooler": 14.6,
+          "postgres": 230.1,
+          "client": 8.0
+        },
+        "idle_total_working_set_mib": 863.2,
+        "result_sha256": "d977f2f399e1345988aadf47dd04fde60af5a5e7667fe52f482162a51da0bd0b"
+      },
+      {
+        "run": "import-portal-overlap-current-r1",
+        "runtime_source": "b46ffb19c7fee423615c31c761a9f57ac81526cf",
+        "image_id": "sha256:962e4b154593b1741fde5d5c9d978b9eb34a4bfab68f5244461d73040e855ea6",
+        "harness_sha": "74faa9aab",
+        "worker_resources": {
+          "limits": {
+            "cpu": "650m",
+            "memory": "2Gi"
+          },
+          "requests": {
+            "cpu": "650m",
+            "memory": "2Gi"
+          }
+        },
+        "graph": [
+          {
+            "pass": 1,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 520.612,
+              "p95_ms": 675.792
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 1504.384,
+              "p95_ms": 1761.522
+            }
+          },
+          {
+            "pass": 2,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 535.468,
+              "p95_ms": 654.125
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 1614.504,
+              "p95_ms": 1657.649
+            }
+          }
+        ],
+        "idle_working_set_mib": {
+          "worker": 273.8,
+          "redis": 6.0,
+          "api": 315.6,
+          "client": 8.4,
+          "pooler": 14.6,
+          "postgres": 239.3
+        },
+        "idle_total_working_set_mib": 857.7,
+        "result_sha256": "b485368d2c312aefe7104622fef3672e985c37c5fa46e58420c71d28849d3b1c"
+      },
+      {
+        "run": "import-portal-overlap-current-worker2cpu-r1",
+        "runtime_source": "b46ffb19c7fee423615c31c761a9f57ac81526cf",
+        "image_id": "sha256:962e4b154593b1741fde5d5c9d978b9eb34a4bfab68f5244461d73040e855ea6",
+        "harness_sha": "2bacf728f",
+        "worker_resources": {
+          "limits": {
+            "cpu": "2",
+            "memory": "2Gi"
+          },
+          "requests": {
+            "cpu": "2",
+            "memory": "2Gi"
+          }
+        },
+        "graph": [
+          {
+            "pass": 1,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 457.549,
+              "p95_ms": 571.42
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 658.518,
+              "p95_ms": 716.63
+            }
+          },
+          {
+            "pass": 2,
+            "sequential": {
+              "count": 10,
+              "p50_ms": 466.892,
+              "p95_ms": 531.098
+            },
+            "burst": {
+              "count": 15,
+              "p50_ms": 639.366,
+              "p95_ms": 698.036
+            }
+          }
+        ],
+        "idle_working_set_mib": {
+          "redis": 6.1,
+          "client": 8.0,
+          "postgres": 227.0,
+          "api": 312.2,
+          "worker": 270.4,
+          "pooler": 14.3
+        },
+        "idle_total_working_set_mib": 838.0,
+        "result_sha256": "d7e1356d2b5054d382aac5fd2e021b42301419bc2179c4b933df065c6d6af3dc"
+      }
+    ],
+    "limitations": [
+      "Single blocked diagnostic per runtime/CPU cell; two passes are not independent randomized repetitions.",
+      "Captured import-only fixture; no original workflow body, Halo call, browser timing or capacity/cost certification.",
+      "Same 25 lookups and18compiles per graph run; phases overlap and are not additive.",
+      "Production worker CPU2 is matched only in CPU2cells; local infrastructure and full installed dependency graph differ.",
+      "No direct CPU-throttling counters or causal commit attribution."
+    ]
+  },
+  "private_images": {
+    "saved_at": "2026-10-31T15:40:01.571820+00:00",
+    "archive": "portal-2026-10-31-v1-images.tar",
+    "sha256": "d6ebe83bbd9056d678b2f761797a92a13e5371ed972201fda2b61016e96322fd",
+    "bytes": 828768256,
+    "images": {
+      "bifrost-api:kind-a74e45295998-prodtrace-f8bcf75ab-md3112": "sha256:e5fb30234b15b0f34b35e94d148df776dc5cdb7955077ecfc8fb13ebcc478ad0",
+      "bifrost-client:kind-a74e45295998": "sha256:16a5f03494d9fff40358a91fc29d0f11b3d93974d09e929140a8ecec522d968e",
+      "bifrost-api:kind-a74e45295998-importtrace-b46ffb19c-md3112": "sha256:962e4b154593b1741fde5d5c9d978b9eb34a4bfab68f5244461d73040e855ea6"
+    }
+  }
+}

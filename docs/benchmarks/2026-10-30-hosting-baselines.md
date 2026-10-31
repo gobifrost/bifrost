@@ -5,6 +5,11 @@ are reproducibility evidence; they are not calibrated cloud capacity or a
 customer hosting quote. Raw artifacts stay outside git under
 `/home/jack/bifrost-bench-evidence/`.
 
+The [saved baseline and replay guide](2026-10-31-benchmark-baseline-and-completion.md)
+pins the October 31 live recheck and October 30 controlled import matrix in a
+[machine-readable record](baselines/portal-2026-10-31.json), with private input,
+artifact and image archives. It also lists the remaining completion gates.
+
 ## October 31 Production Recheck
 
 At the user's request, reran the original shallow site list, contact picker

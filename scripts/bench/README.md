@@ -3,6 +3,9 @@
 Repeatable measurements of one Bifrost build inside a constrained hosting
 envelope, on the worktree's own Kind cluster running the production images.
 Methodology (reviewed): `docs/plans/2026-10-29-capacity-benchmark-methodology.md`.
+Saved portal/import baselines, offline verification, replay recipes and remaining
+completion gates: [baseline guide](../../docs/benchmarks/2026-10-31-benchmark-baseline-and-completion.md)
+and [machine-readable record](../../docs/benchmarks/baselines/portal-2026-10-31.json).
 Earlier design: `docs/superpowers/specs/2026-10-27-performance-benchmark-suite-design.md`.
 
 ```bash
