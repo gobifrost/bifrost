@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "88f9567e3d04e05b153360a14b2f14668db998e1",
-  "collected_at": "2026-10-30T23:44:25Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...88f9567e3d04e05b153360a14b2f14668db998e1",
+  "target_ref": "aa3caac0622c023f369be48f2d24ac5e57d820a9",
+  "collected_at": "2026-10-31T01:31:04Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...aa3caac0622c023f369be48f2d24ac5e57d820a9",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2146,6 +2146,20 @@
       "subject": "Add reviewed automatic App SDK upgrades (#1153)",
       "prs": [
         1153
+      ]
+    },
+    {
+      "sha": "127621d4a730c6c379be3403fa1db819ae1a82fa",
+      "subject": "Activate App SDK Upgrades in Product Updates (#1154)",
+      "prs": [
+        1154
+      ]
+    },
+    {
+      "sha": "aa3caac0622c023f369be48f2d24ac5e57d820a9",
+      "subject": "Fix automatic App SDK rebuild failures (#1155)",
+      "prs": [
+        1155
       ]
     }
   ],
@@ -6136,6 +6150,32 @@
       "merge_commit": "88f9567e3d04e05b153360a14b2f14668db998e1",
       "body": "## Product Updates\n\n- [x] Highlight \u2014 620a0f81-11c2-4cfb-90c7-345317efaab6 (approved canonical entry).\n\n## Summary\n\nAdd **App SDK Upgrades** in Settings \u2192 Maintenance so the platform can attempt required SDK updates that need no app code changes. The setting starts **off** during dogfood testing; the reviewed automatic transition is contract 2 \u2192 3.\n\nThe elected scheduler queues the existing `application.sdk_update` PlatformJob, at most 20 apps per pass. Automatic attempts share manual App/Solution locks, pin the requested SDK, preserve unrelated locked dependencies with `npm ci`, and keep the prior deployment artifacts. Failed attempts leave the active deployment unchanged and require a manual retry; job history prevents repeated automatic attempts for the same App and target.\n\nNew SDK-update jobs use payload version 2 so older workers cannot silently ignore target pinning. New workers also finish already-queued v1 manual jobs through an exact historical schema that rejects automatic/target fields. Authentication expiry and revocation checks are unchanged.\n\n## Validation\n\n- API Pyright and Ruff; client TypeScript and ESLint: passed.\n- Focused frontend service/component/SDK tripwire coverage: 13 passed.\n- Settings authorization/audit, existing manual/Solution SDK update boundaries, and one actual automatic worker rebuild: 11 passed. The live rebuild verifies activation, old artifact retention, and no duplicate on reconciliation.\n- Maintenance browser happy path plus auth setup: 2 passed; screenshot reviewed.\n- Final backend unit/shared-contract checks: 270 passed.\n- Manual build/error paths, SDK memory-profile enqueue, build safeguards, and generated references: 34 targeted consumer checks passed; skill mirror validation passed.\n- Live scheduler diagnostics: all 4 passed, including the schedule inventory with App SDK Upgrades. The stale-list queue failure was reproduced in isolation before correcting the expectation.\n\nFull suites were not run locally; the protected merge queue remains the complete-suite gate.\n\n<details>\n<summary>Focused commands</summary>\n\n```bash\n./test.sh quality api\n(cd client && npm run tsc)\n(cd client && npm run lint)\n./test.sh client unit src/services/appSdkUpgradeSettings.test.ts src/pages/settings/AppSdkUpgradeSettings.test.tsx src/pages/settings/Maintenance.test.tsx src/lib/app-sdk/sdk-contract.test.ts\n./test.sh tests/e2e/api/test_app_sdk_upgrade_settings.py tests/e2e/platform/test_application_sdk_update.py tests/e2e/platform/test_automatic_app_sdk_upgrade.py -q --durations=0\n./test.sh client e2e --screenshots e2e/app-sdk-upgrades.admin.spec.ts\n./test.sh tests/unit/test_app_sdk_upgrade_settings.py tests/unit/shared/test_automatic_app_sdk_upgrades.py tests/unit/test_sdk_automatic_upgrade_contracts.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/jobs/test_application_sdk_update.py tests/unit/test_application_sdk_status.py tests/unit/services/test_platform_jobs.py tests/unit/jobs/test_platform_job_runner.py tests/unit/scheduler/test_control.py tests/unit/test_access_list.py tests/unit/test_dto_flags.py tests/unit/test_contract_version.py tests/unit/jobs/test_platform_job_catalog.py tests/unit/services/test_operation_inventory.py -q --durations=10\n./test.sh tests/unit/test_solution_app_build.py tests/unit/routers/test_application_job_memory_profiles.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/test_skill_appendix_fresh.py tests/unit/jobs/test_application_sdk_update.py -q --durations=10\npython3 scripts/check_skill_mirrors.py\n./test.sh tests/e2e/platform/test_scheduler_diagnostics.py -q --durations=0\n```\n</details>\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1153"
+    },
+    {
+      "number": 1154,
+      "title": "Activate App SDK Upgrades in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1154",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T00:13:24Z",
+      "merge_commit": "127621d4a730c6c379be3403fa1db819ae1a82fa",
+      "body": "Refresh the cumulative verified Product Updates metadata through merged #1153 so its approved Automatic App SDK Upgrades note appears in image bundles. Preserve all 304 previously verified PR records, existing entry prose, contributor evidence, and the authentication notice and prompt.\n\nValidation: canonical Product Updates validation passes. The actual image-preparation helper includes the new entry and preserves all 33 previous approved entries unchanged. This changes cached metadata only.\n\nProduct Updates: Omit \u2014 internal activation of the already approved #1153 announcement.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1154"
+    },
+    {
+      "number": 1155,
+      "title": "Fix automatic App SDK rebuild failures",
+      "url": "https://github.com/gobifrost/bifrost/pull/1155",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T01:30:33Z",
+      "merge_commit": "aa3caac0622c023f369be48f2d24ac5e57d820a9",
+      "body": "## Summary\n\nAutomatic App SDK upgrades could fail when npm normalized unrelated lockfile metadata. Solution App rebuilds could also fail while validating unrelated entity manifests in retained source.\n\nCopy only refreshed SDK entries into the original lockfile, preserving other dependency values and requiring matching root declarations plus a successful `npm ci`. Resolve only the target App through the shared strict App parser and archive safety checks; full Solution validation stays strict.\n\n## Validation\n\n- 38 focused SDK safeguard, shared build, cache, and job tests passed:\n  `./test.sh tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/test_solution_app_build.py tests/unit/test_solution_zip_install_cache.py tests/unit/jobs/test_application_sdk_update.py -v`\n- 35 source resolver and shared definition tests passed:\n  `./test.sh tests/unit/test_application_source_resolver.py tests/unit/test_solution_definition.py -v`\n- Two existing live paths passed:\n  `./test.sh tests/e2e/platform/test_automatic_app_sdk_upgrade.py tests/e2e/platform/test_captured_app_sdk_source.py -v --durations=0`\n  The automatic path uses one worker job and one real Vite build (31.4 seconds), now with a developer lockfile that omits the platform-injected SDK. No extra build jobs were added.\n- `./test.sh quality api` passed (Pyright and Ruff).\n\nFull backend suites and browser suites were not run locally; the protected merge queue remains the complete-suite gate.\n\n## Product Updates\n\n- [x] Other \u2014 App SDK updates no longer fail on npm lockfile metadata or unrelated Solution entity definitions.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1155"
     }
   ]
 }
