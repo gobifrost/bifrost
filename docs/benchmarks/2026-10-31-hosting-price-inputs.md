@@ -33,7 +33,7 @@ receipt are retained under the private evidence directory's `notes/`, named
 `production-node-resources-20261031.json`. They retain neither credentials nor
 customer workflow content.
 
-The final worksheet must additionally state provisioned volumes, retained
+The [demand worksheet](hosting-demand-worksheet.md) additionally states provisioned volumes, retained
 objects/backups, node idle and spare capacity, builds, observability, load
 balancing and network allocations. Provider/model spend, customer demand,
 selling price and cloud performance calibration remain explicit inputs.
