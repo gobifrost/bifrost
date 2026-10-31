@@ -27,11 +27,12 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.policies.probe import make_seed_admin_bypass
 from src.core.log_safety import log_safe
-from src.models.orm.tables import Table
+from src.models.orm.tables import Table, is_repo_table_name_conflict
 from src.services.solutions.guard import SOLUTION_MANAGED_MESSAGE
 from src.services.authorization.enforce import Caller, require_permission
 
@@ -142,7 +143,14 @@ async def create_sdk_table(
         created_by=actor_email,
         access=make_seed_admin_bypass(),
     )
-    session.add(table)
+    try:
+        async with session.begin_nested():
+            session.add(table)
+            await session.flush()
+    except IntegrityError as exc:
+        if is_repo_table_name_conflict(exc):
+            raise SDKTableMetadataError(409, f"Table '{name}' already exists") from exc
+        raise
     await session.commit()
     await session.refresh(table)
 
