@@ -10,6 +10,11 @@ sys.path.insert(0, str(Path(__file__).parent / "vendor"))
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
+        expected = getattr(self.env, "SPIKE_AUTH", None)
+        if expected and request.headers.get("X-Spike-Auth") != expected:
+            return Response.json({"error": "unauthorized"}, status=401)
+        if expected and request.headers.get("X-Spike-Token"):
+            return Response.json({"error": "remote SDK credentials disabled"}, status=403)
         if request.method == "POST":
             from probe import run
             body = await request.json()

@@ -12,7 +12,9 @@ assert.ok(find('multi_step').logs.some(log=>log.message==='structured log probe'
 assert.equal(rows.find(r=>r.workload==='multi_step'&&r.body.status==='Failed').body.error_type,'ValueError');
 assert.equal(find('sync_json').error_type,'TypeError');
 assert.equal(find('io_timeout').error_type,'TimeoutError');
-assert.equal(find('cpu_timeout').status,'Success');
+if(report.runtime==='deployed-cloudflare-python-worker') {
+  assert.equal(rows.find(r=>r.workload==='cpu_timeout').http_status,500);
+} else assert.equal(find('cpu_timeout').status,'Success');
 assert.equal(find('secret_probe').error_message,'[REDACTED]');
 assert.ok(!JSON.stringify(find('secret_probe')).includes('synthetic-secret-12345'));
 if (process.argv.includes('--sdk')) {
@@ -23,5 +25,5 @@ const warm=rows.filter(r=>r.phase==='warm').map(r=>r.client_wall_ms).sort((a,b)=
 const summary={artifact:process.argv[2]??'results/benchmark.json', assertions:'passed',
   warm_json_client_median_ms:warm[Math.floor(warm.length/2)],warm_json_samples:warm,
   correctness:'fixed expected values asserted; negative results are boundaries, not successes'};
-await writeFile('results/verification.json',JSON.stringify(summary,null,2)+'\n');
+await writeFile(report.runtime==='deployed-cloudflare-python-worker' ? 'results/verification-cloud.json' : 'results/verification.json',JSON.stringify(summary,null,2)+'\n');
 console.log(JSON.stringify(summary,null,2));

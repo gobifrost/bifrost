@@ -33,6 +33,7 @@ for the first pass. From this directory:
 ```powershell
 node bench.mjs
 node verify.mjs
+node verify-sources.mjs
 ```
 
 For real SDK operations, boot **this worktree's** isolated stack from its root:
@@ -78,19 +79,45 @@ invoking a new fixture. Generated source copies and environments are ignored.
 docker exec bifrost-pyodide-ddf316c1 npx wrangler deploy --dry-run --outdir /spike/dist
 ```
 
-Dry-run passed. Deployment was **not attempted** because the existing host
-Wrangler login was expired and could not refresh. On an already authenticated
-test machine, `npm ci`, `uv run pywrangler sync`, then `uv run pywrangler deploy`
-deploy this fixed-fixture Worker with both public workers.dev and preview URLs
-disabled. No routes, queues, databases, secret bindings or service bindings are
-provisioned. Add a private test invocation path separately before remote tests;
-the present SDK URL is intentionally local and cannot work in a deployed Worker.
-Do not expose the fixture runner publicly or add arbitrary-code request bodies.
+Dry-run and **cloud deployment through `cf` passed**. The existing Wrangler login
+was expired, but `cf auth whoami` confirmed independent valid authentication.
+The companion config was migrated with `cf migrate wrangler.jsonc`. From this
+directory, using that existing cf installation:
+
+```powershell
+npm ci
+docker cp bifrost-pyodide-ddf316c1:/spike/python_modules/. python_modules/
+cf deploy --dry-run
+cf deploy --provision=false
+```
+
+Final config disables public workers.dev/preview URLs and observability. No
+queues, databases or service bindings are provisioned. Temporary cloud tests
+enabled workersDev and observability behind a generated `SPIKE_AUTH` test secret
+with `cf deploy --secrets-file <temporary-json-file>`. `cloud.mjs` and
+`cloud-security.mjs` read that secret from the OS temp directory, never artifacts.
+For a deliberate rerun, temporarily set `workersDev: true` and
+`observability.enabled: true` in `cloudflare.config.ts`, then run:
+
+```powershell
+./cloud-auth.ps1
+cf deploy --provision=false --secrets-file "$env:TEMP/bifrost-pyodide-ddf316c1-secrets.json"
+node cloud.mjs
+node cloud-security.mjs
+node verify.mjs results/benchmark-cloud.json
+```
+
+Restore workersDev/observability to false and deploy afterward. The cloud runtime
+probes used **no Bifrost credentials** and explicitly reject their forwarding.
+The SDK URL remains local. Never add arbitrary-code request bodies. Cloud raw
+CPU/wall telemetry, resource failures and measured cost inputs are in `results/`;
+`measurements.html` is a standalone chart. `summarize.py` rebuilds the summary.
 
 Native Windows pywrangler 1.17.9 resolved the system 3.13 interpreter during wasm
 installation despite a selected 3.14 environment; Docker avoids that observed
 tooling failure. Tested versions: Wrangler 4.156.0, workers-py 1.17.9,
-Pyodide 314.0.7 / CPython 3.14.2 (see pylock); Linux CPython 3.14.8.
+Pyodide 314.0.7 / CPython 3.14.2 (see pylock); Linux CPython 3.14.8; global cf
+1.0.0-beta.22 (migration's locked local cf package is beta.26).
 
 ## Cleanup
 

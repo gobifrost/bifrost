@@ -103,6 +103,17 @@ async def memory_probe():
 
 
 @workflow
+async def memory_exhaustion():
+    blocks = []
+    for _ in range(8):
+        block = bytearray(64 * 1024 * 1024)
+        for offset in range(0, len(block), 4096):
+            block[offset] = 1
+        blocks.append(block)
+    return {"allocated_and_touched_bytes": sum(map(len, blocks))}
+
+
+@workflow
 async def duplicate_probe():
     import builtins
     builtins._pyodide_spike_duplicate = getattr(builtins, "_pyodide_spike_duplicate", 0) + 1
@@ -128,5 +139,5 @@ async def sync_http_probe():
 WORKLOADS = {f.__name__: f for f in (
     json_transform, async_context, workspace_import, http_orchestration, integration_read,
     table_update, multi_step, sync_json, state_write, state_read, io_timeout, cpu_timeout, secret_probe,
-    memory_probe, duplicate_probe, termination_probe, sync_http_probe
+    memory_probe, duplicate_probe, termination_probe, sync_http_probe, memory_exhaustion
 )}

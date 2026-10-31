@@ -10,8 +10,8 @@ const results = [];
 async function invoke(workload, parameters = {}) {
   const start = performance.now();
   try {
-    const response = await fetch(base, {method: 'POST',
-      headers: {'Content-Type': 'application/json', ...(process.env.SPIKE_TOKEN ? {'X-Spike-Token': process.env.SPIKE_TOKEN} : {})},
+    const response = await fetch(new URL('/'+workload, base), {method: 'POST',
+      headers: {'Content-Type': 'application/json', ...(process.env.SPIKE_TOKEN ? {'X-Spike-Token': process.env.SPIKE_TOKEN} : {}), ...(process.env.SPIKE_AUTH ? {'X-Spike-Auth': process.env.SPIKE_AUTH} : {})},
       body: JSON.stringify({workload, parameters}), signal: AbortSignal.timeout(30000)});
     const text = await response.text();
     let body;
@@ -30,3 +30,4 @@ const report = {recorded_at: new Date().toISOString(), runtime: process.env.SPIK
   cost_per_1000: null, results};
 await writeFile(process.env.SPIKE_OUTPUT ?? 'results/benchmark.json', JSON.stringify(report, null, 2)+'\n');
 console.log(JSON.stringify(results.map(r => ({workload: r.workload, status: r.body?.status ?? r.http_status, error: r.body?.error_type ?? r.error})), null, 2));
+if(results.some(r=>r.error)) process.exitCode=1;

@@ -65,7 +65,7 @@ def prepare():
               "files": hashes, "bytes": sum(p.stat().st_size for p in paths),
               "graph_kind": "conservative AST imports including optional/function-local/TYPE_CHECKING; not runtime closure",
               "graph": graph()}
-    (HERE / "results/source-manifest.json").write_text(json.dumps(report, indent=2)+"\n")
+    (HERE / "results/source-manifest.json").write_text(json.dumps(report, indent=2)+"\n", encoding="utf-8", newline="\n")
     print(json.dumps({"files": len(hashes), "source_bytes": report["bytes"], "graph_nodes": len(report["graph"])}))
 
 

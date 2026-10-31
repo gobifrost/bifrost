@@ -5,7 +5,8 @@
 **YELLOW**: a useful real upstream subset runs, with a small explicit settings
 adapter. **RED** for using this shared-isolate design to execute arbitrary
 untrusted workflows. The latter is a material incompatibility, not a tuning task.
-There is no production or deployed-Cloudflare acceptance evidence.
+There is deployed-Cloudflare evidence for the non-SDK subset; there is no
+production acceptance or deployed SDK-to-Bifrost evidence.
 
 `results/benchmark-sdk.json` contains five requested workload families plus
 context/import/error probes. `verify.mjs ... --sdk` asserts expected values,
@@ -88,6 +89,7 @@ model, use an admin token for untrusted runs, or infer durable completion from H
 |---|---|---|
 | I/O timeout | Two-second sleep canceled with 50 ms wait_for | Cooperative cancellation works; durable timeout status not reproduced. |
 | CPU cancellation | 150 ms busy loop returned Success despite 50 ms timeout | Event-loop cancellation cannot preempt CPU Python. Linux parent kill semantics absent. |
+| Cloud CPU interruption | Timer loop returned HTTP 500; telemetry traceback ends in `introspection.CpuLimitExceeded: Python Worker exceeded CPU time limit` | Platform interrupt bypasses ordinary engine result reporting. Cloud clocks do not advance like native perf_counter during CPU-only work; this is not an equivalent bounded CPU benchmark. |
 | Cross-execution state | builtins marker written in A read by B | Fresh globals/context reset is insufficient; modules/interpreter shared. |
 | Duplicate invocation | Same fixed request ID incremented global counter twice | No deduplication/side-effect fencing. Upstream must own this. |
 | Invalid runtime credential shape | Synthetic token reached API; `BifrostAuthenticationError` | Actual API rejects invalid bearer. Run-specific scope/refresh not proven. |
@@ -96,6 +98,7 @@ model, use an admin token for untrusted runs, or infer durable completion from H
 | Oversized params | 70 KB parameters rejected 413 | Guard runs after JSON parse, not safe admission for arbitrary large bodies. |
 | Worker termination | Container restart interrupted active ten-second I/O request | Request failed; no durable recovery or cancellation ACK. Local container death, not Cloudflare eviction. |
 | Memory pressure | 160 MiB Python bytearray succeeded locally | Local dev does not validate documented 128 MB production enforcement. Exhaustion/neighbor behavior unverified. |
+| Cloud memory | 160 MiB allocation succeeded; bounded 512 MiB allocation with page touches returned HTTP 503, `Worker exceeded resource limits` | Resource failure is real; peak memory and exact memory-versus-CPU cause not measured. Do not infer an effective 128 MB cutoff from allocation size. |
 | Stale result submission | No authoritative result submission surface implemented | DB-fenced stale rejection is source-assessed only, not tested through adapter. |
 | Concurrency | Four overlapping JSON requests returned expected values | No evidence of safe concurrent credentials/logging/monitoring. Global SDK client and root handlers remain shared. |
 
@@ -117,9 +120,19 @@ comparison; `linux-engine-sdk.json` uses the real isolated API and Linux CPython
 pool/dispatch benchmarks. There is no full Linux executor latency comparison.
 The real debug pool was booted but not benchmarked via authoritative dispatch.
 
-Production cold start, CPU ms, peak isolate memory, SDK-only overhead and effective
-cost remain **unmeasured**. Initial request/import time includes local tooling and
-is not a cold-start figure. Local timings include Docker Desktop, shared-host load,
+Production cold start, peak isolate memory and SDK-only overhead remain
+**unmeasured**. Deployed CPU/wall telemetry is in `cloud-metrics.json`, scoped to
+this exact Worker, with 49 log rows at collection. Console/error rows
+(`httpStatus=0`) are excluded from invocation summaries. Observed CPU medians
+include JSON 35 ms and HTTPS orchestration 29 ms; samples are small and JSON
+combines initial, warm and concurrent requests. Five explicit warm JSON client
+samples had a 62.75 ms median in the final cloud benchmark, including network.
+Four concurrent JSON requests returned correct values, with variable latency.
+Cloud startup validation reported 457-939 ms across deployments; this is not
+invocation cold-start latency. See `cloud-imports.json` for observed first
+authenticated client latency, also not a cold-start claim.
+
+Local timings include Docker Desktop, shared-host load,
 client creation, HTTP/JSON/FFI and API latency. There is no direct FFI microbenchmark
 or apples-to-apples overhead decomposition; do not subtract these runs to infer
 Pyodide overhead. Successive fixture runs may warm caches. Bundle dry-run:
@@ -129,8 +142,11 @@ fixtures change this slightly). Vendored package data dominate the bundle.
 At current published paid marginal rates, **estimate only**, for mean CPU c ms:
 `cost/1000 = $0.0003 + $0.00002*c`, excluding the $5 monthly minimum, included
 allowances and upstream API/Linux/control-plane costs. For example c=10,100,1000
-would yield $0.0005,$0.0023,$0.0203. No measured CPU c exists here, so no effective
-execution-cost number is claimed. I/O wall time is not billable CPU time.
+would yield $0.0005,$0.0023,$0.0203. `metrics-summary.json` applies the formula to
+observed request mean CPU. These are marginal estimates, not invoices or full
+system economics. Cloud integration/table requests fail without credentials
+inside HTTP 200 envelopes; their request costs are not successful SDK execution
+costs. I/O wall time is not billable CPU time.
 
 ## Routing recommendation
 
@@ -143,10 +159,34 @@ execution-cost number is claimed. I/O wall time is not billable CPU time.
 | Persistent services | Retain supervised Linux services; Worker request lifecycle is not persistent process ownership. |
 | Agent workloads | Retain Linux pending provider/tool/package/streaming, multi-step durability and cancellation experiments. |
 
-Next experiments: (1) authenticated isolated deployment and trace CPU/memory/startup
-measurements, (2) fresh per-run security-boundary feasibility with hostile state and
+Next experiments: (1) cloud-to-isolated-API reachability with genuine run-scoped
+credentials and measured SDK overhead, (2) fresh per-run security-boundary feasibility with hostile state and
 credential probes, (3) only then a small launcher adapter that exercises actual
 lease replacement, stale terminal events, cancellation and recovery against the API.
+
+## Cloud resource disposition
+
+User-directed `cf` CLI 1.0.0-beta.22 had valid authentication independent of
+Wrangler. `cf migrate` generated only this companion package's config/dependency
+changes. Python packages were copied from tested Linux `python_modules`, since
+failed Windows sync left them absent. A smaller cf dry-run before copying these
+packages was insufficient and was not used for cloud proof. Full deploy included
+352 modules: 9248.29 KiB / gzip 2433.44 KiB at final revision.
+
+The dedicated Worker temporarily had a workers.dev route behind a generated
+test secret, 1000 ms CPU setting and scoped invocation logs. No Bifrost credential
+was uploaded; the entrypoint rejects SDK-token forwarding. Authentication 401,
+forwarding 403, payload 413, state contamination and duplicates were tested
+remotely. The PowerShell RNG API initially failed and emitted a predictable test
+gate; it was corrected and rotated before measurements. Only fixed,
+credential-free fixtures existed during that interval.
+
+Public workers.dev and preview URLs are now disabled, observability disabled,
+and the isolated preview was deleted. The Worker remains uploaded with no public
+targets, no storage/queue/service bindings, and only its test auth secret.
+Final version: `dc47f427-5115-4aa6-bad6-92213520be41`. No shared infrastructure or
+production platform source was changed. CLI receipts and post-cleanup HTTP
+readback are retained separately from runtime benchmark artifacts.
 
 ## Current vendor facts, checked 2026-10-30 local / 2026-10-31 UTC
 

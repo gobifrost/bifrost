@@ -1,0 +1,402 @@
+{
+  "data": [
+    {
+      "cpuTimeMs": 45,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.441",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/integration_read",
+      "wallTimeMs": 46
+    },
+    {
+      "cpuTimeMs": 31,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.517",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/table_update",
+      "wallTimeMs": 32
+    },
+    {
+      "cpuTimeMs": 11,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.574",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/multi_step",
+      "wallTimeMs": 11
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "Execution error: sync_json",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "Traceback (most recent call last):",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 583, in execute",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "    result, captured_variables, captured_logs = await _execute_workflow_with_trace(",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "    ...<5 lines>...",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "    )",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "    ^",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "    result = await _run_workflow_async()",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "             ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "    return await func(**accepted_params)",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "TypeError: 'dict' object can't be awaited",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 14,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.636",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/sync_json",
+      "wallTimeMs": 15
+    },
+    {
+      "cpuTimeMs": 9,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.726",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/io_timeout",
+      "wallTimeMs": 57
+    },
+    {
+      "cpuTimeMs": 1392,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:13.477",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 1409
+    },
+    {
+      "cpuTimeMs": 2164,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:55.425",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/state_write",
+      "wallTimeMs": 2253
+    },
+    {
+      "cpuTimeMs": 1326,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:13.628",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 1340
+    },
+    {
+      "cpuTimeMs": 0,
+      "error": "Traceback (most recent call last):\n  File \"introspection.py\", line 88, in wrapper_func\n    return python_to_rpc(await result)\n                         ^^^^^^^^^^^^\n  File \"/session/metadata/entry.py\", line 28, in fetch\n    result = await run(name, parameters, request.headers.get(\"X-Spike-Token\"))\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/session/metadata/probe.py\", line 33, in run\n    result = await asyncio.wait_for(execute(request), timeout=0.05 if name.endswith(\"timeout\") else 20)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/lib/python314.zip/asyncio/tasks.py\", line 488, in wait_for\n    return await fut\n           ^^^^^^^^^\n  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 583, in execute\n    result, captured_variables, captured_logs = await _execute_workflow_with_trace(\n                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<5 lines>...\n    )\n    ^\n  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace\n    result = await _run_workflow_async()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async\n    return await func(**accepted_params)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/session/metadata/fixtures.py\", line 84, in cpu_timeout\n    while time.perf_counter() < deadline:\n          ~~~~~~~~~~~~~~~~~^^\n  File \"introspection.py\", line 98, in raise_cpu_limit_exceeded\n    raise CpuLimitExceeded(\"Python Worker exceeded CPU time limit\")\nintrospection.CpuLimitExceeded: Python Worker exceeded CPU time limit\n",
+      "httpStatus": 0,
+      "timestamp": "2026-10-31 03:27:08.758",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/cpu_timeout",
+      "wallTimeMs": 0
+    },
+    {
+      "cpuTimeMs": 3488,
+      "error": "POST https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/cpu_timeout",
+      "httpStatus": 500,
+      "timestamp": "2026-10-31 03:27:08.758",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/cpu_timeout",
+      "wallTimeMs": 3648
+    },
+    {
+      "cpuTimeMs": 18,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.498",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/secret_probe",
+      "wallTimeMs": 19
+    },
+    {
+      "cpuTimeMs": 7,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.541",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/state_write",
+      "wallTimeMs": 7
+    },
+    {
+      "cpuTimeMs": 6,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.596",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/state_read",
+      "wallTimeMs": 6
+    },
+    {
+      "cpuTimeMs": 8,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:57.716",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/state_read",
+      "wallTimeMs": 10
+    },
+    {
+      "cpuTimeMs": 5,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:57.776",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/duplicate_probe",
+      "wallTimeMs": 6
+    },
+    {
+      "cpuTimeMs": 9,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:57.812",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/duplicate_probe",
+      "wallTimeMs": 10
+    },
+    {
+      "cpuTimeMs": 9,
+      "error": "",
+      "httpStatus": 413,
+      "timestamp": "2026-10-31 03:27:57.892",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 10
+    },
+    {
+      "cpuTimeMs": 6,
+      "error": "",
+      "httpStatus": 401,
+      "timestamp": "2026-10-31 03:26:56.640",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/",
+      "wallTimeMs": 6
+    },
+    {
+      "cpuTimeMs": 21,
+      "error": "",
+      "httpStatus": 401,
+      "timestamp": "2026-10-31 03:27:05.578",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/",
+      "wallTimeMs": 22
+    },
+    {
+      "cpuTimeMs": 13,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.247",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/async_context",
+      "wallTimeMs": 14
+    },
+    {
+      "cpuTimeMs": 12,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.286",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/workspace_import",
+      "wallTimeMs": 12
+    },
+    {
+      "cpuTimeMs": 29,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.362",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/http_orchestration",
+      "wallTimeMs": 36
+    },
+    {
+      "cpuTimeMs": 22,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.646",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/multi_step",
+      "wallTimeMs": 23
+    },
+    {
+      "cpuTimeMs": 34,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.695",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 35
+    },
+    {
+      "cpuTimeMs": 49,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.757",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 50
+    },
+    {
+      "cpuTimeMs": 29,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.831",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 30
+    },
+    {
+      "cpuTimeMs": 23,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.884",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 23
+    },
+    {
+      "cpuTimeMs": 35,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.932",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 36
+    },
+    {
+      "cpuTimeMs": 35,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:12.995",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 36
+    },
+    {
+      "cpuTimeMs": 32,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:13.048",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 33
+    },
+    {
+      "cpuTimeMs": 144,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:14.999",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/",
+      "wallTimeMs": 144
+    },
+    {
+      "cpuTimeMs": 4,
+      "error": "",
+      "httpStatus": 403,
+      "timestamp": "2026-10-31 03:27:58.007",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/integration_read",
+      "wallTimeMs": 4
+    },
+    {
+      "cpuTimeMs": 2311,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:05.695",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/",
+      "wallTimeMs": 2399
+    },
+    {
+      "cpuTimeMs": 74,
+      "error": "",
+      "httpStatus": 200,
+      "timestamp": "2026-10-31 03:27:08.145",
+      "url": "https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/json_transform",
+      "wallTimeMs": 74
+    }
+  ],
+  "rows": 49,
+  "statistics": {
+    "elapsed_ms": 28,
+    "rows_read": 2102631,
+    "bytes_read": 18627459
+  }
+}
