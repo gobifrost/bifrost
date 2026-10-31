@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {cloudProbeFetch,boundedJson} from './probe-io.mjs';
 const {SPIKE_AUTH}=JSON.parse(await readFile(join(tmpdir(),'bifrost-pyodide-ddf316c1-secrets.json'),'utf8'));
-const base='https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev';
 async function invoke(name,parameters={},extra={}) {
-  const response=await fetch(`${base}/${name}`,{method:'POST',headers:{'Content-Type':'application/json','X-Spike-Auth':SPIKE_AUTH,...extra},
-    body:JSON.stringify({workload:name,parameters}),signal:AbortSignal.timeout(20000)});
-  return {status:response.status,body:await response.json()};
+  const response=await cloudProbeFetch(SPIKE_AUTH,{method:'POST',headers:{'Content-Type':'application/json',...extra},
+    body:JSON.stringify({workload:name,parameters}),signal:AbortSignal.timeout(20000)},'/'+name);
+  return {status:response.status,body:await boundedJson(response)};
 }
 const records=[];
 for(const name of ['state_write','state_read','duplicate_probe','duplicate_probe']) records.push({name,...await invoke(name)});

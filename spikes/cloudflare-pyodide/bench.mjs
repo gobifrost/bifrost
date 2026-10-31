@@ -1,6 +1,7 @@
 // Fixed fixtures only. Never records request credentials.
 import {writeFile} from 'node:fs/promises';
 import {performance} from 'node:perf_hooks';
+import {boundedText} from './probe-io.mjs';
 
 const base = process.env.SPIKE_URL ?? 'http://127.0.0.1:8793';
 const cases = ['json_transform', 'async_context', 'workspace_import', 'http_orchestration',
@@ -12,8 +13,8 @@ async function invoke(workload, parameters = {}) {
   try {
     const response = await fetch(new URL('/'+workload, base), {method: 'POST',
       headers: {'Content-Type': 'application/json', ...(process.env.SPIKE_TOKEN ? {'X-Spike-Token': process.env.SPIKE_TOKEN} : {}), ...(process.env.SPIKE_AUTH ? {'X-Spike-Auth': process.env.SPIKE_AUTH} : {})},
-      body: JSON.stringify({workload, parameters}), signal: AbortSignal.timeout(30000)});
-    const text = await response.text();
+      body: JSON.stringify({workload, parameters}), redirect:'error',signal: AbortSignal.timeout(30000)});
+    const text = await boundedText(response);
     let body;
     try { body = JSON.parse(text); } catch { body = {non_json: text.slice(0, 1500)}; }
     return {workload, http_status: response.status, client_wall_ms: performance.now()-start, body};

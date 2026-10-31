@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {writeFile} from 'node:fs/promises';
+import {boundedText} from './probe-io.mjs';
 const exec=promisify(execFile);
 // This script restarts ONLY the named disposable spike container.
 const started=Date.now();
 const pending=fetch('http://127.0.0.1:8793',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({workload:'termination_probe'}),signal:AbortSignal.timeout(15000)})
-  .then(async r=>({status:r.status,body:await r.text()})).catch(e=>({error:String(e)}));
+  .then(async r=>({status:r.status,body:await boundedText(r)})).catch(e=>({error:String(e)}));
 await new Promise(resolve=>setTimeout(resolve,500));
 await exec('docker',['restart','bifrost-pyodide-ddf316c1']);
 const outcome=await pending;

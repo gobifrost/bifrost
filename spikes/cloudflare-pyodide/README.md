@@ -20,6 +20,11 @@ Unsupported dependency work follows [native-first qualification](dependency-qual
 classify, build if compilable, run relevant package tests under Pyodide, then
 verify actual cloud execution. Missing-wheel and OS-contract failures are distinct.
 
+PR data-flow review and the disposition of all 15 CodeQL comments are in
+[CODEQL_REVIEW.md](CODEQL_REVIEW.md). Run its focused transport/integrity tests
+with `node --test probe-io.test.mjs backend/module-response.test.mjs`. These tests
+make no live cloud requests and do not renew the retired cloud experiment.
+
 ## Reproduce
 
 Requirements: Docker, Python 3.13+ for source preparation, Node 24+, Git Bash on

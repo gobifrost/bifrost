@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {writeFile} from 'node:fs/promises';
+import {boundedText} from '../probe-io.mjs';
 const controller=new AbortController();
 const events=[];
 let abortTimer;
@@ -9,8 +10,14 @@ const afterEffect=new Promise(resolve=>{after=resolve;});
 const started=performance.now();
 const server=createServer(async(request,response)=>{
   const chunks=[];
-  for await(const chunk of request) chunks.push(chunk);
+  let bytes=0;
+  for await(const chunk of request) {
+    bytes+=chunk.length;
+    if(bytes>32) { response.writeHead(413).end();request.destroy();return; }
+    chunks.push(chunk);
+  }
   const event=Buffer.concat(chunks).toString();
+  if(!['before','after'].includes(event)) { response.writeHead(400).end();return; }
   events.push({event,elapsed_ms:performance.now()-started});
   response.end('ok');
   // Callback responds first: the Python child resumes its CPU loop, while this
@@ -26,7 +33,7 @@ try {
     const response=await fetch('http://127.0.0.1:8798',{
       method:'POST',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(45000)]),
     });
-    outcome={status:response.status,body:await response.text()};
+    outcome={status:response.status,body:await boundedText(response)};
   } catch(error) { outcome={error_type:error.name ?? typeof error,error:String(error)}; }
   await Promise.race([afterEffect,new Promise(resolve=>{observationTimer=setTimeout(resolve,15000);})]);
   const result={runtime:'local-workerd',external_abort_requested:controller.signal.aborted,

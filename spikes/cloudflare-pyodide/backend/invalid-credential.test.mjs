@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
+import {boundedText} from '../probe-io.mjs';
 const response=await fetch('http://127.0.0.1:8797',{
   method:'POST',body:JSON.stringify({action:'invalid_credential'}),signal:AbortSignal.timeout(60000),
 });
-const text=await response.text();
+const text=await boundedText(response);
 let body;
 try { body=JSON.parse(text); } catch { body={unparsed:text}; }
 const evidence={runtime:'local-workerd',api:'isolated-debug-19e8149c',status:response.status,body};

@@ -2,7 +2,7 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-const url='https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev';
+import {cloudProbeFetch,boundedText} from '../probe-io.mjs';
 const {SPIKE_AUTH}=JSON.parse(await readFile(join(tmpdir(),'bifrost-pyodide-ddf316c1-secrets.json'),'utf8'));
 const ledgerPath=new URL('../results/fresh-cloud-budget.json',import.meta.url);
 let ledger;
@@ -28,10 +28,10 @@ async function probe(body) {
   const record={ordinal,request:body};
   results.push(record);
   try {
-    const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Spike-Auth':SPIKE_AUTH},
+    const response=await cloudProbeFetch(SPIKE_AUTH,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
     record.status=response.status;
-    const text=await response.text();
+    const text=await boundedText(response);
     try { record.body=JSON.parse(text); } catch { record.body={unparsed:text.slice(0,16000)}; }
   } catch(error) { record.transport_error={type:error.name,message:String(error)}; }
   record.client_wall_ms=performance.now()-started;
@@ -41,7 +41,7 @@ async function probe(body) {
 const evidence={runtime:'deployed-cloudflare-dynamic-python-worker',started_at:new Date().toISOString(),
   versions:process.env.SPIKE_VERSION ?? 'recorded-in-deploy-log',results};
 try {
-  const unauth=await fetch(url,{method:'POST',body:'{"action":"state"}'});
+  const unauth=await cloudProbeFetch(undefined,{method:'POST',body:'{"action":"state"}'});
   evidence.unauthenticated_status=unauth.status;
   await unauth.body?.cancel();
   if(unauth.status!==403) throw new Error('Authentication gate not established');
