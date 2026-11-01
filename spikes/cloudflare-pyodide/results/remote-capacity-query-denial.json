@@ -1,0 +1,16 @@
+{
+  "request_id": "c5842180-9153-4841-b5f7-130aa489f58b",
+  "purpose": "Passive verified pve-t340 capacity/ownership prerequisite query for migration delivery",
+  "reason": "source_run_not_active",
+  "safe_to_resend": false,
+  "backend_version": "0.11.0",
+  "alternate_caller_or_retry_used": false,
+  "remote_execution_observed": false,
+  "delivery_acknowledgement": {
+    "request_id": "af7a12d2-0873-4f74-9eab-e6c75099e0f3",
+    "acknowledged_run_id": "run:thread:6e1d35f9-0847-466a-a570-f72fd16f9ed7:ordinal:22",
+    "acknowledged_at": "2026-11-01T05:11:08.094Z",
+    "agent_acknowledged": true,
+    "is_completion": false
+  }
+}

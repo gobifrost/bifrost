@@ -107,7 +107,7 @@ From the spike directory, after the existing isolated local setup is ready:
 
 ```sh
 node backend/canonical-refresh.mjs --run canonical-refresh-retained-response retained-response concurrent-runtime-manifest.json
-node backend/verify-retained-response.mjs
+node backend/verify-retained-response.mjs --commit e09af99620783221edb9e542c2d84ae4d2966b84
 ```
 
 The run refuses the existing receipt before effects. Offline verification checks

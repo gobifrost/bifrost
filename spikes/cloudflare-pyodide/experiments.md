@@ -307,3 +307,20 @@ real local execution. Exact runtime payload pin unchanged and verified. Source/
 evidence verifier, focused Docker Ruff and JS syntax/diff checks pass. Exact
 own supervisor/network/API cleanup is retained in retained-response-local-cleanup.json.
 Broad recovery_acceptance and physical termination remain false; no cloud claim.
+
+## Live control authentication and remote-test checkpoint
+
+Continued from e09af99620783221edb9e542c2d84ae4d2966b84. Existing test stack was
+stopped with a missing temporary bind directory; its exact own helper/directory
+and ephemeral database were restored through the normal harness before the
+probe. No production or other project's resources changed.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Real control authentication can be tested without unqualified execution admission | Pre-register empty handlers, withhold inventory; `node backend/canonical-refresh.mjs --run canonical-refresh-control-auth control-auth` | First probe exit 0; actual signed hello generations 1 then 2; invalid HMAC, captured replay, old socket and stale generation each close 1008; zero claims, starting throughout | Owner-verified remote harness; physical inventory/adoption remains unqualified |
+| Heavy laptop tests can stop at an exact checkpoint | Consume delivery af7a12d2-0873-4f74-9eab-e6c75099e0f3; preserve source/result, stop own containers only | Delivery ACK succeeded in run22; all own test infrastructure/helper stopped, no volume/lock deletion | Existing pve-t340 owner must verify capacity/ownership before remote execution |
+
+No new heavy laptop batch followed the migration instruction. Passive capacity
+query c5842180-9153-4841-b5f7-130aa489f58b was denied source_run_not_active with
+safe_to_resend false, preserved without alternate caller/retry. Remote execution
+has not occurred. See CONTROL-AUTH.md and REMOTE-TEST-HANDOFF.md under backend/.

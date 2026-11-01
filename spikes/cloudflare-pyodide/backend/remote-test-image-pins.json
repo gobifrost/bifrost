@@ -1,0 +1,16 @@
+{
+  "observed_from": "Existing isolated laptop test images; metadata read only",
+  "target_verified": false,
+  "sidecars": {
+    "pgvector/pgvector:pg16": "pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a",
+    "redis:7-alpine": "redis@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f",
+    "edoburu/pgbouncer:latest": "edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d",
+    "chrislusf/seaweedfs:latest": "chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860"
+  },
+  "api_build": {
+    "dockerfile": "api/Dockerfile.dev",
+    "python_requirements": "requirements.lock",
+    "python_bootstrap": "requirements-piptools.lock",
+    "instruction": "Build from pinned public source and its digest-pinned base images; do not copy private caches or laptop credentials. Verify actual resolved digests before tests."
+  }
+}
