@@ -1,0 +1,15 @@
+{
+  "key": "pr:1164",
+  "classification": "highlight",
+  "entry_ids": [
+    "59f49170-08b6-4ae3-b7f5-8f06d15104b4"
+  ],
+  "action_required": true,
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1164",
+      "Draft canonical upgrade notice at product-updates/entries/59f49170-08b6-4ae3-b7f5-8f06d15104b4.md: installations with existing duplicate global or organization table names must resolve them before this non-destructive migration can proceed. The duplicate-data migration rehearsal proves refusal without mutation; a read-only October 31 production preflight found zero duplicate groups in either scope. Awaiting explicit product/copy review."
+    ]
+  }
+}
