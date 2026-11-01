@@ -223,7 +223,7 @@ the frozen benchmark client and infrastructure are identified separately.
 | Mixed load and conditional soaks | First 4 GB hour: 8,113/8,113 arrivals correct by deadline; latency, throughput and backlog gates passed, but retained-Event quota counter delta was −11 | Invalid measurement. Remaining long windows stopped with verified cleanup; no stock mixed capacity or sustained growth claim. |
 | Browser app path | 24/24 correct actions and durable records; verified cleanup | Descriptive timing only; see the omitted-timer finding below. |
 | Stock retention rehearsal | Complete: 41 successful fixtures and one expected failure; all 42 execution rows and 329 log rows removed; cleanup verified | Stock fixture sizing/deletion evidence; no long-term growth, backup, restore or billing claim. |
-| Fixed-count scaling and zero-warm elasticity | [Declared experiment](2026-10-31-worker-scaling-experiment.md); tooling prepared in a separate checkout, with Docker verification queued | Neither scaling efficiency nor cold-start capacity has been measured yet. |
+| Fixed-count scaling and zero-warm elasticity | [Declared experiment](2026-10-31-worker-scaling-experiment.md); tooling reviewed, 501 Dockerized benchmark tests and Ruff passed; nine-arm run started | No completed scaling arm yet; capacity claims await observations. |
 
 The complete 4 GB SDK raw artifact is retained under
 `runs/stock-capacity-matrix-20261031-r1/4gb-capacity/sdk-confirmation/`.

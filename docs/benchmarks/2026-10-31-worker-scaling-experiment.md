@@ -1,6 +1,7 @@
 # Worker Scaling and Idle-Floor Experiment
 
-Status: tooling under review; no scaling observations yet. This is an isolated
+Status: tooling reviewed and verified by 501 benchmark unit tests plus Ruff;
+the declared nine-arm run has started, with no completed arm yet. This is an isolated
 benchmark of the captured, unmodified production image. It does not authorize
 platform fixes, new PRs, deployments or production policy changes.
 

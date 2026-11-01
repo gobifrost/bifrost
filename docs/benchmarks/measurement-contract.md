@@ -35,6 +35,16 @@ five immutable one-hour segments, with pooled per-class reliability and all
 other gates retained per segment. Storage probes execute in the API pod and add observer CPU/memory during the soak; compare runs with the same probe cadence. Capacity storage frames sit outside the measured window. The two-hour soak runs at 70% of a passing
 mixed rate and records minute metrics plus five-minute storage frames.
 
+Quota-denial Events are sampled by UID before traffic, throughout load and
+reconciliation, and at a final read. The ledger retains each UID's last count
+after its Event expires and counts new UIDs and count increases. It stores only
+allowlisted identity/count observations. A probe failure, malformed observation,
+per-UID rollback or sampling gap over 30 seconds invalidates the window; a real
+positive fault count still fails its gate. Events created and removed between
+observations remain outside sampling coverage. Other pod-counter regressions
+also invalidate measurement. Never clamp a negative endpoint delta to zero or
+report it as a tenant failure.
+
 ## Reproducibility and Comparisons
 
 Every run retains its resolved profile, workload version/source hash, catalog
