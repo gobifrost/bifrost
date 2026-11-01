@@ -1,0 +1,13 @@
+
+ ⛅️ wrangler 4.156.0
+────────────────────
+Your Worker has access to the following bindings:
+Binding                               Resource                  Mode
+env.ISOLATED_TEST_STACK ("true")      Environment Variable      local
+env.LOADER                            Worker Loader             local
+
+⎔ Starting local server...
+[wrangler:info] Ready on http://0.0.0.0:8799
+[wrangler:info] - http://127.0.0.1:8799
+[wrangler:info] - http://172.21.0.8:8799
+[wrangler:info] GET /health 405 Method Not Allowed (753ms)

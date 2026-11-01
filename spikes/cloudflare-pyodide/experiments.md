@@ -1,5 +1,23 @@
 # Compact experiment log
 
+## Actual owned provider interruption after SDK write, 2026-11-01
+
+Hypothesis: a real provider-process loss must not fabricate a result or relaunch
+uncertain effects. Change: fixed async delay after real upsert, independent API
+document readback, bounded marker to the existing supervisor, stop only the owned
+provider container, then unchanged upstream lost-worker recovery/log drain.
+Command: guest ct128-workerd-provider-interruption.py; exact Compose argv in
+results/provider-interruption. Initial attempt failed handoff-directory ownership
+before interruption. Corrected only the new owned output UID/GID and atomic marker.
+Result: actual RemoteProtocolError/no envelope; Running before recovery, Failed
+after; durable value 70; one launch/no dispatch; access/refresh 401; one redacted
+pre-interruption log recovered, repeated drain zero. Receipt SHA-256
+`00b1fcb9562540337d462a4253139390008ec4883203046c361b28e5669a6d87`.
+Docker Ruff/offline verifiers pass; containers stopped, volumes retained, zero
+cloud. Killing this provider harness is not per-isolate physical-stop proof.
+Next: coordinated runtime contract and automatic detection/deployed acceptance;
+do not infer those guarantees from this explicit local recovery operation.
+
 ## Real SDK success after declared lost-worker recovery, 2026-11-01
 
 Hypothesis: canonical lost-worker failure must outrank a late successful actual

@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const bytes = readFileSync(new URL('../results/workerd-loss-recovery/receipt.json', import.meta.url));
 assert.equal(hash(bytes), '62bcd195b85b1d5a9d63713e4ffdbc8a3c514e90f43662b1af05f94a22bfce97');
@@ -13,7 +15,9 @@ assert.equal(report.cloud_invocations, 0);
 assert.deepEqual(report.running_after_cleanup, []);
 assert.equal(report.provider_state_before_cleanup.OOMKilled, false);
 assert.equal(report.packet_sha256['canonical-local.py'],
-  hash(readFileSync(new URL('canonical-local.py', import.meta.url))));
+  hash(execFileSync('git', ['show',
+    '81799e546ad55eecd94ae0130b5e1b0494780697:spikes/cloudflare-pyodide/backend/canonical-local.py'],
+  {cwd: fileURLToPath(new URL('../../../', import.meta.url))})));
 const run = report.canonical_result;
 for (const key of ['canonical_claim_verified', 'worker_loss_recovery_verified',
   'late_success_ignored_verified', 'recovery_not_requeued_verified',
