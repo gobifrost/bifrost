@@ -1,0 +1,10 @@
+{
+  "request_id": "090210bf-62f1-488c-b38f-df026906504f",
+  "action": "Passive source-ownership reconciliation for engine.py and worker.py stdio capture",
+  "reason": "source_run_not_active",
+  "safe_to_resend": false,
+  "backend_version": "0.11.0",
+  "automatic_retry": false,
+  "alternate_caller_or_credentials": false,
+  "shared_source_edited": false
+}

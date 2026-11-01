@@ -22,7 +22,7 @@ from sqlalchemy import delete, select
 
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
-               concurrent_refresh=False, interrupt_refresh=False):
+               concurrent_refresh=False, interrupt_refresh=False, failure_probe=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -39,6 +39,9 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
         raise RuntimeError("Concurrent refresh is a separate fixed single-run fixture")
     if interrupt_refresh and (refresh_probe or expired_access or concurrent_refresh or isolation_label is not None):
         raise RuntimeError("Refresh interruption is a separate fixed single-run fixture")
+    if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
+        raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
+    expected_success = not failure_probe
 
     from src.core.database import init_db, get_engine, close_db, get_db_context
     from src.core.module_cache import set_module, invalidate_module
@@ -154,6 +157,10 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
                         "server_response_received": True, "replacement_adopted": True,
                         "pending_refresh_after_adoption": len(pyodide_refresh._pending)}
 '''
+    failure_code = '''    print("stdout credential=" + os.environ["BIFROST_ACCESS_TOKEN"])
+    logging.getLogger(__name__).warning("structured credential=%s", os.environ["BIFROST_ACCESS_TOKEN"])
+    raise ValueError("fixture failure credential=" + os.environ["BIFROST_ACCESS_TOKEN"])
+''' if failure_probe else ""
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
 import logging, os
@@ -163,6 +170,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
     value = await config.get({key!r})
     refresh_evidence = {{}}
 {refresh_code.rstrip()}
+{failure_code.rstrip()}
     doc = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
     logging.getLogger(__name__).warning("canonical local Pyodide proof")
     return {{"value": doc.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
@@ -180,6 +188,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
         report["concurrent_refresh_probe"] = True
     if interrupt_refresh:
         report["refresh_interruption_probe"] = True
+    if failure_probe:
+        report["workflow_failure_probe"] = True
     if isolation_label is not None:
         report["isolation_label"] = isolation_label
         report["rendezvous_batch"] = batch
@@ -299,7 +309,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     self.token = context["engine_token"]
                     self.refresh_token = context.get("engine_refresh_token")
                     secrets.extend([self.token, context.get("engine_refresh_token")])
-                    self.info = ExecutionInfo(execution_id, datetime.now(timezone.utc), 30, active_execution)
+                    self.info = ExecutionInfo(execution_id, datetime.now(timezone.utc), context["timeout_seconds"], active_execution)
 
                     async def launch():
                         self.launches += 1
@@ -339,8 +349,11 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 if isolation_label is not None:
                                     report["provider_end_ms"] = int(time.time() * 1000)
                                 self.evidence = response.json()
+                                encoded = json.dumps(self.evidence)
+                                if any(secret and secret in encoded for secret in secrets):
+                                    raise RuntimeError("Credential exposure: provider evidence withheld")
                                 result = self.evidence["result"]
-                                if refresh_probe or expired_access or concurrent_refresh or interrupt_refresh:
+                                if refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or failure_probe:
                                     document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
                                                              params={"scope": str(org.id)})
                                     diagnostic = {**report,
@@ -350,7 +363,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     if any(secret and secret in encoded for secret in secrets):
                                         raise RuntimeError("Credential exposure: diagnostic withheld")
                                     print(encoded)
-                                    if result["success"] is True:
+                                    if result["success"] is True and not failure_probe:
                                         assert any(call["path"] == "/auth/refresh" and call["status"] == 200
                                                    for call in self.evidence["api_calls"])
                                         if concurrent_refresh:
@@ -358,19 +371,33 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                             assert result["result"]["same_replacement"] is True
                                             assert sum(call["path"] == "/auth/refresh"
                                                        for call in self.evidence["api_calls"]) == 1
-                                assert result["success"] is True and result["result"]["value"] == expected_value
+                                assert result["success"] is expected_success
+                                if failure_probe:
+                                    assert result["error_type"] == "ValueError"
+                                    assert "fixture failure credential=[REDACTED]" in result["error"]
+                                    messages = [log["message"] for log in result["logs"]]
+                                    report["stdout_capture_verified"] = any("stdout credential=[REDACTED]" in message for message in messages)
+                                    assert any("structured credential=[REDACTED]" in message for message in messages)
+                                    report["structured_log_exception_redaction_verified"] = True
+                                else:
+                                    assert result["result"]["value"] == expected_value
                                 if isolation_label is not None:
                                     value = result["result"]
                                     assert value["tenant_label"] == isolation_label and value["peer_sdk_status"] == 403
                                     assert all(value[key] is None for key in (
                                         "builtins_before", "environment_before", "module_before", "tmp_before"))
-                                assert result["result"]["parent_secret_present"] is False
+                                if expected_success:
+                                    assert result["result"]["parent_secret_present"] is False
                                 assert result["metrics"]["code_hash"] == manifest[path]
                                 document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
                                                          params={"scope": str(org.id)})
-                                assert document.status_code == 200 and document.json()["data"]["value"] == expected_value
+                                if expected_success:
+                                    assert document.status_code == 200 and document.json()["data"]["value"] == expected_value
+                                    report["independent_document_value"] = expected_value
+                                else:
+                                    assert document.status_code == 404
+                                    report["independent_document_absent"] = True
                                 report["cross_tenant_status"] = denied.status_code
-                                report["independent_document_value"] = expected_value
                                 if isolation_label is not None:
                                     await rendezvous("effects_done", {"done": True})
                             return result
@@ -379,7 +406,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     duplicate = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     assert task is duplicate
                     task_result = await task
-                    assert task_result["success"] is True
+                    assert task_result["success"] is expected_success
 
             pool = LocalPool()
             consumer = WorkflowExecutionConsumer(pool=pool)
@@ -412,7 +439,14 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 liveness.update(active_runs=0, runs_handled=1, memory_reserved_bytes=0)
                 async with get_db_context() as db:
                     row = await db.get(Execution, execution.id)
-                    assert row is not None and row.status == ExecutionStatus.SUCCESS and row.result["value"] == expected_value
+                    expected_status = ExecutionStatus.SUCCESS if expected_success else ExecutionStatus.FAILED
+                    assert row is not None and row.status == expected_status
+                    if expected_success:
+                        assert row.result["value"] == expected_value
+                    else:
+                        assert row.result is None and "fixture failure credential=[REDACTED]" in row.error_message
+                        report["canonical_failure_error"] = row.error_message
+                        report["canonical_failure_status"] = row.status.value
                     logs_before = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
                     assert logs_before
                 ref.lease = await connect(2)
@@ -429,7 +463,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     revoked = await api.post("/api/sdk/config/get", headers={"Authorization": f"Bearer {pool.token}"},
                                              json={"key": key})
                     assert revoked.status_code == 401
-                    if refresh_probe or expired_access or concurrent_refresh or interrupt_refresh:
+                    if refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or failure_probe:
                         refresh_revoked = await api.post("/auth/refresh",
                             json={"refresh_token": pool.refresh_token})
                         assert refresh_revoked.status_code == 401
@@ -459,6 +493,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
         if any(secret and secret in encoded for secret in secrets):
             raise RuntimeError("Credential exposure: evidence withheld")
         print(encoded)
+        if failure_probe:
+            assert report["stdout_capture_verified"], "Upstream stdout capture remains unqualified"
     except Exception:
         if isolation_label is not None:
             with suppress(Exception):
@@ -488,10 +524,12 @@ if __name__ == "__main__":
         parser.add_argument("--expired-access", action="store_true")
         parser.add_argument("--concurrent-refresh", action="store_true")
         parser.add_argument("--interrupt-refresh", action="store_true")
+        parser.add_argument("--failure-probe", action="store_true")
         args = parser.parse_args()
         asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
-                         concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh))
+                         concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh,
+                         failure_probe=args.failure_probe))
     except Exception as exc:
         import traceback
         from pathlib import Path
