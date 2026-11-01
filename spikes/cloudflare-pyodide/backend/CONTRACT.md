@@ -1,5 +1,9 @@
 # Smallest executor contract
 
+See [pre-claim eligibility](PRECLAIM-ELIGIBILITY.md) for the tested current
+handler gate and the missing persisted runtime-selection contract. It prevents
+unqualified registration from being mistaken for supported provider admission.
+
 This is a proposed physical-runtime boundary, not an existing upstream API.
 PostgreSQL and the existing upstream services retain scheduling, authorization,
 attempt ownership, fences, recovery and terminal acceptance. A provider executes

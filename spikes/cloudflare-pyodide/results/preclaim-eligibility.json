@@ -1,0 +1,16 @@
+﻿{
+    "command":  "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py -k unqualified_provider -v",
+    "tests":  4,
+    "failures":  0,
+    "deselected":  21,
+    "runtime":  "Docker Python 3.14.8 / actual PostgreSQL",
+    "provider_invocations":  0,
+    "cloud_invocations":  0,
+    "source_sha256":  {
+                          "api/tests/unit/dev/test_pyodide_attempt_journal.py":  "4fe8d43c0b089f069d4bf0e1d89d341702e2aafb2635698e12139acb0f36b5df",
+                          "api/src/services/worker_pool/claims.py":  "1d96bbd5050375956ce601ae7c29d5df3fdb94e800c9591ba15b2e0ed427d236",
+                          "api/src/services/execution/workflow_dispatch.py":  "87c9d0da940b3302a4f42896142cb0332b505dcabc41b5cd24eb74df6e2b9d0f",
+                          "api/src/models/orm/work_dispatches.py":  "4c2be5b482cb232e13c86751a20702ce4190241729350145112cfac792f25883",
+                          "api/src/models/orm/execution_workers.py":  "75802374b7c1f6c0f21ce66978596573626b39329bd348c85dea0c40a2ba765f"
+                      }
+}

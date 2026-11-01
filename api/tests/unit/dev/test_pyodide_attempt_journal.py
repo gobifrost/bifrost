@@ -472,3 +472,61 @@ async def test_prelaunch_reservation_failure_rolls_back_canonical_claim(waiting_
             ExecutionWorkerClaim.subject_id == fixture.subject)) is None
         dispatch = await session.scalar(select(WorkDispatch).where(WorkDispatch.subject_id == fixture.subject))
         assert dispatch is not None and dispatch.assigned_worker_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("advertised", [[], ["agent.run"]], ids=["no-handlers", "other-handler"])
+@pytest.mark.parametrize("reserved", [False, True], ids=["ordinary", "reserved"])
+async def test_unqualified_provider_cannot_claim_even_reserved_work(
+    waiting_dispatch, async_session_factory, advertised, reserved,
+):
+    from src.services.worker_pool import claims
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    fixture = waiting_dispatch
+    async with async_session_factory() as session:
+        worker = await session.get(ExecutionWorker, fixture.lease.worker_id)
+        dispatch = await session.scalar(select(WorkDispatch).where(WorkDispatch.subject_id == fixture.subject))
+        assert worker is not None and dispatch is not None
+        original_dispatch_id = dispatch.id
+        worker.supported_handlers = advertised
+        worker.reserved_for_dispatch_id = dispatch.id if reserved else None
+        await session.commit()
+
+    reservation = AsyncMock()
+    with remote_owner_context(LeaseRef(fixture.lease)):
+        denied = await claims.claim_next(fixture.lease.worker_id, fits_bytes=2**30, budget_bytes=2**30,
+                                        reserve_claim=reservation)
+    assert denied is None
+    reservation.assert_not_called()
+    async with async_session_factory() as session:
+        execution = await session.get(Execution, fixture.subject)
+        dispatch = await session.get(WorkDispatch, original_dispatch_id)
+        held = await session.scalar(select(ExecutionWorkerClaim).where(
+            ExecutionWorkerClaim.subject_id == fixture.subject))
+        assert execution is not None and execution.status == ExecutionStatus.PENDING
+        assert execution.started_at is None and execution.credential_version is None
+        assert dispatch is not None and dispatch.assigned_worker_id is None
+        assert dispatch.created_at == fixture.queued_at and dispatch.payload == dict(fixture.payload)
+        assert held is None
+
+    # An ordinary eligible executor claims the same durable dispatch through
+    # upstream selection, not a fallback invocation or re-enqueued business job.
+    linux = await claims.register_static_worker(hostname="pyodide-admission-linux-control",
+                                               supported_handlers=["workflow.execute"])
+    try:
+        ready = await claims.mark_static_ready(linux, memory_budget_bytes=2**30)
+        assert ready
+        accepted = await claims.claim_next(linux, fits_bytes=2**30, budget_bytes=2**30)
+        assert accepted is not None and accepted.dispatch_id == original_dispatch_id
+        assert accepted.subject_id == fixture.subject and accepted.claimed == dict(fixture.payload)
+        async with async_session_factory() as session:
+            execution = await session.get(Execution, fixture.subject)
+            held = await session.scalar(select(ExecutionWorkerClaim).where(
+                ExecutionWorkerClaim.subject_id == fixture.subject))
+            assert execution is not None and execution.status == ExecutionStatus.RUNNING
+            assert held is not None and held.worker_id == linux
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == linux))
+            await session.commit()
