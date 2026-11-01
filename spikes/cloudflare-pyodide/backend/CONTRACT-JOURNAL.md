@@ -74,13 +74,37 @@ normally, but no event subscriber or external delivery receipt is asserted.
 
 ## Next safe implementation
 
-Acquire and release the dispatch using upstream `worker_pool.claims` and its
-canonical supervisor, then qualify interruption before launch and after claim.
-Extract/reuse the pure result-envelope construction currently embedded in
-`simple_worker.py` before connecting actual Pyodide output: do not maintain a
-second envelope codec. Whole-host loss and interrupted post-commit follow-up
-work still need recovery qualification. This increment injects disconnect after
-the full callback, not at every individual post-commit instruction.
+The subsequent claim/envelope increment now uses the actual `claim_next` path
+in a local PostgreSQL test: one dispatch/run claim, no duplicate acquisition,
+current-owner pre-launch `release_workflow_run`, preserved queue timestamp,
+removed claim, and successful reclaim. A rejected transactional reservation
+rolls back assignment, claim and PENDING-to-RUNNING together. It does not start
+a physical child or assert completed-run claim cleanup. This is qualification
+of the upstream helpers, not a new scheduler or a provider admission policy.
+
+`result_envelope.execution_result_envelope` extracts the existing pure mapping
+from `simple_worker`; Linux still owns its PSS/RSS measurements and exception
+path. The companion full-consumer test now uses the same envelope builder.
+Unknown provider metrics remain unknown. No OS dependency is imported by the
+mapping itself. Actual packaging and execution of this new helper inside
+Pyodide have not yet been qualified; no new wheel/build claim follows.
+
+This increment's exact local command was:
+
+```bash
+./test.sh tests/unit/execution/test_result_envelope.py tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/test_solution_module_isolation.py -q
+```
+
+All 22 tests passed in 19.98 seconds. `../results/claim-envelope-junit.xml` and
+`../results/claim-envelope.json` preserve the raw receipt and source hashes.
+
+Next connect the actual local Pyodide result to this shared builder and the
+canonical claim/consumer path. Completed-run claim release, stale/competing-owner
+handback, whole-host loss and interrupted post-commit follow-up work still need
+qualification. Current-owner pre-launch release is not proof of any of those.
+Runtime security changes remain outside the current authorization. The prior
+disconnect test fails after the full callback, not at every individual
+post-commit instruction.
 
 The initial targeted run passed all nine tests in 8.23 seconds; raw JUnit is
 `../results/attempt-journal-junit.xml`. This comprises six new journal contracts

@@ -128,3 +128,20 @@ after the real consumer completes, before journal ACK; individual post-commit
 interruption windows and whole-host loss remain unqualified. Claims and cleanup
 are fixture-only. Physical execution is a deterministic callback, not a new cloud
 test. CPU physical-stop incompatibility remains unchanged.
+
+## Shared result envelope and canonical pre-launch claims
+
+Continued from 7c7bf4bd3841f09e28a031874f66595692648966. The Containers worktree
+has no dirty changes to simple_worker/result_envelope, and its simple_worker
+matches this baseline; no remote_pool/host/launcher edits were made.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Reuse one pure engine-result envelope across physical runtimes | Extract the exact mapping from simple_worker; use it in the companion consumer test; `./test.sh tests/unit/execution/test_result_envelope.py tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/test_solution_module_isolation.py -q` | 22 passed in 19.98s; Linux PSS/growth accounting and service/error/default mapping preserved; `claim-envelope-junit.xml` | Package shared helper with actual local Pyodide output |
+| Canonical claims handle duplicate acquisition and interruption before launch | Real claim_next, release_workflow_run and reclaim against PostgreSQL; reservation callback rejects before commit | Duplicate claim absent; pre-launch handback returns PENDING, removes claim and preserves queue time; reservation failure rolls back atomically | Completed-run claim release and stale/competing-owner handback qualification |
+
+These are current-owner pre-launch tests, not proof of stale-owner handback,
+completed-run claim cleanup, credential issuance, physical termination or cloud
+acceptance. The handback helper is unchanged; security behavior was not modified.
+The new pure envelope has not yet been packaged or executed in Pyodide. No native
+dependency or PyEmscripten build issue was encountered by this host-side increment.

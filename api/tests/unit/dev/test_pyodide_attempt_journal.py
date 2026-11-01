@@ -21,7 +21,9 @@ from sqlalchemy import delete, select
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution, ExecutionLog
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
+from src.models.orm.work_dispatches import WorkDispatch
 from src.repositories.executions import update_execution
+from src.services.execution.result_envelope import execution_result_envelope
 from src.worker.remote import ownership
 from src.worker.remote.fencing import fence_remote_owner
 from src.worker.remote.protocol import CredentialRouteChanged
@@ -46,7 +48,8 @@ async def owner(async_session_factory, monkeypatch):
     worker_id, owner_id, launcher_id = uuid4(), uuid4(), uuid4()
     async with async_session_factory() as session:
         session.add(ExecutionWorker(id=worker_id, form="static", state="ready",
-                                    resource_class="standard", slots=1))
+                                    resource_class="standard", slots=1,
+                                    supported_handlers=["workflow.execute"]))
         await session.commit()
 
     async def acquire(sequence):
@@ -255,9 +258,10 @@ async def test_full_consumer_commit_lost_ack_reconciles_without_relaunch_or_dupl
         raise ConnectionError("transport lost after canonical completion")
 
     journal = AttemptJournal()
-    launch = AsyncMock(return_value={"execution_id": execution_id, "success": True,
-                                    "status": "Success", "result": {"value": 70},
-                                    "duration_ms": 1, "sync": True})
+    envelope = execution_result_envelope(execution_id, str(lease.worker_id),
+        {"status": "Success", "result": {"value": 70}}, duration_ms=1, metrics={})
+    envelope["sync"] = True  # An untrusted field cannot override parent metadata.
+    launch = AsyncMock(return_value=envelope)
     async with async_session_factory() as session:
         session.add(Execution(id=subject, workflow_name="pyodide-consumer-contract",
                               executed_by_name="test", status=ExecutionStatus.RUNNING,
@@ -335,3 +339,91 @@ async def test_workflow_adapter_rejects_another_workers_consumer_before_effects(
     with pytest.raises(ValueError, match="another worker"):
         await journal.reconcile_workflow(lease, "route", consumer, SimpleNamespace())
     consumer._handle_result.assert_not_awaited()
+
+
+@pytest.fixture
+async def waiting_dispatch(owner, async_session_factory, monkeypatch):
+    from src.core.redis_client import pending_execution_record
+    from src.services import work_dispatch
+    from src.services.execution import workflow_dispatch
+    from src.services.worker_pool import claims
+
+    @asynccontextmanager
+    async def context():
+        async with async_session_factory() as session:
+            yield session
+            await session.commit()
+
+    monkeypatch.setattr(claims, "get_db_context", context)
+    monkeypatch.setattr(workflow_dispatch, "get_db_context", context)
+    lease = await owner(1)
+    subject = uuid4()
+    payload = pending_execution_record(execution_id=str(subject), workflow_id=None,
+        parameters={"proof": 70}, org_id=None, user_id=str(uuid4()), user_name="fixture",
+        user_email="fixture@example.test", sync=True, lineage=None)
+    async with async_session_factory() as session:
+        session.add(Execution(id=subject, workflow_name="pyodide-dispatch-fixture",
+                              executed_by_name="fixture", status=ExecutionStatus.PENDING))
+        await session.flush()
+        dispatch = work_dispatch.stage_dispatch(session, family="workflow_execution", subject_id=subject,
+            handler="workflow.execute", handler_version=1, message={"execution_id": str(subject), "sync": True},
+            payload=dict(payload), memory_request_bytes=128 * 2**20)
+        await session.commit()
+        queued_at = dispatch.created_at
+    try:
+        yield SimpleNamespace(lease=lease, subject=subject, payload=payload, queued_at=queued_at)
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(WorkDispatch).where(WorkDispatch.subject_id == subject))
+            await session.execute(delete(ExecutionWorkerClaim).where(ExecutionWorkerClaim.subject_id == subject))
+            await session.execute(delete(Execution).where(Execution.id == subject))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_canonical_claim_duplicate_and_prelaunch_handback(waiting_dispatch, async_session_factory):
+    from src.services.execution.workflow_dispatch import release_workflow_run
+    from src.services.worker_pool.claims import claim_next
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    fixture = waiting_dispatch
+    with remote_owner_context(LeaseRef(fixture.lease)):
+        claim = await claim_next(fixture.lease.worker_id, fits_bytes=2**30, budget_bytes=2**30)
+        assert claim is not None and claim.subject_id == fixture.subject
+        assert claim.claimed is not None and claim.claimed["parameters"] == {"proof": 70}
+        assert await claim_next(fixture.lease.worker_id, fits_bytes=2**30, budget_bytes=2**30) is None
+        await release_workflow_run(worker_id=fixture.lease.worker_id, message=claim.message,
+            payload=claim.claimed, memory_request_bytes=claim.memory_request_bytes, queued_at=claim.queued_at)
+    async with async_session_factory() as session:
+        row = await session.get(Execution, fixture.subject)
+        assert row is not None and row.status == ExecutionStatus.PENDING and row.started_at is None
+        held = await session.scalar(select(ExecutionWorkerClaim).where(
+            ExecutionWorkerClaim.subject_id == fixture.subject))
+        assert held is None
+        dispatch = await session.scalar(select(WorkDispatch).where(WorkDispatch.subject_id == fixture.subject))
+        assert dispatch is not None and dispatch.created_at == fixture.queued_at
+    with remote_owner_context(LeaseRef(fixture.lease)):
+        again = await claim_next(fixture.lease.worker_id, fits_bytes=2**30, budget_bytes=2**30)
+        assert again is not None and again.claimed == claim.claimed
+
+
+@pytest.mark.asyncio
+async def test_prelaunch_reservation_failure_rolls_back_canonical_claim(waiting_dispatch, async_session_factory):
+    from src.services.worker_pool.claims import claim_next
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    def reject(_claim):
+        raise MemoryError("fixture admission rejected before launch")
+
+    fixture = waiting_dispatch
+    with remote_owner_context(LeaseRef(fixture.lease)):
+        with pytest.raises(MemoryError, match="before launch"):
+            await claim_next(fixture.lease.worker_id, fits_bytes=2**30, budget_bytes=2**30,
+                             reserve_claim=reject)
+    async with async_session_factory() as session:
+        row = await session.get(Execution, fixture.subject)
+        assert row is not None and row.status == ExecutionStatus.PENDING
+        assert await session.scalar(select(ExecutionWorkerClaim).where(
+            ExecutionWorkerClaim.subject_id == fixture.subject)) is None
+        dispatch = await session.scalar(select(WorkDispatch).where(WorkDispatch.subject_id == fixture.subject))
+        assert dispatch is not None and dispatch.assigned_worker_id is None
