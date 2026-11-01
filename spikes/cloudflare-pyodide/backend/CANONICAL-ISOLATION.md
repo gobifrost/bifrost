@@ -4,6 +4,9 @@ Result: warm local two-tenant execution passes. Cold concurrent startup remains
 unsupported in this tested workerd version. This is not cloud acceptance or
 physical termination evidence.
 
+The [minimal cold reproducer](COLD-CONCURRENCY.md) now reproduces the same
+native failure without BiFrost, packages or credentials.
+
 `results/canonical-isolation-warm.json` records two overlapping provider request
 intervals, separate fresh Dynamic Workers, separate canonical attempts and tenant
 identities. Both execute the upstream engine and SDK against the isolated API.
