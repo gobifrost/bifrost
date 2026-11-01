@@ -1,5 +1,9 @@
 # Exact publisher bundle built; actual workerd resumed
 
+Subsequent [cold and warm canonical SDK qualification](WORKERD-SDK-QUALIFICATION.md)
+now passes in guest workerd. The ABI and negative termination observations below
+remain separate evidence, and deployed acceptance remains incomplete.
+
 The recorded HTTP 403 is preserved. Without retrying that download, changing identity or weakening integrity checks, the publisher's public source produced the **exact existing bundle SHA256**:
 
 `3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260`
