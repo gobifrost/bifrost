@@ -21,7 +21,7 @@ import httpx
 from sqlalchemy import delete, select
 
 
-async def main(*, isolation_label=None, batch=None, refresh_probe=False):
+async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -32,6 +32,8 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False):
         raise RuntimeError("Fixed two-tenant isolation fixture required")
     if refresh_probe and isolation_label is not None:
         raise RuntimeError("Refresh qualification is a separate fixed single-run fixture")
+    if expired_access and (refresh_probe or isolation_label is not None):
+        raise RuntimeError("Expired-access qualification is a separate fixed single-run fixture")
 
     from src.core.database import init_db, get_engine, close_db, get_db_context
     from src.core.module_cache import set_module, invalidate_module
@@ -110,6 +112,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
               "physical_termination_verified": False, "cloud_invocations": 0}
     if refresh_probe:
         report["refresh_probe"] = True
+    if expired_access:
+        report["expired_access_probe"] = True
     if isolation_label is not None:
         report["isolation_label"] = isolation_label
         report["rendezvous_batch"] = batch
@@ -242,19 +246,37 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 if isolation_label is not None:
                                     await rendezvous("prepared", {"ready": True})
                                     report["provider_start_ms"] = int(time.time() * 1000)
+                                child_context = context
+                                if expired_access:
+                                    from unittest.mock import patch
+                                    from src.services.authorization.tokens import RuntimeSubject, issue_access_token
+
+                                    # Only this fixture issuer's clock changes; the API, owner
+                                    # lease and original parent credential retain real time.
+                                    with patch("src.services.authorization.tokens._now", return_value=int(time.time()) - 7200):
+                                        expired = await issue_access_token(RuntimeSubject("workflow_execution", execution.id))
+                                    assert expired.expires_at < datetime.now(timezone.utc)
+                                    secrets.append(expired.token)
+                                    challenged = await api.get(f"/api/sdk/modules/{path}",
+                                        headers={"Authorization": f"Bearer {expired.token}"})
+                                    assert challenged.status_code == 401
+                                    assert "refresh_required" in challenged.headers.get("www-authenticate", "")
+                                    report["preflight_challenge_status"] = challenged.status_code
+                                    report["preflight_challenge_header"] = challenged.headers["www-authenticate"]
+                                    child_context = {**context, "engine_token": expired.token}
                                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
                                     response = await provider.post("http://bifrost-pyodide-ddf316c1:8799",
                                         json=json.loads(json.dumps({"mode": "canonical", "worker_id": str(worker.id),
-                                            "execution_id": execution_id, "context": context, "manifest": manifest}, default=str)))
+                                            "execution_id": execution_id, "context": child_context, "manifest": manifest}, default=str)))
                                 assert response.status_code == 200, f"Provider status {response.status_code}"
                                 if isolation_label is not None:
                                     report["provider_end_ms"] = int(time.time() * 1000)
                                 self.evidence = response.json()
                                 result = self.evidence["result"]
-                                if refresh_probe:
+                                if refresh_probe or expired_access:
                                     document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
                                                              params={"scope": str(org.id)})
-                                    diagnostic = {**report, "refresh_probe": True,
+                                    diagnostic = {**report,
                                         "provider_evidence": self.evidence,
                                         "workflow_document_status": document.status_code}
                                     encoded = json.dumps(diagnostic)
@@ -335,7 +357,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     revoked = await api.post("/api/sdk/config/get", headers={"Authorization": f"Bearer {pool.token}"},
                                              json={"key": key})
                     assert revoked.status_code == 401
-                    if refresh_probe:
+                    if refresh_probe or expired_access:
                         refresh_revoked = await api.post("/auth/refresh",
                             json={"refresh_token": pool.refresh_token})
                         assert refresh_revoked.status_code == 401
@@ -391,8 +413,10 @@ if __name__ == "__main__":
         parser.add_argument("--isolation-label", choices=("tenant-a", "tenant-b"))
         parser.add_argument("--batch")
         parser.add_argument("--refresh-probe", action="store_true")
+        parser.add_argument("--expired-access", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch, refresh_probe=args.refresh_probe))
+        asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
+                         refresh_probe=args.refresh_probe, expired_access=args.expired_access))
     except Exception as exc:
         import traceback
         from pathlib import Path

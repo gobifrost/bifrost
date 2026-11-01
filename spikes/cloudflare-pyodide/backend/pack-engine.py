@@ -38,7 +38,8 @@ for folder in (source, root / "python_modules"):
 
 if args.current_runtime:
     for source_name, module_name in (("runtime-runner.py", "runtime_runner.py"),
-                                     ("runtime_guard.py", "runtime_guard.py")):
+                                     ("runtime_guard.py", "runtime_guard.py"),
+                                     ("pyodide_refresh.py", "pyodide_refresh.py")):
         runner = (root / "backend" / source_name).read_bytes()
         modules[module_name] = {"py": runner.decode("utf-8")}
         hashes[module_name] = hashlib.sha256(runner).hexdigest()

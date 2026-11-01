@@ -1,5 +1,9 @@
 # Actual SDK refresh qualification
 
+Follow-on: [challenge-driven cold-module refresh](REFRESH-CHALLENGE.md) now
+qualifies the synchronous challenge path with a native Pyodide bridge. This
+document retains the earlier direct-refresh result at 982921cee.
+
 The unmodified upstream SDK refresh succeeds inside a fresh local Python Worker
 against the real isolated API using a genuine canonical run credential. The
 workflow requires a replacement access token before its table write. The run
@@ -44,7 +48,7 @@ authorized-local Wrangler supervisor connected to that test network:
 
 ```sh
 node backend/canonical-refresh.mjs --run canonical-refresh-routed
-node backend/verify-canonical-refresh.mjs
+node backend/verify-canonical-refresh.mjs --commit 982921ceeb781508375518a68a04bd473e72098f
 node --test backend/test-api-route.test.mjs
 ```
 

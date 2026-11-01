@@ -1,5 +1,10 @@
 # Runtime and wheel provenance
 
+Historical guarded bundle below was qualified at d09c4e113. The current
+[refresh bridge bundle](REFRESH-CHALLENGE.md) adds one companion module while
+retaining the runtime fingerprint guard. Use its verifier for current source;
+the original guarded-probe source verification requires the historical checkout.
+
 The resolver lock and running interpreter report different Pyodide patch
 versions. The lock references Pyodide 314.0.7 CDN wheels; both the minimal Worker
 and the full packaged closure actually report **314.0.6** under local Wrangler

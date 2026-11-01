@@ -11,6 +11,7 @@ mark_execution_child = importlib.import_module("src.core.module_cache_sync").mar
 # Must precede installation of the virtual import hook. This forbids all parent
 # Redis/S3 paths even during module initialization in an isolated runtime.
 mark_execution_child()
+importlib.import_module("pyodide_refresh").install()
 execution_worker = importlib.import_module("src.services.execution.worker")
 ResourceMetrics = execution_worker.ResourceMetrics
 run_execution = execution_worker.run_execution
