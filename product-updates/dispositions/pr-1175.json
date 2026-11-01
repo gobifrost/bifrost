@@ -1,0 +1,14 @@
+{
+  "key": "pr:1175",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Restore spacing around execution details in the slide-out drawer.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1175",
+      "Jack reviewed desktop and phone screenshots and requested merge on 2026-11-01. The concise fix summary describes the verified 16px content inset."
+    ]
+  }
+}

@@ -428,6 +428,38 @@ test.describe("Execution History", () => {
 			drawer.getByRole("region", { name: "Execution log messages" }),
 		).toContainText(`execution acceptance output ${message}`);
 
+		// The embedded details rely on their host for the inset. Check actual
+		// geometry so removing drawer padding cannot pass unnoticed again.
+		for (const width of [1440, 390]) {
+			await page.setViewportSize({ width, height: 900 });
+			for (const name of ["Result", "Input", "Logs"]) {
+				await drawer.getByRole("tab", { name, exact: true }).click();
+				await expect
+					.poll(async () => {
+						const sheet = await drawer.boundingBox();
+						const heading = await drawer
+							.getByRole("heading", {
+								name: workflowFunction,
+								exact: true,
+							})
+							.boundingBox();
+						const inspector = await drawer
+							.getByRole("complementary", { name: "Execution content" })
+							.boundingBox();
+						return !!sheet && !!heading && !!inspector &&
+							heading.x - sheet.x >= 16 &&
+							inspector.x - sheet.x >= 16 &&
+							sheet.x + sheet.width - inspector.x - inspector.width >= 16;
+					})
+					.toBe(true);
+			}
+			await expectNoHorizontalOverflow(page);
+			await page.screenshot({
+				path: test.info().outputPath(`execution-drawer-${width}.png`),
+			});
+		}
+		await page.setViewportSize({ width: 1440, height: 900 });
+
 		const fullPagePromise = context.waitForEvent("page");
 		await drawer
 			.getByRole("link", {
