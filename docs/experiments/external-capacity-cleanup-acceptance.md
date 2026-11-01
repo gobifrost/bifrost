@@ -156,3 +156,31 @@ live process boundaries, with no additional deployment tests introduced.
 `BIFROST_SKIP_BUILD=1 ./test.sh quality api` passed on the integrated tree:
 Pyright reported zero errors/warnings and Ruff was clean. Broader local suites
 remain unrun; the native merge queue is the complete-suite gate.
+
+## Landed Acceptance And Feed Activation
+
+PR #1172 landed as `13f807f4dfac7b0e68ed6f5de2e0544efd25a578` after all ten
+jobs in [queue run 41343135108](https://github.com/gobifrost/bifrost/actions/runs/41343135108)
+passed, including all three backend E2E shards and browser smoke. GitHub's
+commit-author metadata recognizes `MTG-Thomas` as a co-author on that exact
+landed commit. Original PR #1160 is closed as superseded, retaining its body.
+This source acceptance does not broaden the documented provider qualification.
+
+The activation refresh retains the cumulative inventory and verifies Thomas's
+landed co-author identity for both #1170 and #1172 before recording their
+contribution evidence. The prepared image feed includes the approved external
+capacity highlight with Thomas as its sole visible contributor, its required
+launcher upgrade notice and the verified Workers Settings link. All 36 prior
+announcements and all 313 prior PR records remain intact; the new bundle has
+38 announcements and the refreshed inventory has 317 PRs.
+
+```bash
+python3 scripts/product_updates.py validate --content-dir product-updates --inventory product-updates/inventory.json --dispositions product-updates/dispositions.json --target 13f807f4dfac7b0e68ed6f5de2e0544efd25a578
+python3 -m scripts.prepare_product_updates_image --target 13f807f4dfac7b0e68ed6f5de2e0544efd25a578
+python3 -m unittest scripts.test_product_updates
+```
+
+Validation and image preparation passed; all 44 toolchain tests passed.
+Generated packaging output is excluded from this source change. Backend and
+browser suites were not repeated locally for the metadata-only activation;
+its merge queue remains the complete-suite gate. No formal release is cut.
