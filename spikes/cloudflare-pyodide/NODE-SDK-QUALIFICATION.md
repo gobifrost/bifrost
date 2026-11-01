@@ -2,7 +2,7 @@
 
 Outcome: the unchanged upstream execution path and SDK performed authenticated API effects under official Pyodide 314.0.6 / CPython 3.14.2 in Node on CT128. This is not a deployed Cloudflare acceptance result. Execution admission remains disabled pending isolation acceptance.
 
-API checkout: `f417d03f5c8d5e3a182e68f69e2bf601a3b60125`. Prepared runtime closure: `785b560b9973020e1c13401383e1a73a87a54940`. Exact additional fixture bytes are pinned in `results/node-sdk-resume/success.json`. Native package ABI/provenance is recorded in `NATIVE-PACKAGE-QUALIFICATION.md`; no replacement SDK or native-package emulation was used.
+API checkout: `f417d03f5c8d5e3a182e68f69e2bf601a3b60125`. Prepared runtime closure: `785b560b9973020e1c13401383e1a73a87a54940`. Exact additional fixture bytes are pinned in `results/node-sdk-resume/success.json`. Native package ABI/provenance is recorded in [native package qualification](backend/NATIVE-PACKAGE-QUALIFICATION.md); no replacement SDK or native-package emulation was used.
 
 The actual canonical consumer claimed the execution and issued run credentials. The actual runtime runner loaded hash-pinned workflow and helper workspace sources through the API, read config through the SDK, and upserted a table document. Independent API readback returned **70**. The upstream table SDK first received 404, created its missing table (201), and successfully upserted once (200); these are preserved API observations, not a hidden retry added by this harness.
 

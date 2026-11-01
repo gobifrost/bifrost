@@ -9,8 +9,15 @@ Independent [native package qualification](backend/NATIVE-PACKAGE-QUALIFICATION.
 now runs official Pyodide 314.0.6 in CT128: 32 upstream pydantic-core and 261
 PyYAML native cases pass. This does not replace or qualify Cloudflare's bundle.
 The same guest interpreter also passes four [actual upstream engine cases](backend/GUEST-ENGINE-SEMANTICS.md),
-including async context, partial-success status and exception redaction. SDK
-operations and Cloudflare execution remain separate acceptance gates.
+including async context, partial-success status and exception redaction.
+Actual guest [SDK/canonical-consumer execution](NODE-SDK-QUALIFICATION.md) now
+passes, including [integration reads and encrypted synthetic secret redaction](NODE-INTEGRATION-QUALIFICATION.md).
+These use official Pyodide on Node against the isolated upstream API; they do
+not replace the blocked actual-workerd or deployed Cloudflare qualification.
+Current work uses only the existing bounded CT128 allocation. Laptop Docker
+remains stopped; no new cloud invocation or deployment is authorized.
+Guest [WASM memory observations](NODE-MEMORY-QUALIFICATION.md) are now preserved
+for that actual SDK workload; they do not establish total Cloudflare isolate memory.
 
 **YELLOW for fixed, trusted, short workflows. RED for arbitrary untrusted Python
 under the current termination contract, including fresh isolates.** Real upstream `engine.execute()` and unmodified SDK
