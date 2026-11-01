@@ -385,3 +385,23 @@ monorepo source location. No moving-main test substitution. No shared conftest/G
 or full package-suite acceptance claimed. All guest containers stopped, no OOM.
 No failed vendor GET was retried, no source wheel replaced, and no cloud/R2 or
 heavy laptop tests ran. Node Pyodide is a package test harness, not a new backend.
+
+## Follow-on actual guest engine semantics
+
+Hypothesis: the same official guest interpreter can execute the unchanged
+prepared upstream engine, beyond native-package imports/tests. Command:
+ct128-engine-semantics.py over existing SSH/pct exec 128, network=none,
+1 CPU/1 GiB/128 PIDs/120 s. Initial raw sync functions returned Failed/TypeError
+because upstream awaits callables. A diagnostic-only run retained those results;
+the async/context case and ValueError redaction already worked. Correcting the
+fixture to real async @workflow functions, without modifying upstream, yielded
+four passing cases: JSON sum/context, async parameters/scope, CompletedWithErrors,
+and Failed/ValueError with synthetic credential redacted from full output.
+
+Source 785b560b, engine SHA b9bd1d04a17d9dfc6a9418550ffb361c734d99558bdd7c710f3c53b0fdbc06ab.
+Raw successful and failed observations: results/engine-semantics-resume.
+Offline verify-engine-semantics.mjs confirms the source binding/results and
+explicitly false SDK/cloud/physical-stop qualification flags. Actual upstream
+semantics on guest Pyodide pass; the workerd supply and fresh physical-stop
+requirements remain. Next independent boundary is real SDK transport/API work
+on the isolated guest stack, without a stub or a new authoritative job queue.
