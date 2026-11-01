@@ -288,3 +288,22 @@ fenced consumer; no new terminal store, business queue or code replay.
 Sockets and result are synthetic in this protocol/DB test; no new SDK, Pyodide
 or cloud acceptance follows. Linux templates remain unstarted. Actual upstream
 Launcher and Bridge methods are used, not copied. See backend/RETAINED-RESULTS.md.
+
+## Actual local retained response
+
+Continued from 1aa35845b0c3797f3eea45b0c4d0948863dd6780. The existing test gateway
+retains the actual Python Worker envelope through upstream Launcher.send_terminal
+before dropping the downstream collector response. No production/shared code
+or cloud resources changed.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Actual engine/SDK results can recover through the upstream retained-event path | `node backend/canonical-refresh.mjs --run canonical-refresh-retained-response retained-response concurrent-runtime-manifest.json` | First fixture exit 0; actual TCP response loss, one launch/upsert/log row; new owner consumes Success/value 70; canonical-refresh-retained-response.json | Live authenticated control link and physical-handle inventory/adoption |
+| Owner generation alone explains revocation | Check original scoped access after owner reconnect, then after canonical Success | 200 after reconnect, access/refresh 401 after Success before fixture purge | Interrupted-run revocation/deadline remains unqualified |
+| Lost ACK must not lose the actual retained event or repeat effects | Lose first control ACK, replay, feed later ACK to upstream receiver | Same log IDs, one launch, retained event cleared only by receiver | Worker-to-gateway loss and whole-host recovery remain separate |
+
+Control transport is simulated, but Worker/SDK result and provider TCP drop are
+real local execution. Exact runtime payload pin unchanged and verified. Source/
+evidence verifier, focused Docker Ruff and JS syntax/diff checks pass. Exact
+own supervisor/network/API cleanup is retained in retained-response-local-cleanup.json.
+Broad recovery_acceptance and physical termination remain false; no cloud claim.

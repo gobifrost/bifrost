@@ -423,6 +423,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     self.receipt = task
 
             pool = LocalPool()
+            pool.journal = journal  # Trusted-parent transport, never supplied to the child.
             consumer = WorkflowExecutionConsumer(pool=pool)
             consumer.owner_worker_id = worker.id
             try:

@@ -2,6 +2,7 @@
 import asyncio
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -9,12 +10,12 @@ from unittest.mock import patch
 import httpx
 
 
-async def main():
+async def main(*, recover_retained=False):
     from sqlalchemy import select
     from src.core.database import close_db, get_db_context, init_db
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
     from src.models.enums import ExecutionStatus
-    from src.models.orm import Execution
+    from src.models.orm import Execution, ExecutionLog
     from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 
     spec = importlib.util.spec_from_file_location("canonical_response_loss", Path(__file__).with_name("canonical-local.py"))
@@ -30,6 +31,11 @@ async def main():
     fixture_worker_id = None
     fixture_execution_id = None
     module_path = None
+    launcher = None
+    lease_ref = None
+    if recover_retained:
+        report["provider_retained_response_probe"] = True
+        report["control_transport_simulated"] = True
 
     async def drop_response(reader, writer):
         nonlocal module_path
@@ -66,6 +72,27 @@ async def main():
                 assert document.status_code == 200 and document.json()["data"]["value"] == 70
             report.update(provider_success_before_drop=True, independent_document_value=70,
                           successful_upserts=1, response_bytes_discarded=len(response.content))
+            if recover_retained:
+                assert launcher is not None
+                encoded = json.dumps(evidence)
+                assert not any(context.get(key) and context[key] in encoded
+                               for key in ("engine_token", "engine_refresh_token"))
+                assert evidence["result"]["execution_id"] == request["execution_id"]
+                assert evidence["result"]["metrics"]["code_hash"] == request["manifest"][context["file_path"]]
+                report.update(workspace_sha256=request["manifest"],
+                    observed_code_hash=evidence["result"]["metrics"]["code_hash"],
+                    provider_execution_id=evidence["result"]["execution_id"],
+                    provider_worker_id=evidence["result"]["worker_id"])
+                try:
+                    await launcher.send_terminal(
+                        {"event": "result", "route_id": "route", "result": evidence["result"]},
+                        inventory={"route_id": "route", "kind": "workflow", "subject_id": request["execution_id"]})
+                except ConnectionError:
+                    pass  # Upstream retains the event before the deliberately failed send.
+                else:
+                    raise AssertionError("First control send must fail")
+                assert len(launcher.pending_terminal) == 1
+                report["upstream_retained_before_response_drop"] = True
             observed.set_result(True)
             # The caller receives no HTTP response bytes, despite completed effects.
         except Exception as exc:
@@ -90,11 +117,30 @@ async def main():
             raise
 
     async def capture_process(consumer, message, claimed):
-        nonlocal pool_seen, fixture_worker_id, fixture_execution_id
+        nonlocal pool_seen, fixture_worker_id, fixture_execution_id, launcher, lease_ref
+        if recover_retained:
+            from uuid import uuid4
+            from src.worker.remote.fencing import current_remote_lease_ref
+            from src.worker.remote.identity import LauncherIdentity
+            from src.worker.remote.launcher import Launcher
+
+            lease_ref = current_remote_lease_ref()
+            assert lease_ref is not None
+
+            class DisconnectedControl:
+                async def send(self, _frame):
+                    raise OSError("Fixed control transport loss")
+
+            launcher = Launcher(DisconnectedControl(), identity=LauncherIdentity(
+                lease_ref.lease.launcher_id, uuid4(), None, None, "local-retained-fixture", "static"),
+                secret=os.environ["BIFROST_SECRET_KEY"])
+            launcher.session_generation = lease_ref.lease.session_generation
         await original_process(consumer, message, claimed)
         pool_seen = consumer._pool
         fixture_worker_id = consumer.owner_worker_id
         fixture_execution_id = message["execution_id"]
+        if recover_retained:
+            report.update(canonical_execution_id=fixture_execution_id, canonical_worker_id=str(fixture_worker_id))
         report["routing_returned_before_collection_wait"] = True
         try:
             await pool_seen.receipt
@@ -118,6 +164,97 @@ async def main():
             assert active.status_code == 200
             report["credential_active_pending_recovery_status"] = active.status_code
         report["launches"] = pool_seen.launches
+        if recover_retained:
+            from uuid import UUID, uuid4
+            import hashlib
+            from src.services.execution.memory_monitor import effective_memory_sample
+            from src.worker.remote.host import Bridge
+            from src.worker.remote.launcher import _receive_control_commands
+            from src.worker.remote.ownership import acquire_remote_owner
+            from src.worker.remote.protocol import CredentialRouteChanged
+
+            stale = lease_ref.lease
+            current = await acquire_remote_owner(worker_id=stale.worker_id, owner_id=stale.owner_id,
+                launcher_id=stale.launcher_id, nonce_digest=hashlib.sha256(uuid4().bytes).hexdigest(),
+                hello_sequence=2, credential_protocol=2)
+            assert current is not None
+            lease_ref.lease = current
+            event_id, event = next(iter(launcher.pending_terminal.items()))
+            async with httpx.AsyncClient(timeout=15) as api:
+                active = await api.get("http://api:8000" + module_path,
+                    headers={"Authorization": "Bearer " + pool_seen.token})
+                assert active.status_code == 200
+                report["credential_active_after_owner_reconnect_status"] = active.status_code
+            try:
+                await pool_seen.journal.reconcile_retained_workflow(stale, "route", event, consumer, pool_seen.info)
+            except CredentialRouteChanged:
+                report["stale_retained_owner_rejected"] = True
+            else:
+                raise AssertionError("Stale owner accepted retained result")
+            assert await pool_seen.journal.reconcile_retained_workflow(current, "route", event, consumer, pool_seen.info)
+            async with get_db_context() as db:
+                row = await db.get(Execution, UUID(fixture_execution_id))
+                assert row.status == ExecutionStatus.SUCCESS and row.result["value"] == 70
+                report.update(local_retained_result_consumed=True, canonical_status_after_recovery=row.status.value,
+                              canonical_result_value=row.result["value"])
+                logs_before = list(await db.scalars(select(ExecutionLog.id).where(
+                    ExecutionLog.execution_id == row.id)))
+                assert logs_before
+
+            class AckLink:
+                frame = None
+                first = True
+
+                async def send_text(self, frame):
+                    if self.first:
+                        self.first = False
+                        raise OSError("Fixed first ACK loss")
+                    self.frame = frame
+
+            link = AckLink()
+            parent_current, parent_limit = effective_memory_sample()
+            bridge = Bridge(link, {"current": parent_current, "limit": parent_limit,
+                "hostname": "local-retained-fixture", "requirements": {}}, current)
+            try:
+                await bridge.acknowledge(event_id)
+            except OSError:
+                assert event_id in launcher.pending_terminal
+                report["retained_event_survived_lost_ack"] = True
+            else:
+                raise AssertionError("First ACK unexpectedly delivered")
+            assert await pool_seen.journal.reconcile_retained_workflow(current, "route", event, consumer, pool_seen.info)
+            await bridge.acknowledge(event_id)
+            launcher.session_generation = current.session_generation
+
+            class Receiver:
+                received = False
+
+                async def recv(self):
+                    if not self.received:
+                        self.received = True
+                        return link.frame
+                    launcher.retired.set()  # End only this test control receiver.
+                    await asyncio.Event().wait()
+
+            await _receive_control_commands(launcher, Receiver(), asyncio.Event())
+            assert launcher.pending_terminal == launcher.pending_terminal_inventory == {}
+            assert launcher.template.pid is None and launcher.agent_template.pid is None
+            async with get_db_context() as db:
+                logs_after = list(await db.scalars(select(ExecutionLog.id).where(
+                    ExecutionLog.execution_id == UUID(fixture_execution_id))))
+                assert set(logs_after) == set(logs_before)
+            async with httpx.AsyncClient(timeout=15) as api:
+                revoked = await api.get("http://api:8000" + module_path,
+                    headers={"Authorization": "Bearer " + pool_seen.token})
+                assert revoked.status_code == 401
+                refresh = await original_post(api, "http://api:8000/auth/refresh",
+                    json={"refresh_token": pool_seen.refresh_token})
+                assert refresh.status_code == 401
+                report.update(credential_revoked_by_canonical_success_status=revoked.status_code,
+                              refresh_revoked_by_canonical_success_status=refresh.status_code)
+            assert pool_seen.launches == 1
+            report.update(local_recovery_verified=True, persisted_log_count=len(logs_after),
+                          upstream_ack_consumed=True, fixture_only_control_receiver_stopped=True)
 
     try:
         with patch.object(httpx.AsyncClient, "post", intercepted_post), \
@@ -161,9 +298,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    assert sys.argv[1:] == ["--response-loss"]
+    assert sys.argv[1:] in (["--response-loss"], ["--retained-response"])
     try:
-        asyncio.run(main())
+        asyncio.run(main(recover_retained=sys.argv[1] == "--retained-response"))
     except Exception as exc:
         print(json.dumps({"runtime": "local-workerd-canonical-response-loss", "error_type": type(exc).__name__}))
         raise SystemExit(1)
