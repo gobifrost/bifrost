@@ -33,6 +33,11 @@ _MAINTENANCE = "src.jobs.platform.system_maintenance"
 
 SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
     ScheduledTaskDefinition(
+        "app_sdk_upgrades", "App SDK Upgrades", "At startup and every minute", "durable_job",
+        callback="shared.application_sdk_upgrades:enqueue_automatic_app_sdk_upgrades",
+        trigger_args={"minutes": 1}, run_at_startup=True,
+    ),
+    ScheduledTaskDefinition(
         "schedule_processor", "Process Schedule Sources", "Every minute",
         callback="src.jobs.schedulers.cron_scheduler:process_schedule_sources",
         trigger="cron", trigger_args={"minute": "*/1"},
@@ -136,6 +141,11 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
         "workflow_operation_usage_flush", "Flush Workflow Operation Usage Counters", "Every 15 minutes",
         callback="src.jobs.schedulers.workflow_operation_usage_flush:flush_workflow_operation_usage",
         trigger_args={"minutes": 15}, run_at_startup=True,
+    ),
+    ScheduledTaskDefinition(
+        "usage_reporting", "Send Aggregate Usage Report", "At startup and hourly",
+        callback="src.jobs.schedulers.usage_reporting:report_usage_schedule",
+        trigger_args={"hours": 1}, run_at_startup=True,
     ),
     ScheduledTaskDefinition(
         "execution_worker_cleanup", "Clean Up Executors", "Hourly",

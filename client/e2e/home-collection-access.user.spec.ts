@@ -1,31 +1,19 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type {
+	APIRequestContext,
 	APIResponse,
 	Browser,
 	BrowserContext,
 	Page,
-} from "@playwright/test";
-import { expect, test } from "@playwright/test";
+} from "./fixtures/api-fixture";
+import { expect, test } from "./fixtures/api-fixture";
+import {
+	createFreshApiContext,
+	createFreshBrowserContext,
+	knownUserCredentials,
+	type HumanAuthUser,
+} from "./fixtures/human-auth";
 
-type MutatingMethod = "POST" | "PUT" | "PATCH" | "DELETE";
-
-type Api = {
-	get(url: string, options?: RequestOptions): Promise<APIResponse>;
-	post(url: string, options?: RequestOptions): Promise<APIResponse>;
-	put(url: string, options?: RequestOptions): Promise<APIResponse>;
-	delete(url: string, options?: RequestOptions): Promise<APIResponse>;
-};
-
-type RequestOptions = {
-	data?: unknown;
-	params?: Record<string, string | number | boolean>;
-};
-
-type Credentials = {
-	org1_user: { organizationId: string };
-	org2_user: { organizationId: string };
-};
+type Api = APIRequestContext;
 
 type HomeCollection = {
 	id: string;
@@ -47,46 +35,29 @@ const ORG1_PRIVATE_EDITED = `${ORG1_PRIVATE_NAME} edited`;
 const ORG2_PRIVATE_NAME = `Home access private org2 ${UNIQUE}`;
 const SHARED_NAME = `Home access shared global ${UNIQUE}`;
 
-const STORAGE = {
-	admin: "e2e/.auth/platform_admin.json",
-	org1: "e2e/.auth/org1_user.json",
-	org2: "e2e/.auth/org2_user.json",
-} as const;
-
-async function buildApi(context: BrowserContext): Promise<Api> {
-	const cookies = await context.cookies();
-	const csrf = cookies.find((cookie) => cookie.name === "csrf_token")?.value;
-	const send = async (
-		method: MutatingMethod | "GET",
-		url: string,
-		options: RequestOptions = {},
-	) =>
-		context.request.fetch(url, {
-			method,
-			data: options.data,
-			params: options.params,
-			headers:
-				method === "GET" || !csrf
-					? undefined
-					: { "X-CSRF-Token": csrf },
-		});
-
-	return {
-		get: (url, options) => send("GET", url, options),
-		post: (url, options) => send("POST", url, options),
-		put: (url, options) => send("PUT", url, options),
-		delete: (url, options) => send("DELETE", url, options),
-	};
-}
-
 async function newActor(
 	browser: Browser,
-	storageState: string,
-): Promise<{ context: BrowserContext; page: Page; api: Api }> {
-	const context = await browser.newContext({ storageState });
-	const page = await context.newPage();
-	const api = await buildApi(context);
-	return { context, page, api };
+	user: HumanAuthUser,
+): Promise<{
+	context: BrowserContext;
+	apiContext: BrowserContext;
+	page: Page;
+	api: Api;
+}> {
+	const context = await createFreshBrowserContext(browser, user);
+	let apiContext: BrowserContext | undefined;
+	try {
+		const freshApi = await createFreshApiContext(
+			browser,
+			user,
+		);
+		apiContext = freshApi.context;
+		const page = await context.newPage();
+		return { context, apiContext, page, api: freshApi.api };
+	} catch (error) {
+		await Promise.all([context.close(), apiContext?.close()]);
+		throw error;
+	}
 }
 
 async function expectOk(response: APIResponse, label: string): Promise<void> {
@@ -196,20 +167,17 @@ function escapeRegExp(value: string): string {
 test("HOME-COLLECTION-ACCESS-01 proves private ownership, shared filtering, and edit authority", async ({
 	browser,
 }) => {
-	const org1 = await newActor(browser, STORAGE.org1);
-	const org2 = await newActor(browser, STORAGE.org2);
-	const admin = await newActor(browser, STORAGE.admin);
+	const org1 = await newActor(browser, "org1_user");
+	const org2 = await newActor(browser, "org2_user");
+	const admin = await newActor(browser, "platform_admin");
 	const ownedCollectionIds: Array<{ api: Api; id: string; label: string }> =
 		[];
 	let org1FormId: string | undefined;
 	let org2FormId: string | undefined;
 
 	try {
-		const credentials = JSON.parse(
-			readFileSync(resolve("e2e/.auth/credentials.json"), "utf8"),
-		) as Credentials;
-		const org1Id = credentials.org1_user.organizationId;
-		const org2Id = credentials.org2_user.organizationId;
+		const org1Id = knownUserCredentials("org1_user").organizationId;
+		const org2Id = knownUserCredentials("org2_user").organizationId;
 		expect(org1Id, "org1 user has organization id").toBeTruthy();
 		expect(org2Id, "org2 user has organization id").toBeTruthy();
 
@@ -360,8 +328,11 @@ test("HOME-COLLECTION-ACCESS-01 proves private ownership, shared filtering, and 
 		}
 		await Promise.all([
 			org1.context.close(),
+			org1.apiContext.close(),
 			org2.context.close(),
+			org2.apiContext.close(),
 			admin.context.close(),
+			admin.apiContext.close(),
 		]);
 	}
 });

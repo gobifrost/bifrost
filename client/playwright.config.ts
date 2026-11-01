@@ -5,8 +5,8 @@ import { defineConfig, devices } from "@playwright/test";
  *
  * Multi-project setup with different auth states:
  * - setup: Creates users and saves auth states
- * - platform-admin: Tests requiring admin access
- * - org-user: Tests for regular org users
+ * - platform-admin: Tests requiring a fresh platform-admin session
+ * - org-user: Tests requiring a fresh regular-user session
  * - unauthenticated: Tests for login flow and unauthenticated access
  * - chromium: Default project for general tests (uses admin auth)
  *
@@ -65,28 +65,28 @@ export default defineConfig({
 
 		// =============================================================
 		// Platform admin tests (.admin.spec.ts files)
-		// Uses platform_admin auth state for full system access
+		// The shared fixture signs in a new platform-admin session per test.
 		// =============================================================
 		{
 			name: "platform-admin",
 			use: {
 				...devices["Desktop Chrome"],
-				storageState: "e2e/.auth/platform_admin.json",
 			},
+			metadata: { authUser: "platform_admin" },
 			dependencies: ["setup"],
 			testMatch: /.*\.admin\.spec\.ts$/,
 		},
 
 		// =============================================================
 		// Org user tests (.user.spec.ts files)
-		// Uses org1_user auth state for permission testing
+		// The shared fixture signs in a new org-user session per test.
 		// =============================================================
 		{
 			name: "org-user",
 			use: {
 				...devices["Desktop Chrome"],
-				storageState: "e2e/.auth/org1_user.json",
 			},
+			metadata: { authUser: "org1_user" },
 			dependencies: ["setup"],
 			testMatch: /.*\.user\.spec\.ts$/,
 		},
@@ -107,14 +107,14 @@ export default defineConfig({
 
 		// =============================================================
 		// Default project for general tests (not matching other patterns)
-		// Uses platform_admin auth state
+		// The shared fixture signs in a new platform-admin session per test.
 		// =============================================================
 		{
 			name: "chromium",
 			use: {
 				...devices["Desktop Chrome"],
-				storageState: "e2e/.auth/platform_admin.json",
 			},
+			metadata: { authUser: "platform_admin" },
 			dependencies: ["setup"],
 			// Match all .spec.ts files EXCEPT .admin, .user, .unauth, .docs patterns
 			testMatch:
@@ -126,7 +126,7 @@ export default defineConfig({
 		// Drives the screenshots.yaml manifest in gobifrost
 		// to capture full-page screenshots, with sharp-based crop/callout
 		// post-processing. Per-entry auth is handled inside the spec via
-		// ensureAuthenticated() so a single project can capture under
+		// createFreshBrowserContext() so a single project can capture under
 		// platform_admin, org user, or unauthenticated states.
 		// =============================================================
 		{

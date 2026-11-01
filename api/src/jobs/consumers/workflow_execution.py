@@ -387,8 +387,6 @@ class WorkflowExecutionConsumer:
         durable_ms = (time.perf_counter() - completion_started) * 1000
 
         # Wake sync callers as soon as their result is durably committed.
-        # Everything below is terminal-event fan-out or
-        # cleanup and must not add latency to the request/response path.
         if is_sync:
             await self._redis_client.push_result(
                 execution_id=execution_id,
@@ -399,6 +397,18 @@ class WorkflowExecutionConsumer:
                 duration_ms=duration_ms,
             )
         result_ready_ms = (time.perf_counter() - completion_started) * 1000
+
+        # Async callers await this terminal status notification. It must be
+        # published after the durable commit (and sync handoff) but before any
+        # deferred log, event, aggregate, history, or cache follow-up work.
+        # The result itself stays in PostgreSQL; clients fetch it from the
+        # result endpoint instead of receiving a redundant payload here.
+        await publish_execution_update(
+            execution_id,
+            status.value,
+            {"duration_ms": duration_ms},
+        )
+        notification_ms = (time.perf_counter() - completion_started) * 1000
 
         if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
@@ -447,16 +457,6 @@ class WorkflowExecutionConsumer:
         )
         metrics_done_ms = (time.perf_counter() - completion_started) * 1000
 
-        # Pub/sub — no DB connection held.  The result is already persisted and
-        # execution clients fetch it from the result endpoint, so publishing it
-        # again needlessly serializes and transports large payloads through
-        # Redis and WebSocket connections.
-        await publish_execution_update(
-            execution_id,
-            status.value,
-            {"duration_ms": duration_ms},
-        )
-
         await publish_history_update(
             execution_id=execution_id,
             status=status.value,
@@ -478,13 +478,14 @@ class WorkflowExecutionConsumer:
         logger.debug(
             "Completion timing %s: metadata=%.1fms execution_update=%.1fms "
             "logs=%.1fms durable=%.1fms result_ready=%.1fms "
-            "metrics=%.1fms total=%.1fms",
+            "notification=%.1fms metrics=%.1fms total=%.1fms",
             execution_id[:8],
             metadata_read_ms,
             execution_update_ms,
             logs_flushed_ms,
             durable_ms,
             result_ready_ms,
+            notification_ms,
             metrics_done_ms,
             (time.perf_counter() - completion_started) * 1000,
         )
@@ -594,8 +595,7 @@ class WorkflowExecutionConsumer:
             await session.commit()
 
         # A sync failure is just as latency-sensitive as a success. Wake the
-        # caller once the authoritative failure is durable; aggregates and
-        # terminal fan-out are derived follow-up work.
+        # caller once the authoritative failure is durable.
         if is_sync:
             await self._redis_client.push_result(
                 execution_id=execution_id,
@@ -605,6 +605,18 @@ class WorkflowExecutionConsumer:
                 duration_ms=duration_ms,
             )
 
+        # Async callers await this terminal status notification. Publish it
+        # after the durable commit (and sync handoff) before every deferred
+        # log, event, aggregate, history, or cache follow-up.
+        await publish_execution_update(
+            execution_id,
+            status.value,
+            {"error": error, "errorType": error_type},
+        )
+
+        # Derived work begins only after the terminal status is available to
+        # both sync and async callers.
+        if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
 
         if log_receipt is not None:
@@ -624,13 +636,6 @@ class WorkflowExecutionConsumer:
             duration_ms=duration_ms,
             peak_memory_bytes=failure_metrics.get("peak_memory_bytes"),
             cpu_total_seconds=failure_metrics.get("cpu_total_seconds"),
-        )
-
-        # Pub/sub — no DB connection held
-        await publish_execution_update(
-            execution_id,
-            status.value,
-            {"error": error, "errorType": error_type},
         )
 
         completed_at = datetime.now(timezone.utc)
@@ -874,6 +879,13 @@ class WorkflowExecutionConsumer:
                     return
             metadata_ready_ms = (time.perf_counter() - dispatch_started) * 1000
 
+            # The route is chosen before the credentials are minted: its
+            # credential protocol decides their format, which the execution
+            # row records.
+            from src.services.authorization.tokens import credential_version_for
+
+            credential_route = self._pool.credential_route()
+
             # Create PostgreSQL record with RUNNING status
             await create_execution(
                 execution_id=execution_id,
@@ -890,6 +902,7 @@ class WorkflowExecutionConsumer:
                 check_existing=True,
                 lineage=lineage,
                 impersonation_provenance=impersonation_provenance,
+                credential_version=credential_version_for(credential_route.protocol),
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
             if not is_sync:
@@ -926,14 +939,21 @@ class WorkflowExecutionConsumer:
                         "is_provider": org.is_provider,
                     }
 
-            # Mint engine token parent-side (consumer holds SECRET_KEY legitimately).
-            # The child receives it through context_data and installs it only in
-            # its one-shot process environment — no SECRET_KEY or persistent
+            # Mint the run's credentials parent-side (the consumer holds
+            # SECRET_KEY legitimately) for the chosen route. The child
+            # receives them through context_data and installs them only in its
+            # one-shot process environment: no SECRET_KEY or persistent
             # credential write is needed in the child.
-            from src.core.security import mint_engine_token
-            engine_token, _ = mint_engine_token(
-                execution_id=execution_id,
-                timeout_seconds=timeout_seconds,
+            from src.services.authorization.tokens import (
+                RuntimeSubject,
+                issue_run_credentials,
+                legacy_engine_token_lifetime,
+            )
+
+            credentials = await issue_run_credentials(
+                RuntimeSubject("workflow_execution", UUID(execution_id)),
+                protocol=credential_route.protocol,
+                legacy_lifetime_seconds=legacy_engine_token_lifetime(timeout_seconds),
             )
 
             # Build context for worker process
@@ -968,16 +988,19 @@ class WorkflowExecutionConsumer:
                 "solution_id": solution_id,  # Install id if solution-managed (else None)
                 "solution_global_repo_access": solution_global_repo_access,
                 "artifact_workspace_id": artifact_workspace_id,
-                # Pre-minted engine token: child uses process-scoped SDK
-                # credentials, with no SECRET_KEY in its environment.
-                "engine_token": engine_token,
+                # Pre-minted engine credentials: the child uses process-scoped
+                # SDK credentials, with no SECRET_KEY in its environment.
+                "engine_token": credentials.access_token,
             }
+            if credentials.refresh_token is not None:
+                context_data["engine_refresh_token"] = credentials.refresh_token
 
             # Route to process pool
             # Results are handled asynchronously via _handle_result callback
             await self._pool.route_execution(
                 execution_id=execution_id,
                 context=context_data,
+                credential_route=credential_route,
                 active_execution=ActiveExecution(
                     execution_id=execution_id,
                     workflow_id=str(workflow_id) if workflow_id else None,

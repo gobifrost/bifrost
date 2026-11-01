@@ -271,6 +271,7 @@ class PoolWorker:
         if self.static:
             self.incarnation_id = await register_static_worker(
                 hostname=socket.gethostname(),
+                version=get_version(),
                 supported_handlers=[handler for handler, _version in self._handlers],
             )
         else:

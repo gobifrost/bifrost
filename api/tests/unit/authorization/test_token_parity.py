@@ -4,6 +4,9 @@
 case in ``test_runtime.py``, committed so the minter can read it. The role
 cache is cleared first, because the oracle reads the actor's roles through
 it; a poisoned cache must never reach the claims.
+
+The same oracle holds on the validator path: a signed token sent through the
+real authentication dependency yields the principal the database resolves.
 """
 
 from __future__ import annotations
@@ -13,11 +16,14 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import pytest
+from fastapi import Depends, FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from shared.role_cache import _CACHE_SCHEMA_VERSION, _key, invalidate_user
+from src.core.auth import get_current_user
 from src.core.cache import get_shared_redis
 from src.core.principal import UserPrincipal
 from src.services.authorization.runtime_auth import load_runtime_principal
@@ -164,6 +170,31 @@ async def test_the_principal_from_claims_equals_the_database_resolution(
             await invalidate_user(user_id)
 
         assert _normalized(principal_from_claims(claims)) == _normalized(await _oracle(async_engine, subject))
+
+
+@pytest.mark.parametrize("build", list(_SCENARIOS.values()), ids=list(_SCENARIOS))
+async def test_the_validated_principal_equals_the_database_resolution(
+    async_engine: AsyncEngine, build: Callable[[World], Awaitable[RuntimeSubject]]
+) -> None:
+    seen: list[UserPrincipal] = []
+    app = FastAPI()
+
+    async def probe(user: UserPrincipal = Depends(get_current_user)) -> dict[str, str]:
+        seen.append(user)
+        return {}
+
+    app.add_api_route("/probe", probe, methods=["POST"])
+    async with committed_world(async_engine) as world:
+        subject = await build(world)
+        await world.session.commit()
+        issued = await issue_access_token(subject)
+        for user_id in {issued.claims.usr.id, *(() if issued.claims.act is None else (issued.claims.act.id,))}:
+            await invalidate_user(user_id)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/probe", headers={"Authorization": f"Bearer {issued.token}"})
+
+        assert response.status_code == 200
+        assert _normalized(seen[0]) == _normalized(await _oracle(async_engine, subject))
 
 
 async def test_a_poisoned_role_cache_never_reaches_the_claims(async_engine: AsyncEngine) -> None:

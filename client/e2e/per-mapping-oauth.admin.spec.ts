@@ -65,7 +65,7 @@ test.describe.serial("Per-mapping OAuth", () => {
 		}
 	});
 
-	async function openMappings(page: import("@playwright/test").Page) {
+	async function openMappings(page: import("./fixtures/api-fixture").Page) {
 		await page.goto(`/integrations/${integrationId}`);
 		await page.getByRole("tab", { name: "Mappings" }).click();
 		await expect(

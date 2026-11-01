@@ -91,11 +91,11 @@ async def test_the_epoch_row_cannot_be_deleted_or_truncated(
     assert await _committed_epoch(async_engine) == before
 
 
-async def test_a_fresh_install_records_protocol_one(async_engine: AsyncEngine) -> None:
+async def test_a_fresh_install_records_both_protocols(async_engine: AsyncEngine) -> None:
     # The test database is migrated from an empty schema, which the
-    # migration recognises as a fresh install.
+    # migrations recognise as a fresh install.
     async with async_engine.connect() as connection:
         protocols = (
             await connection.execute(text("SELECT protocol FROM authz_protocol_state"))
         ).scalars().all()
-    assert 1 in protocols
+    assert {1, 2} <= set(protocols)

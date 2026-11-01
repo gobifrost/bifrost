@@ -31,6 +31,7 @@ from src.models.orm.scheduler_diagnostics import (
 )
 from src.models.orm.form_embed_secrets import FormEmbedSecret
 from src.models.orm.form_publications import FormPublication
+from src.models.orm.human_sessions import HumanAuthSession
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.audit import AuditLog
@@ -121,6 +122,7 @@ __all__ = [
     "UserRole",
     "UserRoleBoundary",
     "UserInvite",
+    "HumanAuthSession",
     "ProductUpdateReceipt",
     # Agent Runs
     "AgentRun",

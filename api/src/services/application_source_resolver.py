@@ -28,7 +28,7 @@ from src.services.application_source_archive import (
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
 from src.services.solutions.deploy import solution_entity_id
 from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
-from src.services.solutions.zip_install import preview_zip_path
+from src.services.solutions.zip_install import extract_solution_app_sources_from_zip_path
 
 SourceKind = Literal["independent", "solution"]
 
@@ -121,6 +121,13 @@ async def _resolve_solution_source(application: Application) -> ResolvedApplicat
                 "Retained Solution source artifact is missing.",
             )
 
+        def maps_to_application(manifest_app: dict) -> bool:
+            manifest_id = _parse_manifest_id(manifest_app)
+            return manifest_id is not None and (
+                manifest_id == application.id
+                or solution_entity_id(solution_id, manifest_id) == application.id
+            )
+
         try:
             await asyncio.to_thread(
                 validate_solution_source_archive,
@@ -128,7 +135,11 @@ async def _resolve_solution_source(application: Application) -> ResolvedApplicat
                 max_members=SOLUTION_SOURCE_MAX_MEMBERS,
                 max_expanded_bytes=SOLUTION_SOURCE_MAX_EXPANDED_BYTES,
             )
-            preview = await asyncio.to_thread(preview_zip_path, source_zip)
+            matching_entries = await asyncio.to_thread(
+                extract_solution_app_sources_from_zip_path,
+                source_zip,
+                matches=maps_to_application,
+            )
         except InvalidApplicationSource as exc:
             raise ApplicationSourceUnavailable(_resolver_code(exc.code), exc.message) from exc
         except (ValueError, zipfile.BadZipFile, click.ClickException) as exc:
@@ -136,21 +147,6 @@ async def _resolve_solution_source(application: Application) -> ResolvedApplicat
                 "invalid_source",
                 f"Retained Solution source artifact is invalid: {exc}",
             ) from exc
-
-    matching_entries: list[dict] = []
-    for manifest_app in preview.apps:
-        manifest_id = _parse_manifest_id(manifest_app)
-        if manifest_id is None:
-            continue
-        # Captured Apps retain their manifest identity within the same Solution;
-        # installed Apps use the Solution-scoped identity derived at install time.
-        if (
-            manifest_id != application.id
-            and solution_entity_id(solution_id, manifest_id) != application.id
-        ):
-            continue
-
-        matching_entries.append(manifest_app)
 
     if not matching_entries:
         raise ApplicationSourceUnavailable(

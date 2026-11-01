@@ -5,8 +5,10 @@ starts on an empty schema is a fresh install. These tests prove the PR1a
 migration (``20261030_authz_versions``) on both paths: an empty database
 upgraded to head, and an existing database upgraded from the revision before
 it. They also rehearse its bounded lock waits behind a long transaction, and
-the cost of a large cascade through the epoch triggers. PR1b and PR1c add
-their precondition rehearsals here.
+the cost of a large cascade through the epoch triggers. The PR1b migration
+(``20261031_authz_claims_gate``) refuses an existing database until an
+API of the PR1a release has recorded its start. PR1c adds its precondition
+rehearsal here.
 """
 
 from __future__ import annotations
@@ -24,11 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from src.services.authorization.authz import AUTHZ_FACTS
 from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
+    TOKEN_PR1A_REVISION,
     _assert_safe_database_name,
     _create_database,
     _current_revision,
     _direct_database_url,
     _drop_database,
+    _record_token_pr1a_start,
     _run_in_database,
     _upgrade,
 )
@@ -36,6 +40,8 @@ from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
 pytestmark = pytest.mark.e2e
 
 PRE_PR1A_REVISION = "20261025_remote_worker_ownership"
+PR1A_REVISION = TOKEN_PR1A_REVISION
+PR1B_PRECONDITION = "Upgrade to the release that added the authority version"
 
 
 def _expected_trigger_count() -> int:
@@ -85,7 +91,7 @@ def _rehearse(*revisions: str) -> dict[str, Any]:
     try:
         asyncio.run(_create_database(database_name))
         for revision in revisions:
-            _upgrade(database_url, revision)
+            _upgrade(database_url, revision, roll_out_token_releases=False)
         return asyncio.run(_authz_state(database_url))
     finally:
         asyncio.run(_drop_database(database_name))
@@ -95,15 +101,15 @@ def test_an_empty_database_upgrades_to_head_as_a_fresh_install() -> None:
     state = _rehearse("head")
 
     assert state["epoch_kinds"] == ["global"]
-    # A fresh install records protocol 1: no older pod, token or run exists.
-    assert state["protocols"] == [1]
+    # A fresh install records both protocols: no older pod, token or run exists.
+    assert state["protocols"] == [1, 2]
     assert state["triggers"] == _expected_trigger_count()
     assert len(state["columns"]) == 3
     assert state["bumps"] is True
 
 
 def test_an_existing_database_upgrades_without_claiming_a_protocol_start() -> None:
-    state = _rehearse(PRE_PR1A_REVISION, "head")
+    state = _rehearse(PRE_PR1A_REVISION, PR1A_REVISION)
 
     assert state["epoch_kinds"] == ["global"]
     # Only a starting API records its protocol on an upgraded database.
@@ -111,6 +117,50 @@ def test_an_existing_database_upgrades_without_claiming_a_protocol_start() -> No
     assert state["triggers"] == _expected_trigger_count()
     assert len(state["columns"]) == 3
     assert state["bumps"] is True
+
+
+# --- PR1b precondition ------------------------------------------------------------
+
+
+def test_a_skip_upgrade_across_both_token_releases_is_refused_in_one_transaction() -> None:
+    database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
+    _assert_safe_database_name(database_name)
+    database_url = _direct_database_url(database_name)
+    try:
+        asyncio.run(_create_database(database_name))
+        _upgrade(database_url, PRE_PR1A_REVISION, roll_out_token_releases=False)
+
+        with pytest.raises(Exception, match=PR1B_PRECONDITION):
+            _upgrade(database_url, "head", roll_out_token_releases=False)
+
+        # The whole run rolled back, PR1a's migration included.
+        assert _current_revision(database_url) == PRE_PR1A_REVISION
+    finally:
+        asyncio.run(_drop_database(database_name))
+
+
+def test_the_claims_release_waits_for_a_started_pr1a_api() -> None:
+    database_name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
+    _assert_safe_database_name(database_name)
+    database_url = _direct_database_url(database_name)
+    try:
+        asyncio.run(_create_database(database_name))
+        _upgrade(database_url, PRE_PR1A_REVISION, roll_out_token_releases=False)
+        _upgrade(database_url, PR1A_REVISION, roll_out_token_releases=False)
+
+        # PR1a migrated, but no API of that release has started yet.
+        with pytest.raises(Exception, match=PR1B_PRECONDITION):
+            _upgrade(database_url, "head", roll_out_token_releases=False)
+        assert _current_revision(database_url) == PR1A_REVISION
+
+        asyncio.run(_run_in_database(database_url, _record_token_pr1a_start))
+        _upgrade(database_url, "head", roll_out_token_releases=False)
+
+        assert _current_revision(database_url) not in (PRE_PR1A_REVISION, PR1A_REVISION)
+        # Protocol 2 is recorded when the first new API starts, not here.
+        assert asyncio.run(_authz_state(database_url))["protocols"] == [1]
+    finally:
+        asyncio.run(_drop_database(database_name))
 
 
 # --- Bounded lock waits ---------------------------------------------------------
@@ -193,7 +243,7 @@ def test_a_long_transaction_makes_the_migration_fail_fast_and_a_rerun_succeeds(s
 
         started = time.monotonic()
         with pytest.raises(Exception, match="timeout"):
-            _upgrade(database_url, "head")
+            _upgrade(database_url, PR1A_REVISION)
         elapsed = time.monotonic() - started
         stop_probe.set()
         prober.join(30)
@@ -206,8 +256,8 @@ def test_a_long_transaction_makes_the_migration_fail_fast_and_a_rerun_succeeds(s
 
         release.set()
         holder.join(30)
-        _upgrade(database_url, "head")
-        assert _current_revision(database_url) != PRE_PR1A_REVISION
+        _upgrade(database_url, PR1A_REVISION)
+        assert _current_revision(database_url) == PR1A_REVISION
         assert asyncio.run(_authz_state(database_url))["epoch_kinds"] == ["global"]
     finally:
         release.set()

@@ -1,16 +1,24 @@
 """Unit tests for AgentRunConsumer error handling paths."""
 
 import asyncio
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+import asyncpg
 import pytest
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.util import EMPTY_DICT
 
+from src.core.database_retry import RetryBudget
 from src.core.principal import UserPrincipal
 from src.jobs.consumers.agent_run import (
     ACTING_USER_UNAVAILABLE_ERROR,
@@ -19,13 +27,19 @@ from src.jobs.consumers.agent_run import (
 )
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
-from src.models.orm.agents import Conversation
-from src.models.orm.agent_runs import AgentRun
+from src.models.orm.agents import Conversation, Message
+from src.models.orm.agent_runs import AgentRun, AgentRunStep
+from src.models.orm.ai_usage import AIUsage
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
+from src.models.orm.work_dispatches import WorkDispatch
+from src.routers import agent_runs as agent_runs_router
+from src.services import chat_runs
+from src.services.agent_executor import AgentExecutor
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
-from src.services.execution.autonomous_agent_executor import ActingUser
+from src.services.execution.agent_run_service import request_agent_run_cancel
+from src.services.execution.autonomous_agent_executor import ActingUser, AutonomousAgentExecutor
 
 
 class FakeRedisCtx:
@@ -71,6 +85,9 @@ class FakeLateExecutor:
             "status": "completed",
             "llm_model": "test-model",
         }
+
+    async def is_flushed(self, session):
+        return False
 
     async def flush_to_db(self, db):
         return None
@@ -165,11 +182,11 @@ async def test_agent_not_found_returns_early(consumer):
     mock_session.get.return_value = queued_run
     mock_session.execute.return_value = mock_result
 
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+    consumer._session_factory = MagicMock(return_value=mock_session)
 
     with (
         _dispatched({"org_id": str(uuid4()), "input": "hello"}),
@@ -199,10 +216,10 @@ async def test_a_run_cancelled_while_queued_is_skipped(consumer):
     cancelled_run = MagicMock(status="cancelled")
     mock_session = AsyncMock()
     mock_session.get.return_value = cancelled_run
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
 
     with _dispatched(None):
         await consumer.process_message(
@@ -228,10 +245,10 @@ async def test_unavailable_actor_fails_before_agent_execution(consumer, acting_u
     queued_run = MagicMock(status="queued", acting_user_id=acting_user_id)
     mock_session = AsyncMock()
     mock_session.get.return_value = queued_run
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
 
     with (
         _dispatched({"input": {}}),
@@ -382,10 +399,10 @@ async def test_chat_run_publishes_stream_chunks_and_terminal_completion(
         return None
 
     mock_session.get = AsyncMock(side_effect=_get)
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
 
     redis_mock = AsyncMock()
     redis_mock.get.return_value = None
@@ -448,6 +465,7 @@ async def test_chat_run_publishes_stream_chunks_and_terminal_completion(
             caller=_chat_caller(user_id),
             sync=False,
             start_time=time.time(),
+            terminal_budget=RetryBudget(),
             agent_execution_mode="automatic",
         )
 
@@ -535,10 +553,10 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
         return None
 
     mock_session.get = AsyncMock(side_effect=_get)
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
 
     redis_mock = AsyncMock()
     redis_mock.get.return_value = None
@@ -577,6 +595,9 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
         patch("src.jobs.consumers.agent_run.DEFAULT_RUN_TIMEOUT", 0.001),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch(
+            "src.jobs.consumers.agent_run.add_conversation_message", AsyncMock()
+        ) as add_message,
     ):
         await consumer._process_chat_run(
             run_id=run_id,
@@ -598,6 +619,7 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
             caller=_chat_caller(user_id),
             sync=False,
             start_time=time.time(),
+            terminal_budget=RetryBudget(),
         )
 
     assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == [
@@ -610,11 +632,13 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
         "running",
         expected_status,
     ]
-    fake_executor._save_message.assert_awaited_once()
-    save_kwargs = fake_executor._save_message.await_args.kwargs
-    assert save_kwargs["message_id"] == assistant_message_id
-    assert save_kwargs["role"] == MessageRole.ASSISTANT
-    assert save_kwargs["content"] == "Partial "
+    add_message.assert_awaited_once()
+    db, partial = add_message.await_args.args
+    assert db is mock_session
+    assert partial.id == assistant_message_id
+    assert partial.role == MessageRole.ASSISTANT
+    assert partial.content == "Partial "
+    mock_session.commit.assert_awaited_once()
     assert run_obj.status == expected_status
     assert run_obj.output == {"text": "Partial ", "partial": True}
     assert run_obj.error == expected_error
@@ -641,10 +665,10 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
     mock_session.get.return_value = queued_run
     mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
     mock_session.commit = AsyncMock()
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
 
     redis_mock = AsyncMock()
     context = {
@@ -738,10 +762,10 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     mock_session.get.return_value = queued_run
     mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
     mock_session.commit = AsyncMock()
-    mock_session_ctx = AsyncMock()
-    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
-    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
 
     redis_mock = AsyncMock()
     context = {
@@ -803,6 +827,347 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     assert publish_run.await_args.args[0].status == "failed"
 
 
+@pytest.mark.asyncio
+async def test_missing_dispatch_terminalizes_a_queued_chat_run_before_notifying(consumer):
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
+
+    async def after_terminal_commit(*args, **kwargs):
+        assert mock_session.commit.await_count == 1
+
+    publish_chat = AsyncMock(side_effect=after_terminal_commit)
+    publish_run = AsyncMock(side_effect=after_terminal_commit)
+    sync_result = AsyncMock(side_effect=after_terminal_commit)
+
+    with (
+        _dispatched(None),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", sync_result),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+                "sync": True,
+            }
+        )
+
+    assert queued_run.status == "failed"
+    assert queued_run.error == f"Queued agent run {run_id} has no dispatch"
+    assert queued_run.completed_at is not None
+    mock_session.commit.assert_awaited_once()
+    assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == ["error"]
+    assert [call.kwargs["status"] for call in publish_chat.await_args_list] == ["failed"]
+    assert publish_run.await_args.args[0].status == "failed"
+    assert sync_result.await_args.args[1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_boundary", ["load_run", "take_dispatch"])
+async def test_preclaim_failure_terminalizes_the_recovered_queued_chat_run(
+    consumer, failure_boundary
+):
+    run_id = str(uuid4())
+    queued_run = MagicMock(status="queued", conversation_id=uuid4())
+    initial_session = AsyncMock()
+    recovery_session = AsyncMock()
+    for session in (initial_session, recovery_session):
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+    recovery_session.get.return_value = queued_run
+    if failure_boundary == "load_run":
+        initial_session.get.side_effect = ConnectionError("agent run database unavailable")
+    else:
+        initial_session.get.return_value = queued_run
+    consumer._session_factory = MagicMock(side_effect=[initial_session, recovery_session])
+
+    async def after_terminal_commit(*args, **kwargs):
+        assert recovery_session.commit.await_count == 1
+
+    publish_chat = AsyncMock(side_effect=after_terminal_commit)
+    publish_run = AsyncMock(side_effect=after_terminal_commit)
+    sync_result = AsyncMock(side_effect=after_terminal_commit)
+    dispatch = AsyncMock(return_value={"trigger_type": "chat"})
+    if failure_boundary == "take_dispatch":
+        dispatch.side_effect = ConnectionError("dispatch database unavailable")
+
+    with (
+        patch(
+            "src.services.work_dispatch.take_dispatch_payload",
+            dispatch,
+        ),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", sync_result),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+                "sync": True,
+            }
+        )
+
+    assert queued_run.status == "failed"
+    assert queued_run.completed_at is not None
+    recovery_session.commit.assert_awaited_once()
+    assert [call.kwargs["status"] for call in publish_chat.await_args_list] == ["failed"]
+    assert publish_run.await_args.args[0].status == "failed"
+    assert sync_result.await_args.args[1]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("terminal_status", "terminal_kind"),
+    [("cancelled", "cancelled"), ("completed", "done")],
+)
+async def test_chat_outer_failure_republishes_the_committed_terminal_status_after_a_notification_failure(
+    consumer, terminal_status, terminal_kind
+):
+    """A publication failure after a terminal commit must not rewrite the
+    chat stream as a failure.
+
+    The recovery write reads the terminal row the chat worker committed. It
+    republishes that durable outcome, rather than the exception from the
+    failed notification.
+    """
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.execute = AsyncMock(
+        side_effect=AssertionError("agent lookup should be skipped for chat")
+    )
+    mock_session.commit = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
+
+    context = {
+        "trigger_type": "chat",
+        "input": {"conversation_id": str(conversation_id), "content": "Hello"},
+        "caller": {"user_id": str(uuid4()), "email": "caller@example.com", "name": "Caller"},
+    }
+    runtime_principal = MagicMock()
+    caller_user_id = uuid4()
+    runtime_caller = Caller(
+        _chat_caller(caller_user_id).principal,
+        AuthorizationContext(
+            user_id=caller_user_id,
+            home_organization_id=None,
+            base_role_id=None,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
+    published_chat: list[tuple[str, str, ChatStreamChunk]] = []
+    terminal_notification_failed = False
+
+    async def publish_chat_run_event(*, kind, status, payload, **kwargs):
+        nonlocal terminal_notification_failed
+        published_chat.append((kind, status, payload))
+        if (
+            terminal_status == "cancelled"
+            and kind == terminal_kind
+            and not terminal_notification_failed
+        ):
+            terminal_notification_failed = True
+            raise RuntimeError("terminal notification unavailable")
+
+    published_run_statuses: list[str] = []
+
+    async def publish_agent_run_update(run, name):
+        nonlocal terminal_notification_failed
+        published_run_statuses.append(run.status)
+        if (
+            terminal_status == "completed"
+            and run.status == terminal_status
+            and not terminal_notification_failed
+        ):
+            terminal_notification_failed = True
+            raise RuntimeError("terminal notification unavailable")
+
+    async def commit_terminal_then_publish(**kwargs):
+        run = kwargs["agent_run"]
+        run.status = terminal_status
+        run.output = {"text": "Committed answer"} if terminal_status == "completed" else None
+        run.error = "Chat run cancelled" if terminal_status == "cancelled" else None
+        await mock_session.commit()
+        if terminal_status == "cancelled":
+            await publish_chat_run_event(
+                conversation_id=conversation_id,
+                run_id=run_id,
+                kind=terminal_kind,
+                status=terminal_status,
+                payload=ChatStreamChunk(type=terminal_kind, run_status=terminal_status),
+            )
+        else:
+            await publish_agent_run_update(run, "Chat")
+
+    with (
+        _dispatched(context),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=_loaded_actor()),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.AIBehaviorService.resolve_agent_run_execution_mode",
+            new=AsyncMock(return_value="delegated"),
+        ),
+        patch(
+            "src.services.authorization.runtime_auth.load_runtime_principal",
+            new=AsyncMock(return_value=runtime_principal),
+        ),
+        patch(
+            "src.services.authorization.enforce.load_caller",
+            new=AsyncMock(return_value=runtime_caller),
+        ),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat_run_event),
+        patch(
+            "src.jobs.consumers.agent_run.publish_agent_run_update",
+            publish_agent_run_update,
+        ),
+        patch.object(consumer, "_process_chat_run", commit_terminal_then_publish),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+            }
+        )
+
+    assert terminal_notification_failed
+    expected_chat_events = [("run_status", "running")] + [
+        (terminal_kind, terminal_status)
+    ] * (2 if terminal_status == "cancelled" else 1)
+    assert [(kind, status) for kind, status, _ in published_chat] == expected_chat_events
+    assert all(status != "failed" for _, status, _ in published_chat)
+    assert published_chat[-1][2].run_status == terminal_status
+    expected_run_updates = ["running", terminal_status] + (
+        [terminal_status] if terminal_status == "completed" else []
+    )
+    assert published_run_statuses == expected_run_updates
+    # Claim, terminal write, then the recovery read/commit. The failed
+    # notification follows the durable terminal write.
+    assert mock_session.commit.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_a_failure_that_cannot_be_stored_announces_nothing(consumer):
+    """A chat run whose interruption could not be stored within its budget
+    reaches the outer failure path with the budget spent: the failure
+    write makes no attempt, and nothing new is announced."""
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
+    mock_session.commit = AsyncMock()
+    # Like AsyncSession, the session is its own context manager.
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session)
+    context = {
+        "trigger_type": "chat",
+        "input": {"conversation_id": str(conversation_id), "content": "Hello"},
+        "caller": {"user_id": str(uuid4()), "email": "caller@example.com", "name": "Caller"},
+    }
+
+    async def interruption_not_stored(
+        *,
+        run_id: str,
+        context: dict[str, Any],
+        agent_run: AgentRun,
+        agent: Any,
+        caller: Caller,
+        sync: bool,
+        start_time: float,
+        terminal_budget: RetryBudget,
+        agent_execution_mode: str = "delegated",
+    ) -> None:
+        deadline = terminal_budget.deadline()
+        await asyncio.sleep(max(0.0, deadline - asyncio.get_running_loop().time()))
+        raise TimeoutError(f"Database retry budget spent before chat run {run_id} interrupted update")
+
+    caller_user_id = uuid4()
+    chat_caller = Caller(
+        _chat_caller(caller_user_id).principal,
+        AuthorizationContext(
+            user_id=caller_user_id,
+            home_organization_id=None,
+            base_role_id=None,
+            is_external=False,
+            base_permissions=frozenset(),
+        ),
+    )
+    publish_chat = AsyncMock()
+    publish_run = AsyncMock()
+
+    with (
+        _dispatched(context),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(AsyncMock())),
+        patch(
+            "src.jobs.consumers.agent_run._load_acting_user",
+            new=AsyncMock(return_value=_loaded_actor()),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.AIBehaviorService.resolve_agent_run_execution_mode",
+            new=AsyncMock(return_value="delegated"),
+        ),
+        # The claim authorizes the chat run; reach the chat itself.
+        patch(
+            "src.services.authorization.runtime_auth.load_runtime_principal",
+            new=AsyncMock(return_value=MagicMock()),
+        ),
+        patch(
+            "src.services.authorization.enforce.load_caller",
+            new=AsyncMock(return_value=chat_caller),
+        ),
+        patch("src.jobs.consumers.agent_run.RetryBudget", lambda: RetryBudget(0.05)),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        patch.object(
+            consumer, "_process_chat_run", AsyncMock(side_effect=interruption_not_stored)
+        ) as process_chat,
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "dispatch_id": str(uuid4()),
+                "agent_id": None,
+                "trigger_type": "chat",
+                "sync": True,
+            }
+        )
+
+    process_chat.assert_awaited_once()
+    # Only the claim's "running" announcements; no failure was stored.
+    assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == ["run_status"]
+    assert [call.args[0].status for call in publish_run.await_args_list] == ["running"]
+    sync_mock.assert_not_awaited()
+    mock_session.commit.assert_awaited_once()
+    assert queued_run.status == "running"
+
+
 def _recording_executor(runs: list[dict[str, Any]]):
     """An executor stand-in that records how the consumer starts the run."""
 
@@ -850,6 +1215,9 @@ def _recording_executor(runs: list[dict[str, Any]]):
                 "status": "completed",
                 "llm_model": "test-model",
             }
+
+        async def is_flushed(self, session):
+            return False
 
         async def flush_to_db(self, session):
             return None
@@ -1041,3 +1409,803 @@ async def test_run_without_run_as_passes_the_persisted_actor(
         )
     finally:
         await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
+
+
+
+# ---------------------------------------------------------------------------
+# Terminal writes through a database outage
+# ---------------------------------------------------------------------------
+
+
+def _disconnect(statement: str) -> DBAPIError:
+    """What SQLAlchemy raises when the connection drops under a statement."""
+    return DBAPIError(
+        statement,
+        None,
+        asyncpg.exceptions.ConnectionDoesNotExistError(
+            "connection was closed in the middle of operation"
+        ),
+        connection_invalidated=True,
+    )
+
+
+class DropBeforeCommitSession(AsyncSession):
+    """The connection drops before COMMIT reaches the server, which rolls back."""
+
+    async def commit(self) -> None:
+        await self.rollback()
+        raise _disconnect("COMMIT")
+
+
+class LostCommitAckSession(AsyncSession):
+    """COMMIT succeeds on the server, but its acknowledgement never arrives."""
+
+    async def commit(self) -> None:
+        await super().commit()
+        raise _disconnect("COMMIT")
+
+
+class DropMidFlushSession(AsyncSession):
+    """The connection drops while buffered usage is being flushed."""
+
+    async def flush(self, objects: Sequence[Any] | None = None) -> None:
+        await self.rollback()
+        raise _disconnect("INSERT INTO ai_usage")
+
+
+_OUTAGE_SESSIONS: dict[str, type[AsyncSession]] = {
+    "healthy": AsyncSession,
+    "drop_before_commit": DropBeforeCommitSession,
+    "lost_commit_ack": LostCommitAckSession,
+    "drop_mid_flush": DropMidFlushSession,
+}
+
+
+class ScriptedSessionFactory:
+    """The test database, with the next sessions scripted to meet an outage.
+
+    ``script`` names how each upcoming session fails ("refused" reaches a
+    server that refuses connections, as during a pooler or PostgreSQL
+    restart); once it is empty, sessions are healthy.
+    """
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        self._engine = engine
+        self._refusing_engine = create_async_engine(
+            "postgresql+asyncpg://bifrost:unused@127.0.0.1:1/bifrost"
+        )
+        self.script: list[str | type[AsyncSession]] = []
+        self.handed_out: list[str] = []
+
+    def __call__(self) -> AsyncSession:
+        kind = self.script.pop(0) if self.script else "healthy"
+        if isinstance(kind, type):
+            self.handed_out.append(kind.__name__)
+            return kind(self._engine, expire_on_commit=False, autoflush=False)
+        self.handed_out.append(kind)
+        if kind == "refused":
+            return AsyncSession(self._refusing_engine, expire_on_commit=False, autoflush=False)
+        return _OUTAGE_SESSIONS[kind](self._engine, expire_on_commit=False, autoflush=False)
+
+    async def dispose(self) -> None:
+        await self._refusing_engine.dispose()
+
+
+RUN_ERROR = ConnectionRefusedError(111, "Connect call failed ('10.96.0.12', 5432)")
+
+
+def _run_meeting_an_outage(
+    outage: list[str | type[AsyncSession]],
+    *,
+    fail: bool,
+    model: str,
+    before_outage: Callable[[], Awaitable[None]] | None = None,
+):
+    """``AutonomousAgentExecutor.run``: one model call, then the database goes.
+
+    The step and usage go through the executor's real buffers, so the
+    consumer's real ``flush_to_db`` writes them.
+    """
+
+    async def run(
+        self,
+        agent,
+        *,
+        input_data=None,
+        output_schema=None,
+        run_id=None,
+        caller,
+        _shared_usage=None,
+        _shared_budget=None,
+        run_user_id,
+        run_as,
+        acting=None,
+        agent_execution_mode=None,
+    ):
+        self._buffer_ai_usage(
+            agent=agent,
+            run_id=run_id,
+            provider="openai",
+            model=model,
+            input_tokens=10,
+            output_tokens=5,
+            provider_cost=Decimal("0.0001"),
+            duration_ms=5,
+        )
+        await self._record_step(run_id, 1, "llm_response", {"content": "done"}, tokens_used=15)
+        if before_outage is not None:
+            await before_outage()
+        self._session_factory.script = list(outage)
+        if fail:
+            raise RUN_ERROR
+        return {
+            "output": {"text": "done"},
+            "iterations_used": 1,
+            "tokens_used": 15,
+            "status": "completed",
+            "llm_model": model,
+        }
+
+    return run
+
+
+async def _consume_through_outage(consumer, run, run_impl, sleep):
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+    with (
+        _dispatched({"input": "hello"}),
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch.object(AutonomousAgentExecutor, "run", run_impl),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        patch("src.services.execution.summary_dispatch.hand_off_summary", AsyncMock()),
+        patch("src.core.database_retry.sleep", sleep),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": str(run.id),
+                "dispatch_id": str(uuid4()),
+                "agent_id": str(run.agent_id),
+                "trigger_type": "api",
+                "sync": True,
+            }
+        )
+    return sync_mock
+
+
+async def _stored_counts(async_session_factory, run_id) -> tuple[int, int, int]:
+    """Steps, usage rows and summary dispatches stored for a run."""
+    async with async_session_factory() as db:
+        steps = await db.scalar(
+            select(func.count()).select_from(AgentRunStep).where(AgentRunStep.run_id == run_id)
+        )
+        usage = await db.scalar(
+            select(func.count()).select_from(AIUsage).where(AIUsage.agent_run_id == run_id)
+        )
+        summaries = await db.scalar(
+            select(func.count()).select_from(WorkDispatch).where(WorkDispatch.subject_id == run_id)
+        )
+    return int(steps or 0), int(usage or 0), int(summaries or 0)
+
+
+async def _cleanup_outage_run(async_session_factory, outage, contoso, lead, target, run):
+    await outage.dispose()
+    async with async_session_factory() as cleanup:
+        await cleanup.execute(AIUsage.__table__.delete().where(AIUsage.agent_run_id == run.id))
+        await cleanup.execute(
+            WorkDispatch.__table__.delete().where(WorkDispatch.subject_id == run.id)
+        )
+        await cleanup.commit()
+    await _cleanup_run_as_fixture(async_session_factory, contoso, lead, target, run)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outage",
+    [
+        ["refused", "refused", "refused"],
+        ["drop_before_commit"],
+        ["lost_commit_ack"],
+        ["drop_mid_flush"],
+    ],
+    ids=["refused", "rollback", "lost-ack", "mid-flush"],
+)
+@pytest.mark.parametrize("fail", [True, False], ids=["failure-write", "result-write"])
+async def test_terminal_write_records_the_outcome_exactly_once_through_an_outage(
+    consumer, db_session, async_engine, async_session_factory, seed_agent, outage, fail
+):
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    sleep = AsyncMock()
+
+    try:
+        sync_mock = await _consume_through_outage(
+            consumer,
+            run,
+            _run_meeting_an_outage(outage, fail=fail, model=f"outage-{uuid4().hex[:8]}"),
+            sleep,
+        )
+
+        assert factory.handed_out[-len(outage) - 1 :] == [*outage, "healthy"]
+        assert sleep.await_count == len(outage)
+        refreshed = await _load_run(async_session_factory, run.id)
+        expected_status = "failed" if fail else "completed"
+        assert refreshed.status == expected_status
+        assert refreshed.error == (str(RUN_ERROR) if fail else None)
+        steps, usage, summaries = await _stored_counts(async_session_factory, run.id)
+        assert (steps, usage) == (1, 1)
+        assert summaries == (0 if fail else 1)
+        assert sync_mock.await_args.args[1]["status"] == expected_status
+    finally:
+        await _cleanup_outage_run(async_session_factory, factory, contoso, lead, target, run)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fail", "expected_status"),
+    [(True, "cancelled"), (False, "completed")],
+    ids=["failure-write", "result-write"],
+)
+async def test_a_cancel_requested_during_the_outage_is_terminalized(
+    consumer, db_session, async_engine, async_session_factory, seed_agent, fail, expected_status
+):
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+
+    async def _cancel_while_waiting(seconds: float) -> None:
+        # What POST /api/agent-runs/{id}/cancel writes to a running run.
+        async with async_session_factory() as db:
+            running = await db.get(AgentRun, run.id)
+            assert running is not None and running.status == "running"
+            running.status = "cancelling"
+            running.cancel_requested_at = datetime.now(timezone.utc)
+            await db.commit()
+
+    try:
+        sync_mock = await _consume_through_outage(
+            consumer,
+            run,
+            _run_meeting_an_outage(["refused"], fail=fail, model=f"outage-{uuid4().hex[:8]}"),
+            _cancel_while_waiting,
+        )
+
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == expected_status
+        assert refreshed.completed_at is not None
+        if fail:
+            assert refreshed.error == str(RUN_ERROR)
+        assert sync_mock.await_args.args[1]["status"] == expected_status
+        assert (await _stored_counts(async_session_factory, run.id))[:2] == (1, 1)
+    finally:
+        await _cleanup_outage_run(async_session_factory, factory, contoso, lead, target, run)
+
+
+@pytest.mark.asyncio
+async def test_a_run_the_sweep_terminalized_during_the_outage_keeps_its_status(
+    consumer, db_session, async_engine, async_session_factory, seed_agent
+):
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+
+    async def _sweep_while_waiting(seconds: float) -> None:
+        async with async_session_factory() as db:
+            swept = await db.get(AgentRun, run.id)
+            assert swept is not None and swept.status == "running"
+            swept.status = "timeout"
+            swept.error = "swept as stale"
+            swept.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+    try:
+        await _consume_through_outage(
+            consumer,
+            run,
+            _run_meeting_an_outage(["refused"], fail=True, model=f"outage-{uuid4().hex[:8]}"),
+            _sweep_while_waiting,
+        )
+
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "timeout"
+        assert refreshed.error == "swept as stale"
+        # The run's steps and metering are still kept once.
+        assert (await _stored_counts(async_session_factory, run.id))[:2] == (1, 1)
+    finally:
+        await _cleanup_outage_run(async_session_factory, factory, contoso, lead, target, run)
+
+
+async def _chat_run_fixture(db_session):
+    """A running chat run in a titled conversation."""
+    org = Organization(name=f"chat-outage-{uuid4().hex[:8]}", created_by="chat-outage-test")
+    db_session.add(org)
+    await db_session.flush()
+    user = User(email=f"chat-{uuid4().hex[:8]}@example.com", organization_id=org.id)
+    db_session.add(user)
+    await db_session.flush()
+    conversation = Conversation(user_id=user.id, title="Existing title")
+    db_session.add(conversation)
+    await db_session.flush()
+    run = AgentRun(
+        id=uuid4(),
+        agent_id=None,
+        trigger_type="chat",
+        status="running",
+        org_id=org.id,
+        run_user_id=user.id,
+        acting_user_id=user.id,
+        conversation_id=conversation.id,
+        iterations_used=0,
+        tokens_used=0,
+        created_at=datetime.now(timezone.utc),
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run)
+    await db_session.commit()
+    return org, user, conversation, run
+
+
+async def _cleanup_chat_run(async_session_factory, outage, org, user, conversation, run):
+    await outage.dispose()
+    async with async_session_factory() as cleanup:
+        await cleanup.execute(AgentRun.__table__.delete().where(AgentRun.id == run.id))
+        await cleanup.execute(
+            Conversation.__table__.delete().where(Conversation.id == conversation.id)
+        )
+        await cleanup.execute(User.__table__.delete().where(User.id == user.id))
+        await cleanup.execute(Organization.__table__.delete().where(Organization.id == org.id))
+        await cleanup.commit()
+
+
+async def _process_chat_through_outage(
+    consumer, run, conversation, fake_executor, outage_on, outage, budget=None, published=None
+):
+    """Run ``_process_chat_run``; the outage starts as chunk ``outage_on`` is
+    published. Published event kinds are appended to ``published``."""
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+
+    async def publish_chat_run_event(
+        conversation_id: str | UUID,
+        run_id: str | UUID,
+        kind: str,
+        status: str,
+        payload: ChatStreamChunk,
+    ) -> dict[str, Any]:
+        if published is not None:
+            published.append(kind)
+        if kind == outage_on:
+            consumer._session_factory.script = list(outage)
+        return {}
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.ai_model_service.AIModelService.resolve_chat_profile",
+            new=AsyncMock(
+                return_value=(
+                    MagicMock(id=uuid4(), name="Everyday"),
+                    SimpleNamespace(model="test-model"),
+                    SimpleNamespace(),
+                )
+            ),
+        ),
+        patch("src.services.agent_executor.AgentExecutor", return_value=fake_executor),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat_run_event),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.core.database_retry.sleep", AsyncMock()),
+    ):
+        await consumer._process_chat_run(
+            run_id=str(run.id),
+            context={"input": {"conversation_id": str(conversation.id), "content": "Hello"}},
+            agent_run=run,
+            agent=None,
+            caller=_chat_caller(run.run_user_id),
+            sync=False,
+            start_time=time.time(),
+            terminal_budget=budget or RetryBudget(),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outage", [["refused", "refused"], ["lost_commit_ack"]], ids=["refused", "lost-ack"])
+async def test_chat_final_write_records_completion_through_an_outage(
+    consumer, db_session, async_engine, async_session_factory, outage
+):
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    fake_executor = _chat_executor_stub(
+        [
+            ChatStreamChunk(type="delta", content="Hello "),
+            ChatStreamChunk(type="done", content="Hello world", finish_reason="stop", incomplete=False),
+        ]
+    )
+
+    try:
+        await _process_chat_through_outage(consumer, run, conversation, fake_executor, "done", outage)
+
+        assert factory.handed_out[-len(outage) - 1 :] == [*outage, "healthy"]
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "completed"
+        assert refreshed.output == {"text": "Hello world", "finish_reason": "stop", "incomplete": False}
+    finally:
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+class StalledCommitSession(AsyncSession):
+    """Sends the transaction's writes, then the server stops answering
+    before COMMIT is sent."""
+
+    async def commit(self) -> None:
+        await self.flush()
+        await asyncio.Event().wait()
+
+
+async def _messages(async_session_factory, conversation_id) -> list[tuple[UUID, MessageRole, int]]:
+    async with async_session_factory() as db:
+        rows = await db.execute(
+            select(Message.id, Message.role, Message.sequence)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.sequence)
+        )
+        return [tuple(row) for row in rows]
+
+
+def _interrupted_chat(assistant_message_id: UUID):
+    return _chat_executor_stub(
+        [
+            ChatStreamChunk(type="message_start", assistant_message_id=str(assistant_message_id)),
+            ChatStreamChunk(type="delta", content="Partial answer"),
+        ],
+        cancel_after=1,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outage", [["refused"], ["lost_commit_ack"]], ids=["refused", "lost-ack"])
+async def test_chat_interruption_commits_the_partial_answer_with_its_terminal_status(
+    consumer, db_session, async_engine, async_session_factory, outage
+):
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    question = Message(
+        id=uuid4(), conversation_id=conversation.id, role=MessageRole.USER, content="Hello", sequence=1
+    )
+    db_session.add(question)
+    await db_session.commit()
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
+
+    try:
+        await _process_chat_through_outage(
+            consumer, run, conversation, _interrupted_chat(assistant_message_id), "delta", outage
+        )
+
+        assert factory.handed_out[-2:] == [*outage, "healthy"]
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "cancelled"
+        assert refreshed.output == {"text": "Partial answer", "partial": True}
+        assert await _messages(async_session_factory, conversation.id) == [
+            (question.id, MessageRole.USER, 1),
+            (assistant_message_id, MessageRole.ASSISTANT, 2),
+        ]
+
+        # The next turn follows the partial answer.
+        next_turn = await AgentExecutor(async_session_factory)._save_message(
+            conversation_id=conversation.id, role=MessageRole.USER, content="Go on"
+        )
+        assert next_turn.sequence == 3
+    finally:
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_sent_while_the_partial_answer_is_being_stored_comes_after_it(
+    consumer, db_session, async_engine, async_session_factory
+):
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    question = Message(
+        id=uuid4(), conversation_id=conversation.id, role=MessageRole.USER, content="Hello", sequence=1
+    )
+    db_session.add(question)
+    await db_session.commit()
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
+    next_turn_id = uuid4()
+    written = asyncio.Event()
+    release = asyncio.Event()
+    published: list[str] = []
+
+    class HeldBeforeCommitSession(AsyncSession):
+        """The terminal transaction has written the partial answer and
+        holds its locks, but has not committed yet."""
+
+        async def commit(self) -> None:
+            await self.flush()
+            written.set()
+            await release.wait()
+            await super().commit()
+
+    async def send_next_turn() -> None:
+        async with async_session_factory() as db:
+            current = await db.get(Conversation, conversation.id)
+            assert current is not None
+            await chat_runs._persist_user_message(
+                db, current, content="And then?", user_message_id=next_turn_id, attachment_ids=[]
+            )
+            await db.commit()
+
+    try:
+        interrupted = asyncio.create_task(
+            _process_chat_through_outage(
+                consumer,
+                run,
+                conversation,
+                _interrupted_chat(assistant_message_id),
+                "delta",
+                [HeldBeforeCommitSession],
+                published=published,
+            )
+        )
+        await written.wait()
+        assert "cancelled" not in published
+        next_turn = asyncio.create_task(send_next_turn())
+        # The next turn waits for the conversation lock the terminal
+        # transaction holds.
+        done, _ = await asyncio.wait({next_turn}, timeout=0.5)
+        assert not done
+        release.set()
+        await interrupted
+        await next_turn
+
+        assert published[-1] == "cancelled"
+        assert await _messages(async_session_factory, conversation.id) == [
+            (question.id, MessageRole.USER, 1),
+            (assistant_message_id, MessageRole.ASSISTANT, 2),
+            (next_turn_id, MessageRole.USER, 3),
+        ]
+        assert (await _load_run(async_session_factory, run.id)).status == "cancelled"
+    finally:
+        release.set()
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+async def _until_a_session_waits_for_a_lock(async_session_factory) -> None:
+    """Return once some session of this database waits for a row lock."""
+    async with async_session_factory() as probe:
+        for _ in range(100):
+            waiting = await probe.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity"
+                    " WHERE datname = current_database() AND wait_event_type = 'Lock')"
+                )
+            )
+            # pg_stat_activity is read once per transaction; end it to look again.
+            await probe.rollback()
+            if waiting:
+                return
+            await asyncio.sleep(0.05)
+    raise AssertionError("no session started waiting for a lock")
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_conversation_during_the_terminal_write_never_strands_the_run(
+    consumer, db_session, async_engine, async_session_factory
+):
+    """The terminal write locks the run, then the conversation; deleting the
+    conversation locks it, then (SET NULL) the run. PostgreSQL breaks the
+    deadlock by aborting one side; either way the run ends recorded."""
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
+    run_locked = asyncio.Event()
+    conversation_locked = asyncio.Event()
+
+    class LocksTheRunThenWaitsSession(AsyncSession):
+        async def get(
+            self,
+            entity,
+            ident,
+            *,
+            options=None,
+            populate_existing=False,
+            with_for_update=None,
+            identity_token=None,
+            execution_options=EMPTY_DICT,
+        ):
+            found = await super().get(
+                entity,
+                ident,
+                options=options,
+                populate_existing=populate_existing,
+                with_for_update=with_for_update,
+                identity_token=identity_token,
+                execution_options=execution_options,
+            )
+            if entity is AgentRun:
+                run_locked.set()
+                await conversation_locked.wait()
+            return found
+
+    async def delete_the_conversation() -> DBAPIError | None:
+        await run_locked.wait()
+        async with async_session_factory() as db:
+            try:
+                await db.execute(
+                    select(Conversation.id)
+                    .where(Conversation.id == conversation.id)
+                    .with_for_update()
+                )
+                conversation_locked.set()
+                # The terminal write now waits for the conversation; the
+                # delete's SET NULL on the run closes the cycle.
+                await _until_a_session_waits_for_a_lock(async_session_factory)
+                await db.execute(
+                    Conversation.__table__.delete().where(Conversation.id == conversation.id)
+                )
+                await db.commit()
+            except DBAPIError as aborted:
+                return aborted
+        return None
+
+    try:
+        deletion = asyncio.create_task(delete_the_conversation())
+        await _process_chat_through_outage(
+            consumer,
+            run,
+            conversation,
+            _interrupted_chat(assistant_message_id),
+            "delta",
+            [LocksTheRunThenWaitsSession],
+        )
+        aborted = await deletion
+
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "cancelled"
+        assert refreshed.output == {"text": "Partial answer", "partial": True}
+        if aborted is None:
+            # The terminal write was aborted and ran again after the delete.
+            assert factory.handed_out[-2:] == ["LocksTheRunThenWaitsSession", "healthy"]
+            assert refreshed.conversation_id is None
+        else:
+            assert getattr(aborted.orig, "sqlstate", None) == "40P01"
+            assert await _messages(async_session_factory, conversation.id) == [
+                (assistant_message_id, MessageRole.ASSISTANT, 1)
+            ]
+    finally:
+        conversation_locked.set()
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+@pytest.mark.asyncio
+async def test_a_partial_answer_stalled_past_the_budget_is_never_committed(
+    consumer, db_session, async_engine, async_session_factory
+):
+    org, user, conversation, run = await _chat_run_fixture(db_session)
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    assistant_message_id = uuid4()
+
+    try:
+        with pytest.raises(TimeoutError):
+            await _process_chat_through_outage(
+                consumer,
+                run,
+                conversation,
+                _interrupted_chat(assistant_message_id),
+                "delta",
+                [StalledCommitSession],
+                budget=RetryBudget(0.2),
+            )
+
+        # The stalled transaction was discarded, not left to commit later:
+        # no partial answer, and the run is left for the stale-run sweep.
+        assert await _messages(async_session_factory, conversation.id) == []
+        assert (await _load_run(async_session_factory, run.id)).status == "running"
+        next_turn = await AgentExecutor(async_session_factory)._save_message(
+            conversation_id=conversation.id, role=MessageRole.USER, content="Hello again"
+        )
+        assert next_turn.sequence == 1
+    finally:
+        await _cleanup_chat_run(async_session_factory, factory, org, user, conversation, run)
+
+
+def _principal_of(user: User) -> UserPrincipal:
+    return UserPrincipal(
+        user_id=user.id,
+        email=user.email,
+        organization_id=user.organization_id,
+        name=user.name or "",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_that_read_a_running_run_does_not_revive_it_after_its_terminal_commit(
+    consumer, db_session, async_engine, async_session_factory, seed_agent, monkeypatch
+):
+    """Cancel reads ``running``; the result commits but its acknowledgement
+    is lost; the cancel then writes; the consumer retries. The lead who
+    started the run cancels it."""
+    contoso, lead, target, run = await _run_as_fixture(
+        db_session, seed_agent, with_run_as=False
+    )
+    factory = ScriptedSessionFactory(async_engine)
+    consumer._session_factory = factory
+    monkeypatch.setattr(
+        agent_runs_router,
+        "get_redis_client",
+        lambda: SimpleNamespace(set_agent_run_cancel_flag=AsyncMock()),
+    )
+
+    cancel_read = asyncio.Event()
+    terminal_committed = asyncio.Event()
+    cancel_tasks: list[asyncio.Task[Any]] = []
+
+    async def request_after_the_terminal_commit(db: AsyncSession, run_id: UUID):
+        cancel_read.set()
+        await terminal_committed.wait()
+        return await request_agent_run_cancel(db, run_id)
+
+    async def cancel() -> dict[str, str] | HTTPException:
+        async with async_session_factory() as cancel_db:
+            try:
+                return await agent_runs_router.cancel_agent_run(
+                    run_id=run.id, db=cancel_db, user=_principal_of(lead)
+                )
+            except HTTPException as refused:
+                return refused
+
+    async def start_cancel() -> None:
+        task = asyncio.create_task(cancel())
+        cancel_tasks.append(task)
+        read = asyncio.ensure_future(cancel_read.wait())
+        await asyncio.wait({task, read}, return_when=asyncio.FIRST_COMPLETED)
+        read.cancel()
+        # A cancel that ends here never read the run as running.
+        assert not task.done(), f"cancel ended before writing: {task.result()!r}"
+
+    class CancelWritesAfterLostAckSession(AsyncSession):
+        async def commit(self) -> None:
+            await super().commit()
+            terminal_committed.set()
+            await cancel_tasks[0]
+            raise _disconnect("COMMIT")
+
+    try:
+        with patch(
+            "src.routers.agent_runs.request_agent_run_cancel",
+            request_after_the_terminal_commit,
+        ):
+            sync_mock = await _consume_through_outage(
+                consumer,
+                run,
+                _run_meeting_an_outage(
+                    [CancelWritesAfterLostAckSession],
+                    fail=False,
+                    model=f"outage-{uuid4().hex[:8]}",
+                    before_outage=start_cancel,
+                ),
+                AsyncMock(),
+            )
+
+        refused = cancel_tasks[0].result()
+        assert isinstance(refused, HTTPException)
+        assert refused.status_code == 400
+        assert refused.detail == "Cannot cancel agent run with status 'completed'"
+        refreshed = await _load_run(async_session_factory, run.id)
+        assert refreshed.status == "completed"
+        assert refreshed.cancel_requested_at is None
+        assert sync_mock.await_args.args[1]["status"] == "completed"
+        assert (await _stored_counts(async_session_factory, run.id))[:2] == (1, 1)
+    finally:
+        await _cleanup_outage_run(async_session_factory, factory, contoso, lead, target, run)

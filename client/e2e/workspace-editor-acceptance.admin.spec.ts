@@ -1,4 +1,4 @@
-import { type Page } from "@playwright/test";
+import { type Page } from "./fixtures/api-fixture";
 import { readEditorContent } from "./fixtures/monaco-editor";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
 

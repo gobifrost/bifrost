@@ -183,7 +183,10 @@ class TestSolutionAppDeploy:
         monkeypatch.setattr(
             "src.services.application_sdk_status.current_sdk_metadata",
             lambda: CurrentApplicationSdkMetadata(
-                package_version="9.9.9", fingerprint="fp-current", contract_version=42
+                package_version="9.9.9",
+                fingerprint="fp-current",
+                contract_version=42,
+                binding_api_major=1,
             ),
         )
         monkeypatch.setattr(
@@ -222,6 +225,7 @@ class TestSolutionAppDeploy:
         assert app.sdk_package_version == "9.9.9"
         assert app.sdk_fingerprint == "fp-current"
         assert app.sdk_contract_version == 42
+        assert app.sdk_binding_api_major == 1
         assert app.sdk_built_at is not None
 
     async def test_prebuilt_dist_activates_version_without_sdk_provenance(
@@ -243,6 +247,7 @@ class TestSolutionAppDeploy:
         assert app.sdk_package_version is None
         assert app.sdk_fingerprint is None
         assert app.sdk_contract_version is None
+        assert app.sdk_binding_api_major is None
         assert app.sdk_built_at is None
 
     async def test_cli_prebuilt_dist_activates_its_sdk_provenance(
@@ -264,6 +269,7 @@ class TestSolutionAppDeploy:
                             "package_version": "9.9.9",
                             "fingerprint": "sdk-built-by-cli",
                             "contract_version": 42,
+                            "binding_api_major": 1,
                         },
                     }
                 ],
@@ -277,6 +283,7 @@ class TestSolutionAppDeploy:
         assert app.sdk_package_version == "9.9.9"
         assert app.sdk_fingerprint == "sdk-built-by-cli"
         assert app.sdk_contract_version == 42
+        assert app.sdk_binding_api_major == 1
         assert app.sdk_built_at is not None
 
     async def test_prebuilt_only_batch_does_not_load_current_sdk_metadata(

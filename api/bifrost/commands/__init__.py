@@ -17,6 +17,7 @@ import sys
 
 import click
 
+from .admin import admin_group
 from .agents import agents_group
 from .apps import apps_group
 from .audit import audit_group
@@ -59,6 +60,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "audit": audit_group,
     "users": users_group,
     "retention": retention_group,
+    "admin": admin_group,
 }
 
 

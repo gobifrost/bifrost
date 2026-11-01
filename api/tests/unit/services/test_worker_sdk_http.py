@@ -12,8 +12,8 @@ The real forked-child round trip lives in
 import asyncio
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -55,6 +55,7 @@ from src.services.execution.worker_sdk_http import (
     WorkerSdkHttpServer,
     build_worker_sdk_app,
 )
+from tests.helpers.human_tokens import human_claims
 
 
 @pytest.fixture(autouse=True)
@@ -142,13 +143,46 @@ def _no_cache():
 
 
 def _engine_token() -> str:
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
-    token, _ = mint_engine_token(
+    token, _ = legacy_engine_token(
         execution_id=_ENGINE_TOKEN_EXECUTION_ID,
         timeout_seconds=300,
     )
     return token
+
+
+async def _human_token(
+    async_session_factory,
+    *,
+    organization_id: UUID,
+    external: bool = False,
+    base_permissions: list[str] | None = None,
+) -> str:
+    """Sign human claims at the authority epoch visible to the socket app."""
+    from src.services.authorization.authz import read_epoch
+    from src.services.authorization.tokens import _encode_claims
+
+    async with async_session_factory() as session:
+        epoch = await read_epoch(session)
+    claims = human_claims(
+        organization_id=organization_id,
+        external=external,
+        epoch=epoch,
+    )
+    if base_permissions is not None:
+        claims = claims.model_copy(
+            update={
+                "usr": claims.usr.model_copy(
+                    update={
+                        "base": claims.usr.base.model_copy(
+                            update={"perm": base_permissions}
+                        )
+                    }
+                )
+            }
+        )
+    return _encode_claims(claims)
 
 
 async def _delete_owned_test_orgs(session, organization_ids):
@@ -163,13 +197,13 @@ async def _delete_owned_test_orgs(session, organization_ids):
 
 async def _scoped_engine_token(session_factory, organization_id):
     from tests.helpers.live_execution import create_live_execution
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     execution_id = str(uuid4())
     await create_live_execution(
         session_factory, execution_id, organization_id=organization_id, platform_admin=False,
     )
-    token, _ = mint_engine_token(execution_id=execution_id, timeout_seconds=300)
+    token, _ = legacy_engine_token(execution_id=execution_id, timeout_seconds=300)
     return token, execution_id
 
 
@@ -1378,7 +1412,7 @@ class TestEngineLocalTransportSelection:
         assert get_engine_socket_path() is None
         client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 1})
         network_http.stream.assert_called_once_with(
-            "POST", "/api/sdk/ai/stream", json={"x": 1}
+            "POST", "/api/sdk/ai/stream", json={"x": 1}, extensions=ANY
         )
         assert engine_http.stream.call_count == 0
 
@@ -1387,7 +1421,7 @@ class TestEngineLocalTransportSelection:
         _install_engine_socket(f"/tmp/bifrost-{uuid4().hex}.sock")
         client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 2})
         engine_http.stream.assert_called_once_with(
-            "POST", "/api/sdk/ai/stream", json={"x": 2}
+            "POST", "/api/sdk/ai/stream", json={"x": 2}, extensions=ANY
         )
         assert network_http.stream.call_count == 1
 
@@ -1479,8 +1513,8 @@ class TestEngineLocalTransportSelection:
         assert client._engine_http is not None
 
     @pytest.mark.asyncio
-    async def test_engine_local_401_does_not_refresh_or_replay(self):
-        """A local 401 surfaces; it never triggers network refresh/replay."""
+    async def test_engine_local_401_without_the_challenge_does_not_refresh_or_replay(self):
+        """A local 401 that is not the refresh challenge surfaces as it is."""
         from bifrost import config as bifrost_config
 
         server = WorkerSdkHttpServer()
@@ -1491,13 +1525,13 @@ class TestEngineLocalTransportSelection:
             _set_client(client)
 
             refresh_attempts: list[str] = []
-            original_refresh = client._refresh_and_update
+            original_refresh = client.refresh_access_token
 
-            async def _spy(observed: str | None = None) -> bool:
+            async def _spy(observed: str | None = None) -> str | None:
                 refresh_attempts.append("called")
                 return await original_refresh(observed)
 
-            client._refresh_and_update = _spy  # type: ignore[method-assign]
+            client.refresh_access_token = _spy  # type: ignore[method-assign]
             with pytest.raises(httpx.HTTPStatusError):
                 await bifrost_config.get("k", scope="global")
             assert refresh_attempts == []
@@ -1799,17 +1833,11 @@ class TestSocketKnowledge:
     """Gate C4c: the socket serves the real knowledge routes with their DTOs."""
 
     @pytest.mark.asyncio
-    async def test_external_caller_denied_over_socket(self):
-        from src.core.security import create_access_token
-
-        token = create_access_token(
-            {
-                "sub": str(uuid4()),
-                "email": "external@example.com",
-                "name": "External",
-                "org_id": str(uuid4()),
-                "is_external": True,
-            }
+    async def test_external_caller_denied_over_socket(self, async_session_factory):
+        token = await _human_token(
+            async_session_factory,
+            organization_id=uuid4(),
+            external=True,
         )
         headers = {"Authorization": f"Bearer {token}"}
         server = WorkerSdkHttpServer()
@@ -1966,29 +1994,33 @@ class TestSocketWorkflowsAndExecutions:
     """Gate C5a: the socket serves the real workflow/execution routes."""
 
     @pytest.mark.asyncio
-    async def test_workflow_list_requires_superuser(self):
-        from src.core.security import create_access_token
-
+    async def test_workflow_list_filters_unreadable_rows_and_rejects_foreign_scope(
+        self, async_session_factory
+    ):
+        foreign_org = uuid4()
         caller = {
-            "Authorization": "Bearer "
-            + create_access_token(
-                {
-                    "sub": str(uuid4()),
-                    "email": "user@example.com",
-                    "name": "User",
-                    "org_id": str(uuid4()),
-                }
+            "Authorization": "Bearer " + await _human_token(
+                async_session_factory,
+                organization_id=uuid4(),
+                base_permissions=[],
             )
         }
         server = WorkerSdkHttpServer()
         await server.start()
         try:
             async with _socket_client(server) as client:
-                denied = await client.get("/api/workflows", headers=caller)
+                filtered = await client.get("/api/workflows", headers=caller)
+                denied = await client.get(
+                    "/api/workflows",
+                    params={"scope": str(foreign_org)},
+                    headers=caller,
+                )
                 allowed = await client.get(
                     "/api/workflows",
                     headers={"Authorization": f"Bearer {_engine_token()}"},
                 )
+            assert filtered.status_code == 200, filtered.text
+            assert filtered.json() == []
             assert denied.status_code == 403, denied.text
             assert allowed.status_code == 200, allowed.text
             assert isinstance(allowed.json(), list)
@@ -1999,7 +2031,6 @@ class TestSocketWorkflowsAndExecutions:
     async def test_execution_foreign_is_403_over_socket(self, async_session_factory):
         from sqlalchemy import delete
 
-        from src.core.security import create_access_token
         from src.models.enums import ExecutionStatus
         from src.models.orm.executions import Execution as ExecutionModel
         from src.models.orm.organizations import Organization as OrganizationModel
@@ -2032,13 +2063,8 @@ class TestSocketWorkflowsAndExecutions:
             await session.commit()
             exec_id, owner_id = row.id, owner.id
 
-        token = create_access_token(
-            {
-                "sub": str(uuid4()),
-                "email": "other@example.com",
-                "name": "Other",
-                "org_id": str(uuid4()),
-            }
+        token = await _human_token(
+            async_session_factory, organization_id=uuid4()
         )
         server = WorkerSdkHttpServer()
         await server.start()
@@ -2403,7 +2429,6 @@ class TestSocketAgentRuns:
     ):
         from sqlalchemy import delete
 
-        from src.core.security import create_access_token
         from src.models.orm.agent_runs import AgentRun as AgentRunModel
         from src.models.orm.agents import Agent as AgentModel
         from src.models.orm.organizations import Organization as OrganizationModel
@@ -2436,13 +2461,8 @@ class TestSocketAgentRuns:
             org_id, agent_id, run_id = org.id, agent.id, run.id
 
         # A non-superuser outside the run's org must not see it.
-        other_token = create_access_token(
-            {
-                "sub": str(uuid4()),
-                "email": "other@example.com",
-                "name": "Other",
-                "org_id": str(uuid4()),
-            }
+        other_token = await _human_token(
+            async_session_factory, organization_id=uuid4()
         )
         server = WorkerSdkHttpServer()
         await server.start()
@@ -2709,7 +2729,6 @@ class TestSocketEventsForms:
     ):
         from sqlalchemy import delete
 
-        from src.core.security import create_access_token
         from src.models.enums import FormAccessLevel
         from src.models.orm.forms import Form as FormModel
         from src.models.orm.organizations import Organization as OrganizationModel
@@ -2735,13 +2754,8 @@ class TestSocketEventsForms:
             await session.commit()
             org_id, form_id = org.id, form.id
 
-        token = create_access_token(
-            {
-                "sub": str(uuid4()),
-                "email": "other@example.com",
-                "name": "Other",
-                "org_id": str(uuid4()),
-            }
+        token = await _human_token(
+            async_session_factory, organization_id=uuid4()
         )
         server = WorkerSdkHttpServer()
         await server.start()
@@ -3434,14 +3448,14 @@ class TestSocketErrorParityAndActorContext:
 
     @pytest.mark.asyncio
     async def test_request_context_attributes_engine_caller(self, async_session_factory):
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.orm.executions import Execution
         from src.models.orm.users import User
         from src.services.audit_context import current_actor
         from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
         execution_id = uuid4()
-        token, _ = mint_engine_token(
+        token, _ = legacy_engine_token(
             execution_id=str(execution_id),
             timeout_seconds=300,
         )

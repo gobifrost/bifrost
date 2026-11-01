@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "ec7f02f5baa6393b9c2417978914429990c004c7",
-  "collected_at": "2026-10-28T05:27:07Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...ec7f02f5baa6393b9c2417978914429990c004c7",
+  "target_ref": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
+  "collected_at": "2026-10-31T19:34:44Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...55f66591ac3b75e952ec27aae74e6789e5d92efa",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -1817,6 +1817,384 @@
       "subject": "Emit workflow.completed after successful executions (#1100)",
       "prs": [
         1100
+      ]
+    },
+    {
+      "sha": "1640636fbd3300d0b2a21780ac2faea0dd6da436",
+      "subject": "docs: activate workflow completion product update (#1101)",
+      "prs": [
+        1101
+      ]
+    },
+    {
+      "sha": "4b84c9474aa9a9e421a6af2db8a47b129780bf74",
+      "subject": "perf(worker): agent runs and chat turns execute on workers, forked from a warm agent template (#1103)",
+      "prs": [
+        1103
+      ]
+    },
+    {
+      "sha": "3aa8a7d9286f3894bd9b3978bea4a6e95d4378c8",
+      "subject": "Point documentation refresh and release checks at public docs (#1104)",
+      "prs": [
+        1104
+      ]
+    },
+    {
+      "sha": "e77cd36fb75cfdd2c18e6e3b933a7928af0ea6b8",
+      "subject": "perf(worker): keep the agent template loaded like the workflow template (#1106)",
+      "prs": [
+        1106
+      ]
+    },
+    {
+      "sha": "4be06f5803ffc7820e69c8a1a410e5e84969a8a4",
+      "subject": "perf: cut idle database churn (scheduled-task states, telemetry fence) (#1107)",
+      "prs": [
+        1107
+      ]
+    },
+    {
+      "sha": "ffe07b7a3edc5cca232087d890510b692247f296",
+      "subject": "feat(worker): mark idle worker pods safe for the cluster autoscaler to evict (#1110)",
+      "prs": [
+        1110
+      ]
+    },
+    {
+      "sha": "30624cce04af01ab30a807ed4aa793c321ee5218",
+      "subject": "fix: make the nightly Playwright suite pass (2 product fixes, spec and harness repairs) (#1111)",
+      "prs": [
+        1111
+      ]
+    },
+    {
+      "sha": "1ac2ac6df393bdd6a5c9f178047f247e5a6ca0c1",
+      "subject": "Reject invalid workspace manifests before Git sync applies them (#1112)",
+      "prs": [
+        1112
+      ]
+    },
+    {
+      "sha": "88904de42a7c03f6687e8adda4503d1f8237a933",
+      "subject": "fix(worker): a Job worker records the build its pod runs, not the admitting API's (#1114)",
+      "prs": [
+        1114
+      ]
+    },
+    {
+      "sha": "c2a116ca4edd1e35ebdb0e7c47d209444c323d96",
+      "subject": "fix(tables): serialize ordinary document merges (#1115)",
+      "prs": [
+        1115
+      ]
+    },
+    {
+      "sha": "7d2b9bd4877e726707cc7a3dcc4845588a9c3c9f",
+      "subject": "perf(worker): idle executors wait for a wake-up instead of polling every second (#1116)",
+      "prs": [
+        1116
+      ]
+    },
+    {
+      "sha": "a2d4d573cfd4f9bb5c534beb5b6660d810a76888",
+      "subject": "perf(worker): platform-job loop waits for a wake-up; enqueue wakes executors after commit (#1118)",
+      "prs": [
+        1118
+      ]
+    },
+    {
+      "sha": "d19deead82b08dc7299eeca974aae8393e6a25c4",
+      "subject": "Preserve execution logs through completion and recovery (#1123)",
+      "prs": [
+        1123
+      ]
+    },
+    {
+      "sha": "d96f89e829783287025ea974411681c27165a48d",
+      "subject": "test: reclaim orphaned log streams over a full scan cycle (#1125)",
+      "prs": [
+        1125
+      ]
+    },
+    {
+      "sha": "67cb705e6c17193115452a3c1e65a1a590cb199a",
+      "subject": "perf: reconcilers run on wake-ups, sweeping slowly when idle (#1119)",
+      "prs": [
+        1119
+      ]
+    },
+    {
+      "sha": "63529a32960880f4d4b6d6820f5369eba8754527",
+      "subject": "Unify manifest reading and validate decorator settings before acceptance (#1124)",
+      "prs": [
+        1124
+      ]
+    },
+    {
+      "sha": "223bb7c8e3e2f52c60e4560d50f937423de13248",
+      "subject": "perf(worker): idle service claim loop waits for a wake-up (#1126)",
+      "prs": [
+        1126
+      ]
+    },
+    {
+      "sha": "2aaaaf811a8361fe8914c8affecd78cff207ee55",
+      "subject": "perf: Kubernetes build controller waits for a wake-up when no builds are placed (#1127)",
+      "prs": [
+        1127
+      ]
+    },
+    {
+      "sha": "5f0c4900202429f9c83818a34387b97bb481a131",
+      "subject": "Allow Platform Admin self-assignment through existing role controls (#1128)",
+      "prs": [
+        1128
+      ]
+    },
+    {
+      "sha": "2448913b104e165b36af44f8c231eebb3ba184eb",
+      "subject": "fix(worker): preserve remote sessions across reconnects (#1132)",
+      "prs": [
+        1132
+      ]
+    },
+    {
+      "sha": "05d1d516dcd4119a3a1b3b664d505d64689a5b29",
+      "subject": "Let platform admins open an organization's App against that organization (#1117)",
+      "prs": [
+        1117
+      ]
+    },
+    {
+      "sha": "90a4030434dc5fa8db4a71d37057b90df81c2abc",
+      "subject": "Sign in by a provider-verified address, never the Graph mail attribute (#1130)",
+      "prs": [
+        1130
+      ]
+    },
+    {
+      "sha": "839cf78c76056592ad8d9ddaff45af3c0e18a4ce",
+      "subject": "Surface npm/vite output when a Solution app build fails (#1028)",
+      "prs": [
+        1028
+      ]
+    },
+    {
+      "sha": "ddeba337b90091658b2b146ab2b9469735c640e1",
+      "subject": "fix(worker): an executor that lost its remote owner leaves the row to its successor (#1133)",
+      "prs": [
+        1133
+      ]
+    },
+    {
+      "sha": "17785968a151f289f537f20868a1081da69bf5b2",
+      "subject": "test: fork tests delete the audit rows, forms and org they commit (#1122)",
+      "prs": [
+        1122
+      ]
+    },
+    {
+      "sha": "9889619c9727d731cdd23c0058674df498b7f4dd",
+      "subject": "perf(worker): package loop waits for a recorded change's wake-up (#1129)",
+      "prs": [
+        1129
+      ]
+    },
+    {
+      "sha": "bbe61a3900cf7437dd873f46f7a0f96a3b42d4c2",
+      "subject": "perf(engine): capture workflow variables on the final return only (#1099)",
+      "prs": [
+        1099
+      ]
+    },
+    {
+      "sha": "c2d7162b89a540fafbc26399c74d9399c5daf87d",
+      "subject": "Update docs screenshot dependencies and preserve YAML merges (#1134)",
+      "prs": [
+        1134
+      ]
+    },
+    {
+      "sha": "d382228f793365b8ecfbc2e93a2179b0b79952e2",
+      "subject": "test: preserve completed work during blank output recovery (#966)",
+      "prs": [
+        966
+      ]
+    },
+    {
+      "sha": "37b49bb47b4dcfb23b9f7434afd4a06a8e29ac13",
+      "subject": "chore(deps): bump actions/github-script from 8.0.0 to 9.0.0 (#937)",
+      "prs": [
+        937
+      ]
+    },
+    {
+      "sha": "531644009a5795a088977e227d49c0cc54576885",
+      "subject": "Update client dependencies and patch sanitizer advisories (#1135)",
+      "prs": [
+        1135
+      ]
+    },
+    {
+      "sha": "21e8f5928c24e6a73295c2f150cf77b776fbceb7",
+      "subject": "Limit API memory retained after response bursts (#1084)",
+      "prs": [
+        1084
+      ]
+    },
+    {
+      "sha": "bcf7c14173efb20720c31862478d70e1f71e0c15",
+      "subject": "chore(deps): bump mcp from 1.27.0 to 1.30.0 (#1072)",
+      "prs": [
+        1072
+      ]
+    },
+    {
+      "sha": "39f799b3ebfe0dd4a31c23e5d7e3dca3e7fc28f0",
+      "subject": "chore(deps): bump @babel/standalone from 7.29.1 to 8.0.6 in /api/src/services/app_compiler (#933)",
+      "prs": [
+        933
+      ]
+    },
+    {
+      "sha": "2accfd7cf5e65a6ca767ac7a81fcd5a4e321ded6",
+      "subject": "Refresh runtime images and satisfy Node 26 libraries (#1137)",
+      "prs": [
+        1137
+      ]
+    },
+    {
+      "sha": "26102d1cbc4e44f58a7cfa1ad3d49f4f8e8ca770",
+      "subject": "Align Pydantic AI runtime and Harness pins (#1136)",
+      "prs": [
+        1136
+      ]
+    },
+    {
+      "sha": "16d2e45a5d23639353e40e7fa416b43b990f29c8",
+      "subject": "Keep owner and leader leases until they expire when a renewal fails (#1138)",
+      "prs": [
+        1138
+      ]
+    },
+    {
+      "sha": "ad623e2505fe13f50e02f4960fd885082e76ef45",
+      "subject": "Stop pre-pinging pooled database connections (#1139)",
+      "prs": [
+        1139
+      ]
+    },
+    {
+      "sha": "b2c4a93cfc60f524a3e34a683faf597f29c481aa",
+      "subject": "Drop per-pool connection names and keep readiness off shared dependencies (#1143)",
+      "prs": [
+        1143
+      ]
+    },
+    {
+      "sha": "cc1cd64fb80aac69885df0db00ba12f61522dacd",
+      "subject": "Token PR1a: authority version, run refresh endpoint and one minter (no behaviour change) (#1146)",
+      "prs": [
+        1146
+      ]
+    },
+    {
+      "sha": "68139d0a7c0b5fa112c8b595117913bd99d3b56d",
+      "subject": "Token PR1b: claims-backed runtime tokens with legacy bridge (#1147)",
+      "prs": [
+        1147
+      ]
+    },
+    {
+      "sha": "a1edc19fd2679e62c071a0ba4269f0f1c3052c29",
+      "subject": "Keep agent run terminal status writes through a brief database outage (#1144)",
+      "prs": [
+        1144
+      ]
+    },
+    {
+      "sha": "05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2",
+      "subject": "Consolidate human authentication on shared claims and durable sessions (#1149)",
+      "prs": [
+        1149
+      ]
+    },
+    {
+      "sha": "8bef83b73f1b33b62ac2aff57220767b354f0729",
+      "subject": "Activate the approved authentication cutover notice (#1150)",
+      "prs": [
+        1150
+      ]
+    },
+    {
+      "sha": "700e6334f830632ec526654c1ab56e8d74446c69",
+      "subject": "Deliver workflow completion to apps before bookkeeping (#1151)",
+      "prs": [
+        1151
+      ]
+    },
+    {
+      "sha": "ad3ff6a6df1c97709c0fdbb3ef14f7eb3e5fe02e",
+      "subject": "Activate workflow completion fix in Product Updates (#1152)",
+      "prs": [
+        1152
+      ]
+    },
+    {
+      "sha": "88f9567e3d04e05b153360a14b2f14668db998e1",
+      "subject": "Add reviewed automatic App SDK upgrades (#1153)",
+      "prs": [
+        1153
+      ]
+    },
+    {
+      "sha": "127621d4a730c6c379be3403fa1db819ae1a82fa",
+      "subject": "Activate App SDK Upgrades in Product Updates (#1154)",
+      "prs": [
+        1154
+      ]
+    },
+    {
+      "sha": "aa3caac0622c023f369be48f2d24ac5e57d820a9",
+      "subject": "Fix automatic App SDK rebuild failures (#1155)",
+      "prs": [
+        1155
+      ]
+    },
+    {
+      "sha": "a29f7bcba17a4a0d4da7f7e33ffa2abbb4f45b8d",
+      "subject": "Activate App SDK rebuild fix in Product Updates (#1156)",
+      "prs": [
+        1156
+      ]
+    },
+    {
+      "sha": "e5da6d0c1fb751d4155b1b65458bfedfc2bec112",
+      "subject": "fix(worker): preserve launcher enrollment and reported build identity (#1157)",
+      "prs": [
+        1157
+      ]
+    },
+    {
+      "sha": "087ffade922de931d2a57bd8a72531f8240e15f7",
+      "subject": "Serve App SDK updates from the instance (#1158)",
+      "prs": [
+        1158
+      ]
+    },
+    {
+      "sha": "e611d31bbba3d7601980271c774cad5e821b1e97",
+      "subject": "docs(product-updates): activate hosted SDK delivery (#1159)",
+      "prs": [
+        1159
+      ]
+    },
+    {
+      "sha": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
+      "subject": "Report daily aggregate installation usage (#1163)",
+      "prs": [
+        1163
       ]
     }
   ],
@@ -3638,6 +4016,19 @@
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/931"
     },
     {
+      "number": 933,
+      "title": "chore(deps): bump @babel/standalone from 7.29.1 to 8.0.6 in /api/src/services/app_compiler",
+      "url": "https://github.com/gobifrost/bifrost/pull/933",
+      "author": {
+        "login": "dependabot[bot]",
+        "type": "Bot"
+      },
+      "merged_at": "2026-10-29T13:53:26Z",
+      "merge_commit": "39f799b3ebfe0dd4a31c23e5d7e3dca3e7fc28f0",
+      "body": "Upgrade the server-side app compiler to Babel standalone 8.0.6 while preserving the legacy app evaluator's injected React scope. Replace removed optional-chaining/nullish-coalescing proposal plugin aliases with their transform names, explicitly select classic React output, and retain the existing TypeScript import-removal setting. Main's Tailwind 4.3.3 dependency remains unchanged.\n\nThe compiler is still used by app edit/storage/deploy and MCP paths. This repair preserves those consumers instead of leaving the dependency upgrade unable to compile valid TSX. Original Dependabot history is retained; current main merged normally and obsolete combined-ledger metadata migrated to canonical `product-updates/dispositions/pr-933.json`.\n\nTDD: actual locked Babel 8.0.6 first produced 13 compiler-test failures because the old proposal plugin name is removed. The repair passes `./test.sh tests/unit/test_app_compiler.py tests/unit/services/test_app_compiler_deps.py -v` \u2014 15 passed. New regression compiles TypeScript with optional chaining/nullish coalescing and executes the returned component against injected React, rendering the expected result without a raw JSX-runtime import. Existing `$`/`$deps`, relative import and batch consumers remain covered.\n\n`./test.sh quality api` passed with zero errors/warnings; compiler lock dry-run, Product Updates validation and diff checks passed. Root reviewed the compiler change and independently checked `npm audit --json` \u2014 zero vulnerabilities. Full suites were not run locally; native merge queue is the complete-suite gate.\n\n[Official Babel 8 migration notes](https://babeljs.io/docs/v8-migration).\n\nProduct Updates: Omit \u2014 dependency compatibility maintenance; existing approved disposition retained. The non-dependency compatibility code requires maintainer review rather than dependency-only bot approval; no automation guard is weakened.\n\nAutomation disposition: optional Dependabot auto-merge job [123476805274](https://github.com/gobifrost/bifrost/actions/runs/40882316628/job/123476805274) rejected the source/test repair as outside dependency-only maintenance. Root completed manual compiler/consumer review and queued the PR through the protected native merge queue; the bot guard was not retried or weakened.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/933"
+    },
+    {
       "number": 936,
       "title": "chore(deps): bump lucide-react from 1.50.0 to 1.51.0 in /client in the npm-minor-and-patch group across 1 directory",
       "url": "https://github.com/gobifrost/bifrost/pull/936",
@@ -3649,6 +4040,19 @@
       "merge_commit": "79e964f8f4015cc014ff697ffb6a384b6fc7e63e",
       "body": "Bumps the npm-minor-and-patch group with 1 update in the /client directory: [lucide-react](https://github.com/lucide-icons/lucide/tree/HEAD/packages/lucide-react).\n\nUpdates `lucide-react` from 1.50.0 to 1.51.0\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a href=\"https://github.com/lucide-icons/lucide/releases\">lucide-react's releases</a>.</em></p>\n<blockquote>\n<h2>Version 1.51.0</h2>\n<h2>What's Changed</h2>\n<ul>\n<li>fix(site): persist icon customizer by <a href=\"https://github.com/karsa-mistmere\"><code>@\u200bkarsa-mistmere</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4944\">lucide-icons/lucide#4944</a></li>\n<li>chore(deps): Upgrade to vite 8 by <a href=\"https://github.com/ericfennis\"><code>@\u200bericfennis</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4950\">lucide-icons/lucide#4950</a></li>\n<li>feat(icons): added <code>rugby-ball</code> icon by <a href=\"https://github.com/dev-mralph\"><code>@\u200bdev-mralph</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/3496\">lucide-icons/lucide#3496</a></li>\n<li>chore(deps): bump the react-deps group across 1 directory with 3 updates by <a href=\"https://github.com/dependabot\"><code>@\u200bdependabot</code></a>[bot] in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4951\">lucide-icons/lucide#4951</a></li>\n<li>fix(react-native): stop forwarding arbitrary rest props to child shape elements by <a href=\"https://github.com/cipherprofessor\"><code>@\u200bcipherprofessor</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4903\">lucide-icons/lucide#4903</a></li>\n<li>test(lucide-solid): add Vite and SolidStart integration fixtures by <a href=\"https://github.com/ericfennis\"><code>@\u200bericfennis</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4884\">lucide-icons/lucide#4884</a></li>\n<li>feat(icons): add door-closed-cog icon by <a href=\"https://github.com/ajaxjiang96\"><code>@\u200bajaxjiang96</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4905\">lucide-icons/lucide#4905</a></li>\n<li>feat(icons): add text-align-justify-* icons by <a href=\"https://github.com/HectorZaGa\"><code>@\u200bHectorZaGa</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4942\">lucide-icons/lucide#4942</a></li>\n<li>chore(deps): bump pnpm/action-setup from 6.0.10 to 6.1.0 in the github-actions group across 1 directory by <a href=\"https://github.com/dependabot\"><code>@\u200bdependabot</code></a>[bot] in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4939\">lucide-icons/lucide#4939</a></li>\n<li>chore(deps): Upgrade to vitest 5 by <a href=\"https://github.com/ericfennis\"><code>@\u200bericfennis</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4953\">lucide-icons/lucide#4953</a></li>\n<li>feat(icons): added <code>wind-arrow-up</code> icon by <a href=\"https://github.com/jamesgpearce\"><code>@\u200bjamesgpearce</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4501\">lucide-icons/lucide#4501</a></li>\n<li>fix(github/actions): move to daily release flow by <a href=\"https://github.com/karsa-mistmere\"><code>@\u200bkarsa-mistmere</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4911\">lucide-icons/lucide#4911</a></li>\n<li>feat(<code>@\u200blucide/solid</code>): Support for Solid 2.0 RC by <a href=\"https://github.com/davedbase\"><code>@\u200bdavedbase</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4751\">lucide-icons/lucide#4751</a></li>\n<li>chore(deps-dev): bump the angular-deps group across 1 directory with 10 updates by <a href=\"https://github.com/dependabot\"><code>@\u200bdependabot</code></a>[bot] in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4954\">lucide-icons/lucide#4954</a></li>\n<li>chore(deps): bump nuxt from 4.4.8 to 4.5.1 by <a href=\"https://github.com/dependabot\"><code>@\u200bdependabot</code></a>[bot] in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4949\">lucide-icons/lucide#4949</a></li>\n<li>feat(icons): added <code>armenian-dram</code> icon by <a href=\"https://github.com/Elawphant\"><code>@\u200bElawphant</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4456\">lucide-icons/lucide#4456</a></li>\n<li>feat(icons): add <code>kazakh-tenge</code> icon by <a href=\"https://github.com/hkayrad\"><code>@\u200bhkayrad</code></a> in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4925\">lucide-icons/lucide#4925</a></li>\n</ul>\n<h2>New Contributors</h2>\n<ul>\n<li><a href=\"https://github.com/dev-mralph\"><code>@\u200bdev-mralph</code></a> made their first contribution in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/3496\">lucide-icons/lucide#3496</a></li>\n<li><a href=\"https://github.com/cipherprofessor\"><code>@\u200bcipherprofessor</code></a> made their first contribution in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4903\">lucide-icons/lucide#4903</a></li>\n<li><a href=\"https://github.com/HectorZaGa\"><code>@\u200bHectorZaGa</code></a> made their first contribution in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4942\">lucide-icons/lucide#4942</a></li>\n<li><a href=\"https://github.com/jamesgpearce\"><code>@\u200bjamesgpearce</code></a> made their first contribution in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4501\">lucide-icons/lucide#4501</a></li>\n<li><a href=\"https://github.com/davedbase\"><code>@\u200bdavedbase</code></a> made their first contribution in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4751\">lucide-icons/lucide#4751</a></li>\n<li><a href=\"https://github.com/Elawphant\"><code>@\u200bElawphant</code></a> made their first contribution in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4456\">lucide-icons/lucide#4456</a></li>\n<li><a href=\"https://github.com/hkayrad\"><code>@\u200bhkayrad</code></a> made their first contribution in <a href=\"https://redirect.github.com/lucide-icons/lucide/pull/4925\">lucide-icons/lucide#4925</a></li>\n</ul>\n<p><strong>Full Changelog</strong>: <a href=\"https://github.com/lucide-icons/lucide/compare/1.50.0...1.51.0\">https://github.com/lucide-icons/lucide/compare/1.50.0...1.51.0</a></p>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a href=\"https://github.com/lucide-icons/lucide/commit/98331e287029edeff0e04f269439884d060af703\"><code>98331e2</code></a> chore(deps): bump the react-deps group across 1 directory with 3 updates (<a href=\"https://github.com/lucide-icons/lucide/tree/HEAD/packages/lucide-react/issues/4951\">#4951</a>)</li>\n<li><a href=\"https://github.com/lucide-icons/lucide/commit/09aa9c5c62c3b4b519fbb8c9ce1c396cc12f4dae\"><code>09aa9c5</code></a> chore(deps): Upgrade to vite 8 (<a href=\"https://github.com/lucide-icons/lucide/tree/HEAD/packages/lucide-react/issues/4950\">#4950</a>)</li>\n<li>See full diff in <a href=\"https://github.com/lucide-icons/lucide/commits/1.51.0/packages/lucide-react\">compare view</a></li>\n</ul>\n</details>\n<br />\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/936"
+    },
+    {
+      "number": 937,
+      "title": "chore(deps): bump actions/github-script from 8.0.0 to 9.0.0",
+      "url": "https://github.com/gobifrost/bifrost/pull/937",
+      "author": {
+        "login": "dependabot[bot]",
+        "type": "Bot"
+      },
+      "merged_at": "2026-10-29T13:23:05Z",
+      "merge_commit": "37b49bb47b4dcfb23b9f7434afd4a06a8e29ac13",
+      "body": "Update all three GitHub Script consumers to the verified v9.0.0 commit, including the advisory lookup added after this PR opened. Current scripts use the injected GitHub client and local CommonJS helpers; none requires the removed `@actions/github` CommonJS import or shadows the new injected `getOctokit` name. Runner permissions and workflow behavior are unchanged.\n\nMerged current main without rewriting history. Move this PR's obsolete combined-ledger disposition into canonical `product-updates/dispositions/pr-937.json`, preserving main's ledger header.\n\nValidation: `python3 api/scripts/check_github_action_pins.py --verify-versions .github/workflows/dependabot-auto-merge.yml .github/workflows/product-updates.yml` passed; all three v9 SHA references and removed-API conflicts checked. `node --test scripts/test_dependabot_product_updates.cjs scripts/test_product_updates_scope.cjs scripts/test_dependabot_alert_lookup.cjs` \u2014 28 passed, no skips. `git diff --check` passed. Full backend/client suites were not run locally; native queue remains the complete-suite gate.\n\n[Upstream v9 compatibility notes](https://github.com/actions/github-script/releases/tag/v9.0.0).\n\nProduct Updates: Omit \u2014 internal workflow dependency maintenance; canonical disposition included.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/937"
     },
     {
       "number": 938,
@@ -3883,6 +4287,19 @@
       "merge_commit": "0d267c3fcb9bec1a4552d1b0008a47e31374482a",
       "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other \u2014 Inline (v1) apps no longer lose table reads and saves when the 30-minute session cookie lapses; they renew the session and retry.\n- [ ] Omit\n\nDisposition: `product-updates/dispositions/pr-964.json` (`other`, `category: fix`), validated with `scripts/product_updates.py validate`.\n\n## Summary\n\n**Symptom.** In inline v1 apps, table reads and saves fail some time after the last session renewal with `tables: 401 {\"detail\":\"Not authenticated\"}`. Newly mounted `useTable` hooks resolve to `rows: []` with `error` set, so apps that don't render `error` show data as missing. Saves either toast the 401 or silently vanish. Reported by a customer on a v1 CRM app: account info \"randomly unavailable\" when opening another location, and edits disappearing several times a day.\n\n**Root cause.** The `access_token` and `csrf_token` cookies have `Max-Age=1800`. v1 apps never mount `<BifrostProvider>`, so the data SDK's `http()` (`client/src/lib/app-sdk/tables.ts`) does a bare same-origin cookie `fetch` with no 401 handling, and nothing in a v1 app renews the cookie. It only recovers when some other host code path happens to call `refreshAccessToken()`. v2 apps are unaffected: `BifrostProvider.authedFetch` already refreshes once via the host bridge and retries.\n\n**Fix.**\n- `http()` now renews through the host bridge (`__BIFROST_PLATFORM_AUTH_V1__.refreshAccessToken`, the same single-flight refresh `authedFetch` uses) and retries **once** on a 401. It re-reads the rotated CSRF token for the retry.\n  - This applies only to the same-origin (v1) transport; the provider transport keeps owning renewal.\n  - It honors `canRefreshAccessToken()`, so embed sessions are unchanged.\n  - An unrecoverable 401 (refresh fails, or retry still 401) calls `handleAuthenticationFailure()`, as `authedFetch` does, and still throws the same error.\n- The bridge type and accessor move from `provider.tsx` to `transport.ts` (`getPlatformAuth()`), so `tables.ts` and `provider.tsx` share one definition.\n\n**Validation.**\n- Unit:\n  - New `tables.test.ts` cases: retry succeeds; rotated CSRF on the retried mutation; retry result still gets 404\u2192null handling; renewal fails; still-401 retries at most once; embed session; no bridge; provider transport untouched; parallel burst.\n  - New `transport.test.ts`.\n  - New `use-table.test.tsx` case: the snapshot recovers. This case fails against `main`'s `tables.ts` with `error: tables: 401 \u2026`.\n- Commands (on the rebased branch):\n  - `npx vitest run src/lib/app-sdk/` \u2192 21 files / 249 tests pass.\n  - `npm run tsc` \u2192 pass.\n  - `npm run lint` \u2192 0 errors. The 5 warnings are pre-existing, in untouched files.\n  - Before the rebase, the full client unit suite (`npm test`) passed: 568 files / 3632 tests.\n- Live before/after on a local `./debug.sh` stack (port mode). The repro is an inline_v1 app that mirrors the reporting app's table access: an explicit org `scope` on every call, a card that mounts its own `useTable` when opened, a field `update`, and an `insert`. Chromium runs in `mcr.microsoft.com/playwright:v1.63.0-jammy`, which signs in, clears the `access_token` cookie to simulate the 30-minute lapse, then opens a card and saves.\n  - **Before** (`main`): the new card shows `Unknown provider` with `tables: 401 {\"detail\":\"Not authenticated\"}`. PATCH 401, POST 401, and no `/api/auth/refresh` call.\n  - **After**: 2\u00d7 query 401 \u2192 **one** `200 /api/auth/refresh` \u2192 2\u00d7 query 200. The card renders the row, PATCH returns 200 and insert 201.\n  - With `refresh_token` also cleared: before, the page stays put showing the 401; after, it redirects to `/login?returnTo=\u2026`.\n- Not run: backend suites (no backend change), client e2e suite.\n\n\n**Delayed-response recovery.** Table calls now compare the host token captured before sending with the current token after a 401. If another request already renewed the session, they retry once without renewing again. A deterministic regression test releases eleven original 401 responses one at a time after the first renewal completes and verifies that all calls recover with one renewal and no authentication-failure handoff. The existing burst test now clears its single-flight lock after completion, matching the real host.\n\n**Out of scope / follow-ups.**\n- `files.ts` uses the same cookie-only pattern without renewal.\n- The v1 table websocket treats close code 4001 as non-retryable (`ws-client.ts`), so live updates can stop after expiry until remount.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/964"
+    },
+    {
+      "number": 966,
+      "title": "test: preserve completed work during blank output recovery",
+      "url": "https://github.com/gobifrost/bifrost/pull/966",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T13:20:16Z",
+      "merge_commit": "d382228f793365b8ecfbc2e93a2179b0b79952e2",
+      "body": "A completed operational tool must not run again when the model returns blank final responses. This regression test drives the real delegated agent loop through one successful ticket update and two blank finals, asserting one operational dispatch, retained tool receipt, bounded handoff, and charged usage. Runtime behavior and authorization rules are unchanged.\n\nUpdated against current main using the current caller/run-as fixture. The stale test first failed because those required arguments were absent; the fixture repair passes the complete focused empty-output file.\n\nValidation: `./test.sh tests/unit/services/execution/test_autonomous_empty_output.py -v` \u2014 4 passed, no skips (JUnit verified). `./test.sh quality api` \u2014 Pyright zero errors/warnings; Ruff passed. `git diff --check` passed. Full suites were not run locally; native merge queue is the complete-suite gate.\n\nCloses #965.\n\nProduct Updates: Omit \u2014 regression tests only, canonical `product-updates/dispositions/pr-966.json`.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/966"
     },
     {
       "number": 967,
@@ -4418,6 +4835,19 @@
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1026"
     },
     {
+      "number": 1028,
+      "title": "Surface npm/vite output when a Solution app build fails",
+      "url": "https://github.com/gobifrost/bifrost/pull/1028",
+      "author": {
+        "login": "shaank0",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T06:14:48Z",
+      "merge_commit": "839cf78c76056592ad8d9ddaff45af3c0e18a4ce",
+      "body": "Solution installs and deploys now show the failed npm/Vite step, exit code, and the last 20 lines of stderr (or stdout when stderr is empty), instead of the generic unexpected-deploy error. The existing deploy/install displays already surface `SolutionDeployConflict`; out-of-memory failures retain their existing `AppBuildMemoryError` classification.\n\nWill Spence's original implementation and commits are retained. The shared remote-runner CI blocker is repaired separately in #1132.\n\n## Validation\n\n```bash\n./test.sh tests/unit/test_solution_app_build.py tests/unit/shared/test_app_build_errors.py -v\n./test.sh quality api\n```\n\n24 focused build/error tests passed; Pyright and Ruff passed. The Solution build tests also passed in the final combined runner verification. Full backend and browser suites were not run locally; the merge queue supplies the complete gate.\n\n## Product Updates\n\n- [ ] Highlight\n- [x] Other \u2014 Solution installs and deploys show npm or Vite output when an App build fails.\n- [ ] Omit\n\nApproved canonical disposition: `product-updates/dispositions/pr-1028.json`.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1028"
+    },
+    {
       "number": 1029,
       "title": "Resolve App slugs across the caller's reach",
       "url": "https://github.com/gobifrost/bifrost/pull/1029",
@@ -4938,6 +5368,19 @@
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1071"
     },
     {
+      "number": 1072,
+      "title": "chore(deps): bump mcp from 1.27.0 to 1.30.0",
+      "url": "https://github.com/gobifrost/bifrost/pull/1072",
+      "author": {
+        "login": "dependabot[bot]",
+        "type": "Bot"
+      },
+      "merged_at": "2026-10-29T13:44:10Z",
+      "merge_commit": "bcf7c14173efb20720c31862478d70e1f71e0c15",
+      "body": "Update MCP 1.27.0 to 1.30.0 and preserve Bifrost's required identity claims under the SDK's expanded AccessToken model. `Field(default=...)` satisfies pinned Pyright while omitted/null claims remain rejected and verified policy claims remain intact. No empty default, authorization relaxation, token redesign or transport fallback is added.\n\nRetains Dependabot's exact version/hashes and canonical disposition. Original PR history is merged normally into current main; no force push. Bifrost's router deliberately uses stateless JSON sessions, so the upstream stateful idle/cap defaults do not change that contract. No upstream security default is disabled.\n\nValidation on actual MCP 1.30.0 image `bifrost-test-api-dev:bifrost-test-ff2f5de9`:\n- `./test.sh tests/unit/services/test_mcp_auth.py tests/unit/services/mcp_server/test_auth_provider_claims.py -v` \u2014 22 passed.\n- Tool schemas and MCP client catalog/discovery/auth-resolution files \u2014 35 passed.\n- `./test.sh tests/e2e/api-integration/test_mcp_protocol.py tests/e2e/api-integration/test_mcp_refresh_after_register.py -v` \u2014 10 passed, including authenticated wire discovery and immediate registered-tool schema/callable refresh.\n- `./test.sh quality api` \u2014 Pyright zero errors/warnings; Ruff passed. Product Updates validation and diff checks passed.\n\nThe original declaration and positional `Field(...)` both fail the pinned type checker; final explicit default spelling passes without changing required runtime semantics. Root reviewed the auth boundary and exact patch. Full suites were not run locally; native merge queue remains the complete-suite gate.\n\n[Upstream 1.30 release behavior/security notes](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v1.30.0).\n\nProduct Updates: Omit \u2014 dependency maintenance; existing canonical required security review retained.\n\nCI disposition: the optional Dependabot auto-merge workflow rejects this maintainer-repaired branch because `auth.py` and its regression tests are outside dependency-only maintenance. Job 123469338993 confirms that policy rejection. The guard is working as designed and has not been weakened or retried. Root completed the sensitive auth review and manually enabled the protected merge queue under the user's review/fix/merge authorization; required lint, unit and full E2E gates remain mandatory.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1072"
+    },
+    {
       "number": 1073,
       "title": "Reduce repeated runtime authentication queries",
       "url": "https://github.com/gobifrost/bifrost/pull/1073",
@@ -5053,6 +5496,19 @@
       "merge_commit": "4f13ce8be901a8367d41da2388d92c47d26ac716",
       "body": "Workflow-tool registration generated a Pydantic argument model from every synthetic **arguments wrapper, although dispatch validates the workflow's stored JSON schema directly. Full catalog refreshes rebuilt those unused models. Construct workflow tools with shared SDK metadata and keep each workflow's callable and JSON schema distinct. Native-tool argument validation remains intact.\n\nA local control matching production's 701 workflow tools retained about 43 MiB above baseline after five refreshes and quiet; the shared version retained under 1 MiB. Five rebuilds took 2.11 seconds versus 21.8 milliseconds, with equivalent public tool fields and first-call results. These are local control results; production's warmed memory baseline remains under investigation.\n\nValidation: 27 focused MCP unit tests; the existing live register/list/call integration test, including invalid argument rejection; API pyright and ruff. Broader suites are left to the exact merge-queue candidate.\n\nProduct Updates: Other / Fixed \u2014 workflow tool updates use less memory and rebuild faster.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1083"
+    },
+    {
+      "number": 1084,
+      "title": "Limit API memory retained after response bursts",
+      "url": "https://github.com/gobifrost/bifrost/pull/1084",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T13:39:44Z",
+      "merge_commit": "21e8f5928c24e6a73295c2f150cf77b776fbceb7",
+      "body": "The API retains allocator memory after large response bursts. Install jemalloc in the shared runtime image and apply its defaults to API startup, including Kubernetes commands that invoke Uvicorn directly and bypass the Docker entrypoint. A shared helper configures the entrypoint and Uvicorn launcher; worker, scheduler, init and CLI commands retain their settings. Explicit operator allocator values and preload-library precedence are preserved.\n\nThe launch-path correction is now verified on current main. Existing uncommitted work was imported into an isolated correction worktree; original allocator and measurement worktrees were left untouched. No request, authorization, execution-transport or response contract changes.\n\nValidation:\n- `./test.sh tests/unit/test_api_allocator_entrypoint.py tests/unit/test_compose_test_harness.py -v` \u2014 34 passed.\n- `./test.sh tests/e2e/platform/test_agent_runtime_boundary.py -v --durations=0` \u2014 2 passed; 10.55s including setup.\n- `./test.sh quality api` \u2014 Pyright zero errors/warnings; Ruff passed. Root reviewed the full diff, shell syntax, clean candidate and ancestry.\n- Exact source-built image `bifrost-test-api-dev:bifrost-test-9ecfe916`, invoked as UID 1000 with `/usr/local/bin/uvicorn` overriding the entrypoint, returned `/health/ready` HTTP 200 and mapped `/usr/lib/x86_64-linux-gnu/libjemalloc.so.2`. Disposable proof container removed.\n- Direct Uvicorn and normal image launch paths work; non-API command retains unset allocator variables. Operator overrides and duplicate-preload prevention are covered.\n\nMemory evidence is from the earlier bounded controls, not a new production-baseline claim: the same-source object-heavy comparison retained 83 MiB PSS by default versus 7 MiB with this configuration after two bursts/quiet periods; native jemalloc alone retained 50 MiB. The smaller production-volume control did not reproduce the large production increase (334 MiB quiet default versus 339 MiB candidate). Timings were mixed. No general speed improvement or restored fully warmed production footprint is claimed; production workload verification follows deployment.\n\nFull suites were not rerun locally; native merge queue is the complete-suite gate.\n\nProduct Updates: Other \u2014 reduce API memory retained after large responses; existing canonical disposition retained.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1084"
     },
     {
       "number": 1086,
@@ -5185,6 +5641,19 @@
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1096"
     },
     {
+      "number": 1099,
+      "title": "perf(engine): capture workflow variables on the final return only",
+      "url": "https://github.com/gobifrost/bifrost/pull/1099",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T12:25:07Z",
+      "merge_commit": "bbe61a3900cf7437dd873f46f7a0f96a3b42d4c2",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal performance change to workflow variable capture; variables are still captured at the end of each run.\n\n## Summary\n\nWorkflow variable capture installed a `sys.settrace` hook so it could read the workflow's locals on its final return. The hook kept a Python callback running on every line of the workflow function. This replaces it with a `sys.monitoring` (PEP 669) `PY_RETURN` event scoped to the workflow's own code object (an inline script's `main()`), on tool ids 3/4, freed after each run.\n\n- Variables are still captured at the workflow's return, including early returns. Await suspension and exceptions don't fire the event; the error path still captures from the traceback as before.\n- Workflows wrapped by another `functools.wraps` decorator capture the inner function's locals (`inspect.unwrap`), as the old name-matching did.\n- `sys.settrace` is no longer touched, so an existing tracer stays installed.\n\nFound by the performance benchmark harness (`docs/benchmarks/2026-10-27-baseline.md` on branch `claude/api-memory-performance-review-4b3b8c`). Engine-level timing of a 250k-dict JSON workload showed the old hook adding ~10\u201320%; the larger slowdown seen in worker children is a separate, still-open investigation.\n\n## Validation\n\nAll with `BIFROST_TEST_IMAGE_TAG=bifrost-test-2a5c898d BIFROST_SKIP_BUILD=1`:\n\n- `./test.sh unit` \u2014 10,360 passed (full backend unit suite)\n- `./test.sh tests/e2e/engine/test_variable_capture_on_error.py tests/e2e/engine/test_script_logging.py` \u2014 5 passed (obsolete skip-under-coverage guards removed)\n- `./test.sh tests/unit/engine/test_variable_capture_monitoring.py` \u2014 9 passed (sync-style, async final return, no capture on suspension, early return, script `main`, wrapped decorator, failing workflow frees the tool id, existing tracer preserved, no per-line instrumentation)\n- `./test.sh quality api` \u2014 pyright 0 errors, ruff clean\n- Python CodeQL (changed lines): one `py/multiple-definition` note in the new test, fixed in the last commit; the merge queue's CodeQL is the confirming run.\n- Not run locally: client checks and JavaScript CodeQL (no client or JavaScript changes), full E2E and browser suites (merge queue gate).\n\nIndependent review: no blocking findings; its should-fix (wrapped decorators) is addressed and covered by a test that fails on the old lookup.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1099"
+    },
+    {
       "number": 1100,
       "title": "Emit workflow.completed after successful executions",
       "url": "https://github.com/gobifrost/bifrost/pull/1100",
@@ -5196,6 +5665,617 @@
       "merge_commit": "ec7f02f5baa6393b9c2417978914429990c004c7",
       "body": "Successful workflows can now trigger follow-up automation through the built-in `workflow.completed` topic. Emit metadata only after the terminal result is committed and synchronous callers are notified; subscribers fetch results through existing execution access checks.\n\nDirect self-subscriptions are recorded as skipped, while distinct workflows can chain. Built-in emission keeps the existing failure events\u2019 best-effort semantics; multi-workflow cycles require subscription filters.\n\nCloses #1097. Requested by @MTG-Thomas.\n\nValidation:\n- `./test.sh tests/unit/services/events/test_builtins.py tests/unit/services/events/test_emit_topic.py tests/unit/services/events/test_registry.py tests/unit/jobs/consumers/test_workflow_execution_session.py tests/e2e/api/test_builtin_events.py -v --durations=0` \u2014 31 passed, zero skips. The new live path executes one source workflow and one subscriber; 4.80 seconds including setup/cleanup.\n- `./test.sh quality api` \u2014 passed: zero Pyright errors/warnings; Ruff passed.\n- Independent focused source review and `git diff --check` passed.\n\nThe first unit run exposed a test mock assertion against omitted default arguments and a missing delivery mock. Both were corrected; the combined run above passes without the warning.\n\nFull backend, client and browser suites were not run locally. The merge queue supplies complete-suite verification.\n\n## Product Updates\n\n- [x] Highlight \u2014 React to Successful Workflows. Canonical entry: cc3b1800-b7cd-4478-b9a0-0178c189453d; disposition: product-updates/dispositions/pr-1100.json.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1100"
+    },
+    {
+      "number": 1101,
+      "title": "docs: activate workflow completion product update",
+      "url": "https://github.com/gobifrost/bifrost/pull/1101",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T05:50:25Z",
+      "merge_commit": "1640636fbd3300d0b2a21780ac2faea0dd6da436",
+      "body": "Refresh cumulative verified Product Updates metadata through merged PR #1100 so its approved workflow.completed entry is eligible in dev image bundles. Preserve all historical records and the approved entry UUID/prose.\n\nValidation: deterministic Product Updates validation and bundle preparation passed; the generated bundle contains entry cc3b1800-b7cd-4478-b9a0-0178c189453d. No runtime source changed.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1101"
+    },
+    {
+      "number": 1103,
+      "title": "perf(worker): agent runs and chat turns execute on workers, forked from a warm agent template",
+      "url": "https://github.com/gobifrost/bifrost/pull/1103",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T14:34:56Z",
+      "merge_commit": "4b84c9474aa9a9e421a6af2db8a47b129780bf74",
+      "body": "**Stacked on #1102** (benchmark harness and designs). Until #1102 merges, this diff includes it. The agents change is the last 16 commits (`git log perf/benchmark-suite..perf/agent-runs-on-workers`).\n\n## Product Updates\n\n- [ ] Highlight\n- [x] Other: agent runs and chat messages run in separate worker processes, so a busy or memory-full API no longer delays or blocks them.\n- [ ] Omit\n\n## Summary\n\n`agent.run` work (autonomous agent runs and chat turns) moves out of the API process and onto workers again, as designed in `docs/superpowers/specs/2026-10-27-agent-runs-on-workers-design.md`.\n\n**Why now:** production on 2026-10-28 had Triage Agent runs queued for over 20 minutes. The API was at 90% of its 1 GiB limit, so its in-process agent executor stopped claiming work. The allocator never returns memory, so the runs waited until a restart.\n\n**How it works**\n- **On the worker:**\n  - Each worker's launcher keeps a lazily started **agent template**. It holds the agent runtime with the model catalog and prices warmed, `gc.freeze` applied, and no connections open at fork time.\n  - Each run is a **child forked from that template**, and the child exits when the run ends.\n  - The template retires after 5 minutes with no agent child alive. Opening chat pre-warms it.\n- **On the API:**\n  - The API sends `agent_run` and `agent_prewarm` launcher actions.\n  - It keeps routes until the worker's inventory proves them absent, so a lost reply never launches twice.\n  - Abnormal exits, lost workers, drain deadlines and reconnect reconciliation all end the run and wake its sync caller or chat stream.\n- **Stays in the API:** summaries (`agent.summarize`). The legacy `POST /api/chat/conversations/{id}/messages` keeps its contract.\n- **Capacity:**\n  - The worker controller counts the `agent.run` backlog, and Job and static rows advertise `agent.run`.\n  - An agent run requests **96 MiB** (measured child peak 62\u201385 MiB).\n  - A warm template reserves **224 MiB** (measured 198\u2013202 MiB) in admission and in the reserved memory the controller sees.\n\n**Measured** (`docs/benchmarks/2026-10-28-agent-runs-on-workers.md`; same profile before and after; 1,600 runs per backend, all succeeded):\n- **API memory:** 30 MiB lower when fresh. Settled memory is about the same (summaries still load the model client in the API), but it no longer grows from agent runs.\n- **Worker memory:** returns to idle (78\u201391 MiB) once the template retires. Run children use 62\u201385 MiB private each.\n- **Latency:** agent runs are 0.25\u20130.9 s slower, because each child has cold caches and opens its own connections. Reducing that is a separate, measured follow-up.\n- **Workflow classes:** unchanged.\n\n## Rollout notes\n\n- **Roll workers with the API.** A launcher from before this change rejects `agent_run`.\n  - Rows written by an old API don't advertise `agent.run`, so old workers aren't given agent work.\n  - A worker that first registers with this API while running an old launcher would fail the agent runs it claims.\n  - Job workers are replaced on upgrade (#1052), so this window is short.\n- **Rolling back:** roll back the workers together with the API. The old API rejects `agent_run` routes in inventory.\n- **Known, unchanged:**\n  - A run ended by its deadline is recorded as `failed` with a timeout message, not `timeout`.\n  - A run proven never launched after a reconnect is failed rather than re-queued. Workflow runs behave the same way.\n\n## Review\n\nAn independent review of the final branch found no duplicate-execution, fork-safety or lost-caller bugs. Its findings fixed in the last commit:\n- `agent_run` and `agent_prewarm` replies now wait long enough for a template build (120 s + 15 s). Before, a slow first build left callers waiting for the run's full timeout.\n- The warm template's memory is now reserved in admission.\n- A route is released even when recording the run's end fails.\n\n## Verification\n\n- `./test.sh quality api`: clean.\n- `./test.sh unit`: 10,407 passed. After the review fixes: worker, launcher, admission and services suites, 3,098 passed.\n- E2E: `test_agent_workflow_tool_execution.py`, `test_agent_runtime_boundary.py` (including agent and chat runs claimed by a remote worker), `test_remote_runner_lifecycle.py` and the chat tests: 34 passed.\n- Benchmark before and after, fake model and DeepSeek, on a Kind cluster shaped like production.\n- Not run locally: the full backend E2E suite, which the merge queue runs.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1103"
+    },
+    {
+      "number": 1104,
+      "title": "Point documentation refresh and release checks at public docs",
+      "url": "https://github.com/gobifrost/bifrost/pull/1104",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T15:44:58Z",
+      "merge_commit": "3aa8a7d9286f3894bd9b3978bea4a6e95d4378c8",
+      "body": "Documentation refresh and release freshness checks still target the private website checkout. Point their defaults and clone instructions at gobifrost/public-docs, and record the isolated public image directory. Both canonical Claude instructions and generated Codex mirrors are updated. Blog authoring continues to target gobifrost/website.\n\nThe capture pipeline already accepts an explicit --docs-repo and resolves manifest images and fixtures relative to that root, so its runtime behavior is unchanged.\n\nValidation: bash -n scripts/release/check-docs-freshness.sh; execute the freshness helper with its new default and the existing Bifrost checkout; python3 scripts/check_skill_mirrors.py; git diff --check. The public docs build and its 94-entry screenshot manifest validation passed separately. Broader backend, frontend, and capture suites were not run for this shell-default and instruction-only change.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1104"
+    },
+    {
+      "number": 1106,
+      "title": "perf(worker): keep the agent template loaded like the workflow template",
+      "url": "https://github.com/gobifrost/bifrost/pull/1106",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T16:41:42Z",
+      "merge_commit": "e77cd36fb75cfdd2c18e6e3b933a7928af0ea6b8",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other: agent runs and chat messages start immediately again, without waiting for the worker to load the agent runtime.\n- [ ] Omit\n\n## Summary\n\nFollow-up to #1103. The worker's agent template is now **always loaded, like the workflow template**, instead of starting on demand and retiring after 5 idle minutes.\n\n**Why:**\n- **Cold starts in production:** after #1103 deployed, the first agent runs waited about 11 s, because the template took 10.2 s to build. Built alone on a production worker it takes 7.3 s, 7.06 s of it CPU:\n  - `pydantic_ai` with the OpenAI SDK's types: 3.0 s\n  - our agent run module: 1.9 s\n  - the agent executor: 1.1 s\n- **How often:** with a 5-minute retire, 52% of the previous week's 296 production agent runs would have paid it.\n- **Before #1103:** these imports were always loaded in the API, so no run waited.\n\n**Change:**\n- **Launcher start:** the agent template starts with the workflow template, before the launcher measures its memory baseline, so admission counts it as part of the worker.\n- **Recovery:** the launcher's monitor replaces a dead agent template, as it does the workflow template.\n- **Removed, now unneeded:**\n  - the idle retire and the `agent_template_idle_seconds` setting\n  - the `agent_prewarm` action and the chat pre-warm\n  - the 224 MiB template reservation and the admission `own_bytes` hook\n- **Net:** 102 lines added, 257 deleted.\n\n**Memory:** measured on the production worker with the template loaded:\n\n| Process | Private memory |\n|---|---:|\n| Launcher | 25 MiB |\n| Workflow template | 23 MiB |\n| Agent template | 222 MiB |\n\nA worker idles at about 280\u2013290 MiB instead of about 80 MiB. Jack accepted this baseline to keep runs starting immediately. The design spec and the #1103 benchmark doc are updated with the measurements.\n\n## Verification\n\n- Launcher, worker, execution, admission, chat-profile, memory-request and worker-pool unit tests: 298 passed.\n- `./test.sh quality api`: clean.\n- E2E: agent tool execution, agent runtime boundary (agent and chat runs on a remote worker), remote runner lifecycle and chat: 34 passed.\n- New tests:\n  - the launcher loads both templates before measuring its baseline;\n  - the monitor replaces a dead agent template.\n- Not run locally: the full backend E2E suite, which the merge queue runs.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1106"
+    },
+    {
+      "number": 1107,
+      "title": "perf: cut idle database churn (scheduled-task states, telemetry fence)",
+      "url": "https://github.com/gobifrost/bifrost/pull/1107",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T16:44:18Z",
+      "merge_commit": "4be06f5803ffc7820e69c8a1a410e5e84969a8a4",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit: internal database-load reduction with no user-visible behavior change.\n\n## Summary\n\nStep 2 of the idle database churn plan (`docs/superpowers/plans/2026-10-28-idle-database-churn.md`, changes 5 and 3).\n\n- **Scheduled tasks write only what changed.** After every scheduled run, the trigger leader used to re-upsert all 23 `scheduler_task_states` rows. Now it upserts only the task that ran. Leader start-up still publishes the whole catalog.\n- **No database fence per telemetry frame.**\n  - Every launcher message used to run an ownership query (`owns_remote_session`), including the once-a-second memory samples.\n  - The session now records, on the monotonic clock, when its lease was last proven: at acquire and on each renewal, measured from before the call. Only an expired lease can pass to another owner (`acquire_remote_owner`).\n  - So while that lease is current, a `sample` frame (in-memory telemetry only) is accepted without the query.\n  - Every other message (results, exits, inventory, draining, replies) is still fenced in the database, exactly as before.\n\n## Measured\n\nBenchmark `baseline` profile with the fake model, `main` at `4b84c9474` against this branch. Full write-up in `docs/benchmarks/2026-10-28-idle-churn-step2.md`.\n\n| Idle (one API, one worker) | Before | After |\n|---|---:|---:|\n| Transactions/s | 31.9 | 28.7 |\n| Rows written/s | 4.37 | 2.52 |\n| `execution_workers` scans per 60 s | 730 | 646 |\n\n- **Runs:** all 800 runs succeeded on both builds. `wf-noop` p50 was 126 ms before and 128 ms after.\n- **Idle WAL:** it varied with checkpoint timing (2.0 KiB/s before, 4.7 after). Earlier runs on identical code varied by the same amount, so I'm not reading it as a change.\n\n## Verification\n\n- `./test.sh tests/unit/worker/remote/ tests/unit/scheduler/ tests/unit/services/test_scheduler_diagnostics.py`: 102 passed.\n- New tests:\n  - a finished run publishes only its own task state;\n  - telemetry skips the fence only while the lease is known current, and every other event is still fenced.\n- `./test.sh quality api`: clean.\n- Not run locally: the full backend E2E suite, which the merge queue runs.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1107"
+    },
+    {
+      "number": 1110,
+      "title": "feat(worker): mark idle worker pods safe for the cluster autoscaler to evict",
+      "url": "https://github.com/gobifrost/bifrost/pull/1110",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T17:56:00Z",
+      "merge_commit": "ffe07b7a3edc5cca232087d890510b692247f296",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other: on Kubernetes, the cluster drops the extra node a deploy adds once the worker on it is idle, without interrupting any running job.\n- [ ] Omit\n\n## Summary\n\nDuring an upgrade the controller starts the replacement worker before draining the old one (#1052). On a one-node pool, the cluster autoscaler adds a second node for that overlap, and the new worker lands there. Once the old worker has finished, the autoscaler still never removed the extra node, because:\n1. our worker disruption budget allows no evictions (fixed in gocovi/kubernetes, not in this repo);\n2. the worker pod has `emptyDir` volumes and no `cluster-autoscaler.kubernetes.io/safe-to-evict` annotation, so the autoscaler won't evict it.\n\n**The change:** Kubernetes decides where pods run and which node to empty. Bifrost now tells it **when** moving a worker interrupts nothing:\n- **New worker pods** start with `safe-to-evict: \"false\"`.\n- **Each controller pass:** a ready worker holding no work for 10 s (`memory_reserved_bytes == 0` in its heartbeat) is marked `\"true\"`. Any held work marks it `\"false\"`. The pod is patched only when the answer changes. The controller's memory of what it last applied starts as unknown, so a restarted controller corrects a stale mark.\n- **When evicted:** the worker drains on SIGTERM as today, and the warm minimum starts its replacement. The autoscaler keeps new pods off a node it's removing.\n- **Permissions:** the controller's Role gains `patch` on pods (`k8s/api/rbac.yaml`, `k8s/local/api-rbac.yaml`).\n\n**Limits:**\n- Busy state follows the worker heartbeat, every 5 s. A run shorter than that may not mark the worker busy. If the autoscaler evicts at that moment, the run finishes within the existing 5-minute drain.\n- The autoscaler only removes a node that has been underused for about 10 minutes.\n\n## Rollout\n\nThe `patch` permission must reach production before or with this image. Without it, the controller logs a 403 per pass and leaves the pod marked \"not safe\". The gocovi/kubernetes change that adds `patch` and drops the worker disruption budget goes first.\n\n## Verification\n\n- `./test.sh tests/unit/services/worker_pool/ tests/unit/test_kubernetes_build_manifests.py`: 113 passed.\n  - **New tests:** a ready worker is evictable only while idle, and is patched only when that changes; a new worker pod starts not evictable; the RBAC test includes `patch`.\n- `./test.sh quality api`: clean.\n- **Live on the Kind cluster with this image and RBAC:**\n  - an idle worker went from \"false\" to \"true\" about 8 s after ready;\n  - a burst of runs flipped it to \"false\" within about 3 s;\n  - it returned to \"true\" about 15 s after the runs ended.\n- **Before the RBAC update:** the patch failed with a 403, as expected.\n- **Not tested:** the cluster autoscaler itself (Kind has none) and the full backend E2E suite (the merge queue runs it).\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1110"
+    },
+    {
+      "number": 1111,
+      "title": "fix: make the nightly Playwright suite pass (2 product fixes, spec and harness repairs)",
+      "url": "https://github.com/gobifrost/bifrost/pull/1111",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T18:07:56Z",
+      "merge_commit": "30624cce04af01ab30a807ed4aa793c321ee5218",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other: the audit retention setting shows the real 30-day default while it loads, and an app's SDK update status no longer jumps back to \"queued\" after the update has started.\n- [ ] Omit\n\n## Summary\n\nThe nightly Full Product Playwright suite had not passed since at least 2026-08-30. This fixes every failure with a disposition, without retries or skips.\n\n**Product bugs**\n- **Audit retention:** while loading, the card showed 90 days, but the server default has been 30 since #994 (`AuditRetentionSettings.tsx`).\n- **App SDK update race:** an SDK update's enqueue response could reset an App to \"queued\" after its own job had already reported \"running\" or \"failed\". Each App's state now records its job id, and stale enqueue responses are ignored (`useApplicationSdkUpdateJobs.ts`, with 2 new vitest cases).\n\n**Specs aligned with current product contracts**\n- **#996:** User role shows Workspace | Dashboard; new documents default to the caller's org; webhook runs read only global data.\n- **#1046:** MCP catalog shape.\n- **#614:** module preload fetches a stale entry twice.\n\n**Test and harness defects**\n- **EXEC-04:** waits for the URL-driven Logs switch, and uses a per-run log message instead of one that leaked between runs.\n- **Chat attachments:** the fake now sends run events in sequence order, not from a timer.\n- **Apps search:** waits for the search debounce.\n- **Editor search:** uses an exact locator.\n- **Hermeticity:** ai-model-catalog no longer calls api.anthropic.com. After the change, 10 repeats made 0 outbound calls.\n\n**Maintenance previews:** these wait up to 30 s, not Playwright's implicit 5 s. Platform jobs take 4\u20136 s end to end: about 1.3 s to claim plus a 3\u20134 s child-process floor. That floor is tracked as hosting performance work.\n\n**AGENT-REVIEW-01:** the cold-start failure from #1103 is fixed by #1106, and this branch includes #1106.\n\n## Verification\n\n- **Full local nightly** (`./test.sh client nightly`) on this branch, rebased onto main with #1106 and #1107: **196 passed, 0 failed.**\n- **Repeats:**\n  - target specs with `--repeat-each=5`: 41 passed\n  - chat-attachments \u00d720: 41 passed\n  - applications-sdk-update \u00d715: 46 passed\n  - ai-model-catalog \u00d710: 11 passed\n  - editor-search \u00d710: 11 passed\n- **Client checks:** `npm run tsc` clean; `npm run lint` shows 0 errors (1 existing warning); targeted vitest 78 passed.\n- **Did not reproduce:** entity-management (2 old nightly failures) passed in 8 repeats and every full run.\n- **Known, not fixed here:** `api/tests/e2e/test_ai_model_settings_api.py::test_profile_verification_reports_a_rejected_key_without_undoing_the_save` calls api.openai.com for real (same hermeticity defect, backend).\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1111"
+    },
+    {
+      "number": 1112,
+      "title": "Reject invalid workspace manifests before Git sync applies them",
+      "url": "https://github.com/gobifrost/bifrost/pull/1112",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T18:34:08Z",
+      "merge_commit": "1ac2ac6df393bdd6a5c9f178047f247e5a6ca0c1",
+      "body": "Workspace Git acceptance previously ignored unknown manifest fields and silently selected values for duplicate YAML keys. Validate recognized legacy/split workspace manifests before section projection, so malformed candidates stop before entity import, deletion planning, indexing or source publication. Preflight reports the source file and field or YAML line. User-data dictionaries and existing model construction remain unchanged.\n\nThis is the first production slice of #1098. Solution package/descriptor schemas, deprecation migration diagnostics and Python decorator/write validation remain follow-up work; this PR does not close the issue or change execution-time Python imports. The packaged CLI now requires Pydantic >=2.12 for per-call strict decoding.\n\nValidation:\n- 248 focused tests passed, 0 failed/skipped, 13.077s. Coverage includes strict decoder, manifest/diff/determinism/codec round trips, packaged CLI dependency floor, Git preflight, rejected-candidate preservation and a valid Git pull.\n- `./test.sh quality api`: Pyright 0 errors/warnings, Ruff clean. `git diff --check` clean.\n- Astra reviewed the complete production slice and found no blocking issues; recommended commit/merge after the quality check, which passed. The rebase onto current main changed no API source.\n- New preservation E2E queues no jobs; direct service/DB/S3/Redis test took 0.395s. It proves imports/deletions/publication/cache refresh are not reached and active/omitted workflows, file index, source and cache survive. Existing `TestPull::test_pull_new_workflow` retains valid-acceptance coverage (0.286s).\n- The first focused run exposed obsolete test-only keys serialized by the shared sample fixture. The fixture was corrected without weakening validation or assertions; the full focused set then passed.\n\nExact focused command:\n```sh\n./test.sh tests/unit/test_definition_validation.py tests/unit/test_manifest.py tests/unit/test_manifest_diff.py tests/unit/test_manifest_determinism.py tests/unit/test_manifest_codec.py tests/unit/routers/test_cli_download_version.py tests/unit/services/test_github_sync.py tests/e2e/platform/test_git_sync_local.py::TestSyncPublicationOrdering::test_unknown_manifest_field_preserves_active_workspace tests/e2e/platform/test_git_sync_local.py::TestSyncPublicationOrdering::test_prepare_validation_rolls_back_database_mutations tests/e2e/platform/test_git_sync_local.py::TestPull::test_pull_new_workflow -v --durations=0\n```\n\nBroader local backend/client/browser suites were not run; the native merge queue is the complete-suite gate. Canonical Product Updates disposition will record this as a compact fix.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1112"
+    },
+    {
+      "number": 1114,
+      "title": "fix(worker): a Job worker records the build its pod runs, not the admitting API's",
+      "url": "https://github.com/gobifrost/bifrost/pull/1114",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T19:13:20Z",
+      "merge_commit": "88904de42a7c03f6687e8adda4503d1f8237a933",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [x] Other: on Kubernetes, an upgrade now always replaces worker Jobs that are still running the previous version.\n- [ ] Omit\n\n## Summary\n\n`admit_worker` stamped the worker row with `get_version()` of whichever process called it. Since the API admits remote launchers (`worker/remote/host.py`), that's the **API's** build, not the pod's.\n\n**What went wrong in production (2026-10-28):**\n1. During the rollout of `1.4.2-dev.1793210153`, the old API pod launched a warm worker Job from the old image (`1793197355`).\n2. The new API admitted it and recorded it as `1793210153`.\n3. `LiveControllers.outdated()` compares that column, so the upgrade's replacement (#1052) treats the old-image worker as current and never replaces it.\n\n**Fix:**\n- The launcher sends its own build in its hello (`\"version\"`, outside the signed identity, alongside `sample` and `requirements`). The API passes it to `admit_worker`.\n- A launcher that reports nothing (an older launcher) is recorded with no version, so it counts as outdated and is replaced.\n- The in-pod pool worker path keeps passing its own `get_version()`.\n\n**Rollout:** a launcher from before this change reports no version, so a running pre-fix worker will be replaced on the first upgrade after this ships. That's the intended effect.\n\n## Verification\n\n- `./test.sh tests/unit/worker/ tests/unit/services/worker_pool/ tests/unit/dev/test_thin_launcher.py`: 191 passed.\n  - **New:** a Job pod is admitted with the build its launcher reports, and with none when it reports none; an admitted worker records the build its pod reports.\n- `./test.sh tests/e2e/platform/test_remote_runner_lifecycle.py tests/e2e/platform/test_agent_runtime_boundary.py`: 4 passed.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1114"
+    },
+    {
+      "number": 1115,
+      "title": "fix(tables): serialize ordinary document merges",
+      "url": "https://github.com/gobifrost/bifrost/pull/1115",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T19:21:48Z",
+      "merge_commit": "c2a116ca4edd1e35ebdb0e7c47d209444c323d96",
+      "body": "Concurrent partial updates and legacy merge-upserts can overwrite a different writer's field changes after waiting on its row lock. Read and refresh the row under FOR UPDATE before evaluating both policy images and constructing the merge.\n\nFixes #1108. Carries @MTG-Thomas's original implementation and regression tests from #1109, retaining the original commits and authorship. This maintainer-owned replacement is needed because the available GitHub credentials cannot update the contributor fork's draft Product Updates disposition. Runtime source and tests are unchanged from the reviewed candidate; the delivery metadata records the completed approval.\n\nVerification:\n- Independent manual persistence, tenant-scoping, and pre/post-image policy review: no blocking findings. Original approval: https://github.com/gobifrost/bifrost/pull/1109#pullrequestreview-5687638332.\n- 153 focused concurrency, shared-service, policy, batch, repository, and table API tests passed on the original candidate; API Pyright and Ruff passed.\n- The replacement incorporates current main. The four runtime/test files match the tested original candidate exactly. Product Updates validation is repeated for this PR's canonical disposition before ready/queue.\n- Full backend E2E, client, and browser suites were not repeated locally; the merge queue validates the combined current-main candidate.\n\n## Product Updates\n\n- [x] Other: Concurrent table-document merges preserve changes to different fields instead of silently overwriting an earlier writer.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1115"
+    },
+    {
+      "number": 1116,
+      "title": "perf(worker): idle executors wait for a wake-up instead of polling every second",
+      "url": "https://github.com/gobifrost/bifrost/pull/1116",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-28T19:43:26Z",
+      "merge_commit": "7d2b9bd4877e726707cc7a3dcc4845588a9c3c9f",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit: internal database-load reduction for idle installs; no user-visible behavior change.\n\n## Summary\n\nIdle database churn plan (`docs/superpowers/plans/2026-10-28-idle-database-churn.md`), step 3, change 1.\n\n- **Idle executors stop polling.** An executor with nothing to claim used to run `claim_next` every second. Now:\n  - it waits for the existing `bifrost:pool:wake` hint, with a **15 s safety sweep** because Redis pub/sub can drop a message;\n  - while it **holds work**, or **admission holds it back** (memory pressure, a reconnect still reconciling), it still polls every second, because room can free up without an event.\n- **The two re-queue paths that didn't publish the wake now do:**\n  - recovery releasing claims an executor never started (`release_unstarted_claims`);\n  - the dispatch reconciler releasing work held by a lost or retired worker (`_reconcile_one`).\n- **Every hand-off already woke workers:** workflow runs, agent runs, summaries and events.\n- **Worst case:** a lost wake-up delays a run by at most 15 s.\n\n## Measured (bench Kind cluster, same method before and after)\n\nIdle window of 120 s, starting 90 s after an API restart, then `wf-noop` 15 runs alone and a burst of 5.\n\n| | Before (`main`) | After |\n|---|---:|---:|\n| Idle transactions/s | 45.0 | **35.2** |\n| `work_dispatches` scans per 120 s | 770 | 206 |\n| `execution_workers` scans per 120 s | 1,847 | 1,495 |\n| `wf-noop` alone p50 / p95 | 106 / 161 ms | 99 / 144 ms |\n| `wf-noop` queue wait p50 | 36 ms | 30 ms |\n| `wf-noop` burst p50 | 326 ms | 284 ms |\n\nLatency is unchanged or better, so the wake-up path starts work as fast as polling did. The remaining idle load is platform-job polling, worker liveness writes, the reconcilers and settings reads: plan steps change 2, 4, 6 and 7.\n\n## Verification\n\n- `./test.sh tests/unit/services/worker_pool/ tests/unit/test_pool_main_hosting.py tests/unit/test_pool_main_runtime_seams.py tests/unit/worker/ tests/unit/test_service_log_flush.py`: 195 passed, then 122 after the test updates.\n- New and updated tests:\n  - an idle worker looks once, then waits; a wake-up looks again at once; admission pressure keeps polling and easing is noticed;\n  - both re-queue paths publish the wake-up.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1116"
+    },
+    {
+      "number": 1117,
+      "title": "Let platform admins open an organization's App against that organization",
+      "url": "https://github.com/gobifrost/bifrost/pull/1117",
+      "author": {
+        "login": "shaank0",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T06:10:13Z",
+      "merge_commit": "05d1d516dcd4119a3a1b3b664d505d64689a5b29",
+      "body": "Platform Admins opening a customer-owned standalone V2 App now use that App's organization for SDK table, file, and workflow requests. Previously the empty runtime selection fell back to the administrator's provider organization, so customer tables could appear missing.\n\nGlobal Apps and other users keep their existing scope behavior. This selects organization context while retaining the signed-in user and existing server authorization: reach, `apps.readbasic`, and App sharing or management rights still apply. Will Spence's original implementation and commits are retained.\n\n## Validation\n\n```bash\n./test.sh client unit src/components/jsx-app/StandaloneV2App.test.tsx src/components/jsx-app/BundledAppShell.test.tsx\n./test.sh client e2e e2e/solution-runtime-contract.admin.spec.ts\n```\n\n33 component tests passed. The focused browser run passed auth setup and one customer-scoped deployment journey, checking bootstrap organization plus workflow, table, file, and sharing behavior. `npm run tsc` and `npm run lint` passed in Docker; lint retains one existing console warning in `e2e/support/seed-review-pack.ts`.\n\nFull client and backend suites were not run locally; the merge queue supplies the complete gate. The shared queue blocker is repaired separately in #1132.\n\n## Product Updates\n\n- [ ] Highlight\n- [x] Other \u2014 Platform Admins opening a customer's App use that customer's tables, files, and workflow context.\n- [ ] Omit\n\nApproved canonical disposition: `product-updates/dispositions/pr-1117.json`.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1117"
+    },
+    {
+      "number": 1118,
+      "title": "perf(worker): platform-job loop waits for a wake-up; enqueue wakes executors after commit",
+      "url": "https://github.com/gobifrost/bifrost/pull/1118",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T01:15:21Z",
+      "merge_commit": "a2d4d573cfd4f9bb5c534beb5b6660d810a76888",
+      "body": "**Stacked on #1116** (queued). Until #1116 merges, this diff includes it.\n\n## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit: internal database-load reduction for idle installs; no user-visible behavior change.\n\n## Summary\n\nIdle database churn plan, step 3, change 2: platform jobs get the same wake-up as runs.\n\n- **The platform-job loop is wake-driven.** Idle, it used to recover expired leases and try a claim every 2 s. Now:\n  - it claims on a wake-up or a 15 s sweep, and recovers expired runner leases on the sweep;\n  - while it runs jobs, or admission holds it back, it still looks every 2 s.\n- **Enqueue wakes executors after commit.** `enqueue_platform_job` registers an `after_commit` hook that publishes the existing pool wake-up, so an executor wakes once the job is visible. A wake-up before the commit would find nothing to claim. A rolled-back enqueue wakes nobody. This covers all 20 call sites without touching them.\n- **A finished local job wakes the loop**, so jobs blocked on its memory, concurrency slot or resource lock are considered at once.\n- **Worst cases:**\n  - a lost wake-up delays a job by at most 15 s;\n  - a dead runner's job is recovered up to 15 s later than before;\n  - a job blocked by a job running on another executor waits for the sweep.\n\n## Measured (bench Kind cluster, same method as #1116)\n\n| | `main` | #1116 | #1116 + this |\n|---|---:|---:|---:|\n| Idle transactions/s | 45.0 | 35.2 | **30.4** |\n| `platform_jobs` scans per 120 s | 951 | 942 | 483 |\n\nWhat's left on `platform_jobs` is the worker controller (every 2 s), the dispatch reconciler's never-fits check (every 5 s) and the isolated-job scheduler. Those are plan change 6, next.\n\n**Latency:** `wf-noop` alone measured 132 ms p50 here against 99 ms with #1116. This change doesn't touch run claims, and the host was shared with other test stacks, so it's to be confirmed in the full benchmark that closes out this step.\n\n## Verification\n\n- `./test.sh tests/unit/services/test_platform_jobs.py tests/unit/test_pool_main_hosting.py tests/unit/test_pool_main_runtime_seams.py tests/unit/worker/ tests/unit/services/worker_pool/`: 219 passed.\n- **New tests:**\n  - enqueue wakes executors only after the job is committed;\n  - a rolled-back enqueue wakes nobody;\n  - an idle loop claims at once on a wake-up and recovers leases only on the sweep.\n- **E2E** `test_thin_platform_jobs_misc.py`, `test_thin_platform_jobs_providers.py`, `test_remote_runner_lifecycle.py`: 14 passed, including child SIGKILL restart and owner-death takeover after lease expiry.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1118"
+    },
+    {
+      "number": 1119,
+      "title": "perf: reconcilers run on wake-ups, sweeping slowly when idle",
+      "url": "https://github.com/gobifrost/bifrost/pull/1119",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T02:26:29Z",
+      "merge_commit": "67cb705e6c17193115452a3c1e65a1a590cb199a",
+      "body": "**Stacked on #1116 and #1118** (both queued). Until they merge, this diff includes them.\n\n## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit: internal database-load reduction for idle installs; no user-visible behavior change.\n\n## Summary\n\nIdle database churn plan, step 4, change 6: reconcilers run when there's something to reconcile.\n\n- **Dispatch reconciler**, previously every 5 s: settles unclaimed and too-large work, ends silent static executors, blocks services that never fit.\n- **Worker controller**, previously every 2 s: launches and replaces Jobs, detects lost workers, marks idle workers safe to evict.\n\nBoth now run on the existing **pool wake-up**, which every hand-off and re-queue publishes:\n- **Under load:** passes are spaced no closer than before (5 s and 2 s), so busy-time behaviour is unchanged.\n- **Idle:** they sweep every **15 s** (reconciler) and **5 s** (controller).\n- **Why the controller keeps 5 s:** worker-loss detection and the idle-eviction mark (#1110) stay close to today's timing.\n- **Too-large work** still settles within seconds: the new dispatch's wake-up triggers a reconciler pass.\n\n`listen_for_pool_wake` is now one shared listener for executors, the reconciler and the controller. `wait_for_next_pass` implements the wake / spacing / sweep rule once.\n\n## Measured (bench Kind cluster, same method throughout)\n\n| Idle transactions/s | |\n|---|---:|\n| `main` | 45.0 |\n| + #1116 (claim loops wake) | 35.2 |\n| + #1118 (platform jobs wake) | 30.4 |\n| **+ this** | **22.0** |\n\n| Per 120 s idle | #1118 | This |\n|---|---:|---:|\n| `execution_workers` scans | 1,391 | 792 |\n| `system_configs` scans | 296 | 191 |\n| `work_dispatches` scans | 207 | 103 |\n\n- **Latency:** `wf-noop` alone p50 was 115 ms; burst p50 was 202 ms against 292 ms with #1118.\n- **Production:** with #1110 live, the cluster consolidated back to one node by itself at 19:49 UTC.\n\n## Verification\n\n- `./test.sh tests/unit/services/test_work_dispatch_wake.py tests/unit/scheduler/ tests/unit/services/worker_pool/ tests/unit/test_pool_main_hosting.py tests/unit/test_pool_main_runtime_seams.py tests/unit/worker/ tests/unit/services/test_platform_jobs.py`: 255 passed.\n- **New:** `wait_for_next_pass` sweeps without a wake-up, waits out the spacing after one, runs at once past the spacing, and stops early.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1119"
+    },
+    {
+      "number": 1122,
+      "title": "test: fork tests delete the audit rows, forms and org they commit",
+      "url": "https://github.com/gobifrost/bifrost/pull/1122",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T11:13:18Z",
+      "merge_commit": "17785968a151f289f537f20868a1081da69bf5b2",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 test-only cleanup; no product behavior changes.\n\n## Summary\n\nThe slow socket fork tests (`tests/unit/execution/*_fork.py`) commit rows that a forked child must see. Their cleanup left two kinds of rows behind:\n\n- **Audit and access-check rows written by the engine token.** These rows are keyed by `execution_id`. Deleting the actor sets `user_id` to NULL, and `organization_id` is NULL for global targets, so the existing deletes by user or org missed them.\n- **The forms test's three forms and its organization.**\n\nWhen the slow tests run in the same process before them, two victim tests fail on the leftovers:\n- `test_audit_log_group.py`: its access-check aggregation picks up extra groups such as `POST /api/sdk/integrations/get`.\n- `test_sdk_forms_context_service.py::TestListSdkForms`: a leaked active global form `fork-forms-<hex>-global` shows up.\n\nThe default `unit` lane deselects `slow`, so this only appears when slow tests are included, as in `./test.sh all` or explicit paths.\n\n**Fix**\n- `delete_live_execution` now deletes `AuditLog` rows by execution id. It does this before its early return, so the cleanup also runs when the execution row is already gone. This covers every fork test that uses the helper.\n- The forms fork test now deletes its audit rows, its forms and its org, in FK order.\n\n**Evidence** (same stack, state reset before each run)\n- `./test.sh tests/unit/execution/ tests/unit/repositories/test_audit_log_group.py tests/unit/sdk/test_sdk_forms_context_service.py -m \"\" -p no:randomly`\n  - with `main`'s versions of the two files: **5 failed**, 188 passed (the five victim tests)\n  - with this change: **193 passed**\n- `./test.sh quality api`: clean\n\nFound while diagnosing #1118's merge-queue failure.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1122"
+    },
+    {
+      "number": 1123,
+      "title": "Preserve execution logs through completion and recovery",
+      "url": "https://github.com/gobifrost/bifrost/pull/1123",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T01:30:43Z",
+      "merge_commit": "d19deead82b08dc7299eeca974aae8393e6a25c4",
+      "body": "Execution logs can disappear when completion deletes Redis entries before its database transaction commits, or deletes a stream containing a later append. Stage logs with the terminal result, commit, then acknowledge only the staged entry IDs. Recovery uses the existing cleanup scheduler; retention removes streams only after deleting their execution rows.\n\nDelivery is at least once: a crash after commit and before acknowledgement can replay logs. The existing Redis stream size limit remains. Completion wakes synchronous callers before acknowledgement and recovery.\n\nFixes #1113\n\n## Validation\n\nThe final focused run passed 63 tests with no failures, errors, or skips. It covers rollback and failed commit, concurrent appends and flushers, acknowledgement failure, malformed entries, terminal recovery, retention and dry runs, completion ordering, the logs endpoint, and one live workflow logging path.\n\n```bash\nBIFROST_TEST_IMAGE_TAG=bifrost-test-071cddac BIFROST_SKIP_BUILD=1 ./test.sh tests/e2e/test_execution_log_durability.py tests/e2e/platform/test_run_retention_deleter.py::test_execution_stream_cleanup_follows_a_committed_retention_delete tests/e2e/platform/test_run_retention_deleter.py::test_retention_rollback_keeps_selected_execution_stream tests/e2e/platform/test_run_retention_deleter.py::test_orphan_recovery_after_redis_cleanup_failure_keeps_retained_streams tests/unit/cache/test_logging.py tests/unit/jobs/consumers/test_workflow_execution_session.py tests/unit/jobs/test_run_retention_job.py tests/unit/jobs/schedulers/test_execution_cleanup.py tests/unit/services/execution/test_workflow_dispatch.py::test_acceptance_commits_a_pending_run_before_waking_executors tests/unit/services/execution/test_async_executor.py::test_enqueue_workflow_execution_allocates_a_fresh_uuid_when_unset tests/unit/test_access_list.py::TestElevatedInventories::test_every_redis_read_is_classified tests/e2e/api/test_executions.py::TestExecutionDetails::test_get_execution_logs_endpoint tests/e2e/platform/test_inline_transport_logging_live.py::test_inline_script_keeps_user_debug_without_fresh_transport_debug -v --durations=0\nBIFROST_TEST_IMAGE_TAG=bifrost-test-071cddac BIFROST_SKIP_BUILD=1 ./test.sh quality api\n```\n\nAdditional focused verification passed all 18 tests in `tests/unit/core/test_execution_memory_recording.py` and `tests/unit/jobs/consumers/test_workflow_execution_session.py` using the same Docker test command. This covers failed-run memory/CPU recording alongside completion ordering.\n\nAPI checks passed: pyright reported zero errors or warnings; ruff passed. Full backend and client suites were not run locally; the merge queue supplies the full gate.\n\nThomas Bray supplied the original loss reproducer and is credited as co-author. Recovery and execution-ID allocation assumptions are documented in `docs/runbooks/execution-log-durability.md`.\n\n## Product Updates\n\n- [x] Other \u2014 Execution logs survive completion races and database rollbacks.\n- [ ] Highlight\n- [ ] Omit\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1123"
+    },
+    {
+      "number": 1124,
+      "title": "Unify manifest reading and validate decorator settings before acceptance",
+      "url": "https://github.com/gobifrost/bifrost/pull/1124",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T02:59:22Z",
+      "merge_commit": "63529a32960880f4d4b6d6820f5369eba8754527",
+      "body": "Solution readers could discard unknown fields before shared validation, and newly submitted Python could carry decorator settings that the runtime silently ignored. CLI deploy, ZIP preview/install, and connected Git now decode common entities through the workspace YAML reader and canonical `Manifest*` models. Config/connection declarations and package transport data remain explicit Solution extensions. Install projections use the existing entity codecs.\n\nThe AST checker validates supported Bifrost decorator keys without importing source. It runs before workspace writes, Git import, CLI push/watch changes, and Solution deployment. Solution checks include unregistered helper modules and vendored source; the deployer also validates the assembled bundle before reporting phases or changing resources.\n\nNew submissions fail on unsupported settings by default, following the maintainer's strict acceptance decision. Existing deployed Python retains its runtime compatibility until resubmission. Open payload dictionaries and supported aliases remain supported. Descriptor `scope` retains its documented ignore behavior, and generated source/prebuilt packages are covered by round-trip tests. CLI prechecks use the CLI interpreter's Python grammar.\n\nExisting install ownership, UUID remapping, permissions, and reconciliation rules remain in their existing paths. Direct signed uploads retain their existing behavior and authorization; the runbook records their existing content-validation gap as deferred work. Connected Git now carries packaged file policies into that reconciliation instead of dropping them.\n\nCloses #1098\n\n## Validation\n\nComponent validation passed 162 manifest/reader tests. The integrated candidate passed 53 acceptance tests, 35 collector-consumer tests, and one live Solution deploy/run path. Final AST shadowing coverage passed all 31 tests after two new alias cases reproduced false rejection and the binding handling was corrected. After merging current main, 77 file-SDK, Solution-scope, and workspace-authority tests passed, including compatibility cases for authorized signed Python/manifest uploads. API lint/type checks passed. Earlier workspace write/cache and Git preservation checks also passed during component development.\n\n```bash\n./test.sh tests/unit/test_solution_definition.py tests/unit/test_solution_claims_manifest.py tests/unit/test_solution_export.py tests/unit/test_manifest.py -v --durations=0\nBIFROST_TEST_USE_CLEAN_BOOT=1 ./test.sh tests/unit/test_decorator_validation.py tests/unit/test_cli_solution_deploy_phases.py tests/unit/test_solution_collect_python.py tests/unit/test_solution_zip_install.py::test_preview_rejects_invalid_decorator_in_unregistered_helper tests/unit/test_solution_zip_install.py::test_install_zip_rejects_invalid_decorator_before_persisting tests/unit/test_solution_deploy_validation.py::test_deploy_rejects_decorator_settings_before_reporting_or_upsert tests/unit/test_solution_definition.py\nBIFROST_TEST_USE_CLEAN_BOOT=1 ./test.sh tests/unit/test_solution_collect_apps.py tests/unit/test_solution_collect_workflows.py tests/unit/test_solution_git_sync.py tests/unit/test_solution_zip_install_cache.py tests/unit/routers/test_solution_deploy_jobs.py tests/unit/test_solution_backup_archive.py::test_corrupt_payload_is_rejected_before_install_writes\n./test.sh tests/e2e/platform/test_solution_deploy_execution.py::test_solution_deploy_resolves_local_workflows_and_blocks_global_import\nBIFROST_TEST_USE_CLEAN_BOOT=1 ./test.sh tests/unit/test_decorator_validation.py -v --durations=0\n./test.sh tests/unit/sdk/test_sdk_files.py tests/unit/test_files_sdk_solution_scope.py tests/unit/routers/test_files_management_authority.py -v --durations=0\n./test.sh quality api\n```\n\nRejected-candidate tests preserve existing database, object-storage, index, and cache state. The rejected input cases do not enqueue deployment/build jobs. Full backend and client suites were not run locally; the protected merge gate remains required once the draft decision is settled.\n\n## Product Updates\n\n- [x] Other \u2014 Workflow authoring rejects unsupported decorator settings, and Solution imports reject invalid manifests.\n- [ ] Highlight\n- [ ] Omit\n\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1124"
+    },
+    {
+      "number": 1125,
+      "title": "test: reclaim orphaned log streams over a full scan cycle",
+      "url": "https://github.com/gobifrost/bifrost/pull/1125",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T02:08:32Z",
+      "merge_commit": "d96f89e829783287025ea974411681c27165a48d",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 test-only fix; no product behavior changes.\n\n## Summary\n\n`test_orphan_recovery_after_redis_cleanup_failure_keeps_retained_streams`, added in #1123, failed #1119's merge-queue run with `assert 0 == 1`.\n\n**Cause.** The test calls `reclaim_orphaned_execution_log_streams(limit=100)` once and expects that call to find its orphaned stream. Each call is one bounded `SCAN` step from the saved cursor, and `COUNT 100` covers roughly 100 hash-table slots. Once Redis holds thousands of other keys, as it does partway through an E2E shard, a single step usually misses the orphan. The product behaviour is correct: retention reclaims across successive runs. Only the test assumed one step covers the whole keyspace.\n\n**Reproduction.** I seeded 5,000 unrelated keys, then ran the test:\n- One `SCAN` step from cursor 0 returned no `bifrost:logs:*` keys, with the next cursor at 2720.\n- The test failed with the same `assert 0 == 1`.\n\n**Fix.** The test now reclaims until the cursor returns to 0 (one full cycle). It asserts that the orphan is gone and that the retained, running and malformed keys remain. Leftover orphans from other tests may be reclaimed too, so it asserts `orphaned >= 1`.\n\n**Evidence**\n- With 5,000 seeded keys, the fixed test passes.\n- `./test.sh tests/e2e/platform/test_run_retention_deleter.py`: 9 passed.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1125"
+    },
+    {
+      "number": 1126,
+      "title": "perf(worker): idle service claim loop waits for a wake-up",
+      "url": "https://github.com/gobifrost/bifrost/pull/1126",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T04:19:49Z",
+      "merge_commit": "223bb7c8e3e2f52c60e4560d50f937423de13248",
+      "body": "**Stacked on #1119** (being queued behind #1125). Until #1119 merges, this diff includes it. Review the last commit: `perf(worker): idle service claim loop waits for a wake-up`.\n\n## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal database-load reduction for idle installs; no user-visible behavior change.\n\n## Summary\n\nToday every executor runs the supervised-service claim loop every 5 s, even when there are no services. Each pass does lease expiry, a beat commit and a claim query.\n\n**After this change**\n- **While it supervises attempts:** the loop keeps the 5 s cadence, because leases need renewing.\n- **While idle:** it ticks on a pool wake-up, or when the earliest backed-off restart comes due (`service_lifecycle.next_restart_at`). Otherwise it sweeps every 15 s. The sweep also bounds how late it notices another worker's expired lease, on top of the 60 s TTL.\n- **Wake-ups:** creating, enabling, starting and restarting a service wake executors once the change commits. These use the after-commit hook from #1118, moved from `platform_jobs` to `work_dispatch` so both share it. An attempt that ends wakes its own loop, so the restart time is read immediately.\n- **Stop is now prompt.** The loop used to sleep through a whole interval.\n\n**Measured** on Kind with the same idle procedure as #1116, #1118 and #1119 (production image, 90 s settle, 120 s window), comparing #1119 with this change:\n\n| | Before | After |\n|---|---:|---:|\n| Idle transactions/s | 21.8 | **20.0** |\n| `service_definitions` scans in window | 88 | 64 |\n| wf-noop p50 sequential / burst (ms) | 144 / 247 | 118 / 257 |\n\n`service_attempts` dropped out of the top tables. Write volume was flat (3.41 \u2192 3.31 rows/s). WAL KiB/s moved from 2.3 to 4.8 with no matching rise in rows written. I read that as checkpoint noise in a 120 s window, but have not separately confirmed it.\n\n**Tests**\n- New unit tests:\n  - An idle loop waits for a wake-up.\n  - A supervising loop keeps its cadence.\n  - An idle loop ticks when the next restart is due.\n  - An ended attempt wakes its loop.\n  - Every claimable change wakes executors.\n  - `next_restart_at` filters correctly.\n- Updated the indexer test, which uses a mocked session.\n- Full unit lane: 10447 passed. The one failure, that indexer test, is fixed and rerun green.\n- Services E2E (`test_services.py`, `test_service_owner_loss.py`, `test_service_worker_mode.py`): 14 passed.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1126"
+    },
+    {
+      "number": 1127,
+      "title": "perf: Kubernetes build controller waits for a wake-up when no builds are placed",
+      "url": "https://github.com/gobifrost/bifrost/pull/1127",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T04:39:50Z",
+      "merge_commit": "2aaaaf811a8361fe8914c8affecd78cff207ee55",
+      "body": "**Stacked on #1126** (queued). Until it merges, this diff includes it. Review the last commit: `perf: Kubernetes build controller waits for a wake-up when no builds are placed`.\n\n## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal database-load reduction for idle installs; no user-visible behavior change.\n\n## Summary\n\nToday every API replica runs the Kubernetes build controller every 2 s. Each pass reads Settings \u2192 Kubernetes and the placed builds, even when no isolated build exists anywhere. A read-only survey of idle load put this loop at about 1.75 sessions/s. It was the largest remaining source.\n\n**After this change**\n- `KubernetesBuildController.reconcile()` now returns whether there is build work to follow closely. That means Kubernetes holds builds, or this pass placed or returned one.\n- **Busy:** the controller keeps the 2 s cadence, so placement, pod-phase updates and runner-loss handling are unchanged.\n- **Idle:** it passes on a pool wake-up (`listen_for_pool_wake` / `wait_for_next_pass`, as in #1119), and otherwise sweeps every 15 s.\n- **Every platform-job enqueue now wakes**, not only local ones, so an isolated build is placed immediately. Turning isolated jobs on is picked up by the next sweep, within 15 s.\n\n**Measured** on Kind with the same idle procedure as #1116, #1118, #1119 and #1126 (production image, 90 s settle, 120 s window), comparing #1126 with this change:\n\n| | Before | After |\n|---|---:|---:|\n| Idle transactions/s | 20.0 | **15.8** |\n| `platform_jobs` scans | 375 | 190 |\n| `system_configs` scans | 191 | 88 |\n| wf-noop p50 / p95 sequential (ms) | 118 / 213 | 108 / 209 |\n\nRows written were unchanged (3.31/s).\n\n**Tests**\n- New tests:\n  - An idle build loop waits for a wake-up and passes on one.\n  - A loop following builds polls at the busy cadence, then goes idle.\n  - `reconcile()` reports idle with nothing placed or claimed, and busy with a placed pod.\n- Build-controller, reconcile-concurrency, control-plane and platform-job unit tests: 77 passed.\n- Full unit lane: 10453 passed.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1127"
+    },
+    {
+      "number": 1128,
+      "title": "Allow Platform Admin self-assignment through existing role controls",
+      "url": "https://github.com/gobifrost/bifrost/pull/1128",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T05:39:00Z",
+      "merge_commit": "5f0c4900202429f9c83818a34387b97bb481a131",
+      "body": "Platform Admins can edit their own role assignments through the existing user editor and API, including explicitly adding or removing Secrets Reader. Previously, a blanket self-edit prohibition blocked them despite their assignment and privileged-access permissions.\n\nThis is a temporary workaround for local SDK development. The intended development path keeps secret use inside the engine and does not require a human Secrets Reader grant; that direction includes removing the local executor. The service comment, runbook, and [maintainer decision](https://github.com/gobifrost/bifrost/pull/1121#issuecomment-6486778750) record that boundary.\n\nThe API checks the verified caller's Platform Admin status. Existing assignment, privileged-access, role-boundary, audit, cache-invalidation, and last-active-admin protections continue to apply. Non-admin self-edits remain refused, including with delegated privileged assignment permissions. Secrets Reader still requires an explicit assignment; setup and promotion add no new grant. No permissions, DTOs, migrations, or runtime execution policies change.\n\nFixes #1120. Supersedes #1121's setup-time grant approach.\n\nVerification:\n- TDD: the new self-Secrets Reader regression failed on the previous 400 refusal, and the UI regression failed on the previous read-only panel.\n- `./test.sh tests/unit/test_identity_authorization.py::TestRoleAssignments -v` \u2014 24 passed, including grant/revocation, audit actor and details, fixed boundaries, delegated self-edit refusal, ordinary-role assignment, and last-admin protection.\n- `./test.sh client unit src/components/users/UserRoleAssignmentsPanel.test.tsx` under Node 26 \u2014 30 passed.\n- `./test.sh quality api` \u2014 Pyright and Ruff passed.\n- `(cd client && npm run tsc && npm run lint)` under Node 26 \u2014 passed; one existing console warning in untouched `e2e/support/seed-review-pack.ts`. Targeted lint of final changed client files also passed.\n- `./test.sh client e2e e2e/self-role-assignment.admin.spec.ts` \u2014 passed: one real self-grant/reload journey (9.4s) plus shared auth setup.\n\nThe browser journey uses a separate administrator and cleans it up; no worker jobs are started. Its initial exact-text selector failed on the existing Built-in badge; the selector now uses the role's accessible control. Backend edge cases remain in service tests. Full backend/client suites were not run locally; the native merge queue supplies the complete-suite gate.\n\n## Product Updates\n\n- [x] Other \u2014 Platform Admins can explicitly change their own role assignments, including Secrets Reader.\n\nCanonical disposition: `product-updates/dispositions/pr-1128.json` (approved Other/Fixed).\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1128"
+    },
+    {
+      "number": 1129,
+      "title": "perf(worker): package loop waits for a recorded change's wake-up",
+      "url": "https://github.com/gobifrost/bifrost/pull/1129",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T11:38:19Z",
+      "merge_commit": "9889619c9727d731cdd23c0058674df498b7f4dd",
+      "body": "**Stacked on #1127** (which is stacked on #1126, now queued). Until those merge, this diff includes them. Review the last commit: `perf(worker): package loop waits for a recorded change's wake-up`.\n\n## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal database-load reduction for idle installs; no user-visible behavior change.\n\n## Summary\n\nEvery executor read `package_changes` every 5 s with no wake-up, about 72 queries per 2 minutes on the Kind topology.\n\n**After this change**\n- `record_package_change` wakes executors once its transaction commits, using the shared `wake_pool_workers_after_commit` hook.\n- `PoolWorker._package_loop` reads when it is woken (a new `_package_wake` fed by the existing pool wake listener). Otherwise it sweeps every `SWEEP_SECONDS` (15 s), in case a wake-up was lost.\n- The wake event is cleared before the next read, so a change committed during a pass triggers another pass instead of being missed.\n\n**Measured** on Kind with the same idle procedure (production image, 90 s settle, 120 s window), comparing #1127 with this change:\n\n| | Before | After (2 runs) |\n|---|---:|---:|\n| Idle transactions/s | 15.8 | **15.4 / 15.2** |\n| `package_changes` scans | 73 | not in top 8 |\n\n**Latency**\n- Steady-state wf-noop, three back-to-back runs of 15: p50 87\u2013115 ms, p95 128\u2013251 ms.\n- First runs after 3-minute idle periods: 82\u2013160 ms end to end.\n- The idle procedure restarts the API before measuring. Its first post-restart samples showed one 420 ms and one 1119 ms outlier (p50 110 / 136 ms). The direct after-idle check shows no such cost, so I attribute them to post-restart warm-up rather than this change. I have not investigated that warm-up further.\n\n**Tests**\n- New tests:\n  - An idle package loop reads again only on a wake-up.\n  - A recorded change wakes executors only once it commits.\n- Existing loop tests now drive the sweep interval.\n- Package, generation, router and pool_main hosting tests: 33 passed.\n- Full unit lane: 10455 passed.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1129"
+    },
+    {
+      "number": 1130,
+      "title": "Sign in by a provider-verified address, never the Graph mail attribute",
+      "url": "https://github.com/gobifrost/bifrost/pull/1130",
+      "author": {
+        "login": "shaank0",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T06:10:30Z",
+      "merge_commit": "90a4030434dc5fa8db4a71d37057b90df81c2abc",
+      "body": "First-time Microsoft SSO links now use the User Principal Name (UPN), rather than the editable Graph `mail` attribute, to find or provision the Bifrost user. Personal Microsoft and guest accounts cannot create new links. Google links require a verified Gmail address or Workspace account; Workspace secondary domains remain supported.\n\nPermanent links still use the provider's stable user ID. Existing links are resolved before first-link email validation, so an email/UPN change or a missing current email cannot lock out an already linked account. Missing or malformed stable provider IDs are rejected before lookup. The configured generic OIDC issuer trust policy is retained.\n\nWill Spence's original security fix, commits, and contributor credit are retained, with maintainer compatibility repairs on the same PR.\n\n## Validation\n\n```bash\n./test.sh tests/unit/services/test_oauth_sso_identity.py tests/unit/routers/test_oauth_sso.py tests/e2e/api/test_oauth_sso.py -q --durations=0\n./test.sh quality api\n```\n\n32 focused service, callback, and database/Redis tests passed; Pyright and Ruff passed. The live database test verifies that the same Entra object ID reaches the same Bifrost user UUID after a UPN change. External provider HTTP is mocked; no live Microsoft or Google login was performed by the maintainer.\n\nFull suites were not run locally; the merge queue supplies the complete gate. Its shared remote-runner blocker is repaired separately in #1132.\n\n## Product Updates\n\n- [x] Highlight \u2014 Reviewed SSO security notice.\n- [ ] Other\n- [ ] Omit\n\nApproved canonical disposition: `product-updates/dispositions/pr-1130.json`; notice: `product-updates/entries/15fb4f34-d829-453c-88c4-9c6f57e7cbd1.md`. Maintainer security and compatibility review is recorded in this PR's approvals.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1130"
+    },
+    {
+      "number": 1132,
+      "title": "fix(worker): preserve remote sessions across reconnects",
+      "url": "https://github.com/gobifrost/bifrost/pull/1132",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T06:10:13Z",
+      "merge_commit": "2448913b104e165b36af44f8c231eebb3ba184eb",
+      "body": "Remote runners could reject a valid reconnect after an obsolete heartbeat renewal completed, or send an old-generation message on the replacement connection before its handshake finished. Keep renewal results scoped to their original session and hold the send lock through socket replacement and hello/welcome.\n\nThe remote-runner integration fixture now requests the supported drain event before closing its connection. It always stops its launcher and restores executor capabilities, so a teardown failure cannot strand later workflow tests. The existing cleanup repair retains its original attribution.\n\nFixes #1131\n\nThis unblocks the merge-queue failures encountered while reviewing Will Spence's #1028 and #1130. It is separate so his three PRs retain their original scope and authorship.\n\n## Validation\n\n51 focused checks passed on the final branch after merging current main, including the original queue-exposed integration sequence:\n\n```bash\n./test.sh tests/unit/worker/remote/test_host.py tests/unit/worker/remote/test_launcher.py tests/unit/dev/test_thin_launcher.py tests/e2e/platform/test_remote_runner_lifecycle.py tests/e2e/platform/test_sdk_ai_local.py -v --durations=0\n./test.sh quality api\n```\n\nPyright and Ruff passed. No retries, timeout increases, skips, or xfails were added. Full suites were not run locally; the merge queue supplies the complete gate.\n\nCodeQL's `py/ineffectual-statement` comment on `await task` was reviewed and resolved as a false positive: that await propagates the scheduled task's expected cancellation into `pytest.raises`. The review thread records the disposition.\n\n## Product Updates\n\n- [ ] Highlight\n- [x] Other \u2014 Remote runners preserve active workflow sessions when reconnecting.\n- [ ] Omit\n\nApproved canonical disposition: `product-updates/dispositions/pr-1132.json`.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1132"
+    },
+    {
+      "number": 1133,
+      "title": "fix(worker): an executor that lost its remote owner leaves the row to its successor",
+      "url": "https://github.com/gobifrost/bifrost/pull/1133",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T11:13:01Z",
+      "merge_commit": "ddeba337b90091658b2b146ab2b9469735c640e1",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal reliability fix for remote launcher reconnects; nothing user-visible changes except that a reconnecting worker keeps serving.\n\n## Summary\n\n**Bug.** When a remote launcher's telemetry expires, its API-side executor loses ownership and stops. On the way out, its claim loop recorded `begin_drain(incarnation_id, \"stopped\")` on the launcher's **durable** row. The owner lease was still valid at that moment, so the remote-owner fence passed. When the launcher reconnected moments later, its new executor read `draining` on its first heartbeat and stopped as well. The launcher then served nothing, and its row eventually went `lost`.\n\n`_retire` already skips the durable write for an owner that lost its session (\"Only a drained owner can retire the physical launcher\"). The drain write now follows the same rule: an executor with `_lost` set returns from the claim loop without touching the row.\n\n**How it surfaced.** #1126 and #1129 failed the merge queue on `test_remote_runner_lifecycle.py`'s reconnect tests. The first test's teardown timed out waiting for retirement, and the stack's executors were left without `workflow.execute`, so a later workflow test hung until pytest-timeout. The idle-churn changes made draining prompt. Before them, the service claim loop's 5 s sleep delayed the old owner's drain past the reconnect and hid the race.\n\n**Evidence**\n- **Row state, polled every 0.2 s during the reconnect test on `main`:**\n  - Without this change: `ready` \u2192 `draining/stopped` 0.25 s after \"telemetry expired\" and about 2.5 s **before** the reconnect.\n  - With it: the row stays `ready` throughout.\n- **Reconnect test file on #1129's code, before #1128 changed the fixture, two stacks in parallel for load:** 3/8 and 4/8 failing runs without this change, 0/8 with it.\n- **Bisect on one stack:** #1118 0/3, #1119 0/3, #1126 2/3 failing.\n\n**Tests**\n- New unit test: an executor that lost ownership does not record a drain. It fails without the guard.\n- `test_pool_main_hosting.py`, `test_pool_main_runtime_seams.py`, `tests/unit/worker`: 90 passed.\n- Remote-launcher, worker-pool and liveness unit tests: 109 passed.\n- `tests/e2e/platform/test_remote_runner_lifecycle.py`: 2 passed.\n- `./test.sh quality api`: clean.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1133"
+    },
+    {
+      "number": 1134,
+      "title": "Update docs screenshot dependencies and preserve YAML merges",
+      "url": "https://github.com/gobifrost/bifrost/pull/1134",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T13:14:18Z",
+      "merge_commit": "c2d7162b89a540fafbc26399c74d9399c5daf87d",
+      "body": "The docs screenshot tooling now uses pixelmatch 8.0.0 and js-yaml 5.4.2. Explicit merge-tag parsing preserves inherited capture/frontmatter settings under js-yaml 5; existing YAML 1.2 coordinate keys retain their meaning. Remove unused Zod instead of carrying a major upgrade with no consumer.\n\nReplaces Dependabot maintenance proposals #976, #932, and #934; leave those open until this replacement merges. Original dependency proposals: @dependabot[bot].\n\nValidation: `cd scripts/docs && npm ci && npm test` \u2014 5 tests passed; root independently reran `npm test` \u2014 5 passed. Covers unchanged watermark, merged crop, changed screenshot replacement, external-entry exclusion, and inherited frontmatter title. All temporary fixtures clean up. Lock targets and `git diff --check` passed. No backend/client runtime changed; full suites, documentation capture and publication were not run locally. Native queue remains the complete-suite gate.\n\nCompatibility sources: [js-yaml v5 migration](https://github.com/nodeca/js-yaml/blob/master/docs/migrate_v4_to_v5.md), [pixelmatch v8 release](https://github.com/mapbox/pixelmatch/releases/tag/v8.0.0). Existing docs manifests use string timestamps; no legacy binary/set/date-tag consumer was found.\n\nProduct Updates: Omit \u2014 internal documentation screenshot tooling, no customer-facing runtime change. Canonical disposition will be added using this PR's assigned number.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1134"
+    },
+    {
+      "number": 1135,
+      "title": "Update client dependencies and patch sanitizer advisories",
+      "url": "https://github.com/gobifrost/bifrost/pull/1135",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T13:27:16Z",
+      "merge_commit": "531644009a5795a088977e227d49c0cc54576885",
+      "body": "Update the overlapping client dependency proposals together: resolvers 6.0.0, Framer Motion 14.0.0, Pragmatic drag-and-drop 4.0.0, hitbox 3.0.0, and Happy DOM 21.0.4. Happy DOM uses the patched 21.0.4 instead of the original vulnerable 21.0.3 proposal. Align the existing direct DOMPurify dependency and global override on patched 3.4.17, shared with Monaco; keep Monaco unchanged.\n\nReplaces Dependabot proposals #1077, #1007, #912, #841, and #840 (original proposals by @dependabot[bot]). Originals remain open until this replacement merges. No component code, authorization paths, sanitizer options, or API contracts change.\n\nSecurity review: upstream GHSA-834v-8h66-3h79 identifies Happy DOM <=21.0.3 as affected. DOMPurify 3.4.17 patches GHSA-cg2g-xh64-v4q7, GHSA-mrv2-3pqr-j5jr, and GHSA-c6gr-qvv4-5v3f. Existing consumer configuration was inspected; this is dependency maintenance, not evidence of a Bifrost exploitation incident. `npm audit --json` reports zero vulnerabilities on the candidate. Canonical disposition will preserve required release security review.\n\nValidation: worker focused client run \u2014 6 files/47 tests passed; subsequent report/form coverage \u2014 2 files/25 passed. Root independently ran `./test.sh client unit src/components/execution/SafeHTMLRenderer.test.tsx src/components/forms/FormRenderer.test.tsx src/components/forms/FieldsPanelDnD.test.tsx` \u2014 3 files/35 passed. `npm run tsc`, `npm run lint`, `npm run build`, lock dry-run and resolved-tree checks passed. Full client/backend/E2E suites were not run locally; native queue remains the complete-suite gate.\n\nProduct Updates: Omit \u2014 routine dependencies and dependency security maintenance; canonical disposition follows assigned PR number, with security review required for formal release.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1135"
+    },
+    {
+      "number": 1136,
+      "title": "Align Pydantic AI runtime and Harness pins",
+      "url": "https://github.com/gobifrost/bifrost/pull/1136",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T14:46:30Z",
+      "merge_commit": "26102d1cbc4e44f58a7cfa1ad3d49f4f8e8ca770",
+      "body": "Main already declares Pydantic AI Harness 0.59.0 but still locks 0.55.0 alongside slim 2.55.0. Harness 0.59 requires slim 2.59, so the declared pair is not resolvable. Align slim to 2.59.0, retain the approved Harness 0.59.0 declaration, and regenerate the hashed lock without downgrading it to the older #1004 proposal.\n\nThe lock also aligns pydantic-graph 2.59.0 and resolves genai-prices 0.1.13 / google-genai 2.34.0; no packages are added or removed. This replaces Dependabot #1004's earlier 2.57/0.57 proposal. Keep #1004 open until this replacement actually merges.\n\nCompatibility review found that Harness now delivers WarnNearLimits as request-scoped system prompts, without the old [WarnNearLimits] marker. Update only the test's public warning-text matcher and assert tool-result preservation. The original provider-reported 27k fixture, configured 30k/200k windows, production budgets, compaction, and cache thresholds remain unchanged. Both versions already anchor ordinary context estimation on reported usage; there is no claimed estimate-semantics change.\n\nTDD: locked 2.59 with the old marker matcher produced one context-test failure; the warning was present in its new representation. Final verification:\n\n- ./test.sh quality api \u2014 zero errors/warnings; Ruff clean.\n- ./test.sh tests/unit/services/test_agent_runtime_context_window.py tests/unit/services/test_agent_runtime.py tests/unit/services/test_agent_runtime_wind_down.py tests/unit/services/test_agent_runtime_wind_down_capability.py tests/unit/test_anthropic_prompt_cache.py tests/unit/services/test_agent_executor_runtime.py tests/unit/services/test_autonomous_agent_executor.py -v \u2014 128 passed, no failures/errors/skips.\n- Root reviewed the complete dependency/test diff, lock drift, current-main ancestry and JUnit results; git diff --check passed.\n\nNo API DTO, authentication policy, or runtime implementation changed. Full suites were not run locally; native merge queue is the complete-suite gate.\n\n[Upstream warning compatibility change](https://github.com/pydantic/pydantic-ai/pull/10561), [2.58 release notes](https://github.com/pydantic/pydantic-ai/releases/tag/v2.58.0), [2.59 release notes](https://github.com/pydantic/pydantic-ai/releases/tag/v2.59.0). The releases include MCP/UI-adapter/web-fetch security fixes. Current Bifrost code uses its own MCP server and does not import those Pydantic AI MCP/UI/web-fetch capabilities; no Bifrost exposure or incident is claimed. Formal release security review remains required.\n\nProduct Updates: Omit \u2014 dependency alignment and compatibility maintenance, canonical product-updates/dispositions/pr-1136.json retains formal-release security review.\n\nCI disposition: [full unit job 123495130374](https://github.com/gobifrost/bifrost/actions/runs/40887526353/job/123495130374) found one additional stale fixture (10,583 tests passed). The isolated composition test supplied SimpleNamespace to the upstream renamed toolset; 2.59 reads the actual RunContext tool-name path. Production already receives real RunContext instances. Commit 779b62ecb replaces only that fake with the public RunContext constructor, preserving the identity/metadata assertion. The exact test first reproduced the same AttributeError locally, then passed after repair; ./test.sh tests/unit/services/agent_runtime/test_composition.py -v passed 15/15, and ./test.sh quality api passed with zero errors/warnings. No private attributes, production changes, retry, skip, or xfail were added. Root reviewed the follow-up diff and JUnit; normal follow-up push restarts the required gates for the repaired candidate.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1136"
+    },
+    {
+      "number": 1137,
+      "title": "Refresh runtime images and satisfy Node 26 libraries",
+      "url": "https://github.com/gobifrost/bifrost/pull/1137",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T14:33:56Z",
+      "merge_commit": "2accfd7cf5e65a6ca767ac7a81fcd5a4e321ded6",
+      "body": "Refresh the four pending runtime-image proposals together: API Node 26.12.1-bookworm-slim (#1075), Python 3.14 digest a2b82f3 (#978), Playwright 1.64.1-jammy (#1003), and nginx digest df221db (#909). Retain Dependabot's exact target digests and align the Playwright image with the already-installed 1.64.1 client package. Original proposals stay open until this replacement actually merges.\n\nThe original Node upgrade failed the real source API image build: Node 26 links libatomic.so.1, which the Python runtime does not include, so install-npm.sh exited 127. Add libatomic1 to both API runtime apt lists. Production/dev pins remain in parity; the already-merged allocator setup is preserved. No compiler, application, authorization, or allocator settings change.\n\nVerification against current main, including #1084 allocator and #933 Babel 8:\n\n- Rebuilt source API dev image; Node v26.12.1, npm 11.21.1, Python 3.14.8; API readiness healthy.\n- Sourced the exact production allocator helper in a parent process, then ran the real Babel 8 transform and esbuild bundle successfully with inherited allocator settings. This is a direct child-process smoke, not an HTTP compile request.\n- ./test.sh tests/unit/test_npm_install_integrity.py tests/unit/test_app_compiler.py -v \u2014 10 passed. Root independently verified JUnit: no failures/errors/skips.\n- ./test.sh tests/integration/test_app_bundler_tailwind_e2e.py -v \u2014 4 passed before the final Babel merge, exercising Python BundlerService launching the actual Node Tailwind helper.\n- `docker build --progress=plain -f client/Dockerfile -t bifrost-sweep-images-client:20261029 client` passed; nginx served index on the isolated Compose network.\n- `docker build --progress=plain -f client/Dockerfile.playwright -t bifrost-sweep-images-playwright:20261029 client` passed; Playwright 1.64.1 and bundled Chromium executable verified, alongside its existing copied Node 26 runtime.\n- Root reviewed the complete five-file diff, exact source pins, current-main ancestry and git diff --check.\n\nThe first standalone nginx probe could not resolve the configured api upstream outside the Compose network; running the smoke on its intended isolated network passed. This was a probe setup correction, with no nginx configuration or retry changes.\n\nFull suites, final API quality, client lint/type checks, production API image build, and browser E2E were not repeated locally for these image/test-contract edits. Native merge queue is the authoritative full-suite and production-build gate.\n\nSources and credit: Dependabot #1075, #978, #1003, #909. Product Updates: Omit \u2014 routine pinned-image maintenance; canonical product-updates/dispositions/pr-1137.json records the reviewed decision. No original disposition had a security_review: required field. No security incident or production performance improvement is claimed.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1137"
+    },
+    {
+      "number": 1138,
+      "title": "Keep owner and leader leases until they expire when a renewal fails",
+      "url": "https://github.com/gobifrost/bifrost/pull/1138",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-29T19:56:41Z",
+      "merge_commit": "16d2e45a5d23639353e40e7fa416b43b990f29c8",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal resilience fix: background ownership and leadership no longer end on a single transient database error; no new customer-facing workflow.\n\n## Summary\n\nA failed database call ended leases that still had time on them:\n\n- **Remote owner renewal** (`worker/remote/host.py`) dropped ownership of a launcher on the first renewal error, even though renewal runs every 10 s against a 20 s lease. Each renewal is now bounded by the lease left; a failure retries every 2 s while a retry can still finish, then ownership is lost exactly as before. A refused renewal (`False`) still loses ownership immediately.\n- **Trigger leadership** (`scheduler/control.py`) surrendered on the first error and then re-fired every `run_at_startup` task when it re-acquired. A raised renewal now retries while the conservatively tracked lease still holds; a refused or timed-out renewal still surrenders immediately.\n- **Platform-job supervisor** (`jobs/schedulers/platform_jobs.py`) let a heartbeat or memory-check error escape with its runner still going, so lease recovery could requeue or fail a job that was still running. It now stops the runner before the error propagates.\n\nFencing SQL, lease durations and refusal semantics are unchanged. This prepares for removing `pool_pre_ping` (next PR), after which a database or pooler restart fails the first statement on each stale pooled connection; an audit found these three loops were the ones that turned one such error into a durable loss. Tolerating a platform-job heartbeat failure within the claim's lease was evaluated and deliberately left out: doing it safely needs database-clock leases and a bounded remote stop.\n\n### Verification\n\n- New unit tests: retry-then-success keeps ownership/leadership; persistent failure loses ownership only when no retry fits (fake clock); hung renewal times out against the lease; refusal still loses immediately; supervision failure stops the runner before propagating.\n- `./test.sh` on the 11 test files importing these modules: 253 passed. `./test.sh quality api`: 0 errors.\n- `./test.sh pr-preflight`: 10,593 backend unit + 3,999 client tests passed; CodeQL (Python, JS/TS) 0 findings.\n- Independent review (Astra): merge.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1138"
+    },
+    {
+      "number": 1139,
+      "title": "Stop pre-pinging pooled database connections",
+      "url": "https://github.com/gobifrost/bifrost/pull/1139",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T01:04:48Z",
+      "merge_commit": "ad623e2505fe13f50e02f4960fd885082e76ef45",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal database-efficiency change with no customer-facing workflow.\n\n## Summary\n\nRemoves `pool_pre_ping` from the main, dispatch and liveness engines. On asyncpg every checkout's pre-ping is a `BEGIN`/`ROLLBACK` round trip \u2014 about 40 % of an idle process's transactions on the benchmark cluster. The loops that turned one database error into a lost lease were fixed first in #1138.\n\n- One `create_pool_engine` builds all three engines; pool sizes, timeouts and `pool_recycle=1800` are unchanged.\n- Each engine tags its connections `application_name=bifrost:<main|dispatch|liveness>` so pg_stat_activity and PgBouncer can attribute connections per pool.\n\n### Trade-off\n\nAfter a database or pooler restart, the first statement on a broken connection fails and SQLAlchemy invalidates that pool, so later checkouts reconnect. This is not \"one failure per restart\":\n\n- connections already checked out when the restart happens are not repaired, so each can still fail once;\n- every engine in every process detects the restart on its own;\n- bounded knock-on effects: a platform-job runner whose heartbeat meets a stale connection is stopped and lease recovery requeues or fails it per policy (#1138 keeps that fenced); code that catches a DB error and keeps using the session (e.g. AI usage pricing) fails later SQL until rollback.\n\nNo request-level retry is added \u2014 replaying requests could duplicate external effects. Assumption: the pooler does not close idle client connections on its own (PgBouncer `client_idle_timeout`, disabled by default and unset in every shipped config); a value below `pool_recycle` would fail the first statement on every long-idle connection.\n\n## Evidence\n\nIsolated Kind + CloudNativePG 1.30.1 tenant, profile M (1 API at 1.25 CPU, workers at 0.65 CPU, PgBouncer Pooler). A = main `16d2e45a5`, B = this PR `34968104d`.\n\n**A/B** \u2014 `sdk-heavy` at 2/s, order ABBAAB, each arm from a reset state, n = 3 per arm, Student-t 95 %:\n\n| Metric | A (pre-ping) | B (no pre-ping) |\n|---|---|---|\n| Idle transactions/s | 7.52 [7.46, 7.59] | 4.25 [4.07, 4.44] |\n| Idle rollbacks/s | 3.78 [3.75, 3.82] | 0.08 [0.08, 0.08] |\n| Transactions per correct run | 82.6 [82.5, 82.7] | 50.3 [50.3, 50.4] |\n| Rollbacks per correct run | 50.1 [50.1, 50.2] | 9.13 [9.13, 9.13] |\n| API CPU ms per correct run | 129 [127, 130] | 120 [119, 121] |\n| `wf-sdk` p95 | 0.553 s [0.514, 0.592] | 0.440 s [0.41, 0.47] |\n| Steps passing all gates | 3/3 | 3/3 |\n\nAll intervals disjoint.\n\n**Pooler drills** \u2014 mixed load at 1/s, identical seed and request schedule in both arms, fault at ~149 s, 5-minute tail:\n\n| Drill | A | B |\n|---|---|---|\n| Pooler pod deleted | same 5 requests fail; ready after 4.3 s; first success 1.11 s after ready | same 5 requests fail; ready after 3.2 s; first success 0.69 s after ready |\n| pgbouncer SIGKILL | 3 requests fail; first success 0.11 s after ready | the same 3 + **one** `wf-sdk` sent 0.14 s after ready (500, `InterfaceError: connection is closed` on a stale connection); every later request succeeds |\n\nIn every drill on both arms: no owner or leadership lease lost, no platform job stopped, no executor lost. Two pre-existing behaviours reproduced on **both** arms and are filed separately (removing pre-ping can raise their exposure slightly):\n\n- #1141 \u2014 an agent run whose failure write meets the outage stays `running` until the stale-run sweep (~35 min);\n- #1142 \u2014 the worker control socket reconnects with a new session generation on a transient DB error (children preserved).\n\n## Verification\n\n- `tests/unit/core/test_database_pools.py`: every engine has no pre-ping, recycle 1800, unchanged pool sizes, per-pool tag.\n- `tests/e2e/platform/test_database_disconnect_recovery.py` (direct Postgres): terminates a warm pool's three backends, asserts all three terminations and waits for the backends to exit, then the next statement fails with `connection_invalidated` and three concurrent checkouts all succeed (serial detection, concurrent recovery). Passed 8/8 repeats; fails with pre-ping on.\n- `./test.sh quality api`: pyright 0 errors, ruff clean.\n- Independent review (Astra): revise \u2192 fixed (test synchronisation, trade-off wording) \u2192 queue.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1139"
+    },
+    {
+      "number": 1143,
+      "title": "Drop per-pool connection names and keep readiness off shared dependencies",
+      "url": "https://github.com/gobifrost/bifrost/pull/1143",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T02:55:41Z",
+      "merge_commit": "b2c4a93cfc60f524a3e34a683faf597f29c481aa",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal database-efficiency and probe-behaviour change; no customer-facing workflow.\n\n## Summary\n\nTwo small follow-ups to #1139, both about idle load on shared dependencies.\n\n### 1. Drop the per-pool `application_name`\n\n#1139 tagged each engine's connections `application_name=bifrost:<main|dispatch|liveness>`. Behind PgBouncer transaction pooling, PgBouncer re-sends `SET application_name` whenever a server connection passes between clients with different names. Postgres statement logging on the CNPG benchmark showed about 0.4 extra statements per second at idle from those `SET`s, growing with load.\n\n- `create_pool_engine` no longer takes `pool` and passes only the TLS `connect_args`. Pool sizes, timeouts, no pre-ping and `pool_recycle=1800` are unchanged.\n- `tests/unit/core/test_database_pools.py` identifies the engines by which factory built them, keeps the no-pre-ping / recycle / pool-size assertions, and asserts that no `server_settings` are sent.\n- `tests/e2e/platform/test_database_disconnect_recovery.py` holds three connections at once while warming, records their `pg_backend_pid()`s, releases them to the pool and terminates exactly those pids. The assertions are unchanged: three terminations return true, the pids leave `pg_stat_activity`, the next statement fails with `connection_invalidated`, then three concurrent checkouts succeed.\n\n### 2. Readiness stops checking shared dependencies after it passes once\n\n`GET /health/ready` ran `SELECT 1`, a Redis ping and an S3 HeadBucket on every probe. Kubernetes probes every 5 seconds, so that was standing load. It also made every API pod go unready at the same moment during a database blip. Kubernetes then removed them all from the Service, which turned seconds of errors into a full outage.\n\n- Until the database, Redis and S3 (when configured) are all healthy once, `/health/ready` runs the same `build_health_components` check as before and returns 503 if any of them fails. It opens a session only for that check; it no longer takes a `get_db` dependency.\n- After the check passes once, the process stores the result. From then on `/health/ready` returns 200 with those components and does not contact any dependency or open a session.\n- `/health/detailed` still checks live (operator tool). `/health` and `/health/live` are unchanged. The response model (`DetailedHealthCheck`) is unchanged.\n\n**Where the check runs:** it is latched on the first probe that finds the dependencies healthy, not run in the lifespan. Startup already fails if the database (`init_db`) or Redis (`initialize_shared_redis`) is unreachable, but it never required S3, and an S3 outage at boot has always meant \"running, not ready\" rather than a crash loop. Running the check in the lifespan would either make S3 startup-fatal or need a second path for \"started but not yet ready\". Latching on the probe keeps startup behaviour exactly as it is and adds no retry loop: the probe interval is the retry.\n\n**Shutdown:** there is no API-level draining signal, and none was added. Kubernetes removes a terminating pod from the Service's endpoints whatever its probe says (plus the existing 5 s preStop sleep). Uvicorn stops listening before the lifespan shutdown runs, so an \"unready while shutting down\" flag set there could never be observed.\n\n**Other readiness consumers:** `test.sh`, `debug.sh`, `scripts/lib/test_helpers.sh` and the Compose healthchecks wait for `/health/ready` at boot. The first 200 still means the dependencies were reachable, so these still fit; `test.sh stack reset` recreates the API container, so each reset re-checks. The comment in `test_helpers.sh` now says readiness is not re-checked later. The k8s probes (`k8s/api/deployment.yaml`, `k8s/local/bifrost.yaml`) need no change. The endpoint's docstring and OpenAPI description are unchanged, so generated types do not move.\n\n**Trade-off:** after startup, a dependency outage no longer turns any pod unready. Requests fail for its duration instead of being routed nowhere, and `/health/detailed` still shows the live state.\n\n### Tests\n\n- `tests/unit/routers/test_health.py`: readiness returns 503 and keeps checking until the dependencies pass once. After that it returns 200 with the startup components, and the test asserts that `build_health_components`, the individual checks and the session factory are never called. `/health/detailed` still reports a live failure after readiness has latched. Existing readiness tests now use the new signature, and an autouse fixture resets the latch for each test.\n- `tests/e2e/api/test_auth.py::test_ready_health_check`: docstring only; its assertions still hold.\n\n## Verification\n\nA CPU-sensitive capacity benchmark is running on the authoring host, so no local test stack was booted. On the host: `ruff check` and `python3 -m py_compile` on every changed Python file passed. The unit and e2e tests run here in CI. No broader suites were run locally.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1143"
+    },
+    {
+      "number": 1144,
+      "title": "Keep agent run terminal status writes through a brief database outage",
+      "url": "https://github.com/gobifrost/bifrost/pull/1144",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T14:11:39Z",
+      "merge_commit": "a1edc19fd2679e62c071a0ba4269f0f1c3052c29",
+      "body": "## Product Updates\n\nChoose one classification for this pull request. This is the proposal that\nreviewers use to write the canonical\n`product-updates/dispositions/pr-<number>.json`; checking a box alone does not\nsatisfy the Product Updates check.\n\n- [ ] Highlight \u2014 list the entry UUID(s), or say that the entry is being drafted before this PR receives a number.\n- [ ] Other \u2014 give the concise user-visible change that belongs in the durable disposition.\n- [x] Omit \u2014 Internal backend reliability fix (agent run terminal status writes retry through a brief database outage); not announced, per Jack.\n\nPR number and contributor attribution are verified after the PR opens. Security,\naction-required, and breaking changes need explicit review evidence in the\ncanonical entry or disposition.\n\n## Summary\n\nFixes #1141.\n\nAn agent run in flight when PostgreSQL or the pooler restarts fails (`Connect call failed`). Its failure write ran during the same few-second outage, failed, and was only logged, so the row stayed `running` until the stale-run sweep marked it `timeout` after `max_run_timeout` + 5 min. The result write and the chat run's final and interrupted writes had the same exposure.\n\n**Retry helper** \u2014 `api/src/core/database_retry.py`\n- `is_database_unavailable(exc)`: a `DBAPIError` SQLAlchemy marked `connection_invalidated`; a network `OSError` while connecting (`ConnectionError`, `TimeoutError`, `socket.gaierror`, or unreachable-host/network errnos \u2014 not permission, filesystem or TLS certificate errors); or SQLSTATE class `08` / `57P01`\u2013`57P03`, raw or on a wrapped error's `orig`. PostgreSQL `deadlock_detected` (40P01) and `serialization_failure` (40001) are retried too (`is_retryable_database_error`): PostgreSQL aborted the transaction for a conflicting one, and the unit re-reads under its guards. Errors about the work itself are not retried.\n- `run_with_database_retry(session_factory, unit, *, description, budget)`: each attempt is a fresh session running the whole read-check-write. Backoff 0.5 s doubling to 8 s. `RetryBudget` is 60 s of wall-clock time from the first attempt (connects, statements and lock waits included); an attempt still running at the deadline is cut off, and no write sharing the budget makes another attempt. `CancelledError` is never caught.\n\n**Consumer** \u2014 `api/src/jobs/consumers/agent_run.py`: the result, failure, chat final and chat interrupted writes all go through the helper and share one budget per run.\n- Lost COMMIT acknowledgement: each autonomous-run attempt first checks `AutonomousAgentExecutor.is_flushed` (the first buffered step is stored \u21d2 an earlier transaction committed the steps, usage and row together) and returns the stored row instead of re-inserting. Usage is written exactly once. Chat writes have no buffer; their compare-and-set guard already makes a re-run a no-op.\n- Cancel during an outage: the result writer treats `cancelling` as live and writes the outcome the executor produced (as the chat writer does); the failure writer turns `cancelling` into `cancelled` with the error kept (as `announce_ended_agent_run` and the sweep do). A row the sweep terminalized still wins.\n- Chat interruption: the partial assistant answer is inserted in the same transaction as the run's terminal status (through the retry helper), and the `cancelled`/timeout chat event is published only after that transaction commits. If it never commits, nothing new is published and the stale-run sweep ends the run. The answer's message id tells a retry whether an earlier attempt committed it.\n- Message order: `add_conversation_message` (`api/src/services/conversation_messages.py`) locks the conversation row (`SELECT \u2026 FOR UPDATE`) before reading `MAX(sequence)+1`, and every message writer uses it (`AgentExecutor._save_message`, the chat run's user message, the partial answer), so concurrent writers take turns and never share or invert a sequence. Lock order: the terminal write locks the run row, then the conversation row; a cascading delete (user or conversation) takes the opposite order, and the resulting deadlock (40P01) is retried. If the conversation is gone by then, the partial answer is dropped (the run's output keeps it). A unique index on `(conversation_id, sequence)` is a possible follow-up (schema change with backfill risk), not in this PR.\n- Session cleanup: the helper releases each attempt's session itself. A failed, timed-out or cancelled attempt's connection is invalidated rather than rolled back (SQLAlchemy shields a session's close, and a graceful rollback against a blackholed server waits on TCP), and every release is bounded by 2 s.\n- **Worst case** for recording a run's outcome: 60 s from its first terminal write, plus at most 2 s to release the last attempt's session.\n\n**Cancellation** \u2014 `request_agent_run_cancel` in `api/src/services/execution/agent_run_service.py` is a compare-and-set (`queued \u2192 cancelled`, `running \u2192 cancelling`), used by `POST /api/agent-runs/{id}/cancel` and `POST /api/chat/runs/{id}/cancel`. A cancel that read `running` before the run's terminal write committed no longer revives it as `cancelling`; it gets the existing 400 for an ended run. Cancelling an already-cancelling run sets the Redis cancel flag again (keeping the first `cancel_requested_at`), so a cancel whose first signal failed can be retried.\n\n**Failure announcements** \u2014 `process_message`'s failure path announces a failure (chat error event, run update, sync result) only when the failure write committed; if it could not be stored, nothing new is announced and the stale-run sweep ends the run.\n\n**Usage flush** \u2014 `get_cached_pricing`, `record_ai_usage` and `flush_to_db` re-raise `DBAPIError` (the caller's transaction is already gone) instead of swallowing it and leaving the caller to commit into a `PendingRollbackError`. Non-database errors are still logged and swallowed.\n\n**Regression Coverage** (focused local results below)\n- `ruff check` and `pyright` on changed files \u2014 clean\n- `tests/unit/core/test_database_retry.py`: classifier table (incl. permission/filesystem/TLS errors not retried), fresh session per attempt with failed attempts invalidated and the successful one closed, backoff sequence and cap, non-transient not retried, wall-clock exhaustion, a hung attempt cut at the deadline, a session whose close and invalidate never return does not hold the call open, a spent shared budget blocks later writes, cancellation during backoff propagates.\n- `tests/unit/services/test_agent_run_consumer.py` (real test DB; real executor buffers and `flush_to_db`; real summary staging): result and failure writes through refused connections, a dropped connection before COMMIT (rollback then retry), a lost COMMIT acknowledgement, and a disconnect mid-usage-flush \u2014 each records the outcome with exactly one step and one usage row; a cancel requested during the outage; the sweep winning during the outage; the real cancel endpoint reading `running`, the result committing with a lost acknowledgement, the cancel writing, the consumer retrying \u2014 the run stays `completed` and the cancel gets 400; chat final write through refused connections and a lost acknowledgement; chat interruption commits the partial answer with its terminal status through a refused connection and a lost acknowledgement, and the next turn follows it; a partial answer whose COMMIT stalls past the budget is discarded, never committed later; a user turn sent while the partial answer's transaction is open waits for it, lands after it with strictly increasing sequences, and the cancelled event is not published before the commit; deleting the conversation during the terminal write (a real deadlock) ends with the run recorded either way; a failure that cannot be stored within the budget announces nothing (process_message level).\n- `tests/unit/test_agent_run_cancel_requested_at.py` (real DB): both cancel endpoints re-signal after a failed Redis write and the consumer's cancel watcher then sees the flag; a cancel never revives an ended run.\n- `tests/unit/services/test_ai_usage_service.py`: a `DBAPIError` reaches the caller from both the pricing lookup and the usage insert.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n\n### Focused Local Verification\n\nFinal candidate `3c72b7cfe`: final Astra review found no remaining actionable issue after checking terminal recovery, pre-claim dispatch ownership, cancellation, concurrent deletion, COMMIT acknowledgement loss, and notification ordering. Local results: **274 focused unit tests**, **3 live dispatch E2E tests**, pyright (0 errors/warnings), and ruff all pass. Both local test stacks are stopped.\n\nThe pre-claim failure regression covers both an initial run-row read failure and a dispatch-payload read failure: the recovery transaction reloads and locks the run, persists its actual terminal status, then wakes chat/run/sync consumers. A post-commit publication failure republishes the stored completion/cancellation rather than inventing a failure. An exhausted terminal-write budget emits no terminal announcement.\n\nExact commands:\n\n```bash\n./test.sh tests/unit/core/test_database_retry.py tests/unit/services/test_agent_run_consumer.py tests/unit/test_agent_run_cancel_requested_at.py tests/unit/services/test_ai_usage_service.py tests/unit/services/worker_pool/test_worker_pool.py tests/unit/services/test_autonomous_agent_executor.py tests/unit/services/test_chat_runs.py -v --durations=10\nBIFROST_SKIP_BUILD=1 ./test.sh quality api\n./test.sh tests/e2e/platform/test_chat_runtime_boundary.py tests/e2e/platform/test_agent_runtime_boundary.py -v --durations=0\n```\n\nThe full backend, Vitest, and Playwright suites were not run locally; the protected merge queue remains the complete-suite gate. Exact-head PR CI is green; backend E2E is skipped on PRs, so these three live tests were run locally.\n\n### Automated Review Disposition\n\n- Comments 1789, 1794, 1796, 1797, and 1798 flag awaited Tasks as statements with no effect. Each await is required to observe cancellation, propagate task exceptions, or establish the tested transaction/turn ordering; these are false positives. The focused tests exercise each boundary.\n- Comments 1792 and 1793 flag the `RetrySession` Protocol's ellipsis method bodies. They intentionally declare the async close/invalidate interface for generic type checking, without an implementation; pyright validates its consumers.\n- Comment 1791 flags `except BaseException`. The catch invalidates/releases the attempt's connection even on task cancellation, then immediately re-raises non-Exception failures. Cancellation is never retried or swallowed; focused coverage verifies this.\n- Comment 1790 identifies the separate `asyncio` and `from asyncio import sleep` imports. The local backoff binding is intentional so tests can replace retry backoff without replacing `asyncio.sleep` process-wide (which would alter timeout and ordering tests). This is a reviewed style tradeoff, with no behavior defect.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1144"
+    },
+    {
+      "number": 1146,
+      "title": "Token PR1a: authority version, run refresh endpoint and one minter (no behaviour change)",
+      "url": "https://github.com/gobifrost/bifrost/pull/1146",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T10:57:35Z",
+      "merge_commit": "cc1cd64fb80aac69885df0db00ba12f61522dacd",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal authorization plumbing with no customer-visible behaviour: an authority-version table and triggers, a run refresh branch on `/auth/refresh` that nothing calls yet, and a `WWW-Authenticate` challenge on an already-refused expired token. Operator-facing notes are in the runbook below.\n\n## Summary\n\nMerge unit **PR1a** of the token program: spec `docs/superpowers/specs/2026-10-27-access-token-claims-design.md` (amended 2026-10-30), plan `docs/plans/2026-10-30-token-pr1-implementation-plan.md` (revision 6), tasks A1\u2013A8. No authorization behaviour changes: every request is still authorized from the database exactly as today.\n\nStatus: draft \u2014 A1\u2013A8 complete, Astra code reviews 1 and 2 addressed. CI green on PR checks; backend E2E is skipped on PRs and was run locally: `tests/e2e/platform/test_authz_migrations.py` (fresh install, upgrade from the prior revision, two contention rehearsals, 200k cascade) and `test_builder_residue_migration_rehearsal.py` passed.\n\nNotable implementation choices (see commit messages):\n- Any-column UPDATE triggers compare `to_jsonb(OLD)`/`to_jsonb(NEW)` (`system_configs.value_json` is `json`, which has no equality operator).\n- Runtime authority for services and agent runs uses column selects instead of `load_only` entity loads, so callers' session objects stay usable.\n- The expiry challenge is sent only where a refresh can fix it (people and `ver: 1` run tokens; not embed tokens, impersonation markers or legacy runtime tokens).\n- **Migration locking:** one `LOCK TABLE` per mode, each capped at 1 s; previous timeouts restored exactly. Worst-case blocking of product traffic: about 2 s on `executions`/`service_attempts`/`execution_workers`, about 1 s for writes to the other trigger tables, plus milliseconds of DDL and commit. A timeout leaves the prior revision; the operator re-runs (runbook).\n- **Trigger cost on a large cascade (measured locally):** deleting a user referenced by 200,000 executions took 17.19 s with the epoch triggers, bumping once. With the authz triggers disabled the same delete took 16.1 s; with them, 15.5 s for the delete plus 1.77 s at COMMIT for the deferred events.\n- Trigger-disabled maintenance bumps the epoch in the same transaction (or with the API and workers stopped until the bump commits).\n\n### Scope (PR1a)\n\n- **Authority version** (\u00a73.2): `authz_versions` with one random global epoch, `authz_epoch_bump_once()`, and deferred per-event constraint triggers on every carried-fact table, so any committed authority change replaces the epoch once per transaction.\n- **Rollout evidence** (\u00a78.2): `authz_protocol_state` (protocol 1 recorded at API start and on fresh installs); `alembic/env.py` records the starting revision; `credential_version` / `remote_credential_protocol` columns (unused until PR1b).\n- **Claims schema and the single minter** (\u00a72, \u00a74): `issue_access_token` reads every fact and the epoch in one read-only `REPEATABLE READ` snapshot; `principal_from_claims` reproduces today's runtime principal.\n- **Run refresh** (\u00a75.1): `POST /auth/refresh` redeems `type: run_refresh` tokens; the human branch is untouched.\n- **Expiry challenge** (\u00a75.3, D11): an expired, signature-valid access token now gets `WWW-Authenticate: Bearer error=\"invalid_token\", error_description=\"refresh_required\"`, raised by the auth dependency before any handler effect (dependency-graph test).\n- **Completeness tests** (\u00a79.2, \u00a79.3): read capture \u2194 registry \u2194 `pg_trigger`, the maintenance scan, and the one-minter AST.\n\n### Operator-visible changes\n\n- Expired access tokens get the `refresh_required` challenge header on their 401 (status and body unchanged).\n- `docker-compose.yml` Bifrost images use `${BIFROST_VERSION:-latest}` so upgrades can pin a release.\n- New runbook `docs/runbooks/authz-epoch.md`: the trigger-maintenance rule (`SELECT authz_epoch_bump_once();` after disabling triggers) and the pinned-release Compose upgrade procedure.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1146"
+    },
+    {
+      "number": 1147,
+      "title": "Token PR1b: claims-backed runtime tokens with legacy bridge",
+      "url": "https://github.com/gobifrost/bifrost/pull/1147",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T14:10:02Z",
+      "merge_commit": "68139d0a7c0b5fa112c8b595117913bd99d3b56d",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 internal authorization plumbing: runtime credentials (workflow, service and agent-run MCP bridge tokens) carry signed authorization claims checked against the authority epoch, with the same access decisions as today; old-format run tokens keep working while their run is live. Operator steps are in `docs/runbooks/authz-epoch.md`. Disposition: `product-updates/dispositions/pr-1147.json`.\n\n## Summary\n\nMerge unit **PR1b** of the token program \u2014 spec\n`docs/superpowers/specs/2026-10-27-access-token-claims-design.md` (amended\n2026-10-30), plan `docs/plans/2026-10-30-token-pr1-implementation-plan.md`\n(revision 6.1), tasks **B1\u2013B7 and the B8 E2E tests** (B8 benchmarks run\nseparately). Runtime claims become authority.\n\n### Scope\n- **B1** Migration `20261031_authz_claims_gate`: refuses an existing database unless a PR1a API recorded its start (protocol 1); a fresh install records protocol 2. The API now records protocol 2.\n- **B2** `tokens.authenticate_runtime_token`: one statement on the request's session (epoch + run liveness). Missing epoch \u2192 401 + error log; run not live \u2192 401 (no challenge); epoch \u2260 `av` \u2192 401 with `refresh_required`, raised before any handler. MCP `verify_token` uses it (tool roles from `usr`). Legacy tokens (no `ver`) bridged exactly as today, each acceptance logs `authz.legacy_runtime_token_accepted`; any payload with `ver` is never bridged. Middleware: claims \u2192 attribution only, no DB session. `get_execution_context` skips the role read for runtime principals and answers the run's own `?solution=` gate from its authority when the Solution is known active.\n- **B3** Challenge-driven refresh on every SDK client (network/engine socket, async/sync, streams on the status line, cold module fetch): budget 3 per public call shared by transient retries; no other 401 is replayed. Refreshed tokens are registered for redaction.\n- **B4** Launchers report `credential_protocol: 2` (absent = 1), persisted with the owner generation. Pools expose a `CredentialRoute` before minting; protocol 2 \u2192 claims access + run refresh token (`credential_version = 2` on the execution row), protocol 1 \u2192 today's legacy token; remote dispatch refuses to send credentials to a replaced launcher session. Legacy minter moves to `tokens._legacy_runtime_token`. Worker env/redaction/Redis scrub for the run refresh token.\n- **B5** Services per route; legacy rotation and `service-control` delivery kept for NULL-format attempts; install split (`install_service_credentials(access, refresh)` / `install_legacy_service_token`).\n- **B6** MCP bridge runtime contexts mint with `issue_access_token`; `BridgeRefreshingTransport` re-mints on the challenge (3 per request). `create_access_token` refuses reserved runtime claims.\n- **B7** README authority rule + docstrings; `bifrost admin authz legacy-status` (`GET /api/maintenance/authz/legacy-status`, `platform.read`); runbook; regenerated inventories.\n- **B8** `tests/e2e/platform/test_runtime_token_claims.py`.\n\n### Behaviour changes\n- Runtime tokens are claims-backed; a stale epoch gets `WWW-Authenticate: Bearer error=\"invalid_token\", error_description=\"refresh_required\"`.\n- SDK replays only on that challenge, at most 3 refreshes per call; plain 401s (e.g. AI-provider auth errors) now surface instead of a refresh-and-retry. A burst of >3 authority changes within one call fails it with 401.\n- Old-format run tokens: accepted through the bridge only while their run is live (until PR1c).\n\n### Operator steps\n- The PR1b migration requires PR1a to have been rolled out (an API of that release started); otherwise it fails in its own transaction with \"Upgrade to the release that added the authority version \u2026 first\". See `docs/runbooks/authz-epoch.md`.\n- Before PR1c: `bifrost admin authz legacy-status`, upgrade listed launchers, restart listed services.\n\n### Verification\n\nFinal candidate `f320ec7cc`: Astra re-review found no remaining actionable authorization, refresh, revocation, or cancellation/publication issue. Local verification passed: **995 focused unit tests**, **30 targeted E2E tests**, API pyright (0 errors/warnings), and ruff. This repeats the same 30-test E2E set that exposed the old Redis service-token assertion; the repaired healthy lifecycle passes with a claims-format attempt. The lifecycle's 45.98 s is dominated by real ready/restart/stop work; no new worker jobs were added by the test repair.\n\nExact local commands (test stack booted once with cached images, then stopped):\n\n```bash\n./test.sh tests/unit/test_bifrost_client_credentials.py tests/unit/sdk/test_refreshing_transport.py tests/unit/sdk/test_register_secret.py tests/unit/sdk/test_expiry_challenge_cross_version.py tests/unit/engine/test_engine_token_redaction.py tests/unit/test_service_runtime_sdk.py tests/unit/test_service_claim.py tests/unit/authorization tests/unit/services/mcp_server/test_bridge_refresh.py tests/unit/worker/remote/test_credential_protocol.py tests/unit/test_dto_flags.py tests/unit/test_contract_version.py tests/unit/test_cli_admin_authz.py tests/unit/test_cli_surface_smoke.py tests/unit/test_skill_appendix_fresh.py -q --durations=10\nBIFROST_SKIP_BUILD=1 ./test.sh quality api\n./test.sh tests/e2e/platform/test_runtime_token_claims.py tests/e2e/platform/test_service_worker_mode.py tests/e2e/api/test_services.py tests/e2e/platform/test_service_owner_loss.py tests/e2e/platform/test_engine_token_redaction_live.py tests/e2e/platform/test_cli_files.py tests/e2e/platform/test_sdk_socket_audit_parity.py tests/e2e/platform/test_workflow_operation_usage_e2e.py tests/e2e/api/test_access_check_attribution.py -v --durations=0\n```\n\nThe full backend, Vitest, and Playwright suites were not run locally; the protected merge queue remains the complete-suite gate. PR CI for this exact candidate is green, but skips backend E2E, so local E2E results above are independent required evidence.\n\n\n### Automated Review Disposition\n\nCodeQL comments 1799 and 1800 (`test_bifrost_client_credentials.py`, `await waiter` inside `pytest.raises(asyncio.CancelledError)`) are false positives: awaiting each cancelled Task observes its cancellation and raises the exception the regression must assert. Removing either await would stop testing that contract. Both cancellation cases, including pending/active execution contexts for successful refresh, pass in the 995-test local set. The duplicate client import flagged by comment 1795 was fixed by consolidating the import in this candidate.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1147"
+    },
+    {
+      "number": 1149,
+      "title": "Consolidate human authentication on shared claims and durable sessions",
+      "url": "https://github.com/gobifrost/bifrost/pull/1149",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T19:39:47Z",
+      "merge_commit": "05d1fbabdb36f6bf6e00fc80c0b991728fdbcbd2",
+      "body": "## Product Updates\n\n- [x] Highlight \u2014 Action Required entry `68314b62-0ea3-4d44-8779-6241f77275f3`, \u201cRequired: Plan an Authentication Maintenance Cutover.\u201d Canonical approved entry and `product-updates/dispositions/pr-1149.json` cite this PR, verified author attribution, and explicit required security review evidence.\n- [ ] Other\n- [ ] Omit\n\n## Summary\n\nHuman access now uses the shared signed claims minter and global authority epoch across HTTP, WebSockets and MCP. PostgreSQL session families make refresh single-use and let logout revoke a rotated successor; password/MFA resets revoke families and advance the epoch atomically. Browser, CLI and MCP share human session semantics while other credential purposes remain distinct.\n\nProtected browser/SDK calls recover only from the exact pre-effect refresh challenge, with bounded replay and cross-tab rotation serialization. WebSockets revalidate before protected input and outgoing delivery. Large browser credentials use bounded fragments of the same signed JWT. Internal MCP forwarding resolves authoritative subjects rather than copied role flags.\n\n**Upgrade requires maintenance:** block/drain API, MCP and WebSocket traffic, deploy a homogeneous API/MCP fleet and matching SDK build workers, update deployed V2 Apps to SDK contract 3, then reopen service and have everyone sign in again. Ordinary rolling activation and rollback below this authentication version are unsupported. The runtime legacy bridge stays supported until the separately gated later-release PR1c. No production deployment is included.\n\n- [Cutover runbook](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/runbooks/human-auth-cutover.md)\n- [Cross-surface contract and delivery plan](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/plans/2026-10-30-authentication-consolidation.md)\n- [Independent security review and durable failure dispositions](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/plans/2026-10-30-authentication-review.md)\n- [Exact focused commands, results and limits](https://github.com/gobifrost/bifrost/blob/6fc98159a9510f7957d725196cca64586e737964/docs/plans/2026-10-30-authentication-verification.md)\n\n## Validation\n\nActual source CI on `6fc98159a` passed 10,976 backend unit tests, 4,021 client tests across 606 files, both CodeQL analyses, lint/type checks and Product Updates validation. Independent source/security reviews found no P1/P2 findings; all inline review threads are resolved.\n\nFocused implementation verification includes 72 live authentication/runtime/SSO/WebSocket/device E2E tests, 99 live CLI/MCP/WS/SDK consumers, 37 client helper/component tests, two fixture protocol units, the complete 17-test critical browser smoke, and six additional payload/persistence probes. Exact commands and limits are linked above.\n\nThe second queue exposed stale credentials in raw subscription test clients after prior role cleanup. A local sequence now reproduces all 11 original REST authentication failures after initializing every actor before that cleanup; restoring the correction makes the same 15-test sequence pass. The raw execution-log selection also passed all 10 tests, preserving its role-denied and unauthenticated cases. The correction changes three test modules and leaves production behavior unchanged. No unchanged failing run was retried and no gate was bypassed. Earlier incomplete reproductions and their masking conditions are retained in the review record.\n\nFull backend E2E and full Playwright were not run locally; the protected merge queue is the complete-suite gate. The separate Product Updates content PR will refresh verified inventory, prove the prepared development-image bundle includes the unchanged required-action notice and agent prompt, and record the final delivery evidence after this source merges. No production deployment or capacity/memory improvement is claimed.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1149"
+    },
+    {
+      "number": 1150,
+      "title": "Activate the approved authentication cutover notice",
+      "url": "https://github.com/gobifrost/bifrost/pull/1150",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T20:41:35Z",
+      "merge_commit": "8bef83b73f1b33b62ac2aff57220767b354f0729",
+      "body": "## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 activates the already reviewed authentication cutover notice; no new runtime behavior or customer-facing prose.\n\n## Summary\n\nRefresh the cumulative verified inventory through merged authentication PR #1149, retaining all 259 historical sources and reviewed contributor evidence while expanding coverage to 302 sources. This makes Action Required entry `68314b62-0ea3-4d44-8779-6241f77275f3` eligible in prepared development-image bundles. Its UUID, revision, prose, prompt and source disposition are unchanged.\n\nRecord the final source delivery evidence: protected CI passed 10,976 backend units, 4,021 client tests, 2,404 backend E2E tests and all 17 critical browser smoke tests. The exact stale-epoch regression was reproduced and corrected before source merge. No runtime code, generated bundles, release publication or production deployment is included.\n\n## Validation\n\n- Canonical Product Updates validation passed locally and in [manual CI run 41118855589](https://github.com/gobifrost/bifrost/actions/runs/41118855589).\n- Scratch image preparation on clean content commit `bc9f323b14cd6fcc147b43cf371a57e68b21e29b` included the exact notice with `action_required: true`, in-app visibility, source PR #1149 and the approved agent prompt. The notice checksum and all historical inventory records are unchanged.\n- Independent Astra content review found no P1/P2 findings. Final commands, results and scope limits are retained in the authentication verification document. Full local backend/browser suites were not repeated for this metadata-only change; the protected queue remains the complete gate.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1150"
+    },
+    {
+      "number": 1151,
+      "title": "Deliver workflow completion to apps before bookkeeping",
+      "url": "https://github.com/gobifrost/bifrost/pull/1151",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T21:41:00Z",
+      "merge_commit": "700e6334f830632ec526654c1ab56e8d74446c69",
+      "body": "## Summary\n\nV2 apps submit workflows asynchronously and fetch the result after a terminal WebSocket notification. That notification waited behind log acknowledgement/recovery, completion-event emission and metrics updates even after the result had committed. The earlier synchronous-result fixes (#483, #621) did not remove this wait from the app path.\n\nPublish the existing terminal status immediately after the authoritative commit and synchronous result handoff for both success and failure. Results and logs remain durable before notification, stale executor results remain fenced, and the WebSocket payload stays unchanged. Preserve the existing result-ready timing boundary and record notification timing separately.\n\n## Validation\n\nThe new real PostgreSQL/Redis/API WebSocket test failed on unmodified main while metrics were held, then passed unchanged after this correction: the app receives terminal status and fetches the committed result while metrics remain blocked. It dispatches zero worker or event jobs.\n\n- `./test.sh tests/unit/jobs/consumers/test_workflow_execution_session.py tests/unit/jobs/consumers/test_workflow_execution_lineage.py tests/unit/services/events/test_builtins.py tests/e2e/api/test_execution_completion_delivery.py tests/e2e/test_execution_log_durability.py -v --durations=0` \u2014 31 passed; no failures, errors or skips.\n- `./test.sh quality api` \u2014 Pyright and Ruff passed.\n- The test-cleanup follow-up passed all 13 affected checks and API quality; both CodeQL review threads are resolved. The server implementation is unchanged.\n- Bounded final review found no actionable issues. Full backend/client/browser suites were not run locally; the protected merge queue remains the broad gate.\n\nThis proves and repairs post-commit delivery ordering. It does not establish the cause of the reported 33-second production run or quantify a production speedup. No production deployment is included.\n\n## Product Updates\n\n- [x] Other \u2014 Apps receive workflow completion before follow-up bookkeeping.\n- [ ] Highlight\n- [ ] Omit\n\nCanonical classification: `product-updates/dispositions/pr-1151.json`.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1151"
+    },
+    {
+      "number": 1152,
+      "title": "Activate workflow completion fix in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1152",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T22:06:52Z",
+      "merge_commit": "ad3ff6a6df1c97709c0fdbb3ef14f7eb3e5fe02e",
+      "body": "Refresh the cumulative Product Updates metadata through merged workflow completion fix #1151 so its approved Fixed summary appears in development image bundles. Preserve all 302 previously verified PR records, entry prose, required authentication notice, agent prompt and reviewed contributor credits.\n\nValidation: canonical Product Updates validation passes. The actual image-preparation helper produced a bundle containing the new summary and the unchanged authentication notice and prompt. This changes cached metadata only; it does not deploy production or publish a release.\n\nProduct Updates: Omit \u2014 internal activation of the already approved #1151 summary.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1152"
+    },
+    {
+      "number": 1153,
+      "title": "Add reviewed automatic App SDK upgrades",
+      "url": "https://github.com/gobifrost/bifrost/pull/1153",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-30T23:43:28Z",
+      "merge_commit": "88f9567e3d04e05b153360a14b2f14668db998e1",
+      "body": "## Product Updates\n\n- [x] Highlight \u2014 620a0f81-11c2-4cfb-90c7-345317efaab6 (approved canonical entry).\n\n## Summary\n\nAdd **App SDK Upgrades** in Settings \u2192 Maintenance so the platform can attempt required SDK updates that need no app code changes. The setting starts **off** during dogfood testing; the reviewed automatic transition is contract 2 \u2192 3.\n\nThe elected scheduler queues the existing `application.sdk_update` PlatformJob, at most 20 apps per pass. Automatic attempts share manual App/Solution locks, pin the requested SDK, preserve unrelated locked dependencies with `npm ci`, and keep the prior deployment artifacts. Failed attempts leave the active deployment unchanged and require a manual retry; job history prevents repeated automatic attempts for the same App and target.\n\nNew SDK-update jobs use payload version 2 so older workers cannot silently ignore target pinning. New workers also finish already-queued v1 manual jobs through an exact historical schema that rejects automatic/target fields. Authentication expiry and revocation checks are unchanged.\n\n## Validation\n\n- API Pyright and Ruff; client TypeScript and ESLint: passed.\n- Focused frontend service/component/SDK tripwire coverage: 13 passed.\n- Settings authorization/audit, existing manual/Solution SDK update boundaries, and one actual automatic worker rebuild: 11 passed. The live rebuild verifies activation, old artifact retention, and no duplicate on reconciliation.\n- Maintenance browser happy path plus auth setup: 2 passed; screenshot reviewed.\n- Final backend unit/shared-contract checks: 270 passed.\n- Manual build/error paths, SDK memory-profile enqueue, build safeguards, and generated references: 34 targeted consumer checks passed; skill mirror validation passed.\n- Live scheduler diagnostics: all 4 passed, including the schedule inventory with App SDK Upgrades. The stale-list queue failure was reproduced in isolation before correcting the expectation.\n\nFull suites were not run locally; the protected merge queue remains the complete-suite gate.\n\n<details>\n<summary>Focused commands</summary>\n\n```bash\n./test.sh quality api\n(cd client && npm run tsc)\n(cd client && npm run lint)\n./test.sh client unit src/services/appSdkUpgradeSettings.test.ts src/pages/settings/AppSdkUpgradeSettings.test.tsx src/pages/settings/Maintenance.test.tsx src/lib/app-sdk/sdk-contract.test.ts\n./test.sh tests/e2e/api/test_app_sdk_upgrade_settings.py tests/e2e/platform/test_application_sdk_update.py tests/e2e/platform/test_automatic_app_sdk_upgrade.py -q --durations=0\n./test.sh client e2e --screenshots e2e/app-sdk-upgrades.admin.spec.ts\n./test.sh tests/unit/test_app_sdk_upgrade_settings.py tests/unit/shared/test_automatic_app_sdk_upgrades.py tests/unit/test_sdk_automatic_upgrade_contracts.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/jobs/test_application_sdk_update.py tests/unit/test_application_sdk_status.py tests/unit/services/test_platform_jobs.py tests/unit/jobs/test_platform_job_runner.py tests/unit/scheduler/test_control.py tests/unit/test_access_list.py tests/unit/test_dto_flags.py tests/unit/test_contract_version.py tests/unit/jobs/test_platform_job_catalog.py tests/unit/services/test_operation_inventory.py -q --durations=10\n./test.sh tests/unit/test_solution_app_build.py tests/unit/routers/test_application_job_memory_profiles.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/test_skill_appendix_fresh.py tests/unit/jobs/test_application_sdk_update.py -q --durations=10\npython3 scripts/check_skill_mirrors.py\n./test.sh tests/e2e/platform/test_scheduler_diagnostics.py -q --durations=0\n```\n</details>\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1153"
+    },
+    {
+      "number": 1154,
+      "title": "Activate App SDK Upgrades in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1154",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T00:13:24Z",
+      "merge_commit": "127621d4a730c6c379be3403fa1db819ae1a82fa",
+      "body": "Refresh the cumulative verified Product Updates metadata through merged #1153 so its approved Automatic App SDK Upgrades note appears in image bundles. Preserve all 304 previously verified PR records, existing entry prose, contributor evidence, and the authentication notice and prompt.\n\nValidation: canonical Product Updates validation passes. The actual image-preparation helper includes the new entry and preserves all 33 previous approved entries unchanged. This changes cached metadata only.\n\nProduct Updates: Omit \u2014 internal activation of the already approved #1153 announcement.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1154"
+    },
+    {
+      "number": 1155,
+      "title": "Fix automatic App SDK rebuild failures",
+      "url": "https://github.com/gobifrost/bifrost/pull/1155",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T01:30:33Z",
+      "merge_commit": "aa3caac0622c023f369be48f2d24ac5e57d820a9",
+      "body": "## Summary\n\nAutomatic App SDK upgrades could fail when npm normalized unrelated lockfile metadata. Solution App rebuilds could also fail while validating unrelated entity manifests in retained source.\n\nCopy only refreshed SDK entries into the original lockfile, preserving other dependency values and requiring matching root declarations plus a successful `npm ci`. Resolve only the target App through the shared strict App parser and archive safety checks; full Solution validation stays strict.\n\n## Validation\n\n- 38 focused SDK safeguard, shared build, cache, and job tests passed:\n  `./test.sh tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/test_solution_app_build.py tests/unit/test_solution_zip_install_cache.py tests/unit/jobs/test_application_sdk_update.py -v`\n- 35 source resolver and shared definition tests passed:\n  `./test.sh tests/unit/test_application_source_resolver.py tests/unit/test_solution_definition.py -v`\n- Two existing live paths passed:\n  `./test.sh tests/e2e/platform/test_automatic_app_sdk_upgrade.py tests/e2e/platform/test_captured_app_sdk_source.py -v --durations=0`\n  The automatic path uses one worker job and one real Vite build (31.4 seconds), now with a developer lockfile that omits the platform-injected SDK. No extra build jobs were added.\n- `./test.sh quality api` passed (Pyright and Ruff).\n\nFull backend suites and browser suites were not run locally; the protected merge queue remains the complete-suite gate.\n\n## Product Updates\n\n- [x] Other \u2014 App SDK updates no longer fail on npm lockfile metadata or unrelated Solution entity definitions.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1155"
+    },
+    {
+      "number": 1156,
+      "title": "Activate App SDK rebuild fix in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1156",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T02:25:34Z",
+      "merge_commit": "a29f7bcba17a4a0d4da7f7e33ffa2abbb4f45b8d",
+      "body": "Refresh cached Product Updates metadata through merged SDK rebuild repair #1155 so its approved Fixed summary appears in image bundles. Preserve all 306 previously verified PR records, all 34 existing entries, and all 86 existing smaller-change summaries.\n\nA focused CI-only E2E repair removes an incidental enqueue-status snapshot assertion. A worker may claim or finish the durable job before the 202 response is serialized; the test continues to verify the accepted location, durable identity, metadata, and requester visibility. This adds no runtime behavior.\n\nCanonical validation and the actual image-preparation helper pass; the prepared bundle includes #1155's summary and keeps the existing entries unchanged.\n\nProduct Updates: Omit \u2014 internal activation of the already approved #1155 fix summary and CI-only test repair.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1156"
+    },
+    {
+      "number": 1157,
+      "title": "fix(worker): preserve launcher enrollment and reported build identity",
+      "url": "https://github.com/gobifrost/bifrost/pull/1157",
+      "author": {
+        "login": "MTG-Thomas",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T02:45:51Z",
+      "merge_commit": "e5da6d0c1fb751d4155b1b65458bfedfc2bec112",
+      "body": "Static launchers were recorded with the admitting API's build, and startup failures could retry enrollment with a consumed physical identity. Losing the initial welcome also reset the hello sequence on the next connection.\n\nThis records the launcher's reported build (or unknown when absent), retains the initial hello sequence across transport failures, and exits with status 1 after failed template initialization. Both workflow and agent templates still load before memory admission.\n\nRefs #1105 for the build-reporting portion. This does not resolve that issue's replacement, drain, or zero-worker wake-up design. These shared-runtime fixes were found during the full-worker Cloudflare development experiment; scalable summaries and provider/network acceptance remain separate work.\n\nValidation:\n\n- `./test.sh tests/unit/dev/test_thin_launcher.py tests/unit/worker/remote/test_host.py tests/unit/test_api_agent_executor.py tests/unit/test_pool_main_hosting.py tests/unit/services/worker_pool/test_worker_pool.py -v`: 181 passed, JUnit reports zero failures/errors.\n- Both new launcher regressions failed against the original implementation before the fix.\n- API Pyright and Ruff passed through `./test.sh quality api`.\n- Full backend, browser, and client suites were not run locally; the normal merge queue remains the complete-suite gate.\n\n## Product Updates\n\n- [x] Other \u2014 Workers retain their reported build version and recover correctly from interrupted enrollment or failed startup.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1157"
+    },
+    {
+      "number": 1158,
+      "title": "Serve App SDK updates from the instance",
+      "url": "https://github.com/gobifrost/bifrost/pull/1158",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T04:39:39Z",
+      "merge_commit": "087ffade922de931d2a57bd8a72531f8240e15f7",
+      "body": "## Summary\n\nApp bundles currently freeze the SDK's transport and authentication code, so compatible SDK fixes require rebuilding each App. New builds install a small binding and load the existing full SDK from the instance as prebuilt JavaScript. The App keeps its own React, public imports, provider props, and error constructors. After one SDK update, compatible implementation changes arrive on document reload with the App's deployment unchanged.\n\nFactories are built into the API image, published to shared storage before readiness, and loaded through an uncached descriptor plus immutable SHA-256/SRI assets. Factory selection is shared per document/origin/major; SDK state and credentials stay inside each App binding. Production does not run a development server when an App opens.\n\nBinding provenance flows through source builds, CLI prebuilds, activation, status, and bundle manifests. Version 3 SDK-update jobs fence the binding major and retain exact historical schemas for already queued manual jobs. Supported hosted majors ignore server wire-only staleness; changing the public major requires an explicit migration. The initial automatic hosted-migration declaration is empty, so adoption starts with manual Update SDK after an ordinary instance upgrade. Existing automatic-upgrade settings are preserved.\n\nThe CLI preview proxy also forwards expiry close code 4001 and exposes a nonce-protected, tokenless acknowledgement through its existing auth bridge so refresh/reconnect remains functional. Authentication expiry and authorization checks are unchanged.\n\n## Validation\n\n- Focused backend units and DTO/CLI/MCP/skill tripwires: 542 passed, zero skips; JUnit verified.\n- Focused client units: 134 passed across ten files; TypeScript and ESLint passed (one existing seed-review-pack console warning).\n- API Pyright/Ruff: passed.\n- Full PR unit CI exposed six stale App/metadata fixtures and two endpoint-inventory tripwires. Updated fixtures, regenerated inventory, and all 47 focused correction/status checks passed; the full suite must pass again on this head.\n- Existing one-job worker migration: passed (10.82 s call, 3.19 s setup); proves build/activation, hosted manifest provenance, and retained recovery artifacts.\n- Browser legacy/hosted/reloaded-SDK journey: passed (21.3 s including authentication setup). A bundled wire-contract-3 SDK makes a real authenticated API request without loading a hosted artifact. The hosted App then uses the real first artifact and an integrity-valid simulated compatible update; App entry bytes and build stamps stay unchanged. This does not claim arbitrary old wire contracts remain supported.\n- React 18.3.1 factory probe with distinct host React 19.2.0: provider/hooks/header/Lucide and separate App/org transport headers passed.\n- Independent Astra implementation, lifecycle, and Product Updates copy review: approved, no remaining P1/P2 findings.\n\nFull backend, Vitest, and Playwright suites were not run locally; the protected merge queue remains the complete-suite gate. The first introduction of hosted endpoints can show a load error if a newly migrated App reaches an older API replica before an ordinary upgrade finishes; reload after upgrade. Prebuilt metadata is the privileged deploy author's attestation, without JavaScript inspection.\n\n## Product Updates\n\n- [x] Highlight \u2014 \u201cSDK Updates Without App Rebuilds\u201d; entry `a978b8c0-cde0-4b05-bf6d-7cb333ed914a`, with source PR and contributor verified from GitHub.\n\n<details>\n<summary>Exact focused commands</summary>\n\n```bash\n./test.sh tests/unit/test_sdk_package.py tests/unit/test_sdk_package_fingerprint.py tests/unit/test_sdk_automatic_upgrade_contracts.py tests/unit/test_hosted_sdk_artifact.py tests/unit/test_application_sdk_status.py tests/unit/jobs/test_application_sdk_update.py tests/unit/shared/test_automatic_app_sdk_upgrades.py tests/unit/services/test_application_build_sdk_safeguards.py tests/unit/test_solution_app_deploy.py tests/unit/test_solution_start_sdk_warning.py tests/unit/test_cli_solution_deploy_phases.py tests/unit/routers/test_app_code_files.py tests/unit/test_solution_dev_proxy.py tests/unit/test_dto_flags.py tests/unit/test_contract_version.py tests/unit/test_mcp_thin_wrapper.py tests/unit/test_cli_surface_smoke.py tests/unit/test_skill_appendix_fresh.py -v\n./test.sh tests/unit/jobs/test_application_deploy.py tests/unit/routers/test_application_job_memory_profiles.py tests/unit/services/test_operation_inventory.py tests/unit/test_solution_id_on_public_models.py tests/unit/test_solution_sdk_aggregates.py tests/unit/test_application_sdk_status.py -v\n./test.sh quality api\n./test.sh client unit src/lib/app-sdk/hosted-loader.test.ts src/lib/app-sdk/hosted-binding.test.tsx src/lib/app-sdk/hosted-contract.test.ts src/lib/app-sdk/errors.test.ts src/lib/app-sdk/tables.test.ts src/lib/app-sdk/files.test.ts src/lib/app-sdk/ws-client.test.ts src/components/jsx-app/StandaloneV2App.test.tsx src/components/jsx-app/BundledAppShell.test.tsx src/pages/settings/AppSdkUpgradeSettings.test.tsx\nnpm --prefix client run tsc\nnpm --prefix client run lint\n./test.sh tests/e2e/platform/test_automatic_app_sdk_upgrade.py::test_automatic_upgrade_builds_once_and_keeps_recovery_artifacts -v --durations=0\n./test.sh client e2e e2e/hosted-app-sdk.admin.spec.ts\npython3 scripts/check_skill_mirrors.py\n```\n\n</details>\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1158"
+    },
+    {
+      "number": 1159,
+      "title": "docs(product-updates): activate hosted SDK delivery",
+      "url": "https://github.com/gobifrost/bifrost/pull/1159",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T05:14:30Z",
+      "merge_commit": "e611d31bbba3d7601980271c774cad5e821b1e97",
+      "body": "## Summary\n\nRefresh the cumulative verified Product Updates inventory through merged #1158. The approved \u201cSDK Updates Without App Rebuilds\u201d entry is now included in the prepared image bundle, while #1157\u2019s approved routine-fix summary is included automatically.\n\nThe refreshed inventory preserves every prior record and adds #1156\u2013#1158. This PR changes Product Updates metadata only; image preparation regenerates runtime output during the build.\n\n## Validation\n\n- `python3 scripts/product_updates.py validate --content-dir product-updates --inventory product-updates/inventory.json --dispositions product-updates/dispositions.json --target 087ffade922de931d2a57bd8a72531f8240e15f7`\n- `python3 -m scripts.prepare_product_updates_image --target 087ffade922de931d2a57bd8a72531f8240e15f7`\n- `python3 -m unittest scripts.test_product_updates scripts.test_release_gate`\n- Verified the prepared bundle retains prior entries and smaller summaries, includes #1158's approved entry, and includes #1157's approved summary.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1159"
+    },
+    {
+      "number": 1163,
+      "title": "Report daily aggregate installation usage",
+      "url": "https://github.com/gobifrost/bifrost/pull/1163",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T19:34:06Z",
+      "merge_commit": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
+      "body": "Production installations now report a persistent random installation ID, build version, and previous-day workflow and agent run totals to `https://reports.gobifrost.com/usage` by default. Development, testing, debug, and unversioned builds are excluded. `BIFROST_USAGE_REPORTING_ENABLED=false` excludes staging/database clones and provides a permanent opt-out.\n\nThe existing elected scheduler checks at startup and hourly. PostgreSQL stores the installation identity and the last successfully reported UTC day. Only HTTP 204 marks delivery complete; a failed delivery remains eligible for the next check. The fixed seven-field payload excludes customer identities and content. Reports remain unauthenticated and self-reported, as requested. The reporting application retains no source IP addresses, user agents, referrers, or request headers; Worker request logging is disabled. Cloudflare provider-level processing is described separately in the runbook.\n\nDocker Compose and Kubernetes expose the environment setting. The README and usage-reporting runbook document the exact payload, defaults, clone behavior, and Cloudflare privacy boundary. Receiver source remains in the separate private infrastructure repository.\n\n## Validation\n\n- `./test.sh quality api` \u2014 Pyright and Ruff pass.\n- `./test.sh tests/unit/test_usage_reporting.py tests/unit/scheduler/test_control.py tests/unit/services/test_scheduler_diagnostics.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 41 passed, zero skipped. The PostgreSQL happy path uses an HTTP mock transport; no reports are sent to the public receiver. The integration case takes about 0.1 seconds.\n- `./test.sh quality repo` \u2014 repository checks run with a temporary GitHub CONNECT tunnel after the host resolver failed; TLS verification stays enabled and no host DNS settings are changed.\n- `./test.sh tests/unit/test_usage_reporting.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 83 passed after the test-style cleanup and additive contract fingerprint refresh; existing CLI/SDK shapes and minimum CLI version are unchanged.\n- `./test.sh tests/e2e/platform/test_scheduler_diagnostics.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 five passed after adding the reporting task to the live diagnostics catalogue expectation; request calls take under 0.3 seconds, with about 6.6 seconds spent in existing authenticated-user fixture setup.\n- Receiver: `BIFROST_REPORTING_TEST_IMAGE=bifrost-test-client-check:latest ./test.sh usage-reporting` in the private infrastructure repo \u2014 all seven Worker/D1 tests, TypeScript checks, and dry-run build pass.\n- Full backend, frontend, and browser suites were not run locally. No frontend or API route/CLI contract changed.\n\n## Product Updates\n\n- [x] Highlight \u2014 Daily Installation Usage Reporting; canonical entry `c0959ccb-e319-4cba-9b98-1da422ba9700` documents the reporting default and permanent opt-out.\n\nCloses #1165.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1163"
     }
   ]
 }

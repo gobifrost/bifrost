@@ -36,6 +36,20 @@ async def load_mcp_caller(db: AsyncSession, context: MCPContext) -> Caller:
         if principal is None:
             raise MCPAuthorizationError("The runtime credential is no longer valid")
     else:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+        from src.core.security import decode_token
+        from src.services.authorization.tokens import authenticate_human_token, parse_human_claims
+
+        access = get_access_token()
+        if access is not None:
+            payload = decode_token(access.token, expected_type="access")
+            claims = parse_human_claims(payload) if payload is not None else None
+            if claims is None or str(claims.sub) != str(context.user_id):
+                raise MCPAuthorizationError("The MCP human credential is no longer valid")
+            result = await authenticate_human_token(db, claims)
+            if result.principal is None:
+                raise MCPAuthorizationError("The MCP human credential requires reauthentication")
+            return await load_caller(db, result.principal)
         try:
             user_id = UUID(str(context.user_id))
         except (TypeError, ValueError) as exc:

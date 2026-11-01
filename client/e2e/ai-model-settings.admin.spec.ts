@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/api-fixture";
 
 const now = "2026-08-22T12:00:00Z";
 

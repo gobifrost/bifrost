@@ -24,6 +24,7 @@ from src.services.execution.memory_monitor import effective_memory_sample, memor
 from src.services.execution.template_process import TemplateProcess
 from src.worker.remote.identity import LauncherIdentity, load_launcher_identity
 from src.worker.remote.protocol import (
+    CREDENTIAL_PROTOCOL,
     ControlEnvelope,
     FragmentAssembler,
     Hello,
@@ -297,6 +298,7 @@ class Launcher:
             },
             "requirements": requirements,
             "version": get_version(),
+            "credential_protocol": CREDENTIAL_PROTOCOL,
         }, separators=(",", ":")))
         welcome = json.loads(await self.socket.recv())
         if welcome.get("event") != "welcome" or not isinstance(welcome.get("session_generation"), int):
@@ -757,6 +759,7 @@ async def run_launcher(
     identity = load_launcher_identity()
     secret = os.environ["BIFROST_SECRET_KEY"]
     launcher: Launcher | None = None
+    candidate: Launcher | None = None
     stopping = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -767,17 +770,22 @@ async def run_launcher(
             try:
                 async with connect(control_url, max_size=2**20, open_timeout=10) as socket:
                     if launcher is None:
-                        candidate = Launcher(
-                            socket, identity=identity, secret=secret,
-                            on_ready=on_ready, on_stop=on_stop,
-                        )
+                        if candidate is None:
+                            candidate = Launcher(
+                                socket, identity=identity, secret=secret,
+                                on_ready=on_ready, on_stop=on_stop,
+                            )
+                        else:
+                            # A lost welcome may follow a committed enrollment.
+                            # Keep the physical identity's monotonic hello sequence.
+                            candidate.socket = socket
                         # Enroll before the potentially minute-long requirements
                         # install. The API's ordinary worker heartbeat can then
                         # keep the canonical row alive while it waits for the
                         # inventory below; no work is ready to route yet.
-                        started = False
+                        await candidate.hello({})
+                        launcher = candidate
                         try:
-                            await candidate.hello({})
                             setup = asyncio.create_task(candidate.start())
                             while not setup.done():
                                 try:
@@ -791,11 +799,11 @@ async def run_launcher(
                                             "pressure_ratio": memory_pressure_ratio(), "runs": {},
                                         })
                             await asyncio.gather(setup)
-                            started = True
-                        finally:
-                            if not started:
-                                await candidate.stop()
-                        launcher = candidate
+                        except Exception:
+                            # Initialization is not a transport failure. Exit so
+                            # the provider can replace this failed physical worker.
+                            launcher.failed = True
+                            raise
                     else:
                         await launcher.reconnect(socket, launcher.requirements)
                     await launcher.send({
@@ -812,7 +820,10 @@ async def run_launcher(
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.warning("Remote control connection lost; preserving local children", exc_info=True)
+                if launcher is not None and launcher.failed:
+                    logger.error("Remote launcher initialization or supervision failed", exc_info=True)
+                else:
+                    logger.warning("Remote control connection lost; preserving local children", exc_info=True)
                 if stopping.is_set() or (launcher is not None and launcher.failed):
                     break
                 await asyncio.sleep(1)

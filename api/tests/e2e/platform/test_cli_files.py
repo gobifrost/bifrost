@@ -55,7 +55,7 @@ async def engine_creds(async_session_factory, monkeypatch, platform_admin):
     original caller, actor, and permissions from this row on every request,
     exactly as it does for a worker child.
     """
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
     from src.models.enums import ExecutionStatus
     from src.models.orm.executions import Execution
 
@@ -74,7 +74,7 @@ async def engine_creds(async_session_factory, monkeypatch, platform_admin):
         session.add(execution)
         await session.commit()
 
-    token, _ = mint_engine_token(execution_id=str(execution_id), timeout_seconds=120)
+    token, _ = legacy_engine_token(execution_id=str(execution_id), timeout_seconds=120)
     monkeypatch.setenv("BIFROST_API_URL", "http://api:8000")
     monkeypatch.setenv("BIFROST_ACCESS_TOKEN", token)
     monkeypatch.setenv("BIFROST_REFRESH_TOKEN", token)

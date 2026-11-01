@@ -20,7 +20,7 @@ class _Transport:
         self.requests: list[tuple[str, dict]] = []
         self.inventory: list[dict[str, str]] = []
 
-    async def request(self, action: str, payload: dict) -> dict:
+    async def request(self, action: str, payload: dict, *, expected_generation: int | None = None) -> dict:
         self.requests.append((action, payload))
         if action == "package_tool" and payload == {"operation": "inventory"}:
             return {"packages": self.inventory}
@@ -129,7 +129,7 @@ async def test_result_arriving_before_dispatch_ack_is_completed_once() -> None:
     on_result = AsyncMock()
     pool = ThinRemoteProcessPool(transport, on_result=on_result)
 
-    async def result_before_ack(action: str, payload: dict) -> dict:
+    async def result_before_ack(action: str, payload: dict, *, expected_generation: int | None = None) -> dict:
         transport.requests.append((action, payload))
         if action == "workflow":
             await pool.handle_event(

@@ -1,7 +1,6 @@
 """Flush the Redis workflow-operation-usage buffer into the durable table.
 
-Every request authenticated by an engine token carrying an
-``engine_workflow_id`` claim (see ``mint_engine_token`` /
+Every request made with a workflow's runtime credential (see
 ``src.core.app_wiring._record_workflow_operation_usage``) increments a
 per-UTC-day Redis hash ``bifrost:wf_usage:<YYYY-MM-DD>``, field
 ``<workflow_id>|<operation_key>``. This job runs every 15 minutes (see

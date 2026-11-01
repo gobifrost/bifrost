@@ -10,7 +10,7 @@
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 import { expect, test, type AuthedApi } from "./fixtures/api-fixture";
 
 type Credentials = {

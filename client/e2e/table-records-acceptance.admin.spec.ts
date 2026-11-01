@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
-import type { Page as PlaywrightPage } from "@playwright/test";
+import type { Page as PlaywrightPage } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const TABLE_NAME = `e2e_records_${UNIQUE}`.replace(/[^a-z0-9_]/g, "_");

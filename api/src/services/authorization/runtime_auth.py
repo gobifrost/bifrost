@@ -1,7 +1,20 @@
-"""Turn a signed typed runtime credential into a database-backed principal."""
+"""Turn a typed runtime credential into a database-backed principal.
+
+``load_runtime_principal`` reads every authority fact for a runtime
+credential from the database. In-process callers (agent runs, MCP contexts,
+caller refresh) use it with the credential identity they already hold; it is
+also the parity oracle for claims minted by ``tokens.issue_access_token``.
+
+Signed runtime tokens minted by ``issue_access_token`` (``ver: 1``) are
+validated by ``tokens.authenticate_runtime_token`` instead. Older tokens,
+which carry no ``ver``, are bridged: they are validated exactly as before,
+through ``load_runtime_principal``, so they work only while their run is
+live. Token PR1c removes the bridge.
+"""
 
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 from uuid import UUID
 
@@ -26,15 +39,38 @@ _LEGACY_RUNTIME_CLAIMS: frozenset[str] = frozenset(
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def is_runtime_credential_payload(payload: dict[str, Any]) -> bool:
     """Whether a payload claims, or resembles, a runtime credential."""
     return "credential_kind" in payload or any(key in payload for key in _LEGACY_RUNTIME_CLAIMS)
 
 
+def is_legacy_runtime_payload(payload: dict[str, Any]) -> bool:
+    """A runtime-shaped payload from before claims: it has no ``ver``.
+
+    Any payload with ``ver`` is validated only as claims, never through the
+    bridge, whatever its shape.
+    """
+    return is_runtime_credential_payload(payload) and "ver" not in payload
+
+
+def log_legacy_runtime_token_accepted(payload: dict[str, Any]) -> None:
+    """Record one acceptance of a bridged legacy runtime token (counted from
+    the log until token PR1c removes the bridge)."""
+    logger.info(
+        "authz.legacy_runtime_token_accepted kind=%s exp=%s",
+        payload.get("credential_kind"),
+        payload.get("exp"),
+    )
+
+
 async def load_runtime_principal(
     db: AsyncSession, payload: dict[str, Any]
 ) -> UserPrincipal | None:
-    """Resolve a typed runtime token without trusting its authority claims.
+    """Resolve a typed runtime credential from the database, trusting none of
+    its authority claims.
 
     ``None`` means the payload is not a valid typed runtime credential. The
     caller must reject it when :func:`is_runtime_credential_payload` is true;

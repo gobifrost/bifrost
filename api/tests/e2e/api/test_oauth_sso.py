@@ -1,6 +1,7 @@
 """Live database and Redis coverage for the OAuth SSO callback."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -11,7 +12,7 @@ from httpx import ASGITransport, AsyncClient as RealAsyncClient, Request as Http
 from sqlalchemy import delete, select
 
 from src.core.cache import get_shared_redis
-from src.core.cache.keys import oauth_state_key, refresh_token_jti_key
+from src.core.cache.keys import oauth_state_key
 from src.core.database import get_db
 from src.models import User, UserOAuthAccount
 from src.routers import oauth_sso
@@ -65,7 +66,6 @@ async def test_linked_entra_id_authenticates_same_local_user_after_upn_change(
 
     state = f"oauth-sso-{uuid4()}"
     state_key = oauth_state_key(state)
-    refresh_key = refresh_token_jti_key(str(user.id), "test-jti")
     redis = await get_shared_redis()
     await redis.setex(
         state_key,
@@ -96,7 +96,6 @@ async def test_linked_entra_id_authenticates_same_local_user_after_upn_change(
         access_token="provider-access-token",
         id_token=jwt.encode({"tid": "work-tenant"}, "test-signature-is-not-checked-at-sign-in", algorithm="HS256"),
     )
-    token_claims: dict = {}
     provision = AsyncMock()
 
     monkeypatch.setattr(
@@ -111,11 +110,11 @@ async def test_linked_entra_id_authenticates_same_local_user_after_upn_change(
     )
     monkeypatch.setattr("src.services.oauth_sso.httpx.AsyncClient", lambda *_args, **_kwargs: provider_client)
     monkeypatch.setattr(oauth_sso, "ensure_user_provisioned", provision)
-    monkeypatch.setattr(oauth_sso, "get_user_roles", AsyncMock(return_value=[]))
-    monkeypatch.setattr(oauth_sso, "resolve_provider_org_claim", AsyncMock(return_value=False))
-    monkeypatch.setattr(oauth_sso, "create_access_token", lambda data: token_claims.update(data) or "access-token")
-    monkeypatch.setattr(oauth_sso, "create_refresh_token", lambda data: ("refresh-token", "test-jti"))
-    monkeypatch.setattr(oauth_sso, "_set_oauth_auth_cookies", lambda *_args: None)
+    issue_session = AsyncMock(
+        return_value=SimpleNamespace(access_token="access-token", refresh_token="refresh-token")
+    )
+    monkeypatch.setattr(oauth_sso, "issue_human_session", issue_session)
+    monkeypatch.setattr(oauth_sso, "set_auth_cookies", lambda *_args: None)
 
     try:
         async with RealAsyncClient(transport=ASGITransport(app=app), base_url="http://bifrost.test") as client:
@@ -125,8 +124,7 @@ async def test_linked_entra_id_authenticates_same_local_user_after_upn_change(
             )
 
         assert response.status_code == 200
-        assert token_claims["sub"] == str(user.id)
-        assert token_claims["email"] == user.email
+        issue_session.assert_awaited_once_with(user.id)
         assert provider_client.requests == [
             ("https://graph.example.test/me", {"Authorization": "Bearer provider-access-token"})
         ]
@@ -141,7 +139,7 @@ async def test_linked_entra_id_authenticates_same_local_user_after_upn_change(
             )
         assert linked_user_id == user.id
     finally:
-        await redis.delete(state_key, refresh_key)
+        await redis.delete(state_key)
         await db_session.rollback()
         async with async_session_factory() as cleanup_session:
             await cleanup_session.execute(

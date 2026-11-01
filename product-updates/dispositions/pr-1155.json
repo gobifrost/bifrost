@@ -1,0 +1,14 @@
+{
+  "key": "pr:1155",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "App SDK updates no longer fail on npm lockfile metadata or unrelated Solution entity definitions.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1155",
+      "Personal production testing exposed both failures. Reviewed the shared repair and concise customer-facing summary; 73 focused unit tests, two existing live paths, and API quality passed. General Writing and Humanizer applied to the routine-fix summary."
+    ]
+  }
+}

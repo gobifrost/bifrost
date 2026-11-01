@@ -9,10 +9,12 @@ route with expired and valid tokens.
 
 # No ``from __future__ import annotations``: FastAPI must resolve these
 # routes' Annotated dependencies, which name functions local to each test.
+import time
 from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
 from typing import Annotated, Any
 from uuid import uuid4
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import jwt
@@ -30,6 +32,7 @@ from src.core.security import (
     create_refresh_token,
     decode_token,
 )
+from tests.helpers.human_tokens import human_claims
 
 # Dependencies that may run before authentication: opening (not using) a
 # database session, reading the bearer header, reading settings.
@@ -124,11 +127,34 @@ def mutation_app() -> tuple[FastAPI, list[str]]:
 
 
 def _human_claims() -> dict[str, Any]:
-    return {"sub": str(uuid4()), "email": "person@example.test", "org_id": str(uuid4()), "name": "Person"}
+    return human_claims(organization_id=uuid4()).to_payload()
 
 
 def _expired(claims: dict[str, Any]) -> str:
-    return create_access_token(claims, expires_delta=timedelta(seconds=-30))
+    return _signed(claims, expired=True)
+
+
+def _signed(claims: dict[str, Any], *, expired: bool = False) -> str:
+    settings = get_settings()
+    payload = {
+        **claims, "type": "access", "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience, "exp": int(time.time()) + (-30 if expired else 4500),
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+
+
+def _expired_runtime(claims: dict[str, Any]) -> str:
+    """An expired, correctly signed runtime-shaped token. ``create_access_token``
+    refuses runtime claims, so it is signed here directly."""
+    settings = get_settings()
+    payload = {
+        **claims,
+        "type": "access",
+        "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "exp": int(time.time()) - 30,
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
 async def _post(app: FastAPI, token: str | None) -> httpx.Response:
@@ -149,7 +175,10 @@ async def test_a_challenged_mutation_has_no_effect_and_its_replay_has_one(
     assert challenged.headers["www-authenticate"] == REFRESH_REQUIRED_CHALLENGE
     assert effects == []
 
-    replayed = await _post(app, create_access_token(claims))
+    # This transport test controls only the epoch read. The signed claims
+    # still traverse the real schema, epoch and principal reconstruction.
+    with patch("src.services.authorization.tokens.read_epoch", new=AsyncMock(return_value=100)):
+        replayed = await _post(app, _signed(claims))
 
     assert replayed.status_code == 200
     assert effects == ["dependency", "handler"]
@@ -171,15 +200,16 @@ def _wrong_signature() -> str:
     ("make_token", "challenged"),
     [
         (lambda: _expired(_human_claims()), True),
-        (lambda: _expired({"sub": str(uuid4()), "credential_kind": "workflow_execution", "ver": 1}), True),
+        (lambda: _expired({"sub": str(uuid4()), "email": "legacy@example.test"}), False),
+        (lambda: _expired_runtime({"sub": str(uuid4()), "credential_kind": "workflow_execution", "ver": 1}), True),
         (
-            lambda: _expired(
+            lambda: _expired_runtime(
                 {"sub": str(uuid4()), "credential_kind": "service_attempt", "service_id": str(uuid4()), "ver": 1}
             ),
             True,
         ),
         # A legacy runtime token's refresh slot holds the same token.
-        (lambda: _expired({"sub": str(uuid4()), "credential_kind": "workflow_execution"}), False),
+        (lambda: _expired_runtime({"sub": str(uuid4()), "credential_kind": "workflow_execution"}), False),
         # Embed tokens and impersonation markers have no refresh.
         (
             lambda: create_embed_access_token(
@@ -202,6 +232,7 @@ def _wrong_signature() -> str:
     ],
     ids=[
         "expired person",
+        "expired legacy person",
         "expired run token",
         "expired service run token",
         "expired legacy runtime token",
@@ -227,7 +258,7 @@ async def test_only_a_refreshable_expired_access_token_gets_the_challenge(
 
 def test_another_hosts_clock_skew_in_iat_never_rejects_a_token() -> None:
     settings = get_settings()
-    future_iat = create_access_token({**_human_claims(), "iat": 4_102_444_800})
+    future_iat = create_access_token({"sub": str(uuid4()), "iat": 4_102_444_800})
 
     payload = decode_token(future_iat, expected_type="access")
 

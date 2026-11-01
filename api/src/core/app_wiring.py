@@ -35,6 +35,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     """
 
     from src.services.authorization.enforce import PermissionDenied
+    from shared.human_sessions import HumanSessionUnavailable
+
+    @app.exception_handler(HumanSessionUnavailable)
+    async def human_session_handler(request: Request, exc: HumanSessionUnavailable) -> JSONResponse:
+        return JSONResponse(
+            status_code=401, content={"detail": "Authentication is no longer available. Sign in again."},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     @app.exception_handler(PermissionDenied)
     async def named_permission_handler(
@@ -236,24 +244,31 @@ def install_request_context_middleware(app: FastAPI) -> None:
             if token:
                 payload = decode_token(token, expected_type="access")
             if payload:
-                from src.core.database import get_session_factory
-                from src.services.authorization.runtime_auth import is_runtime_credential_payload, load_runtime_principal
+                from src.services.authorization.runtime_auth import is_legacy_runtime_payload, is_runtime_credential_payload
 
-                if is_runtime_credential_payload(payload):
+                if is_legacy_runtime_payload(payload):
+                    # Legacy bridge (token PR1c removes it): validated from
+                    # the database exactly as before; the auth dependency
+                    # reuses this result.
+                    from src.core.database import get_session_factory
+                    from src.services.authorization.runtime_auth import load_runtime_principal
+
                     async with get_session_factory()() as db:
                         runtime_principal = await load_runtime_principal(db, payload)
                     request.state.runtime_token = token
                     request.state.runtime_principal = runtime_principal
-            if payload:
-                user_id = payload.get("sub", "")
-                user_name = (
-                    payload.get("name") or payload.get("email") or user_id
-                )
-                set_request_user(
-                    RequestUser(user_id=user_id, user_name=user_name)
-                )
-            else:
-                set_request_user(None)
+                elif is_runtime_credential_payload(payload):
+                    # Claims (``ver: 1``): attribution only, with no database
+                    # session. The auth dependency validates the token before
+                    # any handler runs, and a refused token never reaches one.
+                    from src.services.authorization.tokens import attribution_principal, parse_runtime_claims
+
+                    claims = parse_runtime_claims(payload)
+                    runtime_principal = None if claims is None else attribution_principal(claims)
+            # ``RequestUser`` is installed from the actor below. In
+            # particular, modern human credentials keep identity under the
+            # signed compressed ``usr`` claim rather than top-level fields.
+            set_request_user(None)
         except Exception:
             payload = None
             set_request_user(None)
@@ -270,7 +285,6 @@ def install_request_context_middleware(app: FastAPI) -> None:
             actor = actor_from_runtime_principal(
                 runtime_principal, ip_address=ip_address, user_agent=user_agent,
             )
-            set_request_user(RequestUser(user_id=str(runtime_principal.user_id), user_name=runtime_principal.name))
         else:
             actor = actor_from_token_payload(
                 payload,
@@ -290,6 +304,15 @@ def install_request_context_middleware(app: FastAPI) -> None:
                 user_agent=user_agent,
                 surface=resolve_self_reported_surface(surface_header),
             )
+        elif actor.user_id is not None:
+            set_request_user(
+                RequestUser(
+                    user_id=str(actor.user_id),
+                    user_name=actor.name or actor.email or str(actor.user_id),
+                )
+            )
+        else:
+            set_request_user(None)
         actor_token = set_actor(actor)
         scope_token = set_request_scope(request.scope)
         # Audit collection never replaces the authentication dependency.
@@ -300,15 +323,16 @@ def install_request_context_middleware(app: FastAPI) -> None:
             logger.warning("access checks skipped: unreadable lineage claims")
             checks_token = None
         collector = access_checks.current()
-        # Attribution only (see mint_engine_token docstring): feeds the
-        # workflow-operation-usage counter below, never read for authorization.
+        # Attribution only: feeds the workflow-operation-usage counter below,
+        # never read for authorization.
         engine_workflow_id = None if runtime_principal is None else runtime_principal.workflow_id
 
         try:
             response = await call_next(request)
             # Routing has necessarily happened by now, so request.scope["route"]
-            # (if any route matched) is populated.
-            if engine_workflow_id:
+            # (if any route matched) is populated. A request whose credential
+            # was refused (401) used no operation.
+            if engine_workflow_id and response.status_code != 401:
                 route = request.scope.get("route")
                 if route is not None:
                     operation_key = (

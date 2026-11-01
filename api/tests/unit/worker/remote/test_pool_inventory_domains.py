@@ -46,7 +46,7 @@ def _platform_route(job: PlatformJob, *, lease_token: str | None = None) -> dict
 
 
 async def _service_attempt(
-    async_session_factory, *, worker_id: str
+    async_session_factory, *, worker_id: str, credential_version: int | None = None
 ) -> tuple[ServiceDefinition, ServiceAttempt]:
     suffix = uuid4().hex
     workflow = Workflow(
@@ -67,6 +67,7 @@ async def _service_attempt(
             lease_token=f"lease-{suffix}",
             lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
             state="running",
+            credential_version=credential_version,
         )
         session.add(attempt)
         await session.commit()
@@ -117,8 +118,9 @@ async def _cleanup_platform_job(async_session_factory, job_id: UUID) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("credential_version", [None, 2], ids=["legacy format", "claims format"])
 async def test_inventory_adopts_service_claim_and_restores_its_memory_reservation(
-    async_session_factory, monkeypatch: pytest.MonkeyPatch,
+    async_session_factory, monkeypatch: pytest.MonkeyPatch, credential_version: int | None,
 ) -> None:
     @asynccontextmanager
     async def context():
@@ -127,7 +129,9 @@ async def test_inventory_adopts_service_claim_and_restores_its_memory_reservatio
 
     monkeypatch.setattr("src.core.database.get_db_context", context)
     worker_id = str(uuid4())
-    definition, attempt = await _service_attempt(async_session_factory, worker_id=worker_id)
+    definition, attempt = await _service_attempt(
+        async_session_factory, worker_id=worker_id, credential_version=credential_version
+    )
     try:
         transport = AsyncMock()
         pool = ThinRemoteProcessPool(transport, worker_id=worker_id)
@@ -141,6 +145,9 @@ async def test_inventory_adopts_service_claim_and_restores_its_memory_reservatio
         assert owned.attempt_id == attempt.id
         assert owned.lease_token == attempt.lease_token
         assert owned.memory_request_bytes == 192 * 2**20
+        # The recorded format survives adoption: a claims attempt is never
+        # rotated by the adopting parent.
+        assert owned.credential_version == credential_version
         assert pool.service_processes
         transport.request.assert_not_awaited()
     finally:

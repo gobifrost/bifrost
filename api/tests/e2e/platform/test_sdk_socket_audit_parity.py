@@ -18,7 +18,7 @@ class TestSocketAuditAttribution:
     ):
         from sqlalchemy import delete, select
 
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.orm.audit import AuditLog
         from src.models.orm.users import Role as RoleModel
         from src.services.execution.worker_sdk_http import build_worker_sdk_app
@@ -29,7 +29,7 @@ class TestSocketAuditAttribution:
         execution_id = uuid.uuid4()
         role_name = f"socket-audit-{uuid.uuid4().hex[:8]}"
 
-        token, _ = mint_engine_token(
+        token, _ = legacy_engine_token(
             execution_id=str(execution_id),
             timeout_seconds=300,
         )

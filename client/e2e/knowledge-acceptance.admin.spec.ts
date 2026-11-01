@@ -8,7 +8,7 @@
  */
 
 import { expect, test } from "./fixtures/api-fixture";
-import type { APIResponse, Page } from "@playwright/test";
+import type { APIResponse, Page } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
 
 type EmbeddingConfig = {

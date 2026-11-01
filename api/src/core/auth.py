@@ -16,14 +16,20 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from src.core.db_deps import DbSession
 from src.core.principal import UserPrincipal
 from src.core.security import decode_expired_access_token, decode_token
+from shared.auth_cookies import read_access_cookie
 from shared.browser_impersonation import (
     BrowserImpersonationError,
     IMPERSONATION_COOKIE_NAME,
     validate_browser_impersonation,
 )
 from src.services.authorization.runtime_auth import (
+    is_legacy_runtime_payload,
     is_runtime_credential_payload,
     load_runtime_principal,
+    log_legacy_runtime_token_accepted,
+)
+from src.services.authorization.tokens import (
+    authenticate_runtime_token, parse_runtime_claims, authenticate_human_token, parse_human_claims,
 )
 from shared.role_cache import get_user_roles
 
@@ -55,7 +61,9 @@ def _refresh_fixes(token: str) -> bool:
         return False
     if is_runtime_credential_payload(payload):
         return payload.get("ver") == 1
-    return True
+    # Legacy human credentials require a fresh login at cutover. Only the
+    # exact human schema can recover by rotating a durable session.
+    return parse_human_claims(payload) is not None
 
 
 def select_http_auth_token(
@@ -70,10 +78,9 @@ def select_http_auth_token(
     cookies. Typed runtime and embed credentials retain their own authority and
     never become impersonated browser traffic.
     """
-    token = (
-        bearer_token
-        or request.cookies.get("access_token")
-        or request.cookies.get("embed_token")
+    token = bearer_token or (
+        read_access_cookie(request.cookies)
+        if "access_token" in request.cookies else request.cookies.get("embed_token")
     )
     marker = request.cookies.get(IMPERSONATION_COOKIE_NAME)
     if allow_impersonation_cookie and marker:
@@ -203,14 +210,23 @@ async def _get_current_user_optional(
     if payload is None:
         return None
 
-    if getattr(request.state, "runtime_token", None) == token:
-        return request.state.runtime_principal
-    runtime_principal = await load_runtime_principal(db, payload)
-    if runtime_principal is not None:
-        return runtime_principal
-    # A legacy engine/service claim, malformed typed credential, or runtime
-    # record that is no longer valid never falls through to human-token auth.
+    # A runtime credential, valid or not, never falls through to human-token
+    # auth.
     if is_runtime_credential_payload(payload):
+        return await _authenticate_runtime_payload(request, token, payload, db)
+
+    if "ver" in payload:
+        claims = parse_human_claims(payload)
+        if claims is None:
+            return None
+        result = await authenticate_human_token(db, claims)
+        if result.refresh_required:
+            request.state.runtime_refresh_required_token = token
+        return result.principal
+
+    if not payload.get("embed") and payload.get("impersonation_session_id") is None:
+        # PR2's explicit reauthentication boundary: legacy human flags are
+        # never authority. Capabilities and browser markers keep their formats.
         return None
 
     # Extract user ID from token
@@ -302,6 +318,34 @@ async def _get_current_user_optional(
     return principal
 
 
+async def _authenticate_runtime_payload(
+    request: Request, token: str, payload: dict, db: DbSession
+) -> UserPrincipal | None:
+    """Authenticate a signature-verified runtime token.
+
+    Claims minted by ``issue_access_token`` (``ver: 1``) are validated in one
+    statement on this request's session; an epoch mismatch marks the request
+    so ``get_current_user`` answers with the refresh challenge. A legacy
+    token (no ``ver``) is bridged until token PR1c: validated exactly as
+    before from the database, normally by the request middleware.
+    """
+    if not is_legacy_runtime_payload(payload):
+        claims = parse_runtime_claims(payload)
+        if claims is None:
+            return None
+        result = await authenticate_runtime_token(db, claims)
+        if result.refresh_required:
+            request.state.runtime_refresh_required_token = token
+        return result.principal
+    if getattr(request.state, "runtime_token", None) == token:
+        principal = request.state.runtime_principal
+    else:
+        principal = await load_runtime_principal(db, payload)
+    if principal is not None:
+        log_legacy_runtime_token_accepted(payload)
+    return principal
+
+
 async def get_original_human_user(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
@@ -336,14 +380,12 @@ async def get_original_human_user(
             except ValueError:
                 operator_id = None
             if operator_id is not None:
-                from src.core.cache import get_shared_redis
-                from src.core.cache.keys import refresh_token_jti_key
+                from shared.human_sessions import has_live_refresh_token_jti
                 from src.models.orm.users import User
 
-                redis = await get_shared_redis()
-                if await redis.exists(refresh_token_jti_key(str(operator_id), jti)):
+                if await has_live_refresh_token_jti(db, operator_id, jti):
                     operator = await db.get(User, operator_id)
-                    if operator is not None and operator.is_active:
+                    if operator is not None and operator.is_active and not operator.is_system and operator.identity_kind is None:
                         return UserPrincipal(
                             user_id=operator.id,
                             email=operator.email,
@@ -387,14 +429,13 @@ async def get_current_user(
 
     if user is None:
         token = select_http_auth_token(request, credentials.credentials if credentials else None)
+        refresh_fixes = token is not None and (
+            getattr(request.state, "runtime_refresh_required_token", None) == token or _refresh_fixes(token)
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
-            headers={
-                "WWW-Authenticate": (
-                    REFRESH_REQUIRED_CHALLENGE if token is not None and _refresh_fixes(token) else "Bearer"
-                )
-            },
+            headers={"WWW-Authenticate": REFRESH_REQUIRED_CHALLENGE if refresh_fixes else "Bearer"},
         )
 
     return user
@@ -453,8 +494,10 @@ async def get_execution_context(
     # Populate role_ids / role_names. The table-policy evaluator's
     # `has_role` function reads these (the JWT claims do not carry the post-
     # token role assignments needed by row-level policies). Reads go through
-    # the per-user role cache (Redis); DB is fallback on miss.
-    if not user.role_ids and not user.role_names:
+    # the per-user role cache (Redis); DB is fallback on miss. A runtime
+    # principal already carries its actor's current roles: from its claims,
+    # or from the database on the legacy path.
+    if user.runtime_authority is None and user.authorization_context is None and not user.role_ids and not user.role_names:
         role_ids, role_names = await get_user_roles(user.user_id, db)
         user.role_ids = role_ids
         user.role_names = role_names
@@ -482,7 +525,17 @@ async def get_execution_context(
             # the resolved org scope (see resolve_solution_ref). Auth only
             # gates UUIDs here; slugs 404 later if unresolvable.
             solution_uuid = None
-        if solution_uuid is not None:
+        runtime = user.runtime_authority
+        if (
+            solution_uuid is not None
+            and runtime is not None
+            and runtime.solution_id == solution_uuid
+            and runtime.solution_active is True
+        ):
+            # The run's own Solution, known active from its authority (claims
+            # whose epoch is current, or the database on the legacy path).
+            pass
+        elif solution_uuid is not None:
             solution_row = await db.get(SolutionORM, solution_uuid)
             if solution_row is None:
                 raise HTTPException(
@@ -642,7 +695,10 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     # Preserve explicit/query then ordinary-cookie precedence, then apply the
     # same marker override as HTTP. Runtime and embed credentials remain
     # independent from browser impersonation.
-    token = explicit_token or websocket.cookies.get("access_token") or websocket.cookies.get("embed_token")
+    token = explicit_token or (
+        read_access_cookie(websocket.cookies)
+        if "access_token" in websocket.cookies else websocket.cookies.get("embed_token")
+    )
     marker = websocket.cookies.get(IMPERSONATION_COOKIE_NAME)
     if marker:
         selected_payload = decode_token(token, expected_type="access") if token else None
@@ -663,6 +719,17 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     # WebSockets have no database dependency to resolve typed runtime
     # credentials. They must not accept them through the ordinary token path.
     if is_runtime_credential_payload(payload):
+        return None
+
+    if "ver" in payload:
+        claims = parse_human_claims(payload)
+        if claims is None:
+            return None
+        from src.core.database import get_db_context
+
+        async with get_db_context() as db:
+            return (await authenticate_human_token(db, claims)).principal
+    if not payload.get("embed") and payload.get("impersonation_session_id") is None:
         return None
 
     user_id_str = payload.get("sub")

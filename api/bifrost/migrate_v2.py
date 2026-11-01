@@ -73,10 +73,11 @@ _BIFROST_KEEP = frozenset({
     "useWorkflow", "useWorkflowQuery", "useWorkflowMutation",
     "useTable", "useInfiniteTable", "tables",
     "useFiles", "files",
-    "BifrostProvider", "BifrostHeader", "useBifrostContext",
-    # v1 platform hooks with no v2 SDK equivalent yet — keep so the build fails
+    "BifrostProvider", "BifrostHeader", "useBifrostContext", "useUser",
+    "RequireRole",
+    # v1 platform hook with no v2 SDK equivalent yet — keep so the build fails
     # loudly (a real "port this" signal) rather than silently mis-routing.
-    "useUser", "useAppState", "RequireRole",
+    "useAppState",
 })
 
 # cn / formatters → @/lib/utils (the scaffold ships cn there; format helpers are

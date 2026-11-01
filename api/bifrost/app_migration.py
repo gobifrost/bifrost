@@ -161,7 +161,7 @@ def migrate_v1_source(
         {
             hook
             for text in (path.read_text() for path in tsx_files)
-            for hook in ("useUser", "useAppState", "RequireRole")
+            for hook in ("useAppState",)
             if hook in text
         }
     )
@@ -236,17 +236,9 @@ def migrate_v1_source(
         )
     if no_v2_hooks:
         click.echo(
-            f"  3. Port v1-only hooks (NO v2 SDK equivalent): {no_v2_hooks}. "
-            "There is no"
+            f"  3. Port v1-only hooks (NO v2 SDK equivalent): {no_v2_hooks}."
         )
-        click.echo(
-            "     useUser in v2 — use `useBifrostContext()` from \"bifrost\" for "
-            "token/org/"
-        )
-        click.echo(
-            "     logout/theme; decode the JWT in ctx.token if you need the "
-            "user's email."
-        )
+        click.echo("     Adapt their state shape and behavior manually.")
     click.echo(
         "  4. Workflow refs: rewrite UUIDs to portable path::function refs and "
         "verify access in every target organization."

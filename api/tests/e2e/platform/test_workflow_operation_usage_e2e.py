@@ -20,7 +20,7 @@ class TestWorkflowOperationUsageE2E:
     ):
         from sqlalchemy import delete, select
 
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.jobs.schedulers.workflow_operation_usage_flush import (
             flush_workflow_operation_usage,
         )
@@ -35,7 +35,7 @@ class TestWorkflowOperationUsageE2E:
         execution_id = uuid.uuid4()
         role_name = f"wf-usage-{uuid.uuid4().hex[:8]}"
 
-        token, _ = mint_engine_token(
+        token, _ = legacy_engine_token(
             execution_id=str(execution_id),
             timeout_seconds=300,
         )

@@ -10,7 +10,7 @@
 
 import { test, expect } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
 const INTEGRATION_NAME = `E2E Mapping ${UNIQUE}`;

@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from src.core.security import decode_token
+from shared.auth_cookies import read_access_cookie
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ def _get_embed_payload(request: Request) -> dict[str, Any] | None:
     if auth_header.lower().startswith("bearer "):
         token = auth_header[7:]
     elif "access_token" in request.cookies:
-        token = request.cookies["access_token"]
+        token = read_access_cookie(request.cookies)
     elif "embed_token" in request.cookies:
         token = request.cookies["embed_token"]
 

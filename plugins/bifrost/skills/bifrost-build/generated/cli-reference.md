@@ -2,6 +2,52 @@
 
 > Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.
 
+## `admin`
+
+```
+Usage: admin [OPTIONS] COMMAND [ARGS]...
+
+  Platform administration.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  authz  Inspect runtime credentials and the authority version.
+```
+
+### `admin authz`
+
+```
+Usage: admin authz [OPTIONS] COMMAND [ARGS]...
+
+  Inspect runtime credentials and the authority version.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  legacy-status  List live runs and remote launchers still on legacy...
+```
+
+#### `admin authz legacy-status`
+
+```
+Usage: admin authz legacy-status [OPTIONS]
+
+  List live runs and remote launchers still on legacy runtime credentials.
+
+  Restart a listed service attempt through the normal service restart (it
+  relaunches with new-format credentials) and upgrade a listed launcher;
+  legacy workflow runs end on their own.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ## `agents`
 
 ```

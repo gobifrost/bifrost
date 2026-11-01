@@ -1,0 +1,19 @@
+{
+  "key": "pr:1149",
+  "classification": "highlight",
+  "entry_ids": [
+    "68314b62-0ea3-4d44-8779-6241f77275f3"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/blob/3f6af8f79727fe71cae1f535bfc4a74ad2b1fcfa/docs/plans/2026-10-30-authentication-review.md"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1149",
+      "https://github.com/gobifrost/bifrost/blob/3f6af8f79727fe71cae1f535bfc4a74ad2b1fcfa/docs/plans/2026-10-30-authentication-review.md",
+      "Action-required compatibility notice and agent prompt approved by independent Astra review; exact focused verification and known-failure dispositions are retained in the source review record."
+    ]
+  }
+}

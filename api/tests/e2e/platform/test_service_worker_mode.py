@@ -16,9 +16,8 @@ disabled) afterwards so no eligible rows leak into other tests.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -124,6 +123,29 @@ async def _wait_for_live_attempt(
     raise AssertionError(f"service {definition_id} never had a matching live attempt: {last}")
 
 
+async def _claims_token_for_live_attempt(async_session_factory, live: dict, definition_id: str) -> str:
+    """Mint a claims token from the durable attempt the worker launched."""
+    from src.core.database import close_db
+    from src.models.orm.services import ServiceAttempt
+    from src.services.authorization.tokens import RuntimeSubject, issue_access_token
+
+    attempt_id = UUID(live["id"])
+    service_id = UUID(definition_id)
+    try:
+        async with async_session_factory() as session:
+            attempt = await session.get(ServiceAttempt, attempt_id)
+            assert attempt is not None, "live service attempt disappeared"
+            assert attempt.service_id == service_id
+            assert attempt.credential_version == 2
+        return (
+            await issue_access_token(
+                RuntimeSubject("service_attempt", attempt_id, service_id)
+            )
+        ).token
+    finally:
+        await close_db()
+
+
 @pytest.fixture
 def service_def(e2e_client, platform_admin):
     """Register a healthy service and its topic source; park both afterwards."""
@@ -174,7 +196,7 @@ def crashing_def(e2e_client, platform_admin):
 
 class TestServiceWorkerMode:
     async def test_healthy_service_lifecycle(
-        self, e2e_client, platform_admin, service_def
+        self, e2e_client, platform_admin, service_def, async_session_factory
     ):
         """One service runs its ready, emit, log, restart, and stop lifecycle."""
         definition_id = service_def["id"]
@@ -279,15 +301,12 @@ class TestServiceWorkerMode:
 
         # The live attempt has current workflow powers within its original
         # identity reach; service event emission also stays in its own org.
-        from src.core.cache.keys import service_token_key
-
         live = await _wait_for_live_attempt(
             e2e_client, platform_admin.headers, definition_id, ready=True
         )
-        async with get_redis() as r:
-            raw = await r.get(service_token_key(live["id"]))
-        assert raw, "no rotation token handed to the child"
-        token = json.loads(raw)["token"]
+        token = await _claims_token_for_live_attempt(
+            async_session_factory, live, definition_id
+        )
         headers = {"Authorization": f"Bearer {token}"}
 
         resp = e2e_client.get("/api/services", headers=headers)

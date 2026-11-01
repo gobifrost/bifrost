@@ -105,8 +105,7 @@ def _register_and_authenticate_user(
         assert response.status_code == 200, f"MFA verify failed: {response.text}"
         verify_data = response.json()
 
-        user.access_token = verify_data["access_token"]
-        user.refresh_token = verify_data["refresh_token"]
+        user.set_tokens(verify_data["access_token"], verify_data["refresh_token"])
 
         logger.info(f"Authenticated user: {user.email}")
         return user
@@ -145,8 +144,7 @@ def _login_user(user: E2EUser) -> E2EUser:
             assert response.status_code == 200, f"MFA login failed: {response.text}"
             login_data = response.json()
 
-        user.access_token = login_data["access_token"]
-        user.refresh_token = login_data["refresh_token"]
+        user.set_tokens(login_data["access_token"], login_data["refresh_token"])
         return user
 
 
@@ -586,7 +584,7 @@ def _org_service_headers(async_session_factory, org_id: str):
     """Back an org-scoped service credential with a live, durable attempt."""
     from sqlalchemy import delete
 
-    from src.core.security import mint_service_token
+    from tests.helpers.runtime_tokens import legacy_service_token
     from src.models.orm.services import ServiceAttempt, ServiceDefinition
     from src.models.orm.users import User
     from src.models.orm.workflows import Workflow
@@ -646,7 +644,7 @@ def _org_service_headers(async_session_factory, org_id: str):
 
     asyncio.run(create())
     try:
-        token, _ = mint_service_token(service_id=str(service_id), attempt_id=str(attempt_id))
+        token, _ = legacy_service_token(service_id=str(service_id), attempt_id=str(attempt_id))
         yield {"Authorization": f"Bearer {token}"}
     finally:
         asyncio.run(cleanup())

@@ -10194,15 +10194,25 @@
     }
   ],
   "counts": {
-    "cli": 172,
+    "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 689,
+    "rest": 694,
     "sdk": 21
   },
   "schema_version": 1,
   "uncataloged": {
     "cli": [
+      {
+        "kind": "operation",
+        "path": [
+          "admin",
+          "authz",
+          "legacy-status"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
       {
         "kind": "lifecycle",
         "path": [
@@ -11702,6 +11712,20 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/app-sdk/assets/{fingerprint}.js",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/app-sdk/v1/manifest",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/applications/sdk/update",
@@ -12801,6 +12825,20 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/app-sdk-upgrades/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/maintenance/app-sdk-upgrades/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/maintenance/artifact-retention/cleanup",
@@ -12846,6 +12884,13 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/maintenance/audit-retention/settings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/maintenance/authz/legacy-status",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

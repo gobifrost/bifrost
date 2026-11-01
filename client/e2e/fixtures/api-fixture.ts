@@ -1,23 +1,10 @@
 /**
- * API Fixture
+ * Authenticated Playwright fixtures.
  *
- * Wraps Playwright's `request` context to auto-inject the CSRF token that
- * the Bifrost API requires on mutating calls. The token lives in a
- * non-HttpOnly `csrf_token` cookie set during login; we pull it out of the
- * authenticated browser context and add `X-CSRF-Token` to every POST, PUT,
- * PATCH, DELETE.
- *
- * Usage:
- *
- *   import { test, expect } from "./fixtures/api-fixture";
- *
- *   test.beforeAll(async ({ api }) => {
- *     const app = await api.post("/api/applications", { data: {...} });
- *     expect(app.ok()).toBe(true);
- *   });
- *
- * The spec file picks the auth storage state via its project (e.g.
- * `.admin.spec.ts` → platform_admin.json), so `api` is pre-authenticated.
+ * Authenticated projects declare `metadata.authUser`; each test receives a
+ * newly logged-in browser context and each `api` consumer receives its own
+ * cookie jar. This intentionally avoids reusing a one-use refresh family from
+ * global storage state.
  */
 
 import {
@@ -25,43 +12,57 @@ import {
 	expect,
 	type APIRequestContext,
 	type APIResponse,
+	type Browser,
 	type BrowserContext,
+	type Locator,
+	type Page,
+	type Response,
+	request,
 } from "@playwright/test";
+import {
+	createFreshApiContext,
+	authenticateHumanBrowserContext,
+	type HumanAuthUser,
+} from "./human-auth";
 
-type MutatingMethod = "POST" | "PUT" | "PATCH" | "DELETE";
+export type AuthedApi = APIRequestContext;
 
-interface RequestOptions {
-	data?: unknown;
-	headers?: Record<string, string>;
-	params?: Record<string, string | number | boolean>;
+function projectAuthUser(testInfo: {
+	project: { metadata: Record<string, unknown> };
+}): HumanAuthUser | undefined {
+	const authUser = testInfo.project.metadata.authUser;
+	if (
+		authUser === "platform_admin" ||
+		authUser === "org1_user" ||
+		authUser === "org2_user"
+	) {
+		return authUser;
+	}
+	return undefined;
 }
 
-/**
- * Thin wrapper around APIRequestContext that auto-injects CSRF.
- *
- * We expose the four methods the specs actually need. If you need something
- * exotic (multipart, custom timeout), fall back to the raw `request` parameter
- * on the Playwright fixture and call csrfHeader() yourself.
- */
-export interface AuthedApi {
-	get(url: string, options?: RequestOptions): Promise<APIResponse>;
-	post(url: string, options?: RequestOptions): Promise<APIResponse>;
-	put(url: string, options?: RequestOptions): Promise<APIResponse>;
-	patch(url: string, options?: RequestOptions): Promise<APIResponse>;
-	delete(url: string, options?: RequestOptions): Promise<APIResponse>;
-	/** Raw CSRF header for when you need to build a request manually. */
-	csrfHeader(): Promise<Record<string, string>>;
-}
+export const test = base.extend<{ api: AuthedApi }>({
+	context: async ({ context }, provide, testInfo) => {
+		const authUser = projectAuthUser(testInfo);
+		if (authUser) await authenticateHumanBrowserContext(context, authUser);
+		await provide(context);
+	},
+	api: async ({ browser }, provide, testInfo) => {
+		const authUser = projectAuthUser(testInfo);
+		if (!authUser) {
+			throw new Error(
+				"The api fixture requires project metadata.authUser; unauthenticated projects must use request explicitly.",
+			);
+		}
+		const { context, api } = await createFreshApiContext(browser, authUser);
+		try {
+			await provide(api);
+		} finally {
+			await context.close();
+		}
+	},
+});
 
-/**
- * Grant the admin a workspace file policy covering an app's source directory.
- *
- * Files are default-deny: `POST /api/files/write` to `workspace`/`apps/<slug>`
- * is 403 without a matching policy. Specs that seed app source via the file API
- * (preview/migration/replace, policy SDK apps, logos) must grant this in their
- * `beforeAll` before the first write. Mirrors `grant_file_policy` in
- * `api/tests/e2e/file_policy_helpers.py`.
- */
 export async function grantWorkspaceAppPolicy(
 	api: AuthedApi,
 	slug: string,
@@ -91,11 +92,6 @@ export async function grantWorkspaceAppPolicy(
 	}
 }
 
-/**
- * Publish an application through the durable async API and wait for its
- * persisted terminal state. Keeping this in the shared fixture prevents specs
- * from treating the 202 acknowledgement as if the live bundle were ready.
- */
 export async function publishAppAndWait(
 	api: AuthedApi,
 	appId: string,
@@ -112,15 +108,11 @@ export async function publishAppAndWait(
 	}
 	const accepted = (await enqueue.json()) as { job_id: string };
 	const startedAt = Date.now();
-
 	for (;;) {
-		const response = await api.get(
-			`/api/platform-jobs/${accepted.job_id}`,
-		);
+		const response = await api.get(`/api/platform-jobs/${accepted.job_id}`);
 		if (!response.ok()) {
 			throw new Error(
-				`read application publish ${accepted.job_id} failed: ` +
-					`${response.status()} ${await response.text()}`,
+				`read application publish ${accepted.job_id} failed: ${response.status()} ${await response.text()}`,
 			);
 		}
 		const job = (await response.json()) as Record<string, unknown> & {
@@ -130,75 +122,26 @@ export async function publishAppAndWait(
 		if (job.status === "succeeded") return job;
 		if (job.status === "failed" || job.status === "cancelled") {
 			throw new Error(
-				job.error?.message || `Application publish ${accepted.job_id} failed`,
+				job.error?.message || `Application publish ${appId} failed`,
 			);
 		}
 		if (Date.now() - startedAt >= timeoutMs) {
 			throw new Error(
-				`Application publish ${accepted.job_id} remained ` +
-					`${job.status} after ${timeoutMs}ms`,
+				`Application publish ${appId} remained ${job.status} after ${timeoutMs}ms`,
 			);
 		}
 		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
 }
 
-export async function csrfHeader(
-	context: BrowserContext,
-): Promise<Record<string, string>> {
-	const cookies = await context.cookies();
-	const csrf = cookies.find((c) => c.name === "csrf_token");
-	return csrf ? { "X-CSRF-Token": csrf.value } : {};
-}
-
-function buildApi(
-	request: APIRequestContext,
-	context: BrowserContext,
-): AuthedApi {
-	const send = async (
-		method: MutatingMethod | "GET",
-		url: string,
-		options: RequestOptions = {},
-	) => {
-		const baseHeaders =
-			method === "GET" ? {} : await csrfHeader(context);
-		return request.fetch(url, {
-			method,
-			data: options.data,
-			params: options.params,
-			headers: { ...baseHeaders, ...(options.headers ?? {}) },
-		});
-	};
-
-	return {
-		get: (url, opts) => send("GET", url, opts),
-		post: (url, opts) => send("POST", url, opts),
-		put: (url, opts) => send("PUT", url, opts),
-		patch: (url, opts) => send("PATCH", url, opts),
-		delete: (url, opts) => send("DELETE", url, opts),
-		csrfHeader: () => csrfHeader(context),
-	};
-}
-
-/**
- * Extended Playwright test with an `api` fixture that handles CSRF.
- *
- * The fixture creates a new browser context from the project's storageState
- * for each use, so it works in beforeAll/afterAll hooks where the `page`
- * fixture is not available.
- */
-export const test = base.extend<{ api: AuthedApi }>({
-	api: async ({ browser }, use, testInfo) => {
-		const storageState = testInfo.project.use.storageState as
-			| string
-			| undefined;
-		const context = await browser.newContext(
-			storageState ? { storageState } : {},
-		);
-		// eslint-disable-next-line react-hooks/rules-of-hooks
-		await use(buildApi(context.request, context));
-		await context.close();
-	},
-});
-
-export { expect };
+export {
+	expect,
+	request,
+	type APIRequestContext,
+	type APIResponse,
+	type Browser,
+	type BrowserContext,
+	type Locator,
+	type Page,
+	type Response,
+};

@@ -397,7 +397,14 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # ADDITIVE: new CLI command and routes; existing DTOs are unchanged.
     # DeviceAuthorizeRequest is now shared (2026-10-27). Its wire shape is
     # unchanged; approval and denial use distinct routes. Fingerprint only.
-    "f7616690d48c3a07382a1e0f9c1f7f4981b558929c55856e3d6c601a1d714e6f"
+    # App SDK upgrade settings and the historical manual-job model (2026-10-30).
+    # ADDITIVE shared models; existing CLI contracts and minimum are unchanged.
+    # Hosted App SDK provenance adds optional sdk_binding_api_major. Existing
+    # clients can ignore the additive field; the CLI minimum remains unchanged.
+    # Daily usage reporting (2026-10-31): UsageReport is newly discovered in
+    # shared.models. ADDITIVE: this outbound report does not alter any existing
+    # CLI/SDK request or response; MIN_CLI_VERSION stays unchanged.
+    "12b78b711bd4b00b41f4e53760d08591c82b16ec3fa62335887f7e7bbc3e60b9"
 )
 
 

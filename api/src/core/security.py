@@ -54,6 +54,11 @@ def get_password_hash(password: str) -> str:
     return password_hash.hash(password)
 
 
+# Claims only ``tokens.issue_access_token`` may sign: a token carrying them is
+# validated as runtime authority, so no other minter may produce one.
+RESERVED_RUNTIME_CLAIMS = frozenset({"ver", "av", "credential_kind", "usr", "act", "run", "imp"})
+
+
 def create_access_token(
     data: dict[str, Any],
     expires_delta: timedelta | None = None
@@ -67,7 +72,15 @@ def create_access_token(
 
     Returns:
         Encoded JWT token string
+
+    Raises:
+        ValueError: ``data`` names a claim reserved for runtime tokens
+            (``RESERVED_RUNTIME_CLAIMS``); mint those with
+            ``tokens.issue_access_token``.
     """
+    reserved = RESERVED_RUNTIME_CLAIMS & data.keys()
+    if reserved:
+        raise ValueError(f"create_access_token refuses reserved runtime claims: {sorted(reserved)}")
     settings = get_settings()
 
     to_encode = data.copy()
@@ -103,14 +116,15 @@ def create_refresh_token(
     Create a JWT refresh token with JTI for revocation support.
 
     Refresh tokens have longer expiration and are used to obtain new access tokens.
-    Each token has a unique JTI (JWT ID) that must be stored in Redis for validation.
+    Each token has a unique JTI (JWT ID). The human-session service stores its
+    hash in the durable session registry before publishing the credential.
 
     Args:
         data: Dictionary of claims to encode in the token
         expires_delta: Optional custom expiration time
 
     Returns:
-        Tuple of (encoded JWT token string, JTI for Redis storage)
+        Tuple of (encoded JWT token string, JTI for the durable session registry)
     """
     import uuid
 
@@ -452,83 +466,3 @@ def validate_csrf_token(cookie_token: str, header_token: str) -> bool:
     if not cookie_token or not header_token:
         return False
     return secrets.compare_digest(cookie_token, header_token)
-
-
-NO_TIMEOUT_TOKEN_SECONDS = 86_400
-"""Engine-token base lifetime for workflows configured with timeout_seconds=0 (no timeout)."""
-
-SERVICE_TOKEN_LIFETIME_SECONDS = 900
-"""Service-token lifetime (15 min). Services outlive any single token: the
-owning worker parent mints a fresh token on every lease heartbeat and hands
-it to the child over Redis (see docs/plans/2026-09-20-services-credential-design.md).
-Short enough to bound a fenced child's residual API access; long enough that
-a missed heartbeat never strands a healthy child."""
-
-def mint_service_token(
-    *,
-    service_id: str,
-    attempt_id: str,
-    lifetime_seconds: int = SERVICE_TOKEN_LIFETIME_SECONDS,
-) -> tuple[str, str]:
-    """
-    Mint a short-lived, service-scoped credential parent-side.
-
-    Called by the owning worker (which legitimately holds SECRET_KEY) when
-    claiming an attempt and on every subsequent lease heartbeat. The child
-    installs the token as process-scoped SDK credentials — no SECRET_KEY or
-    persistent credential write is required there.
-
-    The token identifies only the durable attempt and its service definition.
-    Authentication re-loads all identity, organization, workflow, lineage,
-    and permission facts from the database on every request.
-
-    Returns:
-        (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
-    """
-    token_data = {
-        "sub": attempt_id,
-        "credential_kind": "service_attempt",
-        "service_id": service_id,
-    }
-
-    lifetime = timedelta(seconds=lifetime_seconds)
-    expires_at = datetime.now(timezone.utc) + lifetime
-    token = create_access_token(token_data, expires_delta=lifetime)
-
-    return token, expires_at.isoformat()
-def mint_engine_token(
-    *,
-    execution_id: str,
-    timeout_seconds: int,
-) -> tuple[str, str]:
-    """
-    Mint a short-lived, execution-scoped engine token parent-side.
-
-    Called by the consumer (which legitimately holds SECRET_KEY) before
-    dispatching an execution.  The returned token and expiry ISO string are
-    placed in context_data and handed to the child over its private work pipe;
-    the child installs the token as process-scoped SDK credentials — no
-    SECRET_KEY or persistent credential write is required there.
-
-    The token identifies only the durable execution. Authentication derives
-    all other runtime facts from the execution row on every request.
-
-    Returns:
-        (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
-    """
-    token_data = {
-        "sub": execution_id,
-        "credential_kind": "workflow_execution",
-    }
-
-    # timeout_seconds == 0 means "no timeout" everywhere else in the engine
-    # (process_pool, execution_cleanup, and the 24h BLPOP cap in
-    # execution/service.py). Give those executions a 24h token; a 301-second
-    # token expires under the first long approval wait and every later SDK
-    # call fails with 401.
-    effective_timeout = timeout_seconds if timeout_seconds > 0 else NO_TIMEOUT_TOKEN_SECONDS
-    lifetime = timedelta(seconds=effective_timeout + 300)
-    expires_at = datetime.now(timezone.utc) + lifetime
-    token = create_access_token(token_data, expires_delta=lifetime)
-
-    return token, expires_at.isoformat()

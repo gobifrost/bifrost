@@ -14,6 +14,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.app_sdk_upgrade_settings import AppSdkUpgradeSettingsService
+from shared.models import AppSdkUpgradeSettings, AppSdkUpgradeSettingsUpdate
 from src.core.auth import Context, CurrentActiveUser
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
@@ -37,6 +39,7 @@ from src.models.contracts.artifact_retention import (
     ArtifactRetentionSettings,
     ArtifactRetentionSettingsUpdate,
 )
+from src.models.contracts.authz import LegacyCredentialStatus
 from src.models.contracts.audit_retention import (
     AuditArchiveRunRequest,
     AuditExpiryPreview,
@@ -67,6 +70,7 @@ from src.models.orm.file_index import FileIndex
 from src.services.app_dependencies import parse_dependencies
 from src.services.artifact_retention import ArtifactRetentionSettingsService
 from src.services.audit import emit_audit
+from src.services.authorization.legacy_status import legacy_credential_status
 from src.services.audit_retention.archiver import (
     latest_audit_archive_job,
     plan_expiry,
@@ -97,6 +101,43 @@ async def _authorize_global_route(
     )
 
 router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"], dependencies=[Depends(_authorize_global_route)])
+
+
+@router.get(
+    "/app-sdk-upgrades/settings",
+    response_model=AppSdkUpgradeSettings,
+    summary="Get automatic App SDK upgrade settings",
+)
+async def get_app_sdk_upgrade_settings(
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> AppSdkUpgradeSettings:
+    return await AppSdkUpgradeSettingsService(db).get_settings()
+
+
+@router.put(
+    "/app-sdk-upgrades/settings",
+    response_model=AppSdkUpgradeSettings,
+    summary="Update automatic App SDK upgrade settings",
+)
+async def update_app_sdk_upgrade_settings(
+    body: AppSdkUpgradeSettingsUpdate,
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> AppSdkUpgradeSettings:
+    service = AppSdkUpgradeSettingsService(db)
+    before = await service.get_settings()
+    after = await service.update_settings(
+        AppSdkUpgradeSettings(enabled=body.enabled), updated_by=user.email
+    )
+    await emit_audit(
+        db,
+        "settings.app_sdk_upgrades.update",
+        resource_type="system_config",
+        details={"before": before.model_dump(), "after": after.model_dump()},
+    )
+    await db.commit()
+    return after
 
 
 @router.get(
@@ -278,6 +319,24 @@ async def _run_retention_status(
         info=RunRetentionInfo(**await run_retention_info(db, settings)),
         last_run=platform_job_to_public(last_run) if last_run else None,
     )
+
+
+@router.get(
+    "/authz/legacy-status",
+    response_model=LegacyCredentialStatus,
+    summary="List what still depends on legacy runtime credentials",
+    description=(
+        "Live workflow executions and service attempts whose credentials are in the legacy "
+        "format, and connected remote launchers that receive legacy credentials. The release "
+        "that removes legacy runtime tokens refuses to install while either list is non-empty. "
+        "Read-only."
+    ),
+)
+async def get_legacy_credential_status(
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> LegacyCredentialStatus:
+    return await legacy_credential_status(db)
 
 
 @router.get(

@@ -6,7 +6,7 @@
  * changes, applies them, and verifies a third unselected app is unchanged.
  */
 
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page } from "./fixtures/api-fixture";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
 
 type Organization = { id: string; name: string };

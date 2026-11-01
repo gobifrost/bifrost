@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
 import { authFetch } from "@/lib/api-client";
@@ -13,14 +13,51 @@ const toast = vi.hoisted(() => ({ error: vi.fn() }));
 
 vi.mock("sonner", () => ({ toast }));
 
+function requestUrl(input: RequestInfo | URL): string {
+	if (typeof input === "string") return input;
+	if (input instanceof URL) return input.href;
+	return input.url;
+}
+
+function currentUser(roles: string[] = ["reader"]) {
+	return {
+		id: "account",
+		email: "account@example.test",
+		name: "Account",
+		is_active: true,
+		is_superuser: false,
+		is_verified: true,
+		organization_id: "org-1",
+		roles,
+	};
+}
+
+let restoreWebLocks: (() => void) | null = null;
+
+beforeEach(() => {
+	const previousLocks = Object.getOwnPropertyDescriptor(navigator, "locks");
+	Object.defineProperty(navigator, "locks", {
+		configurable: true,
+		value: {
+			request: async <T,>(_name: string, callback: () => Promise<T>) => callback(),
+		},
+	});
+	restoreWebLocks = () => {
+		if (previousLocks) Object.defineProperty(navigator, "locks", previousLocks);
+		else delete (navigator as unknown as { locks?: unknown }).locks;
+	};
+});
+
 afterEach(() => {
+	restoreWebLocks?.();
+	restoreWebLocks = null;
 	vi.unstubAllGlobals();
 	localStorage.clear();
 	sessionStorage.clear();
 });
 
-it("shares cookie recovery between provider bootstrap and an initial API request", async () => {
-	const token = `header.${btoa(JSON.stringify({ sub: "account", email: "account@example.test", roles: ["authenticated"], exp: Math.floor(Date.now() / 1000) + 3600 }))}.signature`;
+it("loads canonical identity after cookie recovery from a compressed human token", async () => {
+	const token = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "compressed-claims" }))}.signature`;
 	let release!: () => void;
 	const gate = new Promise<void>((resolve) => {
 		release = resolve;
@@ -41,6 +78,18 @@ it("shares cookie recovery between provider bootstrap and an initial API request
 			if (url.endsWith("/auth/status"))
 				return Response.json({ needs_setup: false });
 			if (url.endsWith("/api/auth/refresh")) return refresh();
+			if (url.endsWith("/auth/me")) {
+				return Response.json({
+					id: "account",
+					email: "account@example.test",
+					name: "Account",
+					is_active: true,
+					is_superuser: false,
+					is_verified: true,
+					organization_id: "org-1",
+					roles: ["authenticated"],
+				});
+			}
 			return Response.json({ ok: true });
 		}),
 	);
@@ -70,6 +119,182 @@ it("shares cookie recovery between provider bootstrap and an initial API request
 	expect(refresh).toHaveBeenCalledTimes(1);
 	expect(await screen.findByText("account@example.test")).toBeVisible();
 	expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe(token);
+});
+
+it("replaces displayed roles with canonical identity after refresh", async () => {
+	const initial = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "old" }))}.signature`;
+	const refreshed = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "new" }))}.signature`;
+	localStorage.setItem(ACCESS_TOKEN_KEY, initial);
+	let useNewRoles = false;
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL) => {
+			const url = requestUrl(input);
+			if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
+			if (url.endsWith("/api/auth/refresh")) return Response.json({ access_token: refreshed });
+			if (url.endsWith("/auth/me")) {
+				return Response.json(currentUser(useNewRoles ? ["owner"] : ["reader"]));
+			}
+			return Response.json({});
+		}),
+	);
+	let refreshToken: (() => Promise<boolean>) | undefined;
+	function Probe() {
+		const auth = useAuth();
+		refreshToken = auth.refreshToken;
+		return <p>{auth.hasRole("owner") ? "Owner" : "Reader"}</p>;
+	}
+	render(<MemoryRouter><AuthProvider><Probe /></AuthProvider></MemoryRouter>);
+	await screen.findByText("Reader");
+	useNewRoles = true;
+	await act(async () => {
+		await expect(refreshToken!()).resolves.toBe(true);
+	});
+	expect(await screen.findByText("Owner")).toBeVisible();
+});
+
+it("refreshes a stale epoch during bootstrap before loading canonical roles", async () => {
+	const stale = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "stale" }))}.signature`;
+	const fresh = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "fresh" }))}.signature`;
+	localStorage.setItem(ACCESS_TOKEN_KEY, stale);
+	let meCalls = 0;
+	const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+		const url = requestUrl(input);
+		if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
+		if (url.endsWith("/api/auth/refresh")) return Response.json({ access_token: fresh });
+		if (url.endsWith("/auth/me")) {
+			meCalls += 1;
+			if (meCalls === 1) {
+				return new Response(null, {
+					status: 401,
+					headers: {
+						"WWW-Authenticate":
+							'Bearer error="invalid_token", error_description="refresh_required"',
+					},
+				});
+			}
+			return Response.json(currentUser(["owner"]));
+		}
+		return Response.json({});
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	function Probe() {
+		const auth = useAuth();
+		return <p>{auth.hasRole("owner") ? "Owner" : "Reader"}</p>;
+	}
+	render(<MemoryRouter initialEntries={["/login"]}><AuthProvider><Probe /></AuthProvider></MemoryRouter>);
+
+	expect(await screen.findByText("Owner")).toBeVisible();
+	expect(fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith("/api/auth/refresh"))).toHaveLength(1);
+	expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe(fresh);
+});
+
+it("leaves an ended bootstrap session signed out", async () => {
+	const stale = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "stale" }))}.signature`;
+	localStorage.setItem(ACCESS_TOKEN_KEY, stale);
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL) => {
+			const url = requestUrl(input);
+			if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
+			if (url.endsWith("/auth/me")) {
+				return new Response(null, {
+					status: 401,
+					headers: {
+						"WWW-Authenticate":
+							'Bearer error="invalid_token", error_description="refresh_required"',
+					},
+				});
+			}
+			if (url.endsWith("/api/auth/refresh")) return new Response(null, { status: 401 });
+			return Response.json({});
+		}),
+	);
+	function Probe() {
+		const auth = useAuth();
+		return <p>{auth.user?.email ?? "Signed out"}</p>;
+	}
+	render(<MemoryRouter initialEntries={["/login"]}><AuthProvider><Probe /></AuthProvider></MemoryRouter>);
+	expect(await screen.findByText("Signed out")).toBeVisible();
+	expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
+});
+
+it("does not restore identity after logout wins an in-flight identity read", async () => {
+	const token = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "current" }))}.signature`;
+	localStorage.setItem(ACCESS_TOKEN_KEY, token);
+	let completeIdentity!: (response: Response) => void;
+	const identity = new Promise<Response>((resolve) => {
+		completeIdentity = resolve;
+	});
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (input: RequestInfo | URL) => {
+			const url = requestUrl(input);
+			if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
+			if (url.endsWith("/auth/me")) return identity;
+			if (url.endsWith("/api/auth/logout")) return new Response(null, { status: 204 });
+			return Response.json({});
+		}),
+	);
+	let logout: (() => void) | undefined;
+	function Probe() {
+		const auth = useAuth();
+		logout = auth.logout;
+		return <p>{auth.user?.email ?? "Signed out"}</p>;
+	}
+	render(<MemoryRouter initialEntries={["/login"]}><AuthProvider><Probe /></AuthProvider></MemoryRouter>);
+	await vi.waitFor(() => expect(logout).toBeDefined());
+	act(() => logout!());
+	await vi.waitFor(() => expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull());
+	await act(async () => {
+		completeIdentity(Response.json(currentUser()));
+		await identity;
+	});
+	expect(await screen.findByText("Signed out")).toBeVisible();
+});
+
+it("rotates a stale normal session before completing logout once", async () => {
+	const stale = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "stale" }))}.signature`;
+	const fresh = `header.${btoa(JSON.stringify({ sub: "account", exp: Math.floor(Date.now() / 1000) + 3600, usr: "fresh" }))}.signature`;
+	localStorage.setItem(ACCESS_TOKEN_KEY, stale);
+	let logoutRequests = 0;
+	let completedLogouts = 0;
+	const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+		const url = requestUrl(input);
+		if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
+		if (url.endsWith("/auth/me")) return Response.json(currentUser());
+		if (url.endsWith("/api/auth/refresh")) {
+			return Response.json({ access_token: fresh });
+		}
+		if (url.endsWith("/api/auth/logout")) {
+			logoutRequests += 1;
+			if (logoutRequests === 1) return new Response(null, {
+				status: 401,
+				headers: {
+					"WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"',
+				},
+			});
+			completedLogouts += 1;
+			return new Response(null, { status: 204 });
+		}
+		return Response.json({});
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	let logout: (() => void) | undefined;
+	function Probe() {
+		const auth = useAuth();
+		logout = auth.logout;
+		return <p>{auth.user?.email ?? "Signed out"}</p>;
+	}
+	render(<MemoryRouter initialEntries={["/login"]}><AuthProvider><Probe /></AuthProvider></MemoryRouter>);
+	await screen.findByText("account@example.test");
+
+	act(() => logout!());
+	await vi.waitFor(() => expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull());
+
+	expect(logoutRequests).toBe(2);
+	expect(completedLogouts).toBe(1);
+	expect(fetchMock.mock.calls.filter(([input]) => requestUrl(input).endsWith("/api/auth/refresh"))).toHaveLength(1);
 });
 
 it("reloads an existing normal tab when impersonation or logout changes shared auth", async () => {
@@ -163,7 +388,7 @@ it("keeps the browser-wide support session when logout cannot revoke it", async 
 	localStorage.setItem(ACCESS_TOKEN_KEY, "operator-token");
 	setImpersonationToken("impersonated-token");
 	const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-		const url = typeof input === "string" ? input : input.toString();
+		const url = requestUrl(input);
 		if (url.endsWith("/auth/status")) return Response.json({ needs_setup: false });
 		if (url.endsWith("/auth/logout")) return new Response(null, { status: 500 });
 		return Response.json({});
@@ -236,12 +461,14 @@ it("restores the operator token before releasing the override to other tabs", as
 		return Response.json({ needs_setup: false });
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	const originalRemove = Storage.prototype.removeItem;
-	const remove = vi.spyOn(Storage.prototype, "removeItem");
-	let restoredBeforeRelease = false;
+	const originalRemove = localStorage.removeItem.bind(localStorage);
+	const remove = vi.spyOn(localStorage, "removeItem");
+	const markerRemovalTokens: Array<string | null> = [];
 	remove.mockImplementation(function (this: Storage, key: string) {
-		if (key === IMPERSONATION_TOKEN_KEY) restoredBeforeRelease = localStorage.getItem(ACCESS_TOKEN_KEY) === restoredToken;
-		return originalRemove.call(this, key);
+		if (key === IMPERSONATION_TOKEN_KEY) {
+			markerRemovalTokens.push(localStorage.getItem(ACCESS_TOKEN_KEY));
+		}
+		return originalRemove(key);
 	});
 	let end: (() => Promise<void>) | undefined;
 	function Probe() { end = useAuth().endImpersonation; return null; }
@@ -249,7 +476,7 @@ it("restores the operator token before releasing the override to other tabs", as
 		render(<MemoryRouter><AuthProvider><Probe /></AuthProvider></MemoryRouter>);
 		await vi.waitFor(() => expect(end).toBeDefined());
 		await act(async () => { await end!(); });
-		expect(restoredBeforeRelease).toBe(true);
+		expect(markerRemovalTokens).toEqual([restoredToken]);
 		expect(localStorage.getItem(IMPERSONATION_TOKEN_KEY)).toBeNull();
 		expect(assign).toHaveBeenCalledWith("/users");
 	} finally {

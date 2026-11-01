@@ -27,7 +27,7 @@ import logging
 import os
 import tempfile
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -376,6 +376,39 @@ def preview_zip_path(zip_path: Path) -> PreviewResult:
     with tempfile.TemporaryDirectory(prefix="bifrost-zip-preview-") as tmp:
         _safe_extract_path(zip_path, tmp)
         return _parse_workspace(Path(tmp))
+
+
+@dataclass(frozen=True)
+class _AppEntriesDefinition:
+    """Minimal definition shape consumed by the shared App source collector."""
+
+    apps: list[dict[str, Any]]
+
+    def entries(self, section: str) -> list[dict[str, Any]]:
+        if section != "apps":
+            raise ValueError(f"App-only definition cannot provide {section}")
+        return self.apps
+
+
+def extract_solution_app_sources_from_zip_path(
+    zip_path: Path,
+    *,
+    matches: Callable[[dict[str, Any]], bool],
+) -> list[dict[str, Any]]:
+    """Extract only matching App sources without parsing sibling entities.
+
+    The full preview/install path intentionally parses every Solution manifest.
+    SDK-only App rebuilds instead retain the same archive and App-source safety
+    gates while reading only the canonical ``apps.yaml`` section.
+    """
+    from bifrost.commands.solution import _collect_apps
+    from bifrost.solution_definition import read_solution_apps
+
+    with tempfile.TemporaryDirectory(prefix="bifrost-app-source-") as tmp:
+        workspace = Path(tmp)
+        _safe_extract_path(zip_path, tmp)
+        apps = [app for app in read_solution_apps(workspace) if matches(app)]
+        return _collect_apps(workspace, definition=_AppEntriesDefinition(apps))
 
 
 # Preview entity types ↔ SolutionUpgradeDiff sections (same attribute names).

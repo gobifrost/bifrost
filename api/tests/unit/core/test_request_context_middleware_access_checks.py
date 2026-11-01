@@ -12,11 +12,15 @@ from fastapi import FastAPI, HTTPException
 from shared import access_checks
 from src.core.app_wiring import install_request_context_middleware
 from src.core.principal import UserPrincipal
+from src.core.request_context import get_request_user
 from src.core.security import create_access_token
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.explain import Powers, RunUser
 from src.services.authorization.runtime import RuntimeAuthority
+from src.services.authorization.tokens import _encode_claims
+from tests.helpers.human_tokens import human_claims
+from tests.helpers.runtime_tokens import legacy_engine_token
 
 
 class _Session:
@@ -63,9 +67,7 @@ def _runtime_credential() -> tuple[str, UserPrincipal]:
         root_execution_id=execution_id,
     )
     return (
-        create_access_token(
-            {"sub": str(execution_id), "credential_kind": "workflow_execution"}
-        ),
+        legacy_engine_token(execution_id=execution_id, timeout_seconds=300)[0],
         principal,
     )
 
@@ -103,6 +105,14 @@ def _app() -> FastAPI:
     async def _refused():
         access_checks.note("scope_switch", None)
         raise HTTPException(status_code=403, detail="Access denied")
+
+    @app.get("/__test__/request-user")
+    async def _request_user():
+        request_user = get_request_user()
+        return None if request_user is None else {
+            "id": request_user.user_id,
+            "name": request_user.user_name,
+        }
 
     return app
 
@@ -180,6 +190,20 @@ async def test_a_persons_named_permission_is_judged_as_theirs() -> None:
     [(collector, _route, _operation)] = flushed
     assert (collector.direct, str(collector.run_user_id)) == (True, person)
     assert [note.kind for note in collector.notes] == ["permission"]
+
+
+async def test_modern_human_claims_supply_the_signed_request_attribution_identity() -> None:
+    claims = human_claims(user_id=uuid4(), organization_id=uuid4())
+    transport = httpx.ASGITransport(app=_app())
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(
+            "/__test__/request-user",
+            headers={"Authorization": f"Bearer {_encode_claims(claims)}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"id": str(claims.usr.id), "name": claims.usr.name}
 
 
 async def test_a_failing_writer_never_changes_the_response() -> None:

@@ -26,7 +26,8 @@ def _v1_app(tmp: pathlib.Path) -> pathlib.Path:
         'export default function X() { return null; }\n'
     )
     (app / "components" / "Dlg.tsx").write_text(
-        'import { Dialog, DialogContent, useUser } from "bifrost";\n'
+        'import { Dialog, DialogContent, RequireRole, useAppState, '
+        'useUser } from "bifrost";\n'
         'export const Dlg = () => null;\n'
     )
     # A non-.tsx helper a page imports — must be ported (regression: was dropped).
@@ -77,6 +78,8 @@ def test_migrate_app_ports_rewrites_and_prints_checklist(tmp_path):
     assert 'from "@/components/ui/card"' in idx
     # hooks stay in bifrost
     assert 'useWorkflowQuery } from "bifrost"' in idx
+    dlg = (app / "src" / "components" / "Dlg.tsx").read_text()
+    assert 'import { RequireRole, useAppState, useUser } from "bifrost";' in dlg
 
     # Non-.tsx helper ported (regression: was silently dropped → build break).
     assert (app / "src" / "components" / "metricDefs.ts").is_file()
@@ -86,7 +89,11 @@ def test_migrate_app_ports_rewrites_and_prints_checklist(tmp_path):
     # Checklist surfaced the judgment items, not hidden:
     out = result.output
     assert "migrate-app stops here" in out.lower() or "stops here" in out.lower()
-    assert "useUser" in out and "useBifrostContext" in out  # hook + its replacement
+    assert "['useAppState']" in out
+    assert "Adapt their state shape and behavior manually." in out
+    assert "useUser in v2" not in out
+    assert "ctx.token" not in out
+    assert "JWT" not in out
     assert ":id" in out                     # dynamic-route mapping guidance
     assert "RootLayout" in out              # _layout → RootLayout recipe
     assert "swap-slugs" in out              # cutover step

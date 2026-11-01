@@ -2,23 +2,19 @@ import asyncio
 import logging
 
 from fastapi import APIRouter
-from pydantic import BaseModel
-
 from shared.contract_version import get_contract_version
+from shared.models import VersionResponse
 from shared.version import MIN_CLI_VERSION, get_version
-from src.services.sdk_package import sdk_contract_version, sdk_fingerprint
+from src.services.sdk_package import (
+    sdk_binding_api_major,
+    sdk_contract_version,
+    sdk_fingerprint,
+    sdk_supported_binding_api_majors,
+)
 
 router = APIRouter(prefix="/api/version", tags=["version"])
 
 logger = logging.getLogger(__name__)
-
-
-class VersionResponse(BaseModel):
-    version: str
-    min_cli_version: str
-    contract_version: int
-    sdk_fingerprint: str
-    sdk_contract_version: int
 
 
 def get_sdk_fingerprint() -> str:
@@ -50,4 +46,6 @@ async def get_version_info() -> VersionResponse:
         # synchronous build off the API event loop, matching /api/sdk/download.
         sdk_fingerprint=await asyncio.to_thread(get_sdk_fingerprint),
         sdk_contract_version=sdk_contract_version(),
+        sdk_binding_api_major=sdk_binding_api_major(),
+        sdk_supported_binding_api_majors=sorted(sdk_supported_binding_api_majors()),
     )

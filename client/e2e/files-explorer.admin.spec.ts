@@ -14,7 +14,7 @@
  */
 
 import { test, expect } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const SHARE = `e2e-explorer-${UNIQUE}`.replace(/[^a-z0-9-]/g, "-");

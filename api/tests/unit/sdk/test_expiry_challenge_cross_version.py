@@ -78,3 +78,48 @@ async def test_a_run_refresh_token_is_never_an_access_token(async_engine: AsyncE
 
     assert response.status_code == 401
     assert response.headers["www-authenticate"] == "Bearer"
+
+
+async def test_a_pr1b_client_refreshes_and_replays_on_the_recorded_pr1a_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The PR1b side: given PR1a's recorded expiry response, the SDK refreshes
+    with its run refresh token and replays the call once."""
+    import bifrost.client as client_mod
+    from bifrost._refreshing import RefreshingAsyncClient
+
+    seen: list[str] = []
+
+    def pr1a_api(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["authorization"])
+        if request.headers["authorization"] == "Bearer expired-access":
+            return httpx.Response(
+                PR1A_EXPIRED_TOKEN_RESPONSE["status_code"],
+                headers={"WWW-Authenticate": PR1A_EXPIRED_TOKEN_RESPONSE["www-authenticate"]},
+                json=PR1A_EXPIRED_TOKEN_RESPONSE["json"],
+                request=request,
+            )
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    redeemed: list[str | None] = []
+
+    async def redeem(api_url: str, observed: str | None) -> str:
+        redeemed.append(observed)
+        return "refreshed-access"
+
+    monkeypatch.setattr(client_mod, "refresh_connection_access_token", redeem)
+    client = client_mod.BifrostClient("http://test", "expired-access")
+    client._http = RefreshingAsyncClient(
+        refresh=client.refresh_access_token,
+        base_url="http://test",
+        headers={"Authorization": "Bearer expired-access"},
+        transport=httpx.MockTransport(pr1a_api),
+    )
+    monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
+
+    response = await client.post("/api/sdk/config/set", json={"key": "k"})
+
+    assert response.status_code == 200
+    assert redeemed == ["expired-access"]
+    assert seen == ["Bearer expired-access", "Bearer refreshed-access"]
+    client._sync_http.close()

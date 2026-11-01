@@ -70,8 +70,6 @@ _GATE_FUNCS = {
 _NOISE_FUNC_NAMES = {
     "create_access_token",
     "create_embed_access_token",
-    "mint_service_token",
-    "mint_engine_token",
     "decode_token",
 }
 
@@ -752,6 +750,8 @@ def _flag_policy_seed(node: ast.AST) -> str | None:
 # count on a receiver that is visibly a Redis client.
 _REDIS_ONLY_READS = {"hget", "hgetall", "hmget", "xrange", "xrevrange", "xread", "smembers", "sismember", "blpop"}
 # Lua can read values even when it also writes; classify each script call.
+# ``GETDEL`` is also a read: it returns the atomically consumed authority
+# record, even though it deletes that record as part of the same command.
 _REDIS_GENERIC_READS = {"get", "getdel", "mget", "exists", "lrange", "eval", "evalsha"}
 
 
@@ -1235,7 +1235,8 @@ def _extra_entry_roots() -> dict[str, list[object]]:
     roots |= {f"SCHEDULE {func.__qualname__}": [func] for func in _scheduler_job_functions()}
     roots["STARTUP lifespan"] = [lifespan]
     # principal_from_claims builds the runtime principal from a token's
-    # claims; the auth dependency adopts it in token PR1b.
+    # claims, for the auth dependency (through the validator) and for the
+    # middleware's attribution.
     roots["AUTH resolvers"] = [
         *_GATE_FUNCS,
         auth_mod.get_current_user_optional,
@@ -1990,6 +1991,9 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.authorization.explain.in_reach": (1, "current_role_derivation"),
     "src.services.authorization.explain.load_run_as_target": (3, "current_role_derivation"),
     "src.services.authorization.runtime_auth._principal_from_authority": (1, "actor_facts"),
+    "src.services.authorization.tokens._human_principal": (2, "actor_facts"),
+    "src.services.authorization.tokens._snapshot_human_claims": (1, "current_role_derivation"),
+    "src.services.authorization.tokens.parse_human_claims": (1, "current_role_derivation"),
     "src.services.authorization.tokens.principal_from_claims": (1, "actor_facts"),
     "src.services.chat_runs.create_chat_run": (2, "actor_facts"),
     "src.services.docs_indexer.index_platform_docs": (2, "internal_authorized_resource"),
@@ -2045,23 +2049,11 @@ _TOKEN_MINTING_SITES: dict[str, str] = {
     "shared.sdk_workflow_execution.insert_scheduled_execution": "cutover",
     "src.core.redis_client.pending_execution_record": "cutover",
     "src.core.security.create_embed_access_token": "route",
-    "src.core.security.mint_engine_token": "cutover",
-    "src.core.security.mint_service_token": "route",
     "src.jobs.consumers.workflow_execution.WorkflowExecutionConsumer.process_message": "cutover",
-    "src.routers.auth._generate_login_tokens": "cutover",
-    "src.routers.auth.mfa_initial_verify": "cutover",
-    "src.routers.auth.refresh_token": "cutover",
-    "src.routers.auth.register_user": "cutover",
-    "src.routers.auth.setup_passkey_verify": "cutover",
-    "src.routers.mfa.verify_mfa": "cutover",
-    "src.routers.oauth_sso.oauth_callback": "cutover",
     "src.services.execution.workflow_dispatch.stage_workflow_run": "cutover",
     "src.services.execution.agent_run_service.stage_agent_run_request": "cutover",
     "src.services.execution.async_executor._context_fields": "cutover",
-    "src.services.mcp_server.auth.BifrostAuthProvider._callback": "cutover",
-    "src.services.mcp_server.auth.BifrostAuthProvider._token": "cutover",
     "src.services.mcp_server.auth.BifrostAuthProvider.verify_token": "cutover",
-    "src.services.mcp_server.tools._http_bridge._token_from_context": "cutover",
 }
 _MINTING_KINDS = {"cutover", "route"}
 
@@ -2074,6 +2066,10 @@ _FLAG_CARRIERS: dict[str, str] = {
     "shared.sdk_context.get_sdk_context": "Reports the caller's own flag in the SDK context response.",
     "shared.sdk_users.UPDATE_FIELD_PERMISSIONS": "Names the permission that changing a user's flag needs.",
     "shared.sdk_users.create_user": "Records the created user's own flag in the audit event.",
+    "src.routers.auth._generate_login_tokens": (
+        "Audits the authenticated user's current role fact; HumanSubject mints the session token."
+    ),
+    "src.routers.auth.register_user": "Reports and audits the registered user's current role fact.",
     "src.routers.mcp.mcp_status": "Reports the caller's own flag in the MCP status response.",
     "src.services.authorization.explain._run_user_step": "Copies the run user's flag into an explain trace.",
     "src.services.service_claim.ServiceClaimLoop._launch_claimed": "Copies the pinned run user's current role fact into parent-owned child context; runtime authorization reloads durable authority.",
@@ -2093,12 +2089,11 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {}
 _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
-    "shared.browser_impersonation.validate_browser_impersonation": (2, "cutover"),
+    "shared.browser_impersonation.validate_browser_impersonation": (1, "cutover"),
     "shared.device_auth.decide_device_login": (2, "cutover"),  # Index GET and atomic decision EVAL.
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
     "shared.role_cache.get_user_roles": (1, "cutover"),
-    "src.core.auth.get_original_human_user": (1, "cutover"),
     "shared.sdk_agent_runs.get_sdk_agent_run": (1, "cutover"),
     "src.core.embed_middleware.embed_session_owns_execution": (1, "cutover"),
     "src.core.locks.DistributedLockService.extend_lock": (1, "cutover"),
@@ -2117,7 +2112,6 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.requirements_cache.get_requirements_sync": (1, "cutover"),
     "src.repositories.organizations.OrganizationRepository._get_from_cache": (1, "cutover"),
     "src.routers.auth.exchange_device_token": (1, "cutover"),
-    "src.routers.auth.has_live_refresh_token_jti": (1, "cutover"),
     "src.routers.oauth_sso.oauth_callback": (1, "cutover"),
     "src.services.app_storage.AppStorageService.get_render_cache": (1, "cutover"),
     "src.services.execution.agent_run_service.wait_for_agent_run_result": (1, "cutover"),
@@ -2125,7 +2119,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.services.legacy_broker_drain._redis_json": (1, "cutover"),
     "src.services.legacy_broker_drain.recover_agent_run": (1, "cutover"),
     "src.services.legacy_broker_drain.recover_workflow_run": (2, "cutover"),
-    "src.services.mcp_server.auth.BifrostAuthProvider._callback": (1, "cutover"),
+    "src.services.mcp_server.auth.BifrostAuthProvider._callback": (2, "cutover"),
     "src.services.mcp_server.auth.BifrostAuthProvider._token": (1, "cutover"),
     "shared.runtime_io.service_control": (2, "internal_authorized_resource"),
     "src.services.notification_service.NotificationService._is_admin_notification": (1, "cutover"),
@@ -2747,6 +2741,7 @@ class TestScannerBlindSpots:
             async def read(self, key, cache):
                 r = await get_shared_redis()
                 await r.get(key)
+                await r.getdel(key)
                 await r.eval("return redis.call('GET', KEYS[1])", 1, key)
                 await r.evalsha("digest", 1, key)
                 pending = await self._redis_client.get_pending_execution(key)
@@ -2757,7 +2752,14 @@ class TestScannerBlindSpots:
                 cache.get(key)
                 expression.eval(key)
         """
-        assert _redis_reads(self._nodes(source)) == ["r.get", "r.eval", "r.evalsha", "self._redis.hget", "conn.exists"]
+        assert _redis_reads(self._nodes(source)) == [
+            "r.get",
+            "r.getdel",
+            "r.eval",
+            "r.evalsha",
+            "self._redis.hget",
+            "conn.exists",
+        ]
 
     def test_b11_own_flag_classes_include_subclasses(self) -> None:
         tree = ast.parse(textwrap.dedent("""

@@ -1,8 +1,11 @@
 """Resolve durable runtime authority from current database facts.
 
-This module deliberately accepts only a typed runtime credential identifier.
-Transport claims are attribution, not authority: every invocation re-loads the
-run, its user, and any workflow powers from the database.
+This module deliberately accepts only a typed runtime credential identifier
+and loads the run, its user, and any workflow powers from the database. The
+claims minter (``tokens.issue_access_token``) calls it inside its snapshot;
+claims it mints are authority only through ``tokens.authenticate_runtime_token``.
+In-process callers and legacy runtime tokens reach it through
+``runtime_auth.load_runtime_principal``.
 """
 
 from __future__ import annotations

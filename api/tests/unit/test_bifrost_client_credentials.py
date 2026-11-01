@@ -238,21 +238,143 @@ async def test_concurrent_refreshes_for_same_stale_token_are_coalesced(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_refresh_lock_waiter_does_not_leak_lock() -> None:
+async def test_a_cancelled_refresh_does_not_leak_the_lock(
+    isolated_credentials, monkeypatch
+) -> None:
     from bifrost import client as client_mod
 
-    lock = threading.Lock()
-    lock.acquire()
-    waiter = asyncio.create_task(client_mod._acquire_refresh_lock(lock))
-    await asyncio.sleep(0)
+    api_url = "https://api.example.com"
+    isolated_credentials.save_credentials(
+        api_url,
+        "stale-access-token",
+        "rotating-refresh-token",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    )
+    posted, release = threading.Event(), threading.Event()
+
+    class FakeAsyncClient:
+        def __init__(self, *, base_url, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, path, *, json):
+            posted.set()
+            await asyncio.to_thread(release.wait, 10)
+            return httpx.Response(401, request=httpx.Request("POST", f"{api_url}{path}"))
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", FakeAsyncClient)
+    waiter = asyncio.create_task(
+        client_mod.refresh_connection_access_token(api_url, "stale-access-token")
+    )
+    assert await asyncio.to_thread(posted.wait, 10)
 
     waiter.cancel()
-    lock.release()
+    release.set()
 
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(waiter, timeout=1)
-    assert lock.acquire(blocking=False) is True
+        await waiter
+    lock = client_mod._refresh_coordinator(api_url).lock
+    # The refresh finishes on its own thread and releases the lock.
+    assert await asyncio.to_thread(lock.acquire, True, 10) is True
     lock.release()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preexisting_context", [False, True], ids=["pending", "active"])
+async def test_a_cancelled_successful_refresh_registers_the_published_token(
+    isolated_credentials, monkeypatch, preexisting_context
+) -> None:
+    """The helper must register a token even when its waiter is cancelled."""
+    from bifrost import client as client_mod
+    from bifrost._context import clear_execution_context, set_execution_context
+    from src.core.secret_string import redact_secrets
+    from src.sdk.context import ExecutionContext
+
+    api_url = "https://api.example.com"
+    refreshed = "fresh-access-token-for-redaction"
+    isolated_credentials.save_credentials(
+        api_url,
+        "stale-access-token",
+        "rotating-refresh-token",
+        (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(),
+    )
+    published, release = threading.Event(), threading.Event()
+    save_refreshed_credentials = client_mod.save_refreshed_credentials
+    clear_execution_context()
+    context = ExecutionContext(
+        user_id="u1",
+        email="user@example.com",
+        name="User",
+        scope="GLOBAL",
+        organization=None,
+        is_platform_admin=False,
+        is_function_key=False,
+        execution_id="exec-1",
+    )
+    if preexisting_context:
+        set_execution_context(context)
+
+    class FakeAsyncClient:
+        def __init__(self, *, base_url, timeout):
+            assert base_url == api_url
+            assert timeout == 30.0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, path, *, json):
+            assert path == "/auth/refresh"
+            assert json == {"refresh_token": "rotating-refresh-token"}
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": refreshed,
+                    "refresh_token": "fresh-refresh-token",
+                    "expires_in": 1800,
+                },
+                request=httpx.Request("POST", f"{api_url}{path}"),
+            )
+
+    def save_after_cancellation_window(*args, **kwargs):
+        published.set()
+        assert release.wait(10)
+        return save_refreshed_credentials(*args, **kwargs)
+
+    monkeypatch.setattr(client_mod.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        client_mod, "save_refreshed_credentials", save_after_cancellation_window
+    )
+    waiter = asyncio.create_task(
+        client_mod.refresh_connection_access_token(api_url, "stale-access-token")
+    )
+    try:
+        assert await asyncio.to_thread(published.wait, 10)
+        waiter.cancel()
+        release.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+
+        lock = client_mod._refresh_coordinator(api_url).lock
+        assert await asyncio.to_thread(lock.acquire, True, 10) is True
+        lock.release()
+
+        assert isolated_credentials.get_credentials(api_url)["access_token"] == refreshed
+        set_execution_context(context)
+        assert redact_secrets(
+            {"token": refreshed}, context._collect_secret_values()
+        ) == {"token": "[REDACTED]"}
+    finally:
+        release.set()
+        clear_execution_context()
 
 
 @pytest.mark.asyncio
@@ -722,8 +844,10 @@ async def test_client_token_update_is_shared_with_async_and_sync_transports(
     assert token == "fresh-access-token"
     assert client._access_token == "fresh-access-token"
     assert client._sync_http.headers["Authorization"] == "Bearer fresh-access-token"
-    assert client._http is None
-    assert async_http.headers["Authorization"] == "Bearer stale-access-token"
+    # The open async client is updated in place, so a challenged request
+    # replays on the client it was sent with.
+    assert client._http is async_http
+    assert async_http.headers["Authorization"] == "Bearer fresh-access-token"
     await async_http.aclose()
     client._sync_http.close()
 
@@ -732,6 +856,7 @@ def test_sync_context_refreshes_expired_token_and_retries(
     isolated_credentials, monkeypatch
 ) -> None:
     from bifrost import client as client_mod
+    from bifrost._refreshing import RefreshingClient
 
     seen_authorization: list[str | None] = []
 
@@ -739,7 +864,13 @@ def test_sync_context_refreshes_expired_token_and_retries(
         authorization = request.headers.get("Authorization")
         seen_authorization.append(authorization)
         if authorization == "Bearer stale-access-token":
-            return httpx.Response(401, request=request)
+            return httpx.Response(
+                401,
+                headers={
+                    "WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"'
+                },
+                request=request,
+            )
         return httpx.Response(
             200,
             json={"organization": {"id": "org-1"}},
@@ -750,7 +881,8 @@ def test_sync_context_refreshes_expired_token_and_retries(
         "https://api.example.com", "stale-access-token"
     )
     client._sync_http.close()
-    client._sync_http = httpx.Client(
+    client._sync_http = RefreshingClient(
+        refresh=client._refresh_access_token_sync,
         base_url=client.api_url,
         headers={"Authorization": "Bearer stale-access-token"},
         transport=httpx.MockTransport(handler),

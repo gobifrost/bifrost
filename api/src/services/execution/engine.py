@@ -254,10 +254,13 @@ class ServiceRunConfig:
     revision: str | None = None
     graceful_shutdown_seconds: int = 30
     startup_grace_seconds: int = 60
-    # Initial renewable credential; the supervisor installs fresher ones
-    # from the parent's Redis handoff as they arrive.
+    # Initial credential. A claims-format attempt also has a run refresh
+    # token, and the SDK refreshes on the API's challenge; a legacy-format
+    # attempt's supervisor installs fresher tokens from the parent's Redis
+    # handoff as they arrive.
     token: str = ""
     token_expires_at: str = ""
+    refresh_token: str | None = None
 
 
 @dataclass
@@ -317,11 +320,13 @@ class ExecutionRequest:
     # no variable tracing) and attempt-scoped log streaming.
     service: ServiceRunConfig | None = None
 
-    # The pre-minted engine token this process installed as its SDK
-    # credentials (see worker.py::_set_process_engine_credentials).
-    # Registered as a dynamic secret so _scrub_outputs redacts it from
-    # results, logs, variables and error messages.
+    # The pre-minted engine credentials this process installed for the SDK
+    # (see worker.py::_set_process_engine_credentials). Registered as dynamic
+    # secrets so _scrub_outputs redacts them from results, logs, variables
+    # and error messages; access tokens refreshed later are registered when
+    # the SDK installs them.
     engine_token: str | None = None
+    engine_refresh_token: str | None = None
 
 
 @dataclass
@@ -521,10 +526,11 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         artifact_workspace_id=request.artifact_workspace_id,
     )
 
-    # The engine token this process installed as its SDK credentials is a
-    # secret like any other: register it so _scrub_outputs redacts it from
-    # the result, logs, variables and error message.
+    # The engine credentials this process installed for the SDK are secrets
+    # like any other: register them so _scrub_outputs redacts them from the
+    # result, logs, variables and error message.
     context._register_dynamic_secret(request.engine_token)
+    context._register_dynamic_secret(request.engine_refresh_token)
 
     # Set bifrost SDK context if available
     if BIFROST_CONTEXT_AVAILABLE:
@@ -945,11 +951,15 @@ async def execute_service(
     if BIFROST_CONTEXT_AVAILABLE:
         set_execution_context(context)
 
-    # Install the initial renewable credential handed down at dispatch.
+    # Install the credentials handed down at dispatch, now that the
+    # execution context exists to register them for redaction.
     if cfg.token:
-        from bifrost._service_runtime import install_service_credentials
+        from bifrost._service_runtime import install_legacy_service_token, install_service_credentials
 
-        install_service_credentials(cfg.token)
+        if cfg.refresh_token:
+            install_service_credentials(cfg.token, cfg.refresh_token)
+        else:
+            install_legacy_service_token(cfg.token)
 
     stop_event = asyncio.Event()
     from bifrost._service_runtime import (
@@ -1058,7 +1068,7 @@ async def _service_supervisor(
     cfg: ServiceRunConfig, stop_event: asyncio.Event
 ) -> None:
     """Exchange only this attempt's control state over its authenticated API."""
-    from bifrost._service_runtime import install_service_credentials, take_ready_report
+    from bifrost._service_runtime import install_legacy_service_token, take_ready_report
     from bifrost.client import get_client, raise_for_status_with_detail
 
     ready_pending = False
@@ -1078,8 +1088,12 @@ async def _service_supervisor(
             if payload["stop_requested"]:
                 stop_event.set()
                 break
-            if payload["access_token"] is not None:
-                install_service_credentials(payload["access_token"])
+            # Only a legacy-format attempt installs a token its parent
+            # rotates. A claims-format attempt refreshes its own access
+            # token and ignores rotations, which an older API (after a
+            # rollback) sends for every attempt it supervises.
+            if payload["access_token"] is not None and not cfg.refresh_token:
+                install_legacy_service_token(payload["access_token"])
                 cfg.token_expires_at = payload["token_expires_at"]
         except asyncio.CancelledError:
             break

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from uuid import UUID, uuid4
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from src.models.orm.human_sessions import HumanAuthSession
 
 import pytest
 import pytest_asyncio
@@ -12,8 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared import access_checks
 from src.core.principal import UserPrincipal
 from src.core.security import decode_token
-from src.core.cache import get_shared_redis
-from src.core.cache.keys import TTL_REFRESH_TOKEN, refresh_token_jti_key
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.services.authorization.impersonation import RunAsError
@@ -80,8 +81,11 @@ async def test_browser_session_is_provenanced_and_revocable(db_session: AsyncSes
     await _grant_impersonate(db_session, initiator, organization)
 
     refresh_jti = str(uuid4())
-    redis = await get_shared_redis()
-    await redis.setex(refresh_token_jti_key(str(initiator.id), refresh_jti), TTL_REFRESH_TOKEN, "1")
+    db_session.add(HumanAuthSession(
+        user_id=initiator.id, current_jti_hash=sha256(refresh_jti.encode()).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    ))
+    await db_session.flush()
     credential = await create_browser_impersonation(
         db_session, _principal(initiator), target.id, initiator_refresh_jti=refresh_jti
     )
@@ -135,8 +139,11 @@ async def test_browser_session_requires_current_impersonation_permission(db_sess
 
     await _grant_impersonate(db_session, initiator, organization)
     refresh_jti = str(uuid4())
-    redis = await get_shared_redis()
-    await redis.setex(refresh_token_jti_key(str(initiator.id), refresh_jti), TTL_REFRESH_TOKEN, "1")
+    db_session.add(HumanAuthSession(
+        user_id=initiator.id, current_jti_hash=sha256(refresh_jti.encode()).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    ))
+    await db_session.flush()
     credential = await create_browser_impersonation(
         db_session, _principal(initiator), target.id, initiator_refresh_jti=refresh_jti
     )

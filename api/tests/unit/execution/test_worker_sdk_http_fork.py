@@ -149,7 +149,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
 async def test_forked_child_config_crud_over_worker_socket(
     committed_config, monkeypatch, async_session_factory
 ):
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     key = f"wsdk-fork-{uuid4().hex[:8]}"
     await committed_config(key, "fork-socket-value")
@@ -159,7 +159,7 @@ async def test_forked_child_config_crud_over_worker_socket(
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
     engine_execution_id = str(uuid4())
-    engine_token, _ = mint_engine_token(
+    engine_token, _ = legacy_engine_token(
         execution_id=engine_execution_id,
         timeout_seconds=120,
     )
@@ -508,7 +508,7 @@ async def test_forked_child_integrations_over_worker_socket(
     no DB credential proves the socket carried every call to the parent-served
     routes with the same scope, secret, and error behavior as the network API.
     """
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     seed = await _seed_committed_integration(async_session_factory)
     access = "fresh-fork-access"
@@ -518,7 +518,7 @@ async def test_forked_child_integrations_over_worker_socket(
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
     engine_execution_id = str(uuid4())
-    engine_token, _ = mint_engine_token(
+    engine_token, _ = legacy_engine_token(
         execution_id=engine_execution_id,
         timeout_seconds=120,
     )
@@ -782,7 +782,7 @@ async def test_forked_child_tables_over_worker_socket(
     the socket, with the same scope, 404, retry, and delete semantics as the
     network API.
     """
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     org_id = await _seed_committed_org(async_session_factory)
     tag = uuid4().hex[:8]
@@ -795,7 +795,7 @@ async def test_forked_child_tables_over_worker_socket(
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
     engine_execution_id = str(uuid4())
-    engine_token, _ = mint_engine_token(
+    engine_token, _ = legacy_engine_token(
         execution_id=engine_execution_id,
         timeout_seconds=120,
     )
@@ -975,7 +975,7 @@ async def test_forked_child_files_over_worker_socket(monkeypatch, async_session_
     credential proves the shared client carried every call to the
     parent-served routes, where the worker owns the protected storage.
     """
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     tag = uuid4().hex[:8]
     prefix = f"sdk-files-fork-{tag}"
@@ -985,7 +985,7 @@ async def test_forked_child_files_over_worker_socket(monkeypatch, async_session_
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
     engine_execution_id = str(uuid4())
-    engine_token, _ = mint_engine_token(
+    engine_token, _ = legacy_engine_token(
         execution_id=engine_execution_id,
         timeout_seconds=120,
     )
@@ -1123,7 +1123,7 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch, async_sess
     no DB, SQLAlchemy, or S3 credential proves the shared client carried every
     call to the parent-served routes, where the worker owns protected storage.
     """
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
 
     tag = uuid4().hex[:8]
 
@@ -1132,7 +1132,7 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch, async_sess
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
     engine_execution_id = str(uuid4())
-    engine_token, _ = mint_engine_token(
+    engine_token, _ = legacy_engine_token(
         execution_id=engine_execution_id,
         timeout_seconds=120,
     )
@@ -1291,7 +1291,7 @@ async def test_forked_child_events_and_forms_over_worker_socket(
     no DB credential proves the shared client carried every call to the
     parent-served routes.
     """
-    from src.core.security import mint_engine_token
+    from tests.helpers.runtime_tokens import legacy_engine_token
     from src.models.enums import FormAccessLevel
     from src.models.orm.forms import Form as FormModel
 
@@ -1317,7 +1317,7 @@ async def test_forked_child_events_and_forms_over_worker_socket(
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
     engine_execution_id = str(uuid4())
-    engine_token, _ = mint_engine_token(
+    engine_token, _ = legacy_engine_token(
         execution_id=engine_execution_id,
         timeout_seconds=120,
     )
