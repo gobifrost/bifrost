@@ -1,0 +1,13 @@
+{
+  "key": "pr:1140",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Superseded by PR #1170, which preserves Thomas Bray’s commits and contributor credit and carries the customer-facing fix disposition.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1140",
+      "https://github.com/gobifrost/bifrost/pull/1170"
+    ]
+  }
+}

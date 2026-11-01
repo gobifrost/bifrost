@@ -79,6 +79,9 @@ mkdir -p "$LOG_DIR"
 # e2e tests stage file:// git repos here). Creating it host-side first means Docker
 # binds an existing host-owned dir instead of auto-creating a root-owned mountpoint.
 mkdir -p "$LOG_DIR/solution-repo-fixtures"
+# Keep replica-local Git caches separate, but reachable by isolation fixtures.
+mkdir -p "$LOG_DIR/solution-repo-fixtures/git-checkouts/worker"
+mkdir -p "$LOG_DIR/solution-repo-fixtures/git-checkouts/scheduler"
 mkdir -p "$SCRIPT_DIR/client/playwright-results"
 chmod 777 "$SCRIPT_DIR/client/playwright-results" 2>/dev/null || true
 export LOG_DIR
@@ -150,6 +153,19 @@ reset_state() {
     # fixture volumes remain intact. Remove anonymous dependency volumes with
     # the containers so repeated resets do not leave their contents on disk.
     docker compose -f "$COMPOSE_FILE" rm -sfv api worker scheduler > /dev/null
+
+    # These test-visible bind mounts outlive container recreation. Clear their
+    # contents as the container uid, including on hosts whose uid is not 1000.
+    docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps test-runner python -c '
+import shutil
+from pathlib import Path
+for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdir():
+    for entry in checkout.iterdir():
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+'
 
     docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U bifrost -d postgres -c \
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'bifrost_test' AND pid <> pg_backend_pid();" \
