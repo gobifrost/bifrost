@@ -1,5 +1,10 @@
 # Smallest executor contract
 
+The [authenticated dispatch handle boundary](REMOTE-HANDLE-BOUNDARY.md) now
+characterizes the actual Linux PID ACK, lost-ACK and callback replay paths.
+It explains why an opaque isolate handle needs coordinated negotiation and
+uncertainty handling; these are proposal requirements, not an existing API.
+
 See [pre-claim eligibility](PRECLAIM-ELIGIBILITY.md) for the tested current
 handler gate and the missing persisted runtime-selection contract. It prevents
 unqualified registration from being mistaken for supported provider admission.

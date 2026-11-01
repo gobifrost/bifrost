@@ -1,0 +1,81 @@
+{
+  "source": "45bcb38dd6412d64aa1d308479178904cd2ceab6",
+  "uncommitted_fixture": {
+    "api/tests/unit/dev/test_pyodide_remote_ack_boundary.py": "07154cf159a1d57e8abe5e0bfe5af4d82e7235d7924720e1a2dd20d53e57c87a"
+  },
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-6ec9fba9",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/dev/test_pyodide_remote_ack_boundary.py",
+        "tests/unit/dev/test_thin_remote_pool.py::test_callback_failure_retains_route_until_durable_result_replay",
+        "-q"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-6ec9fba9",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "ruff",
+        "check",
+        "tests/unit/dev/test_pyodide_remote_ack_boundary.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "cloud_invocations": 0,
+  "physical_invocations": 0,
+  "qualification_passed": true,
+  "scope": "unit characterization with transport/Redis doubles; not SDK compatibility",
+  "started_at_epoch": 1793555339.5265834,
+  "source_status": "?? api/tests/unit/dev/test_pyodide_remote_ack_boundary.py",
+  "shared_source_sha256": {
+    "api/src/worker/remote/remote_pool.py": "ea7ddad24f5bb324303e0933d42aa8b447039fe02ce7e1c7f0e5a806d9b8b8df",
+    "api/src/worker/remote/launcher.py": "45782932698c2e99143f7e5b55d8fb3c746e2a16f41594eae05bdce36dd952bc",
+    "api/src/worker/remote/protocol.py": "60d88cf4587c6fc4ef0e8c851c1b0d6a0770af76bf0a5ce849e97b98c4bcfa31",
+    "api/src/worker/remote/host.py": "7780037199ee104c0409bbe99407f09b447d9bb84e4f0308e5d7ab7fc76e4f65"
+  },
+  "project": "bifrost-test-6ec9fba9",
+  "junit": {
+    "cases": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 97.20031941495836
+}
