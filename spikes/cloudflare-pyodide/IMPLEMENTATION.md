@@ -1,7 +1,7 @@
 # Upstream Python Worker backend acceptance
 
 Current requirement-level status is in [ACCEPTANCE.md](ACCEPTANCE.md), reconciled
-through b9043a08b. The chronological sections below preserve earlier stopping
+through 5aaeb608c. The chronological sections below preserve earlier stopping
 points and must not be read as current PR or runtime state. Local canonical SDK,
 tenant and warm concurrency proofs now exist; deployed canonical acceptance and
 physical termination remain incomplete.

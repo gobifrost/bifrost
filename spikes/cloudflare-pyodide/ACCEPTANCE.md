@@ -1,6 +1,6 @@
 # Backend acceptance ledger
 
-Reconciled against source/evidence through `b9043a08b` on 2026-10-31.
+Reconciled against source/evidence through `5aaeb608cfdb884ca7d1b45e9c767bb6d83aa2bf` on 2026-11-01.
 The full backend objective is **not achieved**. The useful trusted subset is
 experimental YELLOW; first-class arbitrary untrusted execution is RED under the
 tested physical-termination contract. A source PR, an approved research review,
@@ -9,13 +9,13 @@ green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 | Required guarantee / artifact | Current authoritative evidence | Status and missing proof |
 |---|---|---|
 | Deployable Worker and exact setup | Wrangler configs, README, historical cloud version receipts in IMPLEMENTATION.md | Prototype exists; production provider is not enabled. |
-| Current upstream engine and SDK, genuine run identity | `results/canonical-local.json`; `results/canonical-isolation-admission.json` | Passes actual **local** engine/SDK path, not deployed canonical execution. |
+| Current upstream engine and SDK, genuine run identity | Historical local canonical receipts; NODE-SDK-QUALIFICATION.md and CT128 raw node-sdk-resume receipt | Actual engine/SDK passes in local workerd and official guest Pyodide/Node with canonical run identity; no deployed canonical execution. |
 | Parameters, async execution, workspace imports, logs/errors | Current-engine cloud fixtures and local canonical receipts | Cloud fixtures use synthetic context; credentialed fixtures are local. |
 | Actual canonical error and output channels | backend/WORKFLOW-FAILURE.md; failure-terminal receipt | Genuine ValueError and redacted structured logs persist/reconcile; stdout is absent in shared engine path. Runtime qualification deliberately still fails that assertion. |
-| Integration/config reads and table writes | SDK benchmark and canonical tenant receipts with independent API readback | Local success; no authenticated cloud-to-BiFrost end-to-end proof. |
+| Integration/config reads and table writes | NODE-INTEGRATION-QUALIFICATION.md; actual guest API 200/peer 403, independent table readback 70 | Guest actual integration SDK and canonical consumption pass. Synthetic encrypted secret decrypts correctly and result/log probes redact; OAuth and authenticated cloud-to-BiFrost end-to-end remain unqualified. |
 | Dependency closure and pinned provenance | Runtime manifest/source hashes, packaged closure and module-response tests | Tested closure exists. Broad package compatibility and missing-wheel builds are not implied. |
 | Runtime versus resolver identity | backend/RUNTIME-PROVENANCE.md; actual full-closure fingerprint and bootstrap guard | Local runtime/ABI pin enforced before upstream import; cloud runtime still requires separate qualification. |
-| Native dependency qualification | dependency-qualification.md | Procedure specifies native-first build/test/deploy. No native build or third-party upstream package-suite claim is made for the C++ startup failure: no Python package causes the minimal reproduction. |
+| Native dependency qualification | backend/NATIVE-PACKAGE-QUALIFICATION.md; native-package-resume raw results | Existing matching native Pydantic/PyYAML WASM wheels execute under official guest Pyodide: 32 selected upstream pydantic-core tests and 261 selected PyYAML native cases pass. No wheel compilation was needed. This is neither full package-suite nor actual Cloudflare wheel acceptance. |
 | Dynamic workspace/source integrity | Actual helper import; module/resolution integrity checks | Fixed loose-workspace path passes. Solution/artifact-workspace remapping is rejected. Trusted production artifact selection is not integrated. |
 | Canonical dispatch ownership/fencing | Actual stage/claim/consumer tests; journal PostgreSQL tests | Local pass. Transport journal survives reconnect only, not host loss; it is not a second queue. |
 | Eligibility before claim | `results/preclaim-eligibility.xml`; backend/PRECLAIM-ELIGIBILITY.md | Existing handler non-advertisement blocks unqualified providers. Selective runtime requirements are not persisted/integrated. |
@@ -34,7 +34,7 @@ green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 | Worker interruption and cleanup | Local termination fixture, canonical fixture cleanup, cloud retirement readbacks | Full interrupted-attempt provider recovery and physical-handle cleanup remain incomplete. Retired cloud test allowance cannot be reused. |
 | Oversized payload/memory exhaustion | Bounded transport tests; historical local/cloud memory artifacts | Negative probes exist. No measured safe per-run peak or capacity admission for current engine; synthetic 1 GiB fixture budget is not isolate capacity. |
 | Cold/warm latency and concurrency | Historical benchmarks; warm tenant receipt; minimal cold reproducer | Warm local pair passes. Cold local pair fails in native workerd without BiFrost or packages. No production p95/p99 claim. |
-| CPU/peak memory/bundle/SDK overhead/cost | Historical raw benchmark/metric artifacts and bundle receipts | Measurements and estimates separated. Full Linux pool comparison, current peak/CPU and complete per-1,000 execution economics remain missing. |
+| CPU/peak memory/bundle/SDK overhead/cost | Historical artifacts; NODE-MEMORY-QUALIFICATION.md and actual SDK memory receipt | Guest observed WASM capacity 43.25 MiB after real SDK execution, separate Node snapshots. Total Cloudflare memory, resident peak/CPU, full Linux pool comparison and complete per-1,000 economics remain missing. |
 | Python↔JS marshaling overhead | backend/INTEROP.md and raw interop-local.json | Bounded local FFI/JSON microbenchmark now measured; null conversion mismatch explicit. Full SDK/cloud contribution remains unmeasured. |
 | Linux compatibility | Focused engine/consumer tests and ordinary CI | Default Linux seams retained; every new candidate still requires its normal CI/review. |
 | Reviewable upstream contribution | Public personal fork; draft PR #1161 | Published experimental source. Maintainer research review at f8cc75e does not accept later heads or the backend. |
