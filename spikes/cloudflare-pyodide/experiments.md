@@ -1,5 +1,22 @@
 # Compact experiment log
 
+## Real SDK success after declared lost-worker recovery, 2026-11-01
+
+Hypothesis: canonical lost-worker failure must outrank a late successful actual
+workerd result, including after lost-ACK/reconnect replay. Change: opt-in fixture
+calls unchanged end_runs_of_lost_worker/announce_lost_runs after collecting real
+SDK success but before consuming it. Command: guest ct128-workerd-loss-recovery.py
+(exact Compose argv in results/workerd-loss-recovery). Both runs preserve Failed,
+null result and completion timestamp; access/refresh 401 before late delivery;
+one physical launch/upsert, no new dispatch. Initial run sampled zero persisted
+logs. Follow-on calls the existing terminal-log drainer: two rows persisted,
+second drain zero, identical IDs. Both receipts retained; this is explicit
+recovery-service fault injection, not physical interruption/detection acceptance.
+Final SHA-256 `62bcd195b85b1d5a9d63713e4ffdbc8a3c514e90f43662b1af05f94a22bfce97`.
+Docker Ruff and offline verifiers pass; owned containers stopped, volumes retained.
+Next: coordinated runtime boundary and remaining automatic-loss/physical-stop/
+deployed acceptance gates, without cloud reopening or new authority.
+
 ## CT128 matched Linux benchmark, 2026-11-01
 
 Hypothesis: the byte-identical benchmark helper can run through the actual Linux

@@ -24,7 +24,8 @@ from sqlalchemy import delete, select
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
-               node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False):
+               node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False,
+               worker_loss_probe=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -44,6 +45,9 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
         raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
     expected_success = not failure_probe
+    if worker_loss_probe and (benchmark_probe or failure_probe or refresh_probe or expired_access or concurrent_refresh
+                             or interrupt_refresh or isolation_label is not None or transport_waiter):
+        raise RuntimeError("Worker loss requires the fixed successful SDK fixture")
     if benchmark_probe and (not integration_probe or failure_probe or refresh_probe or expired_access
                             or concurrent_refresh or interrupt_refresh or isolation_label is not None or transport_waiter):
         raise RuntimeError("Benchmark requires the fixed successful integration fixture")
@@ -537,6 +541,28 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 task_result = await pool.receipt
                 assert task_result["success"] is expected_success
                 assert pool.evidence is not None and pool.info is not None
+                if worker_loss_probe:
+                    from src.services.worker_pool.recovery import end_runs_of_lost_worker, announce_lost_runs, EXECUTOR_LOST
+                    async with get_db_context() as db:
+                        lost = await end_runs_of_lost_worker(db, worker.id)
+                        await db.commit()
+                    if lost.workflow_runs != [execution.id]:
+                        raise RuntimeError("Canonical recovery did not end the exact fixture run")
+                    await announce_lost_runs(lost)
+                    async with get_db_context() as db:
+                        recovered = await db.get(Execution, execution.id)
+                        if (recovered.status != ExecutionStatus.FAILED or recovered.result is not None
+                                or recovered.error_message != EXECUTOR_LOST):
+                            raise RuntimeError("Canonical lost-worker state mismatch")
+                        recovery_completed_at = recovered.completed_at
+                    async with httpx.AsyncClient(base_url="http://api:8000", timeout=15) as api:
+                        after_loss = await api.post("/api/sdk/config/get", headers={"Authorization": f"Bearer {pool.token}"},
+                                                    json={"key": key})
+                        refresh_after_loss = await api.post("/auth/refresh", json={"refresh_token": pool.refresh_token})
+                    if after_loss.status_code != 401 or refresh_after_loss.status_code != 401:
+                        raise RuntimeError("Lost-worker credentials remained usable before late result")
+                    report.update(worker_loss_recovery_verified=True, access_after_loss_status=after_loss.status_code,
+                                  refresh_after_loss_status=refresh_after_loss.status_code)
                 original = consumer._handle_result
 
                 async def lose_ack(result):
@@ -554,16 +580,22 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 liveness.update(active_runs=0, runs_handled=1, memory_reserved_bytes=0)
                 async with get_db_context() as db:
                     row = await db.get(Execution, execution.id)
-                    expected_status = ExecutionStatus.SUCCESS if expected_success else ExecutionStatus.FAILED
+                    expected_status = ExecutionStatus.SUCCESS if expected_success and not worker_loss_probe else ExecutionStatus.FAILED
                     assert row is not None and row.status == expected_status
-                    if expected_success:
+                    if worker_loss_probe:
+                        if row.result is not None or row.error_message != EXECUTOR_LOST or row.completed_at != recovery_completed_at:
+                            raise RuntimeError("Late provider result overwrote canonical recovery")
+                        report['late_success_ignored_verified'] = True
+                        report['canonical_recovery_status'] = row.status.value
+                    elif expected_success:
                         assert row.result["value"] == expected_value
                     else:
                         assert row.result is None and "fixture failure credential=[REDACTED]" in row.error_message
                         report["canonical_failure_error"] = row.error_message
                         report["canonical_failure_status"] = row.status.value
                     logs_before = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
-                    assert logs_before
+                    if not worker_loss_probe:
+                        assert logs_before
                 ref.lease = await connect(2)
                 await beat()
                 consumer._handle_result = original
@@ -572,8 +604,30 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 async with get_db_context() as db:
                     logs_after = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
                     assert logs_after == logs_before
+                    if worker_loss_probe:
+                        recovered = await db.get(Execution, execution.id)
+                        dispatch = await db.scalar(select(WorkDispatch.id).where(WorkDispatch.subject_id == execution.id))
+                        if (recovered.status != ExecutionStatus.FAILED or recovered.result is not None
+                                or recovered.completed_at != recovery_completed_at or dispatch is not None):
+                            raise RuntimeError("Recovery replay mutated terminal state or requeued effects")
+                        report['recovery_not_requeued_verified'] = True
                     assert await db.scalar(select(ExecutionWorkerClaim).where(
                         ExecutionWorkerClaim.worker_id == worker.id, ExecutionWorkerClaim.subject_id == execution.id))
+                if worker_loss_probe:
+                    from bifrost._logging import recover_terminal_execution_logs
+                    report['log_rows_before_terminal_drain'] = len(logs_before)
+                    drained = await recover_terminal_execution_logs([execution.id], limit=1)
+                    async with get_db_context() as db:
+                        recovered_logs = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
+                    if len(recovered_logs) != len(task_result['logs']):
+                        raise RuntimeError('Canonical terminal-log recovery did not persist the actual SDK logs')
+                    repeated_drain = await recover_terminal_execution_logs([execution.id], limit=1)
+                    async with get_db_context() as db:
+                        repeated_logs = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
+                    if repeated_logs != recovered_logs or repeated_drain['flushed'] != 0:
+                        raise RuntimeError('Completed terminal-log drain duplicated rows')
+                    report.update(lost_worker_log_recovery_verified=True, terminal_log_drain=drained,
+                                  repeated_terminal_log_drain=repeated_drain, log_rows_after_terminal_drain=len(recovered_logs))
                 async with httpx.AsyncClient(base_url="http://api:8000", timeout=15) as api:
                     revoked = await api.post("/api/sdk/config/get", headers={"Authorization": f"Bearer {pool.token}"},
                                              json={"key": key})
@@ -587,7 +641,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 assert pool.launches == 1
                 if heartbeat.done():
                     heartbeat.result()
-                report.update({"canonical_claim_verified": True, "canonical_terminal_consumption_verified": True,
+                report.update({"canonical_claim_verified": True, "canonical_terminal_consumption_verified": not worker_loss_probe,
                     "lost_ack_reconnect_verified": True, "credential_revoked_after_terminal_status": revoked.status_code,
                     "launches": pool.launches, "persisted_log_count": len(logs_before), "result": pool.evidence,
                     "completed_claim_retained_as_upstream_specifies": True})
@@ -645,8 +699,10 @@ if __name__ == "__main__":
         parser.add_argument("--integration-probe", action="store_true")
         parser.add_argument("--integration-secret-probe", action="store_true")
         parser.add_argument("--benchmark-probe", action="store_true")
+        parser.add_argument("--worker-loss-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(benchmark_probe=args.benchmark_probe, isolation_label=args.isolation_label, batch=args.batch,
+        asyncio.run(main(worker_loss_probe=args.worker_loss_probe, benchmark_probe=args.benchmark_probe,
+                         isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
                          concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh,
                          failure_probe=args.failure_probe, transport_waiter=args.transport_waiter,

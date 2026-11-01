@@ -7,6 +7,9 @@ Both fetch and RPC cancellation permit post-abort CPU effects. Untrusted
 admission and deployed acceptance remain held.
 The benchmark now includes the same pinned workloads on the real signed-control
 Linux executor, with raw samples and explicit comparison limits.
+The [lost-worker recovery fixture](backend/WORKER-LOSS-RECOVERY.md) also preserves
+canonical failure against a late real SDK success, revokes credentials before
+delivery, and exercises upstream terminal-log recovery without redispatch.
 
 Guest offload update: the publisher-source build now reproduces the exact pinned
 bundle, resolving the recorded HTTP 403 supply blocker without retrying it.

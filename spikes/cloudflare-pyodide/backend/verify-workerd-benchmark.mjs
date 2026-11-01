@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const bytes = readFileSync(new URL('../results/workerd-benchmark/receipt.json', import.meta.url));
 assert.equal(hash(bytes), '6e9f41683e7d30fd863f736cb2d0259dface691bb962cc0b18efa450c83ce11e');
@@ -13,7 +15,11 @@ assert.equal(report.cloud_invocations, 0);
 assert.deepEqual(report.running_after_cleanup, []);
 assert.equal(report.provider_state_before_cleanup.OOMKilled, false);
 for (const [name, digest] of Object.entries(report.packet_sha256)) {
-  assert.equal(hash(readFileSync(new URL(name, import.meta.url))), digest);
+  // Historical benchmark fixture, not a claim about a later optional mode.
+  const source = execFileSync('git', ['show',
+    `4434ffe73dcac497c1f7ce668bb5e77659364faa:spikes/cloudflare-pyodide/backend/${name}`],
+  {cwd: fileURLToPath(new URL('../../../', import.meta.url))});
+  assert.equal(hash(source), digest);
 }
 const run = report.canonical_result;
 for (const key of ['canonical_claim_verified', 'canonical_terminal_consumption_verified',
