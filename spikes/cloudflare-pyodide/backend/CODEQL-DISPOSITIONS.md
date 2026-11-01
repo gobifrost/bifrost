@@ -86,3 +86,12 @@ lines before disposition:
 These are source-reviewed false positives, with no alert dismissal or runtime
 rewrite. Verification for this documentation-only follow-up is git diff --check;
 no fixture replay, Docker startup or cloud call was performed.
+
+Findings 1857 and 1858 map to the previously reviewed cancelled-waiter joins
+(canonical-local.py:454 and test_pyodide_attempt_journal.py:116). Finding 1859
+maps to test_pyodide_attempt_journal.py:142: `await receipt` inside
+`pytest.raises(error)`, parameterized for ConnectionError and CancelledError.
+It observes the failed collection before checking sanitized inventory state;
+removing it would omit the exception assertion. Retain all three as
+source-reviewed false positives, without dismissal or suppression. Only the
+documentation changed; git diff --check passed, with no runtime test replay.
