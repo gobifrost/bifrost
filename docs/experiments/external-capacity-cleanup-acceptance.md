@@ -135,3 +135,24 @@ passed all **four tests** in 15.34 seconds. The overlap case continues to run
 the real Fetch, Sync and worker-import boundaries with delete confirmation off.
 An independent PostgreSQL readback found zero owned workflow, agent, profile
 and provider rows afterward. Dockerized API Pyright and Ruff passed again.
+
+## Current-Main Integration
+
+Merged `c167b594d` (#1171) without conflicts, preserving Thomas's commits and
+the fixture repairs. Repeated the 341-test focused backend command above:
+**341 passed** in 18.69 seconds, with no failures, errors or skips. TypeScript
+and ESLint passed again, with the same existing seed-helper warning.
+
+```bash
+./test.sh tests/e2e/platform/test_agent_indexer.py tests/e2e/platform/test_workspace_sync_execution_overlap.py tests/e2e/platform/test_agent_runtime_boundary.py tests/e2e/platform/test_service_worker_mode.py tests/e2e/api/test_workflow_mutations_service.py::test_execution_only_user_reads_current_workflow_parameters tests/e2e/api/test_workflow_mutations_service.py::test_parameter_read_respects_workflow_sharing tests/e2e/api/test_workflow_mutations_service.py::test_parameter_read_requires_workflow_execute_permission tests/e2e/api/test_workflow_mutations_service.py::test_parameter_read_respects_original_user_organization_reach tests/e2e/api/test_workflow_mutations_service.py::test_parameter_read_respects_solution_inbound_scope -q --durations=0
+```
+
+**13 passed** in 79.55 seconds, with no failures, errors or skips. The ordered
+indexer/Sync regression, real agent/summary dispatch and service recovery remain
+green alongside #1171's workflow parameter authorization boundaries. Existing
+service lifecycle and Sync calls account for 45.11 and 12.27 seconds; these are
+live process boundaries, with no additional deployment tests introduced.
+
+`BIFROST_SKIP_BUILD=1 ./test.sh quality api` passed on the integrated tree:
+Pyright reported zero errors/warnings and Ruff was clean. Broader local suites
+remain unrun; the native merge queue is the complete-suite gate.
