@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import {readFile,writeFile} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
+import {classifyCancellation} from './termination-evidence.mjs';
 const read=async name=>JSON.parse((await readFile(new URL('../results/'+name,import.meta.url),'utf8')).replace(/^\uFEFF/,''));
 const isolation=await read('isolation-cloud-fresh.json');
 const engine=await read('engine-cloud-fresh.json');
@@ -32,10 +33,13 @@ assert.equal(caught.results[0].body.outcome.body.caught,'CpuLimitExceeded');
 assert.deepEqual(caught.results[0].body.effects,['before','caught','after']);
 assert.ok(ledger.reservations.length<=20);
 const cpuAbort=isolation.results.find(value=>value.request.action==='cpu').body;
+const cancellation=classifyCancellation(cpuAbort);
 const report={supported_checks_passed:true,reserved_invocations:ledger.reservations.length,
-  cpu_cancellation_prevents_later_effect:!cpuAbort.effects.includes('after'),
+  cpu_cancellation_test_exercised:cancellation.abort_request_observed,
+  cpu_cancellation_classification:cancellation.classification,
+  cpu_cancellation_prevents_later_effect:cancellation.cancellation_prevents_later_effect,
   provider_cpu_exception_is_uncatchable:!caught.results[0].body.effects.includes('after'),
   authorized_sdk_identity_verified:false,first_class_executor_acceptance:false};
-await writeFile(new URL('../results/fresh-cloud-verification.json',import.meta.url),JSON.stringify(report,null,2)+'\n');
-console.log(report);
-if(!report.cpu_cancellation_prevents_later_effect || !report.provider_cpu_exception_is_uncatchable) process.exitCode=1;
+// Historical reports are immutable evidence. Verification prints only; no writes.
+console.log(JSON.stringify(report,null,2));
+if(report.cpu_cancellation_prevents_later_effect!==true || !report.provider_cpu_exception_is_uncatchable) process.exitCode=1;

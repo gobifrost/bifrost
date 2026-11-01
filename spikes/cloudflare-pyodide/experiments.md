@@ -324,3 +324,20 @@ No new heavy laptop batch followed the migration instruction. Passive capacity
 query c5842180-9153-4841-b5f7-130aa489f58b was denied source_run_not_active with
 safe_to_resend false, preserved without alternate caller/retry. Remote execution
 has not occurred. See CONTROL-AUTH.md and REMOTE-TEST-HANDOFF.md under backend/.
+
+## Offline termination-evidence qualification
+
+Heavy laptop tests remain stopped. Bounded read-only owner lookup supplied no
+verified current capacity handoff; this environment has no linked remote
+environments. No message, new link, guest selection or remote test was started.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Cloud CPU after effects prove received cancellation failed | Audit raw abort_requested flag | Flag is false: test was not exercised; verifier now reports not_exercised/null | Independent timestamped stop receipt required on a verified target |
+| Quota exception is a physical stop | Audit distinct cpu_catch record | Actual CpuLimitExceeded caught, then caught/after effects; acceptance remains failed | Provider physical-stop primitive still required |
+| Offline verification may rewrite historical evidence | Remove writer; `node --test backend/termination-evidence.test.mjs` | Four pass; real verifier exits 1 and preserves old report bytes | No runtime replay or evidence overwrite |
+
+Historical source snapshot hashes are verified separately from deployed-version
+associations. The local observer's 1.809 s is before-to-after, not a measured
+abort-to-after interval. See backend/TERMINATION-EVIDENCE.md and the new audit
+JSON. No source-mocked SDK/Worker compatibility or new cancellation proof follows.
