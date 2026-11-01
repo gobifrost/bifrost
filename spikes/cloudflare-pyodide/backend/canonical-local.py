@@ -9,7 +9,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 import runpy
+import time
 from contextlib import suppress
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -19,15 +21,19 @@ import httpx
 from sqlalchemy import delete, select
 
 
-async def main():
+async def main(*, isolation_label=None, batch=None):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
         or target.hostname != "pgbouncer" or target.path != "/bifrost_test"):
         raise RuntimeError("Disposable Docker test stack required")
+    if isolation_label is not None and (isolation_label not in ("tenant-a", "tenant-b")
+                                       or not re.fullmatch(r"[a-f0-9]{32}", batch or "")):
+        raise RuntimeError("Fixed two-tenant isolation fixture required")
 
     from src.core.database import init_db, get_engine, close_db, get_db_context
     from src.core.module_cache import set_module, invalidate_module
+    from src.core.cache import get_redis
     from src.core.redis_client import PendingExecution, pending_execution_record
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
     from src.models.enums import ExecutionStatus
@@ -37,10 +43,13 @@ async def main():
     from src.services.execution.process_pool import CredentialRoute, ExecutionInfo
     from src.services.execution.workflow_dispatch import stage_workflow_run
     from src.services.repo_storage import RepoStorage
-    from src.services.worker_pool.claims import claim_next
+    from src.services.worker_pool.claims import (
+        claim_next, register_static_worker, mark_static_ready, heartbeat_worker,
+    )
     from src.worker.remote.fencing import LeaseRef, remote_owner_context
     from src.worker.remote.ownership import acquire_remote_owner, renew_remote_owner, release_remote_owner
     from tests.unit.authorization.committed_runs import committed_world
+    from shared.version import get_version
 
     # Reuse the existing fixture setup/teardown; loading definitions has no run effects.
     helpers = runpy.run_path("/spike/backend/authorized-local.py")
@@ -50,21 +59,63 @@ async def main():
     path = f"workflows/pyodide_qualification_{suffix}.py"
     helper = f"pyodide_helper_{suffix}"
     key, table = f"pyodide-config-{suffix}", f"pyodide-table-{suffix}"
+    canary_code = "    isolation = {}\n"
+    if isolation_label is not None:
+        canary_code = f'''    import builtins, json
+    from pathlib import Path
+    canary = Path("/tmp/bifrost-tenant-canary")
+    isolation = {{"builtins_before": getattr(builtins, "_bifrost_tenant_canary", None),
+                 "environment_before": os.environ.get("BIFROST_TENANT_CANARY"),
+                 "module_before": getattr(json, "_bifrost_tenant_canary", None),
+                 "tmp_before": canary.read_text() if canary.exists() else None,
+                 "tenant_label": {isolation_label!r}}}
+    if any(isolation[key] is not None for key in ("builtins_before", "environment_before", "module_before", "tmp_before")):
+        raise RuntimeError("Cross-run state contamination before SDK effects")
+    builtins._bifrost_tenant_canary = {isolation_label!r}
+    json._bifrost_tenant_canary = {isolation_label!r}
+    os.environ["BIFROST_TENANT_CANARY"] = {isolation_label!r}
+    canary.write_text({isolation_label!r})
+    import httpx
+    try:
+        await config.get(forbidden_key, scope=forbidden_scope)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 403:
+            raise
+        isolation["peer_sdk_status"] = exc.response.status_code
+    else:
+        raise RuntimeError("Peer tenant SDK read was not denied")
+'''
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
 import logging, os
 @workflow
-async def qualified(n: int = 7):
+async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_key: str | None = None):
+{canary_code.rstrip()}
     value = await config.get({key!r})
     doc = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
     logging.getLogger(__name__).warning("canonical local Pyodide proof")
     return {{"value": doc.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
-             "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"]}}
+             "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"], **isolation}}
 '''
     sources = {path: source, f"{helper}.py": "def fold(n):\n    return sum(range(1,n+1))\n"}
     manifest = {name: hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()}
     report = {"runtime": "local-workerd-canonical-claim-consumer", "workspace_sha256": manifest,
               "physical_termination_verified": False, "cloud_invocations": 0}
+    if isolation_label is not None:
+        report["isolation_label"] = isolation_label
+        report["rendezvous_batch"] = batch
+
+    async def rendezvous(phase, value):
+        peer = "tenant-b" if isolation_label == "tenant-a" else "tenant-a"
+        prefix = f"bifrost:pyodide-isolation:{batch}:{phase}:"
+        async with get_redis() as redis:
+            await redis.set(prefix + isolation_label, json.dumps(value), ex=90)
+            async with asyncio.timeout(60):
+                while (other_value := await redis.get(prefix + peer)) is None:
+                    if await redis.exists(f"bifrost:pyodide-isolation:{batch}:abort:{peer}"):
+                        raise RuntimeError("Peer isolation fixture failed")
+                    await asyncio.sleep(0.05)
+            return json.loads(other_value)
     secrets = []
     storage = RepoStorage()
     heartbeat = None
@@ -79,17 +130,34 @@ async def qualified(n: int = 7):
             workflow.path, workflow.function_name, workflow.timeout_seconds = path, "qualified", 30
             execution = await world.execution(run_user=user, workflow=workflow, organization=org, credential_version=2)
             execution.status = ExecutionStatus.PENDING
-            worker = await world._add(ExecutionWorker(form="static", state="ready", resource_class="standard",
-                                                     slots=1, supported_handlers=["workflow.execute"]))
+            parameters = {"n": 7}
+            if isolation_label is not None:
+                peer = await rendezvous("setup", {"organization_id": str(org.id), "key": key})
+                parameters.update({"n": 7 if isolation_label == "tenant-a" else 8,
+                                   "forbidden_scope": peer["organization_id"], "forbidden_key": peer["key"]})
+                report["organization_id"] = str(org.id)
+                report["peer_organization_id"] = peer["organization_id"]
+            expected_value = 42 + sum(range(1, parameters["n"] + 1))
             pending = pending_execution_record(execution_id=str(execution.id), workflow_id=str(workflow.id),
-                parameters={"n": 7}, org_id=str(org.id), user_id=str(user.id), user_name=user.name,
+                parameters=parameters, org_id=str(org.id), user_id=str(user.id), user_name=user.name,
                 user_email=user.email, sync=False, lineage=None)
-            await stage_workflow_run(world.session, pending,
+            accepted = await stage_workflow_run(world.session, pending,
                 {"execution_id": str(execution.id), "workflow_id": str(workflow.id), "sync": False}, record_exists=True)
             await world.session.commit()
             for name, code in sources.items():
-                assert await storage.write(name, code.encode()) == manifest[name]
+                written_digest = await storage.write(name, code.encode())
+                assert written_digest == manifest[name]
                 await set_module(name, code, manifest[name])
+            worker_id = await register_static_worker(hostname=f"pyodide-local-fixture-{suffix}",
+                supported_handlers=["workflow.execute"], version=get_version())
+            world._created.append((ExecutionWorker, worker_id))
+            worker = await world.session.get(ExecutionWorker, worker_id)
+            assert worker is not None
+            if isolation_label is not None:
+                # The pool still schedules globally. Reserve this controlled
+                # fixture dispatch; do not invent a tenant-specific scheduler.
+                worker.reserved_for_dispatch_id = accepted.dispatch_id
+            await world.session.commit()
             owner_id, launcher_id = uuid4(), uuid4()
 
             async def connect(sequence):
@@ -99,12 +167,37 @@ async def qualified(n: int = 7):
                 return lease
 
             ref = LeaseRef(await connect(1))
+            liveness = {"active_runs": 0, "runs_handled": 0, "memory_reserved_bytes": 0}
+            report["worker_heartbeat_count"] = 0
+            report["owner_renewal_count"] = 0
+
+            async def beat():
+                lease = ref.lease
+                with remote_owner_context(ref):
+                    state = await heartbeat_worker(worker.id, **liveness, package_generation=0,
+                        memory_pressured=False, memory_budget_bytes=2**30)
+                if lease != ref.lease:
+                    return  # Same stale-renew guard as the upstream remote host.
+                if state not in ("ready", "draining"):
+                    raise ConnectionError("Canonical worker liveness rejected")
+                report["worker_heartbeat_count"] += 1
+
+            with remote_owner_context(ref):
+                ready = await mark_static_ready(worker.id, memory_budget_bytes=2**30)
+                assert ready
+            await beat()
 
             async def renew():
                 while True:
                     await asyncio.sleep(5)
-                    if not await renew_remote_owner(ref.lease):
+                    lease = ref.lease
+                    renewed = await renew_remote_owner(lease)
+                    if lease != ref.lease:
+                        continue
+                    if not renewed:
                         raise ConnectionError("Canonical owner renewal failed")
+                    report["owner_renewal_count"] += 1
+                    await beat()
 
             heartbeat = asyncio.create_task(renew())
             journal = journal_type()
@@ -135,27 +228,40 @@ async def qualified(n: int = 7):
                                 denied = await api.post("/api/sdk/config/get", headers=headers,
                                                         json={"key": key, "scope": str(other.id)})
                                 assert denied.status_code == 403
+                                if isolation_label is not None:
+                                    await rendezvous("prepared", {"ready": True})
+                                    report["provider_start_ms"] = int(time.time() * 1000)
                                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
                                     response = await provider.post("http://bifrost-pyodide-ddf316c1:8799",
                                         json=json.loads(json.dumps({"mode": "canonical", "worker_id": str(worker.id),
                                             "execution_id": execution_id, "context": context, "manifest": manifest}, default=str)))
                                 assert response.status_code == 200, f"Provider status {response.status_code}"
+                                if isolation_label is not None:
+                                    report["provider_end_ms"] = int(time.time() * 1000)
                                 self.evidence = response.json()
                                 result = self.evidence["result"]
-                                assert result["success"] is True and result["result"]["value"] == 70
+                                assert result["success"] is True and result["result"]["value"] == expected_value
+                                if isolation_label is not None:
+                                    value = result["result"]
+                                    assert value["tenant_label"] == isolation_label and value["peer_sdk_status"] == 403
+                                    assert all(value[key] is None for key in (
+                                        "builtins_before", "environment_before", "module_before", "tmp_before"))
                                 assert result["result"]["parent_secret_present"] is False
                                 assert result["metrics"]["code_hash"] == manifest[path]
                                 document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
                                                          params={"scope": str(org.id)})
-                                assert document.status_code == 200 and document.json()["data"]["value"] == 70
+                                assert document.status_code == 200 and document.json()["data"]["value"] == expected_value
                                 report["cross_tenant_status"] = denied.status_code
-                                report["independent_document_value"] = 70
+                                report["independent_document_value"] = expected_value
+                                if isolation_label is not None:
+                                    await rendezvous("effects_done", {"done": True})
                             return result
 
                     task = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     duplicate = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     assert task is duplicate
-                    assert (await task)["success"] is True
+                    task_result = await task
+                    assert task_result["success"] is True
 
             pool = LocalPool()
             consumer = WorkflowExecutionConsumer(pool=pool)
@@ -164,7 +270,11 @@ async def qualified(n: int = 7):
                 with remote_owner_context(ref):
                     claim = await claim_next(worker.id, fits_bytes=2**30, budget_bytes=2**30)
                     assert claim is not None and claim.subject_id == execution.id and claim.claimed is not None
-                    assert await claim_next(worker.id, fits_bytes=2**30, budget_bytes=2**30) is None
+                    liveness.update(active_runs=1, memory_reserved_bytes=claim.memory_request_bytes)
+                    await beat()
+                    if isolation_label is None:
+                        duplicate_claim = await claim_next(worker.id, fits_bytes=2**30, budget_bytes=2**30)
+                        assert duplicate_claim is None
                     await consumer.process_message(claim.message, PendingExecution(**claim.claimed))
                 assert pool.evidence is not None and pool.info is not None
                 original = consumer._handle_result
@@ -181,14 +291,17 @@ async def qualified(n: int = 7):
                 else:
                     raise AssertionError("Lost-ACK injection was not observed")
                 assert not journal.inventory()[0]["acknowledged"]
+                liveness.update(active_runs=0, runs_handled=1, memory_reserved_bytes=0)
                 async with get_db_context() as db:
                     row = await db.get(Execution, execution.id)
-                    assert row is not None and row.status == ExecutionStatus.SUCCESS and row.result["value"] == 70
+                    assert row is not None and row.status == ExecutionStatus.SUCCESS and row.result["value"] == expected_value
                     logs_before = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
                     assert logs_before
                 ref.lease = await connect(2)
+                await beat()
                 consumer._handle_result = original
-                assert await journal.reconcile_workflow(ref.lease, "route", consumer, pool.info)
+                reconciled = await journal.reconcile_workflow(ref.lease, "route", consumer, pool.info)
+                assert reconciled
                 async with get_db_context() as db:
                     logs_after = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
                     assert logs_after == logs_before
@@ -223,6 +336,12 @@ async def qualified(n: int = 7):
         if any(secret and secret in encoded for secret in secrets):
             raise RuntimeError("Credential exposure: evidence withheld")
         print(encoded)
+    except Exception:
+        if isolation_label is not None:
+            with suppress(Exception):
+                async with get_redis() as redis:
+                    await redis.set(f"bifrost:pyodide-isolation:{batch}:abort:{isolation_label}", "failed", ex=90)
+        raise
     finally:
         if heartbeat is not None and not heartbeat.done():
             heartbeat.cancel()
@@ -237,13 +356,34 @@ async def qualified(n: int = 7):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
     try:
-        asyncio.run(main())
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--isolation-label", choices=("tenant-a", "tenant-b"))
+        parser.add_argument("--batch")
+        args = parser.parse_args()
+        asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch))
     except Exception as exc:
         import traceback
         from pathlib import Path
 
+        chain = []
+        pending_errors = [exc]
+        seen = set()
+        while pending_errors and len(chain) < 12:
+            error = pending_errors.pop(0)
+            if id(error) in seen:
+                continue
+            seen.add(id(error))
+            chain.append({"error_type": type(error).__name__,
+                "constraint": getattr(error, "constraint_name", None),
+                "table": getattr(error, "table_name", None),
+                "locations": [f"{Path(frame.filename).name}:{frame.lineno}"
+                              for frame in traceback.extract_tb(error.__traceback__)]})
+            pending_errors.extend(e for e in (error.__cause__, error.__context__) if e is not None)
         print(json.dumps({"runtime": "local-workerd-canonical-claim-consumer",
             "error_type": type(exc).__name__,
+            "exception_chain": chain,
             "locations": [f"{Path(frame.filename).name}:{frame.lineno}"
                           for frame in traceback.extract_tb(exc.__traceback__)]}))
         raise SystemExit(1)

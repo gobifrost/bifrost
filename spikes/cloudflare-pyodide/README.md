@@ -27,6 +27,11 @@ make no live cloud requests and do not renew the retired cloud experiment.
 
 ## Reproduce
 
+Latest local qualification: [two concurrent canonical tenant runs](backend/CANONICAL-ISOLATION.md).
+Warm execution passes with real run-scoped SDK identity; cold concurrent startup
+fails in the tested native workerd runtime. This does not resolve physical CPU
+termination or deployed end-to-end acceptance.
+
 Requirements: Docker, Python 3.13+ for source preparation, Node 24+, Git Bash on
 Windows for the repository debug launcher. From the worktree root:
 

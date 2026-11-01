@@ -1,5 +1,22 @@
 # PR 1161 data-flow review
 
+## Current-head follow-up at f7deaf162
+
+The check-run annotations were read directly on 2026-10-31 (check
+124706101545). The eight HTTP-to-file warnings are the intentional fixed-path,
+bounded JSON evidence flows assessed below (1813–1820); they remain open for
+maintainer review. Successful Python/JavaScript analysis jobs do not override
+the failing alert gate. No dismissal or suppression was applied.
+
+The canonical-local fixture's storage write was inside an assertion. Move all
+effectful awaited calls outside assertions, including worker readiness, claim,
+task completion and reconciliation, so optimized Python cannot omit them.
+The two no-effect notes identify cancellation joins (`await heartbeat`), which
+are necessary to observe task termination before releasing ownership/closing
+the database. Retain those joins; they are executable asyncio synchronization,
+not unused expression placeholders. No physical provider-stop claim follows
+from joining this local heartbeat task.
+
 Reviewed all 15 public PR comments on source head
 `b720516c1c7f39e30d558f353bb4b144f38fafb9`. Detailed code-scanning API access
 returned HTTP403. No additional scope, alternate identity, dismissal, suppression,

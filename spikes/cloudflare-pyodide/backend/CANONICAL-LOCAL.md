@@ -38,7 +38,7 @@ result without another physical launch or duplicate log row.
 Paths above are relative to the spike directory. Offline verification:
 
 ```bash
-node backend/verify-canonical-local.mjs
+node backend/verify-canonical-local.mjs --commit a00ae73e98a65dfd1f1001bda595754ce51f2580
 node --test probe-io.test.mjs backend/module-response.test.mjs backend/resolution-response.test.mjs
 ```
 

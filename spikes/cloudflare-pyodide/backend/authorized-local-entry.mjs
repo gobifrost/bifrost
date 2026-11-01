@@ -27,6 +27,13 @@ export default {
   async fetch(request,env,ctx) {
     if(env.ISOLATED_TEST_STACK!=='true') return new Response('Test stack only',{status:403});
     if(request.method!=='POST') return new Response('POST required',{status:405});
+    if(new URL(request.url).pathname==='/__fixture_warmup') {
+      // Fixed, credential-free Python startup probe. No workspace code or API
+      // capability is passed; this is not production admission or a retry.
+      const response=await env.LOADER.load(runtimeCode(null)).getEntrypoint().fetch(
+        new Request('https://warmup.invalid/',{method:'POST',body:JSON.stringify({action:'inspect'})}));
+      return Response.json(await boundedJson(response));
+    }
     const body=await boundedJson(request,262144);
     if(!/^workflows\/pyodide_qualification_[a-f0-9]{32}\.py$/.test(body.context?.file_path ?? '') ||
        body.context?.function_name!=='qualified' || !body.context?.engine_token ||

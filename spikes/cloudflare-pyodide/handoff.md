@@ -1,5 +1,13 @@
 # Spike handoff: package 0.1.0
 
+Latest increment: [concurrent canonical local qualification](backend/CANONICAL-ISOLATION.md).
+Two warm fresh tenant runs passed actual engine/SDK execution, wrong-peer denial,
+state canaries, duplicate delivery, terminal reconciliation and cleanup.
+Cold concurrency failures are retained; no cloud invocation was performed.
+The smallest safe next implementation step is a credential-free minimal
+reproduction of the cold workerd startup race, followed by explicit admission
+tests for the supported runtime boundary. Physical termination remains blocking.
+
 Current contribution checkpoint: see [combined canonical local proof](backend/CANONICAL-LOCAL.md)
 at a00ae73e9 and the subsequent [post-commit recovery boundary](backend/POSTCOMMIT-RECOVERY.md).
 The latter qualifies the earlier one-log claim to the after-full-callback fault

@@ -2,9 +2,20 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const args=process.argv.slice(2);
+if(args.length && (args.length!==2 || args[0]!=='--commit' || !/^[a-f0-9]{40}$/.test(args[1]))) {
+  throw new Error('Use no arguments for current source or --commit <full tested SHA>');
+}
+const historicalCommit=args[1];
+const exec=promisify(execFile);
 const results=new URL('../results/',import.meta.url);
 const repo=new URL('../../../',import.meta.url);
 const read=async name=>JSON.parse(await readFile(new URL(name,results),'utf8'));
+const sourceBytes=async path=>historicalCommit
+  ? (await exec('git',['show',`${historicalCommit}:${path}`],{cwd:repo,encoding:'buffer',maxBuffer:2*1024*1024})).stdout
+  : readFile(new URL(path,repo));
 const report=await read('canonical-local.json');
 assert.equal(report.process_exit_code,0);
 for(const field of ['canonical_claim_verified','canonical_terminal_consumption_verified',
@@ -26,14 +37,14 @@ assert.ok(Object.values(report.workspace_sha256).includes(envelope.metrics.code_
 assert.ok(report.result.api_calls.some(call=>call.path==='/api/sdk/runtime/logs' && call.status===200));
 const provenance=await read('canonical-local-provenance.json');
 for(const [path,digest] of Object.entries(provenance.source_sha256)) {
-  assert.equal(createHash('sha256').update(await readFile(new URL(path,repo))).digest('hex'),digest,path);
+  assert.equal(createHash('sha256').update(await sourceBytes(path)).digest('hex'),digest,path);
 }
 const manifest=await read('canonical-local-runtime-manifest.json');
 const sources=await read('canonical-local-source.json');
 assert.equal(manifest.files['src/services/execution/result_envelope.py'],
   sources.source_files['src/services/execution/result_envelope.py']);
 for(const [path,digest] of Object.entries(sources.source_files)) {
-  assert.equal(createHash('sha256').update(await readFile(new URL('api/'+path,repo))).digest('hex'),digest,path);
+  assert.equal(createHash('sha256').update(await sourceBytes('api/'+path)).digest('hex'),digest,path);
 }
 const cleanup=await read('canonical-local-cleanup.json');
 assert.equal(cleanup.listener_status,'ECONNREFUSED');
