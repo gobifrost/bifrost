@@ -187,5 +187,55 @@
     "mixed_capacity": "not established",
     "partial_campaign": "one of five required segments completed; no mixed-capacity claim"
   },
-  "runtime_scope": "Unmodified captured production registry image; no platform code fixes or deployments. This is descriptive first-segment evidence only."
+  "runtime_scope": "Unmodified captured production registry image; no platform code fixes or deployments. This is descriptive first-segment evidence only.",
+  "storage_observation": {
+    "status": "descriptive_only_invalid_capacity_window",
+    "scope": "before warm-up through drain and durable reconciliation; collection timestamps retained",
+    "before": {
+      "collected_at_epoch_s": 1793495248.3624108,
+      "postgres_database_bytes": 42269719,
+      "postgres_retained_wal_bytes": 150994944,
+      "postgres_allocated_bytes": 217878528,
+      "current_object_payload_bytes": 1980014,
+      "current_object_count": 41,
+      "object_store_allocated_bytes": 2449408,
+      "retained_container_log_bytes": 360077,
+      "cardinality": {
+        "execution_rows": 0,
+        "execution_log_rows": 0,
+        "agent_run_rows": 0,
+        "agent_step_rows": 0,
+        "ai_usage_rows": 0,
+        "audit_rows": 1863
+      }
+    },
+    "after": {
+      "collected_at_epoch_s": 1793499133.5127141,
+      "postgres_database_bytes": 89103383,
+      "postgres_retained_wal_bytes": 436207616,
+      "postgres_allocated_bytes": 550256640,
+      "current_object_payload_bytes": 1980014,
+      "current_object_count": 41,
+      "object_store_allocated_bytes": 1642496,
+      "retained_container_log_bytes": 46493592,
+      "cardinality": {
+        "execution_rows": 9965,
+        "execution_log_rows": 0,
+        "agent_run_rows": 2005,
+        "agent_step_rows": 13730,
+        "ai_usage_rows": 3220,
+        "audit_rows": 7542
+      }
+    },
+    "observed_elapsed_s": 3885.1503033638,
+    "all_phases_database_window": {
+      "seconds": 3889.724470058456,
+      "xact": 358521,
+      "rollbacks": 42448,
+      "rows_written": 210298,
+      "wal_generated_bytes": 273658528,
+      "wal_stats_reset": "2026-11-01T01:00:04.921074+00:00"
+    },
+    "limits": "Includes warm-up, drain and reconciliation, not only the measured arrival cohort. Not a per-execution storage coefficient or long-term growth forecast. Logical, WAL, allocated and object/log bytes overlap or use different accounting bases; do not add them as a hosting bill."
+  }
 }
