@@ -22,7 +22,8 @@ from sqlalchemy import delete, select
 
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
-               concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False):
+               concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
+               node_pyodide=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -181,7 +182,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
 '''
     sources = {path: source, f"{helper}.py": "def fold(n):\n    return sum(range(1,n+1))\n"}
     manifest = {name: hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()}
-    report = {"runtime": "local-workerd-canonical-claim-consumer", "workspace_sha256": manifest,
+    report = {"runtime": "node-pyodide-canonical-claim-consumer" if node_pyodide else "local-workerd-canonical-claim-consumer", "workspace_sha256": manifest,
               "physical_termination_verified": False, "cloud_invocations": 0}
     if refresh_probe:
         report["refresh_probe"] = True
@@ -568,11 +569,13 @@ if __name__ == "__main__":
         parser.add_argument("--interrupt-refresh", action="store_true")
         parser.add_argument("--failure-probe", action="store_true")
         parser.add_argument("--transport-waiter", action="store_true")
+        parser.add_argument("--node-pyodide", action="store_true")
         args = parser.parse_args()
         asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
                          concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh,
-                         failure_probe=args.failure_probe, transport_waiter=args.transport_waiter))
+                         failure_probe=args.failure_probe, transport_waiter=args.transport_waiter,
+                         node_pyodide=args.node_pyodide))
     except Exception as exc:
         import traceback
         from pathlib import Path
