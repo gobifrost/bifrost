@@ -71,3 +71,57 @@ The initial published head `fd8614a0a` also passed upstream's full unit job: 10,
 CodeQL left an inline warning about an implicit lambda return inside `finally`. Test-only follow-up `3b33f092715b6c4898e001b5fdb1ea3ba1b741b7` replaces that polling callback with `functools.partial`, with no exception-handling or product-runtime change. The complete selected suite passed again: **156 tests in 59.13 seconds**, plus Docker Ruff. Fetch `82121271-4fde-4988-bbe9-e600ff1424df` and Sync `cf34826f-fa77-4c40-a748-ba5af8d1ea5d` succeeded on attempt one. Fixture commit `7e65ab65a237c0e705df0baca7c5ef6a1def2665` again returned A=`v1/v1/v2`, B=`v2/v2/v2`. Documentation-only changes follow this exact tested source.
 
 Receipts are local under `/root/.jcode/scratch/migration-20261029/validation/workspace-sync-overlap/repaired/`, including `exact-3f5b08323.log`, `current-upstream.log`, `final-review.log`, their JUnit XML files, and `upstream-unit-job.log`. No staging platform upgrade is part of this proposal.
+
+## Merge-queue fixture isolation repair
+
+The November 1 merge-queue candidate failed the overlap test because earlier
+tests committed source-less workflows and left unlinked configs under
+soft-deleted integrations. Fetch intentionally omits those records from its
+workspace manifest, so Sync correctly requested deletion confirmation instead
+of publishing the three fixture files. This was an order-dependent fixture
+leak, reproduced with the resource-report test followed by the overlap test
+(one passed, one failed).
+
+The repair cleans up records in the fixtures that created them: the two report
+workflows and their executions, the cross-org form's committed records, and
+integration fixtures with their dependent configs and mappings. Cleanup uses
+exact fixture IDs. The external-integration fixture's existing cleanup check
+also verifies that config rows do not remain. Production code and
+`confirm_deletes=False` remain unchanged.
+
+The original failing order, extended to include the cross-org form test, passed
+all three tests in 15.03 seconds after workflow-fixture cleanup.
+
+A broader reproduction then passed 986 tests and exposed a second isolation
+problem: Fetch refreshed one executor's checkout, but Sync reached another
+executor's nonempty checkout left by an earlier Git test. Its existing
+freshness guard correctly refused that stale checkout. The harness now exposes
+each executor's separate `/tmp/git` through distinct fixture bind mounts. The
+overlap test snapshots, clears, and restores those caches alongside its existing
+storage restoration, so either executor can start from the persisted baseline.
+It does not share caches between replicas or pin jobs to one executor.
+Suite reset also clears both bind-mounted caches through the UID-1000 test
+runner after stopping the executors, preserving the fresh-state contract
+without depending on the host user's UID.
+
+The preceding native Git-job test followed by the overlap scenario and harness
+contracts passed **27 tests in 51.10 seconds**. Reproducing the original failed
+CI shard's 114 files, plus the focused Git consumers and harness contracts,
+then passed **1,012 tests in 515.96 seconds**, with zero failures, errors, or
+skips in JUnit. This includes the overlap test after the leaking fixtures and
+earlier native Git jobs.
+
+The reset-script edit was accidentally made while that broad invocation was
+running; Bash resumed at an obsolete file offset after pytest and exited 127.
+The settled script was verified in a separate invocation: **25 harness tests
+passed in 6.51 seconds**, command exit zero, and both replica cache directories
+were empty after reset, including removal of hidden sentinel files planted in
+each one. The post-pytest shell error was an in-flight harness-edit error, not
+a failed test or an accepted intermittent failure.
+Dockerized API quality checks also passed: Pyright reported zero errors or
+warnings, and Ruff reported all checks passed. Bash syntax and Compose
+configuration validation passed.
+
+Validation receipts for this maintainer follow-up are under
+`/tmp/review-1140-20261101-*.log` and their matching JUnit XML snapshots. Full
+repository-wide acceptance remains the merge queue's responsibility.

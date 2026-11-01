@@ -36,6 +36,34 @@ from tests.e2e.platform.thin_live_helpers import wait_for_job
 pytestmark = pytest.mark.e2e
 
 
+def _empty_directory(path: Path) -> None:
+    for entry in path.iterdir():
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+
+@pytest.fixture
+def isolated_git_checkouts(tmp_path):
+    """Start both physical executors fresh without merging their local caches."""
+    root = Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts")
+    checkouts = [root / name for name in ("worker", "scheduler")]
+    for checkout in checkouts:
+        assert checkout.is_dir(), f"missing test-harness Git mount: {checkout}"
+        shutil.copytree(checkout, tmp_path / checkout.name, symlinks=True)
+    try:
+        for checkout in checkouts:
+            _empty_directory(checkout)
+        yield
+    finally:
+        for checkout in checkouts:
+            _empty_directory(checkout)
+            shutil.copytree(
+                tmp_path / checkout.name, checkout, dirs_exist_ok=True, symlinks=True,
+            )
+
+
 def _source(function: str, eager: str, lazy: str, version: str) -> str:
     return f'''import asyncio
 import time
@@ -69,7 +97,7 @@ def _execution(client, headers, execution_id: str, *, terminal: bool = True):
 
 
 async def test_sync_updates_queued_code_without_replacing_running_imports(
-    e2e_client, platform_admin, async_session_factory,
+    e2e_client, platform_admin, async_session_factory, isolated_git_checkouts,
 ):
     """A keeps loaded v1 code, lazily imports v2; queued B starts entirely on v2."""
     headers = platform_admin.headers

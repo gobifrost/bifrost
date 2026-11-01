@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 import pytest
+from sqlalchemy import delete
 
 from src.models.enums import ExecutionStatus
 from src.models.orm import AIUsage, Execution, Workflow
@@ -226,32 +227,39 @@ class TestWorkflowResourceReports:
             )
         await db_session.commit()
 
-        params = {
-            "started_after": (now - timedelta(hours=1)).isoformat(),
-            "started_before": (now + timedelta(hours=1)).isoformat(),
-            "workflow": name,
-            "view": "workflows",
-        }
-        response = e2e_client.get(
-            "/api/reports/workflow-resources",
-            headers=platform_admin.headers,
-            params=params,
-        )
-        assert response.status_code == 200, response.text
-        assert response.json()["total"] == 2
-        assert {row["workflow_id"] for row in response.json()["workflows"]} == {
-            str(first.id),
-            str(second.id),
-        }
+        try:
+            params = {
+                "started_after": (now - timedelta(hours=1)).isoformat(),
+                "started_before": (now + timedelta(hours=1)).isoformat(),
+                "workflow": name,
+                "view": "workflows",
+            }
+            response = e2e_client.get(
+                "/api/reports/workflow-resources",
+                headers=platform_admin.headers,
+                params=params,
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["total"] == 2
+            assert {row["workflow_id"] for row in response.json()["workflows"]} == {
+                str(first.id),
+                str(second.id),
+            }
 
-        selected = e2e_client.get(
-            "/api/reports/workflow-resources",
-            headers=platform_admin.headers,
-            params={**params, "view": "runs", "workflow_id": str(first.id)},
-        )
-        assert selected.status_code == 200, selected.text
-        assert selected.json()["total"] == 1
-        assert selected.json()["runs"][0]["workflow_id"] == str(first.id)
+            selected = e2e_client.get(
+                "/api/reports/workflow-resources",
+                headers=platform_admin.headers,
+                params={**params, "view": "runs", "workflow_id": str(first.id)},
+            )
+            assert selected.status_code == 200, selected.text
+            assert selected.json()["total"] == 1
+            assert selected.json()["runs"][0]["workflow_id"] == str(first.id)
+        finally:
+            # Committed report fixtures are visible to later workspace Syncs.
+            workflow_ids = [first.id, second.id]
+            await db_session.execute(delete(Execution).where(Execution.workflow_id.in_(workflow_ids)))
+            await db_session.execute(delete(Workflow).where(Workflow.id.in_(workflow_ids)))
+            await db_session.commit()
 
     def test_rejects_invalid_time_window(self, e2e_client, platform_admin) -> None:
         response = e2e_client.get(
