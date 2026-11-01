@@ -1,0 +1,89 @@
+{
+  "source": "f417d03f5c8d5e3a182e68f69e2bf601a3b60125",
+  "scope": "Linux signed control with one real native SDK workflow",
+  "cloud_invocations": 0,
+  "planned_workflows": 1,
+  "qualification_passed": true,
+  "started_at_epoch": 1793556497.777704,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "-f",
+        "/opt/bifrost-tests/pyodide-ddf316c1/runs/linux-control-reference-v1/limits.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--name",
+        "bifrost-test-cc399929-linux-control-reference",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/linux-control-reference-v1:/qualification:ro",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/f417d03f5c8d5e3a182e68f69e2bf601a3b60125/spikes/cloudflare-pyodide:/spike:ro",
+        "test-runner",
+        "python",
+        "/qualification/linux-control-reference.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "project": "bifrost-test-cc399929",
+  "fixture_sha256": "5af55296b66553c861c0557b2f230e6f7a91cb2e28caba4e1b8b86403969c535",
+  "observed": {
+    "runtime": "actual-linux-signed-control-reference",
+    "cloud_invocations": 0,
+    "pyodide_physical_termination_verified": false,
+    "qualification_passed": true,
+    "workspace_sha256": {
+      "workflows/linux_reference_6ae5dafbb8a14829b0f0a045e6bb4b00.py": "7d5e355f5df29b3ad5cda0984815e87becf01cbb318f198540363ae3b9bf5d40",
+      "linux_helper_6ae5dafbb8a14829b0f0a045e6bb4b00.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"
+    },
+    "terminal_status": "Success",
+    "independent_document_value": 70,
+    "wire_events": {
+      "workflow_commands": 1,
+      "pid_acks": [
+        21
+      ],
+      "result_events": 1
+    },
+    "signed_session_generation": 1,
+    "runtime_access_after_terminal_status": 401,
+    "retained_terminal_acknowledged": true,
+    "real_linux_fork_verified": true,
+    "native_templates_stopped": true,
+    "fixture_worker_cleanup_verified": true
+  },
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 62.20936137391254
+}
