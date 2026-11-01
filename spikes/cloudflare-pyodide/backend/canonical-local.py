@@ -22,7 +22,7 @@ from sqlalchemy import delete, select
 
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
-               concurrent_refresh=False, interrupt_refresh=False, failure_probe=False):
+               concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -42,6 +42,9 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
         raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
     expected_success = not failure_probe
+    if transport_waiter and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh
+                             or failure_probe or isolation_label is not None):
+        raise RuntimeError("Transport waiter qualification is a separate fixed single-run fixture")
 
     from src.core.database import init_db, get_engine, close_db, get_db_context
     from src.core.module_cache import set_module, invalidate_module
@@ -302,6 +305,14 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     return CredentialRoute(2, ref.lease.session_generation)
 
                 async def route_execution(self, *, execution_id, context, credential_route, active_execution):
+                    provider_sent = asyncio.Event()
+
+                    async def trace_provider(event, _info):
+                        # Observe only the fixed provider request's transport phase;
+                        # never retain headers, request bodies or credentials.
+                        if event == "http11.send_request_body.complete":
+                            provider_sent.set()
+
                     if credential_route != self.credential_route():
                         raise ConnectionError("Credential route changed")
                     assert context["file_path"] == path and context["function_name"] == "qualified"
@@ -342,6 +353,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     child_context = {**context, "engine_token": expired.token}
                                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
                                     response = await provider.post("http://bifrost-pyodide-ddf316c1:8799",
+                                        extensions={"trace": trace_provider} if transport_waiter else {},
                                         json=json.loads(json.dumps({"mode": "canonical", "worker_id": str(worker.id),
                                             "execution_id": execution_id, "context": child_context, "manifest": manifest,
                                             **({"fixture_mode": "refresh_interruption"} if interrupt_refresh else {})}, default=str)))
@@ -405,6 +417,30 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     task = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     duplicate = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     assert task is duplicate
+                    if transport_waiter:
+                        async def wait_for_provider():
+                            return await task
+
+                        waiter = asyncio.create_task(wait_for_provider())
+                        sent = asyncio.create_task(provider_sent.wait())
+                        try:
+                            await asyncio.wait((sent, waiter), return_when=asyncio.FIRST_COMPLETED)
+                            if waiter.done():
+                                await waiter  # Preserve a provider failure before the checkpoint.
+                                raise RuntimeError("Provider completed before interruption checkpoint")
+                            assert provider_sent.is_set()
+                            waiter.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await waiter
+                            assert waiter.cancelled()
+                            assert journal.inventory()[0]["terminal"] is False
+                            report["transport_waiter_probe"] = True
+                            report["provider_request_body_sent"] = True
+                            report["cancelled_waiter_collection_retained"] = True
+                        finally:
+                            sent.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await sent
                     task_result = await task
                     assert task_result["success"] is expected_success
 
@@ -525,11 +561,12 @@ if __name__ == "__main__":
         parser.add_argument("--concurrent-refresh", action="store_true")
         parser.add_argument("--interrupt-refresh", action="store_true")
         parser.add_argument("--failure-probe", action="store_true")
+        parser.add_argument("--transport-waiter", action="store_true")
         args = parser.parse_args()
         asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
                          concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh,
-                         failure_probe=args.failure_probe))
+                         failure_probe=args.failure_probe, transport_waiter=args.transport_waiter))
     except Exception as exc:
         import traceback
         from pathlib import Path

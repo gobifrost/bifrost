@@ -209,3 +209,19 @@ deterministic launch callback, not a fresh Python Worker. Whole-host loss and
 physical CPU termination remain unresolved. Quality's first invocation was
 refused while the test command held the stack lock; it was started sequentially
 after that command completed, without bypassing the lock.
+
+## Actual provider collection after waiter detachment
+
+Continued from ea35a2ec23f5b17aa6cc56d2aa8322df72c7bd5e using the own isolated
+local API and Wrangler 4.156.0 supervisor only. No cloud resources were invoked.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| The shielded receipt retains an actual Python Worker result after its caller detaches in flight | Cancel a separate waiter after HTTP request body completion; `node backend/canonical-refresh.mjs --run canonical-refresh-transport-waiter transport concurrent-runtime-manifest.json` | Exit 0, actual SDK value 70, one launch, canonical persistence/lost-ACK reconciliation and terminal access 401; canonical-refresh-transport-waiter.json | A dropped provider socket and whole-supervisor interruption remain separate tests |
+| Exact cached bundle still matches its tested pin | Parse generated runtime and use packer's sorted Python JSON hash | Payload 21b82a20... matches; raw source mismatch was verified CRLF normalization, not a different payload | Make source-byte versus serialized-module provenance explicit when changing the packer |
+
+Initial API-starting preflight refused before fixture effects; no business
+retry occurred. Offline verifier, 26 focused Node cases, Docker Ruff and diff
+checks passed. Cleanup receipt confirms port refusal, bridge-only network and
+stopped API. No physical workflow stop, cloud acceptance or refresh revocation
+claim follows from this waiter-detachment fixture. See backend/TRANSPORT-INTERRUPTION.md.
