@@ -1,5 +1,11 @@
 # Upstream Python Worker backend acceptance
 
+Current requirement-level status is in [ACCEPTANCE.md](ACCEPTANCE.md), reconciled
+through b9043a08b. The chronological sections below preserve earlier stopping
+points and must not be read as current PR or runtime state. Local canonical SDK,
+tenant and warm concurrency proofs now exist; deployed canonical acceptance and
+physical termination remain incomplete.
+
 Standing goal received 2026-10-31; sole writer on existing
 `t3/cloudflare-pyodide-workflow-spike`. No edits to Containers owner branch/resources.
 Baseline spike commits and evidence remain historical and immutable.
