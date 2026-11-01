@@ -25,8 +25,10 @@ not a substitute. No guest is currently selected or verified.
 ## Reproducible source and isolation
 
 Use the public personal fork MTG-Thomas/bifrost-upstream at the **exact published
-commit read back for this handoff**, never a moving branch head. The final
-handoff manifest binds relevant source/fixture hashes. Obtain public source by
+commit `0c3241789a15e418d02ca8eb6fbd8fac8016edef`**, never a moving branch head.
+results/remote-test-handoff.json binds the relevant source/fixture hashes;
+the later publication commit adds only this pin/packet and offline verification.
+Obtain public source by
 existing authorized access; do not copy .env files, production secrets, signed
 hello material, SSH/Docker/npm credentials or entire private caches. Do not
 reuse the laptop-specific canonical-refresh.mjs container paths remotely.

@@ -1,0 +1,52 @@
+{
+    "source_repository":  "https://github.com/MTG-Thomas/bifrost-upstream",
+    "source_commit":  "0c3241789a15e418d02ca8eb6fbd8fac8016edef",
+    "source_branch":  "t3/cloudflare-pyodide-workflow-spike",
+    "status":  "prepared_not_executed_remotely",
+    "instruction_acted_on":  true,
+    "target_host":  "pve-t340",
+    "target_guest":  null,
+    "target_owner_lease":  null,
+    "target_capacity_verified":  false,
+    "remote_harness_verified":  false,
+    "remote_execution_observed":  false,
+    "excluded_candidate":  "VM108/Kata",
+    "scratch_namespace":  "\u003cowner-approved-scratch\u003e/pyodide-ddf316c1/\u003csource_commit\u003e",
+    "proposed_not_approved_envelope":  {
+                                           "max_memory_mib":  8192,
+                                           "max_scratch_gib":  30,
+                                           "max_wall_seconds":  900,
+                                           "max_vcpu":  2
+                                       },
+    "first_phase_commands":  [
+                                 "./test.sh stack up",
+                                 "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_launcher.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q"
+                             ],
+    "source_and_fixture_sha256":  {
+                                      "test.sh":  "72e3fff24e62ec35fd83687ba670ab6650b5505baba25b08c39370de74052647",
+                                      "scripts/lib/test_helpers.sh":  "ee21bdfa3a5c6c90e5fb5e3db2ac4dad973920852fff433522b03a34dd43bd9f",
+                                      "docker-compose.test.yml":  "a75415b85f3bccca9e915ea3b75a436525ab79a6ecbf5344a0d68f4ef07e7c6a",
+                                      "api/Dockerfile.dev":  "21653adc509bc3159fd8a97548ce855ba8f2e9a9b0cf4593864554f7c5f861de",
+                                      "requirements.lock":  "9b2634b897af7a22510fcf2c441caa8fe248168c3683b9a29dafb90c54ec51d2",
+                                      "requirements-piptools.lock":  "4480000a4db1bfc8b61c37d05e6e0762b5aec16af4b2d27345fe98e014da2523",
+                                      "api/tests/unit/dev/test_pyodide_attempt_journal.py":  "99ee63f54d75e3a93419017b50a7476279ebb6cea342728000d112c15a3ff62c",
+                                      "api/tests/unit/worker/remote/test_launcher.py":  "000a4b9430a48cbb05505b2bcf7236adbe0b0960d15a5adbf7a9d70f7a67263a",
+                                      "api/tests/unit/worker/remote/test_ownership.py":  "9476d0ca17102b84b092df32fcc51a371f41419d4ba79a8322e3d6088bbdbc3e",
+                                      "api/tests/unit/worker/remote/test_fencing.py":  "ee644ff5556c4ef83ab6fd890bd7476de8830c00fbe33cb4b35b98180b01f8c2",
+                                      "spikes/cloudflare-pyodide/backend/attempt_journal.py":  "ec73658536a377574d71256397037ed7e3aa2fac1064d39f53887d1b9653a4de",
+                                      "spikes/cloudflare-pyodide/backend/control-auth.py":  "d7cb913997c80a4274736cb2c5e275c5219c6936fa3efa67373f596bd74d6bce",
+                                      "spikes/cloudflare-pyodide/backend/remote-test-image-pins.json":  "caf27c952b046928469c31a206cc3982548afe1579e27b37349ffcd0a161f2fe",
+                                      "spikes/cloudflare-pyodide/results/canonical-refresh-control-auth.json":  "4826786dabb9cd3330a5f90659f2c4c12c00eaa7fee0213d03ad8a7b2c52b37e",
+                                      "spikes/cloudflare-pyodide/results/control-auth-checkpoint.patch":  "8ff2e5e2c22d21e19b8025a31d696ca8e12bb2505c9a847b83821aa48b274ae2"
+                                  },
+    "prohibited_transfers":  [
+                                 "production secrets",
+                                 ".env files",
+                                 "signed hello material",
+                                 "SSH/Docker/npm credentials",
+                                 "whole private caches"
+                             ],
+    "capacity_query_request_id":  "c5842180-9153-4841-b5f7-130aa489f58b",
+    "capacity_query_denial":  "source_run_not_active",
+    "safe_to_resend":  false
+}
