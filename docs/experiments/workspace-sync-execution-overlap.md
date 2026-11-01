@@ -148,3 +148,38 @@ repair therefore continues in [PR #1170](https://github.com/gobifrost/bifrost/pu
 preserving the original commits from Thomas's
 [PR #1140](https://github.com/gobifrost/bifrost/pull/1140) and crediting Thomas Bray
 as a co-author in the squash-commit body.
+
+## Additional fixture ownership repair
+
+The first #1170 queue run passed unit, client, browser, and two E2E shards;
+[shard 2](https://github.com/gobifrost/bifrost/actions/runs/41326748197/job/124908175549)
+exposed two more source-less workflow fixtures in its different file partition.
+The workspace-bundle test deleted its package's incoming workflow ID, although
+workspace import remaps that ID. It now verifies the imported row exists and
+cleans up by its unique fixture path/function. The uninstall-summary test
+correctly verified that an unrelated workspace listener survived Solution
+deletion, but left that listener and workflow behind; it now removes its exact
+owned records after making the survival assertion.
+
+Those two cases immediately followed by the overlap test passed **3 tests in
+35.00 seconds**. The failed partition, every earlier repaired fixture, and Git
+consumer/harness coverage then completed **949 tests in 591.91 seconds**, with
+zero failures, errors, or skips in JUnit. Docker recorded test-container exit
+code zero. The outer command reported SIGTERM (143) after the completed run;
+its sender was not identified, so a successful outer-shell exit is not claimed.
+The ordered exposing sequence and subsequent Dockerized API quality command
+both exited zero. Pyright reported zero errors/warnings and Ruff passed.
+No test failure was retried, skipped, or masked.
+
+The expanded file list and receipts are `/tmp/pr1170-repair2-expanded-files.txt`,
+`/tmp/pr1170-repair2-expanded.xml`, `/tmp/pr1170-repair2-expanded.log`,
+`/tmp/pr1170-repair2-ordered.xml`, and `/tmp/pr1170-repair2-quality.log`. The
+expanded command was:
+
+```bash
+mapfile -t test_files < /tmp/pr1170-repair2-expanded-files.txt
+./test.sh "${test_files[@]}" -v --durations=30
+```
+
+The test body, deletion-confirmation guard, and production implementation are
+unchanged by this additional repair. Full acceptance remains the merge queue.

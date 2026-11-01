@@ -9,7 +9,8 @@
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1170",
       "https://github.com/gobifrost/bifrost/pull/1140",
-      "Carries Thomas Bray’s original commits and credits him as co-author. Original runtime scope is unchanged. Maintainer fixture/cache isolation repair passed 1,012 tests with zero JUnit failures, errors, or skips; the settled reset/harness invocation passed 25 tests and Dockerized API Pyright/Ruff passed. Full acceptance remains the merge queue."
+      "Carries Thomas Bray’s original commits and credits him as co-author. Original runtime scope is unchanged. Maintainer fixture/cache isolation repair passed 1,012 tests with zero JUnit failures, errors, or skips; the settled reset/harness invocation passed 25 tests and Dockerized API Pyright/Ruff passed. Full acceptance remains the merge queue.",
+      "Additional queue-exposed fixture ownership repairs leave product code unchanged. The two leaking fixtures followed immediately by native overlap passed three tests; an expanded 949-case run completed with zero JUnit failures/errors/skips and Docker test-container exit zero. The outer host command returned SIGTERM after completion, documented in the experiment note; ordered verification and Dockerized Pyright/Ruff both exited zero."
     ]
   }
 }
