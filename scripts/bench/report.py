@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from statistics import median
 
 import jsoncodec
 
@@ -540,6 +541,48 @@ def _ab(result: dict) -> list[str]:
     return [*rows, ""]
 
 
+def _elasticity(result: dict) -> list[str]:
+    rows = [
+        "## Worker Elasticity Observation", "",
+        f"Status: **{result.get('status', 'in progress')}**. This is a first-request/burst diagnostic, not a sustained capacity certification.",
+        "", "Each request uses the existing two-second wait workflow and validates its durable result. Node images remain cached.", "",
+        "| Phase | Correct Within Deadline / Sent | End-to-End Min / Median / Max s | Late Completions | Phase Outcome |",
+        "|---|---:|---:|---:|---|",
+    ]
+    for key in ("first_arrival", "burst"):
+        wave = result.get(key)
+        if not isinstance(wave, dict):
+            continue
+        requests = wave["requests"]
+        correct = sum(row.get("correct") is True and row.get("deadline_met") is True
+                      and row.get("durable_identity_matches") is True and row.get("error") is None
+                      and row.get("duplicate_durable_rows") == 0 for row in requests)
+        durations = [row["e2e_s"] for row in requests if row.get("timing_valid") is True]
+        timing = " / ".join(f"{value:.6f}" for value in (min(durations), median(durations), max(durations))) if durations else "unmeasured"
+        late = wave["late_count"] if wave.get("late_count") is not None else "unmeasured"
+        rows.append(f"| {key} | {correct} / {len(requests)} | {timing} | {late} | {wave['verdict']} |")
+    rows += ["", "## Policy and Resource Evidence", "",
+             f"Effective policy before: `{result.get('policy_before', 'not observed')}`.",
+             f"Effective policy after: `{result.get('policy_after', 'not observed')}`.", "",
+             f"Lifecycle checkpoints: `{result.get('timeline', {}).get('path', 'not recorded')}`. "
+             "DB, Pod and quota probes are sequential; heartbeat activity is not exact child concurrency.", ""]
+    host = result.get("host_sampling", {})
+    rows += [f"Host validity: `{host.get('validity', 'not observed')}`.", "",
+             "| Resource Phase | Window s | Tenant CPU Seconds Observed | Tenant Memory Peak MiB Observed | Interval Coverage |",
+             "|---|---:|---:|---:|---:|"]
+    for name, phase in host.get("phases", {}).items():
+        usage = phase["resource_usage"]
+        tenant = usage["tenant"]
+        memory = tenant["working_set_peak_bytes"]
+        cpu = f"{tenant['cpu_seconds']:.3f}" if tenant["observed_seconds"] > 0 else "unmeasured"
+        rows.append(f"| {name} | {usage['window_seconds']:.3f} | {cpu} | "
+                    + (f"{memory / 2**20:.3f}" if memory is not None else "unmeasured")
+                    + f" | {tenant['observed_window_fraction']:.3f} |")
+    rows += ["", host.get("limits", "Resource evidence not yet collected."), "",
+             f"Cleanup: `{result.get('cleanup', 'not yet observed')}`.", ""]
+    return rows
+
+
 def render(result: dict) -> str:
     if jsoncodec.NON_FINITE_NUMBERS in result:
         result = jsoncodec.decode(result)
@@ -564,6 +607,8 @@ def render(result: dict) -> str:
         return "\n".join([*lines, *_retention(result)])
     if result["kind"] == "recovery-drill":
         return "\n".join([*lines, *_recovery(result)])
+    if result["kind"] == "worker-elasticity":
+        return "\n".join([*lines, *_elasticity(result)])
     import_diagnostic = bool(result.get("imports_diagnostic"))
     lines += [
         f"Classes: {profile['sequential']} sequential + {profile['burst_rounds']} bursts of {profile['burst']} per class, two passes.",

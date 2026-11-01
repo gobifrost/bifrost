@@ -31,6 +31,7 @@ _ROLES = (
 )
 _OCI_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _PROXY_ADDRESS = re.compile(r"Starting to serve on 127\.0\.0\.1:(\d+)")
+_QUOTA_EVENT_PROBE_TIMEOUT_S = 10.0
 
 
 class RemoteCleanupError(RuntimeError):
@@ -472,6 +473,37 @@ class Cluster:
             "evicted": sum(1 for pod in pods if pod.get("status", {}).get("reason") == "Evicted"),
             "quota_denials": sum(e.get("count") or 1 for e in events if e.get("reason") == "FailedCreate" and "exceeded quota" in e.get("message", "")),
         }
+
+    def quota_denial_events(self) -> list[dict]:
+        """Return only UID/count evidence for quota-denial Events in the tenant namespace.
+
+        Classification needs the Event message, but benchmark evidence must not
+        retain it because it can contain workload details.
+        """
+        events = json.loads(self.kubectl(
+            "get", "events", "-o", "json", timeout_s=_QUOTA_EVENT_PROBE_TIMEOUT_S,
+        ))["items"]
+        observed = []
+        for event in events:
+            if not isinstance(event, dict):
+                observed.append({"uid": None, "count": None})
+                continue
+            message = event.get("message")
+            if event.get("reason") != "FailedCreate" or not isinstance(message, str) or "exceeded quota" not in message:
+                continue
+            series = event.get("series")
+            if isinstance(series, dict):
+                # events.k8s.io/v1 keeps the current aggregate in series.count;
+                # do not silently fall back to a deprecated CoreV1 count when
+                # a present series is malformed.
+                count = series.get("count")
+            elif series is None:
+                count = event.get("count")
+            else:
+                count = None
+            metadata = event.get("metadata")
+            observed.append({"uid": metadata.get("uid") if isinstance(metadata, dict) else None, "count": count})
+        return observed
 
     def driver_sql(self, sql: str, *, timeout_s: float = 3600) -> object:
         """Run one read-only query from the infrastructure driver pod (never inside a tenant pod)."""

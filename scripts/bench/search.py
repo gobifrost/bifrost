@@ -16,6 +16,7 @@ from typing import Callable
 
 import capacity
 import execution_rates
+import faults
 import hostmetrics
 import resource_summary
 import storage
@@ -47,9 +48,10 @@ def window_seconds(rate: float, mix: dict[str, float], minimum_s: float, observa
 class HostSampler:
     """Host and cgroup counters every ``HOST_INTERVAL_S`` while a step runs."""
 
-    def __init__(self, cluster: Cluster, disk: dict[str, str]) -> None:
+    def __init__(self, cluster: Cluster, disk: dict[str, str], on_sample: Callable[[], None] | None = None) -> None:
         self.cluster = cluster
         self.disk = disk
+        self.on_sample = on_sample
         self.nodes = {"bench": hostmetrics.node_cgroup(cluster.identity.node_name)}
         for name in cluster.external_nodes():
             self.nodes[f"external:{name}"] = hostmetrics.node_cgroup(name)
@@ -78,6 +80,8 @@ class HostSampler:
         pods = self._pods()
         refreshed = time.monotonic()
         while not self._stop.is_set():
+            if self.on_sample is not None:
+                self.on_sample()
             if time.monotonic() - refreshed > 30:
                 pods, refreshed = self._pods(), time.monotonic()
             self.snapshots.append(hostmetrics.snapshot(self.nodes, pods, self.disk))
@@ -96,6 +100,34 @@ class HostSampler:
     def intervals(self, start: float, end: float) -> list[dict]:
         inside = [snap for snap in self.snapshots if start <= snap["at"] <= end]
         return [hostmetrics.window(a, b) for a, b in zip(inside, inside[1:])]
+
+
+def _pod_fault_deltas(before: object, after: object) -> tuple[dict[str, int], dict, list[str]]:
+    """Return valid pod-fault deltas; counter corruption invalidates measurement."""
+    names = ("restarts", "oom_killed", "evicted")
+    evidence: dict = {"before": before, "after": after, "deltas": {}}
+    deltas: dict[str, int] = {}
+    invalid: list[str] = []
+    for name in names:
+        start = before.get(name) if isinstance(before, dict) else None
+        end = after.get(name) if isinstance(after, dict) else None
+        if (not isinstance(start, int) or isinstance(start, bool) or start < 0
+                or not isinstance(end, int) or isinstance(end, bool) or end < 0):
+            evidence["deltas"][name] = None
+            invalid.append(f"tenant {name} fault counter was missing or malformed")
+            continue
+        delta = end - start
+        evidence["deltas"][name] = delta
+        if delta < 0:
+            invalid.append(f"tenant {name} fault counter regressed")
+            continue
+        deltas[name] = delta
+    evidence["legacy_quota_denials"] = {
+        "before": before.get("quota_denials") if isinstance(before, dict) else None,
+        "after": after.get("quota_denials") if isinstance(after, dict) else None,
+        "scope": "not used for step faults because retained Kubernetes Events can expire during the observed window",
+    }
+    return deltas, evidence, invalid
 
 
 def to_records(sent: list[dict], outcomes: dict, started: float, deadlines: dict[str, float]) -> list[dict]:
@@ -163,7 +195,9 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
     duration = plan["warmup_s"] + window_s
     storage_before = storage.collect(cluster)
     faults_before = cluster.tenant_faults()
-    with HostSampler(cluster, disk) as host:
+    quota_ledger = faults.QuotaEventLedger(cluster, interval_s=HOST_INTERVAL_S)
+    quota_ledger.seed()
+    with HostSampler(cluster, disk, on_sample=quota_ledger.sample) as host:
         step_args = {
             "rate": rate, "duration_s": duration, "mix": mix, "seed": seed, "ids": ids, "io": plan.get("io"),
         }
@@ -175,24 +209,29 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
             command = cluster.start_exec_python("bench-driver", LOADGEN, ["step", json.dumps(step_args)], cancel_driver=cancel_driver)
             sent = command.result(int(duration + 600), on_event or (lambda _event: None))
         if checkpoint is not None:
-            checkpoint({"phase": "sent", "sent": sent})
+            checkpoint({"phase": "sent", "sent": sent, "quota_event_ledger": quota_ledger.evidence()})
         time.sleep(plan["drain_s"])
         reconciliation = await_reconciliation_deadline(sent["requests"], plan["deadlines_s"])
-    outcomes = cluster.exec_python("bench-driver", LOADGEN, ["outcomes", json.dumps({
-        "requests": [{"id": r["id"], "class": r["class"]} for r in sent["requests"]], "io": plan.get("io"),
-    })], timeout_s=600)
-    if checkpoint is not None:
-        checkpoint({"phase": "outcomes", "sent": sent, "outcomes": outcomes, "reconciliation": reconciliation})
+        outcomes = cluster.exec_python("bench-driver", LOADGEN, ["outcomes", json.dumps({
+            "requests": [{"id": r["id"], "class": r["class"]} for r in sent["requests"]], "io": plan.get("io"),
+        })], timeout_s=600)
+        quota_ledger.final_read()
+        if checkpoint is not None:
+            checkpoint({"phase": "outcomes", "sent": sent, "outcomes": outcomes, "reconciliation": reconciliation,
+                        "quota_event_ledger": quota_ledger.evidence()})
     started = sent["started"]
     window = (plan["warmup_s"], plan["warmup_s"] + window_s)
-    faults = {key: after - faults_before.get(key, 0) for key, after in cluster.tenant_faults().items()}
-    faults["duplicate_executions"] = len(outcomes["duplicates"])
+    pod_faults, fault_counter_evidence, fault_counter_invalid = _pod_fault_deltas(faults_before, cluster.tenant_faults())
+    fault_counts = {**pod_faults, "quota_denials": quota_ledger.count}
+    fault_counts["duplicate_executions"] = len(outcomes["duplicates"])
     records = to_records(sent["requests"], outcomes, started, plan["deadlines_s"])
     backlog = [(sample["t"] - started, float(sample["unfinished"])) for sample in sent["backlog"]]
     verdict = capacity.step_verdict(records, backlog, window, rate,
-                                    {**thresholds, "drift_limit_per_s": drift_limit, "faults": faults}, seed, mix)
+                                    {**thresholds, "drift_limit_per_s": drift_limit, "faults": fault_counts}, seed, mix)
     validity = hostmetrics.assess(host.intervals(started + window[0], started + window[1]),
                                   {name for name in host.snapshots[-1]["pods"] if name.split("/")[1].startswith(INFRA_LABELS)} if host.snapshots else set())
+    validity["invalid"].extend(fault_counter_invalid)
+    validity["invalid"].extend(quota_ledger.evidence()["invalid"])
     if sent["driver_lag_p99_s"] is not None and sent["driver_lag_p99_s"] > 0.25:
         validity["invalid"].append(f"driver lag p99 {sent['driver_lag_p99_s']:.3f} s")
     overall = "invalid" if validity["invalid"] else verdict["overall"]
@@ -200,7 +239,8 @@ def run_step(cluster: Cluster, ids: dict, rate: float, plan: dict, seed: int, di
         "started": started,
         "window": window,
         "rate": rate, "seed": seed, "window_s": window_s, "confirm": confirm, "drift_limit_per_s": drift_limit, "overall": overall, "verdict": verdict, "validity": validity,
-        "faults": faults, "driver_lag_p99_s": sent["driver_lag_p99_s"], "missing": outcomes["missing"],
+        "faults": fault_counts, "fault_counter_evidence": fault_counter_evidence, "quota_event_ledger": quota_ledger.evidence(),
+        "driver_lag_p99_s": sent["driver_lag_p99_s"], "missing": outcomes["missing"],
         "records": records, "backlog": backlog,
         "reconciliation": {
             "scope": "epoch seconds; outcomes query follows the latest submitted request class deadline",
