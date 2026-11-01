@@ -39,3 +39,8 @@ pattern. It now uses the exclusive receipt helper before the benchmark effect,
 and includes that helper in its source manifest. Verification: the two shared
 helper regression tests and caller syntax check pass. The benchmark was not
 invoked; existing interop measurements remain historical and unchanged.
+
+Findings 1842 and 1843: guarded-runtime-probe.mjs and runtime-probe.mjs now
+reserve their receipts with the same exclusive helper before any invocation.
+Both include the helper in new source manifests. Shared helper tests (2) and
+both caller syntax checks pass; no probe was invoked or old receipt rewritten.
