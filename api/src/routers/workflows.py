@@ -43,6 +43,7 @@ from src.models import (
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
     WorkflowMetadata,
+    WorkflowParameter,
     WorkflowReference,
     WorkflowRolesResponse,
     WorkflowUpdateRequest,
@@ -1754,6 +1755,48 @@ async def remove_role_from_workflow(
         details={"role_id": str(role_id)},
     )
     logger.info(f"Removed role {log_safe(role_id)} from workflow {log_safe(workflow_id)}")
+
+
+@router.get(
+    "/{workflow_id}/parameters",
+    response_model=list[WorkflowParameter],
+    summary="Get launchable Workflow parameters",
+    description=(
+        "Returns current input parameters for a Workflow the caller may execute. "
+        "Uses the same sharing, organization reach, and Solution scope checks as execution."
+    ),
+**operation_route("workflows.parameters"))
+async def get_workflow_parameters(
+    workflow_id: UUID,
+    ctx: Context,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> list[WorkflowParameter]:
+    """Return signature metadata without granting broader Workflow read access."""
+    from shared.sdk_workflow_execution import (
+        SdkWorkflowExecutionError,
+        resolve_sdk_workflow_for_execution,
+    )
+
+    try:
+        resolved = await resolve_sdk_workflow_for_execution(
+            db,
+            user,
+            WorkflowExecutionRequest(workflow_id=str(workflow_id)),
+            context_solution_id=ctx.solution_id,
+            context_app_id=ctx.app_id,
+            context_caller_solution_id=ctx.caller_solution_id,
+            context_dev_solution_id=getattr(ctx, "dev_solution_id", None),
+        )
+    except SdkWorkflowExecutionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+    assert resolved.workflow is not None
+    return [
+        WorkflowParameter(**parameter)
+        for parameter in resolved.workflow.parameters_schema or []
+        if isinstance(parameter, dict)
+    ]
 
 
 @router.get(

@@ -1039,6 +1039,28 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="workflows.parameters",
+        summary="Get current parameters for a launchable Workflow",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/workflows/{workflow_id}/parameters",
+            response_model="list[WorkflowParameter]",
+        ),
+        native_builder=False,
+        action_scopes=("workflows.execute",),
+        authorization_resolver=(
+            "WorkflowRepository execution access and execution-context policy"
+        ),
+        exclusions={
+            "cli": "The CLI supplies execution parameters directly and does not render the rerun dialog.",
+            "mcp": "Parameter metadata is only used to render the authenticated platform rerun dialog.",
+            "native_builder": "Rerun dialog metadata is not a Builder authoring target.",
+            "manifest": "Parameter metadata is derived from the Workflow signature and does not mutate portable definitions.",
+            "sdk": _WORKFLOW_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="workflows.get",
         summary="Get a Workflow by ID, from any organization",
         target_kind=OperationTargetKind.RESOURCE,

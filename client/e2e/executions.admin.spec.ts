@@ -7,6 +7,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readEditorContent } from "./fixtures/monaco-editor";
 import type { Page } from "./fixtures/api-fixture";
 import { test, expect } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
@@ -35,12 +36,13 @@ logger = logging.getLogger(__name__)
     name="${workflowFunction}",
     description="E2E execution acceptance Playwright fixture",
 )
-async def ${workflowFunction}(message: str = "default", delay_seconds: float = 0) -> dict:
+async def ${workflowFunction}(message: str = "default", delay_seconds: float = 0, options: dict | None = None) -> dict:
     logger.info(f"execution acceptance input {message}")
     if delay_seconds:
         await asyncio.sleep(delay_seconds)
     result = {
         "message": message,
+        "options": options or {},
         "marker": "${workflowMarker}",
     }
     logger.info(f"execution acceptance output {message}")
@@ -450,11 +452,12 @@ test.describe("Execution History", () => {
 	});
 
 	test(
-		"[EXEC-02 desktop] actual rerun creates a new execution with the expected output",
+		"[EXEC-02 desktop] edited rerun creates a new execution with the expected output",
 		{ tag: "@smoke" },
 		async ({ page, api }) => {
 			const originalExecutionId = await startExecution(api, workflowId, {
 				message: "exec-02",
+				options: { count: 1 },
 			});
 			await waitForTerminalSuccess(api, originalExecutionId);
 
@@ -464,10 +467,38 @@ test.describe("Execution History", () => {
 				.getByRole("button", { name: "Rerun", exact: true })
 				.click();
 			await expect(
-				page.getByRole("alertdialog", { name: "Rerun Workflow?" }),
+				page.getByRole("dialog", { name: "Rerun Workflow" }),
 			).toBeVisible();
-			await page
-				.getByRole("button", { name: "Yes, rerun workflow" })
+			const dialog = page.getByRole("dialog", { name: "Rerun Workflow" });
+			await expect(dialog.getByLabel("message")).toHaveValue("exec-02");
+			await dialog.getByLabel("message").fill("exec-02 edited");
+			const optionsEditor = dialog.getByRole("group", {
+				name: "Options",
+				exact: true,
+			});
+			expect(JSON.parse(await readEditorContent(optionsEditor))).toEqual({
+				count: 1,
+			});
+			await page.evaluate(() =>
+				navigator.clipboard.writeText('{"count":2}'),
+			);
+			await optionsEditor.getByRole("textbox").focus();
+			await page.keyboard.press("ControlOrMeta+A");
+			await page.keyboard.press("ControlOrMeta+V");
+			expect(JSON.parse(await readEditorContent(optionsEditor))).toEqual({
+				count: 2,
+			});
+			await dialog.screenshot({
+				path: "playwright-results/rerun-workflow-desktop.png",
+			});
+			await page.setViewportSize({ width: 390, height: 844 });
+			await expectNoHorizontalOverflow(page);
+			await dialog.screenshot({
+				path: "playwright-results/rerun-workflow-mobile.png",
+			});
+			await page.setViewportSize({ width: 1440, height: 900 });
+			await dialog
+				.getByRole("button", { name: "Rerun Workflow" })
 				.click();
 
 			await expect(page).toHaveURL(
@@ -482,7 +513,14 @@ test.describe("Execution History", () => {
 			expect(rerunExecutionId).toBeTruthy();
 			expect(rerunExecutionId).not.toBe(originalExecutionId);
 
-			await waitForTerminalSuccess(api, rerunExecutionId!);
+			const rerun = await waitForTerminalSuccess(api, rerunExecutionId!);
+			expect(rerun.input_data).toMatchObject({
+				message: "exec-02 edited",
+				options: { count: 2 },
+			});
+			expect(
+				(await getExecution(api, originalExecutionId)).input_data,
+			).toMatchObject({ message: "exec-02", options: { count: 1 } });
 			await page.reload();
 			await openExecutionDetail(page, rerunExecutionId!);
 			await expect(
@@ -490,7 +528,7 @@ test.describe("Execution History", () => {
 			).toBeVisible();
 			await expect(
 				page.getByRole("tabpanel", { name: "Result", exact: true }),
-			).toContainText("exec-02");
+			).toContainText("exec-02 edited");
 			await expect(
 				page.getByRole("tabpanel", { name: "Result", exact: true }),
 			).toContainText(workflowMarker);

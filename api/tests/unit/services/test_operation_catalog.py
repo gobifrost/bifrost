@@ -192,6 +192,13 @@ WORKFLOW_OPERATIONS = {
         ("workflows", "execute"),
         "bifrost_workflow_execute",
     ),
+    "workflows.parameters": (
+        "GET",
+        "/api/workflows/{workflow_id}/parameters",
+        None,
+        None,
+        False,
+    ),
     "workflows.update": (
         "PATCH",
         "/api/workflows/{workflow_id}",
