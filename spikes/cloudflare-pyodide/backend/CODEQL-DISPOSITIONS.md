@@ -67,3 +67,22 @@ remains pending and can complete. Removing the await would stop observing the
 exception under test. Retain it as a source-reviewed false positive without
 dismissing the alert or changing controls. This documentation change has only
 diff-check verification; the Docker test remains deferred to remote capacity.
+
+Historical 6194730 findings 1849-1852 were mapped from review comment original
+lines before disposition:
+
+* 1849, canonical-local.py original 429: `await waiter` in the already-done
+  branch propagates the original provider failure before raising the checkpoint
+  failure. Current code retains this exception observation.
+* 1850, original 434: `await waiter` joins the cancelled observer before checking
+  cancellation and the journal's still-pending collection state. Retain it.
+* 1851, original 443: `await sent` joins the cancelled Event.wait task in cleanup.
+  Retain it; cancellation request alone does not join the task.
+* 1852, provider-response-loss.py original 91: `await observed` waits for the
+  response-loss observation checkpoint before database/credential assertions.
+  Current code also explicitly awaits the journal receipt and verifies the
+  expected RemoteProtocolError; neither wait is an unused-value defect.
+
+These are source-reviewed false positives, with no alert dismissal or runtime
+rewrite. Verification for this documentation-only follow-up is git diff --check;
+no fixture replay, Docker startup or cloud call was performed.
