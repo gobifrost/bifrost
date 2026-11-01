@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 
 for (const [kind, digest] of Object.entries({
   bootstrap: '8bbb2dfda6427b3aff360aaa26d08afb25d1e1f6db511468f6193524c1bef51f',
@@ -20,7 +22,10 @@ for (const [kind, digest] of Object.entries({
   assert.equal(observed.pyodide_physical_termination_verified, false);
   assert.equal(observed.native_templates_stopped, true);
   assert.equal(observed.fixture_worker_cleanup_verified, true);
-  const fixture = readFileSync(new URL(`linux-control-${kind}.py`, import.meta.url));
+  // This is a historical run: bind its fixture to the tested immutable commit.
+  const fixture = execFileSync('git', ['show',
+    `c3f5cf807fdbf22330596fca294f064e453c589e:spikes/cloudflare-pyodide/backend/linux-control-${kind}.py`],
+  {cwd: fileURLToPath(new URL('../../../', import.meta.url))});
   assert.equal(createHash('sha256').update(fixture).digest('hex'), report.fixture_sha256);
   if (kind === 'bootstrap') {
     assert.equal(observed.inventory_sent, false);

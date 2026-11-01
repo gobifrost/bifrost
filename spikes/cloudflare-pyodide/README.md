@@ -5,6 +5,8 @@ Latest guest evidence: [five-workload real engine/SDK measurements](WORKERD-BENC
 [Python RPC cancellation counterexample](backend/RPC-TERMINATION-QUALIFICATION.md).
 Both fetch and RPC cancellation permit post-abort CPU effects. Untrusted
 admission and deployed acceptance remain held.
+The benchmark now includes the same pinned workloads on the real signed-control
+Linux executor, with raw samples and explicit comparison limits.
 
 Guest offload update: the publisher-source build now reproduces the exact pinned
 bundle, resolving the recorded HTTP 403 supply blocker without retrying it.

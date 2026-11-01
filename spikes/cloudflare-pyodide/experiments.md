@@ -1,5 +1,23 @@
 # Compact experiment log
 
+## CT128 matched Linux benchmark, 2026-11-01
+
+Hypothesis: the byte-identical benchmark helper can run through the actual Linux
+control/template path, providing a local reference and clarifying helper logging.
+Change: opt-in benchmark in linux-control-reference.py; existing signed control,
+canonical execution/credentials and pinned workspace loading remain upstream.
+Command: guest `python3 .../inbox/linux-benchmark-v1/ct128-linux-benchmark.py`.
+Result: 15 correctness samples pass, three independent document readbacks equal
+70, one real command/PID ACK/result, terminal ACK, revoked credential 401, native
+template/worker cleanup. The same helper warnings are absent on Linux, confirming
+the current filter boundary rather than a Pyodide-only observation. Raw timings
+are noisy three-sample local runs, not a platform performance/cost claim.
+Artifact: results/linux-benchmark; receipt SHA-256
+`b477d4aee3462ba5c69bf42dc8bf184dc6590ef30845ec8fa02fbec6b8ea50ae`.
+Targeted Docker Ruff passes; containers stopped, volumes retained, zero cloud.
+Next: remaining contract/admission gaps and SDK/interop attribution. Physical
+termination remains unqualified; deployment and untrusted admission stay held.
+
 ## CT128 real-engine five-workload benchmark, 2026-11-01
 
 Hypothesis: the proven canonical workerd SDK path can supply useful operation

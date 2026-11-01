@@ -4,6 +4,7 @@ from contextlib import suppress
 import hashlib
 import json
 import os
+from pathlib import Path
 import runpy
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -12,7 +13,7 @@ import httpx
 import websockets
 
 
-async def main():
+async def main(*, benchmark_probe=False):
     target = urlsplit(os.environ.get('BIFROST_DATABASE_URL', ''))
     if (os.environ.get('BIFROST_ENVIRONMENT') != 'testing' or os.environ.get('TEST_API_URL') != 'http://api:8000'
             or target.hostname != 'pgbouncer' or target.path != '/bifrost_test'):
@@ -45,6 +46,8 @@ async def main():
     key, table, name = f'linux-config-{suffix}', f'linux-table-{suffix}', f'linux-integration-{suffix}'
     synthetic = 'synthetic-linux-reference-' + uuid4().hex
     secrets = [synthetic, os.environ['BIFROST_SECRET_KEY']]
+    benchmark_code = (f"    from {helper} import measure\n"
+                      f"    benchmark = await measure({key!r}, {name!r}, {table!r})\n") if benchmark_probe else "    benchmark = {}\n"
     source = f'''from bifrost import workflow, config, tables, integrations
 from {helper} import fold
 import hashlib, httpx, logging, os
@@ -59,12 +62,15 @@ async def qualified(n: int = 7):
         raise RuntimeError('Synthetic secret decryption mismatch')
     logging.getLogger(__name__).warning('integration secret=%s', secret)
     doc = await tables.upsert({table!r}, id='proof', data={{'value':value + fold(n)}})
+{benchmark_code.rstrip()}
     logging.getLogger(__name__).warning('Linux control reference')
     return {{'value':doc.data['value'],'integration_secret_probe':secret,
              'credential_redaction_probe':os.environ['BIFROST_ACCESS_TOKEN'],
-             'parent_secret_present':'BIFROST_SECRET_KEY' in os.environ}}
+             'parent_secret_present':'BIFROST_SECRET_KEY' in os.environ, **benchmark}}
 '''
     sources = {path:source, helper + '.py':'def fold(n):\n    return sum(range(1,n+1))\n'}
+    if benchmark_probe:
+        sources[helper + '.py'] += Path(__file__).with_name('benchmark-workloads.py').read_text()
     report = {'runtime':'actual-linux-signed-control-reference','cloud_invocations':0,
               'pyodide_physical_termination_verified':False,'qualification_passed':False,
               'workspace_sha256':{p:hashlib.sha256(c.encode()).hexdigest() for p,c in sources.items()}}
@@ -157,6 +163,15 @@ async def qualified(n: int = 7):
                                 assert await db.scalar(select(ExecutionWorkerClaim).where(
                                     ExecutionWorkerClaim.worker_id==worker_id,ExecutionWorkerClaim.subject_id==execution.id))
                                 report['terminal_status'],report['independent_document_value'] = row.status.value,doc.data['value']
+                                if benchmark_probe:
+                                    report['benchmark'] = row.result['benchmark']
+                                    documents = list(await db.scalars(select(Document).join(Table,Table.id==Document.table_id).where(
+                                        Table.name==table,Table.organization_id==org.id,Document.id.in_(['benchmark-0','benchmark-1','benchmark-2']))))
+                                    if len(documents) != 3 or any(document.data['value'] != 70 for document in documents):
+                                        raise RuntimeError('Independent benchmark document readback failed')
+                                    report['independent_benchmark_documents'] = len(documents)
+                                    report['retained_log_messages'] = list(await db.scalars(select(ExecutionLog.message).where(
+                                        ExecutionLog.execution_id==execution.id)))
                                 break
                         await asyncio.sleep(0.1)
                 async with asyncio.timeout(10):
@@ -197,7 +212,10 @@ async def qualified(n: int = 7):
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--benchmark-probe', action='store_true')
+        asyncio.run(main(benchmark_probe=parser.parse_args().benchmark_probe))
     except Exception as error:
         print(json.dumps({'runtime':'linux-control-reference-error','error_type':type(error).__name__}))
         raise SystemExit(1)
