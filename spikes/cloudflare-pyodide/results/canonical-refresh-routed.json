@@ -1,0 +1,169 @@
+{
+  "container": "bifrost-pyodide-refresh-c29f1b98-bcf3-4765-ab9a-5fa53ae74e56",
+  "phase": "observed",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "process_exit_code": 0,
+  "result": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "workspace_sha256": {
+      "workflows/pyodide_qualification_228f719512a34ea5857155730e6fcf91.py": "dd0bdfd42a63e2708b10b6d43daa04f580d112802074ba1881c76be98c47359d",
+      "pyodide_helper_228f719512a34ea5857155730e6fcf91.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"
+    },
+    "physical_termination_verified": false,
+    "cloud_invocations": 0,
+    "refresh_probe": true,
+    "worker_heartbeat_count": 4,
+    "owner_renewal_count": 1,
+    "cross_tenant_status": 403,
+    "independent_document_value": 70,
+    "refresh_revoked_after_terminal_status": 401,
+    "canonical_claim_verified": true,
+    "canonical_terminal_consumption_verified": true,
+    "lost_ack_reconnect_verified": true,
+    "credential_revoked_after_terminal_status": 401,
+    "launches": 1,
+    "persisted_log_count": 1,
+    "result": {
+      "result": {
+        "execution_id": "4730acfa-c93f-43a5-a6dc-4ff2cf667cab",
+        "success": true,
+        "status": "Success",
+        "result": {
+          "value": 70,
+          "parent_secret_present": false,
+          "credential_redaction_probe": "[REDACTED]"
+        },
+        "error": null,
+        "error_type": null,
+        "duration_ms": 340,
+        "logs": [
+          {
+            "timestamp": "2026-11-01T01:55:32.144000+00:00",
+            "level": "warning",
+            "message": "canonical local Pyodide proof",
+            "source": "workflow"
+          }
+        ],
+        "variables": {
+          "n": 7,
+          "forbidden_scope": null,
+          "forbidden_key": null,
+          "isolation": {},
+          "value": 42,
+          "replacement": "[REDACTED]",
+          "doc": {
+            "id": "proof",
+            "table_id": "ee03d9e8-afa1-4c5f-8481-9c2cfa2fff6d",
+            "data": {
+              "value": 70
+            },
+            "created_at": "2026-11-01T01:55:32.070770+00:00",
+            "updated_at": "2026-11-01T01:55:32.070770+00:00",
+            "created_by": "8293c60d-b530-48be-9094-1204baa13ffb",
+            "updated_by": "8293c60d-b530-48be-9094-1204baa13ffb"
+          }
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "metrics": {
+          "peak_memory_bytes": null,
+          "peak_process_rss_bytes": null,
+          "cpu_user_seconds": null,
+          "cpu_system_seconds": null,
+          "cpu_total_seconds": null,
+          "code_hash": "dd0bdfd42a63e2708b10b6d43daa04f580d112802074ba1881c76be98c47359d"
+        },
+        "cached": false,
+        "cache_expires_at": null,
+        "execution_context": {
+          "user_id": "8293c60d-b530-48be-9094-1204baa13ffb",
+          "email": "token-ac87ecc7@example.test",
+          "name": "Person 174c",
+          "scope": "dea80ac6-7e7a-4471-8fff-fc11b169c1a1",
+          "organization": {
+            "id": "dea80ac6-7e7a-4471-8fff-fc11b169c1a1",
+            "name": "Token World b412ba5d",
+            "is_active": true,
+            "is_provider": false
+          },
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "4730acfa-c93f-43a5-a6dc-4ff2cf667cab",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 30,
+          "workflow_name": "token_1a500cf9",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "https://test-api.invalid",
+          "parameters": {
+            "n": 7
+          },
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "worker_id": "c04e41b7-88b3-406a-9f42-aadd4886b52d"
+      },
+      "api_calls": [
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules/workflows/pyodide_qualification_228f719512a34ea5857155730e6fcf91.py",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules-resolve",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/auth/refresh",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables/pyodide-table-228f719512a34ea5857155730e6fcf91/documents/upsert",
+          "status": 404
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables/pyodide-table-228f719512a34ea5857155730e6fcf91/documents/upsert",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        }
+      ]
+    },
+    "completed_claim_retained_as_upstream_specifies": true,
+    "fixture_worker_cascade_cleanup_verified": true
+  },
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-refresh.mjs": "ae69200a2e83c099e22dc8d948cf365b78f7864fadcff271ca680ef1ff726137",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "528398714373803ca9ff308a65ce091a4ea47f90a8a9cc194b38de2648737c1a",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "18cdc399c85aa73d3b75e68643a1a0059c1dcd6c326bdb7f1a7131bc5a399c66",
+    "spikes/cloudflare-pyodide/backend/runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "4e6c30fa818620ce6c5922a2191dd42baa2660216d7d54ae0c6536be41323df1",
+    "spikes/cloudflare-pyodide/backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174"
+  }
+}

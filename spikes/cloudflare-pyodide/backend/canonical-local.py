@@ -21,7 +21,7 @@ import httpx
 from sqlalchemy import delete, select
 
 
-async def main(*, isolation_label=None, batch=None):
+async def main(*, isolation_label=None, batch=None, refresh_probe=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -30,6 +30,8 @@ async def main(*, isolation_label=None, batch=None):
     if isolation_label is not None and (isolation_label not in ("tenant-a", "tenant-b")
                                        or not re.fullmatch(r"[a-f0-9]{32}", batch or "")):
         raise RuntimeError("Fixed two-tenant isolation fixture required")
+    if refresh_probe and isolation_label is not None:
+        raise RuntimeError("Refresh qualification is a separate fixed single-run fixture")
 
     from src.core.database import init_db, get_engine, close_db, get_db_context
     from src.core.module_cache import set_module, invalidate_module
@@ -85,6 +87,10 @@ async def main(*, isolation_label=None, batch=None):
     else:
         raise RuntimeError("Peer tenant SDK read was not denied")
 '''
+    refresh_code = ("    from bifrost.client import get_client\n"
+                    "    replacement = await get_client().refresh_access_token()\n"
+                    "    if replacement is None:\n"
+                    "        raise RuntimeError('SDK refresh returned no replacement credential')\n") if refresh_probe else ""
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
 import logging, os
@@ -92,6 +98,7 @@ import logging, os
 async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_key: str | None = None):
 {canary_code.rstrip()}
     value = await config.get({key!r})
+{refresh_code.rstrip()}
     doc = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
     logging.getLogger(__name__).warning("canonical local Pyodide proof")
     return {{"value": doc.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
@@ -101,6 +108,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
     manifest = {name: hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()}
     report = {"runtime": "local-workerd-canonical-claim-consumer", "workspace_sha256": manifest,
               "physical_termination_verified": False, "cloud_invocations": 0}
+    if refresh_probe:
+        report["refresh_probe"] = True
     if isolation_label is not None:
         report["isolation_label"] = isolation_label
         report["rendezvous_batch"] = batch
@@ -207,6 +216,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 evidence = None
                 info = None
                 token = None
+                refresh_token = None
 
                 def credential_route(self):
                     return CredentialRoute(2, ref.lease.session_generation)
@@ -217,6 +227,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     assert context["file_path"] == path and context["function_name"] == "qualified"
                     context["content_hash"] = manifest[path]
                     self.token = context["engine_token"]
+                    self.refresh_token = context.get("engine_refresh_token")
                     secrets.extend([self.token, context.get("engine_refresh_token")])
                     self.info = ExecutionInfo(execution_id, datetime.now(timezone.utc), 30, active_execution)
 
@@ -240,6 +251,19 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     report["provider_end_ms"] = int(time.time() * 1000)
                                 self.evidence = response.json()
                                 result = self.evidence["result"]
+                                if refresh_probe:
+                                    document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
+                                                             params={"scope": str(org.id)})
+                                    diagnostic = {**report, "refresh_probe": True,
+                                        "provider_evidence": self.evidence,
+                                        "workflow_document_status": document.status_code}
+                                    encoded = json.dumps(diagnostic)
+                                    if any(secret and secret in encoded for secret in secrets):
+                                        raise RuntimeError("Credential exposure: diagnostic withheld")
+                                    print(encoded)
+                                    if result["success"] is True:
+                                        assert any(call["path"] == "/auth/refresh" and call["status"] == 200
+                                                   for call in self.evidence["api_calls"])
                                 assert result["success"] is True and result["result"]["value"] == expected_value
                                 if isolation_label is not None:
                                     value = result["result"]
@@ -311,6 +335,11 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     revoked = await api.post("/api/sdk/config/get", headers={"Authorization": f"Bearer {pool.token}"},
                                              json={"key": key})
                     assert revoked.status_code == 401
+                    if refresh_probe:
+                        refresh_revoked = await api.post("/auth/refresh",
+                            json={"refresh_token": pool.refresh_token})
+                        assert refresh_revoked.status_code == 401
+                        report["refresh_revoked_after_terminal_status"] = refresh_revoked.status_code
                 await journal.retire()
                 assert pool.launches == 1
                 if heartbeat.done():
@@ -361,8 +390,9 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser()
         parser.add_argument("--isolation-label", choices=("tenant-a", "tenant-b"))
         parser.add_argument("--batch")
+        parser.add_argument("--refresh-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch))
+        asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch, refresh_probe=args.refresh_probe))
     except Exception as exc:
         import traceback
         from pathlib import Path

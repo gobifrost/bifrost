@@ -71,6 +71,12 @@ alongside the AST graph. No claim of compatibility follows from graph membership
 | keyring/watchdog/textual/CLI/dev tooling | Optional/excluded | No interactive credential storage, file watcher or CLI is used in the Worker. |
 | AI providers, native scientific packages, subprocess/thread execution | Unverified or incompatible OS facilities | No agent/native-package compatibility claim. `threading.Lock` creation in engine succeeds; starting threads/processes was not validated. |
 
+Later qualification: [actual async SDK refresh](backend/SDK-REFRESH.md) now
+executes the upstream `asyncio.to_thread` refresh path and obtains a genuine
+replacement through the isolated API. This is evidence for that operation,
+not general thread/process, sync-refresh or cancellation compatibility. The
+demonstrated refresh blocker was the companion bridge's wrong route prefix.
+
 The full `execute()` path still imports server settings at call time; the adapter
 provides exactly the one used field. It does not issue authority, reconstruct
 settings, alter results or replace engine behavior. Namespace scaffolding and

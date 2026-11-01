@@ -1,0 +1,52 @@
+// Fixed local canonical SDK-refresh qualification; no cloud access.
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {readFile,writeFile,access} from 'node:fs/promises';
+import {createHash,randomUUID} from 'node:crypto';
+import assert from 'node:assert/strict';
+const exec=promisify(execFile),[mode,name='canonical-refresh-final']=process.argv.slice(2);
+if(!/^canonical-refresh(?:-[a-z0-9-]+)?$/.test(name)) throw new Error('Fixed canonical-refresh receipt name required');
+const receipt=new URL(`../results/${name}.json`,import.meta.url);
+const repo=new URL('../../../',import.meta.url);
+const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+if(mode==='--run') {
+  try {await access(receipt);throw new Error('Preserve existing receipt; invocation refused');}
+  catch(error){if(error.code!=='ENOENT')throw error;}
+  const health=await exec('docker',['inspect','bifrost-test-79c5c14e-api-1','--format','{{.State.Health.Status}}']);
+  assert.equal(health.stdout.trim(),'healthy','Existing isolated API must be healthy before qualification');
+  const container=`bifrost-pyodide-refresh-${randomUUID()}`;
+  const report={container,phase:'invoking',cloud_invocations:0,physical_termination_verified:false};
+  await writeFile(receipt,JSON.stringify(report,null,2)+'\n',{flag:'wx'});
+  let stdout='',code=0;
+  try {({stdout}=await exec('docker',['exec','bifrost-pyodide-test-tools-ddf316c1','env',
+    'LOG_DIR=/tmp/bifrost-bifrost-test-79c5c14e','BIFROST_TEST_IMAGE_TAG=bifrost-test-79c5c14e',
+    'docker','compose','-p','bifrost-test-79c5c14e','-f','docker-compose.test.yml','--profile','test',
+    'run','--rm','--no-deps','--name',container,'--volume',
+    '/run/desktop/mnt/host/c/Users/ThomasBray/.t3/worktrees/bifrost/t3-ddf316c1/spikes/cloudflare-pyodide:/spike:ro',
+    'test-runner','python','/spike/backend/canonical-local.py','--refresh-probe'],
+    {timeout:180000,maxBuffer:2*1024*1024}));}
+  catch(error){stdout=error.stdout ?? '';code=typeof error.code==='number' ? error.code : 1;report.unknown_process_state=!!error.killed;}
+  const lines=stdout.split(/\r?\n/).filter(line=>line.startsWith('{"runtime":'));
+  const line=code===0 ? lines.at(-1) : lines[0];
+  report.phase='observed';report.process_exit_code=code;
+  report.result=line ? JSON.parse(line) : {error:'No sanitized report returned'};
+  report.source_sha256={};
+  for(const path of ['spikes/cloudflare-pyodide/backend/canonical-refresh.mjs',
+    'spikes/cloudflare-pyodide/backend/canonical-local.py','spikes/cloudflare-pyodide/backend/runtime-runner.py',
+    'spikes/cloudflare-pyodide/backend/runtime_guard.py','spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs',
+    'spikes/cloudflare-pyodide/backend/test-api-route.mjs']) {
+    report.source_sha256[path]=hash(await readFile(new URL(path,repo)));
+  }
+  await writeFile(receipt,JSON.stringify(report,null,2)+'\n');
+  console.log({process_exit_code:code,refresh_probe:report.result.refresh_probe,
+    workflow_document_status:report.result.workflow_document_status,
+    worker_error_type:report.result.provider_evidence?.result?.error_type});
+  process.exitCode=code || (line ? 0 : 1);
+} else if(mode==='--verify') {
+  const r=JSON.parse(await readFile(receipt,'utf8'));
+  assert.equal(r.phase,'observed');assert.equal(r.result.refresh_probe,true);
+  assert.notEqual(r.unknown_process_state,true);
+  for(const [path,digest] of Object.entries(r.source_sha256)) assert.equal(hash(await readFile(new URL(path,repo))),digest);
+  console.log({process_exit_code:r.process_exit_code,provider_evidence:r.result.provider_evidence,
+    workflow_document_status:r.result.workflow_document_status});
+} else throw new Error('Use --run once or --verify');

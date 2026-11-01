@@ -5,13 +5,12 @@ import {boundedJson} from '../probe-io.mjs';
 import {verifyModuleResponse} from './module-response.mjs';
 import {verifyResolutionResponse} from './resolution-response.mjs';
 import {admitFixture} from './fixture-admission.mjs';
+import {testApiRouteAllowed} from './test-api-route.mjs';
 const observations=new Map();
 export class TestApi extends WorkerEntrypoint {
   async fetch(request) {
     const url=new URL(request.url);
-    if(url.origin!=='https://test-api.invalid' ||
-       !(url.pathname.startsWith('/api/sdk/') || url.pathname==='/api/tables' || url.pathname.startsWith('/api/tables/') ||
-         url.pathname==='/api/auth/refresh')) {
+    if(!testApiRouteAllowed(url)) {
       return new Response('Test API capability only',{status:403});
     }
     const response=await fetch(new Request('http://api:8000'+url.pathname+url.search,request),{redirect:'manual'});

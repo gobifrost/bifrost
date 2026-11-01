@@ -63,7 +63,7 @@ final source passed 3 companion guard tests and 29 focused Node tests; no broad
 API/client suite or type-check rerun is claimed for this companion-only change.
 
 ```sh
-node backend/canonical-isolation.mjs --verify canonical-isolation-guarded-final
+node backend/canonical-isolation.mjs --verify canonical-isolation-guarded-final --commit d09c4e113efea3ba9e3c8c94b42a6dfc6b5474fa
 ```
 
 All three fingerprint/guard/authorized local supervisors were stopped afterward,
