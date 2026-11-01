@@ -2,6 +2,11 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const args=process.argv.slice(2);
+if(args.length && (args.length!==2 || args[0]!=='--commit' || !/^[a-f0-9]{40}$/.test(args[1]))) {
+  throw new Error('Use no arguments or --commit with an exact historical commit');
+}
 const root=new URL('../../../',import.meta.url);
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const initial=JSON.parse(await readFile(new URL('../results/canonical-refresh-response-loss.json',import.meta.url)));
@@ -29,6 +34,7 @@ assert.equal(r.canonical_error_message,'Server disconnected without sending a re
 assert.equal(r.credential_revoked_after_failure_status,401);
 assert.equal(r.launches,1);
 for(const [path,digest] of Object.entries(receipt.source_sha256)) {
-  assert.equal(hash(await readFile(new URL(path,root))),digest,path);
+  const source=args.length ? execFileSync('git',['show',`${args[1]}:${path}`],{cwd:root}) : await readFile(new URL(path,root));
+  assert.equal(hash(source),digest,path);
 }
 console.log('Response-loss boundary verified: successful SDK effects, canonical Failed, no recovered success or replay');

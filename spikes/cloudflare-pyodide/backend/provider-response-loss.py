@@ -28,8 +28,11 @@ async def main():
               "cloud_invocations": 0, "physical_termination_verified": False, "recovery_acceptance": False}
     pool_seen = None
     fixture_worker_id = None
+    fixture_execution_id = None
+    module_path = None
 
     async def drop_response(reader, writer):
+        nonlocal module_path
         try:
             # Only one bounded POST to this ephemeral loopback socket is legal.
             assert not observed.done()
@@ -55,6 +58,7 @@ async def main():
                 assert len(writes) == 1
                 document_path = writes[0]["path"].removesuffix("/upsert") + "/proof"
                 context = request["context"]
+                module_path = "/api/sdk/modules/" + context["file_path"]
                 # Independent read before dropping the response, while the run is live.
                 document = await upstream.get("http://api:8000" + document_path,
                     headers={"Authorization": "Bearer " + context["engine_token"]},
@@ -86,25 +90,33 @@ async def main():
             raise
 
     async def capture_process(consumer, message, claimed):
-        nonlocal pool_seen, fixture_worker_id
+        nonlocal pool_seen, fixture_worker_id, fixture_execution_id
         await original_process(consumer, message, claimed)
-        await observed
         pool_seen = consumer._pool
         fixture_worker_id = consumer.owner_worker_id
+        fixture_execution_id = message["execution_id"]
+        report["routing_returned_before_collection_wait"] = True
+        try:
+            await pool_seen.receipt
+        except httpx.RemoteProtocolError:
+            pass  # Assert and inspect the exact observed failure below; never ACK it.
+        else:
+            raise AssertionError("Collector must report the actual socket loss")
+        await observed
         assert pool_seen.evidence is None and pool_seen.launches == 1
         async with get_db_context() as db:
             from uuid import UUID
             row = await db.get(Execution, UUID(message["execution_id"]))
-            assert row is not None and row.status == ExecutionStatus.FAILED
-            assert row.result is None and row.error_message == "Server disconnected without sending a response."
+            assert row is not None and row.status == ExecutionStatus.RUNNING
+            assert row.result is None and row.error_message is None
             assert report["collector_error_type"] == "RemoteProtocolError"
             report.update(canonical_status=row.status.value, canonical_error_message=row.error_message,
                           canonical_success_result_missing=True)
         async with httpx.AsyncClient(timeout=15) as api:
-            revoked = await original_post(api, "http://api:8000/api/sdk/config/get",
-                headers={"Authorization": "Bearer " + pool_seen.token}, json={"key": "probe"})
-            assert revoked.status_code == 401
-            report["credential_revoked_after_failure_status"] = revoked.status_code
+            active = await api.get("http://api:8000" + module_path,
+                headers={"Authorization": "Bearer " + pool_seen.token})
+            assert active.status_code == 200
+            report["credential_active_pending_recovery_status"] = active.status_code
         report["launches"] = pool_seen.launches
 
     try:
@@ -112,8 +124,8 @@ async def main():
              patch.object(WorkflowExecutionConsumer, "process_message", capture_process):
             try:
                 await fixture.main()
-            except AssertionError:
-                # The success fixture correctly refuses its missing provider result.
+            except httpx.RemoteProtocolError:
+                # Collection is outside upstream's routing/setup error handler.
                 assert pool_seen is not None and report.get("canonical_success_result_missing") is True
                 report["success_fixture_acceptance_failed"] = True
             else:
@@ -130,11 +142,19 @@ async def main():
     await init_db()
     try:
         async with get_db_context() as db:
+            from uuid import UUID
             assert fixture_worker_id is not None
             assert await db.get(ExecutionWorker, fixture_worker_id) is None
             assert not list(await db.scalars(select(ExecutionWorkerClaim).where(
                 ExecutionWorkerClaim.worker_id == fixture_worker_id)))
+            assert await db.get(Execution, UUID(fixture_execution_id)) is None
         report["fixture_worker_cleanup_verified"] = True
+        report["fixture_execution_cleanup_verified"] = True
+        async with httpx.AsyncClient(timeout=15) as api:
+            revoked = await api.get("http://api:8000" + module_path,
+                headers={"Authorization": "Bearer " + pool_seen.token})
+            assert revoked.status_code == 401
+            report["credential_revoked_by_fixture_cleanup_status"] = revoked.status_code
     finally:
         await close_db()
     print(json.dumps(report))

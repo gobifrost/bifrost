@@ -241,3 +241,20 @@ new fixed-fixture run. Source/provenance verifiers, Docker Ruff and JS syntax/di
 checks pass. Exact cleanup is retained in response-loss-local-cleanup.json.
 No new cloud, physical-stop or successful recovery claim follows from a passing
 negative-characterization process. See backend/RESPONSE-LOSS.md.
+
+## Asynchronous routing acceptance
+
+Continued from 6194730cb40b109665f2259ee1fdc5e07beab5c4. The companion route now
+returns its retained dispatch receipt before waiting for collection. Collection
+and canonical terminal delivery occur outside the consumer's setup handler.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Matching upstream asynchronous routing preserves successful execution | `node backend/canonical-refresh.mjs --run canonical-refresh-async-collection transport concurrent-runtime-manifest.json` | Exit 0, SDK value 70, one launch, cancelled waiter retained, canonical persistence/reconnect, terminal access 401 | Reconnectable physical terminal receipt |
+| Late socket loss must not become a canonical setup failure | `node backend/canonical-refresh.mjs --run canonical-refresh-response-loss-async response-loss concurrent-runtime-manifest.json` | Exit 0 characterization: RemoteProtocolError, canonical Running/no result/error, no replay; credential remains 200 until fixture purge then 401 | Canonical recovery/deadline and physical-state proof remain required |
+
+This is a correction of routing semantics, not successful unknown-result recovery.
+Exact payload pin unchanged, actual local Worker executions only. Docker Ruff,
+source/provenance verifiers and JS syntax/diff checks pass. Own supervisor/network/
+API cleanup is retained in async-collection-local-cleanup.json. No shared API,
+Containers, cloud invocation, persistent access or security setting changed.

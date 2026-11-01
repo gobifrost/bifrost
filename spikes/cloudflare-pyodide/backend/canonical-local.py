@@ -306,6 +306,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
 
                 async def route_execution(self, *, execution_id, context, credential_route, active_execution):
                     provider_sent = asyncio.Event()
+                    self.provider_sent = provider_sent
 
                     async def trace_provider(event, _info):
                         # Observe only the fixed provider request's transport phase;
@@ -417,32 +418,9 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     task = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     duplicate = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     assert task is duplicate
-                    if transport_waiter:
-                        async def wait_for_provider():
-                            return await task
-
-                        waiter = asyncio.create_task(wait_for_provider())
-                        sent = asyncio.create_task(provider_sent.wait())
-                        try:
-                            await asyncio.wait((sent, waiter), return_when=asyncio.FIRST_COMPLETED)
-                            if waiter.done():
-                                await waiter  # Preserve a provider failure before the checkpoint.
-                                raise RuntimeError("Provider completed before interruption checkpoint")
-                            assert provider_sent.is_set()
-                            waiter.cancel()
-                            with suppress(asyncio.CancelledError):
-                                await waiter
-                            assert waiter.cancelled()
-                            assert journal.inventory()[0]["terminal"] is False
-                            report["transport_waiter_probe"] = True
-                            report["provider_request_body_sent"] = True
-                            report["cancelled_waiter_collection_retained"] = True
-                        finally:
-                            sent.cancel()
-                            with suppress(asyncio.CancelledError):
-                                await sent
-                    task_result = await task
-                    assert task_result["success"] is expected_success
+                    # Upstream awaits routing acceptance, not the workflow result.
+                    # Retain collection independently of its setup error handler.
+                    self.receipt = task
 
             pool = LocalPool()
             consumer = WorkflowExecutionConsumer(pool=pool)
@@ -457,6 +435,33 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         duplicate_claim = await claim_next(worker.id, fits_bytes=2**30, budget_bytes=2**30)
                         assert duplicate_claim is None
                     await consumer.process_message(claim.message, PendingExecution(**claim.claimed))
+                report["routing_returned_before_collection_wait"] = True
+                if transport_waiter:
+                    async def wait_for_provider():
+                        return await pool.receipt
+
+                    waiter = asyncio.create_task(wait_for_provider())
+                    sent = asyncio.create_task(pool.provider_sent.wait())
+                    try:
+                        await asyncio.wait((sent, waiter), return_when=asyncio.FIRST_COMPLETED)
+                        if waiter.done():
+                            await waiter
+                            raise RuntimeError("Provider completed before interruption checkpoint")
+                        assert pool.provider_sent.is_set()
+                        waiter.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await waiter
+                        assert waiter.cancelled()
+                        assert journal.inventory()[0]["terminal"] is False
+                        report["transport_waiter_probe"] = True
+                        report["provider_request_body_sent"] = True
+                        report["cancelled_waiter_collection_retained"] = True
+                    finally:
+                        sent.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await sent
+                task_result = await pool.receipt
+                assert task_result["success"] is expected_success
                 assert pool.evidence is not None and pool.info is not None
                 original = consumer._handle_result
 

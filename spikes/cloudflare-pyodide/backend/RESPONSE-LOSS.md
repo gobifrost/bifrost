@@ -1,8 +1,9 @@
 # Lost response after successful effects
 
-The current companion HTTP collector does **not** reproduce upstream remote
-result recovery when the provider connection loses its response. This is a
-tested backend gap, not an upstream consumer bug or a successful recovery gate.
+The companion HTTP collector at 6194730cb did **not** reproduce upstream remote
+result recovery when the provider connection lost its response. The routing
+classification correction below fixes one part of that tested gap; it does not
+provide successful result recovery or imply an upstream consumer bug.
 
 `provider-response-loss.py` runs the existing canonical fixture with two scoped,
 test-process-only patches: route its single provider POST through an ephemeral
@@ -60,7 +61,7 @@ from the spike directory:
 
 ```sh
 node backend/canonical-refresh.mjs --run canonical-refresh-response-loss-observed response-loss concurrent-runtime-manifest.json
-node backend/verify-response-loss.mjs
+node backend/verify-response-loss.mjs --commit 6194730cb40b109665f2259ee1fdc5e07beab5c4
 node backend/verify-transport-waiter.mjs --commit 832ed9d0ddcaee4d28accb6392f4e2ce4eec675c
 ```
 
@@ -85,3 +86,50 @@ supervisor, independent port-8799 connection refusal, bridge-only tools network
 and restored stopped API. The ephemeral proxy closes in finally. No cloud call,
 endpoint reopening in Cloudflare, new credential grant, spending or production
 change occurred. Physical CPU termination and stdout qualification remain open.
+
+## Routing acceptance separated from collection
+
+The companion now retains the `AttemptJournal.dispatch` receipt and returns from
+`route_execution` without awaiting it. Collection is awaited outside
+`WorkflowExecutionConsumer.process_message`, followed by the existing fenced
+journal-to-consumer terminal callback. It introduces no new queue, status table,
+fallback, replay, shared consumer modification or physical-stop claim.
+
+Two actual local Worker runs qualify this change:
+
+* `canonical-refresh-async-collection.json`: actual upstream engine/SDK value 70,
+  cancelled waiter collection retained, one launch, canonical persistence,
+  lost-ACK owner reconnect, terminal access 401 and fixture cleanup all pass.
+* `canonical-refresh-response-loss-async.json`: actual successful SDK effects
+  followed by socket loss still yield RemoteProtocolError, but the canonical row
+  remains **Running**, with no result/error message and no automatic replay.
+  The known module is still readable with the run credential (200) until the
+  fixture explicitly purges its execution and worker; afterward it returns 401.
+
+This fixes false setup-failure classification. It is **not** interrupted-run
+recovery or equivalent credential lifetime/security: the current fixture leaves
+that run active until test cleanup. A production adapter must resolve it through
+canonical recovery/deadlines with trusted physical-state evidence. Fixture row
+purge is not a production recovery policy. `recovery_acceptance` remains false.
+
+The journal's `terminal` inventory flag describes collection-task completion,
+not proof of a physical isolate's termination. A failed collection task has no
+success result; reconciliation raises and cannot ACK it. The retained terminal
+receipt/inventory protocol remains the next implementation boundary.
+
+From the spike directory, with the own test API healthy and local supervisor up:
+
+```sh
+node backend/canonical-refresh.mjs --run canonical-refresh-async-collection transport concurrent-runtime-manifest.json
+node backend/canonical-refresh.mjs --run canonical-refresh-response-loss-async response-loss concurrent-runtime-manifest.json
+node backend/verify-async-collection.mjs
+```
+
+The two invocation names are immutable receipts, not overwrite targets. Both
+processes exited 0 with scoped assertions; the second is negative recovery
+characterization. Runtime payload 21b82a20... is unchanged and was verified
+before execution. Docker Ruff, offline current/historical provenance verifiers,
+JS syntax and diff checks pass; no broader API suite ran because production API
+source is unchanged. `async-collection-local-cleanup.json` records exact own
+supervisor SIGINT, port refusal, bridge-only network and stopped API. No cloud
+invocation, persistent credential/access change or Containers mutation occurred.
