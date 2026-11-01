@@ -8,6 +8,16 @@ untrusted workflows. The latter is a material incompatibility, not a tuning task
 There is deployed-Cloudflare evidence for the non-SDK subset; there is no
 production acceptance or deployed SDK-to-Bifrost evidence.
 
+Subsequent local qualification at a00ae73e9 connects actual canonical dispatch
+claim, consumer-issued protocol-2 credentials, fresh Pyodide engine/SDK execution,
+the shared result envelope and canonical persistence/reconnect. This closes the
+functional local chain, not deployed acceptance or general workload admission.
+The [post-commit fault matrix](backend/POSTCOMMIT-RECOVERY.md) preserves durable
+Success/Failed/Timeout/Cancelled outcomes but exposes a narrower recovery
+boundary: stale terminal replay does not resume skipped notification/cache work,
+and native at-least-once log recovery can duplicate a committed log row. No new
+provider orchestration or canonical platform repair is claimed.
+
 The authorized fresh-isolate follow-on also remains **RED for first-class
 arbitrary untrusted execution**: cloud CPU cancellation permits later effects,
 and a Python workflow can catch Cloudflare's CpuLimitExceeded and emit another

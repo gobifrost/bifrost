@@ -106,6 +106,12 @@ No cloud invocation, reopening, credential grant, spending or security-setting
 change occurred. Catchable CPU-limit failure remains a material blocker to
 arbitrary untrusted execution. Do not infer physical stop from logical ACK.
 
+The subsequent [post-commit interruption qualification](POSTCOMMIT-RECOVERY.md)
+shows why this distinction matters: an earlier fault preserves the durable
+outcome but leaves notification/cache follow-up unrepaired by terminal replay,
+and native at-least-once recovery can append a duplicate log row. The original
+one-log receipt proves only its explicitly tested after-callback fault window.
+
 Current API review used the [Dynamic Workers reference](https://developers.cloudflare.com/dynamic-workers/api-reference/)
 and [Workers best practices](https://developers.cloudflare.com/workers/best-practices/workers-best-practices/),
 plus published `@cloudflare/workers-types` 5.20261031.1. The reference describes

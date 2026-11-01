@@ -229,14 +229,23 @@ async def test_running_route_cannot_be_acknowledged_or_cleaned_up(owner):
 
 
 @pytest.mark.asyncio
-async def test_full_consumer_commit_lost_ack_reconciles_without_relaunch_or_duplicate_logs(
-    owner, async_session_factory, monkeypatch,
+@pytest.mark.parametrize("fault_window", ["after_callback", "before_notification"])
+@pytest.mark.parametrize("outcome,expected_status,error_type", [
+    pytest.param("Success", ExecutionStatus.SUCCESS, None, id="success"),
+    pytest.param("Failed", ExecutionStatus.FAILED, "RuntimeError", id="engine_error"),
+    pytest.param("Timeout", ExecutionStatus.TIMEOUT, "TimeoutError", id="timeout"),
+    pytest.param("Cancelled", ExecutionStatus.CANCELLED, "CancelledError", id="logical_cancel"),
+    pytest.param("Failed", ExecutionStatus.FAILED, "CpuLimitExceeded", id="cpu_limit"),
+])
+async def test_consumer_replay_preserves_result_across_completion_faults(
+    owner, async_session_factory, monkeypatch, request, fault_window, outcome, expected_status, error_type,
 ):
-    from bifrost._logging import append_log_to_stream_async
+    from bifrost._logging import append_log_to_stream_async, recover_terminal_execution_logs
     from src.core.cache import execution_logs_stream_key, get_redis
     from src.core.cache.keys import active_execution_key
     from src.core.redis_client import ActiveExecution, RESULT_KEY_PREFIX
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+    from src.jobs.consumers import workflow_execution as consumer_module
     from src.services.execution.process_pool import ExecutionInfo
 
     monkeypatch.setattr("src.core.database.get_session_factory", lambda: async_session_factory)
@@ -252,14 +261,18 @@ async def test_full_consumer_commit_lost_ack_reconciles_without_relaunch_or_dupl
     metrics = AsyncMock(wraps=consumer._record_completion_metrics)
     monkeypatch.setattr(consumer, "_record_completion_metrics", metrics)
     original = consumer._handle_result
+    original_publish = consumer_module.publish_execution_update
 
     async def lose_ack(result):
         await original(result)
         raise ConnectionError("transport lost after canonical completion")
 
     journal = AttemptJournal()
+    expected_result = {"value": 70} if outcome == "Success" else None
+    expected_error = None if outcome == "Success" else f"fixture failure: {error_type}"
     envelope = execution_result_envelope(execution_id, str(lease.worker_id),
-        {"status": "Success", "result": {"value": 70}}, duration_ms=1, metrics={})
+        {"status": outcome, "result": expected_result, "error_message": expected_error,
+         "error_type": error_type}, duration_ms=1, metrics={"cpu_total_seconds": None})
     envelope["sync"] = True  # An untrusted field cannot override parent metadata.
     launch = AsyncMock(return_value=envelope)
     async with async_session_factory() as session:
@@ -275,32 +288,64 @@ async def test_full_consumer_commit_lost_ack_reconciles_without_relaunch_or_dupl
             await redis.set(active_execution_key(execution_id), json.dumps(metadata), ex=60)
         assert await append_log_to_stream_async(execution_id, "INFO", "canonical consumer proof")
         task = await journal.dispatch(lease, "route", execution_id, launch)
-        assert (await task)["result"] == {"value": 70}
-        monkeypatch.setattr(consumer, "_handle_result", lose_ack)
-        with pytest.raises(ConnectionError, match="after canonical completion"):
+        assert (await task)["result"] == expected_result
+        if fault_window == "after_callback":
+            monkeypatch.setattr(consumer, "_handle_result", lose_ack)
+        else:
+            monkeypatch.setattr(consumer_module, "publish_execution_update",
+                AsyncMock(side_effect=ConnectionError("transport lost during completion notification")))
+        with pytest.raises(ConnectionError, match="completion"):
             await journal.reconcile_workflow(lease, "route", consumer, execution)
         assert not journal.inventory()[0]["acknowledged"]
         async with async_session_factory() as session:
             row = await session.get(Execution, subject)
-            assert row is not None and row.status == ExecutionStatus.SUCCESS
-            assert row.result == {"value": 70}
+            assert row is not None and row.status == expected_status
+            assert row.result == expected_result and row.error_message == expected_error
+            assert row.cpu_total_seconds is None
         async with get_redis() as redis:
-            assert not await redis.exists(active_execution_key(execution_id))
+            pending_cleanup = fault_window == "before_notification"
+            assert bool(await redis.exists(active_execution_key(execution_id))) == pending_cleanup
             assert not await redis.exists(RESULT_KEY_PREFIX + execution_id)
-            assert await redis.xlen(execution_logs_stream_key(execution_id)) == 0
+            assert await redis.xlen(execution_logs_stream_key(execution_id)) == int(pending_cleanup)
 
         # Same physical route survives reconnect. Upstream consumes its stale
         # terminal replay normally, which permits ACK without rewriting the run.
         replacement = await owner(2)
         monkeypatch.setattr(consumer, "_handle_result", original)
+        replay_notifications = AsyncMock(wraps=original_publish)
+        monkeypatch.setattr(consumer_module, "publish_execution_update", replay_notifications)
         assert await journal.dispatch(replacement, "route", execution_id, launch) is task
         assert await journal.reconcile_workflow(replacement, "route", consumer, execution)
         launch.assert_awaited_once()
-        metrics.assert_awaited_once()
+        assert metrics.await_count == (0 if pending_cleanup else 1)
+        replay_notifications.assert_not_awaited()
         async with async_session_factory() as session:
             logs = (await session.scalars(select(ExecutionLog).where(
                 ExecutionLog.execution_id == subject))).all()
             assert [log.message for log in logs] == ["canonical consumer proof"]
+        # Upstream explicitly provides at-least-once log recovery, not durable
+        # Redis-entry deduplication. A crash before stream ACK can replay the
+        # already committed row at a new sequence number. Keep this boundary
+        # visible rather than asserting exactly-once logs from a passing ACK.
+        recovery = await recover_terminal_execution_logs([execution_id], limit=1)
+        assert recovery["flushed"] == int(pending_cleanup)
+        async with async_session_factory() as session:
+            logs = (await session.scalars(select(ExecutionLog).where(
+                ExecutionLog.execution_id == subject).order_by(ExecutionLog.sequence))).all()
+            assert [log.message for log in logs] == ["canonical consumer proof"] * (2 if pending_cleanup else 1)
+            row = await session.get(Execution, subject)
+            assert row is not None and row.result == expected_result and row.status == expected_status
+            assert row.error_message == expected_error and row.cpu_total_seconds is None
+        async with get_redis() as redis:
+            assert await redis.xlen(execution_logs_stream_key(execution_id)) == 0
+            assert bool(await redis.exists(active_execution_key(execution_id))) == pending_cleanup
+        request.node.user_properties.extend([
+            ("fault_window", fault_window), ("outcome", outcome), ("error_type", error_type),
+            ("canonical_status", expected_status.value), ("physical_launches", launch.await_count),
+            ("persisted_log_rows_after_recovery", len(logs)),
+            ("terminal_notifications_on_replay", replay_notifications.await_count),
+            ("active_cache_remains_until_ttl_or_cleanup", pending_cleanup),
+        ])
         await journal.retire()
     finally:
         async with get_redis() as redis:

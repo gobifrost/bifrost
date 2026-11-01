@@ -1,5 +1,15 @@
 # Spike handoff: package 0.1.0
 
+Current contribution checkpoint: see [combined canonical local proof](backend/CANONICAL-LOCAL.md)
+at a00ae73e9 and the subsequent [post-commit recovery boundary](backend/POSTCOMMIT-RECOVERY.md).
+The latter qualifies the earlier one-log claim to the after-full-callback fault
+window. A mid-callback fault preserves the durable outcome but leaves follow-up
+unrepaired by stale replay; native log recovery is explicitly at least once.
+The contribution also includes runtime seams, a shared envelope and tests
+under `api/`, plus the narrow test-module mount in `docker-compose.test.yml`.
+The initial package-only snapshot below predates those changes. None is a
+production deployment, supported-provider acceptance or physical-stop proof.
+
 Decision: **YELLOW** for a restricted useful subset; **RED** for arbitrary
 untrusted code in a shared Worker interpreter.
 

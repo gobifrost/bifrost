@@ -140,6 +140,9 @@ The [combined canonical local qualification](backend/CANONICAL-LOCAL.md) now
 connects real dispatch claim, consumer-issued credentials, fresh Pyodide engine
 and SDK execution, shared envelope, persisted result/log and lost-ACK replay.
 It is local evidence; cloud and physical-stop acceptance remain incomplete.
+The [post-commit fault matrix](backend/POSTCOMMIT-RECOVERY.md) additionally shows
+durable outcomes surviving while notification/cache follow-up remains unrepaired
+and native at-least-once log recovery may append duplicates.
 
 For the subsequent real upstream worker + authorized SDK qualification in local
 workerd, see [authorized local setup and evidence](backend/AUTHORIZED-LOCAL.md).

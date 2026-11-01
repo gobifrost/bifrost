@@ -174,3 +174,21 @@ existing wasm wheels plus the added pure-Python envelope ran successfully.
 Actual CPU/peak memory remain unknown, and no cloud acceptance or physical-stop
 improvement is claimed. Runtime/API review used current Dynamic Workers docs and
 published workers-types 5.20261031.1 without changing the pinned runtime.
+
+## Intermediate post-commit interruption
+
+Continued from a00ae73e98a65dfd1f1001bda595754ce51f2580. Production consumer,
+logging and provider implementations remain unchanged; only qualification tests
+and evidence were added. No cloud invocation or listener reopening occurred.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| After-callback replay proves complete post-commit recovery | Fail terminal notification after real result/log commit, reconnect and replay; `./test.sh tests/unit/dev/test_pyodide_attempt_journal.py -q` | Falsified: durable outcome preserved but notification/cache repair not performed; native log recovery appends a second row | Canonical recovery design review if stronger delivery is required; do not add provider business queue |
+| Reported failure outcomes retain native mapping across the same windows | Expand Success-only qualification to RuntimeError, TimeoutError, CancelledError and CpuLimitExceeded | Final 21 pass; ten fault-case property records in postcommit-recovery-junit.xml, parsed/source-hashed postcommit-recovery.json | Provider-boundary classification and actual physical stop remain separate |
+
+The initial success-only 13-test receipt is retained separately. Final tests
+passed in 9.07 seconds; focused Docker Ruff/diff checks passed. The new evidence
+qualifies the earlier one-log claim to its after-full-callback window. This is
+upstream's documented at-least-once log behavior, not a new Pyodide divergence.
+Callbacks are deterministic fixtures, so no actual Worker/CPU/cancellation or
+new end-to-end/cloud acceptance evidence is claimed by this matrix.
