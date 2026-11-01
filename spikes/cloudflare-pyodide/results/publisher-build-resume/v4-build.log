@@ -1,0 +1,67 @@
+Extracting Bazel installation...
+OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release.
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+[31.600s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.601s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-29"
+[31.608s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.608s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-19"
+[31.652s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.652s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-23"
+[31.660s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.660s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-31"
+[31.667s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.667s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-32"
+[31.675s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.675s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-7"
+[31.682s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.683s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-35"
+[31.690s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.690s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-10"
+[31.697s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.698s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-36"
+FATAL: bazel ran out of memory and crashed. Printing stack trace:
+java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached
+	at java.base/java.lang.Thread.start0(Native Method)
+	at java.base/java.lang.Thread.start(Unknown Source)
+	at java.base/java.lang.System$1.start(Unknown Source)
+	at java.base/jdk.internal.vm.SharedThreadContainer.start(Unknown Source)
+	at java.base/java.util.concurrent.ForkJoinPool.createWorker(Unknown Source)
+	at java.base/java.util.concurrent.ForkJoinPool.signalWork(Unknown Source)
+	at java.base/java.util.concurrent.ForkJoinPool.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source)
+[31.705s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.705s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-38"
+[31.713s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.713s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-24"
+[31.721s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.721s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-39"
+[31.755s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.756s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-42"
+[31.763s][warning][os,thread] Failed to start thread "Unknown thread" - pthread_create failed (EAGAIN) for attributes: stacksize: 1024k, guardsize: 0k, detached.
+[31.764s][warning][os,thread] Failed to start the native thread for java.lang.Thread "globbing pool-43"
