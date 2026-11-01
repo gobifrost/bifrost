@@ -95,3 +95,13 @@ It observes the failed collection before checking sanitized inventory state;
 removing it would omit the exception assertion. Retain all three as
 source-reviewed false positives, without dismissal or suppression. Only the
 documentation changed; git diff --check passed, with no runtime test replay.
+
+Journal findings 1860-1863: the test-only Receiver.recv now explicitly returns
+an awaited unresolved Future after setting retired, instead of falling through
+after an unresolved Event wait. Both remain pending until caller cancellation;
+no synthetic control frame or physical-stop claim is introduced. The local-result
+case now asserts the completed receipt value. The other flagged receipt awaits
+are inside pytest.raises(ConnectionError), observing the injected response-loss
+failure before retained-result reconciliation; retain those exception assertions.
+Diff checks passed. Docker tests were not run and this test-source edit still
+requires focused remote/CI verification.

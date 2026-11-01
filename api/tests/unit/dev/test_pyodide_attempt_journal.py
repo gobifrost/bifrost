@@ -237,7 +237,7 @@ async def test_upstream_retained_result_recovers_failed_collection_and_lost_ack(
                     return frame
                 # End this test-only control receiver; no physical child was started.
                 launcher.retired.set()
-                await asyncio.Event().wait()
+                return await asyncio.get_running_loop().create_future()
 
         await _receive_control_commands(launcher, Receiver(), asyncio.Event())
         assert launcher.pending_terminal == launcher.pending_terminal_inventory == {}
@@ -279,7 +279,7 @@ async def test_retained_result_rejects_unbound_or_inapplicable_delivery(owner, c
 
     receipt = await journal.dispatch(lease, "route", "execution", launch)
     if case == "local-result":
-        await receipt
+        assert await receipt == {"execution_id": "execution", "success": True}
     elif case != "collector-pending":
         with pytest.raises(ConnectionError):
             await receipt
