@@ -256,6 +256,11 @@ These finish the existing deliverable; further memory reduction is not a gate.
    matrix and live canary as separate controls; the original 33-second outlier
    remains unattributed. Fixed-count scaling and scale-from-zero remain separate
    unmeasured scenarios.
+   The shared-graph first-action cell also had a 5.043-second median residual
+   outside its reported workflow timer; its stored running interval was about
+   5.081 seconds versus 0.302 seconds reported by the engine. The omitted
+   lifecycle time remains an investigation priority. The short terminal-to-render
+   interval does not establish where that larger residual was spent.
 4. **Soak and recovery.** Run the implemented two-hour soak at 70% of a passing
    mixed rate and complete the declared recovery evidence. Report memory and
    connection trends, database/generated-WAL/object growth, accepted work,

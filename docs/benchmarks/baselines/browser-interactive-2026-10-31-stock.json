@@ -5,7 +5,7 @@
   "units": {
     "action_to_render_ms": "milliseconds",
     "first_terminal_observed_to_render_ms": "milliseconds",
-    "summary_precision": "0.1 ms from one browser performance clock"
+    "summary_precision": "Browser summaries: 0.1 ms; stored timestamp and workflow-span summaries: 0.001 ms. Display precision does not establish timing accuracy."
   },
   "private_evidence": {
     "result_path": "/home/jack/bifrost-bench-evidence/runs/interactive-stock-20261031-r6/result.json",
@@ -109,6 +109,36 @@
         "first_terminal_observed_to_render_ms": {
           "min": 19.0,
           "max": 38.9
+        },
+        "reported_workflow_duration_ms": {
+          "min": 0,
+          "median": 0,
+          "max": 0
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 759.8,
+          "median": 910.6,
+          "max": 1210.5
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 0.001,
+          "sdk_mapping_wall_ms": 0.0,
+          "provider_wall_ms": 0.0
+        },
+        "stored_created_to_started_ms": {
+          "min": 389.163,
+          "median": 596.394,
+          "max": 866.135
+        },
+        "stored_started_to_completed_ms": {
+          "min": 110.791,
+          "median": 151.471,
+          "max": 152.805
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 110.791,
+          "median": 151.471,
+          "max": 152.805
         }
       },
       {
@@ -123,6 +153,36 @@
         "first_terminal_observed_to_render_ms": {
           "min": 19.5,
           "max": 29.7
+        },
+        "reported_workflow_duration_ms": {
+          "min": 0,
+          "median": 0,
+          "max": 1
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 796.5,
+          "median": 1164.2,
+          "max": 1326.7
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 0.001,
+          "sdk_mapping_wall_ms": 0.0,
+          "provider_wall_ms": 0.0
+        },
+        "stored_created_to_started_ms": {
+          "min": 241.75,
+          "median": 483.541,
+          "max": 760.178
+        },
+        "stored_started_to_completed_ms": {
+          "min": 469.589,
+          "median": 487.276,
+          "max": 580.792
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 468.589,
+          "median": 487.276,
+          "max": 580.792
         }
       },
       {
@@ -137,6 +197,36 @@
         "first_terminal_observed_to_render_ms": {
           "min": 18.7,
           "max": 44.8
+        },
+        "reported_workflow_duration_ms": {
+          "min": 301,
+          "median": 302,
+          "max": 499
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 4495.3,
+          "median": 5043.2,
+          "max": 5195.3
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 301.828,
+          "sdk_mapping_wall_ms": 301.825,
+          "provider_wall_ms": 0.003
+        },
+        "stored_created_to_started_ms": {
+          "min": 42.587,
+          "median": 55.492,
+          "max": 170.025
+        },
+        "stored_started_to_completed_ms": {
+          "min": 4665.472,
+          "median": 5081.385,
+          "max": 5599.634
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 4364.472,
+          "median": 4779.385,
+          "max": 5100.634
         }
       },
       {
@@ -151,6 +241,36 @@
         "first_terminal_observed_to_render_ms": {
           "min": 30.0,
           "max": 34.6
+        },
+        "reported_workflow_duration_ms": {
+          "min": 295,
+          "median": 344,
+          "max": 397
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 4752.8,
+          "median": 4883.4,
+          "max": 5167.9
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 300.601,
+          "sdk_mapping_wall_ms": 300.598,
+          "provider_wall_ms": 0.003
+        },
+        "stored_created_to_started_ms": {
+          "min": 191.541,
+          "median": 519.212,
+          "max": 600.92
+        },
+        "stored_started_to_completed_ms": {
+          "min": 4675.568,
+          "median": 4678.562,
+          "max": 4828.135
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 4281.562,
+          "median": 4380.568,
+          "max": 4484.135
         }
       },
       {
@@ -165,6 +285,36 @@
         "first_terminal_observed_to_render_ms": {
           "min": 25.4,
           "max": 33.5
+        },
+        "reported_workflow_duration_ms": {
+          "min": 217,
+          "median": 379,
+          "max": 386
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 4134.3,
+          "median": 4496.2,
+          "max": 4727.0
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 301.6,
+          "sdk_mapping_wall_ms": 202.501,
+          "provider_wall_ms": 17.547
+        },
+        "stored_created_to_started_ms": {
+          "min": 45.91,
+          "median": 166.359,
+          "max": 272.434
+        },
+        "stored_started_to_completed_ms": {
+          "min": 4380.207,
+          "median": 4412.933,
+          "max": 4884.934
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 4033.933,
+          "median": 4163.207,
+          "max": 4498.934
         }
       },
       {
@@ -179,6 +329,36 @@
         "first_terminal_observed_to_render_ms": {
           "min": 20.5,
           "max": 32.8
+        },
+        "reported_workflow_duration_ms": {
+          "min": 67,
+          "median": 165,
+          "max": 185
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 3313.0,
+          "median": 3416.4,
+          "max": 3527.6
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 112.958,
+          "sdk_mapping_wall_ms": 51.034,
+          "provider_wall_ms": 18.372
+        },
+        "stored_created_to_started_ms": {
+          "min": 157.743,
+          "median": 400.684,
+          "max": 591.682
+        },
+        "stored_started_to_completed_ms": {
+          "min": 2942.396,
+          "median": 3005.332,
+          "max": 3344.462
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 2820.332,
+          "median": 2875.396,
+          "max": 3179.462
         }
       },
       {
@@ -193,6 +373,36 @@
         "first_terminal_observed_to_render_ms": {
           "min": 21.3,
           "max": 25.9
+        },
+        "reported_workflow_duration_ms": {
+          "min": 3215,
+          "median": 3586,
+          "max": 3700
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 827.1,
+          "median": 1087.0,
+          "max": 1314.4
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 3585.5,
+          "sdk_mapping_wall_ms": 91.801,
+          "provider_wall_ms": 3516.739
+        },
+        "stored_created_to_started_ms": {
+          "min": 51.231,
+          "median": 82.351,
+          "max": 202.591
+        },
+        "stored_started_to_completed_ms": {
+          "min": 4279.901,
+          "median": 4411.622,
+          "max": 4481.539
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 693.901,
+          "median": 781.539,
+          "max": 1196.622
         }
       },
       {
@@ -207,13 +417,45 @@
         "first_terminal_observed_to_render_ms": {
           "min": 20.3,
           "max": 32.2
+        },
+        "reported_workflow_duration_ms": {
+          "min": 3326,
+          "median": 3449,
+          "max": 3600
+        },
+        "action_minus_reported_workflow_duration_ms": {
+          "min": 898.2,
+          "median": 1415.5,
+          "max": 1686.5
+        },
+        "workflow_spans_ms_median": {
+          "workflow_wall_ms": 3448.486,
+          "sdk_mapping_wall_ms": 99.167,
+          "provider_wall_ms": 3358.723
+        },
+        "stored_created_to_started_ms": {
+          "min": 166.902,
+          "median": 347.743,
+          "max": 413.444
+        },
+        "stored_started_to_completed_ms": {
+          "min": 4256.662,
+          "median": 4436.782,
+          "max": 4475.738
+        },
+        "stored_running_interval_minus_reported_duration_ms": {
+          "min": 656.662,
+          "median": 987.782,
+          "max": 1149.738
         }
       }
     ],
     "overall_first_terminal_observed_to_render_ms": {
       "min": 18.7,
       "max": 44.8
-    }
+    },
+    "outside_reported_timer_scope": "Per-action browser wall duration minus that execution reported workflow duration; includes queue, pre-engine loading, dispatch, persistence and transport; does not isolate any phase or establish post-execution delay.",
+    "stored_interval_scope": "Arithmetic on stored execution timestamps; includes lifecycle work outside the reported engine timer. Does not isolate loading, credentials, child startup, persistence, or browser notification delay."
   },
   "limitations": [
     "Three samples per cell support the reported wall-clock medians only.",
