@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFile,writeFile,access} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
+import {withExclusiveReceipt} from './exclusive-receipt.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 const exec=promisify(execFile);
 const [mode,name='canonical-isolation',...extra]=process.argv.slice(2);
@@ -58,9 +59,7 @@ if(mode==='--verify') {
   }
   console.log('Concurrent real local tenant/attempt/SDK/isolate qualification verified; no cloud or physical-stop acceptance');
 } else {
-  let exists=true;
-  try {await access(receipt);} catch(error) {if(error.code!=='ENOENT') throw error;exists=false;}
-  if(exists) throw new Error('Receipt already exists; preserve it and choose a new explicit name before any invocation');
+  await withExclusiveReceipt(receipt, async save => {
   let warmup;
   if(prewarm) {
     try {
@@ -69,8 +68,8 @@ if(mode==='--verify') {
         {maxBuffer:1024*1024,timeout:40000});
       warmup=JSON.parse(stdout);
     } catch(error) {
-      await writeFile(receipt,JSON.stringify({process_exit_code:1,phase:'credential-free-warmup',
-        error_type:error.name,cloud_invocations:0},null,2)+'\n',{flag:'wx'});
+      await save({process_exit_code:1,phase:'credential-free-warmup',
+        error_type:error.name,cloud_invocations:0});
       throw error;
     }
   }
@@ -99,7 +98,7 @@ if(mode==='--verify') {
   const report={process_exit_code:participants.some(p=>p.process_exit_code!==0) ? 1 : 0,
     batch,participants,prewarm,warmup,cloud_invocations:0,physical_termination_verified:false};
   // Preserve terminal actor receipts even if subsequent cleanup/verification fails.
-  await writeFile(receipt,JSON.stringify(report,null,2)+'\n',{flag:'wx'});
+  await save(report);
   try {
   if(!participants.some(p=>p.unknown_process_state)) {
     const cleanup=`import asyncio,json,sys
@@ -121,6 +120,7 @@ asyncio.run(clean())`;
     report.cleanup_error_type=error.name;
   }
   const paths=['spikes/cloudflare-pyodide/backend/canonical-isolation.mjs',
+    'spikes/cloudflare-pyodide/backend/exclusive-receipt.mjs',
     'spikes/cloudflare-pyodide/backend/fixture-admission.mjs',
     'spikes/cloudflare-pyodide/backend/test-api-route.mjs',
     'spikes/cloudflare-pyodide/backend/refresh-gate.mjs',
@@ -132,8 +132,9 @@ asyncio.run(clean())`;
   report.source_sha256=Object.fromEntries(await Promise.all(paths.map(async path=>[path,hash(await readFile(new URL(path,repo)))])));
   let verificationError;
   try {verify(report);} catch(error) {verificationError=error;report.process_exit_code=1;report.verification_error_type=error.name;}
-  await writeFile(receipt,JSON.stringify(report,null,2)+'\n');
+  await save(report);
   if(verificationError) throw verificationError;
   console.log({process_exit_code:0,local_fresh_runs:2,tenant_sdk_denials:[403,403],
     values:participants.map(p=>p.report.independent_document_value),barrier_keys_remaining:report.barrier_keys_remaining});
+  });
 }

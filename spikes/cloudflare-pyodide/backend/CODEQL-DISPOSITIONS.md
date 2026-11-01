@@ -22,3 +22,14 @@ was run for this documentation-only disposition. REST comment reads received
 HTTP 403 rate-limit errors; bounded GraphQL review-thread reads supplied the
 exact original/current line mapping. The separate failed CodeQL check is not
 established as resolved by this review.
+
+Filesystem receipt race follow-up (1837-1840): canonical-isolation.mjs and
+cold-concurrency.mjs now reserve their output with exclusive open before any
+fixture effect. Updates use that same open file handle, avoiding path-based
+check/use and reopen races. A failed observer leaves a reserved, explicitly
+unverified receipt; no automatic retry removes it. New source manifests include
+the shared helper. Historical receipts remain unchanged.
+
+Verification: node --test backend/exclusive-receipt.test.mjs (2 passed),
+node --check for both callers, git diff --check. No Docker/cloud invocation.
+This is local helper coverage, not fresh CodeQL or execution acceptance.
