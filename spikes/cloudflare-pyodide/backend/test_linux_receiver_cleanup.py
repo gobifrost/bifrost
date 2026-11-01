@@ -24,13 +24,14 @@ class ReceiverCleanupTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_already_completed_receiver_is_joined(self):
         async def receive():
-            return None
+            return 'receiver completed'
 
         task = asyncio.create_task(receive())
-        await task
+        self.assertEqual(await task, 'receiver completed')
         await cancel_and_join(task)
         self.assertTrue(task.done())
         self.assertFalse(task.cancelled())
+        self.assertEqual(task.result(), 'receiver completed')
 
     async def test_receiver_failure_is_not_suppressed(self):
         async def receive():
@@ -58,8 +59,9 @@ class ReceiverCleanupTests(unittest.IsolatedAsyncioTestCase):
         join = asyncio.create_task(cancel_and_join(task))
         await cleaning.wait()
         join.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await join
+        outcome, = await asyncio.gather(join, return_exceptions=True)
+        self.assertIsInstance(outcome, asyncio.CancelledError)
+        self.assertTrue(join.cancelled())
         self.assertTrue(task.done())
 
 

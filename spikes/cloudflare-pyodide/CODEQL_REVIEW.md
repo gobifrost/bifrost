@@ -155,3 +155,18 @@ guest packet. Existing recorded packets/receipt hashes remain historical; full
 SDK workflows and backend suites were not rerun for this cleanup-only change.
 No new access, cloud invocation, production/shared execution edit or alert
 dismissal occurred. Fresh CodeQL must establish disposition on the new head.
+
+## Lifecycle test outcomes: alerts 1884 and 1885
+
+Both review comments flag bare awaits of Task variables in the cleanup tests.
+The completed receiver now returns an explicit marker, asserted both before and
+after cleanup. The parent-cancellation test gathers the cancelled join and
+asserts its CancelledError outcome, cancelled state and completed child. These
+assertions retain the original lifecycle contracts without standalone discarded
+await results, suppression or alert dismissal.
+
+All four real asyncio lifecycle cases passed in the existing CT128 Docker image
+(network disabled, one CPU/512 MiB/64 PIDs, 30-second timeout). Targeted Docker
+Ruff and diff checks passed; no running containers remained. Only tests changed;
+no SDK/database/cloud workflow or full backend suite was rerun. Fresh CodeQL
+confirmation remains required.
