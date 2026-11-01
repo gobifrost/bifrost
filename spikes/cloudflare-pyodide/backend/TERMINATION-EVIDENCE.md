@@ -47,3 +47,28 @@ and before/after byte equality of the old report. Unknown/unexercised signals
 cannot produce physical-stop proof. No SDK, auth, CPU quota, isolation or
 production routing guarantee was weakened. Arbitrary untrusted execution stays
 unqualified; the full backend goal remains incomplete.
+
+## Prepared guest observer correction
+
+The timestamped guest driver now retains correlation for all three fixed case
+IDs throughout the bounded observation session. Previously, advancing `active`
+would reject late callbacks from a previous case; that could discard a useful
+counterexample. Final classification is recomputed from retained event arrays.
+Unknown IDs, invalid events and excess observations remain refused. No fixture
+execution, runtime setting, quota or deployment was changed by this correction.
+
+```sh
+node --test backend/termination-observer.test.mjs backend/timed-termination.test.mjs backend/termination-evidence.test.mjs
+```
+
+Nine offline tests pass, including a deterministic previous-case late effect
+after a subsequent case starts. These are observer regression tests, not a
+physical termination experiment. The prepared actual-workerd fixture remains
+unexecuted pending legitimate availability of the pinned runtime bundle.
+
+Current official documentation describes `load()` as creating a new Worker and
+custom CPU limits as raising exceptions, but does not document an explicit
+terminate operation on the loader/stub. Documentation is API evidence, not
+physical-stop evidence:
+[API reference](https://developers.cloudflare.com/dynamic-workers/api-reference/),
+[custom limits](https://developers.cloudflare.com/dynamic-workers/usage/limits/).
