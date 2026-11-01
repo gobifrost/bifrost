@@ -223,7 +223,7 @@ the frozen benchmark client and infrastructure are identified separately.
 | Mixed load and conditional soaks | Declared sequence pending | No stock mixed capacity or sustained growth claim yet. |
 | Browser app path | 24/24 correct actions and durable records; verified cleanup | Descriptive timing only; see the omitted-timer finding below. |
 | Stock retention rehearsal | Queued behind the same host lock | Earlier candidate storage evidence stays separate. |
-| Fixed-count scaling and zero-warm elasticity | Written test matrix; read-only sampler implemented with verification queued | Neither scaling efficiency nor cold-start capacity has been measured yet. |
+| Fixed-count scaling and zero-warm elasticity | [Declared experiment](2026-10-31-worker-scaling-experiment.md); tooling prepared in a separate checkout, with Docker verification queued | Neither scaling efficiency nor cold-start capacity has been measured yet. |
 
 The complete 4 GB SDK raw artifact is retained under
 `runs/stock-capacity-matrix-20261031-r1/4gb-capacity/sdk-confirmation/`.
