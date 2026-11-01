@@ -4,7 +4,9 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import httpx
@@ -16,7 +18,7 @@ from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.executions import Execution
 from src.models.enums import ExecutionStatus
-from src.services.worker_pool import claims, external_controller
+from src.services.worker_pool import claims, controller, external_controller
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.external_controller import ExternalWorkerPoolController
 from tests.unit.services.worker_pool.test_worker_pool import (
@@ -39,6 +41,7 @@ class Provider:
         self.starts = []
         self.before_start: Callable[[UUID], Awaitable[None]] | None = None
         self.lose_start_response = False
+        self.fail_deletions = False
 
     async def handle(self, request):
         assert request.headers["Authorization"] == f"Bearer {TOKEN}"
@@ -75,6 +78,8 @@ class Provider:
                     self.lose_start_response = False
                     raise httpx.ReadTimeout("synthetic lost response", request=request)
             elif request.method == "DELETE":
+                if self.fail_deletions:
+                    raise httpx.ReadTimeout("synthetic provider outage", request=request)
                 resource["state"] = "deleted"
         return httpx.Response(200, json=resource)
 
@@ -349,3 +354,42 @@ async def test_provider_redirects_never_forward_the_bearer_to_another_origin():
         with pytest.raises(httpx.HTTPStatusError):
             await client.profile()
     assert requests == ["capacity.invalid"]
+
+
+@pytest.mark.parametrize("terminal_state", ["lost", "retired"])
+async def test_cleanup_survives_provider_outage_beyond_one_hour_and_controller_restart(
+    db, capacity, monkeypatch, terminal_state,
+):
+    await _accept_pool_run()
+    [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+    resource = capacity.provider.resources[str(worker_id)]
+    ended_at = controller._now()
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        worker.state, worker.ended_at = terminal_state, ended_at
+        await session.commit()
+    monkeypatch.setattr(capacity.pool, "launch_for_demand", AsyncMock(return_value=[]))
+    monkeypatch.setattr(capacity.pool, "replace_outdated", AsyncMock())
+    capacity.provider.fail_deletions = True
+    await capacity.pool.reconcile()
+    later = ended_at + timedelta(hours=2)
+    monkeypatch.setattr(controller, "_now", lambda: later)
+    monkeypatch.setattr(external_controller, "_now", lambda: later)
+    await capacity.pool.reconcile()
+    deletions = [method for method, path in capacity.provider.requests
+                 if method == "DELETE" and path.endswith(str(worker_id))]
+    assert len(deletions) == 2, "cleanup must remain eligible throughout the outage"
+    capacity.provider.fail_deletions = False
+    restarted = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile)
+    monkeypatch.setattr(restarted, "launch_for_demand", AsyncMock(return_value=[]))
+    monkeypatch.setattr(restarted, "replace_outdated", AsyncMock())
+    await restarted.reconcile()
+    assert resource["state"] == "deleted"
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.state == terminal_state
+        assert worker.capacity_resource_uid == resource["resource_uid"]
+    before = sum(path.endswith(str(worker_id)) for _, path in capacity.provider.requests)
+    await restarted.reconcile()
+    assert sum(path.endswith(str(worker_id)) for _, path in capacity.provider.requests) == before
