@@ -98,8 +98,11 @@ This increment's exact local command was:
 All 22 tests passed in 19.98 seconds. `../results/claim-envelope-junit.xml` and
 `../results/claim-envelope.json` preserve the raw receipt and source hashes.
 
-Next connect the actual local Pyodide result to this shared builder and the
-canonical claim/consumer path. Completed-run claim release, stale/competing-owner
+The [combined canonical local qualification](CANONICAL-LOCAL.md) subsequently
+connected actual Pyodide output through the shared builder and canonical
+claim/consumer path. It also verified upstream's intended completed-claim
+retention and fixture executor deletion cascade; there is no per-run completed
+claim-release API to invent. Production retention policy, stale/competing-owner
 handback, whole-host loss and interrupted post-commit follow-up work still need
 qualification. Current-owner pre-launch release is not proof of any of those.
 Runtime security changes remain outside the current authorization. The prior

@@ -145,3 +145,32 @@ completed-run claim cleanup, credential issuance, physical termination or cloud
 acceptance. The handback helper is unchanged; security behavior was not modified.
 The new pure envelope has not yet been packaged or executed in Pyodide. No native
 dependency or PyEmscripten build issue was encountered by this host-side increment.
+
+## Combined real local canonical execution
+
+Continued from 336b6d2512512d00d20fcc00974d58d0d590989b. Reused the existing own
+local fixture listener after checking it was live; no duplicate supervisor,
+cloud invocation or shared Containers edit. Ordinary test-stack worker/scheduler
+were stopped before staging the fixture dispatch.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Actual Pyodide output can use upstream claim, consumer-issued identity and terminal persistence | Add canonical local fixture/route mode, package shared envelope; `node backend/run-authorized-local.mjs --canonical` | First run exit 0; actual module/helper load, SDK config/table operations, value 70, canonical result/log persistence; `canonical-local.json` | Concurrent tenants and interruption during individual post-commit steps |
+| Retained terminal result survives reconnect without new effects | Inject exception after full consumer return, advance persisted owner generation, replay | One physical launch, one log row, same persisted result, transport ACK after replay; no rerun needed | Whole-host loss and recovery qualification |
+| Terminal state revokes actual run credentials | Same consumer-issued credential before effects and after completion | Cross-tenant request 403; after terminal, credential 401; no credential in retained evidence | HTTP-user request authorization/admission qualification |
+| Completed claim rows follow upstream retention, not per-run release | Inspect execution_workers.py, retain claim after completion, delete fixture executor through World cleanup | Claim retained as specified, executor FK cascade removes it | Production retention controller is still unqualified |
+| Local cleanup actually retires the physical listener | Disconnect own test network; revalidate exact Wrangler supervisor and SIGINT it | Port 8799 ECONNREFUSED, bridge network only; `canonical-local-cleanup.json` | Reopen only for a deliberate authorized local experiment |
+
+Correction to earlier local cleanup wording: ending the old tool handle did not
+stop its Wrangler process. It remained unreachable from the detached API network,
+was found/reused here and is now independently verified stopped. Cloud cleanup
+evidence and its revoked remote secret were not changed. Package regeneration
+after a metadata-note correction produced the identical tested payload hash
+e4db1ebbd021387907062af4721543d5639889fe587884215cea1e0e1ec4e0c5.
+
+Offline receipt/provenance verification and 15 focused Node tests pass. Focused
+Docker Ruff and syntax/diff checks pass. No new native dependency failed: the
+existing wasm wheels plus the added pure-Python envelope ran successfully.
+Actual CPU/peak memory remain unknown, and no cloud acceptance or physical-stop
+improvement is claimed. Runtime/API review used current Dynamic Workers docs and
+published workers-types 5.20261031.1 without changing the pinned runtime.

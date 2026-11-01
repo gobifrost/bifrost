@@ -19,6 +19,7 @@ paths += [repo / "api" / (name + ".py") for name in (
     "src/services/execution/worker", "src/services/execution/engine",
     "src/services/execution/virtual_import", "src/services/execution/workspace_modules",
     "src/services/execution/module_loader", "src/services/execution/type_inference",
+    "src/services/execution/result_envelope",
     "src/core/module_cache_sync", "src/core/module_cache_contract",
     "src/core/error_messages", "src/core/secret_string", "src/models/enums",
     "src/sdk/context", "src/sdk/errors", "src/sdk/error_handling", "src/sdk/decorators",

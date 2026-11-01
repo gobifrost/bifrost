@@ -42,7 +42,7 @@ if args.current_runtime:
     hashes["runtime_runner.py"] = hashlib.sha256(runner).hexdigest()
 manifest = {"module_count": len(modules), "files": hashes,
             "payload_sha256": hashlib.sha256(json.dumps(modules,sort_keys=True).encode()).hexdigest(),
-            "note": "Prepared source and wasm package bytes; authority/context of probe runner remains synthetic"}
+            "note": "Source bundle provenance only; invocation evidence must establish execution authority/context"}
 name = "runtime" if args.current_runtime else "engine"
 output = "generated-runtime.mjs" if args.current_runtime else "generated-modules.mjs"
 (root / "backend" / output).write_text("export default " + json.dumps(modules) + ";\n")

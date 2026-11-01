@@ -1,0 +1,10 @@
+{
+  "listener_status": "ECONNREFUSED",
+  "test_network_attached": false,
+  "actions": [
+    "Disconnected bifrost-test-79c5c14e_default from own Pyodide tools container",
+    "Revalidated exact own wrangler.authorized-local supervisor PID 1276 and sent SIGINT",
+    "Read back listener 8799 connection refused and Docker network bridge only"
+  ],
+  "cloud_mutations": 0
+}

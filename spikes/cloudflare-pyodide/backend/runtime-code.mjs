@@ -30,7 +30,15 @@ class Default(WorkerEntrypoint):
                        "transient":True, "no_cache":True}
             return Response.json(await run_authorized_attempt(
                 "00000000-0000-0000-0000-000000000001",context,"https://local-api.invalid"))
-        return Response.json(await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"]))
+        import time
+        if body["action"] == "execute_envelope":
+            from src.services.execution.result_envelope import execution_result_envelope
+        started = time.perf_counter()
+        result = await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"])
+        if body["action"] == "execute_envelope":
+            result = execution_result_envelope(body["execution_id"], body["worker_id"], result,
+                duration_ms=int((time.perf_counter()-started)*1000), metrics=result.get("metrics") or {})
+        return Response.json(result)
 `;
 
 export function runtimeCode(outbound=null,entrypoint=main) {

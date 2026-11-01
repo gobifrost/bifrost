@@ -31,6 +31,8 @@ export default {
     if(!/^workflows\/pyodide_qualification_[a-f0-9]{32}\.py$/.test(body.context?.file_path ?? '') ||
        body.context?.function_name!=='qualified' || !body.context?.engine_token ||
        body.context?.code || body.context?.service || body.context?.is_platform_admin ||
+       (body.mode!==undefined && body.mode!=='canonical') ||
+       (body.mode==='canonical' && !/^[a-f0-9-]{36}$/.test(body.worker_id ?? '')) ||
        !body.manifest?.[body.context.file_path] || observations.size>=4) {
       return new Response('Fixture not admitted',{status:422});
     }
@@ -40,7 +42,8 @@ export default {
     try {
       const response=await env.LOADER.load(runtimeCode(ctx.exports.TestApi({props:{id,manifest:body.manifest}})))
         .getEntrypoint().fetch(new Request('https://attempt.invalid/',{
-          method:'POST',body:JSON.stringify({action:'execute',execution_id:body.execution_id,
+          method:'POST',body:JSON.stringify({action:body.mode==='canonical' ? 'execute_envelope' : 'execute',
+            worker_id:body.worker_id,execution_id:body.execution_id,
             context:body.context,api_url:'https://test-api.invalid'}),
         }));
       return Response.json({result:await boundedJson(response),api_calls:calls});
