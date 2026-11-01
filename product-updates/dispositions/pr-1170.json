@@ -1,0 +1,15 @@
+{
+  "key": "pr:1170",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Fresh Git workers can sync a fetched workspace without a second Fetch. Existing stale-checkout protections remain unchanged.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1170",
+      "https://github.com/gobifrost/bifrost/pull/1140",
+      "Carries Thomas Bray’s original commits and credits him as co-author. Original runtime scope is unchanged. Maintainer fixture/cache isolation repair passed 1,012 tests with zero JUnit failures, errors, or skips; the settled reset/harness invocation passed 25 tests and Dockerized API Pyright/Ruff passed. Full acceptance remains the merge queue."
+    ]
+  }
+}

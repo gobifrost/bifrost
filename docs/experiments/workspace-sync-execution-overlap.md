@@ -125,3 +125,26 @@ configuration validation passed.
 Validation receipts for this maintainer follow-up are under
 `/tmp/review-1140-20261101-*.log` and their matching JUnit XML snapshots. Full
 repository-wide acceptance remains the merge queue's responsibility.
+
+The focused exposing sequence and settled reset checks were run with:
+
+```bash
+./test.sh tests/e2e/platform/test_thin_platform_jobs_build.py \
+  tests/e2e/platform/test_workspace_sync_execution_overlap.py \
+  tests/unit/test_compose_test_harness.py \
+  tests/unit/test_remote_launcher_deployment_contract.py -v --durations=20
+./test.sh tests/unit/test_compose_test_harness.py \
+  tests/unit/test_remote_launcher_deployment_contract.py -v
+./test.sh quality api
+```
+
+The original failed shard's file list is retained at
+`/tmp/pr1140-original-shard3.txt`; the broad run added the five Git consumer
+files from the earlier reproduction command and the two harness contract files.
+Full local backend, client, and browser suites were not run.
+
+The fork rejected the maintainer push because it is organization-owned. The
+repair therefore continues in [PR #1170](https://github.com/gobifrost/bifrost/pull/1170),
+preserving the original commits from Thomas's
+[PR #1140](https://github.com/gobifrost/bifrost/pull/1140) and crediting Thomas Bray
+as a co-author in the squash-commit body.
