@@ -5,6 +5,7 @@ const record=value=>value!==null && typeof value==='object' && !Array.isArray(va
 export function fixtureRejection(body,active) {
   if(!Number.isInteger(active) || active<0 || active>=4) return 'capacity';
   if(!record(body) || !record(body.context) || !record(body.manifest)) return 'shape';
+  if(body.fixture_mode!==undefined && body.fixture_mode!=='refresh_interruption') return 'fixture_mode';
   const c=body.context;
   const match=/^workflows\/pyodide_qualification_([a-f0-9]{32})\.py$/.exec(c.file_path ?? '');
   if(!match || c.function_name!=='qualified') return 'workspace';

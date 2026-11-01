@@ -8,7 +8,8 @@ test('actual SDK and router refresh path is admitted',()=>{
 test('refresh admission cannot select another origin or auth route',()=>{
   for(const value of ['https://other.invalid/auth/refresh','http://test-api.invalid/auth/refresh',
     'https://test-api.invalid/auth/login','https://test-api.invalid/auth/refresh/extra',
-    'https://test-api.invalid/api/tables-elsewhere','https://test-api.invalid/api/sdk-elsewhere']) {
+    'https://test-api.invalid/api/tables-elsewhere','https://test-api.invalid/api/sdk-elsewhere',
+    'https://test-api.invalid/__fixture_refresh/ready','https://test-api.invalid/__fixture_refresh/release']) {
     assert.equal(testApiRouteAllowed(new URL(value)),false,value);
   }
 });

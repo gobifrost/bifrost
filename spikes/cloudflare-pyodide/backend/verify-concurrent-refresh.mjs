@@ -2,6 +2,13 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const args=process.argv.slice(2);
+if(args.length && (args.length!==2 || args[0]!=='--commit' || !/^[a-f0-9]{40}$/.test(args[1]))) {
+  throw new Error('Use no arguments or --commit <full tested SHA>');
+}
+const historicalCommit=args[1],exec=promisify(execFile);
 const root=new URL('../../../',import.meta.url);
 const read=async name=>JSON.parse(await readFile(new URL('../results/'+name,import.meta.url),'utf8'));
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -31,7 +38,11 @@ for(const receipt of [mixed,cold]) {
   assert.equal(r.result.result.result.credential_redaction_probe,'[REDACTED]');
   assert.equal(r.result.result.result.parent_secret_present,false);
   assert.deepEqual(r.result.api_calls.filter(c=>c.path==='/auth/refresh'),[{method:'POST',path:'/auth/refresh',status:200}]);
-  for(const [path,digest] of Object.entries(receipt.source_sha256)) assert.equal(hash(await readFile(new URL(path,root))),digest,path);
+  for(const [path,digest] of Object.entries(receipt.source_sha256)) {
+    const bytes=historicalCommit ? (await exec('git',['show',`${historicalCommit}:${path}`],
+      {cwd:root,encoding:'buffer',maxBuffer:2*1024*1024})).stdout : await readFile(new URL(path,root));
+    assert.equal(hash(bytes),digest,path);
+  }
   const manifest=await read(receipt.runtime_manifest);
   assert.equal(manifest.payload_sha256,receipt.payload_sha256);
   assert.equal(manifest.files['pyodide_refresh.py'],receipt.source_sha256['spikes/cloudflare-pyodide/backend/pyodide_refresh.py']);

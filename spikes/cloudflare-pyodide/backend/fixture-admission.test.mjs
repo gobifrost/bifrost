@@ -16,6 +16,7 @@ test('supported fixture is passed unchanged to the runtime callback exactly once
   assert.equal(fixtureRejection({...body,mode:undefined,worker_id:undefined},0),null);
 });
 const cases=[
+  ['unknown fixture mode',b=>{b.fixture_mode='other';}],
   ['missing context',b=>{b.context=null;}],
   ['different attempt',b=>{b.context.execution_id='22222222-2222-4222-8222-222222222222';}],
   ['malformed worker',b=>{b.worker_id='-'.repeat(36);}],

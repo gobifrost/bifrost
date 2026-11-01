@@ -1,5 +1,9 @@
 # Mixed synchronous/asynchronous refresh
 
+Follow-on [actual SDK waiter cancellation](REFRESH-INTERRUPTION.md) now tests
+the API-issued-response/adoption boundary in a Worker. The component-only
+cancellation statement below records the earlier 8cf1ded85 qualification scope.
+
 Two async SDK callers and one synchronous caller now converge on the same
 replacement credential in a fresh local Python Worker, with exactly one actual
 `POST /auth/refresh` request. A start gate releases all three callers using the
@@ -46,7 +50,7 @@ Package the current companion into the existing local tools container:
 python backend/pack-engine.py --current-runtime --manifest concurrent-runtime-manifest.json
 node backend/canonical-refresh.mjs --run canonical-refresh-concurrent-cooperative concurrent concurrent-runtime-manifest.json
 node backend/canonical-refresh.mjs --run canonical-refresh-challenge-cooperative challenge concurrent-runtime-manifest.json
-node backend/verify-concurrent-refresh.mjs
+node backend/verify-concurrent-refresh.mjs --commit 8cf1ded85e342642808215adb363dc9e0336d212
 python -m unittest discover -s backend -p 'test_*.py' -v
 ```
 

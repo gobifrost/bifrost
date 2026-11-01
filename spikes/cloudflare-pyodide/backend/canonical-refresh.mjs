@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const exec=promisify(execFile),[mode,name='canonical-refresh-final',scenario='direct',
   artifactManifest='refresh-runtime-manifest.json']=process.argv.slice(2);
 if(!/^[a-z0-9-]+-manifest\.json$/.test(artifactManifest)) throw new Error('Fixed artifact manifest filename required');
-if(!['direct','challenge','concurrent'].includes(scenario)) throw new Error('Use direct, challenge or concurrent scenario');
+if(!['direct','challenge','concurrent','interruption'].includes(scenario)) throw new Error('Use direct, challenge, concurrent or interruption scenario');
 if(!/^canonical-refresh(?:-[a-z0-9-]+)?$/.test(name)) throw new Error('Fixed canonical-refresh receipt name required');
 const receipt=new URL(`../results/${name}.json`,import.meta.url);
 const repo=new URL('../../../',import.meta.url);
@@ -27,7 +27,7 @@ if(mode==='--run') {
     'run','--rm','--no-deps','--name',container,'--volume',
     '/run/desktop/mnt/host/c/Users/ThomasBray/.t3/worktrees/bifrost/t3-ddf316c1/spikes/cloudflare-pyodide:/spike:ro',
     'test-runner','python','/spike/backend/canonical-local.py',
-    {challenge:'--expired-access',direct:'--refresh-probe',concurrent:'--concurrent-refresh'}[scenario]],
+    {challenge:'--expired-access',direct:'--refresh-probe',concurrent:'--concurrent-refresh',interruption:'--interrupt-refresh'}[scenario]],
     {timeout:180000,maxBuffer:2*1024*1024}));}
   catch(error){stdout=error.stdout ?? '';code=typeof error.code==='number' ? error.code : 1;report.unknown_process_state=!!error.killed;}
   const lines=stdout.split(/\r?\n/).filter(line=>line.startsWith('{"runtime":'));
@@ -39,7 +39,8 @@ if(mode==='--run') {
     'spikes/cloudflare-pyodide/backend/canonical-local.py','spikes/cloudflare-pyodide/backend/runtime-runner.py',
     'spikes/cloudflare-pyodide/backend/runtime_guard.py','spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs',
     'spikes/cloudflare-pyodide/backend/test-api-route.mjs','spikes/cloudflare-pyodide/backend/pyodide_refresh.py',
-    'spikes/cloudflare-pyodide/backend/pack-engine.py']) {
+    'spikes/cloudflare-pyodide/backend/pack-engine.py','spikes/cloudflare-pyodide/backend/refresh-gate.mjs',
+    'spikes/cloudflare-pyodide/backend/fixture-admission.mjs']) {
     report.source_sha256[path]=hash(await readFile(new URL(path,repo)));
   }
   report.runtime_manifest=artifactManifest;
@@ -52,7 +53,8 @@ if(mode==='--run') {
 } else if(mode==='--verify') {
   const r=JSON.parse(await readFile(receipt,'utf8'));
   assert.equal(r.phase,'observed');
-  assert.equal(r.result[{challenge:'expired_access_probe',direct:'refresh_probe',concurrent:'concurrent_refresh_probe'}[scenario]],true);
+  assert.equal(r.result[{challenge:'expired_access_probe',direct:'refresh_probe',concurrent:'concurrent_refresh_probe',
+    interruption:'refresh_interruption_probe'}[scenario]],true);
   assert.notEqual(r.unknown_process_state,true);
   for(const [path,digest] of Object.entries(r.source_sha256)) assert.equal(hash(await readFile(new URL(path,repo))),digest);
   console.log({process_exit_code:r.process_exit_code,provider_evidence:r.result.provider_evidence,
