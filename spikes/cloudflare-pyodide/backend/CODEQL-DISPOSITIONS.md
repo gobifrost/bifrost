@@ -105,3 +105,8 @@ are inside pytest.raises(ConnectionError), observing the injected response-loss
 failure before retained-result reconciliation; retain those exception assertions.
 Diff checks passed. Docker tests were not run and this test-source edit still
 requires focused remote/CI verification.
+
+The e09af99 analysis additionally flags the equivalent mixed-return Receiver.recv
+in provider-response-loss.py. Apply the same explicit pending-Future return as
+the journal test, preserving cancellation-only completion after fixture retirement.
+Diff check passed; actual response-loss fixture execution remains deferred.

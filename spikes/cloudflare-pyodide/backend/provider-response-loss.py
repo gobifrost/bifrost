@@ -234,7 +234,7 @@ async def main(*, recover_retained=False):
                         self.received = True
                         return link.frame
                     launcher.retired.set()  # End only this test control receiver.
-                    await asyncio.Event().wait()
+                    return await asyncio.get_running_loop().create_future()
 
             await _receive_control_commands(launcher, Receiver(), asyncio.Event())
             assert launcher.pending_terminal == launcher.pending_terminal_inventory == {}
