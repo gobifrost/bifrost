@@ -6,8 +6,9 @@ import {readFile,writeFile,access} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
 const exec=promisify(execFile);
 const [mode,name='canonical-isolation',...extra]=process.argv.slice(2);
+const historicalCommit=mode==='--verify' && extra.length===2 && extra[0]==='--commit' && /^[a-f0-9]{40}$/.test(extra[1]) ? extra[1] : null;
 const prewarm=mode==='--run' && extra.length===1 && extra[0]==='--prewarm';
-if(!['--run','--verify'].includes(mode) || (extra.length && !prewarm) || !/^canonical-isolation(?:-[a-z0-9-]+)?$/.test(name)) {
+if(!['--run','--verify'].includes(mode) || (extra.length && !prewarm && !historicalCommit) || !/^canonical-isolation(?:-[a-z0-9-]+)?$/.test(name)) {
   throw new Error('Use --run or --verify, optional canonical-isolation-<name>; --run also accepts --prewarm');
 }
 const receipt=new URL(`../results/${name}.json`,import.meta.url);
@@ -51,7 +52,9 @@ if(mode==='--verify') {
   const report=JSON.parse(await readFile(receipt,'utf8'));
   verify(report);
   for(const [path,digest] of Object.entries(report.source_sha256)) {
-    assert.equal(hash(await readFile(new URL(path,repo))),digest,path);
+    const bytes=historicalCommit ? (await exec('git',['show',`${historicalCommit}:${path}`],
+      {cwd:repo,encoding:'buffer',maxBuffer:2*1024*1024})).stdout : await readFile(new URL(path,repo));
+    assert.equal(hash(bytes),digest,path);
   }
   console.log('Concurrent real local tenant/attempt/SDK/isolate qualification verified; no cloud or physical-stop acceptance');
 } else {
@@ -118,6 +121,7 @@ asyncio.run(clean())`;
     report.cleanup_error_type=error.name;
   }
   const paths=['spikes/cloudflare-pyodide/backend/canonical-isolation.mjs',
+    'spikes/cloudflare-pyodide/backend/fixture-admission.mjs',
     'spikes/cloudflare-pyodide/backend/canonical-local.py','spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs',
     'spikes/cloudflare-pyodide/backend/runtime-code.mjs','spikes/cloudflare-pyodide/backend/attempt_journal.py'];
   report.source_sha256=Object.fromEntries(await Promise.all(paths.map(async path=>[path,hash(await readFile(new URL(path,repo)))])));

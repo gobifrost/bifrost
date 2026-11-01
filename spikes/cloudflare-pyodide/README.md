@@ -28,6 +28,8 @@ make no live cloud requests and do not renew the retired cloud experiment.
 ## Reproduce
 
 Latest local qualification: [two concurrent canonical tenant runs](backend/CANONICAL-ISOLATION.md).
+The follow-on [fixture admission check](backend/FIXTURE-ADMISSION.md) rejects
+unsupported contexts before runtime/API effects and retains real SDK qualification.
 Warm execution passes with real run-scoped SDK identity; cold concurrent startup
 fails in the tested native workerd runtime. This does not resolve physical CPU
 termination or deployed end-to-end acceptance.

@@ -4,6 +4,7 @@ import {runtimeCode} from './runtime-code.mjs';
 import {boundedJson} from '../probe-io.mjs';
 import {verifyModuleResponse} from './module-response.mjs';
 import {verifyResolutionResponse} from './resolution-response.mjs';
+import {admitFixture} from './fixture-admission.mjs';
 const observations=new Map();
 export class TestApi extends WorkerEntrypoint {
   async fetch(request) {
@@ -35,14 +36,7 @@ export default {
       return Response.json(await boundedJson(response));
     }
     const body=await boundedJson(request,262144);
-    if(!/^workflows\/pyodide_qualification_[a-f0-9]{32}\.py$/.test(body.context?.file_path ?? '') ||
-       body.context?.function_name!=='qualified' || !body.context?.engine_token ||
-       body.context?.code || body.context?.service || body.context?.is_platform_admin ||
-       (body.mode!==undefined && body.mode!=='canonical') ||
-       (body.mode==='canonical' && !/^[a-f0-9-]{36}$/.test(body.worker_id ?? '')) ||
-       !body.manifest?.[body.context.file_path] || observations.size>=4) {
-      return new Response('Fixture not admitted',{status:422});
-    }
+    return admitFixture(body,observations.size,async()=>{
     const id=crypto.randomUUID();
     const calls=[];
     observations.set(id,calls);
@@ -55,5 +49,6 @@ export default {
         }));
       return Response.json({result:await boundedJson(response),api_calls:calls});
     } finally { observations.delete(id); }
+    });
   },
 };

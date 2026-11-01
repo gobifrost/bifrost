@@ -43,7 +43,7 @@ This fixture is explicitly local-only; do not deploy its test API bridge.
 Receipt names cannot be overwritten. Verification is read-only:
 
 ```sh
-node backend/canonical-isolation.mjs --verify canonical-isolation-warm
+node backend/canonical-isolation.mjs --verify canonical-isolation-warm --commit 4c2f09017f441811f5761abcd458652657909a60
 node backend/verify-canonical-local.mjs --commit a00ae73e98a65dfd1f1001bda595754ce51f2580
 ```
 
