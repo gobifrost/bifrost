@@ -107,3 +107,26 @@ All six journal tests passed through `./test.sh` in 6.43 seconds; raw receipt:
 hashes remain historical evidence for the earlier implementation. This change
 modifies only assertions, not the journal or platform implementation. Fresh
 CodeQL analysis must establish the disposition on the new head.
+
+## Receiver cleanup: alert 1879
+
+The [review comment](https://github.com/gobifrost/bifrost/pull/1161#discussion_r4436825424)
+flags `await receive` after cancellation in linux-control-reference.py. Awaiting
+the task joins its cleanup before stopping the launcher; removing the join would
+introduce a race. The fixture now explicitly gathers its single cancelled task,
+inspects the outcome and rethrows non-cancellation errors. It does not discard
+the cleanup operation or suppress arbitrary receiver failures.
+
+Three real asyncio lifecycle tests passed in CT128: pending cancellation waits
+for the receiver's finally block, an already completed receiver remains complete,
+and ValueError propagates. The command was a bounded, network-disabled Docker
+invocation of `python /qualification/test_linux_receiver_cleanup.py -v`, using
+the existing test image, one CPU, 512 MiB and 64 PIDs with a 30-second timeout.
+Targeted Docker Ruff passed. No database/SDK/cloud invocation or heavy laptop
+Docker was needed; no running containers remained. Historical Linux receipt
+verifiers pass and now bind the benchmark fixture to tested commit ca40ad458.
+
+The detailed-alert API returned HTTP 403; no scope refresh, alternate identity
+or dismissal was attempted. Public review context and exact current source
+identified the statement. Fresh CodeQL is required before claiming the alert
+resolved. Full backend suites were not rerun for this fixture-only cleanup.

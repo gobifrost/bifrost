@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const bytes = readFileSync(new URL('../results/linux-benchmark/receipt.json', import.meta.url));
 assert.equal(hash(bytes), 'b477d4aee3462ba5c69bf42dc8bf184dc6590ef30845ec8fa02fbec6b8ea50ae');
@@ -10,7 +12,9 @@ assert.equal(report.qualification_passed, true);
 assert.equal(report.cloud_invocations, 0);
 assert.deepEqual(report.running_after_cleanup, []);
 assert.equal(report.volumes_deleted, false);
-assert.equal(report.fixture_sha256, hash(readFileSync(new URL('linux-control-reference.py', import.meta.url))));
+assert.equal(report.fixture_sha256, hash(execFileSync('git', ['show',
+  'ca40ad458c29ef465820fa76dd6767811ac5caf6:spikes/cloudflare-pyodide/backend/linux-control-reference.py'],
+{cwd: fileURLToPath(new URL('../../../', import.meta.url))})));
 assert.equal(report.benchmark_source_sha256, hash(readFileSync(new URL('benchmark-workloads.py', import.meta.url))));
 const run = report.observed;
 assert.equal(run.real_linux_fork_verified, true);

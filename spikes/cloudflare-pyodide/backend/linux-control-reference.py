@@ -1,6 +1,5 @@
 """One real Linux workflow over upstream signed control; isolated test data only."""
 import asyncio
-from contextlib import suppress
 import hashlib
 import json
 import os
@@ -11,6 +10,14 @@ from uuid import uuid4
 
 import httpx
 import websockets
+
+
+async def cancel_control_receiver(task):
+    """Join the receiver before launcher cleanup; retain non-cancellation errors."""
+    task.cancel()
+    outcome, = await asyncio.gather(task, return_exceptions=True)
+    if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
+        raise outcome
 
 
 async def main(*, benchmark_probe=False):
@@ -186,9 +193,7 @@ async def qualified(n: int = 7):
                     runtime_access_after_terminal_status=401,retained_terminal_acknowledged=True,real_linux_fork_verified=True)
             finally:
                 if receive is not None:
-                    receive.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await receive
+                    await cancel_control_receiver(receive)
                 if launcher is not None:
                     await launcher.stop()
                     report['native_templates_stopped'] = not launcher.template.is_alive() and not launcher.agent_template.is_alive()
