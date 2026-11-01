@@ -1,5 +1,23 @@
 # Compact experiment log
 
+## CT128 real-engine five-workload benchmark, 2026-11-01
+
+Hypothesis: the proven canonical workerd SDK path can supply useful operation
+measurements without another orchestration layer. Change: opt-in benchmark in
+the existing pinned helper; three samples each for JSON, concurrent API reads,
+integration reads, authenticated writes and async/handled-exception steps.
+Command: guest `python3 .../inbox/workerd-benchmark-v3/ct128-workerd-benchmark.py`;
+exact Compose invocation and source hashes in `results/workerd-benchmark`.
+V1 failed before execution creation (missing Path import). V2 was correctly
+rejected for an extra third manifest module. V3 retained the unchanged two-file
+admission policy and passed all 15 correctness samples, one canonical launch,
+terminal/reconnect replay and cleanup. Medians 2/21/20/14/17 ms are local operation
+wall times, not CPU, cold-start or Cloudflare cost. Helper warning logs were
+filtered; only the two workflow logs persisted. Receipt SHA-256
+`6e9f41683e7d30fd863f736cb2d0259dface691bb962cc0b18efa450c83ce11e`.
+Next: same workloads on the signed Linux reference; preserve the physical-stop
+blocker and cloud hold. See WORKERD-BENCHMARK.md for limits and measurement scope.
+
 Platform source baseline: `e5da6d0c1fb751d4155b1b65458bfedfc2bec112`.
 Artifacts are under `results/`; generated copies retain source hashes.
 

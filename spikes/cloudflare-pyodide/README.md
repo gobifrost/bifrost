@@ -1,5 +1,11 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest guest evidence: [five-workload real engine/SDK measurements](WORKERD-BENCHMARK.md),
+[real Linux signed-control reference](backend/LINUX-CONTROL-REFERENCE.md), and
+[Python RPC cancellation counterexample](backend/RPC-TERMINATION-QUALIFICATION.md).
+Both fetch and RPC cancellation permit post-abort CPU effects. Untrusted
+admission and deployed acceptance remain held.
+
 Guest offload update: the publisher-source build now reproduces the exact pinned
 bundle, resolving the recorded HTTP 403 supply blocker without retrying it.
 [Actual workerd ABI/native validation passes](SOURCE-RUNTIME-QUALIFICATION.md)

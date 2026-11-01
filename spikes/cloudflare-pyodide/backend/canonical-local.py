@@ -14,6 +14,7 @@ import runpy
 import time
 from contextlib import suppress
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 from urllib.parse import urlsplit
 
@@ -23,7 +24,7 @@ from sqlalchemy import delete, select
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
-               node_pyodide=False, integration_probe=False, integration_secret_probe=False):
+               node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -43,6 +44,9 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
         raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
     expected_success = not failure_probe
+    if benchmark_probe and (not integration_probe or failure_probe or refresh_probe or expired_access
+                            or concurrent_refresh or interrupt_refresh or isolation_label is not None or transport_waiter):
+        raise RuntimeError("Benchmark requires the fixed successful integration fixture")
     if integration_secret_probe and not integration_probe:
         raise RuntimeError("Synthetic integration-secret qualification requires integration fixture")
     if integration_probe and (isolation_label is not None or refresh_probe or expired_access or concurrent_refresh
@@ -195,6 +199,8 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     isolation["integration_value"] = integration.config["qualification_value"]
 {integration_secret_code.rstrip()}
 ''' if integration_probe else ""
+    benchmark_code = (f"    from {helper} import measure\n"
+                      f"    refresh_evidence.update(await measure({key!r}, {integration_name!r}, {table!r}))\n") if benchmark_probe else ""
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
 import logging, os
@@ -207,11 +213,14 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
 {refresh_code.rstrip()}
 {failure_code.rstrip()}
     doc = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
+{benchmark_code.rstrip()}
     logging.getLogger(__name__).warning("canonical local Pyodide proof")
     return {{"value": doc.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
              "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"], **isolation, **refresh_evidence}}
 '''
     sources = {path: source, f"{helper}.py": "def fold(n):\n    return sum(range(1,n+1))\n"}
+    if benchmark_probe:
+        sources[f"{helper}.py"] += Path(__file__).with_name("benchmark-workloads.py").read_text()
     manifest = {name: hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()}
     report = {"runtime": "node-pyodide-canonical-claim-consumer" if node_pyodide else "local-workerd-canonical-claim-consumer", "workspace_sha256": manifest,
               "physical_termination_verified": False, "cloud_invocations": 0}
@@ -635,8 +644,9 @@ if __name__ == "__main__":
         parser.add_argument("--node-pyodide", action="store_true")
         parser.add_argument("--integration-probe", action="store_true")
         parser.add_argument("--integration-secret-probe", action="store_true")
+        parser.add_argument("--benchmark-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
+        asyncio.run(main(benchmark_probe=args.benchmark_probe, isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
                          concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh,
                          failure_probe=args.failure_probe, transport_waiter=args.transport_waiter,
@@ -644,7 +654,6 @@ if __name__ == "__main__":
                          integration_secret_probe=args.integration_secret_probe))
     except Exception as exc:
         import traceback
-        from pathlib import Path
 
         chain = []
         pending_errors = [exc]
