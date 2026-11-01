@@ -1,0 +1,14 @@
+{
+  "key": "pr:1171",
+  "classification": "highlight",
+  "entry_ids": [
+    "3c08c353-228b-4d49-8223-389deb934a13"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1171",
+      "General Writing and Humanizer copy review: concise description of the verified prefilled edit-before-rerun behavior. History route checked in the passing production-browser journey; desktop/mobile and light/dark preview reviewed."
+    ]
+  }
+}

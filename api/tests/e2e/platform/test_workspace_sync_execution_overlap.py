@@ -17,10 +17,13 @@ from pathlib import Path
 
 import pytest
 from git import Repo
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
+from bifrost.manifest import read_manifest_from_dir
 from src.config import get_settings
+from src.models.orm.config import Config
 from src.models.orm.execution_workers import ExecutionWorker
+from src.models.orm.integrations import Integration
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.git_repo_manager import GitRepoManager
 from src.services.github_config import (
@@ -117,6 +120,8 @@ async def test_sync_updates_queued_code_without_replacing_running_imports(
     async with async_session_factory() as db:
         original_config = await get_github_config(db, None)
     table_id = None
+    hidden_config_id = None
+    hidden_integration_id = None
     executions: list[str] = []
     paused: dict[uuid.UUID, list[str]] = {}
     try:
@@ -136,6 +141,26 @@ async def test_sync_updates_queued_code_without_replacing_running_imports(
             e2e_client, headers, paths[0], _source(function, eager, lazy, "v1"),
             function, organization_id=None,
         )
+        # The workspace manifest intentionally omits configs owned by a
+        # non-exportable Integration. This mirrors an earlier test's retained
+        # state and proves a code-only Sync never treats that omission as a
+        # user-requested config deletion.
+        async with async_session_factory() as db:
+            hidden = Integration(name=f"overlap-hidden-{suffix}", is_deleted=True)
+            db.add(hidden)
+            await db.flush()
+            hidden_config = Config(
+                key="overlap_hidden",
+                value={"value": "hidden"},
+                integration_id=hidden.id,
+                updated_by="overlap-test",
+            )
+            db.add(hidden_config)
+            await db.flush()
+            hidden_config_id = hidden_config.id
+            hidden_integration_id = hidden.id
+            await db.commit()
+        assert hidden_config_id is not None
 
         # Seed the already-published baseline without paying for a setup Sync.
         await manager.sync_down(seed)
@@ -143,6 +168,9 @@ async def test_sync_updates_queued_code_without_replacing_running_imports(
             shutil.rmtree(seed / ".git")
         async with async_session_factory() as db:
             await GitHubSyncService._regenerate_manifest_to_dir(db, seed)
+        assert str(hidden_config_id) not in {
+            config.id for config in read_manifest_from_dir(seed / ".bifrost").configs.values()
+        }
         repo = Repo.init(seed, initial_branch="main")
         with repo.config_writer() as config:
             config.set_value("user", "name", "Overlap Test")
@@ -223,6 +251,8 @@ async def test_sync_updates_queued_code_without_replacing_running_imports(
         assert synced.status_code == 202, synced.text
         publication = wait_for_job(e2e_client, headers, synced.json()["job_id"], "workspace.git")
         assert publication["result"]["success"] is True, publication
+        async with async_session_factory() as db:
+            assert await db.get(Config, hidden_config_id) is not None
         # A pull-only Sync legitimately has no pushed commit SHA. Verify the
         # published workspace bytes, not that optional push receipt.
         for path in paths:
@@ -283,6 +313,11 @@ async def test_sync_updates_queued_code_without_replacing_running_imports(
                 await save_github_config(db, None, original_config.token, original_config.repo_url, original_config.branch, "overlap-test-restore")
             else:
                 await delete_github_config(db, None)
+            if hidden_integration_id:
+                await db.execute(
+                    delete(Integration).where(Integration.id == hidden_integration_id)
+                )
+                await db.commit()
         for path in await storage.list(""):
             await storage.delete(path)
         for path, content in original_files.items():

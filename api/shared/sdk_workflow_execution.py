@@ -30,6 +30,7 @@ it over the engine socket).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -61,6 +62,16 @@ class SdkWorkflowExecutionError(Exception):
         super().__init__(detail if isinstance(detail, str) else str(detail))
         self.status_code = status_code
         self.detail = detail
+
+
+@dataclass(frozen=True)
+class ResolvedSdkWorkflow:
+    """Workflow and execution scope admitted by the canonical launch gate."""
+
+    workflow: Any | None
+    app_embed: Any | None
+    lookup_org_id: UUID | None
+    execution_org_id: UUID | None
 
 
 def is_uuid_workflow_ref(identifier: str) -> bool:
@@ -215,6 +226,178 @@ async def _verified_app_embed_capability(
     return app
 
 
+async def resolve_sdk_workflow_for_execution(
+    session: AsyncSession,
+    principal: UserPrincipal,
+    request: WorkflowExecutionRequest,
+    *,
+    context_solution_id: str | None = None,
+    context_app_id: str | None = None,
+    context_caller_solution_id: str | None = None,
+    context_dev_solution_id: str | None = None,
+) -> ResolvedSdkWorkflow:
+    """Resolve and authorize a Workflow using the same gate as ``/execute``.
+
+    The resolver intentionally owns the original-user scope, resource sharing,
+    Solution, and ``workflows.execute`` decisions. Callers that only need
+    launchable metadata, such as rerun parameter loading, must use this rather
+    than the broader Workflow read endpoints.
+    """
+    from src.repositories import AccessDeniedError, WorkflowRepository
+    from src.services.solution_scope import (
+        SolutionInboundDenied,
+        derive_execution_solution_scope,
+        solution_allows_global,
+    )
+
+    app_embed = await _verified_app_embed_capability(session, principal, request)
+    if app_embed is not None:
+        signed_solution_id = (
+            str(app_embed.solution_id) if app_embed.solution_id is not None else None
+        )
+        if (
+            context_app_id not in (None, str(app_embed.id))
+            or context_solution_id not in (None, signed_solution_id)
+            or context_caller_solution_id is not None
+            or context_dev_solution_id is not None
+        ):
+            raise SdkWorkflowExecutionError(404, "Workflow not found")
+
+    caller = None
+    if app_embed is not None:
+        lookup_org_id = app_embed.organization_id
+        workflow_repo = WorkflowRepository(
+            session=session,
+            org_id=lookup_org_id,
+            user_id=None,
+            is_superuser=False,
+            is_external=False,
+        )
+    else:
+        from shared.scope_resolver import ScopeNotAllowed, UNSET, resolve_effective_scope
+        from src.services.authorization.enforce import load_caller
+
+        caller = await load_caller(session, principal)
+        requested_scope = UUID(request.org_id) if request.org_id else UNSET
+        try:
+            lookup_org_id = resolve_effective_scope(
+                caller=caller, requested_scope=requested_scope
+            )
+        except ScopeNotAllowed as exc:
+            raise SdkWorkflowExecutionError(403, str(exc)) from None
+
+        workflow_repo = WorkflowRepository(
+            session=session,
+            org_id=lookup_org_id,
+            is_external=principal.is_external and not principal.embed,
+            caller=caller,
+        )
+
+    if app_embed is not None:
+        solution_scope = app_embed.solution_id
+    else:
+        server_ctx = _server_caller_context(
+            principal,
+            context_solution_id,
+            context_app_id,
+            context_caller_solution_id,
+            context_dev_solution_id,
+        )
+        try:
+            solution_scope = await derive_execution_solution_scope(
+                session,
+                server_ctx,
+                solution_id=request.solution_id,
+                form_id=request.form_id,
+                app_id=request.app_id,
+                target_org_id=lookup_org_id,
+                caller_solution_id=request.caller_solution_id,
+            )
+        except SolutionInboundDenied:
+            raise SdkWorkflowExecutionError(
+                404,
+                {"message": f"Workflow '{request.workflow_id}' not found"},
+            ) from None
+    allow_shared_workflow = (
+        solution_scope is None
+        or await solution_allows_global(session, solution_scope)
+    )
+
+    workflow = None
+    if request.workflow_id:
+        workflow = await workflow_repo.resolve(
+            request.workflow_id,
+            solution_scope=solution_scope,
+            allow_shared_fallback=allow_shared_workflow,
+        )
+        if not workflow:
+            raise SdkWorkflowExecutionError(
+                404,
+                {
+                    "message": f"Workflow '{request.workflow_id}' not found",
+                    "workflow_ref": request.workflow_id,
+                    "context_solution_id": context_solution_id,
+                    "request_solution_id": request.solution_id,
+                    "request_form_id": request.form_id,
+                    "request_app_id": request.app_id,
+                    "derived_solution_scope": (
+                        str(solution_scope) if solution_scope else None
+                    ),
+                },
+            )
+
+    if not request.code and request.workflow_id:
+        assert workflow is not None
+        if not is_uuid_workflow_ref(request.workflow_id):
+            try:
+                await workflow_repo.can_access(id=workflow.id)
+            except AccessDeniedError:
+                raise SdkWorkflowExecutionError(
+                    403,
+                    "Access denied to execute this workflow",
+                ) from None
+    elif not request.code:
+        raise SdkWorkflowExecutionError(
+            400,
+            "Either workflow_id or code must be provided",
+        )
+
+    if request.org_id:
+        execution_org_id = lookup_org_id
+        logger.info(f"Using explicit org_id override: {execution_org_id}")
+    elif workflow and workflow.organization_id:
+        execution_org_id = workflow.organization_id
+        logger.info(f"Using workflow's organization: {execution_org_id}")
+    else:
+        execution_org_id = lookup_org_id
+
+    if app_embed is None:
+        from src.services.authorization.enforce import (
+            PermissionDenied,
+            require_named_permission,
+            user_reach,
+        )
+
+        assert caller is not None
+        if not user_reach(caller).covers(execution_org_id):
+            raise SdkWorkflowExecutionError(
+                403, "Execution organization is outside the caller's organization reach"
+            )
+        try:
+            require_named_permission(caller, "workflows.execute", execution_org_id)
+            if request.code:
+                require_named_permission(caller, "repository.readwrite", execution_org_id)
+        except PermissionDenied as exc:
+            raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
+
+    return ResolvedSdkWorkflow(
+        workflow=workflow,
+        app_embed=app_embed,
+        lookup_org_id=lookup_org_id,
+        execution_org_id=execution_org_id,
+    )
+
+
 async def execute_sdk_workflow(
     session: AsyncSession,
     principal: UserPrincipal,
@@ -248,151 +431,19 @@ async def execute_sdk_workflow(
         ValueError: malformed scope/UUID inputs from the pre-dispatch phase
             (the global handler maps these to 422, as before extraction).
     """
-    from src.repositories import AccessDeniedError, WorkflowRepository
-    from src.services.solution_scope import (
-        SolutionInboundDenied,
-        derive_execution_solution_scope,
-        solution_allows_global,
+    resolved = await resolve_sdk_workflow_for_execution(
+        session,
+        principal,
+        request,
+        context_solution_id=context_solution_id,
+        context_app_id=context_app_id,
+        context_caller_solution_id=context_caller_solution_id,
+        context_dev_solution_id=context_dev_solution_id,
     )
-
-    app_embed = await _verified_app_embed_capability(session, principal, request)
-    if app_embed is not None:
-        signed_solution_id = (
-            str(app_embed.solution_id) if app_embed.solution_id is not None else None
-        )
-        if (
-            context_app_id not in (None, str(app_embed.id))
-            or context_solution_id not in (None, signed_solution_id)
-            or context_caller_solution_id is not None
-            or context_dev_solution_id is not None
-        ):
-            # These transport fields are request context for ordinary SDK
-            # callers.  An embed cannot use one to replace its signed parent.
-            raise SdkWorkflowExecutionError(404, "Workflow not found")
-    caller = None
-    if app_embed is not None:
-        # The signed app's persisted scope is exact, including Global.  Do
-        # not inherit the request context or a synthetic embed identity.
-        lookup_org_id = app_embed.organization_id
-        workflow_repo = WorkflowRepository(
-            session=session,
-            org_id=lookup_org_id,
-            user_id=None,
-            is_superuser=False,
-            is_external=False,
-        )
-    else:
-        from shared.scope_resolver import ScopeNotAllowed, UNSET, resolve_effective_scope
-        from src.services.authorization.enforce import load_caller
-
-        caller = await load_caller(session, principal)
-        requested_scope = UUID(request.org_id) if request.org_id else UNSET
-        try:
-            lookup_org_id = resolve_effective_scope(
-                caller=caller, requested_scope=requested_scope
-            )
-        except ScopeNotAllowed as exc:
-            raise SdkWorkflowExecutionError(403, str(exc)) from None
-
-        # REST entry evaluates the original run user's workflow sharing. Children
-        # already passed their parent resource gate, so retain their established
-        # no-second-ACL behavior while named permissions and reach remain enforced.
-        workflow_repo = WorkflowRepository(
-            session=session,
-            org_id=lookup_org_id,
-            is_external=principal.is_external and not principal.embed,
-            caller=caller,
-        )
-
-    # A Solution caller's path::fn ref carries no install id (it can't know the
-    # per-install uuid5). Derive the install scope from the caller so a path ref
-    # resolves to THIS install's own workflow, not a sibling install's that
-    # shares the path (Codex #8 P1) nor the bare _repo/ one. solution_id (a
-    # form/agent) > form_id > app_id. A bad/foreign ref yields no scope.
-    # An explicitly denied/sealed target raises SolutionInboundDenied — 404
-    # WITHOUT shared fallback (a denied install must never execute a loose
-    # same-path workflow).
-    if app_embed is not None:
-        # Use only the current signed app row as the parent capability.  It is
-        # not a request attestation and therefore does not take an inbound
-        # cross-install path.
-        solution_scope = app_embed.solution_id
-    else:
-        server_ctx = _server_caller_context(
-            principal,
-            context_solution_id,
-            context_app_id,
-            context_caller_solution_id,
-            context_dev_solution_id,
-        )
-        try:
-            solution_scope = await derive_execution_solution_scope(
-                session,
-                server_ctx,
-                solution_id=request.solution_id,
-                form_id=request.form_id,
-                app_id=request.app_id,
-                target_org_id=lookup_org_id,
-                caller_solution_id=request.caller_solution_id,
-            )
-        except SolutionInboundDenied:
-            raise SdkWorkflowExecutionError(
-                404,
-                {"message": f"Workflow '{request.workflow_id}' not found"},
-            ) from None
-    allow_shared_workflow = (
-        solution_scope is None
-        or await solution_allows_global(session, solution_scope)
-    )
-
-    # Look up workflow metadata for type checking (needed for data provider handling)
-    workflow = None
-    if request.workflow_id:
-        workflow = await workflow_repo.resolve(
-            request.workflow_id,
-            solution_scope=solution_scope,
-            allow_shared_fallback=allow_shared_workflow,
-        )
-        if not workflow:
-            # A resolution miss must identify its scope inputs: a dropped or
-            # wrong install scope reads as derived_solution_scope=null here
-            # instead of a mystery 404 (no user/token data — every field is
-            # caller-supplied or derived from it).
-            raise SdkWorkflowExecutionError(
-                404,
-                {
-                    "message": f"Workflow '{request.workflow_id}' not found",
-                    "workflow_ref": request.workflow_id,
-                    "context_solution_id": context_solution_id,
-                    "request_solution_id": request.solution_id,
-                    "request_form_id": request.form_id,
-                    "request_app_id": request.app_id,
-                    "derived_solution_scope": (
-                        str(solution_scope) if solution_scope else None
-                    ),
-                },
-            )
-
-    # REST workflow entry retains its resource-level access check. Inline
-    # source has no workflow object; its named permissions are enforced below.
-    if not request.code and request.workflow_id:
-        # UUID resolution already goes through repository.get(), including its
-        # org and role access checks. Portable name/path refs use specialized
-        # resolution and still need the explicit access assertion below.
-        assert workflow is not None  # guaranteed by resolve() + 404 above
-        if not is_uuid_workflow_ref(request.workflow_id):
-            try:
-                await workflow_repo.can_access(id=workflow.id)
-            except AccessDeniedError:
-                raise SdkWorkflowExecutionError(
-                    403,
-                    "Access denied to execute this workflow",
-                ) from None
-    elif not request.code:
-        raise SdkWorkflowExecutionError(
-            400,
-            "Either workflow_id or code must be provided",
-        )
+    workflow = resolved.workflow
+    app_embed = resolved.app_embed
+    lookup_org_id = resolved.lookup_org_id
+    execution_org_id = resolved.execution_org_id
 
     # The acting user: the caller, or the run_as user when the caller may act as them.
     exec_user_id = str(principal.user_id)
@@ -444,43 +495,7 @@ async def execute_sdk_workflow(
         exec_user_email = embed_shared_ctx.email
         exec_is_admin = embed_shared_ctx.is_platform_admin
 
-    # Determine execution org_id
-    # Priority order:
-    # 0. Explicit org_id override, already constrained to caller reach.
-    # 1. Org-scoped workflow: use workflow's organization_id (enforces workflow isolation)
-    # 2. Global workflow / inline code: use caller's org context (caller_org_id).
-    #    Platform admins and provider-org members targeting a non-default
-    #    org must pass request.org_id explicitly per call.
-    if request.org_id:
-        execution_org_id = lookup_org_id
-        logger.info(f"Using explicit org_id override: {execution_org_id}")
-    elif workflow and workflow.organization_id:
-        # Org-scoped workflow - execution MUST use workflow's org for data isolation
-        execution_org_id = workflow.organization_id
-        logger.info(f"Using workflow's organization: {execution_org_id}")
-    else:
-        execution_org_id = lookup_org_id
-    if app_embed is None:
-        from src.services.authorization.enforce import (
-            PermissionDenied,
-            require_named_permission,
-            user_reach,
-        )
-
-        assert caller is not None
-        if not user_reach(caller).covers(execution_org_id):
-            raise SdkWorkflowExecutionError(
-                403, "Execution organization is outside the caller's organization reach"
-            )
-        try:
-            require_named_permission(caller, "workflows.execute", execution_org_id)
-            if request.code:
-                require_named_permission(caller, "repository.readwrite", execution_org_id)
-        except PermissionDenied as exc:
-            raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
     access_checks.note("child_run", execution_org_id)
-    # The execution organization is already the workflow's, or the caller's
-    # for a Global workflow or inline code.
     access_checks.note_launch(
         "workflows.execute",
         execution_org_id,
