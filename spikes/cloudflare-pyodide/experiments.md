@@ -258,3 +258,18 @@ Exact payload pin unchanged, actual local Worker executions only. Docker Ruff,
 source/provenance verifiers and JS syntax/diff checks pass. Own supervisor/network/
 API cleanup is retained in async-collection-local-cleanup.json. No shared API,
 Containers, cloud invocation, persistent access or security setting changed.
+
+## Collection inventory boundary
+
+Continued from 815ae7dad81273b2bb1a3df38f7b1ca0a0006ebb. No cloud invocation or
+actual Worker relaunch; this increment is the host transport inventory contract.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| A done collector provides a terminal receipt | Fail/cancel collection before inventory | Falsified: both advertised terminal true; collection-inventory-before.xml | Report collector state independently of physical state |
+| Failed/cancelled collection must retain uncertainty without effects | Explicit states plus owner rotation, ACK/capacity/retirement regressions; `./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q` | 31 passed, 13.98 s; collection-inventory-after.xml | Reuse upstream retained event/ACK semantics for reconnectable physical results |
+
+Upstream Launcher.send_terminal, retained terminal inventory and host delivery/
+ACK paths were read. They remain unmodified along with Linux/Containers source.
+Inventory exception type is reported, never its message; physical termination
+remains unverified in every state. See backend/CONTRACT-JOURNAL.md.

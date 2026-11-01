@@ -452,7 +452,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         with suppress(asyncio.CancelledError):
                             await waiter
                         assert waiter.cancelled()
-                        assert journal.inventory()[0]["terminal"] is False
+                        assert journal.inventory()[0]["collection_state"] == "pending"
                         report["transport_waiter_probe"] = True
                         report["provider_request_body_sent"] = True
                         report["cancelled_waiter_collection_retained"] = True

@@ -115,7 +115,8 @@ async def test_cancelled_transport_waiter_preserves_result_for_reconnect(owner):
         with pytest.raises(asyncio.CancelledError):
             await waiter
         assert journal.inventory() == [{"route_id": "route", "execution_id": "execution",
-                                        "terminal": False, "acknowledged": False}]
+                                        "collection_state": "pending", "collection_error_type": None,
+                                        "physical_termination_verified": False, "acknowledged": False}]
     finally:
         release.set()
     replacement = await owner(2)
@@ -127,6 +128,36 @@ async def test_cancelled_transport_waiter_preserves_result_for_reconnect(owner):
     accept.assert_awaited_once_with("route", "execution", {"status": "Success", "result": 70})
     await journal.retire()
     assert journal.inventory() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True], ids=["transport-error", "collector-cancelled"])
+async def test_failed_collection_is_not_a_terminal_receipt_or_physical_stop(owner, cancelled):
+    lease = await owner(1)
+    journal = AttemptJournal(capacity=1)
+    error = asyncio.CancelledError if cancelled else ConnectionError
+    launch = AsyncMock(side_effect=error("must-not-appear-in-inventory"))
+    receipt = await journal.dispatch(lease, "route", "execution", launch)
+    with pytest.raises(error):
+        await receipt
+    inventory = journal.inventory()
+    assert "terminal" not in inventory[0]
+    assert inventory[0]["collection_state"] == ("cancelled" if cancelled else "failed")
+    assert inventory[0]["collection_error_type"] == error.__name__
+    assert inventory[0]["physical_termination_verified"] is False
+    assert inventory[0]["acknowledged"] is False
+    assert "must-not-appear" not in json.dumps(inventory)
+    accept = AsyncMock(return_value=True)
+    replacement = await owner(2)
+    assert await journal.dispatch(replacement, "route", "execution", launch) is receipt
+    with pytest.raises(error):
+        await journal.reconcile_terminal(replacement, "route", accept)
+    accept.assert_not_awaited()
+    launch.assert_awaited_once()
+    with pytest.raises(RuntimeError, match="unacknowledged"):
+        await journal.retire()
+    with pytest.raises(RuntimeError, match="journal full"):
+        await journal.dispatch(replacement, "new-route", "execution", launch)
 
 
 @pytest.mark.asyncio
@@ -150,7 +181,8 @@ async def test_terminal_replay_requires_acceptance_and_preserves_tombstone(owner
     assert await journal.dispatch(replacement, "route", "execution", launch)
     launch.assert_awaited_once()
     assert journal.inventory() == [{"route_id": "route", "execution_id": "execution",
-                                    "terminal": True, "acknowledged": True}]
+                                    "collection_state": "result_available", "collection_error_type": None,
+                                    "physical_termination_verified": False, "acknowledged": True}]
     await journal.retire()
     assert journal.inventory() == []
     with pytest.raises(RuntimeError, match="launcher retired"):

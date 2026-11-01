@@ -112,17 +112,18 @@ that run active until test cleanup. A production adapter must resolve it through
 canonical recovery/deadlines with trusted physical-state evidence. Fixture row
 purge is not a production recovery policy. `recovery_acceptance` remains false.
 
-The journal's `terminal` inventory flag describes collection-task completion,
-not proof of a physical isolate's termination. A failed collection task has no
-success result; reconciliation raises and cannot ACK it. The retained terminal
-receipt/inventory protocol remains the next implementation boundary.
+At this evidence commit, the journal's `terminal` inventory flag described
+collection-task completion, not physical termination. It has since been replaced
+with explicit collection states; see CONTRACT-JOURNAL.md. Failed collection has
+no success result; reconciliation raises and cannot ACK it. The retained
+terminal receipt/inventory protocol remains the next implementation boundary.
 
 From the spike directory, with the own test API healthy and local supervisor up:
 
 ```sh
 node backend/canonical-refresh.mjs --run canonical-refresh-async-collection transport concurrent-runtime-manifest.json
 node backend/canonical-refresh.mjs --run canonical-refresh-response-loss-async response-loss concurrent-runtime-manifest.json
-node backend/verify-async-collection.mjs
+node backend/verify-async-collection.mjs --commit 815ae7dad81273b2bb1a3df38f7b1ca0a0006ebb
 ```
 
 The two invocation names are immutable receipts, not overwrite targets. Both

@@ -2,6 +2,11 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const args=process.argv.slice(2);
+if(args.length && (args.length!==2 || args[0]!=='--commit' || !/^[a-f0-9]{40}$/.test(args[1]))) {
+  throw new Error('Use no arguments or --commit with an exact historical commit');
+}
 const root=new URL('../../../',import.meta.url);
 for(const [name,loss] of [['canonical-refresh-async-collection',false],['canonical-refresh-response-loss-async',true]]) {
   const receipt=JSON.parse(await readFile(new URL('../results/'+name+'.json',import.meta.url)));
@@ -33,7 +38,8 @@ for(const [name,loss] of [['canonical-refresh-async-collection',false],['canonic
     assert.equal(r.result.result.result.credential_redaction_probe,'[REDACTED]');
   }
   for(const [path,digest] of Object.entries(receipt.source_sha256)) {
-    assert.equal(createHash('sha256').update(await readFile(new URL(path,root))).digest('hex'),digest,path);
+    const source=args.length ? execFileSync('git',['show',`${args[1]}:${path}`],{cwd:root}) : await readFile(new URL(path,root));
+    assert.equal(createHash('sha256').update(source).digest('hex'),digest,path);
   }
 }
 console.log('Asynchronous routing verified: canonical success/reconnect retained; lost response stays Running without fabricated failure or replay');

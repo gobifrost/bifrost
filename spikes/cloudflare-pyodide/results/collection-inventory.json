@@ -1,0 +1,23 @@
+{
+    "baseline_commit":  "815ae7dad81273b2bb1a3df38f7b1ca0a0006ebb",
+    "scope":  "Host collection inventory, real PostgreSQL fencing, deterministic physical launch callback",
+    "command":  "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q",
+    "before_tests":  2,
+    "before_failures":  2,
+    "after_tests":  31,
+    "after_failures":  0,
+    "after_errors":  0,
+    "quality_command":  "./test.sh quality api",
+    "quality_exit_code":  0,
+    "cloud_invocations":  0,
+    "actual_worker_invocations":  0,
+    "physical_termination_verified":  false,
+    "source_and_evidence_sha256":  {
+                                       "spikes/cloudflare-pyodide/backend/attempt_journal.py":  "a1d75df2bf54916582c8e50bb365e8809f4a05cdde15d12d64e3bd4bfa28903c",
+                                       "spikes/cloudflare-pyodide/backend/canonical-local.py":  "103c03813901ce91688b6eefc1da1ec12615dfc9bb85d420ecf877cd8a00b425",
+                                       "api/tests/unit/dev/test_pyodide_attempt_journal.py":  "59301745a34ebc3ff0a4a727ca42fe9100b5c87ab7a9e94d5d6899321654d272",
+                                       "spikes/cloudflare-pyodide/results/collection-inventory-before.xml":  "2473d341ecbc9d18bb720ef91a2401cfaf2f7240c081f0125f70d023ea004dea",
+                                       "spikes/cloudflare-pyodide/results/collection-inventory-after.xml":  "3c0e5356b7853fa4cc1f87ae0ef48da9a1a873ec1df8c701e9d6da33d8d612fa",
+                                       "spikes/cloudflare-pyodide/results/collection-inventory-quality.txt":  "bb219f88e9937b5b7641749ea319bfdbca3bbdc3a3d34a4527b13c1c44be0e51"
+                                   }
+}

@@ -81,9 +81,20 @@ class AttemptJournal:
             return receipt
 
     def inventory(self) -> list[dict[str, Any]]:
-        return [{"route_id": key, "execution_id": route.execution_id,
-                 "terminal": route.task.done(), "acknowledged": route.acknowledged}
-                for key, route in self.routes.items()]
+        """Report collection, never infer physical termination from task state."""
+        entries = []
+        for key, route in self.routes.items():
+            state, error_type = "pending", None
+            if route.task.cancelled():
+                state, error_type = "cancelled", "CancelledError"
+            elif route.task.done():
+                error = route.task.exception()
+                state = "result_available" if error is None else "failed"
+                error_type = type(error).__name__ if error is not None else None
+            entries.append({"route_id": key, "execution_id": route.execution_id,
+                            "collection_state": state, "collection_error_type": error_type,
+                            "physical_termination_verified": False, "acknowledged": route.acknowledged})
+        return entries
 
     async def reconcile_terminal(
         self, lease: RemoteOwnerLease, route_id: str,

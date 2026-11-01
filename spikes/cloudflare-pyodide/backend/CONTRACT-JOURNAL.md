@@ -157,3 +157,58 @@ was altered or bypassed.
 and clean Ruff (`../results/transport-waiter-quality.txt`). A focused Docker
 Ruff check also passed for the companion module and regression test. No broader
 suite or actual provider invocation was run for this host transport change.
+
+## Collection state is not physical terminal state
+
+The old internal `terminal: task.done()` field labelled a failed or cancelled
+collector as terminal, despite having no result or physical-stop receipt. The
+two new regressions reproduced that exact output before the correction
+(`../results/collection-inventory-before.xml`). The companion inventory now uses:
+
+| collection_state | Meaning |
+|---|---|
+| pending | Collector has not completed. |
+| result_available | Collector returned a result; canonical acceptance is separate. |
+| failed | Collector raised; only its exception type is reported. |
+| cancelled | Collector was cancelled; no workflow/physical outcome is inferred. |
+
+Every entry separately carries `acknowledged` and
+`physical_termination_verified: false`. The latter means no physical-stop proof,
+not an assertion that the isolate is still running. This is a companion internal
+shape, **not** a change to upstream's remote wire schema. Its sole runtime
+fixture consumer is updated atomically; no compatibility alias remains.
+
+The 31-case PostgreSQL journal/owner/fence run passed in 13.98 seconds; raw result
+is `../results/collection-inventory-after.xml`. The new failed/cancelled cases
+prove owner-reconnect adoption returns the same receipt, no second launch,
+canonical acceptance is never called, retirement/full-capacity refusal retain
+the uncertain route, and exception messages do not enter inventory. Existing
+pending/result-available cases check the new fields without a physical-stop
+claim. The command was:
+
+```sh
+./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q
+```
+
+This run uses deterministic host callbacks, not new Pyodide/cloud execution.
+The actual engine/SDK before/after routing receipts remain pinned to 815ae7dad;
+their offline verifier accepts that exact historical commit. Unknown-result
+recovery, timely run revocation and physical CPU termination remain unresolved.
+
+Current upstream reuse points were inspected, not changed: Launcher.send_terminal
+in api/src/worker/remote/launcher.py retains a terminal event and event ID before
+network send; its session receiver removes the retained event/inventory only on
+ACK. The host's _deliver_terminal in host.py schedules canonical delivery outside
+the receiver and ACKs only after delivery returns. Those retention/ACK semantics
+are the target. The same Launcher also owns Linux children, process sampling and
+physical supervision; importing its full OS closure into Pyodide or cloning its
+authoritative scheduling is not this increment. No shared launcher/host/remote
+pool or Containers source was edited.
+
+`./test.sh quality api` passed with zero Pyright errors/warnings and clean Ruff;
+the raw quality output is `../results/collection-inventory-quality.txt`. Focused
+Docker Ruff on the companion/fixture and JS syntax/historical provenance checks
+also passed. `../results/collection-inventory.json` binds source and evidence
+hashes and explicitly records zero actual Worker/cloud invocations in this
+increment. The broader backend suite was not run. The own test API is stopped
+and the Worker tools container remains on its bridge network only.
