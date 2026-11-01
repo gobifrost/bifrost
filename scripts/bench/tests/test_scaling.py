@@ -62,6 +62,13 @@ class ScalingTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "16"):
                     scaling.run_arm(1, "sdk-heavy", "stock-pinned", Path(directory) / "arm", max_rate=maximum)
 
+    def test_proven_stopped_pod_metadata_is_not_an_extra_live_worker(self):
+        sample = ready_sample(1)
+        sample["pods"]["pods"].append({"phase": "Succeeded", "containers": [{"ready": False, "started_at": None}]})
+        self.assertTrue(scaling.fixed_count(sample, 1))
+        sample["pods"]["pods"][-1]["containers"][0]["ready"] = None
+        self.assertFalse(scaling.fixed_count(sample, 1))
+
     @contextmanager
     def harness(self, root: Path, outcomes: list[str], *, preflight_status="pass", confirmation="pass"):
         cluster = Mock()

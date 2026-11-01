@@ -98,6 +98,14 @@ class ElasticityControlsTest(unittest.TestCase):
     def test_floor_accepts_exactly_four_ready_workers(self) -> None:
         self.assertEqual(elasticity.floor_state(self._floor_sample(4), 4), "ready")
 
+    def test_zero_hot_workers_does_not_require_deletion_of_proven_stopped_pod_metadata(self) -> None:
+        sample = self._floor_sample(0)
+        sample["pods"]["pods"] = [{"phase": "Succeeded", "containers": [{"ready": False, "started_at": None}]}]
+        self.assertEqual(elasticity.floor_state(sample, 0), "ready")
+        for containers in ([], [{"ready": None, "started_at": None}], [{"ready": True, "started_at": "now"}]):
+            sample["pods"]["pods"][0]["containers"] = containers
+            self.assertEqual(elasticity.floor_state(sample, 0), "waiting")
+
     def test_run_arm_retains_checkpoint_and_cleans_up_after_probe_failure(self) -> None:
         cluster, current = Mock(), Mock()
         current.result = {}

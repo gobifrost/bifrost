@@ -32,9 +32,12 @@ setting is not proof that the controller applied it.
 Compare `(warm, maximum)` pairs `(0,1)/(1,1)`, `(0,2)/(1,2)`, and
 `(0,4)/(1,4)`. Each arm gets a fresh tenant. After all setup, observe the idle
 floor; fixture creation and preflights may already have started workers.
-Zero requires no live worker DB states, no worker Pods, and observed zero
+Zero requires no live worker DB states, no live worker Pods, and observed zero
 unfinished work. Warm floors require matching Ready Pod/worker identities,
 fresh heartbeats and usable idle admission budgets.
+Terminal Pod metadata may remain for the controller's 600-second Job TTL;
+retain it as evidence and count it as stopped only when container observations
+also show no running container. Missing container state remains unknown.
 
 Measure one `wf-wait` request, return naturally to the idle floor, then submit
 the same concurrent burst of 32 requests. The existing deterministic workflow

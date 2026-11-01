@@ -81,6 +81,24 @@ def observe(cluster: Cluster) -> dict:
             "scope": "sequential DB/pod/quota observations; missing data is never zero"}
 
 
+def live_worker_pods(snapshot: dict) -> list[dict] | None:
+    """Keep live/unknown Pods; terminal metadata is inert only with stopped-container evidence."""
+    rows = snapshot.get("pods")
+    if snapshot.get("status") != "observed" or not isinstance(rows, list):
+        return None
+    live = []
+    for pod in rows:
+        if not isinstance(pod, dict):
+            return None
+        containers = pod.get("containers")
+        stopped = (pod.get("phase") in {"Succeeded", "Failed"} and isinstance(containers, list)
+                   and bool(containers) and all(isinstance(container, dict) and container.get("ready") is False
+                                               and container.get("started_at") is None for container in containers))
+        if not stopped:
+            live.append(pod)
+    return live
+
+
 def floor_state(sample: dict, warm_workers: int) -> str:
     """Return ready only for the explicit target floor; unknown remains waiting."""
     work = sample.get("work", {})
@@ -106,8 +124,8 @@ def floor_state(sample: dict, warm_workers: int) -> str:
             live.append(worker)
         elif ended is None:
             return "waiting"
-    pod_rows = pods.get("pods")
-    if not isinstance(pod_rows, list):
+    pod_rows = live_worker_pods(pods)
+    if pod_rows is None:
         return "waiting"
     if warm_workers == 0:
         return "ready" if not live and not pod_rows else "waiting"

@@ -47,8 +47,8 @@ def fixed_count(sample: dict, workers: int) -> bool:
             live.append(row)
         elif ended is None:
             return False
-    pod_rows = pods.get("pods")
-    if not isinstance(pod_rows, list) or len(live) != workers or len(pod_rows) != workers:
+    pod_rows = elasticity.live_worker_pods(pods)
+    if pod_rows is None or len(live) != workers or len(pod_rows) != workers:
         return False
     if any(row.get("state") != "ready" or row.get("heartbeat_freshness", {}).get("state") != "fresh"
            for row in live):
