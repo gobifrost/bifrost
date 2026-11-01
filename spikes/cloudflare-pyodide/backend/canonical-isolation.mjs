@@ -122,6 +122,8 @@ asyncio.run(clean())`;
   }
   const paths=['spikes/cloudflare-pyodide/backend/canonical-isolation.mjs',
     'spikes/cloudflare-pyodide/backend/fixture-admission.mjs',
+    'spikes/cloudflare-pyodide/backend/runtime-runner.py','spikes/cloudflare-pyodide/backend/runtime_guard.py',
+    'spikes/cloudflare-pyodide/backend/pack-engine.py',
     'spikes/cloudflare-pyodide/backend/canonical-local.py','spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs',
     'spikes/cloudflare-pyodide/backend/runtime-code.mjs','spikes/cloudflare-pyodide/backend/attempt_journal.py'];
   report.source_sha256=Object.fromEntries(await Promise.all(paths.map(async path=>[path,hash(await readFile(new URL(path,repo)))])));

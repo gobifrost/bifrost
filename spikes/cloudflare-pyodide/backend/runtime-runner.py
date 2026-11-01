@@ -1,10 +1,19 @@
 """Provider bootstrap; authorization stays in the upstream SDK/API."""
-from src.core.module_cache_sync import mark_execution_child
+import importlib
+
+from runtime_guard import require_runtime
+
+# Reject runtime drift before importing upstream modules or accepting credentials.
+require_runtime()
+
+mark_execution_child = importlib.import_module("src.core.module_cache_sync").mark_execution_child
 
 # Must precede installation of the virtual import hook. This forbids all parent
 # Redis/S3 paths even during module initialization in an isolated runtime.
 mark_execution_child()
-from src.services.execution.worker import ResourceMetrics, run_execution
+execution_worker = importlib.import_module("src.services.execution.worker")
+ResourceMetrics = execution_worker.ResourceMetrics
+run_execution = execution_worker.run_execution
 
 
 class UnknownResources:

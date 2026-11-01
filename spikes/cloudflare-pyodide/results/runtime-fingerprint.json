@@ -1,0 +1,30 @@
+{
+  "status": 200,
+  "body": {
+    "pyodide": "314.0.6",
+    "python": [
+      3,
+      14,
+      2
+    ],
+    "cache_tag": "cpython-314",
+    "soabi": "cpython-314-wasm32-emscripten",
+    "platform": "emscripten-5.0.3-wasm32",
+    "pydantic": "2.14.2",
+    "pydantic_core": "2.50.2",
+    "validated": {
+      "values": [
+        1,
+        2
+      ]
+    },
+    "invalid_rejected": true
+  },
+  "cloud_invocations": 0,
+  "source_sha256": {
+    "runtime-probe-entry.mjs": "743f2de13d4cd2bf8edd70e1c96612fd99731a72154e0710e8f8a2fb0bb1fe7c",
+    "wrangler.runtime-probe.jsonc": "f2d4a8e96c576e0d24b0f8130fa7d7a9ce847812e72a5a7f5d7241eab4f1336b",
+    "runtime-code.mjs": "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+    "runtime-probe.mjs": "83023278ab0657adca816d01cd226c0bc4caf1bb79b117ba17c4c60b52df105f"
+  }
+}

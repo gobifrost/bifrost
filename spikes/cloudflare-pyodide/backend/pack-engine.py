@@ -37,9 +37,11 @@ for folder in (source, root / "python_modules"):
         hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
 
 if args.current_runtime:
-    runner = (root / "backend/runtime-runner.py").read_bytes()
-    modules["runtime_runner.py"] = {"py": runner.decode("utf-8")}
-    hashes["runtime_runner.py"] = hashlib.sha256(runner).hexdigest()
+    for source_name, module_name in (("runtime-runner.py", "runtime_runner.py"),
+                                     ("runtime_guard.py", "runtime_guard.py")):
+        runner = (root / "backend" / source_name).read_bytes()
+        modules[module_name] = {"py": runner.decode("utf-8")}
+        hashes[module_name] = hashlib.sha256(runner).hexdigest()
 manifest = {"module_count": len(modules), "files": hashes,
             "payload_sha256": hashlib.sha256(json.dumps(modules,sort_keys=True).encode()).hexdigest(),
             "note": "Source bundle provenance only; invocation evidence must establish execution authority/context"}
