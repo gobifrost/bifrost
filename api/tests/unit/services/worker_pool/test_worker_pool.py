@@ -692,6 +692,33 @@ async def test_ended_executors_are_pruned(db) -> None:
         assert await session.get(ExecutionWorker, old.id) is None
 
 
+@pytest.mark.parametrize("state", ["lost", "retired"])
+async def test_external_cleanup_record_survives_retention_until_deletion_confirmed(db, state) -> None:
+    worker = await _job_worker(db.sessions, state=state)
+    now = datetime.now(timezone.utc)
+    async with db.sessions() as session:
+        await session.execute(update(ExecutionWorker).where(ExecutionWorker.id == worker.id).values(
+            form="external", capacity_scope="test", capacity_resource_uid="physical-resource",
+            ended_at=now - timedelta(days=30),
+        ))
+        await session.commit()
+
+    await maintenance.prune_execution_workers()
+
+    async with db.sessions() as session:
+        retained = await session.get(ExecutionWorker, worker.id)
+        assert retained is not None
+        assert retained.capacity_resource_uid == "physical-resource"
+        assert retained.capacity_resource_deleted_at is None
+        retained.capacity_resource_deleted_at = now
+        await session.commit()
+
+    await maintenance.prune_execution_workers()
+
+    async with db.sessions() as session:
+        assert await session.get(ExecutionWorker, worker.id) is None
+
+
 async def test_a_silent_static_executor_is_lost_and_its_runs_end(db) -> None:
     from src.services.execution.workflow_dispatch import claim_workflow_dispatch
     from src.services.worker_pool.recovery import EXECUTOR_LOST
