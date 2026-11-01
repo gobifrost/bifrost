@@ -182,9 +182,10 @@ async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
     async with sessions() as session:
         await session.execute(delete(WorkDispatch))
         await session.execute(delete(ExecutionWorker))
-        # Queued platform jobs count as launch demand; the stack's scheduler
-        # enqueues some (model catalog, Solution updates) during the reset.
-        await session.execute(delete(PlatformJob).where(PlatformJob.status == "queued"))
+        # The isolated unit harness stops executors after startup. Clear both
+        # queued demand and active jobs whose concurrency slots survived that
+        # stop, so each case owns the complete platform-job admission state.
+        await session.execute(delete(PlatformJob))
         await session.commit()
     # What a worker controller last published it can launch, and which
     # controllers are live.
@@ -1945,9 +1946,22 @@ async def test_a_too_large_export_fails_its_backup_and_clears_its_options(
             await session.commit()
 
 
-async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:
+@pytest.mark.parametrize("startup_state", ["running", "cancel_requested"])
+async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_state) -> None:
     from src.models.orm.platform_jobs import PlatformJob
     from src.services.platform_jobs import WAITING_FOR_MEMORY
+
+    startup = PlatformJob(
+        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
+        requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+        title="Startup Reindex", status=startup_state,
+    )
+    async with db.sessions() as session:
+        session.add(startup)
+        await session.commit()
+    # Model a startup job left active when the unit harness stops executors.
+    # Resetting the fixture must release its global concurrency slot.
+    await _clear_pool_state(db.sessions)
 
     waiting = PlatformJob(
         job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
