@@ -6,7 +6,6 @@ from unittest.mock import Mock, patch
 
 import asyncio
 import pyodide_refresh
-from pyodide_refresh import install, refresh_sync, refresh_async
 
 
 class PyodideRefreshTests(unittest.TestCase):
@@ -14,10 +13,10 @@ class PyodideRefreshTests(unittest.TestCase):
         core = Mock()
         sdk = SimpleNamespace(_refresh_locked=core)
         with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk)}):
-            install()
-            install()
-        self.assertIs(sdk._refresh_connection_access_token_sync, refresh_sync)
-        self.assertIs(sdk.refresh_connection_access_token, refresh_async)
+            pyodide_refresh.install()
+            pyodide_refresh.install()
+        self.assertIs(sdk._refresh_connection_access_token_sync, pyodide_refresh.refresh_sync)
+        self.assertIs(sdk.refresh_connection_access_token, pyodide_refresh.refresh_async)
         self.assertIs(sdk._refresh_locked, core)
 
     def test_delegates_and_registers_returned_token(self):
@@ -27,7 +26,7 @@ class PyodideRefreshTests(unittest.TestCase):
         bridge = Mock(return_value="replacement")
         with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk),
                                      "pyodide.ffi": SimpleNamespace(run_sync=bridge)}):
-            result = refresh_sync("https://test.invalid", "observed")
+            result = pyodide_refresh.refresh_sync("https://test.invalid", "observed")
         self.assertEqual(result, "replacement")
         sdk.refresh_connection_access_token.assert_called_once_with("https://test.invalid", "observed")
         bridge.assert_called_once_with(pending)
@@ -40,7 +39,7 @@ class PyodideRefreshTests(unittest.TestCase):
         with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk),
                                      "pyodide.ffi": SimpleNamespace(run_sync=bridge)}):
             with self.assertRaisesRegex(RuntimeError, "native bridge failure"):
-                refresh_sync("https://test.invalid", "observed")
+                pyodide_refresh.refresh_sync("https://test.invalid", "observed")
         self.assertEqual(sdk.refresh_connection_access_token.call_count, 1)
         sdk._register_refreshed.assert_not_called()
 
@@ -68,7 +67,7 @@ class CooperativeRefreshTests(unittest.IsolatedAsyncioTestCase):
         sdk = SimpleNamespace(_refresh_locked=core,
             _refresh_coordinator=Mock(return_value=coordinator), _register_refreshed=Mock())
         with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk)}):
-            values = await asyncio.gather(*(refresh_async("https://test.invalid/", "observed") for _ in range(3)))
+            values = await asyncio.gather(*(pyodide_refresh.refresh_async("https://test.invalid/", "observed") for _ in range(3)))
         self.assertEqual(values, ["replacement"] * 3)
         self.assertEqual(maximum, 1)
         self.assertEqual(calls, [("https://test.invalid", coordinator, "observed")] * 3)
@@ -85,7 +84,7 @@ class CooperativeRefreshTests(unittest.IsolatedAsyncioTestCase):
         sdk = SimpleNamespace(_refresh_locked=core,
             _refresh_coordinator=Mock(return_value=object()), _register_refreshed=Mock())
         with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk)}):
-            waiter = asyncio.create_task(refresh_async("https://test.invalid", "observed"))
+            waiter = asyncio.create_task(pyodide_refresh.refresh_async("https://test.invalid", "observed"))
             await started.wait()
             waiter.cancel()
             with self.assertRaises(asyncio.CancelledError):

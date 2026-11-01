@@ -50,3 +50,11 @@ even the Docker health inspection, and writes both invoking/observed snapshots
 through the retained file handle. The helper is included in new source hashes.
 The two shared helper tests, caller syntax check and diff check pass. No local
 stack, refresh fixture, control authentication or cloud execution was invoked.
+
+Refresh-test follow-up: use only the pyodide_refresh module import, qualifying
+all bridge references through it. The reported no-effect statement is
+`await waiter` inside `assertRaises(asyncio.CancelledError)`: this explicitly
+checks cancellation propagation and must remain. It is a source-reviewed false
+positive, not a dismissed alert. Python tests were not rerun because the owned
+Docker stack is stopped pending remote capacity; diff checks cover this edit,
+and functional verification remains deferred.
