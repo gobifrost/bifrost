@@ -212,3 +212,8 @@ also passed. `../results/collection-inventory.json` binds source and evidence
 hashes and explicitly records zero actual Worker/cloud invocations in this
 increment. The broader backend suite was not run. The own test API is stopped
 and the Worker tools container remains on its bridge network only.
+
+`reconcile_retained_workflow` now supplies the next bounded consumption path;
+see [retained-result recovery](RETAINED-RESULTS.md). Its protocol/DB tests use
+upstream launcher retention and the ACK receiver unchanged. Actual Python Worker
+result integration is still the next acceptance step, not proved by unit tests.

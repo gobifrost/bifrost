@@ -161,6 +161,157 @@ async def test_failed_collection_is_not_a_terminal_receipt_or_physical_stop(owne
 
 
 @pytest.mark.asyncio
+async def test_upstream_retained_result_recovers_failed_collection_and_lost_ack(
+    owner, async_session_factory, monkeypatch,
+):
+    from bifrost._logging import append_log_to_stream_async
+    from src.core.cache import execution_logs_stream_key, get_redis
+    from src.core.redis_client import ActiveExecution
+    from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+    from src.services.execution.process_pool import ExecutionInfo
+    from src.worker.remote.fencing import LeaseRef
+    from src.worker.remote.host import Bridge
+    from src.worker.remote.identity import LauncherIdentity
+    from src.worker.remote.launcher import Launcher, _receive_control_commands
+    from src.worker.remote.protocol import ControlEnvelope
+
+    monkeypatch.setattr("src.core.database.get_session_factory", lambda: async_session_factory)
+    lease = await owner(1)
+    subject = uuid4()
+    execution_id = str(subject)
+    metadata = ActiveExecution(execution_id=execution_id, workflow_id=None, workflow_name="retained-result",
+        org_id=None, user_id=None, user_email=None, user_name="test", sync=False, event=None)
+    info = ExecutionInfo(execution_id, datetime.now(timezone.utc), 30, metadata)
+    consumer = WorkflowExecutionConsumer(pool=SimpleNamespace(on_result=None))
+    consumer.owner_worker_id = lease.worker_id
+    metrics = AsyncMock(wraps=consumer._record_completion_metrics)
+    monkeypatch.setattr(consumer, "_record_completion_metrics", metrics)
+    journal = AttemptJournal()
+    launch = AsyncMock(side_effect=ConnectionError("provider response lost"))
+    receipt = await journal.dispatch(lease, "route", execution_id, launch)
+    with pytest.raises(ConnectionError):
+        await receipt
+    launcher = Launcher(AsyncMock(send=AsyncMock(side_effect=OSError("control disconnected"))),
+        identity=LauncherIdentity(lease.launcher_id, uuid4(), None, None, "unit", "static"),
+        secret="unit-only-not-a-live-credential")
+    launcher.session_generation = lease.session_generation
+    result = execution_result_envelope(execution_id, str(lease.worker_id),
+        {"status": "Success", "result": {"value": 70}}, duration_ms=1, metrics={})
+    with pytest.raises(ConnectionError):
+        await launcher.send_terminal({"event": "result", "route_id": "route", "result": result},
+            inventory={"route_id": "route", "kind": "workflow", "subject_id": execution_id})
+    event_id, event = next(iter(launcher.pending_terminal.items()))
+    assert event["_event_id"] == event_id
+    assert launcher.inventory()["terminal_routes"][0]["subject_id"] == execution_id
+    async with async_session_factory() as db:
+        db.add(Execution(id=subject, workflow_name="retained-result", executed_by_name="test",
+                         status=ExecutionStatus.RUNNING, started_at=datetime.now(timezone.utc)))
+        await db.flush()
+        db.add(ExecutionWorkerClaim(worker_id=lease.worker_id, family="workflow_execution", subject_id=subject))
+        await db.commit()
+    try:
+        assert await append_log_to_stream_async(execution_id, "INFO", "retained physical result")
+        current = await owner(2)
+        with pytest.raises(CredentialRouteChanged):
+            await journal.reconcile_retained_workflow(lease, "route", event, consumer, info)
+        assert await journal.reconcile_retained_workflow(current, "route", event, consumer, info)
+        socket = AsyncMock(send_text=AsyncMock(side_effect=[OSError("ACK lost"), None]))
+        bridge = Bridge(socket, {"current": 1, "limit": 2, "hostname": "unit", "requirements": {}}, current)
+        bridge.lease_ref = LeaseRef(current)
+        with pytest.raises(OSError):
+            await bridge.acknowledge(event_id)
+        assert event_id in launcher.pending_terminal
+        # Replay the identical retained event. Canonical consumption is already ACKed.
+        assert await journal.reconcile_retained_workflow(current, "route", event, consumer, info)
+        await bridge.acknowledge(event_id)
+        frame = socket.send_text.await_args.args[0]
+        assert ControlEnvelope.from_json(frame).session_generation == current.session_generation
+        launcher.session_generation = current.session_generation
+
+        class Receiver:
+            received = False
+
+            async def recv(self):
+                if not self.received:
+                    self.received = True
+                    return frame
+                # End this test-only control receiver; no physical child was started.
+                launcher.retired.set()
+                await asyncio.Event().wait()
+
+        await _receive_control_commands(launcher, Receiver(), asyncio.Event())
+        assert launcher.pending_terminal == launcher.pending_terminal_inventory == {}
+        assert launcher.template.pid is None and launcher.agent_template.pid is None
+        assert journal.inventory()[0]["collection_state"] == "failed"
+        assert journal.inventory()[0]["acknowledged"] is True
+        assert journal.inventory()[0]["physical_termination_verified"] is False
+        launch.assert_awaited_once()
+        assert metrics.await_count == 1
+        async with async_session_factory() as db:
+            row = await db.get(Execution, subject)
+            assert row.status == ExecutionStatus.SUCCESS and row.result == {"value": 70}
+            logs = list(await db.scalars(select(ExecutionLog).where(ExecutionLog.execution_id == subject)))
+            assert [log.message for log in logs] == ["retained physical result"]
+    finally:
+        async with get_redis() as redis:
+            await redis.delete(execution_logs_stream_key(execution_id))
+        async with async_session_factory() as db:
+            await db.execute(delete(ExecutionLog).where(ExecutionLog.execution_id == subject))
+            await db.execute(delete(ExecutionWorkerClaim).where(ExecutionWorkerClaim.subject_id == subject))
+            await db.execute(delete(Execution).where(Execution.id == subject))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["missing-event-id", "wrong-route", "wrong-execution", "wrong-success",
+                                  "wrong-worker", "collector-pending", "local-result"])
+async def test_retained_result_rejects_unbound_or_inapplicable_delivery(owner, case):
+    lease = await owner(1)
+    journal = AttemptJournal()
+    release = asyncio.Event()
+
+    async def launch():
+        if case == "collector-pending":
+            await release.wait()
+        if case in ("collector-pending", "local-result"):
+            return {"execution_id": "execution", "success": True}
+        raise ConnectionError("response lost")
+
+    receipt = await journal.dispatch(lease, "route", "execution", launch)
+    if case == "local-result":
+        await receipt
+    elif case != "collector-pending":
+        with pytest.raises(ConnectionError):
+            await receipt
+    result = {"execution_id": "execution", "success": True}
+    event = {"event": "result", "route_id": "route", "_event_id": "retained", "result": result}
+    consumer = SimpleNamespace(owner_worker_id=lease.worker_id, _handle_result=AsyncMock())
+    info = SimpleNamespace(execution_id="execution", attach_transport_metadata=lambda value: value)
+    if case == "missing-event-id":
+        del event["_event_id"]
+    elif case == "wrong-route":
+        event["route_id"] = "other-route"
+    elif case == "wrong-execution":
+        result["execution_id"] = "other-execution"
+    elif case == "wrong-success":
+        result["success"] = "true"
+    elif case == "wrong-worker":
+        consumer.owner_worker_id = uuid4()
+    try:
+        if case == "collector-pending":
+            assert not await journal.reconcile_retained_workflow(lease, "route", event, consumer, info)
+        else:
+            with pytest.raises(ValueError):
+                await journal.reconcile_retained_workflow(lease, "route", event, consumer, info)
+        consumer._handle_result.assert_not_awaited()
+        assert journal.inventory()[0]["acknowledged"] is False
+    finally:
+        if case == "collector-pending":
+            release.set()
+            assert await receipt == {"execution_id": "execution", "success": True}
+
+
+@pytest.mark.asyncio
 async def test_terminal_replay_requires_acceptance_and_preserves_tombstone(owner):
     lease = await owner(1)
     journal = AttemptJournal()

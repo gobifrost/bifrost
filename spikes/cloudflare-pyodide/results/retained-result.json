@@ -1,0 +1,27 @@
+{
+    "baseline_commit":  "9cf1d24ddd899ee4293284d3e96d98b4f08f6276",
+    "scope":  "Upstream retained event/ACK implementation, real PostgreSQL/Redis consumer, simulated sockets and synthetic result",
+    "command":  "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_launcher.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q",
+    "initial_tests":  33,
+    "initial_failures":  0,
+    "final_tests":  40,
+    "final_failures":  0,
+    "final_errors":  0,
+    "quality_command":  "./test.sh quality api",
+    "quality_exit_code":  0,
+    "actual_worker_invocations":  0,
+    "cloud_invocations":  0,
+    "transport_simulated":  true,
+    "result_synthetic":  true,
+    "physical_termination_verified":  false,
+    "source_and_evidence_sha256":  {
+                                       "spikes/cloudflare-pyodide/backend/attempt_journal.py":  "ec73658536a377574d71256397037ed7e3aa2fac1064d39f53887d1b9653a4de",
+                                       "api/tests/unit/dev/test_pyodide_attempt_journal.py":  "99ee63f54d75e3a93419017b50a7476279ebb6cea342728000d112c15a3ff62c",
+                                       "api/src/worker/remote/launcher.py":  "45782932698c2e99143f7e5b55d8fb3c746e2a16f41594eae05bdce36dd952bc",
+                                       "api/src/worker/remote/host.py":  "7780037199ee104c0409bbe99407f09b447d9bb84e4f0308e5d7ab7fc76e4f65",
+                                       "api/src/worker/remote/protocol.py":  "60d88cf4587c6fc4ef0e8c851c1b0d6a0770af76bf0a5ce849e97b98c4bcfa31",
+                                       "spikes/cloudflare-pyodide/results/retained-result-initial.xml":  "81550c0792bfca68229fb3ccd0d5bc850e099a848e7bfa9a1730266e059dce35",
+                                       "spikes/cloudflare-pyodide/results/retained-result-final.xml":  "d53110742a2a91d54e47f9f210cba1ad4bd3997e420fb5caff445a8849e99edb",
+                                       "spikes/cloudflare-pyodide/results/retained-result-quality.txt":  "c7c14b6bca264cb7b9d133646d937ed78c230c9ed198d363765656de225556bc"
+                                   }
+}

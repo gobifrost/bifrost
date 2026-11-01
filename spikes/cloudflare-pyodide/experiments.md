@@ -273,3 +273,18 @@ Upstream Launcher.send_terminal, retained terminal inventory and host delivery/
 ACK paths were read. They remain unmodified along with Linux/Containers source.
 Inventory exception type is reported, never its message; physical termination
 remains unverified in every state. See backend/CONTRACT-JOURNAL.md.
+
+## Upstream retained-result consumption
+
+Continued from 9cf1d24ddd899ee4293284d3e96d98b4f08f6276. Added an explicit
+companion recovery method using upstream result event identity and the normal
+fenced consumer; no new terminal store, business queue or code replay.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Actual upstream retention/ACK code can recover a failed collector without duplicate canonical effects | `./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_launcher.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q` | Initial 33, final 40 passed; value 70, one completion/log row/launch, lost ACK preserves event until actual ACK receiver consumes it | Place retention around the actual local Worker response-loss fixture |
+| Recovery entry must reject unbound or inapplicable results before consumption | Seven negative cases plus stale owner | Consumer not called/route not ACKed on rejection; retained-result-final.xml | Live authenticated transport and physical-handle adoption remain unqualified |
+
+Sockets and result are synthetic in this protocol/DB test; no new SDK, Pyodide
+or cloud acceptance follows. Linux templates remain unstarted. Actual upstream
+Launcher and Bridge methods are used, not copied. See backend/RETAINED-RESULTS.md.
