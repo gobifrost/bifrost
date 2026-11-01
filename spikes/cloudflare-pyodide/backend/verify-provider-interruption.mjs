@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const bytes = readFileSync(new URL('../results/provider-interruption/receipt.json', import.meta.url));
 assert.equal(hash(bytes), '00b1fcb9562540337d462a4253139390008ec4883203046c361b28e5669a6d87');
@@ -16,7 +18,9 @@ assert.equal(report.cloudflare_runtime_qualified, false);
 assert.equal(report.cloud_invocations, 0);
 assert.deepEqual(report.running_after_cleanup, []);
 assert.equal(report.volumes_deleted, false);
-assert.equal(report.packet_sha256['canonical-local.py'], hash(readFileSync(new URL('canonical-local.py', import.meta.url))));
+assert.equal(report.packet_sha256['canonical-local.py'], hash(execFileSync('git', ['show',
+  '3e0b6f55b7992810163b247425578210245c220e:spikes/cloudflare-pyodide/backend/canonical-local.py'],
+{cwd: fileURLToPath(new URL('../../../', import.meta.url))})));
 const run = report.canonical_result;
 assert.equal(run.provider_interruption_recovery_verified, true);
 assert.equal(run.provider_collection_error_type, 'RemoteProtocolError');

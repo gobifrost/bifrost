@@ -1,10 +1,7 @@
 """Real asyncio receiver lifecycle tests; no SDK, provider or database invocation."""
 import asyncio
-from pathlib import Path
-import runpy
 import unittest
-
-cancel_receiver = runpy.run_path(str(Path(__file__).with_name('linux-control-reference.py')))['cancel_control_receiver']
+from task_cleanup import cancel_and_join
 
 
 class ReceiverCleanupTests(unittest.IsolatedAsyncioTestCase):
@@ -21,7 +18,7 @@ class ReceiverCleanupTests(unittest.IsolatedAsyncioTestCase):
 
         task = asyncio.create_task(receive())
         await entered.wait()
-        await cancel_receiver(task)
+        await cancel_and_join(task)
         self.assertTrue(task.cancelled())
         self.assertTrue(cleaned.is_set())
 
@@ -31,7 +28,7 @@ class ReceiverCleanupTests(unittest.IsolatedAsyncioTestCase):
 
         task = asyncio.create_task(receive())
         await task
-        await cancel_receiver(task)
+        await cancel_and_join(task)
         self.assertTrue(task.done())
         self.assertFalse(task.cancelled())
 
@@ -42,7 +39,28 @@ class ReceiverCleanupTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(receive())
         await asyncio.sleep(0)
         with self.assertRaisesRegex(ValueError, '^fixed receiver failure$'):
-            await cancel_receiver(task)
+            await cancel_and_join(task)
+
+    async def test_parent_cancellation_is_not_suppressed(self):
+        entered = asyncio.Event()
+        cleaning = asyncio.Event()
+
+        async def receive():
+            try:
+                entered.set()
+                await asyncio.Event().wait()
+            finally:
+                cleaning.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(receive())
+        await entered.wait()
+        join = asyncio.create_task(cancel_and_join(task))
+        await cleaning.wait()
+        join.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await join
+        self.assertTrue(task.done())
 
 
 if __name__ == '__main__':

@@ -130,3 +130,28 @@ The detailed-alert API returned HTTP 403; no scope refresh, alternate identity
 or dismissal was attempted. Public review context and exact current source
 identified the statement. Fresh CodeQL is required before claiming the alert
 resolved. Full backend suites were not rerun for this fixture-only cleanup.
+
+## Canonical fixture joins: alerts 1881 and 1882
+
+The current-head review comments identify cancellation joins for the provider
+observer (1881) and request-sent task (1882), rather than disposable statements.
+Both now use `task_cleanup.cancel_and_join`, shared with the Linux receiver.
+Adjacent waiter/heartbeat cancellation joins use the same helper. It gathers
+the cancelled task, waits for its cleanup and propagates non-cancellation
+failures; cancellation of the joining parent also propagates. No join is simply
+removed and no cancellation is treated as provider termination.
+
+Four real asyncio lifecycle tests passed in CT128 with the existing image and
+network disabled: pending cleanup, completed task, failed task and parent
+cancellation. Command: `python /qualification/test_linux_receiver_cleanup.py -v`
+inside a one-CPU/512-MiB/64-PID container with a 30-second timeout. Targeted Docker
+Ruff passed on both fixtures, helper and tests; no containers remained running.
+Historical provider-interruption, lost-worker and Linux benchmark verifiers pass.
+The provider-interruption verifier now binds its fixture to tested commit
+3e0b6f55b rather than the later cleanup revision.
+
+Include `task_cleanup.py` beside either fixture when staging a current-source
+guest packet. Existing recorded packets/receipt hashes remain historical; full
+SDK workflows and backend suites were not rerun for this cleanup-only change.
+No new access, cloud invocation, production/shared execution edit or alert
+dismissal occurred. Fresh CodeQL must establish disposition on the new head.

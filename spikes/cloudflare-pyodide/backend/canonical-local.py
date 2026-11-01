@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy import delete, select
+from task_cleanup import cancel_and_join
 
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
@@ -461,12 +462,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                             response.raise_for_status()
                                 finally:
                                     if observer is not None:
-                                        if not observer.done():
-                                            observer.cancel()
-                                            with suppress(asyncio.CancelledError):
-                                                await observer
-                                        else:
-                                            observer.result()
+                                        await cancel_and_join(observer)
                                 assert response.status_code == 200, f"Provider status {response.status_code}"
                                 if isolation_label is not None:
                                     report["provider_end_ms"] = int(time.time() * 1000)
@@ -566,18 +562,14 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                             await waiter
                             raise RuntimeError("Provider completed before interruption checkpoint")
                         assert pool.provider_sent.is_set()
-                        waiter.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await waiter
+                        await cancel_and_join(waiter)
                         assert waiter.cancelled()
                         assert journal.inventory()[0]["collection_state"] == "pending"
                         report["transport_waiter_probe"] = True
                         report["provider_request_body_sent"] = True
                         report["cancelled_waiter_collection_retained"] = True
                     finally:
-                        sent.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await sent
+                        await cancel_and_join(sent)
                 if provider_interruption_probe:
                     try:
                         await pool.receipt
@@ -743,9 +735,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         "completed_claim_retained_as_upstream_specifies": True})
             finally:
                 if heartbeat is not None:
-                    heartbeat.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await heartbeat
+                    await cancel_and_join(heartbeat)
                 if ref is not None:
                     await release_remote_owner(ref.lease)
                 async with get_db_context() as db:
@@ -768,9 +758,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
         raise
     finally:
         if heartbeat is not None and not heartbeat.done():
-            heartbeat.cancel()
-            with suppress(asyncio.CancelledError):
-                await heartbeat
+            await cancel_and_join(heartbeat)
         for name in sources:
             await invalidate_module(name)
             await storage.delete(name)
