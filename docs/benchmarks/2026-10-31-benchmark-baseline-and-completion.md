@@ -219,7 +219,7 @@ the frozen benchmark client and infrastructure are identified separately.
 | Scenario | Result | Capacity Interpretation |
 |---|---|---|
 | 4 decimal GB, SDK-only, offered 3.90625/s | Correctness preflight 127/127; confirmation 3,735/3,735 correct by deadline; end-to-end p95 1.815980 s, above the 1.5 s gate | Valid negative result; this offered rate is not accepted. Queue, throughput, strict reliability, backlog and tenant-fault gates passed. Host invalid reasons were empty; possible external memory pressure remained an unproven warning. |
-| M / 8 GiB SDK-only | Measurement sequence pending | No stock SDK capacity claim yet. |
+| M / 8 GiB SDK-only, offered 3.90625/s | Correctness preflight 127/127; confirmation 3,735/3,735 correct by deadline; end-to-end p95 0.583503 s; all gates passed | Valid SDK-only pass at this offered rate; no mixed or hosting-capacity claim. |
 | Mixed load and conditional soaks | Declared sequence pending | No stock mixed capacity or sustained growth claim yet. |
 | Browser app path | 24/24 correct actions and durable records; verified cleanup | Descriptive timing only; see the omitted-timer finding below. |
 | Stock retention rehearsal | Queued behind the same host lock | Earlier candidate storage evidence stays separate. |
@@ -242,6 +242,12 @@ not a smaller safe quota or a mixed-workload capacity claim. Per-role memory
 peaks are not additive. The Pooler showed throttled scheduling periods despite
 modest mean CPU use; that is a candidate for a controlled resource comparison,
 not proof of the latency cause.
+
+The [paired stock SDK report](2026-10-31-stock-sdk-baseline.md) and
+[M scalar baseline](baselines/sdk-confirmation-2026-10-31-m-stock.json) retain
+the completed comparison. M used one sampled worker throughout, versus two
+for 4 GB; the shared-component and per-worker memory allocations also changed.
+Its SDK pass cannot be used as a controlled worker-count or memory-effect claim.
 
 ### Collector Validation (October 31)
 

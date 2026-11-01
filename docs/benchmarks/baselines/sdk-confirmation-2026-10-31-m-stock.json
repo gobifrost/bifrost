@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "baseline_id": "sdk-confirmation-2026-10-31-m-stock-v1",
+  "kind": "capacity-confirmation",
+  "status": "valid_pass",
+  "capacity_certification": false,
+  "source": {
+    "private_result_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/m-capacity/sdk-confirmation/result.json",
+    "streamed_raw_result_sha256": "3ad1cd08ef7dd587128ed12faacc0427471d083ce8131ad37784867e33c3ca8e",
+    "declaration_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/declaration.json",
+    "declaration_sha256": "ae598852916335a63ed028e8ee67f151c05ef73b58f101f3bc9161ffef93f157"
+  },
+  "immutable_chain": {
+    "harness_git_sha": "e62bad1dfbc0943eeb04610fc86d3f1e7651a708",
+    "run_id": "sdk-confirmation",
+    "runtime_ready_record": "/home/jack/bifrost-bench-evidence/runs/stock-production-image-preparation-20261031-r1/preparation.json",
+    "runtime_ready_record_sha256": "345d31ddf3d0c67d792fe5c5097302463211944e0c547cc3583d4f5804a9f56d",
+    "original_runtime_archive": "/home/jack/bifrost-bench-evidence/runs/stock-production-image-preparation-20261031-r1/runtime-images.json",
+    "original_runtime_archive_sha256": "f1209a474caaa4d72783b4251f97ef3e71e21de2cfece305fc727f878bfcf53c",
+    "runtime_source_git_sha": "e611d31bbba3d7601980271c774cad5e821b1e97",
+    "runtime_api_tag": "bifrost-api:kind-a74e45295998-stock-e611d31bb",
+    "runtime_api_host_id": "sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692",
+    "runtime_api_config_id": "sha256:b4e0f9b7650557e3c4d272da4ff48b667f04ba168488c99220719460c0db475b",
+    "runtime_api_manifest_id": "sha256:04026602d39e8ab4e3b024e0c7a0b613e894d11d859072afe937b5febff4e4b3",
+    "supervisor_sha256": "2494f1dc83e37dfc1032f40f47a370281716467f8b27e8fa038b7d4ab5963e1e"
+  },
+  "profile_name": "m-capacity",
+  "mix_name": "sdk-heavy",
+  "preflight": {
+    "status": "pass",
+    "correct": 127,
+    "accepted": 127,
+    "total": 127
+  },
+  "confirmation": {
+    "status": "pass",
+    "offered_rate_per_s": 3.90625,
+    "measured_window_start_s": 90,
+    "measured_window_end_s": 1048.464,
+    "measured_window_s": 958.464,
+    "capped": false,
+    "driver_lag_p99_s": 0.0021886825561523438
+  },
+  "arrival_cohort": {
+    "scheduled": 3735,
+    "submitted": 3735,
+    "accepted_union": 3735,
+    "http_and_durable": 3735,
+    "http_only": 0,
+    "durable_only": 0,
+    "neither_accepted": 0,
+    "correct_by_deadline": 3735,
+    "correct_completed": 3735,
+    "correct_late": 0,
+    "durably_terminal": 3735,
+    "failed_terminal": 0,
+    "unfinished_durable": 0,
+    "duplicate_request_ids": 0,
+    "extra_durable_rows": 0
+  },
+  "measured_window": {
+    "correct_by_deadline_completed": 3736,
+    "correct_completed": 3736,
+    "durable_created": 3735,
+    "durably_terminal": 3736,
+    "http_accepted_responses": 3735,
+    "scheduled": 3735,
+    "sent": 3735,
+    "correct_completed_event_rate_per_s": 3.897903311965812,
+    "throughput_ratio": 1.0002677376171352,
+    "throughput_limit": 0.995,
+    "throughput_status": "pass"
+  },
+  "event_rates_per_s": {
+    "correct_by_deadline_completed": 3.897903311965812,
+    "correct_completed": 3.897903311965812,
+    "durable_created": 3.8968599759615388,
+    "durably_terminal": 3.897903311965812,
+    "http_accepted_responses": 3.8968599759615388,
+    "scheduled": 3.8968599759615388,
+    "sent": 3.8968599759615388
+  },
+  "latency": {
+    "queue_p95_s": 0.3690030574798584,
+    "queue_p95_ci_low_s": 0.3452260494232178,
+    "queue_p95_ci_high_s": 0.4026811122894287,
+    "queue_p95_ci_half_width_s": 0.02872753143310547,
+    "queue_p95_limit_s": 2.0,
+    "queue_p95_status": "pass",
+    "e2e_p95_s": 0.583503007888794,
+    "e2e_p95_ci_low_s": 0.5594353675842285,
+    "e2e_p95_ci_high_s": 0.6129040718078613,
+    "e2e_p95_ci_half_width_s": 0.026734352111816406,
+    "e2e_p95_limit_s": 1.5,
+    "e2e_p95_status": "pass"
+  },
+  "drift": {
+    "upper_per_s": 0.00047765836407537385,
+    "limit_per_s": 0.00390625,
+    "status": "pass"
+  },
+  "strict_reliability": {
+    "class": "wf-sdk",
+    "failure_upper_limit": 0.001,
+    "evidence_status": "pass",
+    "observations": 3735
+  },
+  "tenant_faults": {
+    "status": "pass",
+    "duplicate_executions": 0,
+    "evicted": 0,
+    "oom_killed": 0,
+    "quota_denials": 0,
+    "restarts": 0
+  },
+  "host_validity": {
+    "status": "valid",
+    "invalid_reasons": [],
+    "warnings": [
+      "possible external memory pressure (unproven)"
+    ]
+  },
+  "worker_sampling": {
+    "actual_sampled_worker_count_distribution": [
+      {
+        "worker_count": 1,
+        "raw_observation_frames": 190
+      }
+    ],
+    "resource_intervals": 189,
+    "observed_seconds": 948.9363851547241,
+    "observed_window_fraction": 0.9900594964108645,
+    "charged_peak_bytes": 402026496,
+    "working_set_peak_bytes": 396963840
+  },
+  "declaration": {
+    "no_replacements_or_retries": true,
+    "sdk_only": false,
+    "sdk_purpose": "One unmodified-production SDK baseline per envelope; independent of mixed capacity.",
+    "mixed_offered_rate_per_s": 2.236,
+    "mixed_segments": 5,
+    "segment_window_s": 3600,
+    "soak_rate_fraction": 0.7,
+    "soak_window_s": 7200
+  },
+  "stage_cleanup": {
+    "cleanup_verified": true,
+    "finished_at": "2026-11-01T00:46:34.637842+00:00"
+  },
+  "disposition": {
+    "accepted_sdk_only_rate_per_s": 3.90625,
+    "mixed_capacity": "not established",
+    "scaling_capacity": "not established",
+    "hosting_capacity": "not established"
+  },
+  "runtime_scope": "Unmodified captured production registry image; no platform code fixes or deployments. Experimental candidate results are retained separately.",
+  "resource_sampling": {
+    "roles": {
+      "api": {
+        "mean_cpu_cores_observed": 0.49449060373366355,
+        "max_interval_cpu_cores": 0.8126951444719315,
+        "max_pod_throttled_ratio": 0.0,
+        "charged_peak_bytes": 354549760,
+        "working_set_peak_bytes": 335491072,
+        "observed_window_fraction": 0.9900594964108645,
+        "cpu_seconds": 469.2401259999998,
+        "observed_cpu_ms_per_correct_completion": 125.59960546038539
+      },
+      "client": {
+        "mean_cpu_cores_observed": 0.00004974622191592225,
+        "max_interval_cpu_cores": 0.00008194851724077953,
+        "max_pod_throttled_ratio": 0.0,
+        "charged_peak_bytes": 8876032,
+        "working_set_peak_bytes": 8667136,
+        "observed_window_fraction": 0.9900594964108645,
+        "cpu_seconds": 0.04720599999999998,
+        "observed_cpu_ms_per_correct_completion": 0.012635438972162735
+      },
+      "pooler": {
+        "mean_cpu_cores_observed": 0.04257408360773602,
+        "max_interval_cpu_cores": 0.0677708493640198,
+        "max_pod_throttled_ratio": 0.07692307692307693,
+        "charged_peak_bytes": 59068416,
+        "working_set_peak_bytes": 58986496,
+        "observed_window_fraction": 0.9900594964108645,
+        "cpu_seconds": 40.40009700000002,
+        "observed_cpu_ms_per_correct_completion": 10.813730460385443
+      },
+      "postgres": {
+        "mean_cpu_cores_observed": 0.07481552516128281,
+        "max_interval_cpu_cores": 0.17865470480075119,
+        "max_pod_throttled_ratio": 0.0,
+        "charged_peak_bytes": 571523072,
+        "working_set_peak_bytes": 306061312,
+        "observed_window_fraction": 0.9900594964108645,
+        "cpu_seconds": 70.99517400000002,
+        "observed_cpu_ms_per_correct_completion": 19.002990899357606
+      },
+      "redis": {
+        "mean_cpu_cores_observed": 0.01829640982432041,
+        "max_interval_cpu_cores": 0.0323825620554945,
+        "max_pod_throttled_ratio": 0.09302325581395349,
+        "charged_peak_bytes": 16547840,
+        "working_set_peak_bytes": 16470016,
+        "observed_window_fraction": 0.9900594964108645,
+        "cpu_seconds": 17.362128999999992,
+        "observed_cpu_ms_per_correct_completion": 4.647250802997857
+      },
+      "worker": {
+        "mean_cpu_cores_observed": 0.23662920140151206,
+        "max_interval_cpu_cores": 0.5474433687354705,
+        "max_pod_throttled_ratio": 0.5416666666666666,
+        "charged_peak_bytes": 402026496,
+        "working_set_peak_bytes": 396963840,
+        "observed_window_fraction": 0.9900594964108645,
+        "cpu_seconds": 224.54605900000004,
+        "observed_cpu_ms_per_correct_completion": 60.103334850107075
+      }
+    },
+    "tenant": {
+      "kind": "observed_tenant_lower_bound",
+      "observed_seconds": 948.9363851547241,
+      "observed_window_fraction": 0.9900594964108645,
+      "cpu_seconds": 822.5907909999999,
+      "mean_cpu_cores_observed": 0.8668555699504308,
+      "max_interval_cpu_cores": 1.4573419988712608,
+      "charged_peak_bytes": 1368055808,
+      "working_set_peak_bytes": 1103671296,
+      "observed_samples": 189,
+      "memory_coverage": {
+        "complete_observed_samples": 189,
+        "missing_or_partial_observed_samples": 0,
+        "observed_seconds": 948.9363851547241,
+        "observed_window_fraction": 0.9900594964108645
+      }
+    },
+    "limits": "sampled lower-bound peaks; missing/new/replaced or unsampled pods reduce coverage; role peaks are not additive and tenant is not a complete namespace inventory",
+    "scope": "Observed CPU is covered intervals only; per-correct-completion CPU divides by all correct measured-window terminals. Throttling is the fraction of CFS periods throttled, not CPU time lost. Role peaks are not additive. Requests and limits are separate from usage."
+  }
+}
