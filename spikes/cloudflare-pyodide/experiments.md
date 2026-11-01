@@ -341,3 +341,18 @@ Historical source snapshot hashes are verified separately from deployed-version
 associations. The local observer's 1.809 s is before-to-after, not a measured
 abort-to-after interval. See backend/TERMINATION-EVIDENCE.md and the new audit
 JSON. No source-mocked SDK/Worker compatibility or new cancellation proof follows.
+
+## CT128 run72: pinned runtime frontier
+
+| Hypothesis | Specific change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Public pins reproduce the dependency closure without laptop caches | ct128-runtime-stage.py over existing SSH/pct exec 128 | npm ci and 11 hash-verified wheels; 455 packaged modules at source 785b560b; results/ct128-run72/staging.json | Invoke ABI fixture with no network |
+| Pinned workerd includes a usable offline Python runtime | ct128-runtime-probe.py, network=none, 1.5 CPU/3 GiB container | HTTP 500 before Python start: required bundle missing, DNS refused; abi-probe.json/runtime.log | Inspect exact official bundle/cache interface |
+| Official integrity-pinned bundle is publicly fetchable | ct128-runtime-cache.py, exact source metadata URL/digest | HTTP 403; cache-denial.json retained, no alternate route/retry/R2 | Authorized supply of exact artifact required |
+| Independent timestamps can establish stop from abort alone | Prepare guest-termination-entry/probe + classifyTimedCancellation | Not invoked; 3 offline classifier/opt-in tests pass and never assert physical-stop or canonical fencing acceptance | Once runtime qualifies, run completion/catch/abort negative controls; require separate trusted stop and actual canonical fencing proof |
+| Diagnostic guard test needs path check/use | Separate missing-output observation from exclusive safe output | 8 guard tests pass; no credential-bearing file created | Fresh CodeQL on new head |
+
+Package ABI and execution remain unqualified in this guest. Detailed commands,
+source hashes, denial and required future cloud proof are in
+backend/CT128-RUNTIME-FRONTIER.md. All owned containers stopped; no heavy laptop,
+cloud execution, credentials, resource expansion or baseline/control-auth rerun.

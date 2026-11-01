@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,access,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {cloudProbeFetch,CLOUD_PROBE_URL,boundedText,boundedJson,diagnosticJson} from './probe-io.mjs';
@@ -75,10 +75,11 @@ test('credential echo is rejected before a receipt is created; hostile fields ca
     const secret='synthetic-scoped-credential';
     const body=await boundedJson(Response.json({error:'Bearer '+secret}));
     await assert.rejects(async()=>writeFile(output,diagnosticJson({body},[secret])),/evidence withheld/);
-    await assert.rejects(access(output),{code:'ENOENT'});
+    assert.deepEqual(await readdir(directory),[]);
     const hostile={path:'../../outside',body:'process.exit(99)'};
-    await writeFile(output,diagnosticJson(hostile));
-    assert.deepEqual(JSON.parse(await readFile(output,'utf8')),hostile);
+    const safeOutput=join(directory,'safe.json');
+    await writeFile(safeOutput,diagnosticJson(hostile),{flag:'wx'});
+    assert.deepEqual(JSON.parse(await readFile(safeOutput,'utf8')),hostile);
   } finally {
     await rm(directory,{recursive:true});
   }

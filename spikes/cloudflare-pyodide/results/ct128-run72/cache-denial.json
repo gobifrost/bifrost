@@ -1,0 +1,12 @@
+{
+  "url": "https://pyodide-capnp-bin.edgeworker.net/pyodide_314.0.6_2026-08-17_6.capnp.bin",
+  "source_repository": "cloudflare/workerd",
+  "source_commit": "7caf6dee5bfe9af1b7710ddf66222900007af080",
+  "metadata_path": "build/python_metadata.bzl",
+  "cloud_invocations": 0,
+  "r2_requests": 0,
+  "runtime_invocations": 0,
+  "started_at_epoch": 1793519721.6331873,
+  "verified": false,
+  "error_type": "HTTPError"
+}

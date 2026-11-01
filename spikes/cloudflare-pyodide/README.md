@@ -1,5 +1,11 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Guest offload update: CT128 protocol tests and control authentication qualified;
+the subsequent pinned Pyodide runtime attempt is blocked before Python startup
+by an HTTP 403 for its exact official bundle. See
+[CT128 runtime frontier](backend/CT128-RUNTIME-FRONTIER.md) for preserved evidence,
+the prepared (unexecuted) timestamped termination fixture and remaining gates.
+
 **YELLOW for fixed, trusted, short workflows. RED for arbitrary untrusted Python
 under the current termination contract, including fresh isolates.** Real upstream `engine.execute()` and unmodified SDK
 integration reads/table writes ran in local Cloudflare workerd/Pyodide. This is
