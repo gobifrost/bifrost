@@ -1,4 +1,69 @@
-# Pending pve-t340 test handoff
+# pve-t340 test offload
+
+## Observed CT128 qualification, owner run68
+
+The newer delivery 304a9578-18c2-4a5c-ad77-c0fd98e9c682 was acknowledged in
+native run68. Existing pve-t340 SSH -> pct exec 128 access was verified without
+new credentials. owner-binding.json assigns this thread the exclusive
+/opt/bifrost-tests/pyodide-ddf316c1 scratch. Guest identity was rechecked:
+bifrost-pyodide-test-01, 172.16.15.181, 2 vCPU, 4096 MiB, zero swap, onboot=0,
+unprivileged, independent 40 GiB root disk and about 32 GiB free.
+
+Remote execution **occurred** against pinned source
+`4d493d5547a6864cc6337df9144cdf9366652915`, tree
+`c3966435749a6952bf6cf06f7a79eaf076ae9712`, in its own clean Git worktree.
+There were no staged/unstaged patches or required untracked source fixtures.
+The uncommitted transport harness is retained as remote-ct128-qualify.py;
+its SHA-256 is c87225f3cdd2c756aa6910ddeb8772305bdabda51c48cd7b72995b055ea6b35c.
+It was sent over existing SSH stdin, not copied with private caches/profiles.
+
+The assigned guest already held owner run73's successful 40-case baseline at
+0c3241789; those receipts, source, containers and volumes were preserved. No
+other test was active. Existing image
+sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b
+was reused only after verifying that changes since its source baseline were
+limited to spike files and API tests. All four sidecar digest/tag identities
+were checked against the pinned manifest. No image build or latest pull ran.
+
+Exact commands, in /opt/bifrost-tests/pyodide-ddf316c1/<source>:
+
+```sh
+export BIFROST_SKIP_BUILD=1 BIFROST_TEST_IMAGE_TAG=bifrost-test-7ddfac36
+export BIFROST_TEST_UNIT_ONLY=1
+./test.sh stack up
+./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_launcher.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q
+```
+
+The supervisor supplied an empty per-run HOME and only the required environment.
+Project bifrost-test-da7a5eef used its own disposable DB, Redis, network and
+volumes, with no published ports. Both commands exited 0. JUnit: **40 passed,
+0 failures/errors/skips**, pytest 3.52 s, supervisor 100.44 s including cleanup.
+All owned project containers were stopped and read back as not running; volumes
+and logs were preserved. Laptop heavy containers stayed stopped.
+
+The existing guest enforces the 2 vCPU/4 GiB/no-swap ceiling. Supervisor bounds:
+900 s and sampled stop guard at 24 GiB disk used. These are not filesystem quotas
+or per-container limits. Across 98 one-second guest meminfo samples, the largest
+MemTotal-minus-MemAvailable was 1495.07 MiB. This is a sampled guest working-memory
+indicator, **not process peak RSS, an absolute peak, or the minimum required RAM**.
+4 GiB is sufficient for this subset; no resource expansion is requested.
+
+Raw evidence: results/ct128-run68/receipt.json, test-results.xml,
+memory-samples.jsonl and preflight-failure.json. Receipt SHA-256:
+142e233549d9fe3fc3c918efe1204878ec89054b6cbac9ebd604398c29559f6c.
+Transferred JUnit/memory hashes match the remote receipt. The first preflight
+failed before tests because the harness referenced results/remote-test-image-pins
+instead of backend/remote-test-image-pins; its receipt is retained unchanged.
+After that specific correction a new exclusive run directory was used; no test
+failure was rerun. Reuse is refused for any existing run reservation.
+
+This proves Linux remote contract tests and the latest journal-test edits, not
+Pyodide execution, cloud acceptance, refresh bridge tests or physical termination.
+The next safe remote step is the fixed control-auth fixture on this same isolated
+stack, followed by dependency/ABI-qualified Pyodide setup. No new cloud invocation,
+production cutover or resource/security change is authorized by this offload.
+
+## Historical pending packet (preserved)
 
 **Acted upon locally; remote execution has not occurred.** Delivery
 af7a12d2-0873-4f74-9eab-e6c75099e0f3 was acknowledged in the existing native
