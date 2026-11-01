@@ -4,6 +4,8 @@ import asyncio
 import importlib.util
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 
 class ElasticityDriverTest(unittest.TestCase):
@@ -95,6 +97,37 @@ class ElasticityDriverTest(unittest.TestCase):
         for change in ({"started": None}, {"completed": 9.0}, {"durable_id": "other"}):
             reconciliation = {**base, "outcomes": {"r": {**row, **change}}}
             self.assertEqual(driver.reconciled_records([request], reconciliation)["verdict"], "observed_failure")
+
+    def test_reconciliation_error_retains_admissions_without_claiming_missing_or_incorrect_outputs(self) -> None:
+        driver = self._driver()
+
+        class Session:
+            def __init__(self):
+                self.http = self
+
+            async def login(self):
+                pass
+
+            async def request(self, method, path, **kwargs):
+                if method == "GET":
+                    return SimpleNamespace(status_code=200, json=lambda: [{"name": "bench_wf_wait", "id": "workflow"}])
+                return SimpleNamespace(status_code=200, json=lambda: {"execution_id": "execution"})
+
+            async def aclose(self):
+                pass
+
+        module = SimpleNamespace(Session=Session, _rows=lambda value: value,
+                                 outcomes=AsyncMock(side_effect=RuntimeError("private database detail")))
+        driver._load = lambda payload: module
+        result = asyncio.run(driver.measure({"count": 1}))
+        self.assertEqual(result["verdict"], "invalid")
+        self.assertEqual(result["error_class"], "RuntimeError")
+        self.assertEqual(result["requests"][0]["http_status"], 200)
+        self.assertEqual(result["requests"][0]["durable_id"], "execution")
+        self.assertTrue(result["requests"][0]["id"])
+        self.assertIsNone(result["reconciliation"])
+        self.assertIsNone(result["late_count"])
+        self.assertNotIn("private database detail", str(result))
 
 
 if __name__ == "__main__":

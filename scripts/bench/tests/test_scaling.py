@@ -18,6 +18,7 @@ def ready_sample(workers: int = 1) -> dict:
     return {
         "worker_db": {"workers": [{
             "state": "ready", "pod_uid": f"pod-{index}", "heartbeat_freshness": {"state": "fresh"},
+            "lifecycle": {"ended_at_epoch_s": None},
         } for index in range(workers)]},
         "pods": {"status": "observed", "pods": [{
             "pod_uid": f"pod-{index}", "phase": "Running", "ready": {"value": True}, "deletion_at": None,
@@ -47,12 +48,19 @@ class ScalingTest(unittest.TestCase):
             lambda value: value["worker_db"]["workers"][0].update(state="starting"),
             lambda value: value["worker_db"]["workers"][0].update(heartbeat_freshness={"state": "stale"}),
             lambda value: value.pop("worker_db"),
+            lambda value: value["worker_db"]["workers"].append({"state": "failed", "lifecycle": {"ended_at_epoch_s": None}}),
         )
         for change in changes:
             with self.subTest(change=change):
                 sample = ready_sample(4)
                 change(sample)
                 self.assertFalse(scaling.fixed_count(sample, 4))
+
+    def test_rate_input_cannot_bypass_the_declared_hard_ceiling(self):
+        for maximum in (17, 1e100, float("inf")):
+            with self.subTest(maximum=maximum), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaisesRegex(ValueError, "16"):
+                    scaling.run_arm(1, "sdk-heavy", "stock-pinned", Path(directory) / "arm", max_rate=maximum)
 
     @contextmanager
     def harness(self, root: Path, outcomes: list[str], *, preflight_status="pass", confirmation="pass"):

@@ -36,7 +36,17 @@ def fixed_count(sample: dict, workers: int) -> bool:
     pods = sample.get("pods", {})
     if not isinstance(rows, list) or pods.get("status") != "observed":
         return False
-    live = [row for row in rows if row.get("state") in {"reserved", "starting", "ready", "draining"}]
+    live = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("lifecycle"), dict):
+            return False
+        ended = row["lifecycle"].get("ended_at_epoch_s")
+        if row.get("state") in {"reserved", "starting", "ready", "draining"}:
+            if ended is not None:
+                return False
+            live.append(row)
+        elif ended is None:
+            return False
     pod_rows = pods.get("pods")
     if not isinstance(pod_rows, list) or len(live) != workers or len(pod_rows) != workers:
         return False
@@ -57,8 +67,8 @@ def run_arm(workers: int, mix_name: str, api_image: str, out: Path,
     if workers not in (1, 2, 4) or isinstance(workers, bool):
         raise ValueError("workers must be 1, 2, or 4")
     if any(isinstance(value, bool) or not isinstance(value, (float, int))
-           or not math.isfinite(value) or value <= 0 for value in (start_rate, max_rate)) or start_rate > max_rate:
-        raise ValueError("rates must be finite and positive with start <= maximum")
+           or not math.isfinite(value) or value <= 0 for value in (start_rate, max_rate)) or not start_rate <= max_rate <= 16:
+        raise ValueError("rates must be finite and positive with start <= maximum <= 16/s")
     if out.exists():
         raise FileExistsError(f"refusing to replace scaling evidence: {out}")
     profile = elasticity.build_profile(workers, workers)

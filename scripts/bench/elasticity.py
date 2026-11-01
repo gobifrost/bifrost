@@ -303,6 +303,8 @@ def run_arm(warm_workers: int, max_workers: int, api_image: str, out: Path, *, c
                 selected, "first_arrival", checkpoint, lambda: _driver(selected, "measure", {"count": 1}, timeout_s=120),
                 record_result("first_arrival"),
             ))
+            if first["verdict"] == "invalid":
+                raise RuntimeError("first-arrival reconciliation was invalid; raw admissions retained")
             checkpoint(observe(selected), "after_first")
             _phase(phase_bounds, "cooldown_after_first", lambda: checkpoint(
                 wait_for_floor(selected, warm_workers, checkpoint=checkpoint), "floor_before_burst",
@@ -311,6 +313,8 @@ def run_arm(warm_workers: int, max_workers: int, api_image: str, out: Path, *, c
                 selected, "burst", checkpoint, lambda: _driver(selected, "measure", {"count": 32}, timeout_s=180),
                 record_result("burst"),
             ))
+            if burst["verdict"] == "invalid":
+                raise RuntimeError("burst reconciliation was invalid; raw admissions retained")
             checkpoint(observe(selected), "after_burst")
             _phase(phase_bounds, "cooldown_after_burst", lambda: checkpoint(
                 wait_for_floor(selected, warm_workers, checkpoint=checkpoint), "idle_floor",

@@ -62,8 +62,8 @@ async def policy(payload: dict) -> dict:
 async def measure(payload: dict) -> dict:
     """Send exactly one fixed wf-wait wave, then preserve durable reconciliation."""
     count = payload.get("count")
-    if type(count) is not int or count < 1:
-        raise ValueError("measure count must be a positive integer")
+    if type(count) is not int or count not in (1, 32):
+        raise ValueError("measure count must be the declared first request or 32-request burst")
     module = _load(payload)
     session = module.Session()
     try:
@@ -109,14 +109,27 @@ async def measure(payload: dict) -> dict:
 
         requests = list(await asyncio.gather(*(submit(index) for index in range(count))))
         deadline = max(record["sent_monotonic"] for record in requests if isinstance(record["sent_monotonic"], (int, float))) + 60.0
-        reconciliation = await module.outcomes(requests)
-        def complete(value: dict) -> bool:
-            return not value["missing"] and all(item.get("completed") is not None for item in value["outcomes"].values())
-        while not complete(reconciliation) and time.monotonic() < deadline:
-            await asyncio.sleep(1.0)
+        reconciliation = None
+        reconciled_at = None
+        try:
             reconciliation = await module.outcomes(requests)
+            reconciled_at = time.time()
+
+            def complete(value: dict) -> bool:
+                return not value["missing"] and all(item.get("completed") is not None for item in value["outcomes"].values())
+
+            while not complete(reconciliation) and time.monotonic() < deadline:
+                await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+                reconciliation = await module.outcomes(requests)
+                reconciled_at = time.time()
+        except Exception as error:
+            return {"started": started, "deadline_s": 60, "requests": requests,
+                    "reconciliation": reconciliation, "reconciliation_observed_epoch_s": reconciled_at,
+                    "late_count": None, "not_completed_by_deadline_count": None,
+                    "verdict": "invalid", "error_class": type(error).__name__}
         result = reconciled_records(requests, reconciliation)
-        return {"started": started, "deadline_s": 60, **result, "reconciliation": reconciliation}
+        return {"started": started, "deadline_s": 60, **result, "reconciliation": reconciliation,
+                "reconciliation_observed_epoch_s": reconciled_at}
     finally:
         await session.http.aclose()
 

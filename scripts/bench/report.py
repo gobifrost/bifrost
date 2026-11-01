@@ -559,7 +559,8 @@ def _elasticity(result: dict) -> list[str]:
                       and row.get("duplicate_durable_rows") == 0 for row in requests)
         durations = [row["e2e_s"] for row in requests if row.get("timing_valid") is True]
         timing = " / ".join(f"{value:.6f}" for value in (min(durations), median(durations), max(durations))) if durations else "unmeasured"
-        rows.append(f"| {key} | {correct} / {len(requests)} | {timing} | {wave['late_count']} | {wave['verdict']} |")
+        late = wave["late_count"] if wave.get("late_count") is not None else "unmeasured"
+        rows.append(f"| {key} | {correct} / {len(requests)} | {timing} | {late} | {wave['verdict']} |")
     rows += ["", "## Policy and Resource Evidence", "",
              f"Effective policy before: `{result.get('policy_before', 'not observed')}`.",
              f"Effective policy after: `{result.get('policy_after', 'not observed')}`.", "",
