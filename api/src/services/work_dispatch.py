@@ -287,8 +287,8 @@ async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") ->
     largest budget of an executor live now or within ``RECENTLY_LIVE`` (one
     restarting or rolling over counts), or what the worker controller can
     launch. Only executors supporting this handler count. A physical worker
-    launch adds workflow and agent-run capacity, never the API's summary
-    capacity. None while no compatible executor has reported (an outage is
+    launch adds capacity for every advertised remote handler, including live
+    and backfill summaries. None while no compatible executor has reported (an outage is
     not too-large work).
     """
     from src.core.cache.redis_client import get_redis

@@ -35,7 +35,7 @@ _STUB = textwrap.dedent(
     import src.jobs.agent_run_child as agent_run_child
 
 
-    async def run_agent_message(message):
+    async def run_agent_message(message, *, handler="agent.run", worker_id=None):
         if "raise" in message:
             raise LookupError(message["raise"])
         if "exit" in message:

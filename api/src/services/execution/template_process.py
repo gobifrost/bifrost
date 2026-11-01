@@ -748,7 +748,10 @@ def _run_agent_child(
     from src.jobs.agent_run_child import run_agent_message
 
     try:
-        asyncio.run(run_agent_message(work_item["message"]))
+        asyncio.run(run_agent_message(
+            work_item["message"], handler=work_item.get("handler", "agent.run"),
+            worker_id=work_item.get("worker_id"),
+        ))
         reply: dict[str, Any] = {"ok": True}
     # A run that exits or is cancelled still reports how it ended.
     except (Exception, SystemExit, asyncio.CancelledError) as e:

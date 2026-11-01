@@ -210,6 +210,18 @@ class TestServiceWorkerMode:
         assert live.get("ready_at"), "attempt never reported ready"
         assert live.get("worker_id"), "attempt has no owning worker"
 
+        # A running attempt retains its organization and identity authority.
+        workflow_url = f"/api/workflows/{service_def['workflow_id']}"
+        original_org = service_def["organization_id"]
+        moved = e2e_client.patch(
+            workflow_url, headers=platform_admin.headers,
+            json={"organization_id": None},
+        )
+        assert moved.status_code == 409, moved.text
+        unchanged = e2e_client.get(workflow_url, headers=platform_admin.headers)
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json()["organization_id"] == original_org
+
         # The producer path: this attempt may emit within its own organization.
         deadline = time.monotonic() + 60.0
         found = None
@@ -372,6 +384,19 @@ class TestServiceWorkerMode:
         )
         assert resp.status_code == 200, resp.text
         await _wait_for(e2e_client, platform_admin.headers, definition_id, "stopped")
+        # Once stopped, scope changes update both records without restarting.
+        for organization_id in (None, original_org):
+            moved = e2e_client.patch(
+                workflow_url, headers=platform_admin.headers,
+                json={"organization_id": organization_id},
+            )
+            assert moved.status_code == 200, moved.text
+            definition = e2e_client.get(
+                f"/api/services/{definition_id}", headers=platform_admin.headers,
+            )
+            assert definition.status_code == 200, definition.text
+            assert definition.json()["organization_id"] == organization_id
+            assert definition.json()["desired_state"] == "stopped"
         resp = e2e_client.get(
             f"/api/services/{definition_id}/logs",
             headers=platform_admin.headers,

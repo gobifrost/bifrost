@@ -192,3 +192,38 @@ class ApplicationBundleManifest(BaseModel):
     app_model: Literal["inline_v1", "standalone_v2"] = "inline_v1"
     runtime_contract: Literal["mount-v1"] | None = None
     sdk_binding_api_major: int | None = Field(default=None, ge=1)
+
+
+class WorkerCapacityProfile(BaseModel):
+    """Capabilities of an authenticated external physical-capacity provider."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    protocol_version: Literal[1]
+    scope: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9._:-]+$")
+    worker_version: str = Field(min_length=1, max_length=100)
+    memory_limit_bytes: int = Field(ge=67108864, le=137438953472, multiple_of=1048576, strict=True)
+    max_workers: int = Field(ge=1, le=1000, strict=True)
+    max_lifetime_seconds: int = Field(ge=60, le=604800, strict=True)
+
+
+class WorkerCapacityReservation(BaseModel):
+    """Immutable preparation of one canonical worker incarnation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    worker_id: UUID
+    worker_version: str = Field(min_length=1, max_length=100)
+    memory_limit_bytes: int = Field(ge=67108864, le=137438953472, multiple_of=1048576, strict=True)
+    max_lifetime_seconds: int = Field(ge=60, le=604800, strict=True)
+    drain_grace_seconds: int = Field(ge=0, le=3600, strict=True)
+
+
+class WorkerCapacityResource(BaseModel):
+    """Provider state; canonical enrollment and work status remain in Postgres."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    scope: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9._:-]+$")
+    worker_id: UUID
+    worker_version: str = Field(min_length=1, max_length=100)
+    resource_uid: str = Field(min_length=1, max_length=255, pattern=r"^[a-zA-Z0-9._:-]+$")
+    state: Literal["prepared", "starting", "running", "stopped", "deleted"]
+    out_of_memory: bool = Field(default=False, strict=True)

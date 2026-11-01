@@ -23,6 +23,8 @@ async def prune_execution_workers() -> ScheduledTaskOutcome:
                 delete(ExecutionWorker).where(
                     ExecutionWorker.state.in_(("retired", "lost")),
                     ExecutionWorker.ended_at < now - ENDED_RETENTION,
+                    (ExecutionWorker.form != "external")
+                    | ExecutionWorker.capacity_resource_deleted_at.is_not(None),
                 )
             )
         ).rowcount

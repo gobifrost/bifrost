@@ -27,8 +27,9 @@ from src.services.execution.summary_dispatch import (
     lock_waiting_summary,
     report_unclaimed_summary,
     stage_summary,
+    request_summary,
 )
-from src.services.worker_pool.recovery import end_runs_of_lost_worker
+from src.services.worker_pool.recovery import announce_lost_runs, end_runs_of_lost_worker
 
 
 @pytest.fixture
@@ -209,16 +210,25 @@ async def test_the_handler_counts_a_claimed_summary_against_its_backfill(world, 
     summarize = AsyncMock()
     record = AsyncMock()
     monkeypatch.setattr("src.jobs.summarize_worker.summarize_run", summarize)
-    monkeypatch.setattr(backfill_tracker, "record_backfill_outcome", record)
+    monkeypatch.setattr(backfill_tracker, "refresh_backfill_progress", record)
     message = dict(dispatch.message)
+    worker_id = uuid4()
+    claim_id = uuid4()
+    message["claim_id"] = str(claim_id)
+    world.workers.append(worker_id)
+    async with world.sessions() as db:
+        db.add(ExecutionWorker(id=worker_id, form="static", state="ready", slots=1))
+        await db.flush()
+        db.add(ExecutionWorkerClaim(id=claim_id, worker_id=worker_id, family=FAMILY, subject_id=run_id))
+        await db.commit()
 
-    await handle_summarize_message(message, session_factory=world.sessions)
-    await handle_summarize_message(message, session_factory=world.sessions)
+    await handle_summarize_message(message, session_factory=world.sessions, worker_id=worker_id)
+    await handle_summarize_message(message, session_factory=world.sessions, worker_id=worker_id)
 
     summarize.assert_awaited_once()
+    assert summarize.await_args.args[0] == run_id
     record.assert_awaited_once()
     assert record.await_args.kwargs["job_id"] == job_id
-    assert record.await_args.kwargs["succeeded"] is True
 
 
 async def test_a_lost_executor_s_summary_is_requested_again(world) -> None:  # type: ignore[no-untyped-def]
@@ -246,7 +256,7 @@ async def test_an_unclaimed_backfill_summary_counts_as_failed(world, monkeypatch
     run_id = await world.run(backfill_job_id=job_id)
     live_run = await world.run()
     record = AsyncMock()
-    monkeypatch.setattr(backfill_tracker, "record_backfill_outcome", record)
+    monkeypatch.setattr(backfill_tracker, "refresh_backfill_progress", record)
     monkeypatch.setattr("src.core.database.get_session_factory", lambda: world.sessions)
 
     await report_unclaimed_summary(run_id, {}, "no capacity")
@@ -254,5 +264,43 @@ async def test_an_unclaimed_backfill_summary_counts_as_failed(world, monkeypatch
 
     record.assert_awaited_once()
     assert record.await_args.kwargs["job_id"] == job_id
-    assert record.await_args.kwargs["succeeded"] is False
+
+
+async def test_lost_worker_reports_a_committed_summary_without_running_it_again(world, monkeypatch) -> None:
+    job_id = await world.backfill_job()
+    run_id = await world.run(summary_status="completed", backfill_job_id=job_id)
+    worker_id = uuid4()
+    world.workers.append(worker_id)
+    async with world.sessions() as db:
+        db.add(ExecutionWorker(id=worker_id, form="static", state="lost", slots=1))
+        await db.flush()
+        db.add(ExecutionWorkerClaim(worker_id=worker_id, family=FAMILY, subject_id=run_id))
+        await db.commit()
+    refresh = AsyncMock()
+    monkeypatch.setattr(backfill_tracker, "refresh_backfill_progress", refresh)
+    monkeypatch.setattr("src.core.database.get_session_factory", lambda: world.sessions)
+    async with world.sessions() as db:
+        lost = await end_runs_of_lost_worker(db, worker_id)
+        await db.commit()
+    await announce_lost_runs(lost)
+    assert await world.summary_status(run_id) == "completed"
+    assert await world.dispatches(run_id) == []
+    refresh.assert_awaited_once()
+    assert refresh.await_args.kwargs["job_id"] == job_id
+
+
+@pytest.mark.parametrize("backfill_status", ["running", "complete", "cancelled"])
+async def test_regeneration_replaces_pending_work_and_preserves_active_backfill_membership(world, backfill_status):
+    job_id = await world.backfill_job()
+    run_id = await world.run(backfill_job_id=job_id)
+    old_dispatch = await world.stage(run_id, backfill=True)
+    async with world.sessions() as db:
+        job = await db.get(SummaryBackfillJob, job_id)
+        job.status = backfill_status
+        run = await db.scalar(select(AgentRun).where(AgentRun.id == run_id).with_for_update(of=AgentRun))
+        new_dispatch = await request_summary(db, run)
+        await db.commit()
+        assert run.summary_backfill_job_id == (job_id if backfill_status == "running" else None)
+    assert new_dispatch is not None and new_dispatch.id != old_dispatch.id
+    assert [entry.id for entry in await world.dispatches(run_id)] == [new_dispatch.id]
 

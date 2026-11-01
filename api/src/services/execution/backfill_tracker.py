@@ -2,7 +2,7 @@
 
 When an admin triggers a backfill via ``POST /api/agent-runs/backfill-summaries``,
 we enqueue one ``agent-summarization`` message per run with a ``backfill_job_id``
-tag. The summarize worker calls :func:`record_backfill_outcome` after each
+tag. The summarize worker calls :func:`refresh_backfill_progress` after each
 run's summarizer finishes so we can update the orchestration row, emit a
 progress broadcast, and flip the job to ``complete`` on the last one.
 """
@@ -15,24 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.pubsub import publish_summary_backfill_update
 from src.models.orm.ai_usage import AIUsage
+from src.models.orm.agent_runs import AgentRun
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 
 logger = logging.getLogger(__name__)
 
 
-async def record_backfill_outcome(
+async def refresh_backfill_progress(
     job_id: UUID,
-    run_id: UUID,
-    succeeded: bool,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Increment the job's counters, accumulate cost, and broadcast progress.
-
-    Idempotency guarantee: if the job row is missing (deleted / bad id) we
-    swallow and log — the summarizer itself already persisted the per-run
-    outcome, and losing a progress counter is strictly better than failing
-    the worker message.
-    """
+    """Rebuild progress from durable outcomes; replay never counts a run twice."""
     try:
         async with session_factory() as db:
             # Locked: several executors count outcomes for one job at once.
@@ -45,25 +38,31 @@ async def record_backfill_outcome(
             ).scalar_one_or_none()
             if job is None:
                 logger.warning(
-                    "Backfill job %s not found when recording outcome for run %s",
+                    "Backfill job %s not found when refreshing progress",
                     job_id,
-                    run_id,
                 )
                 return
-            if job.status == "cancelled":
+            if job.status not in ("running", "complete"):
                 # Admin cancelled the job — keep processing the per-run summary
                 # (no harm in it) but don't touch the terminal counters.
                 return
 
-            if succeeded:
-                job.succeeded = (job.succeeded or 0) + 1
-                cost = await _sum_run_cost(run_id, db)
-                if cost is not None:
-                    job.actual_cost_usd = (
-                        job.actual_cost_usd or Decimal("0")
-                    ) + cost
-            else:
-                job.failed = (job.failed or 0) + 1
+            if job.status == "running":
+                counts = (await db.execute(select(
+                    func.count().filter(AgentRun.summary_status == "completed"),
+                    func.count().filter(AgentRun.summary_status == "failed"),
+                ).where(AgentRun.summary_backfill_job_id == job_id))).one()
+                job.succeeded, job.failed = counts
+                # Completed runs predate the backfill; exclude their original
+                # agent execution's usage from the backfill's actual cost.
+                job.actual_cost_usd = await db.scalar(
+                    select(func.coalesce(func.sum(AIUsage.cost), Decimal("0")))
+                    .join(AgentRun, AgentRun.id == AIUsage.agent_run_id)
+                    .where(
+                        AgentRun.summary_backfill_job_id == job_id,
+                        AIUsage.timestamp >= job.created_at,
+                    )
+                ) or Decimal("0")
 
             finished = (job.succeeded + job.failed) >= job.total
             if finished and job.status == "running":
@@ -104,18 +103,6 @@ async def record_backfill_outcome(
             )
     except Exception:
         logger.exception(
-            "Failed to record backfill outcome for job %s run %s",
+            "Failed to refresh backfill progress for job %s",
             job_id,
-            run_id,
         )
-
-
-async def _sum_run_cost(run_id: UUID, db: AsyncSession) -> Decimal | None:
-    """Sum ``AIUsage.cost`` rows linked to the run. None if no cost recorded."""
-    result = await db.execute(
-        select(func.coalesce(func.sum(AIUsage.cost), Decimal("0"))).where(
-            AIUsage.agent_run_id == run_id
-        )
-    )
-    total = result.scalar() or Decimal("0")
-    return total if total > 0 else None

@@ -26,5 +26,7 @@ async def test_a_running_backfill_summary_never_blocks_a_live_one() -> None:
         assert ("agent.summarize_backfill", 1) not in claimable
         assert ("agent.summarize", 1) in claimable
         assert worker.active_runs() == 1, "an executor with a summary in flight is not idle"
+        assert worker.active_handler_counts()["agent.summarize_backfill"] == 1
+        assert worker.active_handler_counts()["agent.summarize"] == 0
     finally:
         task.cancel()

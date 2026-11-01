@@ -491,6 +491,10 @@ services:
     # repository root, which resolves to / inside /app.
     volumes:
       - ./docs/generated:/docs/generated:ro
+      # Source auth tests share the browser helper. Production build contexts
+      # exclude e2e/, so supply this test-only dependency to verification only.
+      - ./client/e2e/fixtures:/app/e2e/fixtures:ro
+      - ./client/e2e/setup:/app/e2e/setup:ro
     profiles:
       - client-check
 

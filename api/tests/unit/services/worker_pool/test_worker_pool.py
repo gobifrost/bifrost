@@ -50,6 +50,8 @@ from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_ma
 GIB = 1024 * MIB
 
 SETTINGS = SimpleNamespace(
+    worker_capacity_url=None,
+    worker_capacity_token=None,
     kubernetes_job_namespace="test",
     kubernetes_job_image="api:test",
     kubernetes_job_configmap="config",
@@ -180,9 +182,10 @@ async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
     async with sessions() as session:
         await session.execute(delete(WorkDispatch))
         await session.execute(delete(ExecutionWorker))
-        # Queued platform jobs count as launch demand; the stack's scheduler
-        # enqueues some (model catalog, Solution updates) during the reset.
-        await session.execute(delete(PlatformJob).where(PlatformJob.status == "queued"))
+        # The isolated unit harness stops executors after startup. Clear both
+        # queued demand and active jobs whose concurrency slots survived that
+        # stop, so each case owns the complete platform-job admission state.
+        await session.execute(delete(PlatformJob))
         await session.commit()
     # What a worker controller last published it can launch, and which
     # controllers are live.
@@ -688,6 +691,33 @@ async def test_ended_executors_are_pruned(db) -> None:
 
     async with db.sessions() as session:
         assert await session.get(ExecutionWorker, old.id) is None
+
+
+@pytest.mark.parametrize("state", ["lost", "retired"])
+async def test_external_cleanup_record_survives_retention_until_deletion_confirmed(db, state) -> None:
+    worker = await _job_worker(db.sessions, state=state)
+    now = datetime.now(timezone.utc)
+    async with db.sessions() as session:
+        await session.execute(update(ExecutionWorker).where(ExecutionWorker.id == worker.id).values(
+            form="external", capacity_scope="test", capacity_resource_uid="physical-resource",
+            ended_at=now - timedelta(days=30),
+        ))
+        await session.commit()
+
+    await maintenance.prune_execution_workers()
+
+    async with db.sessions() as session:
+        retained = await session.get(ExecutionWorker, worker.id)
+        assert retained is not None
+        assert retained.capacity_resource_uid == "physical-resource"
+        assert retained.capacity_resource_deleted_at is None
+        retained.capacity_resource_deleted_at = now
+        await session.commit()
+
+    await maintenance.prune_execution_workers()
+
+    async with db.sessions() as session:
+        assert await session.get(ExecutionWorker, worker.id) is None
 
 
 async def test_a_silent_static_executor_is_lost_and_its_runs_end(db) -> None:
@@ -1239,6 +1269,7 @@ async def test_stale_remote_owner_cannot_control_its_replaced_worker(db) -> None
                 memory_pressured=False,
                 memory_budget_bytes=GIB,
                 memory_reserved_bytes=64 * MIB,
+                active_handler_counts={"agent.summarize": 1},
             )
             is None
         )
@@ -1257,6 +1288,7 @@ async def test_stale_remote_owner_cannot_control_its_replaced_worker(db) -> None
     assert worker.state == "ready"
     assert worker.active_runs == 0
     assert worker.runs_handled == 0
+    assert worker.active_handler_counts is None
     assert dispatch is None
 
 
@@ -1914,12 +1946,25 @@ async def test_a_too_large_export_fails_its_backup_and_clears_its_options(
             await session.commit()
 
 
-async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:
+@pytest.mark.parametrize("startup_state", ["running", "cancel_requested"])
+async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_state) -> None:
     from src.models.orm.platform_jobs import PlatformJob
     from src.services.platform_jobs import WAITING_FOR_MEMORY
 
+    startup = PlatformJob(
+        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
+        requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+        title="Startup Reindex", status=startup_state,
+    )
+    async with db.sessions() as session:
+        session.add(startup)
+        await session.commit()
+    # Model a startup job left active when the unit harness stops executors.
+    # Resetting the fixture must release its global concurrency slot.
+    await _clear_pool_state(db.sessions)
+
     waiting = PlatformJob(
-        job_type="workspace.reindex", payload={}, requested_by_user_id=str(uuid4()),
+        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
         requested_by_email="person@contoso.example", requested_by_name="Contoso User",
         title="Contoso Reindex", memory_required_bytes=512 * MIB, phase=WAITING_FOR_MEMORY,
     )
@@ -2191,6 +2236,8 @@ def test_a_job_is_outdated_only_when_its_build_and_its_launcher_are_gone() -> No
     assert not live.outdated(job(launched_by=live_id)), "its launcher is live: never a loop"
     assert not live.outdated(job(state="starting")), "its build is unknown until admitted"
     assert not live.outdated(job(form="static")), "static executors roll with their Deployment"
+    assert not live.outdated(job(form="external", version="2.0", launched_by=live_id)), "current provider build stays ready"
+    assert not live.outdated(job(form="external", state="starting", launched_by=live_id)), "unadmitted resources do not rotate"
 
 
 async def test_live_controllers_expire_and_withdraw(db) -> None:  # type: ignore[no-untyped-def]

@@ -44,3 +44,31 @@ def test_static_launcher_generates_process_identity_without_kubernetes_env() -> 
     assert identity.form == "static"
     assert identity.job_uid is None
     assert identity.pod_uid is None
+
+
+def test_external_launcher_uses_its_reserved_incarnation_and_resource() -> None:
+    identity = LauncherIdentity.from_environment({
+        "HOSTNAME": "external-1", "BIFROST_WORKER_FORM": "external",
+        "BIFROST_WORKER_INCARNATION_ID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "BIFROST_WORKER_RESOURCE_UID": "resource-123",
+    })
+    assert identity.form == "external"
+    assert identity.incarnation_id == UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    assert identity.resource_uid == "resource-123"
+    assert identity.job_uid is None and identity.pod_uid is None
+
+
+def test_external_launcher_requires_its_prepared_resource_binding() -> None:
+    with pytest.raises(IdentityError, match="resource UID"):
+        LauncherIdentity.from_environment({
+            "HOSTNAME": "external-1", "BIFROST_WORKER_FORM": "external",
+            "BIFROST_WORKER_INCARNATION_ID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        })
+
+
+def test_static_launcher_cannot_impersonate_a_managed_incarnation() -> None:
+    with pytest.raises(IdentityError, match="managed incarnation"):
+        LauncherIdentity.from_environment({
+            "HOSTNAME": "static-1",
+            "BIFROST_WORKER_INCARNATION_ID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        })

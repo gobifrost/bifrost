@@ -1,10 +1,28 @@
 """The forked agent child's entry: one dispatch, its own database pool."""
 import os
+from uuid import uuid4
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.jobs import agent_run_child
+
+
+@pytest.mark.parametrize("handler", ["agent.summarize", "agent.summarize_backfill"])
+async def test_summary_child_uses_the_shared_summary_handler_and_closes_its_pool(api_url, handler) -> None:
+    worker_id = uuid4()
+    message = {"run_id": str(uuid4()), "dispatch_id": str(uuid4())}
+    with (
+        patch.object(agent_run_child, "AgentRunConsumer") as agent,
+        patch.object(agent_run_child, "init_db", new=AsyncMock()) as initialize,
+        patch.object(agent_run_child, "close_db", new=AsyncMock()) as close,
+        patch("src.jobs.summarize_worker.handle_summarize_message", new=AsyncMock()) as summarize,
+    ):
+        await agent_run_child.run_agent_message(message, handler=handler, worker_id=str(worker_id))
+    initialize.assert_awaited_once()
+    summarize.assert_awaited_once_with(message, worker_id=worker_id)
+    close.assert_awaited_once()
+    agent.assert_not_called()
 
 
 class _Consumer:
