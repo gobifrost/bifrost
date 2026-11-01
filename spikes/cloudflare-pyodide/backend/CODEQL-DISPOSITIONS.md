@@ -58,3 +58,12 @@ checks cancellation propagation and must remain. It is a source-reviewed false
 positive, not a dismissed alert. Python tests were not rerun because the owned
 Docker stack is stopped pending remote capacity; diff checks cover this edit,
 and functional verification remains deferred.
+
+Finding 1848, api/tests/unit/dev/test_pyodide_attempt_journal.py:116, flags
+`await waiter` inside `pytest.raises(asyncio.CancelledError)`. The cancelled
+waiter awaits the shielded journal receipt; joining it verifies that cancellation
+reaches the waiter while the subsequent assertions verify the underlying route
+remains pending and can complete. Removing the await would stop observing the
+exception under test. Retain it as a source-reviewed false positive without
+dismissing the alert or changing controls. This documentation change has only
+diff-check verification; the Docker test remains deferred to remote capacity.
