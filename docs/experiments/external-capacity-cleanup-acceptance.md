@@ -85,3 +85,20 @@ The complete backend/frontend/browser suites and a deployed-provider outage
 rehearsal were not run locally. The merge queue owns complete-suite acceptance.
 Thomas's documented provider/runtime-family qualification limits remain; this
 repair does not claim a production deployment or new provider qualification.
+
+## CodeQL Review Follow-Up
+
+CodeQL's `py/ineffectual-statement` query reported the delayed-preparation test's
+`await pending` cleanup statement on the first replacement candidate. The task
+join is necessary: preparation must finish before the test inspects its resource.
+The test now expresses that join as `await asyncio.gather(pending)`, preserving
+completion and exception propagation while making the effect explicit to the
+analyzer. Auto-merge was disabled while addressing the comment.
+
+```bash
+./test.sh tests/unit/services/worker_pool/test_external_capacity.py tests/unit/services/worker_pool/test_worker_pool.py -q
+```
+
+All **128 tests passed** in 10.89 seconds, including delayed preparation, cleanup,
+and both active-startup fixture regressions. This is test code only; the prior
+341-test, four live-runtime, and frontend checks cover unchanged product source.

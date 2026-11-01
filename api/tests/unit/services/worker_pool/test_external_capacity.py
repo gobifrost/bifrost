@@ -419,7 +419,7 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
             assert worker.capacity_resource_deleted_at is None, "absence cannot fence a delayed prepare"
     finally:
         release.set()
-        await pending
+        await asyncio.gather(pending)
 
     assert capacity.provider.resources[str(worker_id)]["state"] == "prepared"
     assert capacity.provider.starts == []
