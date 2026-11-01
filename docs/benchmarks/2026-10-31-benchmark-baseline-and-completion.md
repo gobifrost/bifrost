@@ -211,6 +211,29 @@ experimental storage evidence, not an unmodified production-runtime baseline.
 
 ## Remaining Completion Gates
 
+### Captured Production API/Worker Results
+
+These local observations use the stock captured `e611d31bb` API/worker image;
+the frozen benchmark client and infrastructure are identified separately.
+
+| Scenario | Result | Capacity Interpretation |
+|---|---|---|
+| 4 decimal GB, SDK-only, offered 3.90625/s | Correctness preflight 127/127; confirmation 3,735/3,735 correct by deadline; end-to-end p95 1.815980 s, above the 1.5 s gate | Valid negative result; this offered rate is not accepted. Queue, throughput, strict reliability, backlog and tenant-fault gates passed. Host invalid reasons were empty; possible external memory pressure remained an unproven warning. |
+| M / 8 GiB SDK-only | Measurement sequence pending | No stock SDK capacity claim yet. |
+| Mixed load and conditional soaks | Declared sequence pending | No stock mixed capacity or sustained growth claim yet. |
+| Browser app path | 24/24 correct actions and durable records; verified cleanup | Descriptive timing only; see the omitted-timer finding below. |
+| Stock retention rehearsal | Queued behind the same host lock | Earlier candidate storage evidence stays separate. |
+| Fixed-count scaling and zero-warm elasticity | Written test matrix; read-only sampler implemented with verification queued | Neither scaling efficiency nor cold-start capacity has been measured yet. |
+
+The complete 4 GB SDK raw artifact is retained under
+`runs/stock-capacity-matrix-20261031-r1/4gb-capacity/sdk-confirmation/`.
+The [stock 4 GB scalar baseline](baselines/sdk-confirmation-2026-10-31-4gb-stock-valid-failure.json)
+pins its result, declaration and immutable image identities for reproduction.
+Its 95% end-to-end p95 interval was 1.730816–1.899850 seconds; all 3,735
+arrivals reconciled correctly and all tenant fault counters were zero. Do not
+attribute its difference from the experimental candidate to a platform fix:
+the observations were not randomized matched repetitions.
+
 ### Collector Validation (October 31)
 
 The frozen `df605bb5e` diagnostic used the 4 GB resource envelope and a reduced

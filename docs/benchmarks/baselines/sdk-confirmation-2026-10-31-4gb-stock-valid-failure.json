@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "baseline_id": "sdk-confirmation-2026-10-31-4gb-stock-valid-failure-v1",
+  "kind": "capacity-confirmation",
+  "status": "valid_failure",
+  "capacity_certification": false,
+  "source": {
+    "private_result_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/4gb-capacity/sdk-confirmation/result.json",
+    "streamed_raw_result_sha256": "f9b18d2f2ca3c30103ed167ae67e89a914cfc54950afd37d08223e4857ae674a",
+    "declaration_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/declaration.json",
+    "declaration_sha256": "ae598852916335a63ed028e8ee67f151c05ef73b58f101f3bc9161ffef93f157"
+  },
+  "immutable_chain": {
+    "harness_git_sha": "e62bad1dfbc0943eeb04610fc86d3f1e7651a708",
+    "run_id": "sdk-confirmation",
+    "runtime_ready_record": "/home/jack/bifrost-bench-evidence/runs/stock-production-image-preparation-20261031-r1/preparation.json",
+    "runtime_ready_record_sha256": "345d31ddf3d0c67d792fe5c5097302463211944e0c547cc3583d4f5804a9f56d",
+    "original_runtime_archive": "/home/jack/bifrost-bench-evidence/runs/stock-production-image-preparation-20261031-r1/runtime-images.json",
+    "original_runtime_archive_sha256": "f1209a474caaa4d72783b4251f97ef3e71e21de2cfece305fc727f878bfcf53c",
+    "runtime_source_git_sha": "e611d31bbba3d7601980271c774cad5e821b1e97",
+    "runtime_api_tag": "bifrost-api:kind-a74e45295998-stock-e611d31bb",
+    "runtime_api_host_id": "sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692",
+    "runtime_api_config_id": "sha256:b4e0f9b7650557e3c4d272da4ff48b667f04ba168488c99220719460c0db475b",
+    "runtime_api_manifest_id": "sha256:04026602d39e8ab4e3b024e0c7a0b613e894d11d859072afe937b5febff4e4b3",
+    "supervisor_sha256": "2494f1dc83e37dfc1032f40f47a370281716467f8b27e8fa038b7d4ab5963e1e"
+  },
+  "profile_name": "4gb-capacity",
+  "mix_name": "sdk-heavy",
+  "preflight": {
+    "status": "pass",
+    "correct": 127,
+    "accepted": 127,
+    "total": 127
+  },
+  "confirmation": {
+    "status": "fail",
+    "offered_rate_per_s": 3.90625,
+    "measured_window_start_s": 90,
+    "measured_window_end_s": 1048.464,
+    "measured_window_s": 958.464,
+    "capped": false,
+    "driver_lag_p99_s": 0.002161264419555664
+  },
+  "arrival_cohort": {
+    "scheduled": 3735,
+    "submitted": 3735,
+    "accepted_union": 3735,
+    "http_and_durable": 3735,
+    "http_only": 0,
+    "durable_only": 0,
+    "neither_accepted": 0,
+    "correct_by_deadline": 3735,
+    "correct_completed": 3735,
+    "correct_late": 0,
+    "durably_terminal": 3735,
+    "failed_terminal": 0,
+    "unfinished_durable": 0,
+    "duplicate_request_ids": 0,
+    "extra_durable_rows": 0
+  },
+  "measured_window": {
+    "correct_by_deadline_completed": 3729,
+    "correct_completed": 3729,
+    "durable_created": 3735,
+    "durably_terminal": 3729,
+    "http_accepted_responses": 3736,
+    "scheduled": 3735,
+    "sent": 3735,
+    "correct_completed_event_rate_per_s": 3.890599959935898,
+    "throughput_ratio": 0.9983935742971888,
+    "throughput_limit": 0.995,
+    "throughput_status": "pass"
+  },
+  "event_rates_per_s": {
+    "correct_by_deadline_completed": 3.890599959935898,
+    "correct_completed": 3.890599959935898,
+    "durable_created": 3.8968599759615388,
+    "durably_terminal": 3.890599959935898,
+    "http_accepted_responses": 3.897903311965812,
+    "scheduled": 3.8968599759615388,
+    "sent": 3.8968599759615388
+  },
+  "latency": {
+    "queue_p95_s": 0.953110933303833,
+    "queue_p95_ci_low_s": 0.8657371997833252,
+    "queue_p95_ci_high_s": 1.0245130062103271,
+    "queue_p95_ci_half_width_s": 0.07938790321350098,
+    "queue_p95_limit_s": 2.0,
+    "queue_p95_status": "pass",
+    "e2e_p95_s": 1.8159801959991455,
+    "e2e_p95_ci_low_s": 1.7308156490325928,
+    "e2e_p95_ci_high_s": 1.8998503684997559,
+    "e2e_p95_ci_half_width_s": 0.08451735973358154,
+    "e2e_p95_limit_s": 1.5,
+    "e2e_p95_status": "fail"
+  },
+  "drift": {
+    "upper_per_s": 0.0009165421297378966,
+    "limit_per_s": 0.00390625,
+    "status": "pass"
+  },
+  "strict_reliability": {
+    "class": "wf-sdk",
+    "failure_upper_limit": 0.001,
+    "evidence_status": "pass",
+    "observations": 3735
+  },
+  "tenant_faults": {
+    "status": "pass",
+    "duplicate_executions": 0,
+    "evicted": 0,
+    "oom_killed": 0,
+    "quota_denials": 0,
+    "restarts": 0
+  },
+  "host_validity": {
+    "status": "valid",
+    "invalid_reasons": [],
+    "warnings": [
+      "possible external memory pressure (unproven)"
+    ]
+  },
+  "worker_sampling": {
+    "actual_sampled_worker_count_distribution": [
+      {
+        "worker_count": 2,
+        "raw_observation_frames": 190
+      }
+    ],
+    "resource_intervals": 189,
+    "observed_seconds": 949.1644475460052,
+    "observed_window_fraction": 0.9902974421149121,
+    "charged_peak_bytes": 676118528,
+    "working_set_peak_bytes": 667123712
+  },
+  "declaration": {
+    "no_replacements_or_retries": true,
+    "sdk_only": false,
+    "sdk_purpose": "One unmodified-production SDK baseline per envelope; independent of mixed capacity.",
+    "mixed_offered_rate_per_s": 2.236,
+    "mixed_segments": 5,
+    "segment_window_s": 3600,
+    "soak_rate_fraction": 0.7,
+    "soak_window_s": 7200
+  },
+  "stage_cleanup": {
+    "cleanup_verified": true,
+    "finished_at": "2026-11-01T00:06:34.488264+00:00"
+  },
+  "disposition": {
+    "failure_reason": "e2e_p95 latency gate failed",
+    "sustainable_sdk_rate_per_s": null,
+    "mixed_capacity": "not established",
+    "scaling_capacity": "not established",
+    "hosting_capacity": "not established"
+  },
+  "runtime_scope": "Unmodified captured production registry image; no platform code fixes or deployments. Experimental candidate results are retained separately."
+}
