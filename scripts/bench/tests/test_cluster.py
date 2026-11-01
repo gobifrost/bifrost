@@ -69,6 +69,28 @@ class ProbeDeadlineTest(unittest.TestCase):
         self.assertEqual(instance.exec_python.call_args.args[0], "bench-driver")
 
 
+class QuotaEventCollectionTest(unittest.TestCase):
+    def test_collects_only_sanitized_quota_event_uid_and_count(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.kubectl = Mock(return_value=json.dumps({"items": [
+            {"reason": "FailedCreate", "message": "exceeded quota secret=do-not-keep",
+             "metadata": {"uid": "core-v1"}, "count": 2},
+            {"reason": "FailedCreate", "message": "exceeded quota token=do-not-keep",
+             "metadata": {"uid": "events-v1"}, "series": {"count": 3}},
+            {"reason": "FailedCreate", "message": "exceeded quota modern-event",
+             "metadata": {"uid": "series-wins"}, "count": 0, "series": {"count": 4}},
+            {"reason": "FailedCreate", "message": "exceeded quota malformed-series",
+             "metadata": {"uid": "bad-series"}, "count": 7, "series": {}},
+            {"reason": "FailedCreate", "message": "some unrelated failure",
+             "metadata": {"uid": "ignored"}, "count": 9},
+        ]}))
+        self.assertEqual(instance.quota_denial_events(), [
+            {"uid": "core-v1", "count": 2}, {"uid": "events-v1", "count": 3},
+            {"uid": "series-wins", "count": 4}, {"uid": "bad-series", "count": None},
+        ])
+        self.assertEqual(instance.kubectl.call_args.kwargs["timeout_s"], cluster._QUOTA_EVENT_PROBE_TIMEOUT_S)
+
+
 class DbCountersTest(unittest.TestCase):
     def test_parse_db_counters(self) -> None:
         raw = ('{"xact": 12, "rows_written": 3, "wal_bytes": 4096, '

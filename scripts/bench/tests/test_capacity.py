@@ -114,6 +114,25 @@ class BootstrapTest(unittest.TestCase):
 
 
 class VerdictTest(unittest.TestCase):
+    @staticmethod
+    def _fault_verdict(faults: object) -> dict:
+        return capacity.step_verdict(
+            [], [], (0.0, 60.0), 1.0,
+            {"drift_limit_per_s": 0.01, "faults": faults}, seed=1, mix={},
+        )
+
+    def test_expired_or_malformed_fault_counts_are_rejected_as_invalid_input(self) -> None:
+        for counts in (None, {"quota_denials": -11}, {"restarts": None}, {"evicted": True},
+                       {"oom_killed": 1.0}, {"quota_denials": "0"}, {"restarts": math.nan}):
+            with self.subTest(counts=counts), self.assertRaisesRegex(ValueError, "nonnegative integer counts"):
+                self._fault_verdict(counts)
+
+    def test_real_positive_fault_remains_a_product_failure(self) -> None:
+        verdict = self._fault_verdict({"quota_denials": 1})
+        self.assertEqual(verdict["tenant_faults"]["status"], "fail")
+        self.assertEqual(verdict["tenant_faults"]["value"], {"quota_denials": 1})
+        self.assertEqual(verdict["overall"], "fail")
+
     def test_failed_work_cannot_improve_latency_or_throughput(self) -> None:
         records = [_record(str(index), "correct", float(index), float(index) + 2.0) for index in range(400)]
         thresholds = {

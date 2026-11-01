@@ -390,8 +390,8 @@ def step_verdict(
         reliability[name] = _gate("pass" if upper <= failure_limit else "fail", upper, failure_limit)
 
     faults = thresholds.get("faults", {})
-    if not isinstance(faults, dict):
-        raise ValueError("faults must be a count dictionary")
+    if not isinstance(faults, dict) or any(type(value) is not int or value < 0 for value in faults.values()):
+        raise ValueError("faults must be a dictionary of nonnegative integer counts")
     tenant_faults = _gate("pass" if not any(value != 0 for value in faults.values()) else "fail", faults, 0)
     statuses = [throughput["status"], drift["status"], tenant_faults["status"]]
     statuses.extend(gate["status"] for gates in latency.values() for gate in gates.values())
