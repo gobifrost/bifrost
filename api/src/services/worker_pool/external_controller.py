@@ -93,6 +93,10 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         if uid is not None and resource is not None and resource.resource_uid != uid:
             raise CapacityProtocolError("Provider resource UID changed for an existing incarnation")
         if state in self.cleanup_states:
+            if resource is None and uid is None:
+                # Another controller may still prepare this unbound incarnation.
+                # Absence does not fence that delayed mutation; retain cleanup.
+                return
             if resource is not None and resource.state != "deleted":
                 await self.client.remove(worker_id, self.profile.scope, resource.resource_uid)
             # GET absence/a deleted tombstone or a validated DELETE response confirms

@@ -394,3 +394,41 @@ async def test_cleanup_survives_provider_outage_beyond_one_hour_and_controller_r
     before = sum(path.endswith(str(worker_id)) for _, path in capacity.provider.requests)
     await restarted.reconcile()
     assert sum(path.endswith(str(worker_id)) for _, path in capacity.provider.requests) == before
+
+
+async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capacity, monkeypatch):
+    await _accept_pool_run()
+    [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
+    preparing, release = asyncio.Event(), asyncio.Event()
+    prepare = capacity.client.prepare
+
+    async def delayed_prepare(reservation, scope):
+        preparing.set()
+        await release.wait()
+        return await prepare(reservation, scope)
+
+    monkeypatch.setattr(capacity.client, "prepare", delayed_prepare)
+    pending = asyncio.create_task(capacity.pool.reconcile_worker(worker_id, capacity.policy))
+    try:
+        await preparing.wait()
+        await capacity.pool._record_loss(worker_id, None, "provider_version_changed", False)
+        restarted = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile)
+        await restarted.reconcile_worker(worker_id, capacity.policy)
+        async with db.context() as session:
+            worker = await session.get(ExecutionWorker, worker_id)
+            assert worker.capacity_resource_deleted_at is None, "absence cannot fence a delayed prepare"
+    finally:
+        release.set()
+        await pending
+
+    assert capacity.provider.resources[str(worker_id)]["state"] == "prepared"
+    assert capacity.provider.starts == []
+    monkeypatch.setattr(restarted, "launch_for_demand", AsyncMock(return_value=[]))
+    monkeypatch.setattr(restarted, "replace_outdated", AsyncMock())
+    await restarted.reconcile()
+
+    assert capacity.provider.resources[str(worker_id)]["state"] == "deleted"
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.state == "lost"
+        assert worker.capacity_resource_deleted_at is not None

@@ -67,7 +67,7 @@ out-of-memory only from explicit runtime evidence, not a generic process exit.
 ## Confirmed Physical Cleanup
 
 Lost and retired external workers remain eligible for resource cleanup until
-provider absence or a validated `deleted` response confirms deletion. Provider
+provider absence for a bound resource or a validated `deleted` response confirms deletion. Provider
 outages and controller restarts do not expire this eligibility after one hour.
 The controller persists `capacity_resource_deleted_at` only for the unchanged,
 still-terminal incarnation, preserving its resource UID and loss/retirement
@@ -75,6 +75,10 @@ history. Confirmed rows stop generating provider lookups and DELETE calls.
 The nullable migration lets existing terminal rows converge through the same
 readback path; it changes no provider protocol or Kubernetes cleanup cutoff.
 Do not prune unconfirmed worker rows while their physical resources may exist.
+Absence for an unbound incarnation is not confirmation: another controller may
+still finish a delayed prepare. Keep that row eligible so its eventual resource
+is deleted without starting. If preparation never completes, the unbound record
+remains pending rather than inventing a deletion receipt from a time cutoff.
 
 ## Launcher Admission and Recovery
 
