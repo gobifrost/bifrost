@@ -225,3 +225,19 @@ retry occurred. Offline verifier, 26 focused Node cases, Docker Ruff and diff
 checks passed. Cleanup receipt confirms port refusal, bridge-only network and
 stopped API. No physical workflow stop, cloud acceptance or refresh revocation
 claim follows from this waiter-detachment fixture. See backend/TRANSPORT-INTERRUPTION.md.
+
+## Actual provider response loss
+
+Continued from 832ed9d0ddcaee4d28accb6392f4e2ce4eec675c; own local Wrangler/API
+only. Shared consumer/Linux/Containers implementations remain unchanged.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Retaining a receipt also recovers a lost collector connection | Local TCP injector discards the actual provider response after independent SDK document read; `node backend/canonical-refresh.mjs --run canonical-refresh-response-loss-observed response-loss concurrent-runtime-manifest.json` | Falsified: provider success/value 70, actual RemoteProtocolError, canonical Failed/no success result, access 401, one launch; recovery_acceptance false | Separate routing acceptance from asynchronous result collection and identify a reconnectable physical terminal receipt; no replay |
+| Observer can inspect a persisted error_type | Initial fixture reads nonexistent ORM field | AttributeError; failed receipt and exact initial driver retained | Corrected observer uses real error_message and captured transport exception |
+
+The failed process was terminal and its fixture worker count zero before the
+new fixed-fixture run. Source/provenance verifiers, Docker Ruff and JS syntax/diff
+checks pass. Exact cleanup is retained in response-loss-local-cleanup.json.
+No new cloud, physical-stop or successful recovery claim follows from a passing
+negative-characterization process. See backend/RESPONSE-LOSS.md.

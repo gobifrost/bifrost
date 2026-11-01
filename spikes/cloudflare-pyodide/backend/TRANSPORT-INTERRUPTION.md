@@ -37,7 +37,7 @@ part of these commands. From the spike directory:
 
 ```sh
 node backend/canonical-refresh.mjs --run canonical-refresh-transport-waiter transport concurrent-runtime-manifest.json
-node backend/verify-transport-waiter.mjs
+node backend/verify-transport-waiter.mjs --commit 832ed9d0ddcaee4d28accb6392f4e2ce4eec675c
 node --test probe-io.test.mjs backend/fixture-admission.test.mjs backend/test-api-route.test.mjs
 ```
 

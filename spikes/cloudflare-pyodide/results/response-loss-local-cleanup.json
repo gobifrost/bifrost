@@ -1,0 +1,10 @@
+{
+    "api_state":  "exited",
+    "tools_networks":  [
+                           "bridge"
+                       ],
+    "local_8799":  "ECONNREFUSED",
+    "exact_supervisor_sigint_pid":  3104,
+    "cloud_invocations":  0,
+    "physical_termination_of_workflow_verified":  false
+}

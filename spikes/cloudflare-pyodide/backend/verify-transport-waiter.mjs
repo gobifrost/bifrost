@@ -2,6 +2,11 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const args=process.argv.slice(2);
+if(args.length && (args.length!==2 || args[0]!=='--commit' || !/^[a-f0-9]{40}$/.test(args[1]))) {
+  throw new Error('Use no arguments or --commit with an exact historical commit');
+}
 const receipt=JSON.parse(await readFile(new URL('../results/canonical-refresh-transport-waiter.json',import.meta.url)));
 const report=receipt.result;
 assert.equal(receipt.process_exit_code,0);
@@ -27,7 +32,8 @@ assert.equal(report.result.api_calls.filter(c=>c.path.endsWith('/documents/upser
 assert.ok(report.result.api_calls.some(c=>c.path==='/api/sdk/config/get' && c.status===200));
 const repo=new URL('../../../',import.meta.url);
 for(const [path,digest] of Object.entries(receipt.source_sha256)) {
-  assert.equal(createHash('sha256').update(await readFile(new URL(path,repo))).digest('hex'),digest,path);
+  const source=args.length ? execFileSync('git',['show',`${args[1]}:${path}`],{cwd:repo}) : await readFile(new URL(path,repo));
+  assert.equal(createHash('sha256').update(source).digest('hex'),digest,path);
 }
 const manifest=JSON.parse(await readFile(new URL('../results/'+receipt.runtime_manifest,import.meta.url)));
 assert.equal(receipt.payload_sha256,manifest.payload_sha256);

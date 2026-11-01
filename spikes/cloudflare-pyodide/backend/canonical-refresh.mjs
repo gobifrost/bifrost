@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const exec=promisify(execFile),[mode,name='canonical-refresh-final',scenario='direct',
   artifactManifest='refresh-runtime-manifest.json']=process.argv.slice(2);
 if(!/^[a-z0-9-]+-manifest\.json$/.test(artifactManifest)) throw new Error('Fixed artifact manifest filename required');
-if(!['direct','challenge','concurrent','interruption','failure','transport'].includes(scenario)) throw new Error('Unknown fixed qualification scenario');
+if(!['direct','challenge','concurrent','interruption','failure','transport','response-loss'].includes(scenario)) throw new Error('Unknown fixed qualification scenario');
 if(!/^canonical-refresh(?:-[a-z0-9-]+)?$/.test(name)) throw new Error('Fixed canonical-refresh receipt name required');
 const receipt=new URL(`../results/${name}.json`,import.meta.url);
 const repo=new URL('../../../',import.meta.url);
@@ -26,8 +26,8 @@ if(mode==='--run') {
     'docker','compose','-p','bifrost-test-79c5c14e','-f','docker-compose.test.yml','--profile','test',
     'run','--rm','--no-deps','--name',container,'--volume',
     '/run/desktop/mnt/host/c/Users/ThomasBray/.t3/worktrees/bifrost/t3-ddf316c1/spikes/cloudflare-pyodide:/spike:ro',
-    'test-runner','python','/spike/backend/canonical-local.py',
-    {challenge:'--expired-access',direct:'--refresh-probe',concurrent:'--concurrent-refresh',interruption:'--interrupt-refresh',failure:'--failure-probe',transport:'--transport-waiter'}[scenario]],
+    'test-runner','python',scenario==='response-loss' ? '/spike/backend/provider-response-loss.py' : '/spike/backend/canonical-local.py',
+    {challenge:'--expired-access',direct:'--refresh-probe',concurrent:'--concurrent-refresh',interruption:'--interrupt-refresh',failure:'--failure-probe',transport:'--transport-waiter','response-loss':'--response-loss'}[scenario]],
     {timeout:180000,maxBuffer:2*1024*1024}));}
   catch(error){stdout=error.stdout ?? '';code=typeof error.code==='number' ? error.code : 1;report.unknown_process_state=!!error.killed;}
   const lines=stdout.split(/\r?\n/).filter(line=>line.startsWith('{"runtime":'));
@@ -48,6 +48,8 @@ if(mode==='--run') {
   }
   report.source_sha256['spikes/cloudflare-pyodide/backend/attempt_journal.py']=hash(
     await readFile(new URL('spikes/cloudflare-pyodide/backend/attempt_journal.py',repo)));
+  if(scenario==='response-loss') report.source_sha256['spikes/cloudflare-pyodide/backend/provider-response-loss.py']=hash(
+    await readFile(new URL('spikes/cloudflare-pyodide/backend/provider-response-loss.py',repo)));
   report.runtime_manifest=artifactManifest;
   report.payload_sha256=JSON.parse(await readFile(new URL('../results/'+artifactManifest,import.meta.url),'utf8')).payload_sha256;
   await writeFile(receipt,JSON.stringify(report,null,2)+'\n');
@@ -59,7 +61,7 @@ if(mode==='--run') {
   const r=JSON.parse(await readFile(receipt,'utf8'));
   assert.equal(r.phase,'observed');
   assert.equal(r.result[{challenge:'expired_access_probe',direct:'refresh_probe',concurrent:'concurrent_refresh_probe',
-    interruption:'refresh_interruption_probe',failure:'workflow_failure_probe',transport:'transport_waiter_probe'}[scenario]],true);
+    interruption:'refresh_interruption_probe',failure:'workflow_failure_probe',transport:'transport_waiter_probe','response-loss':'provider_response_loss_probe'}[scenario]],true);
   assert.notEqual(r.unknown_process_state,true);
   for(const [path,digest] of Object.entries(r.source_sha256)) assert.equal(hash(await readFile(new URL(path,repo))),digest);
   console.log({process_exit_code:r.process_exit_code,provider_evidence:r.result.provider_evidence,
