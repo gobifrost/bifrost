@@ -114,7 +114,7 @@ export function ExecutionRerunDialog({
 			}}
 		>
 			<DialogContent
-				className="flex max-w-xl flex-col overflow-hidden"
+				className="flex max-w-xl flex-col overflow-clip"
 				showCloseButton={!isRerunning}
 			>
 				<DialogHeader>

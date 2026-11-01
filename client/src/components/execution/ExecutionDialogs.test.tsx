@@ -5,6 +5,26 @@ const mockParameters = vi.hoisted(() => vi.fn());
 vi.mock("@/services/workflowParameters", () => ({
 	useWorkflowParameters: mockParameters,
 }));
+vi.mock("@/components/tables/CodeEditor", () => ({
+	CodeEditor: ({
+		text,
+		onChange,
+		ariaLabel,
+		readOnly,
+	}: {
+		text: string;
+		onChange: (value: string) => void;
+		ariaLabel: string;
+		readOnly: boolean;
+	}) => (
+		<textarea
+			aria-label={ariaLabel}
+			value={text}
+			disabled={readOnly}
+			onChange={(event) => onChange(event.target.value)}
+		/>
+	),
+}));
 import {
 	ExecutionCancelDialog,
 	ExecutionRerunDialog,

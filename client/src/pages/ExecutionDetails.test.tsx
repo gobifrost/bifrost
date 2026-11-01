@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExecutionDetails } from "./ExecutionDetails";
 import { executeWorkflowWithContext } from "@/hooks/useWorkflows";
 const mockWorkflowParameters = vi.hoisted(() => vi.fn());
@@ -8,7 +9,6 @@ vi.mock("@/services/workflowParameters", () => ({
  * Tests for admin-only controls in ExecutionDetails.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useLocation } from "react-router-dom";
 import {
 	makeQueryClient,
@@ -816,20 +816,14 @@ describe("ExecutionDetails — editable rerun", () => {
 
 	it("starts each opening from the original input after cancellation", async () => {
 		const { user } = await renderPage();
-		await user.click(
-			screen.getByRole("button", { name: "Rerun" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Rerun" }));
 		await user.type(
 			screen.getByRole("textbox", { name: /Message/ }),
 			" discarded",
 		);
-		await user.click(
-			screen.getByRole("button", { name: "Cancel" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
 		expect(executeWorkflowWithContext).not.toHaveBeenCalled();
-		await user.click(
-			screen.getByRole("button", { name: "Rerun" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Rerun" }));
 		expect(screen.getByRole("textbox", { name: /Message/ })).toHaveValue(
 			"previous",
 		);
@@ -840,9 +834,7 @@ describe("ExecutionDetails — editable rerun", () => {
 			new Error("Unavailable"),
 		);
 		const { user } = await renderPage();
-		await user.click(
-			screen.getByRole("button", { name: "Rerun" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Rerun" }));
 		await user.type(
 			screen.getByRole("textbox", { name: /Message/ }),
 			" edited",

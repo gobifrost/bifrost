@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Textarea } from "@/components/ui/textarea";
+import { CodeEditor } from "@/components/tables/CodeEditor";
 import { Button } from "@/components/ui/button";
 import {
 	Select,
@@ -29,6 +29,50 @@ interface WorkflowParametersFormProps {
 	renderAsDiv?: boolean;
 	// When true, don't set HTML required attribute on inputs (e.g. for optional input mapping)
 	disableRequired?: boolean;
+}
+
+/** Keep draft text intact while the shared editor emits parsed parameter values. */
+function StructuredParameterInput({
+	value,
+	onChange,
+	label,
+	readOnly,
+}: {
+	value: unknown;
+	onChange: (value: unknown) => void;
+	label: string;
+	readOnly: boolean;
+}) {
+	const modelId = useId();
+	const serialize = (next: unknown) =>
+		typeof next === "string" ? next : (JSON.stringify(next, null, 2) ?? "");
+	const [text, setText] = useState(() => serialize(value));
+	const [lastValue, setLastValue] = useState(value);
+	if (value !== lastValue) {
+		setLastValue(value);
+		setText(serialize(value));
+	}
+	return (
+		<CodeEditor
+			mode="json"
+			path={`workflow-parameters/${modelId}/value.json`}
+			ariaLabel={label}
+			height="180px"
+			readOnly={readOnly}
+			text={text}
+			onChange={(next) => {
+				setText(next);
+				let parsed: unknown = next;
+				try {
+					parsed = JSON.parse(next);
+				} catch {
+					/* Preserve incomplete JSON while editing. */
+				}
+				setLastValue(parsed);
+				onChange(parsed);
+			}}
+		/>
+	);
 }
 
 /**
@@ -104,7 +148,10 @@ export function WorkflowParametersForm({
 						}
 						disabled={isExecuting}
 					>
-						<SelectTrigger className="w-full" id={param.name ?? "select"}>
+						<SelectTrigger
+							className="w-full"
+							id={param.name ?? "select"}
+						>
 							<SelectValue
 								placeholder={
 									param.default_value != null
@@ -209,9 +256,14 @@ export function WorkflowParametersForm({
 
 			case "json":
 			case "dict":
+			case "list":
 				return (
-					<div className="min-w-0 space-y-2">
-						<Label htmlFor={param.name ?? "json"}>
+					<div
+						className="min-w-0 space-y-2"
+						role="group"
+						aria-label={displayName}
+					>
+						<Label>
 							{displayName}{" "}
 							<span className="text-muted-foreground text-xs">
 								({param.type})
@@ -220,79 +272,13 @@ export function WorkflowParametersForm({
 								<span className="text-destructive ml-1">*</span>
 							)}
 						</Label>
-						<Textarea
-							id={param.name ?? "json"}
-							className="min-h-28 font-mono"
-							value={
-								typeof value === "string"
-									? value
-									: JSON.stringify(value, null, 2) || ""
+						<StructuredParameterInput
+							value={value}
+							label={`${displayName} (${param.type})`}
+							readOnly={isExecuting}
+							onChange={(next) =>
+								handleParameterChange(param.name, next)
 							}
-							onChange={(e) => {
-								try {
-									handleParameterChange(
-										param.name ?? "",
-										JSON.parse(e.target.value),
-									);
-								} catch {
-									// Keep as string if not valid JSON yet
-									handleParameterChange(
-										param.name ?? "",
-										e.target.value,
-									);
-								}
-							}}
-							placeholder={
-								param.type === "dict"
-									? '{"key": "value"}'
-									: "{}"
-							}
-							disabled={isExecuting}
-						/>
-						{param.description && (
-							<p className="text-xs text-muted-foreground">
-								{param.description}
-							</p>
-						)}
-					</div>
-				);
-
-			case "list":
-				return (
-					<div className="min-w-0 space-y-2">
-						<Label htmlFor={param.name ?? "list"}>
-							{displayName}{" "}
-							<span className="text-muted-foreground text-xs">
-								(list)
-							</span>
-							{param.required && (
-								<span className="text-destructive ml-1">*</span>
-							)}
-						</Label>
-						<Textarea
-							id={param.name ?? "list"}
-							className="min-h-28 font-mono"
-							value={
-								typeof value === "string"
-									? value
-									: JSON.stringify(value, null, 2) || ""
-							}
-							onChange={(e) => {
-								try {
-									handleParameterChange(
-										param.name ?? "",
-										JSON.parse(e.target.value),
-									);
-								} catch {
-									// Keep as string if not valid JSON yet
-									handleParameterChange(
-										param.name ?? "",
-										e.target.value,
-									);
-								}
-							}}
-							placeholder='["item1", "item2"]'
-							disabled={isExecuting}
 						/>
 						{param.description && (
 							<p className="text-xs text-muted-foreground">

@@ -2530,7 +2530,7 @@ export interface paths {
          * Get launchable Workflow parameters
          * @description Returns current input parameters for a Workflow the caller may execute. Uses the same sharing, organization reach, and Solution scope checks as execution.
          */
-        get: operations["get_workflow_parameters_api_workflows__workflow_id__parameters_get"];
+        get: operations["workflows.parameters"];
         put?: never;
         post?: never;
         delete?: never;
@@ -35673,7 +35673,7 @@ export interface operations {
             };
         };
     };
-    get_workflow_parameters_api_workflows__workflow_id__parameters_get: {
+    "workflows.parameters": {
         parameters: {
             query?: never;
             header?: never;

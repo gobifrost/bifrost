@@ -1754,7 +1754,7 @@ async def remove_role_from_workflow(
         "Returns current input parameters for a Workflow the caller may execute. "
         "Uses the same sharing, organization reach, and Solution scope checks as execution."
     ),
-)
+**operation_route("workflows.parameters"))
 async def get_workflow_parameters(
     workflow_id: UUID,
     ctx: Context,
