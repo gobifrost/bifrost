@@ -1,0 +1,15 @@
+{
+  "name": "bifrost-pyodide-spike",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "cf": "^1.0.0-beta.26",
+    "wrangler": "4.156.0"
+  },
+  "scripts": {
+    "bench": "node bench.mjs",
+    "verify": "node verify.mjs",
+    "security": "node security.mjs"
+  }
+}

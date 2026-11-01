@@ -1,0 +1,19 @@
+
+ ⛅️ wrangler 4.156.0
+────────────────────
+Your Worker has access to the following bindings:
+Binding                       Resource                  Mode
+env.LOCAL_PROBE ("true")      Environment Variable      local
+env.LOADER                    Worker Loader             local
+
+[wrangler:warn] Unable to fetch the `Request.cf` object! Falling back to a default placeholder...
+Error: getaddrinfo EAI_AGAIN workers.cloudflare.com
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+⎔ Starting local server...
+[wrangler:warn] Unable to fetch the `Request.cf` object! Falling back to a default placeholder...
+Error: getaddrinfo EAI_AGAIN workers.cloudflare.com
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[wrangler:info] Ready on http://127.0.0.1:8811
+[wrangler:info] POST / 200 OK (5339ms)
+[wrangler:info] POST / 200 OK (18565ms)
+[wrangler:info] POST / 200 OK (3844ms)

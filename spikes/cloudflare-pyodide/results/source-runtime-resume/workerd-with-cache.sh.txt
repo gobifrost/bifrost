@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /spike/node_modules/@cloudflare/workerd-linux-64/bin/workerd "$@" --pyodide-bundle-disk-cache-dir=/bundle-cache

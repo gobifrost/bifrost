@@ -413,6 +413,7 @@ services:
       - ./api/bifrost:/app/bifrost:ro
       - ./api/scripts:/app/scripts:ro  # Scripts for migration utilities
       - ./api/tests:/app/tests:ro
+      - ./spikes/cloudflare-pyodide/backend/attempt_journal.py:/app/pyodide-prototype/attempt_journal.py:ro  # Host-side executor contract qualification only.
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/pytest.ini:/app/pytest.ini:ro

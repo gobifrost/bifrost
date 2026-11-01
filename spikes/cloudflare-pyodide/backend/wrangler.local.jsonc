@@ -1,0 +1,10 @@
+{
+  "name": "bifrost-pyodide-spike-ddf316c1",
+  "main": "isolation-entry.mjs",
+  "compatibility_date": "2026-10-30",
+  "worker_loaders": [{"binding":"LOADER"}],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {"LOCAL_PROBE":"true","PARENT_CANARY":"synthetic-supervisor-only"},
+  "observability": {"enabled":false}
+}

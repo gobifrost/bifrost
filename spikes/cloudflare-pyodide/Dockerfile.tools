@@ -1,0 +1,8 @@
+FROM node:24-bookworm-slim
+COPY --from=ghcr.io/astral-sh/uv:0.13.4 /uv /uvx /usr/local/bin/
+ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_CACHE_DIR=/opt/uv-cache
+RUN uv python install 3.14 && uv tool install workers-py==1.17.9 --python 3.14
+ENV PATH=/root/.local/bin:$PATH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /spike
+CMD ["pywrangler", "dev", "--ip", "0.0.0.0", "--port", "8793"]

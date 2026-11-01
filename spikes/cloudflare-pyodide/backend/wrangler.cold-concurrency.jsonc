@@ -1,0 +1,10 @@
+{
+  "name":"bifrost-pyodide-cold-local-ddf316c1",
+  "main":"cold-concurrency-entry.mjs",
+  "compatibility_date":"2026-10-30",
+  "worker_loaders":[{"binding":"LOADER"}],
+  "workers_dev":false,
+  "preview_urls":false,
+  "vars":{"LOCAL_REPRO":"true"},
+  "observability":{"enabled":false}
+}

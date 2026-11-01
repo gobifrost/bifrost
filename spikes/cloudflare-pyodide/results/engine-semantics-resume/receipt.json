@@ -1,0 +1,315 @@
+{
+  "source": "785b560b9973020e1c13401383e1a73a87a54940",
+  "runtime": "official-pyodide-on-node",
+  "cloudflare_runtime_qualified": false,
+  "sdk_operation_qualified": false,
+  "physical_termination_verified": false,
+  "cloud_invocations": 0,
+  "started_at_epoch": 1793549825.8414264,
+  "engine_sha256": "b9bd1d04a17d9dfc6a9418550ffb361c734d99558bdd7c710f3c53b0fdbc06ab",
+  "command": [
+    "docker",
+    "run",
+    "--name",
+    "pyodide-ddf316c1-engine-semantics-v3",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=128",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/engine-semantics-resume-v3,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/pyodide-package-qualification-resume/core/pyodide,dst=/core,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--workdir",
+    "/qualification",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "engine.mjs"
+  ],
+  "exit_code": 0,
+  "observed": {
+    "abi": {
+      "pyodide": "314.0.6",
+      "python": [
+        3,
+        14,
+        2
+      ],
+      "cache_tag": "cpython-314",
+      "soabi": "cpython-314-wasm32-emscripten",
+      "platform": "emscripten-5.0.3-wasm32"
+    },
+    "observations": [
+      {
+        "name": "json",
+        "result": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "Success",
+          "result": {
+            "total": 6,
+            "execution_id": "00000000-0000-0000-0000-000000000001"
+          },
+          "duration_ms": 1,
+          "logs": [],
+          "variables": {
+            "values": [
+              1,
+              2,
+              3
+            ]
+          },
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          },
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "json",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://qualification.invalid",
+            "parameters": {
+              "values": [
+                1,
+                2,
+                3
+              ]
+            },
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0.0
+            }
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null
+        }
+      },
+      {
+        "name": "async",
+        "result": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "Success",
+          "result": {
+            "value": 42,
+            "scope": "GLOBAL"
+          },
+          "duration_ms": 1,
+          "logs": [],
+          "variables": {
+            "value": 42
+          },
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          },
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "async",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://qualification.invalid",
+            "parameters": {
+              "value": 42
+            },
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0.0
+            }
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null
+        }
+      },
+      {
+        "name": "partial",
+        "result": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "CompletedWithErrors",
+          "result": {
+            "success": false,
+            "reason": "fixed qualification"
+          },
+          "duration_ms": 1,
+          "logs": [],
+          "variables": {},
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0.0
+          },
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "partial",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://qualification.invalid",
+            "parameters": {},
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0.0
+            }
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null
+        }
+      },
+      {
+        "name": "failure",
+        "result": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "Failed",
+          "result": null,
+          "duration_ms": 8,
+          "logs": [
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK] Traceback (most recent call last):",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/source/src/services/execution/engine.py\", line 1642, in _execute_workflow_with_trace",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     result = await _run_workflow_async()",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/source/src/services/execution/engine.py\", line 1633, in _run_workflow_async",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     return await func(**accepted_params)",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.113999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"<exec>\", line 24, in failure",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.115000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK] ValueError: credential=[REDACTED]",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.115000+00:00",
+              "level": "error",
+              "message": "Execution error: failure",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-01T16:17:11.115000+00:00",
+              "level": "error",
+              "message": "ValueError: credential=[REDACTED]",
+              "source": "workflow"
+            }
+          ],
+          "variables": {},
+          "integration_calls": [],
+          "roi": null,
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "failure",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://qualification.invalid",
+            "parameters": {},
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0.0
+            }
+          },
+          "error_message": "credential=[REDACTED]",
+          "error_type": "ValueError",
+          "cached": false,
+          "cache_expires_at": null
+        }
+      }
+    ]
+  },
+  "finished_at_epoch": 1793549831.3355901
+}

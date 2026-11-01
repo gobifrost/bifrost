@@ -1,0 +1,12 @@
+{
+  "runtime": "local-workerd",
+  "cloud_invocations": 0,
+  "python_invocations": 1,
+  "status": 500,
+  "error_type": "RuntimeError",
+  "error": "Interop correctness mismatch",
+  "location": "main.py:25",
+  "measurement_valid": false,
+  "observer_failure": "boundedJson rejected the non-JSON Wrangler error page; no successful benchmark receipt was emitted",
+  "hypothesis": "Default to_js maps Python None to JS undefined, so JSON.stringify can omit the nested property. Verify explicit none_to_null conversion before timing equivalent values."
+}

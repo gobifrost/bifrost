@@ -1,0 +1,184 @@
+{
+  "source": "Cloudflare logs.workersLogs, exact script filter; invocation rows only",
+  "cost": "Request marginal estimate at observed mean CPU, including failed workflows; excludes allowances, monthly minimum, upstream costs. No successful cloud SDK cost measured.",
+  "workloads": {
+    "integration_read": {
+      "invocations": 2,
+      "http_statuses": [
+        200,
+        403
+      ],
+      "median_cpu_ms": 45,
+      "mean_cpu_ms": 45,
+      "median_wall_ms": 46,
+      "estimated_marginal_usd_per_1000": 0.0012000000000000001,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "table_update": {
+      "invocations": 1,
+      "http_statuses": [
+        200
+      ],
+      "median_cpu_ms": 31,
+      "mean_cpu_ms": 31,
+      "median_wall_ms": 32,
+      "estimated_marginal_usd_per_1000": 0.00092,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "multi_step": {
+      "invocations": 2,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "median_cpu_ms": 16.5,
+      "mean_cpu_ms": 16.5,
+      "median_wall_ms": 17.0,
+      "estimated_marginal_usd_per_1000": 0.00063,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "sync_json": {
+      "invocations": 1,
+      "http_statuses": [
+        200
+      ],
+      "median_cpu_ms": 14,
+      "mean_cpu_ms": 14,
+      "median_wall_ms": 15,
+      "estimated_marginal_usd_per_1000": 0.00058,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "io_timeout": {
+      "invocations": 1,
+      "http_statuses": [
+        200
+      ],
+      "median_cpu_ms": 9,
+      "mean_cpu_ms": 9,
+      "median_wall_ms": 57,
+      "estimated_marginal_usd_per_1000": 0.00047999999999999996,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "json_transform": {
+      "invocations": 11,
+      "http_statuses": [
+        200,
+        200,
+        413,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "median_cpu_ms": 35.0,
+      "mean_cpu_ms": 302.9,
+      "median_wall_ms": 36.0,
+      "estimated_marginal_usd_per_1000": 0.006358,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "state_write": {
+      "invocations": 2,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "median_cpu_ms": 1085.5,
+      "mean_cpu_ms": 1085.5,
+      "median_wall_ms": 1130.0,
+      "estimated_marginal_usd_per_1000": 0.022010000000000002,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "cpu_timeout": {
+      "invocations": 1,
+      "http_statuses": [
+        500
+      ]
+    },
+    "secret_probe": {
+      "invocations": 1,
+      "http_statuses": [
+        200
+      ],
+      "median_cpu_ms": 18,
+      "mean_cpu_ms": 18,
+      "median_wall_ms": 19,
+      "estimated_marginal_usd_per_1000": 0.00066,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "state_read": {
+      "invocations": 2,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "median_cpu_ms": 7.0,
+      "mean_cpu_ms": 7,
+      "median_wall_ms": 8.0,
+      "estimated_marginal_usd_per_1000": 0.00043999999999999996,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "duplicate_probe": {
+      "invocations": 2,
+      "http_statuses": [
+        200,
+        200
+      ],
+      "median_cpu_ms": 7.0,
+      "mean_cpu_ms": 7,
+      "median_wall_ms": 8.0,
+      "estimated_marginal_usd_per_1000": 0.00043999999999999996,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "diagnostic_or_memory": {
+      "invocations": 4,
+      "http_statuses": [
+        401,
+        401,
+        200,
+        200
+      ],
+      "median_cpu_ms": 1227.5,
+      "mean_cpu_ms": 1227.5,
+      "median_wall_ms": 1271.5,
+      "estimated_marginal_usd_per_1000": 0.024850000000000004,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "async_context": {
+      "invocations": 1,
+      "http_statuses": [
+        200
+      ],
+      "median_cpu_ms": 13,
+      "mean_cpu_ms": 13,
+      "median_wall_ms": 14,
+      "estimated_marginal_usd_per_1000": 0.00056,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "workspace_import": {
+      "invocations": 1,
+      "http_statuses": [
+        200
+      ],
+      "median_cpu_ms": 12,
+      "mean_cpu_ms": 12,
+      "median_wall_ms": 12,
+      "estimated_marginal_usd_per_1000": 0.00054,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    },
+    "http_orchestration": {
+      "invocations": 1,
+      "http_statuses": [
+        200
+      ],
+      "median_cpu_ms": 29,
+      "mean_cpu_ms": 29,
+      "median_wall_ms": 36,
+      "estimated_marginal_usd_per_1000": 0.0008799999999999999,
+      "correctness": "HTTP status alone is not workflow success; cross-check benchmark-cloud.json"
+    }
+  }
+}

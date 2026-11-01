@@ -1,0 +1,13 @@
+{
+  "artifact": "results/benchmark-cloud.json",
+  "assertions": "passed",
+  "warm_json_client_median_ms": 62.746900000000096,
+  "warm_json_samples": [
+    45.738900000000285,
+    53.191899999999805,
+    62.746900000000096,
+    63.98730000000069,
+    74.7554999999993
+  ],
+  "correctness": "fixed expected values asserted; negative results are boundaries, not successes"
+}

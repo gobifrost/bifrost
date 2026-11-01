@@ -1,0 +1,31 @@
+{
+  "runtime": "deployed-cloudflare-dynamic-python-worker",
+  "started_at": "2026-10-31T15:47:50.312Z",
+  "versions": "13d72a73-ee73-4ea6-9525-8d40137f98a6",
+  "results": [
+    {
+      "ordinal": 15,
+      "request": {
+        "action": "cpu_limit"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "error_type": "PythonError",
+          "error": "PythonError: Traceback (most recent call last):\n  File \"introspection.py\", line 88, in wrapper_func\n    return python_to_rpc(await result)\n                         ^^^^^^^^^^^^\n  File \"/session/metadata/main.py\", line 36, in fetch\n    total += value\n    ^^^^^\n  File \"introspection.py\", line 98, in raise_cpu_limit_exceeded\n    raise CpuLimitExceeded(\"Python Worker exceeded CPU time limit\")\nintrospection.CpuLimitExceeded: Python Worker exceeded CPU time limit\n"
+        },
+        "effects": [
+          "before"
+        ],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      },
+      "client_wall_ms": 4700.7647
+    }
+  ],
+  "unauthenticated_status": 403,
+  "finished_at": "2026-10-31T15:47:55.343Z",
+  "total_reserved_invocations": 15
+}

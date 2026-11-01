@@ -328,6 +328,10 @@ class ExecutionRequest:
     engine_token: str | None = None
     engine_refresh_token: str | None = None
 
+    # Trusted runtime metadata. Process workers retain server settings by default;
+    # isolated providers need not import the server's settings/dependency closure.
+    public_url: str | None = None
+
 
 @dataclass
 class ExecutionResult:
@@ -502,7 +506,10 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         roi.time_saved = request.roi.get("time_saved", 0)
         roi.value = request.roi.get("value", 0.0)
 
-    from src.config import get_settings
+    public_url = request.public_url
+    if public_url is None:
+        from src.config import get_settings
+        public_url = get_settings().public_url
 
     context = ExecutionContext(
         user_id=request.caller.user_id,
@@ -516,7 +523,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         workflow_deadline=request.workflow_deadline,
         workflow_timeout_seconds=request.timeout_seconds,
         workflow_name=request.name or "",  # Workflow/script name for context
-        public_url=get_settings().public_url,
+        public_url=public_url,
         startup=request.startup,  # Launch workflow results (from form execution)
         form_inputs=request.form_inputs,
         embed=request.embed,

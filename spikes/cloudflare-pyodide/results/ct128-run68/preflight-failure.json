@@ -1,0 +1,27 @@
+{
+  "owner": "6e1d35f9-0847-466a-a570-f72fd16f9ed7",
+  "vmid": 128,
+  "source": "4d493d5547a6864cc6337df9144cdf9366652915",
+  "commands": [],
+  "cloud_invocations": 0,
+  "runtime_acceptance": false,
+  "wall_limit_seconds": 900,
+  "disk_used_guard_bytes": 25769803776,
+  "hard_guest_limits": {
+    "cpus": 2,
+    "memory_mib": 4096,
+    "swap": 0
+  },
+  "started_at_epoch": 1793512757.3862693,
+  "remote_test_executed": false,
+  "staged_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "unstaged_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "required_untracked_files": [],
+  "tree": "c3966435749a6952bf6cf06f7a79eaf076ae9712",
+  "image": "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+  "qualification_passed": false,
+  "error_type": "FileNotFoundError",
+  "elapsed_seconds": 1.8204734832979739,
+  "finished_at_epoch": 1793512759.2067463,
+  "artifacts": {}
+}

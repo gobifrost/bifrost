@@ -1,0 +1,16 @@
+{
+  "baseline_head": "336b6d2512512d00d20fcc00974d58d0d590989b",
+  "command": "node backend/run-authorized-local.mjs --canonical",
+  "scope": "isolated local workerd plus actual disposable upstream API/PostgreSQL/Redis; trusted fixed fixture only",
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "483a4ca0ffc9c0125da573c2b0ec2c74d5eb6c0a529903cfadbad4d56e1d0d17",
+    "spikes/cloudflare-pyodide/backend/authorized-local.py": "5ac898b9181b9eed93e07927375c04306d9b3d43fcf19ef5df57b02d30d669c0",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "b810355e500c6f238db8f28db4df63345c255310dbc0cf87a53625c9d25b35c1",
+    "spikes/cloudflare-pyodide/backend/runtime-code.mjs": "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "c0af2072e72129214fc54d4a2fe05efddbf591fbd6a742818b731152a346abdc",
+    "spikes/cloudflare-pyodide/backend/attempt_journal.py": "5a2e1cec90b7a85df07e9e5e5b8691bfaae1dbab6fc2264fb89468c998d08c9d",
+    "spikes/cloudflare-pyodide/backend/run-authorized-local.mjs": "467560ceb64a9fefaf4b339eeb92fae48994afe0e9ed70f0136715f7dc22acd0",
+    "spikes/cloudflare-pyodide/backend/prepare-runtime.py": "a805d8255692a22f64cd58ed4e485e640995c9c9ee8174d75d333195f0a58fdd",
+    "spikes/cloudflare-pyodide/backend/pack-engine.py": "3161943353676fb78209f8ee885def31ada16145b71c73a2de7aa4cb69f879cd"
+  }
+}

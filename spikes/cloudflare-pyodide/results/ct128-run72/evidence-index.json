@@ -1,0 +1,31 @@
+{
+  "tested_source": "785b560b9973020e1c13401383e1a73a87a54940",
+  "delivery_request": "8e8c7bc2-9477-4a1a-b1cc-5b68d2c08e64",
+  "native_run": 72,
+  "dependency_staging_passed": true,
+  "guest_runtime_qualified": false,
+  "python_started": false,
+  "runtime_asset_http_status": 403,
+  "expected_asset_sha256": "3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260",
+  "physical_termination_fixture_executed": false,
+  "physical_termination_verified": false,
+  "cloud_invocations": 0,
+  "r2_requests": 0,
+  "local_tests": {
+    "command": "node --test spikes/cloudflare-pyodide/backend/timed-termination.test.mjs spikes/cloudflare-pyodide/probe-io.test.mjs",
+    "passed": 11
+  },
+  "files": {
+    "staging.json": "4835b62984c74a424922ca7fdbf54a82f6b8dd5ba0202c7c49b091cc81ec4354",
+    "abi-probe.json": "d77606770cbc6127a1ea9f8481623e3c4e57f0efd9b838d49854fe67e3032912",
+    "cache-denial.json": "62454470d076b2d0bbe5c5a648406e806dce7f208f67bfad1d2c00ea535c02bc",
+    "runtime.log": "4d4b7fdd01d12cad3dd8487c83d3b57df26168b6d4486dd06896fc64976facd9",
+    "backend/ct128-runtime-stage.py": "0d96f9dafd51a4292839ef31aa8db9a726eee94ae1e3045ef3cd72a827ecbff2",
+    "backend/ct128-runtime-probe.py": "c6bcc40698fc20456c5ae0788f9142c392cc45b8ae1bf1f03399535a86d4bf7b",
+    "backend/ct128-runtime-cache.py": "6c50d5399490befa40c49e33c0425d927942ae32797a9dbbbf71e678b732e936",
+    "backend/guest-termination-entry.mjs": "00505118633cacaa00627972dbc20427a7e6b4d54a51dd371ac0e967efbfbe11",
+    "backend/guest-termination-probe.mjs": "49d733dc7438d2362def1c067e1948add82f632c26fdc4e5546deb86fded6fab",
+    "backend/wrangler.guest-termination.jsonc": "b2912bf2cb63decbcba9982d9f508204c2a1a93cfd6876c3d7c4d5d875ddbfe8",
+    "backend/timed-termination.test.mjs": "3c14faea93b8049e377b7945d3a75eadab7703e57d508d1c737abcf912ca5306"
+  }
+}

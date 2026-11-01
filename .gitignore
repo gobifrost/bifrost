@@ -215,3 +215,6 @@ system//home/
 client/preview/
 .desloppify/
 scorecard.png
+
+# Cloudflare CLI account/build cache (local state, never source)
+.cloudflare/

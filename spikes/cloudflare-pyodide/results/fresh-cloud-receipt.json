@@ -1,0 +1,51 @@
+{
+  "worker": "bifrost-pyodide-spike-ddf316c1",
+  "cli": "cf 1.0.0-beta.22",
+  "approved_max_invocations": 20,
+  "approved_incremental_usd_cap": 0.1,
+  "reserved_invocations": 16,
+  "bifrost_credentials_uploaded": false,
+  "production_resources_changed": false,
+  "versions": [
+    {
+      "artifact": "isolation-cloud-fresh.json",
+      "version": "5d55880e-ec51-4c0f-938b-833096fd4ddb"
+    },
+    {
+      "artifact": "engine-cloud-fresh-bootstrap-failure.json",
+      "version": "7518d138-8251-436d-b32a-44b84a0a37ec"
+    },
+    {
+      "artifact": "engine-cloud-diagnostic.json",
+      "version": "82ede251-96a4-4b8d-81e7-7cd249d24698"
+    },
+    {
+      "artifact": "engine-cloud-fresh.json",
+      "version": "11aed8eb-c28e-4d2d-86a6-71a977baabf6"
+    },
+    {
+      "artifact": "cpu-limit-cloud-fresh.json",
+      "version": "13d72a73-ee73-4ea6-9525-8d40137f98a6"
+    },
+    {
+      "artifact": "cpu-catch-cloud-fresh.json",
+      "version": "03460cde-9d4f-4942-a68f-93adb8624358"
+    }
+  ],
+  "final_private_upload_version": "1c4abba7-4fc8-4e37-b5d9-99aef8c68b13",
+  "current_local_source_sha256": {
+    "backend/isolation-code.mjs": "c5f205405b5bc5a845724a88c7e2a83d345bf6e9c4a6ae83282760f21f0d0c43",
+    "backend/isolation-entry.mjs": "d9f5d19e5444f09a102fb49a2c9741e4b60621d968d0797560cff8406814a848",
+    "backend/runtime-code.mjs": "652922b089d8a4e97162223da47798d493e4d25065d9c0457d611dd67ef8c1dd",
+    "backend/cloud-engine-entry.mjs": "d569b9e546009055a75884efd9c3b008a46f33f3cfb71172638db69d520a112f",
+    "backend/cloud-isolation.mjs": "98a4f5baeff9c78444feac0a1166756ee2e539b212aada4ef6aa8cec5bea7e68",
+    "cloudflare.config.ts": "c471337966b67d74c7f19272daacdca8f92831528610e1ee1d388bb846fecc88",
+    "results/dynamic-runtime-manifest.json": "868a59fb8a0f4948c7019b37d9c9da18ae7801968980c0e2bcb875624b72407c"
+  },
+  "measured_total_client_wall_ms": 60353.5591,
+  "estimated_creation_usd_before_included_allocation": 0.032,
+  "conservative_cost_proxy_usd": 0.034442942364,
+  "cost_note": "Estimate only, not invoice. Proxy counts two worker CPU durations at full client wall time plus six requests per reservation; actual CPU and billable allocation were not measured.",
+  "physical_stop_acceptance": false,
+  "first_class_executor_acceptance": false
+}

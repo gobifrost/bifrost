@@ -1,0 +1,220 @@
+{
+  "container": "bifrost-pyodide-refresh-fe1c8913-49ab-4195-919d-03f53c0d2303",
+  "phase": "observed",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "unknown_process_state": false,
+  "process_exit_code": 1,
+  "result": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "workspace_sha256": {
+      "workflows/pyodide_qualification_9b9d6554e98e4193b5beacdf38c00eb4.py": "e82ada539e8bb826550533a60feb7c6b4458f6d873de5326e464e7d25ff8cc97",
+      "pyodide_helper_9b9d6554e98e4193b5beacdf38c00eb4.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"
+    },
+    "physical_termination_verified": false,
+    "cloud_invocations": 0,
+    "refresh_probe": true,
+    "worker_heartbeat_count": 3,
+    "owner_renewal_count": 1,
+    "provider_evidence": {
+      "result": {
+        "execution_id": "ed2c7abc-9274-4be7-bb86-4ec3f1cc8bec",
+        "success": false,
+        "status": "Failed",
+        "result": null,
+        "error": "SDK refresh returned no replacement credential",
+        "error_type": "RuntimeError",
+        "duration_ms": 251,
+        "logs": [
+          {
+            "timestamp": "2026-11-01T01:52:55.148000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.148999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/src/services/execution/engine.py\", line 1642, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.150000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.151000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.152000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/src/services/execution/engine.py\", line 1633, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.152999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.153999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.155000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"workflows/pyodide_qualification_9b9d6554e98e4193b5beacdf38c00eb4.py\", line 11, in qualified",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.156000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] RuntimeError: SDK refresh returned no replacement credential",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.148000+00:00",
+            "level": "error",
+            "message": "Execution error: token_52c336e6",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T01:52:55.148999+00:00",
+            "level": "error",
+            "message": "RuntimeError: SDK refresh returned no replacement credential",
+            "source": "workflow"
+          }
+        ],
+        "variables": {
+          "n": 7,
+          "forbidden_scope": null,
+          "forbidden_key": null,
+          "isolation": {},
+          "value": 42,
+          "replacement": null
+        },
+        "integration_calls": [],
+        "roi": null,
+        "metrics": {
+          "peak_memory_bytes": null,
+          "peak_process_rss_bytes": null,
+          "cpu_user_seconds": null,
+          "cpu_system_seconds": null,
+          "cpu_total_seconds": null,
+          "code_hash": "e82ada539e8bb826550533a60feb7c6b4458f6d873de5326e464e7d25ff8cc97"
+        },
+        "cached": false,
+        "cache_expires_at": null,
+        "execution_context": {
+          "user_id": "86aadba8-caa1-4e22-a42b-237d4b8d92b2",
+          "email": "token-597013fa@example.test",
+          "name": "Person 8ae4",
+          "scope": "7ecae9d4-dc28-4b6b-ac53-9443f11b7251",
+          "organization": {
+            "id": "7ecae9d4-dc28-4b6b-ac53-9443f11b7251",
+            "name": "Token World c582d1d5",
+            "is_active": true,
+            "is_provider": false
+          },
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "ed2c7abc-9274-4be7-bb86-4ec3f1cc8bec",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 30,
+          "workflow_name": "token_52c336e6",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "https://test-api.invalid",
+          "parameters": {
+            "n": 7
+          },
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "worker_id": "74176de3-2180-4016-9d84-a1f5f3684e4d"
+      },
+      "api_calls": [
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules/workflows/pyodide_qualification_9b9d6554e98e4193b5beacdf38c00eb4.py",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules-resolve",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        }
+      ]
+    },
+    "workflow_document_status": 404
+  },
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-refresh.mjs": "3fbdb2aed8f4aa16b0a5654624095d880fc95dbaa6d9d523cf9c33b026145c7b",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "f41856267a7de98d7256c5595032aeae99bf723900db8ac3d177622fa035edfb",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "18cdc399c85aa73d3b75e68643a1a0059c1dcd6c326bdb7f1a7131bc5a399c66",
+    "spikes/cloudflare-pyodide/backend/runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23"
+  }
+}

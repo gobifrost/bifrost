@@ -1,0 +1,122 @@
+{
+  "runtime": "official-pyodide-on-node",
+  "cloudflare_runtime_qualified": false,
+  "physical_termination_verified": false,
+  "cloud_invocations": 0,
+  "started_at_epoch": 1793548971.57757,
+  "test_source_sha256": {
+    "tests/serializers/test_none.py": "6a173fb74642582b3b1e32b8a56d69d7be1f4638cf153e492a609ec3b6ef725c",
+    "tests/serializers/test_json.py": "4cfec2d1531b4cbb7a4c41fb3491c92e012cc2adfafd946f238d33abddf6cc7b"
+  },
+  "test_dependencies": [
+    {
+      "name": "atomicwrites",
+      "version": "1.4.1",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/atomicwrites-1.4.1-py2.py3-none-any.whl",
+      "sha256": "1f31c24e72b0f06b2f0aeb1118260da4bdd8c72f2c93e2691a85267322a3cee2"
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/attrs-26.1.0-py3-none-any.whl",
+      "sha256": "a4f54da7c9756fe3d366ed4a1513df5cf62dc9ec39df2ece0b5e9fc847029c14"
+    },
+    {
+      "name": "exceptiongroup",
+      "version": "1.3.1",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/exceptiongroup-1.3.1-py3-none-any.whl",
+      "sha256": "19465535880c3c97c9609e52354c63683dc7bce158bfc26c10fed9912832502a"
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/iniconfig-2.3.0-py3-none-any.whl",
+      "sha256": "94eac96a7a1734b126d4af2b612769462d608a8e45eaa24c9a724704f043b7f6"
+    },
+    {
+      "name": "more-itertools",
+      "version": "11.0.1",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/more_itertools-11.0.1-py3-none-any.whl",
+      "sha256": "054981c047a32157c434a5c75e7f107cfe042f15cbe99b6d1144b082e7747190"
+    },
+    {
+      "name": "packaging",
+      "version": "26.1",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/packaging-26.1-py3-none-any.whl",
+      "sha256": "f58ad9d3cde3f3051e3bc82df1db19ff0aa940439dfd5f5d470da61c5ea033bf"
+    },
+    {
+      "name": "pluggy",
+      "version": "1.6.0",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/pluggy-1.6.0-py3-none-any.whl",
+      "sha256": "191740621d1c50382a331fdee8d644342a8409ea70e46188ca93ad79f78fa199"
+    },
+    {
+      "name": "py",
+      "version": "1.11.0",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/py-1.11.0-py2.py3-none-any.whl",
+      "sha256": "fc395edd965f8af4ce4a13da8ab49d4dc4acb34b470e11619759eb4d22bc2fa9"
+    },
+    {
+      "name": "pygments",
+      "version": "2.20.0",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/pygments-2.20.0-py3-none-any.whl",
+      "sha256": "30f3c928127039f39462e3690c2e0ff03977c5ee1766df0a1e9bad09a377ae8e"
+    },
+    {
+      "name": "pyparsing",
+      "version": "3.3.2",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/pyparsing-3.3.2-py3-none-any.whl",
+      "sha256": "8c3e4bb64e23a66a4c9effc4a5a09a2aafc1db7d70b8451ba3ba5b7fe6d18dd2"
+    },
+    {
+      "name": "pytest",
+      "version": "9.0.2",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/pytest-9.0.2-py3-none-any.whl",
+      "sha256": "bebde3f51a312150e6221460986ea2488bd498114454c318f833e6fadb436ac8"
+    },
+    {
+      "name": "setuptools",
+      "version": "82.0.1",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/setuptools-82.0.1-py3-none-any.whl",
+      "sha256": "5dc47f9c9e9da126476870464a9608a63134ed23a2fa587966e5091b736a338f"
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "url": "https://cdn.jsdelivr.net/pyodide/v314.0.6/full/six-1.17.0-py2.py3-none-any.whl",
+      "sha256": "29edb1e328c61cad6ac21a2ff92c7d274a2b662eb7c12b2d147f04917b765ad6"
+    }
+  ],
+  "upstream_source_archive_sha256": "1b0e8dc3932cf4e9ed5727570325cacc716b9409ffc794a221c0ccc72e8eb775",
+  "command": [
+    "docker",
+    "run",
+    "--name",
+    "pyodide-ddf316c1-upstream-tests",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=128",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/pydantic-core-upstream-tests-resume,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/pyodide-package-qualification-resume/core/pyodide,dst=/core,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/python_modules,dst=/packages,readonly",
+    "--workdir",
+    "/qualification",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "tests.mjs"
+  ],
+  "exit_code": 0,
+  "observed": {
+    "exit_code": 0,
+    "pyodide": "314.0.6",
+    "pydantic_core": "2.50.2"
+  },
+  "finished_at_epoch": 1793548981.1044862
+}
