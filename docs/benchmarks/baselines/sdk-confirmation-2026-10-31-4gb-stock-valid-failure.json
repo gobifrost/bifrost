@@ -154,5 +154,88 @@
     "scaling_capacity": "not established",
     "hosting_capacity": "not established"
   },
-  "runtime_scope": "Unmodified captured production registry image; no platform code fixes or deployments. Experimental candidate results are retained separately."
+  "runtime_scope": "Unmodified captured production registry image; no platform code fixes or deployments. Experimental candidate results are retained separately.",
+  "resource_sampling": {
+    "roles": {
+      "api": {
+        "mean_cpu_cores_observed": 0.63126744532955,
+        "max_interval_cpu_cores": 0.9761420929911374,
+        "max_pod_throttled_ratio": 0.0,
+        "charged_peak_bytes": 350912512,
+        "working_set_peak_bytes": 335319040,
+        "observed_window_fraction": 0.9902974421149121,
+        "cpu_seconds": 599.1766160000004,
+        "observed_cpu_ms_per_correct_completion": 160.68024027889524
+      },
+      "client": {
+        "mean_cpu_cores_observed": 4.976587578909558e-05,
+        "max_interval_cpu_cores": 0.00010332230490979027,
+        "max_pod_throttled_ratio": 0.0,
+        "charged_peak_bytes": 8884224,
+        "working_set_peak_bytes": 8663040,
+        "observed_window_fraction": 0.9902974421149121,
+        "cpu_seconds": 0.04723600000000002,
+        "observed_cpu_ms_per_correct_completion": 0.012667203003486194
+      },
+      "pooler": {
+        "mean_cpu_cores_observed": 0.05889734928919198,
+        "max_interval_cpu_cores": 0.09220975509848854,
+        "max_pod_throttled_ratio": 0.5,
+        "charged_peak_bytes": 66260992,
+        "working_set_peak_bytes": 66179072,
+        "observed_window_fraction": 0.9902974421149121,
+        "cpu_seconds": 55.903270000000006,
+        "observed_cpu_ms_per_correct_completion": 14.991491016358275
+      },
+      "postgres": {
+        "mean_cpu_cores_observed": 0.11432853735784303,
+        "max_interval_cpu_cores": 0.2344080516957135,
+        "max_pod_throttled_ratio": 0.0625,
+        "charged_peak_bytes": 636084224,
+        "working_set_peak_bytes": 386293760,
+        "observed_window_fraction": 0.9902974421149121,
+        "cpu_seconds": 108.5165829999999,
+        "observed_cpu_ms_per_correct_completion": 29.10071949584336
+      },
+      "redis": {
+        "mean_cpu_cores_observed": 0.019572157435974322,
+        "max_interval_cpu_cores": 0.03521475789315158,
+        "max_pod_throttled_ratio": 0.10638297872340426,
+        "charged_peak_bytes": 16769024,
+        "working_set_peak_bytes": 16719872,
+        "observed_window_fraction": 0.9902974421149121,
+        "cpu_seconds": 18.577196000000008,
+        "observed_cpu_ms_per_correct_completion": 4.9818171091445445
+      },
+      "worker": {
+        "mean_cpu_cores_observed": 0.24767425034491256,
+        "max_interval_cpu_cores": 0.5532196305891212,
+        "max_pod_throttled_ratio": 0.3181818181818182,
+        "charged_peak_bytes": 676118528,
+        "working_set_peak_bytes": 667123712,
+        "observed_window_fraction": 0.9902974421149121,
+        "cpu_seconds": 235.08359299999992,
+        "observed_cpu_ms_per_correct_completion": 63.04199329578974
+      }
+    },
+    "tenant": {
+      "kind": "observed_tenant_lower_bound",
+      "observed_seconds": 949.1644475460052,
+      "observed_window_fraction": 0.9902974421149121,
+      "cpu_seconds": 1017.3044940000005,
+      "mean_cpu_cores_observed": 1.0717895056332614,
+      "max_interval_cpu_cores": 1.7289713782793281,
+      "charged_peak_bytes": 1722519552,
+      "working_set_peak_bytes": 1466437632,
+      "observed_samples": 189,
+      "memory_coverage": {
+        "complete_observed_samples": 189,
+        "missing_or_partial_observed_samples": 0,
+        "observed_seconds": 949.1644475460052,
+        "observed_window_fraction": 0.9902974421149121
+      }
+    },
+    "limits": "sampled lower-bound peaks; missing/new/replaced or unsampled pods reduce coverage; role peaks are not additive and tenant is not a complete namespace inventory",
+    "scope": "Observed CPU is covered intervals only; per-correct-completion CPU divides by all correct measured-window terminals. Throttling is the fraction of CFS periods throttled, not CPU time lost. Role peaks are not additive. Requests and limits are separate from usage."
+  }
 }

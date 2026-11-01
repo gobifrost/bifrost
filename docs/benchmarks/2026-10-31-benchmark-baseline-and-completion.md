@@ -234,6 +234,15 @@ arrivals reconciled correctly and all tenant fault counters were zero. Do not
 attribute its difference from the experimental candidate to a platform fix:
 the observations were not randomized matched repetitions.
 
+The same stock scalar retains component resource measurements: sampled tenant
+CPU averaged 1.071790 cores over covered intervals; simultaneous charged-memory
+and working-set peaks were 1,722,519,552 and 1,466,437,632 bytes. Interval
+coverage was 99.03%. These are sampled tenant lower bounds for SDK-only work,
+not a smaller safe quota or a mixed-workload capacity claim. Per-role memory
+peaks are not additive. The Pooler showed throttled scheduling periods despite
+modest mean CPU use; that is a candidate for a controlled resource comparison,
+not proof of the latency cause.
+
 ### Collector Validation (October 31)
 
 The frozen `df605bb5e` diagnostic used the 4 GB resource envelope and a reduced
