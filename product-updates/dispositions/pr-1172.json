@@ -1,0 +1,21 @@
+{
+  "key": "pr:1172",
+  "classification": "highlight",
+  "entry_ids": [
+    "b3129848-c1d8-4f70-8294-effe7168a82a"
+  ],
+  "action_required": true,
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1172"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1172",
+      "https://github.com/gobifrost/bifrost/pull/1160",
+      "Thomas Bray original commits and cleanup candidate 6cc0d8693d7ffa9ea90e07930da07a6824441651 are preserved. Maintainer fixture repair passed 341 backend tests, four live agent/service tests, 23 frontend tests, TypeScript, ESLint, API Pyright and Ruff. Commands and red-to-green proof are in docs/experiments/external-capacity-cleanup-acceptance.md.",
+      "Copy review confirms the concise feature description, verified Workers Settings route, and mandatory physical-launcher upgrade notice. Sensitive-path review covered provider authentication/TLS, immutable resource identity, cleanup receipts, retention/migration safety, physical admission and summary claim fencing; documented runtime qualification limits remain. Jack authorized this repair and merge on 2026-11-01."
+    ]
+  }
+}

@@ -1,19 +1,13 @@
 {
   "key": "pr:1160",
-  "classification": "highlight",
-  "entry_ids": [
-    "b3129848-c1d8-4f70-8294-effe7168a82a"
-  ],
-  "action_required": true,
-  "security_review": {
-    "status": "required",
-    "review_ref": "https://github.com/gobifrost/bifrost/pull/1160"
-  },
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Superseded by #1172, which preserves Thomas Bray original commits, cleanup correction, and contributor credit. The external-capacity highlight and launcher upgrade notice are attached to #1172.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1160",
-      "Draft copy, launcher upgrade action and security review require maintainer approval."
+      "https://github.com/gobifrost/bifrost/pull/1172"
     ]
   }
 }
