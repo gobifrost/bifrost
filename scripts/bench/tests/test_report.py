@@ -58,6 +58,21 @@ RESULT = {
 
 
 class RenderTest(unittest.TestCase):
+    def test_elasticity_report_preserves_failures_and_missing_resource_coverage(self) -> None:
+        text = report.render({**RESULT, "kind": "worker-elasticity", "status": "observed_failure",
+                              "first_arrival": {"verdict": "observed_failure", "late_count": 0, "requests": [{
+                                  "correct": False, "deadline_met": True, "durable_identity_matches": True,
+                                  "error": None, "duplicate_durable_rows": 0, "e2e_s": 2.5, "timing_valid": True,
+                              }]}, "host_sampling": {"phases": {"first_arrival": {"resource_usage": {
+                                  "window_seconds": 3, "tenant": {"cpu_seconds": 0, "observed_seconds": 0,
+                                  "observed_window_fraction": 0, "working_set_peak_bytes": None},
+                              }}}}})
+        self.assertIn("| first_arrival | 0 / 1 | 2.500000 / 2.500000 / 2.500000 | 0 | observed_failure |", text)
+        self.assertIn("| first_arrival | 3.000 | unmeasured | unmeasured | 0.000 |", text)
+        self.assertIn("first-request/burst diagnostic", text)
+        self.assertNotIn("## Execution times", text)
+        self.assertNotIn("sequential +", text)
+
     def test_recovery_report_exposes_correctness_and_missing_drills(self) -> None:
         source = {key: value for key, value in RESULT.items() if key not in ("classes", "snapshots", "api_pod_changes")}
         text = report.render({**source, "kind": "recovery-drill", "drill": "d6", "status": "failed",
