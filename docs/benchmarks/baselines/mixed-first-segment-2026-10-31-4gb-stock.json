@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "baseline_id": "mixed-first-segment-2026-10-31-4gb-stock-v1",
+  "kind": "mixed-campaign-partial",
+  "status": "invalid_measurement",
+  "capacity_certification": false,
+  "partial_campaign": true,
+  "source": {
+    "private_segment_result_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/4gb-capacity/mixed-campaign/segments/segment-0.json",
+    "segment_result_sha256": "7df6e28c8b3034c7d451d4e7546a52b2b4b287023acae0265371b184827f8036",
+    "declaration_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/declaration.json",
+    "declaration_sha256": "ae598852916335a63ed028e8ee67f151c05ef73b58f101f3bc9161ffef93f157",
+    "campaign_manifest_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/4gb-capacity/mixed-campaign/campaign-manifest.json",
+    "campaign_manifest_sha256": "d1b5e92ccb92a5d708eabd890c59252e9b9cec7e8bf6814b6ca86b6a244d3cab",
+    "campaign_aggregate_path": "/home/jack/bifrost-bench-evidence/runs/stock-capacity-matrix-20261031-r1/4gb-capacity/mixed-campaign/aggregate.json",
+    "campaign_aggregate_sha256": "f490251678a6c325314ce8964b6609597fd6909a2a366550b25085b03645499c",
+    "campaign_preflight_sha256": "51e069499cb19c0777b47f5a503cd1f7a1c290a792f686e6537643f3d95125c1"
+  },
+  "immutable_chain": {
+    "harness_git_sha": "e62bad1dfbc0943eeb04610fc86d3f1e7651a708",
+    "resolved_profile_sha256": "aa1931e9d4bda07b832395d58f0a06adbd2dcdbf05553eddd32b658fcc86834f",
+    "runtime_ready_record": "/home/jack/bifrost-bench-evidence/runs/stock-production-image-preparation-20261031-r1/preparation.json",
+    "runtime_ready_record_sha256": "345d31ddf3d0c67d792fe5c5097302463211944e0c547cc3583d4f5804a9f56d",
+    "original_runtime_archive": "/home/jack/bifrost-bench-evidence/runs/stock-production-image-preparation-20261031-r1/runtime-images.json",
+    "original_runtime_archive_sha256": "f1209a474caaa4d72783b4251f97ef3e71e21de2cfece305fc727f878bfcf53c",
+    "runtime_source_git_sha": "e611d31bbba3d7601980271c774cad5e821b1e97",
+    "runtime_api_tag": "bifrost-api:kind-a74e45295998-stock-e611d31bb",
+    "runtime_api_host_id": "sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692",
+    "runtime_api_config_id": "sha256:b4e0f9b7650557e3c4d272da4ff48b667f04ba168488c99220719460c0db475b",
+    "runtime_api_manifest_id": "sha256:04026602d39e8ab4e3b024e0c7a0b613e894d11d859072afe937b5febff4e4b3",
+    "supervisor_sha256": "2494f1dc83e37dfc1032f40f47a370281716467f8b27e8fa038b7d4ab5963e1e"
+  },
+  "profile_name": "4gb-capacity",
+  "mix_name": "mixed",
+  "segment": {
+    "index": 0,
+    "offered_rate_per_s": 2.236,
+    "warmup_s": 90,
+    "measured_window_s": 3600,
+    "drain_s": 120,
+    "completed_segments": 1,
+    "required_segments": 5,
+    "cleanup_verified": true
+  },
+  "stage_cleanup": {
+    "cleanup_verified": true,
+    "finished_at": "2026-11-01T02:15:10.228678+00:00"
+  },
+  "arrival_cohort": {
+    "scheduled": 8113,
+    "submitted": 8113,
+    "accepted_union": 8113,
+    "http_and_durable": 8113,
+    "http_only": 0,
+    "durable_only": 0,
+    "neither_accepted": 0,
+    "correct_by_deadline": 8113,
+    "correct_completed": 8113,
+    "correct_late": 0,
+    "durably_terminal": 8113,
+    "failed_terminal": 0,
+    "unfinished_durable": 0,
+    "duplicate_request_ids": 0,
+    "extra_durable_rows": 0
+  },
+  "event_counts": {
+    "correct_by_deadline_completed": 8115,
+    "correct_completed": 8115,
+    "durable_created": 8113,
+    "durably_terminal": 8115,
+    "http_accepted_responses": 8113,
+    "scheduled": 8113,
+    "sent": 8113
+  },
+  "event_rates_per_s": {
+    "correct_by_deadline_completed": 2.254166666666667,
+    "correct_completed": 2.254166666666667,
+    "durable_created": 2.2536111111111112,
+    "durably_terminal": 2.254166666666667,
+    "http_accepted_responses": 2.2536111111111112,
+    "scheduled": 2.2536111111111112,
+    "sent": 2.2536111111111112
+  },
+  "latency_gates": {
+    "agent-chat": {
+      "queue_p95_s": 0.4507870674133301,
+      "queue_p95_ci_low_s": 0.393718957901001,
+      "queue_p95_ci_high_s": 0.5092601776123047,
+      "queue_p95_limit_s": 5.0,
+      "queue_p95_status": "pass",
+      "e2e_p95_s": 2.4293878078460693,
+      "e2e_p95_ci_low_s": 2.2956008911132812,
+      "e2e_p95_ci_high_s": 2.562386989593506,
+      "e2e_p95_limit_s": 4.0,
+      "e2e_p95_status": "pass"
+    },
+    "agent-tools": {
+      "queue_p95_s": 0.4599878787994385,
+      "queue_p95_ci_low_s": 0.4235708713531494,
+      "queue_p95_ci_high_s": 0.5034580230712891,
+      "queue_p95_limit_s": 5.0,
+      "queue_p95_status": "pass",
+      "e2e_p95_s": 4.539368152618408,
+      "e2e_p95_ci_low_s": 4.306502342224121,
+      "e2e_p95_ci_high_s": 4.729226350784302,
+      "e2e_p95_limit_s": 8.0,
+      "e2e_p95_status": "pass"
+    },
+    "wf-io": {
+      "queue_p95_s": 0.15602993965148926,
+      "queue_p95_ci_low_s": 0.14347004890441895,
+      "queue_p95_ci_high_s": 0.16625404357910156,
+      "queue_p95_limit_s": 2.0,
+      "queue_p95_status": "pass",
+      "e2e_p95_s": 0.9904718399047852,
+      "e2e_p95_ci_low_s": 0.9751250743865967,
+      "e2e_p95_ci_high_s": 1.008955478668213,
+      "e2e_p95_limit_s": 3.0,
+      "e2e_p95_status": "pass"
+    },
+    "wf-noop": {
+      "queue_p95_s": 0.16583490371704102,
+      "queue_p95_ci_low_s": 0.13704395294189453,
+      "queue_p95_ci_high_s": 0.20226120948791504,
+      "queue_p95_limit_s": 2.0,
+      "queue_p95_status": "pass",
+      "e2e_p95_s": 0.4017200469970703,
+      "e2e_p95_ci_low_s": 0.34142255783081055,
+      "e2e_p95_ci_high_s": 0.46521806716918945,
+      "e2e_p95_limit_s": 1.0,
+      "e2e_p95_status": "pass"
+    },
+    "wf-sdk": {
+      "queue_p95_s": 0.1354060173034668,
+      "queue_p95_ci_low_s": 0.12189483642578125,
+      "queue_p95_ci_high_s": 0.15416216850280762,
+      "queue_p95_limit_s": 2.0,
+      "queue_p95_status": "pass",
+      "e2e_p95_s": 0.632695198059082,
+      "e2e_p95_ci_low_s": 0.6073544025421143,
+      "e2e_p95_ci_high_s": 0.6778380870819092,
+      "e2e_p95_limit_s": 1.5,
+      "e2e_p95_status": "pass"
+    }
+  },
+  "throughput": {
+    "value": 1.0002465179341797,
+    "limit": 0.995,
+    "status": "pass"
+  },
+  "drift": {
+    "upper_per_s": 5.9559621802218666e-05,
+    "limit_per_s": 0.002236,
+    "status": "pass"
+  },
+  "tenant_faults": {
+    "duplicate_executions": 0,
+    "evicted": 0,
+    "oom_killed": 0,
+    "quota_denials": -11,
+    "restarts": 0,
+    "status": "invalid_measurement"
+  },
+  "host_validity": {
+    "invalid_reasons": [],
+    "warnings": []
+  },
+  "resource_coverage": {
+    "observed_samples": 715,
+    "observed_seconds": 3590.42568564415,
+    "observed_window_fraction": 0.9973404682344861,
+    "missing_or_partial_observed_samples": 0
+  },
+  "aggregate": {
+    "overall": "invalid",
+    "segment_0_status": "invalid",
+    "missing_segments": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "disposition": {
+    "invalid_reason": "nonmonotonic quota_denials counter (-11) from endpoint totals over currently retained Kubernetes Events; consistent with Event expiry, but expired UID details were not captured",
+    "measurement_interpretation": "invalid measurement; not a valid tenant-fault failure",
+    "mixed_capacity": "not established",
+    "partial_campaign": "one of five required segments completed; no mixed-capacity claim"
+  },
+  "runtime_scope": "Unmodified captured production registry image; no platform code fixes or deployments. This is descriptive first-segment evidence only."
+}

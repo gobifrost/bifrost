@@ -220,9 +220,9 @@ the frozen benchmark client and infrastructure are identified separately.
 |---|---|---|
 | 4 decimal GB, SDK-only, offered 3.90625/s | Correctness preflight 127/127; confirmation 3,735/3,735 correct by deadline; end-to-end p95 1.815980 s, above the 1.5 s gate | Valid negative result; this offered rate is not accepted. Queue, throughput, strict reliability, backlog and tenant-fault gates passed. Host invalid reasons were empty; possible external memory pressure remained an unproven warning. |
 | M / 8 GiB SDK-only, offered 3.90625/s | Correctness preflight 127/127; confirmation 3,735/3,735 correct by deadline; end-to-end p95 0.583503 s; all gates passed | Valid SDK-only pass at this offered rate; no mixed or hosting-capacity claim. |
-| Mixed load and conditional soaks | Declared sequence pending | No stock mixed capacity or sustained growth claim yet. |
+| Mixed load and conditional soaks | First 4 GB hour: 8,113/8,113 arrivals correct by deadline; latency, throughput and backlog gates passed, but retained-Event quota counter delta was −11 | Invalid measurement. Remaining long windows stopped with verified cleanup; no stock mixed capacity or sustained growth claim. |
 | Browser app path | 24/24 correct actions and durable records; verified cleanup | Descriptive timing only; see the omitted-timer finding below. |
-| Stock retention rehearsal | Queued behind the same host lock | Earlier candidate storage evidence stays separate. |
+| Stock retention rehearsal | Running after the stopped mixed campaign | Earlier candidate storage evidence stays separate. |
 | Fixed-count scaling and zero-warm elasticity | [Declared experiment](2026-10-31-worker-scaling-experiment.md); tooling prepared in a separate checkout, with Docker verification queued | Neither scaling efficiency nor cold-start capacity has been measured yet. |
 
 The complete 4 GB SDK raw artifact is retained under
@@ -248,6 +248,16 @@ The [paired stock SDK report](2026-10-31-stock-sdk-baseline.md) and
 the completed comparison. M used one sampled worker throughout, versus two
 for 4 GB; the shared-component and per-worker memory allocations also changed.
 Its SDK pass cannot be used as a controlled worker-count or memory-effect claim.
+
+The [first mixed-hour scalar record](baselines/mixed-first-segment-2026-10-31-4gb-stock.json)
+preserves the completed window and its invalid disposition. The collector
+subtracted endpoint totals over currently retained Kubernetes Events. Those
+totals can fall when Events expire; the observed quota delta of −11 cannot
+certify zero new denials. Expired Event UID details were not retained, so expiry
+is a supported explanation rather than a reconstruction of the eleven lost
+counts. The raw window remains unchanged. A benchmark-only collector repair
+and a new declared campaign are required before another capacity claim; this
+does not identify a platform fault.
 
 ### Collector Validation (October 31)
 
@@ -275,12 +285,13 @@ These finish the existing deliverable; further memory reduction is not a gate.
    passed the SDK-only gate at 0.612 seconds. Neither establishes production or
    mixed capacity because the runtime includes unmerged PR #1164. The
    [earlier host-invalid observation](2026-10-31-capacity-confirmation-results.md)
-   is retained separately. Run the declared checks on the unmodified captured
-   production image next. Preserve
+   is retained separately. The stock SDK comparison above is complete. Preserve
    correctness/latency/reliability/backlog gates and measure the whole tenant,
    including Postgres, Pooler and Redis.
-2. **Sustained mixed load.** Execute the immutable five-segment confirmation
-   after its representative preflight. The planned 2.236/s is a historical
+2. **Sustained mixed load.** Repair and verify the nonmonotonic Event collector,
+   then declare a new five-segment confirmation after its representative
+   preflight. Preserve the invalid first campaign rather than replacing its
+   failed window. The planned 2.236/s is a historical
    candidate, not certified current capacity. A changed rate/design requires
    a new declared campaign. Keep every segment and per-class reliability
    evidence; incomplete samples cannot pass as capacity.
