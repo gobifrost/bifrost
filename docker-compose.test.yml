@@ -238,6 +238,7 @@ services:
       # The same as the scheduler: both are executors and run any work.
       - test-mounts:/mounts
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/worker:/tmp/git
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
@@ -311,6 +312,7 @@ services:
       # server-side. Same safety shape as the api mount: only the
       # uid-1000-created fixture subdir, never the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/scheduler:/tmp/git
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:

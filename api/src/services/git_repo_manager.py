@@ -260,7 +260,14 @@ class GitRepoManager:
         Editor, MCP and CLI writes reach S3 only. An operation that commits the
         working dir or syncs it back to S3 with --delete would otherwise revert
         or delete them.
+
+        Callers hold the repository lock. A newly assigned worker has no local
+        checkout, so hydrate it from the persisted repository first. Never do
+        this over existing files: they may contain local commits or an unfinished
+        merge, and must retain the normal fail-closed freshness check.
         """
+        if work_dir.is_dir() and not any(work_dir.iterdir()):
+            await self.sync_down(work_dir)
         baseline = work_dir / ".git" / STORAGE_BASELINE_FILE
         if not baseline.is_file() or baseline.read_text() != await self._storage_fingerprint():
             raise WorkspaceStorageChanged(

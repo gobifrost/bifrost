@@ -401,11 +401,25 @@ async def test_workspace_bundle_import_runs_real_handler_and_promotes_seeded_bun
         job = wait_for_job(e2e_client, platform_admin.headers, job_id, "workspace.bundle_import")
         assert job["result"] is not None and str(workflow_id) in job["result"]["imported_entity_ids"]
         assert await RepoStorage().read(path) == source.encode()
+        async with async_session_factory() as db:
+            imported = await db.scalar(select(Workflow.id).where(
+                Workflow.path == path,
+                Workflow.function_name == f"thin_bundle_{suffix}",
+                Workflow.solution_id.is_(None),
+            ))
+            assert imported is not None, "bundle import did not persist its workflow"
     finally:
         await WorkspaceBundleStorage(preview.json()["preview_token"]).delete()
         await RepoStorage().delete(path)
         async with async_session_factory() as db:
-            await db.execute(delete(Workflow).where(Workflow.id == workflow_id))
+            # Workspace import remaps package IDs. Its receipt reports the
+            # incoming ID, so clean up by this fixture's unique path/function.
+            await db.execute(delete(Workflow).where(
+                Workflow.path == path,
+                Workflow.function_name == f"thin_bundle_{suffix}",
+                Workflow.solution_id.is_(None),
+            ))
+            await db.execute(delete(FileIndex).where(FileIndex.path == path))
             await db.commit()
         await _delete_job(async_session_factory, job_id)
 
