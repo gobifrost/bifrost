@@ -44,3 +44,9 @@ Findings 1842 and 1843: guarded-runtime-probe.mjs and runtime-probe.mjs now
 reserve their receipts with the same exclusive helper before any invocation.
 Both include the helper in new source manifests. Shared helper tests (2) and
 both caller syntax checks pass; no probe was invoked or old receipt rewritten.
+
+Findings 1844 and 1845: canonical-refresh.mjs now reserves its receipt before
+even the Docker health inspection, and writes both invoking/observed snapshots
+through the retained file handle. The helper is included in new source hashes.
+The two shared helper tests, caller syntax check and diff check pass. No local
+stack, refresh fixture, control authentication or cloud execution was invoked.

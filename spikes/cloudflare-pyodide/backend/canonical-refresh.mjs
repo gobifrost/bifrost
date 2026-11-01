@@ -1,7 +1,8 @@
 // Fixed local canonical SDK-refresh qualification; no cloud access.
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFile,writeFile,access} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
+import {withExclusiveReceipt} from './exclusive-receipt.mjs';
 import {createHash,randomUUID} from 'node:crypto';
 import assert from 'node:assert/strict';
 const exec=promisify(execFile),[mode,name='canonical-refresh-final',scenario='direct',
@@ -13,13 +14,12 @@ const receipt=new URL(`../results/${name}.json`,import.meta.url);
 const repo=new URL('../../../',import.meta.url);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 if(mode==='--run') {
-  try {await access(receipt);throw new Error('Preserve existing receipt; invocation refused');}
-  catch(error){if(error.code!=='ENOENT')throw error;}
+  await withExclusiveReceipt(receipt, async save => {
   const health=await exec('docker',['inspect','bifrost-test-79c5c14e-api-1','--format','{{.State.Health.Status}}']);
   assert.equal(health.stdout.trim(),'healthy','Existing isolated API must be healthy before qualification');
   const container=`bifrost-pyodide-refresh-${randomUUID()}`;
   const report={container,scenario,phase:'invoking',cloud_invocations:0,physical_termination_verified:false};
-  await writeFile(receipt,JSON.stringify(report,null,2)+'\n',{flag:'wx'});
+  await save(report);
   let stdout='',code=0;
   try {({stdout}=await exec('docker',['exec','bifrost-pyodide-test-tools-ddf316c1','env',
     'LOG_DIR=/tmp/bifrost-bifrost-test-79c5c14e','BIFROST_TEST_IMAGE_TAG=bifrost-test-79c5c14e',
@@ -40,6 +40,7 @@ if(mode==='--run') {
   if(code!==0 && observations.length) report.qualification_error=observations.at(-1);
   report.source_sha256={};
   for(const path of ['spikes/cloudflare-pyodide/backend/canonical-refresh.mjs',
+    'spikes/cloudflare-pyodide/backend/exclusive-receipt.mjs',
     'spikes/cloudflare-pyodide/backend/canonical-local.py','spikes/cloudflare-pyodide/backend/runtime-runner.py',
     'spikes/cloudflare-pyodide/backend/runtime_guard.py','spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs',
     'spikes/cloudflare-pyodide/backend/test-api-route.mjs','spikes/cloudflare-pyodide/backend/pyodide_refresh.py',
@@ -61,11 +62,12 @@ if(mode==='--run') {
   report.runtime_manifest=scenario==='control-auth' ? null : artifactManifest;
   report.payload_sha256=scenario==='control-auth' ? null :
     JSON.parse(await readFile(new URL('../results/'+artifactManifest,import.meta.url),'utf8')).payload_sha256;
-  await writeFile(receipt,JSON.stringify(report,null,2)+'\n');
+  await save(report);
   console.log({process_exit_code:code,refresh_probe:report.result.refresh_probe,
     workflow_document_status:report.result.workflow_document_status,
     worker_error_type:report.result.provider_evidence?.result?.error_type});
   process.exitCode=code || (best ? 0 : 1);
+  });
 } else if(mode==='--verify') {
   const r=JSON.parse(await readFile(receipt,'utf8'));
   assert.equal(r.phase,'observed');
