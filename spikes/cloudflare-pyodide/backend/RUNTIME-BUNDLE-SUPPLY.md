@@ -1,7 +1,9 @@
 # Supported runtime bundle supply, run73
 
-Subsequent bounded publisher-source build evidence is below. It did not produce
-a matching bundle and does not supersede the preserved download denial.
+Current update: [subsequent publisher-source reconstruction](../SOURCE-RUNTIME-QUALIFICATION.md)
+produced the exact matching bundle and passed network-disabled actual-workerd
+ABI/native validation. The denial and initial failed builds below remain history;
+they were not bypassed or rewritten. Physical termination remains unqualified.
 
 Thomas authorized identifying a legitimate supply path following the preserved
 403. Delivery 811c5b11-2e83-457a-9d42-aaf2557acbe5 was acknowledged in native

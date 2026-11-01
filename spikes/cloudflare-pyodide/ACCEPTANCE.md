@@ -1,6 +1,7 @@
 # Backend acceptance ledger
 
-Reconciled against source/evidence through `5aaeb608cfdb884ca7d1b45e9c767bb6d83aa2bf` on 2026-11-01.
+Reconciled against preserved source/evidence on 2026-11-01, including the exact
+publisher build and actual-workerd ABI/timed-cancellation receipts in SOURCE-RUNTIME-QUALIFICATION.md.
 The full backend objective is **not achieved**. The useful trusted subset is
 experimental YELLOW; first-class arbitrary untrusted execution is RED under the
 tested physical-termination contract. A source PR, an approved research review,
@@ -14,7 +15,7 @@ green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 | Actual canonical error and output channels | backend/WORKFLOW-FAILURE.md; failure-terminal receipt | Genuine ValueError and redacted structured logs persist/reconcile; stdout is absent in shared engine path. Runtime qualification deliberately still fails that assertion. |
 | Integration/config reads and table writes | NODE-INTEGRATION-QUALIFICATION.md; actual guest API 200/peer 403, independent table readback 70 | Guest actual integration SDK and canonical consumption pass. Synthetic encrypted secret decrypts correctly and result/log probes redact; OAuth and authenticated cloud-to-BiFrost end-to-end remain unqualified. |
 | Dependency closure and pinned provenance | Runtime manifest/source hashes, packaged closure and module-response tests | Tested closure exists. Broad package compatibility and missing-wheel builds are not implied. |
-| Runtime versus resolver identity | backend/RUNTIME-PROVENANCE.md; actual full-closure fingerprint and bootstrap guard | Local runtime/ABI pin enforced before upstream import; cloud runtime still requires separate qualification. |
+| Runtime versus resolver identity | backend/RUNTIME-PROVENANCE.md; SOURCE-RUNTIME-QUALIFICATION.md; full-closure fingerprint and bootstrap guard | Exact source-built bundle matches existing hash; actual network-disabled workerd ABI/native validation passes. Deployed runtime still needs separate qualification. |
 | Native dependency qualification | backend/NATIVE-PACKAGE-QUALIFICATION.md; native-package-resume raw results | Existing matching native Pydantic/PyYAML WASM wheels execute under official guest Pyodide: 32 selected upstream pydantic-core tests and 261 selected PyYAML native cases pass. No wheel compilation was needed. This is neither full package-suite nor actual Cloudflare wheel acceptance. |
 | Dynamic workspace/source integrity | Actual helper import; module/resolution integrity checks | Fixed loose-workspace path passes. Solution/artifact-workspace remapping is rejected. Trusted production artifact selection is not integrated. |
 | Canonical dispatch ownership/fencing | Actual stage/claim/consumer tests; journal PostgreSQL tests | Local pass. Transport journal survives reconnect only, not host loss; it is not a second queue. |
@@ -29,7 +30,7 @@ green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 | Upstream retained terminal-event/ACK reuse | backend/RETAINED-RESULTS.md; protocol JUnit and canonical-refresh-retained-response.json | Actual local Worker/SDK result survives downstream response loss and lost ACK using upstream retention; one launch/log row, Success/value 70, access/refresh revoked. Control link remains simulated; live authentication, upstream-link loss and whole-host recovery unqualified. |
 | Reconnect/reconciliation without duplicate effects | Lost-ACK local runs; postcommit fault matrix; RESPONSE-LOSS and RETAINED-RESULTS | Without a retained provider result, loss stays Running. The retained gateway path below recovers locally. Whole-host recovery and timely interrupted-run revocation remain unqualified; mid-callback cache/log boundaries persist. |
 | I/O cancellation | Local/cloud before/after probes | Later observed I/O effect suppressed in bounded probes. No universal physical-termination receipt. |
-| CPU cancellation and physical termination | cpu-catch-cloud-fresh.json; external abort data; backend/TERMINATION-EVIDENCE.md | Catchable quota exception permits later effects. Cloud CPU abort was not exercised; local abort/effects lack an abort timestamp. No trusted physical-stop receipt is established. |
+| CPU cancellation and physical termination | Historical cloud catch; SOURCE-RUNTIME-QUALIFICATION.md and source-termination-resume receipt | New actual-workerd independent observer timestamps a later CPU effect 1672.304 ms after abort. Local catch loop completes without quota exception; cloud catch remains separate evidence. No trusted physical-stop receipt exists. |
 | Deadlines/provider CPU failure mapping | Outcome-mapping PostgreSQL fault matrix; actual cloud CPU exception | Mapping of reported outcome is tested; trusted physical deadline enforcement is not. |
 | Worker interruption and cleanup | Local termination fixture, canonical fixture cleanup, cloud retirement readbacks | Full interrupted-attempt provider recovery and physical-handle cleanup remain incomplete. Retired cloud test allowance cannot be reused. |
 | Oversized payload/memory exhaustion | Bounded transport tests; historical local/cloud memory artifacts | Negative probes exist. No measured safe per-run peak or capacity admission for current engine; synthetic 1 GiB fixture budget is not isolate capacity. |

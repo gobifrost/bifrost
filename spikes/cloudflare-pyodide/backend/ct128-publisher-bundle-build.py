@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -9,11 +10,11 @@ import time
 import urllib.request
 
 ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
-RUN = ROOT / 'runs/publisher-bundle-build-v4'
+RUN = ROOT / 'runs/publisher-bundle-build-v7'
 SOURCE = ROOT / 'sources/workerd-v1.20261023.1'
 COMMIT = '7caf6dee5bfe9af1b7710ddf66222900007af080'
 EXPECTED = '3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260'
-NAME = 'pyodide-ddf316c1-publisher-build-v4'
+NAME = 'pyodide-ddf316c1-publisher-build-v7'
 
 
 def output(args):
@@ -67,13 +68,17 @@ def main():
         # No rewrites, credentials or alternate route to the denied artifact.
         (RUN / 'downloader.conf').write_text('block pyodide-capnp-bin.edgeworker.net\nblock r2.dev\n')
         bazel = ['/build/bazel', '--batch', '--host_jvm_args=-Xmx512m', '--host_jvm_args=-XX:ActiveProcessorCount=1', '--output_user_root=/build/bazel-state', '--output_base=/build/output',
-                 'build', '//src/pyodide:pyodide.capnp.bin@rule@314.0.6', '--jobs=1', '--loading_phase_threads=1',
+                 'build', '//src/pyodide:pyodide.capnp.bin@rule@314.0.6', '--jobs=1', '--loading_phase_threads=1', '--legacy_globbing_threads=1',
                  '--local_resources=memory=1024', '--repository_cache=/build/repository-cache',
                  '--downloader_config=/build/downloader.conf', '--remote_cache=', '--remote_executor=']
+        build_script = '#!/bin/sh\nset -eu\nexport DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y --no-install-recommends clang=1:19.0-63 lld=1:19.0-63 libc++-dev=1:19.0-63 libc++abi-dev=1:19.0-63\ndpkg-query -W > /build/toolchain-packages.tsv\n' + 'exec ' + shlex.join(bazel) + '\n'
+        (RUN / 'build.sh').write_text(build_script)
+        report['build_script_sha256'] = hashlib.sha256(build_script.encode()).hexdigest()
+        report['build_only_packages'] = ['clang=1:19.0-63', 'lld=1:19.0-63', 'libc++-dev=1:19.0-63', 'libc++abi-dev=1:19.0-63']
         args = ['docker', 'run', '--name', NAME, '--cpus=1', '--memory=2g', '--memory-swap=2g',
                 '--pids-limit=256', '--env', 'PATH=/build/tools/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', '--mount', f'type=bind,src={RUN},dst=/build',
-                '--workdir', '/build/source', '--entrypoint', '/build/bazel',
-                'bifrost-test-api-dev:bifrost-test-7ddfac36', *bazel[1:]]
+                '--workdir', '/build/source', '--entrypoint', '/bin/sh',
+                'bifrost-test-api-dev:bifrost-test-7ddfac36', '/build/build.sh']
         report['command'] = args
         with (RUN / 'build.log').open('x') as log:
             process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT)

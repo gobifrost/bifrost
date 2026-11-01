@@ -1,5 +1,9 @@
 # CT128 runtime qualification, run72
 
+Historical stopping point. [Subsequent exact publisher-source reconstruction](../SOURCE-RUNTIME-QUALIFICATION.md)
+resolved bundle supply and passed actual-workerd ABI/native validation. The new
+timed cancellation observation still fails the physical-stop requirement.
+
 Delivery 8e8c7bc2-9477-4a1a-b1cc-5b68d2c08e64 was acknowledged in native run72.
 Tested source: 785b560b9973020e1c13401383e1a73a87a54940. Existing CT128 ownership,
 hostname, idle container state and 2 CPU/4096 MiB/zero-swap allocation were

@@ -1,10 +1,11 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
-Guest offload update: CT128 protocol tests and control authentication qualified;
-the subsequent pinned Pyodide runtime attempt is blocked before Python startup
-by an HTTP 403 for its exact official bundle. See
-[CT128 runtime frontier](backend/CT128-RUNTIME-FRONTIER.md) for preserved evidence,
-the prepared (unexecuted) timestamped termination fixture and remaining gates.
+Guest offload update: the publisher-source build now reproduces the exact pinned
+bundle, resolving the recorded HTTP 403 supply blocker without retrying it.
+[Actual workerd ABI/native validation passes](SOURCE-RUNTIME-QUALIFICATION.md)
+network-disabled in CT128. Its independent timed observer also records a CPU
+effect 1.67 seconds after abort, so physical termination remains unqualified.
+The [original CT128 frontier](backend/CT128-RUNTIME-FRONTIER.md) is preserved as history.
 Independent [native package qualification](backend/NATIVE-PACKAGE-QUALIFICATION.md)
 now runs official Pyodide 314.0.6 in CT128: 32 upstream pydantic-core and 261
 PyYAML native cases pass. This does not replace or qualify Cloudflare's bundle.
@@ -13,7 +14,7 @@ including async context, partial-success status and exception redaction.
 Actual guest [SDK/canonical-consumer execution](NODE-SDK-QUALIFICATION.md) now
 passes, including [integration reads and encrypted synthetic secret redaction](NODE-INTEGRATION-QUALIFICATION.md).
 These use official Pyodide on Node against the isolated upstream API; they do
-not replace the blocked actual-workerd or deployed Cloudflare qualification.
+not replace actual-workerd canonical SDK or deployed Cloudflare qualification.
 Current work uses only the existing bounded CT128 allocation. Laptop Docker
 remains stopped; no new cloud invocation or deployment is authorized.
 Guest [WASM memory observations](NODE-MEMORY-QUALIFICATION.md) are now preserved

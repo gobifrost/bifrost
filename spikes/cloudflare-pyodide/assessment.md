@@ -177,7 +177,7 @@ Pyodide overhead. Successive fixture runs may warm caches. Bundle dry-run:
 9,246.93 KiB total / 2,432.48 KiB gzip at that experiment revision (later probe
 fixtures change this slightly). Vendored package data dominate the bundle.
 
-At current published paid marginal rates, **estimate only**, for mean CPU c ms:
+For the historical standard-Worker request model, **estimate only**, for mean CPU c ms:
 `cost/1000 = $0.0003 + $0.00002*c`, excluding the $5 monthly minimum, included
 allowances and upstream API/Linux/control-plane costs. For example c=10,100,1000
 would yield $0.0005,$0.0023,$0.0203. `metrics-summary.json` applies the formula to
@@ -185,6 +185,20 @@ observed request mean CPU. These are marginal estimates, not invoices or full
 system economics. Cloud integration/table requests fail without credentials
 inside HTTP 200 envelopes; their request costs are not successful SDK execution
 costs. I/O wall time is not billable CPU time.
+
+The proposed fresh Dynamic Worker per attempt has an additional creation cost.
+The [current Dynamic Workers pricing page](https://developers.cloudflare.com/dynamic-workers/pricing/)
+(checked 2026-11-01) counts each `load()` invocation separately, charges $0.002
+per additional Worker/day, and bills startup CPU as well as execution CPU.
+After included allowances are consumed, creation alone is therefore **$2 per
+1,000 fresh attempts**. With average billed request count `r` and combined
+startup/execution CPU `c` milliseconds per attempt, the marginal estimate is
+`$2 + $0.0003*r + $0.00002*c` per 1,000. This excludes plan minimums, API,
+control-plane and other costs; it is neither measured SDK economics nor an
+invoice. Node bootstrap wall time cannot supply `c`. Cached-ID reuse is not an
+authorized optimization for the required fresh untrusted execution boundary.
+The historical formula above must not be used as the complete cost of that
+fresh-isolate design. No Linux price comparison is inferred without a baseline.
 
 ## Routing recommendation
 

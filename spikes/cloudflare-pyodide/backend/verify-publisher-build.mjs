@@ -26,4 +26,4 @@ assert.match(readFileSync(new URL('v1-build.log',root),'utf8'),/patch: command n
 assert.match(readFileSync(new URL('v2-build.log',root),'utf8'),/unable to create native thread/);
 assert.match(readFileSync(new URL('v3-build.log',root),'utf8'),/already in use/);
 assert.match(readFileSync(new URL('v4-build.log',root),'utf8'),/unable to create native thread/);
-console.log('Negative publisher-source build evidence verified; no matching bundle or runtime qualification exists.');
+console.log('Historical negative publisher-build receipts verified; subsequent success is checked separately by verify-source-runtime.mjs.');

@@ -1,0 +1,115 @@
+Extracting Bazel installation...
+OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release.
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Loading: 
+Loading: 9 packages loaded
+Loading: 9 packages loaded
+    currently loading: src/pyodide
+DEBUG: /build/output/external/aspect_tools_telemetry+/extension.bzl:184:14: Aspect Telemetry is uploading ruleset usage data (which Bazel and module versions are in use) now and on future builds, to help us maintain our open source rulesets. Reports carry no user or organization identifiers and are governed by the https://aspect.build/privacy-policy.
+
+To opt out, add this line to your .bazelrc:
+  common --repo_env=DO_NOT_TRACK=1
+
+See https://github.com/aspect-build/tools_telemetry for the exact fields and finer-grained controls.
+Loading: 9 packages loaded
+    currently loading: src/pyodide
+Loading: 9 packages loaded
+    currently loading: src/pyodide
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (10 packages loaded)
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (14 packages loaded, 6 targets configured)
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (14 packages loaded, 6 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (14 packages loaded, 6 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (20 packages loaded, 22 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (24 packages loaded, 22 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (24 packages loaded, 22 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (25 packages loaded, 22 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (87 packages loaded, 22 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (107 packages loaded, 30 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (134 packages loaded, 770 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (140 packages loaded, 1784 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (140 packages loaded, 1784 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (140 packages loaded, 1784 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (143 packages loaded, 6558 targets configured)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (146 packages loaded, 8280 targets configured)
+
+DEBUG: /build/output/external/aspect_rules_ts+/ts/extensions.bzl:103:14: WARNING: rules_ts: the 'ext' module extension symbol is deprecated and will be removed in the next
+major release. Rename `use_extension(..., "ext")` to `use_extension(..., "typescript")`.
+DEBUG: /build/output/external/aspect_rules_ts+/ts/extensions.bzl:105:14: WARNING: rules_ts: the 'ts_version', 'ts_version_from' and 'ts_integrity' attributes of the
+TypeScript module extension are deprecated and will be removed in the next major release. Rename
+them to 'version', 'version_from' and 'integrity':
+
+    typescript = use_extension("@aspect_rules_ts//ts:extensions.bzl", "typescript")
+    typescript.deps(version = "...")   # or version_from = "//:package.json"
+    use_repo(typescript, "npm_typescript")
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (157 packages loaded, 8379 targets configured, 1 aspect application)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (157 packages loaded, 8379 targets configured, 1 aspect application)
+
+Analyzing: target //src/pyodide:pyodide.capnp.bin@rule@314.0.6 (160 packages loaded, 8393 targets configured, 1 aspect application)
+
+INFO: Repo rules_cc++cc_configure_extension+local_config_cc defined by rule cc_autoconf in @@rules_cc+//cc/private/toolchain:cc_configure.bzl
+ERROR: /build/output/external/rules_cc+/cc/private/toolchain/lib_cc_configure.bzl:112:9: An error occurred during the fetch of repository 'rules_cc++cc_configure_extension+local_config_cc':
+   Traceback (most recent call last):
+	File "/build/output/external/rules_cc+/cc/private/toolchain/cc_configure.bzl", line 119, column 33, in cc_autoconf_impl
+		configure_unix_toolchain(repository_ctx, cpu_value, overriden_tools)
+	File "/build/output/external/rules_cc+/cc/private/toolchain/unix_cc_configure.bzl", line 413, column 23, in configure_unix_toolchain
+		cc = _find_generic(repository_ctx, "gcc", "CC", overridden_tools)
+	File "/build/output/external/rules_cc+/cc/private/toolchain/unix_cc_configure.bzl", line 374, column 32, in _find_generic
+		auto_configure_fail(msg)
+	File "/build/output/external/rules_cc+/cc/private/toolchain/lib_cc_configure.bzl", line 112, column 9, in auto_configure_fail
+		fail("\n%sAuto-Configuration Error:%s %s\n" % (red, no_color, msg))
+Error in fail: 
+Auto-Configuration Error: Cannot find gcc or CC (clang); either correct your path or set the CC environment variable
+ERROR: no such package '@@rules_cc++cc_configure_extension+local_config_cc//': 
+Auto-Configuration Error: Cannot find gcc or CC (clang); either correct your path or set the CC environment variable
+ERROR: /build/output/external/+http+capnp-cpp/src/capnp/BUILD.bazel:144:10: @@+http+capnp-cpp//src/capnp:capnp_tool depends on @@rules_cc++cc_configure_extension+local_config_cc//:cc-compiler-k8 in repository @@rules_cc++cc_configure_extension+local_config_cc which failed to fetch. no such package '@@rules_cc++cc_configure_extension+local_config_cc//': 
+Auto-Configuration Error: Cannot find gcc or CC (clang); either correct your path or set the CC environment variable
+ERROR: Analysis of target '//src/pyodide:pyodide.capnp.bin@rule@314.0.6' failed; build aborted: Analysis failed
+INFO: Elapsed time: 64.162s, Critical Path: 0.24s
+INFO: 1 process: 1 internal.
+ERROR: Build did NOT complete successfully
