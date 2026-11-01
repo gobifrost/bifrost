@@ -64,6 +64,18 @@ Providers must preserve idempotency and tombstones, reject conflicting
 reservations or resource UIDs, and never restart a stopped incarnation. Report
 out-of-memory only from explicit runtime evidence, not a generic process exit.
 
+## Confirmed Physical Cleanup
+
+Lost and retired external workers remain eligible for resource cleanup until
+provider absence or a validated `deleted` response confirms deletion. Provider
+outages and controller restarts do not expire this eligibility after one hour.
+The controller persists `capacity_resource_deleted_at` only for the unchanged,
+still-terminal incarnation, preserving its resource UID and loss/retirement
+history. Confirmed rows stop generating provider lookups and DELETE calls.
+The nullable migration lets existing terminal rows converge through the same
+readback path; it changes no provider protocol or Kubernetes cleanup cutoff.
+Do not prune unconfirmed worker rows while their physical resources may exist.
+
 ## Launcher Admission and Recovery
 
 The prepared resource launches the normal worker image with
