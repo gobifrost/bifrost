@@ -1,6 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {cloudProbeFetch,CLOUD_PROBE_URL,boundedText,boundedJson} from './probe-io.mjs';
+import {mkdtemp,writeFile,readFile,access,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {cloudProbeFetch,CLOUD_PROBE_URL,boundedText,boundedJson,diagnosticJson} from './probe-io.mjs';
 
 test('authentication goes only to the fixed target and redirects fail closed',async()=>{
   const original=globalThis.fetch;
@@ -36,4 +39,47 @@ test('invalid UTF-8 and malformed JSON are rejected',async()=>{
   await assert.rejects(boundedText(new Response(new Uint8Array([0xff]))),TypeError);
   await assert.rejects(boundedJson(new Response('{invalid')),SyntaxError);
   assert.deepEqual(await boundedJson(Response.json({status:'Failed'})),{status:'Failed'});
+});
+
+test('diagnostic JSON rejects credential echoes including escaped nested values',()=>{
+  for(const secret of ['synthetic-runtime-token','quoted"credential\nvalue']) {
+    assert.throws(()=>diagnosticJson({body:{error:'echo '+secret}},[secret]),error=>{
+      assert.equal(error.message,'Credential exposure: diagnostic evidence withheld');
+      assert.ok(!error.message.includes(secret));
+      return true;
+    });
+  }
+});
+
+test('serialized output limit includes JSON escaping and UTF-8 bytes',()=>{
+  assert.throws(()=>diagnosticJson({body:'\u0000'.repeat(10)},[],40),/Serialized diagnostic exceeds/);
+  const value={body:'✓'};
+  const encoded=diagnosticJson(value);
+  const bytes=new TextEncoder().encode(encoded).byteLength;
+  assert.equal(diagnosticJson(value,[],bytes),encoded);
+  assert.throws(()=>diagnosticJson(value,[],bytes-1),/byte limit/);
+});
+
+test('hostile response strings remain inert data and invalid guard configuration fails',()=>{
+  const value={path:'../../outside',body:'import("node:fs").then(() => { throw 42; })'};
+  assert.deepEqual(JSON.parse(diagnosticJson(value)),value);
+  assert.throws(()=>diagnosticJson(value,[null]),TypeError);
+  assert.throws(()=>diagnosticJson(value,[],Infinity),TypeError);
+  assert.throws(()=>diagnosticJson(undefined),TypeError);
+});
+
+test('credential echo is rejected before a receipt is created; hostile fields cannot select its path',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'pyodide-diagnostic-'));
+  const output=join(directory,'receipt.json');
+  try {
+    const secret='synthetic-scoped-credential';
+    const body=await boundedJson(Response.json({error:'Bearer '+secret}));
+    await assert.rejects(async()=>writeFile(output,diagnosticJson({body},[secret])),/evidence withheld/);
+    await assert.rejects(access(output),{code:'ENOENT'});
+    const hostile={path:'../../outside',body:'process.exit(99)'};
+    await writeFile(output,diagnosticJson(hostile));
+    assert.deepEqual(JSON.parse(await readFile(output,'utf8')),hostile);
+  } finally {
+    await rm(directory,{recursive:true});
+  }
 });

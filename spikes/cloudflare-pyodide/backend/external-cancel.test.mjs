@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {writeFile} from 'node:fs/promises';
-import {boundedText} from '../probe-io.mjs';
+import {boundedText,diagnosticJson} from '../probe-io.mjs';
 const controller=new AbortController();
 const events=[];
 let abortTimer;
@@ -38,7 +38,7 @@ try {
   await Promise.race([afterEffect,new Promise(resolve=>{observationTimer=setTimeout(resolve,15000);})]);
   const result={runtime:'local-workerd',external_abort_requested:controller.signal.aborted,
     observation_window_ms:15000,events,outcome};
-  await writeFile(new URL('../results/external-cpu-cancel-local.json',import.meta.url),JSON.stringify(result,null,2)+'\n');
+  await writeFile(new URL('../results/external-cpu-cancel-local.json',import.meta.url),diagnosticJson(result));
   console.log({external_abort_requested:result.external_abort_requested,events,outcome_status:outcome.status,
     outcome_error:outcome.error_type});
   assert.ok(controller.signal.aborted,'External timer must fire');

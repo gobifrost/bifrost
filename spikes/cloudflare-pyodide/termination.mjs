@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {writeFile} from 'node:fs/promises';
-import {boundedText} from './probe-io.mjs';
+import {boundedText,diagnosticJson} from './probe-io.mjs';
 const exec=promisify(execFile);
 // This script restarts ONLY the named disposable spike container.
 const started=Date.now();
@@ -13,7 +13,7 @@ await new Promise(resolve=>setTimeout(resolve,500));
 await exec('docker',['restart','bifrost-pyodide-ddf316c1']);
 const outcome=await pending;
 assert.ok(outcome.error || outcome.status>=500);
-await writeFile('results/termination.json',JSON.stringify({runtime:'local-workerd',
+await writeFile('results/termination.json',diagnosticJson({runtime:'local-workerd',
   test:'container termination during ten-second I/O',wall_ms:Date.now()-started,outcome,
-  durable_recovery:'not implemented; no authoritative execution was claimed'},null,2)+'\n');
+  durable_recovery:'not implemented; no authoritative execution was claimed'}));
 console.log('In-flight request interrupted; no durable recovery claim.');

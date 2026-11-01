@@ -63,6 +63,40 @@ The next safe remote step is the fixed control-auth fixture on this same isolate
 stack, followed by dependency/ABI-qualified Pyodide setup. No new cloud invocation,
 production cutover or resource/security change is authorized by this offload.
 
+## Subsequent control-auth qualification, run71
+
+Source eee2a6faf23b3242b633e42b030d6959455a4593 was checked out separately in
+the same assigned scratch, with no source patches/untracked fixtures. The
+transport harness now supports explicit --control-auth; its baseline mode and
+exclusive run68 reservations remain preserved. Invocation from the existing
+Windows owner connection:
+
+```powershell
+Get-Content -Raw spikes/cloudflare-pyodide/backend/remote-ct128-qualify.py | ssh -o BatchMode=yes -o ConnectTimeout=6 pve-t340 "pct exec 128 -- python3 - --control-auth"
+```
+
+The same image/sidecar checks, 900 s/disk guard, empty HOME and 2 CPU/4 GiB guest
+envelope applied. After ./test.sh stack up, only the owner project's worker and
+scheduler were stopped; its API remained live. Exact Docker fixture invocation
+and read-only /spike mount are recorded in results/ct128-run71-control-auth/receipt.json.
+All three commands exited 0. Total supervisor duration was 107.33 s.
+
+Actual upstream WebSocket /api/worker-control accepted signed hello generation 1
+and reconnect generation 2. Invalid signature, nonce replay, superseded socket
+and stale generation each closed with 1008. Canonical DB assertions verified no
+invalid owner acquisition/advance, empty supported handlers, Starting state and
+zero claims. Linux template processes were not started. Fixture worker deletion
+was verified; signed hello material was not retained in evidence.
+
+All project bifrost-test-a68d5ca1 containers were stopped, read back empty, and
+volumes/logs preserved. Receipt SHA-256:
+75e32215702729302f93eefca90c2c11d85fddc0db8a8923e0bc7ec719a292a0.
+Memory samples were copied with their recorded hash verified. This qualifies
+remote authentication/fencing only: execution_admission_qualified and
+physical_termination_verified remain false. No 40-test baseline rerun or cloud
+invocation occurred. Next: preserve these handshake semantics when qualifying
+physical inventory/adoption; fresh untrusted CPU termination remains blocked.
+
 ## Historical pending packet (preserved)
 
 **Acted upon locally; remote execution has not occurred.** Delivery

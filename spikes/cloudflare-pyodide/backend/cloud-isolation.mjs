@@ -2,7 +2,7 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {cloudProbeFetch,boundedText} from '../probe-io.mjs';
+import {cloudProbeFetch,boundedText,diagnosticJson} from '../probe-io.mjs';
 const {SPIKE_AUTH}=JSON.parse(await readFile(join(tmpdir(),'bifrost-pyodide-ddf316c1-secrets.json'),'utf8'));
 const ledgerPath=new URL('../results/fresh-cloud-budget.json',import.meta.url);
 let ledger;
@@ -62,5 +62,5 @@ try {
   evidence.total_reserved_invocations=ledger.reservations.length;
   const filename=['cpu_limit','cpu_catch'].includes(process.env.SPIKE_ONLY) ? process.env.SPIKE_ONLY.replace('_','-')+'-cloud-fresh' :
     (suite==='engine' ? (process.env.SPIKE_ONLY==='transform' ? 'engine-cloud-diagnostic' : 'engine-cloud-fresh') : 'isolation-cloud-fresh');
-  await writeFile(new URL('../results/'+filename+'.json',import.meta.url),JSON.stringify(evidence,null,2)+'\n');
+  await writeFile(new URL('../results/'+filename+'.json',import.meta.url),diagnosticJson(evidence,[SPIKE_AUTH]));
 }

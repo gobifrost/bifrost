@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -30,7 +31,12 @@ def command(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main():
+def main(control_auth=False):
+    global SOURCE, CHECKOUT, RUN
+    if control_auth:
+        SOURCE = 'eee2a6faf23b3242b633e42b030d6959455a4593'
+        CHECKOUT = ROOT / SOURCE
+        RUN = ROOT / 'runs' / ('owner-run71-control-auth-' + SOURCE[:12])
     binding = json.loads((ROOT / 'owner-binding.json').read_text())
     assert binding['owner_thread_id'] == OWNER and binding['vmid'] == 128
     assert command(['hostname']) == 'bifrost-pyodide-test-01'
@@ -71,15 +77,26 @@ def main():
         report['sidecars_verified'] = staged
         project = command(['bash', '-c', 'source scripts/lib/test_helpers.sh; compute_project_name .'], cwd=CHECKOUT)
         report['project'] = project
-        report['fixture_sha256'] = {p: hashlib.sha256((CHECKOUT / 'api' / p).read_bytes()).hexdigest()
-                                    for p in SELECTORS}
+        fixture_paths = ['spikes/cloudflare-pyodide/backend/control-auth.py'] if control_auth else ['api/' + p for p in SELECTORS]
+        report['fixture_sha256'] = {p: hashlib.sha256((CHECKOUT / p).read_bytes()).hexdigest()
+                                    for p in fixture_paths}
         env = {'PATH': os.environ['PATH'], 'HOME': str(RUN / 'home'),
                'BIFROST_SKIP_BUILD': '1', 'BIFROST_TEST_IMAGE_TAG': 'bifrost-test-7ddfac36',
                'BIFROST_TEST_UNIT_ONLY': '1'}
-        for index, args in enumerate([['./test.sh', 'stack', 'up'], ['./test.sh', *SELECTORS, '-q']]):
+        compose = ['docker', 'compose', '-p', project, '-f', 'docker-compose.test.yml']
+        fixture_command = [*compose, '--profile', 'test', 'run', '--rm', '--no-deps',
+            '--name', project + '-control-auth', '--volume',
+            str(CHECKOUT / 'spikes/cloudflare-pyodide') + ':/spike:ro', 'test-runner',
+            'python', '/spike/backend/control-auth.py', '--control-auth']
+        commands = [['./test.sh', 'stack', 'up']]
+        if control_auth:
+            commands += [[*compose, 'stop', 'worker', 'scheduler'], fixture_command]
+        else:
+            commands += [['./test.sh', *SELECTORS, '-q']]
+        for index, args in enumerate(commands):
             entry = {'argv': args, 'started_at_epoch': time.time()}
             report['commands'].append(entry)
-            if index == 1:
+            if args == (fixture_command if control_auth else commands[-1]):
                 report['remote_test_executed'] = True
             with (RUN / f'phase-{index}.log').open('x') as output:
                 process = subprocess.Popen(args, cwd=CHECKOUT, env=env, stdout=output,
@@ -100,13 +117,24 @@ def main():
                 entry['exit_code'] = process.returncode
             entry['finished_at_epoch'] = time.time()
             assert entry['exit_code'] == 0, entry
-        junit = Path('/tmp') / ('bifrost-' + project) / 'test-results.xml'
-        shutil.copyfile(junit, RUN / 'test-results.xml')
-        tree = ET.parse(junit)
-        cases = tree.findall('.//testcase')
-        report['junit'] = {'cases': len(cases), 'failures': len(tree.findall('.//failure')),
-                           'errors': len(tree.findall('.//error')), 'skipped': len(tree.findall('.//skipped'))}
-        assert len(cases) == 40 and not any(report['junit'][k] for k in ('failures', 'errors', 'skipped'))
+        if control_auth:
+            reports = [json.loads(line) for line in (RUN / 'phase-2.log').read_text().splitlines()
+                       if line.startswith('{"runtime":')]
+            result = reports[-1]
+            for key in ('control_auth_probe', 'empty_handlers_preserved', 'remained_starting',
+                        'linux_templates_unstarted', 'fixture_worker_cleanup_verified'):
+                assert result[key] is True, key
+            assert result['claims_observed'] == result['actual_worker_invocations'] == 0
+            assert result['physical_termination_verified'] is False
+            report['control_auth'] = result
+        else:
+            junit = Path('/tmp') / ('bifrost-' + project) / 'test-results.xml'
+            shutil.copyfile(junit, RUN / 'test-results.xml')
+            tree = ET.parse(junit)
+            cases = tree.findall('.//testcase')
+            report['junit'] = {'cases': len(cases), 'failures': len(tree.findall('.//failure')),
+                               'errors': len(tree.findall('.//error')), 'skipped': len(tree.findall('.//skipped'))}
+            assert len(cases) == 40 and not any(report['junit'][k] for k in ('failures', 'errors', 'skipped'))
         report['qualification_passed'] = True
     except Exception as error:
         report['qualification_passed'] = False
@@ -128,4 +156,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:] not in ([], ['--control-auth']):
+        raise SystemExit('Use no arguments or --control-auth')
+    main(control_auth=sys.argv[1:] == ['--control-auth'])

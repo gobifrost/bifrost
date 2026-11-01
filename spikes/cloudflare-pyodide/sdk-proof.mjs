@@ -1,7 +1,7 @@
 // Uses only the dedicated local debug API; token lives in memory, never in artifacts.
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
-import {boundedJson} from './probe-io.mjs';
+import {boundedJson,diagnosticJson} from './probe-io.mjs';
 const api='http://127.0.0.1:39046';
 const login = await fetch(`${api}/api/auth/login`, {method:'POST',
   body:new URLSearchParams({username:'dev@gobifrost.com', password:'password'})});
@@ -30,7 +30,7 @@ await import('./bench.mjs');
 // Independent REST readback verifies the SDK write reached the real platform.
 response=await fetch(`${api}/api/tables/pyodide-spike/documents/probe`,{headers});
 const readback=await boundedJson(response);
-await writeFile('results/sdk-readback.json',JSON.stringify({http_status:response.status,readback},null,2)+'\n');
+await writeFile('results/sdk-readback.json',diagnosticJson({http_status:response.status,readback},[token]));
 assert.equal(response.status,200);
 assert.equal(readback.data.value,42);
 console.log('Real SDK write independently read back through REST.');

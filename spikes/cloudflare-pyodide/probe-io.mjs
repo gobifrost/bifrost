@@ -36,3 +36,23 @@ export async function boundedText(response,maxBytes=1024*1024) {
 export async function boundedJson(response,maxBytes) {
   return JSON.parse(await boundedText(response,maxBytes));
 }
+
+// Diagnostic content remains untrusted JSON. Check before any filesystem write;
+// never include the rejected payload or credential in the error message.
+export function diagnosticJson(value, forbiddenValues=[], maxBytes=1024*1024) {
+  if(!Array.isArray(forbiddenValues) || forbiddenValues.some(v=>typeof v!=='string')) {
+    throw new TypeError('Diagnostic credential list must contain strings');
+  }
+  if(!Number.isSafeInteger(maxBytes) || maxBytes<1) throw new TypeError('Invalid diagnostic byte limit');
+  const encoded=JSON.stringify(value,null,2);
+  if(typeof encoded!=='string') throw new TypeError('Diagnostic value must encode as JSON');
+  for(const secret of forbiddenValues) {
+    if(secret && (encoded.includes(secret) || encoded.includes(JSON.stringify(secret).slice(1,-1)))) {
+      throw new Error('Credential exposure: diagnostic evidence withheld');
+    }
+  }
+  if(new TextEncoder().encode(encoded+'\n').byteLength>maxBytes) {
+    throw new Error('Serialized diagnostic exceeds byte limit');
+  }
+  return encoded+'\n';
+}

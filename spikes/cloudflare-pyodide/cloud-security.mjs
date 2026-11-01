@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {cloudProbeFetch,boundedJson} from './probe-io.mjs';
+import {cloudProbeFetch,boundedJson,diagnosticJson} from './probe-io.mjs';
 const {SPIKE_AUTH}=JSON.parse(await readFile(join(tmpdir(),'bifrost-pyodide-ddf316c1-secrets.json'),'utf8'));
 async function invoke(name,parameters={},extra={}) {
   const response=await cloudProbeFetch(SPIKE_AUTH,{method:'POST',headers:{'Content-Type':'application/json',...extra},
@@ -17,5 +17,5 @@ const oversized=await invoke('json_transform',{padding:'x'.repeat(70000)});
 assert.equal(oversized.status,413);
 const credential=await invoke('integration_read',{}, {'X-Spike-Token':'synthetic-invalid-token'});
 assert.equal(credential.status,403);
-await writeFile('results/security-cloud.json',JSON.stringify({records,oversized,credential_forwarding_block:credential},null,2)+'\n');
+await writeFile('results/security-cloud.json',diagnosticJson({records,oversized,credential_forwarding_block:credential},[SPIKE_AUTH]));
 console.log('Cloud shared state, duplicate execution, payload rejection and credential-forwarding block asserted.');
