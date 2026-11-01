@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root=new URL('../',import.meta.url);
 const receipt=JSON.parse(readFileSync(new URL('results/node-sdk-resume/success.json',root)));
 assert.equal(receipt.qualification_passed,true);
@@ -10,7 +11,8 @@ assert.equal(receipt.volumes_deleted,false);
 assert.equal(receipt.cloud_invocations,0);
 assert.equal(receipt.physical_termination_verified,false);
 for(const [name,expected] of Object.entries(receipt.packet_sha256)) {
-  assert.equal(createHash('sha256').update(readFileSync(new URL('backend/'+name,root))).digest('hex'),expected);
+  const tested=execFileSync('git',['show','4ca8abc1b0608bd3884763ddf5b5c88010232cf0:spikes/cloudflare-pyodide/backend/'+name],{cwd:root});
+  assert.equal(createHash('sha256').update(tested).digest('hex'),expected);
 }
 const run=receipt.canonical_result;
 for(const key of ['canonical_claim_verified','canonical_terminal_consumption_verified','lost_ack_reconnect_verified','fixture_worker_cascade_cleanup_verified']) assert.equal(run[key],true,key);

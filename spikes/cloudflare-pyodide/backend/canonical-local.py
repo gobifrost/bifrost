@@ -23,7 +23,7 @@ from sqlalchemy import delete, select
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
-               node_pyodide=False):
+               node_pyodide=False, integration_probe=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -43,6 +43,9 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
         raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
     expected_success = not failure_probe
+    if integration_probe and (isolation_label is not None or refresh_probe or expired_access or concurrent_refresh
+                              or interrupt_refresh or failure_probe or transport_waiter):
+        raise RuntimeError("Integration qualification is a separate fixed single-run fixture")
     if transport_waiter and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh
                              or failure_probe or isolation_label is not None):
         raise RuntimeError("Transport waiter qualification is a separate fixed single-run fixture")
@@ -75,6 +78,7 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     path = f"workflows/pyodide_qualification_{suffix}.py"
     helper = f"pyodide_helper_{suffix}"
     key, table = f"pyodide-config-{suffix}", f"pyodide-table-{suffix}"
+    integration_name = f"pyodide-integration-{suffix}"
     canary_code = "    isolation = {}\n"
     if isolation_label is not None:
         canary_code = f'''    import builtins, json
@@ -165,6 +169,21 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     logging.getLogger(__name__).warning("structured credential=%s", os.environ["BIFROST_ACCESS_TOKEN"])
     raise ValueError("fixture failure credential=" + os.environ["BIFROST_ACCESS_TOKEN"])
 ''' if failure_probe else ""
+    integration_code = f'''    from bifrost import integrations
+    import httpx
+    integration = await integrations.get({integration_name!r})
+    if integration is None or integration.config.get("qualification_value") != 42:
+        raise RuntimeError("Integration configuration read did not match fixture")
+    try:
+        await integrations.get({integration_name!r}, scope=forbidden_scope)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 403:
+            raise
+        isolation["integration_peer_status"] = 403
+    else:
+        raise RuntimeError("Cross-tenant integration read was not denied")
+    isolation["integration_value"] = integration.config["qualification_value"]
+''' if integration_probe else ""
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
 import logging, os
@@ -172,6 +191,7 @@ import logging, os
 async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_key: str | None = None):
 {canary_code.rstrip()}
     value = await config.get({key!r})
+{integration_code.rstrip()}
     refresh_evidence = {{}}
 {refresh_code.rstrip()}
 {failure_code.rstrip()}
@@ -217,13 +237,28 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
         async with committed_world(get_engine()) as world, helpers["cleanup_fixture_audit"](world, get_engine()):
             org, other = await world.organization(), await world.organization()
             user = await world.person(org)
-            role = await world.role("configs.read", "configs.readwrite", "tables.read", "tables.readwrite")
+            permissions = ("configs.read", "configs.readwrite", "tables.read", "tables.readwrite")
+            role = await world.role(*permissions, *(("integrations.read", "secrets.read") if integration_probe else ()))
+            if integration_probe:
+                from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
+                from src.models.orm.config import Config
+                from src.models.enums import ConfigType
+                integration = await world._add(Integration(name=integration_name))
+                await world._add(IntegrationMapping(integration_id=integration.id, organization_id=org.id,
+                    entity_id="synthetic-qualification-entity"))
+                schema = await world._add(IntegrationConfigSchema(integration_id=integration.id,
+                    key="qualification_value", type="int"))
+                await world._add(Config(key="qualification_value", value={"value": 42}, config_type=ConfigType.INT,
+                    organization_id=org.id, integration_id=integration.id, config_schema_id=schema.id,
+                    updated_by=str(user.id)))
             await world.assign(user, role.id, ("organization", org.id))
             workflow = await world.workflow(org)
             workflow.path, workflow.function_name, workflow.timeout_seconds = path, "qualified", 30
             execution = await world.execution(run_user=user, workflow=workflow, organization=org, credential_version=2)
             execution.status = ExecutionStatus.PENDING
             parameters = {"n": 7}
+            if integration_probe:
+                parameters["forbidden_scope"] = str(other.id)
             if isolation_label is not None:
                 peer = await rendezvous("setup", {"organization_id": str(org.id), "key": key})
                 parameters.update({"n": 7 if isolation_label == "tenant-a" else 8,
@@ -395,6 +430,10 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     report["structured_log_exception_redaction_verified"] = True
                                 else:
                                     assert result["result"]["value"] == expected_value
+                                if integration_probe:
+                                    assert result["result"]["integration_value"] == 42
+                                    assert result["result"]["integration_peer_status"] == 403
+                                    report["integration_read_verified"] = True
                                 if isolation_label is not None:
                                     value = result["result"]
                                     assert value["tenant_label"] == isolation_label and value["peer_sdk_status"] == 403
@@ -570,12 +609,13 @@ if __name__ == "__main__":
         parser.add_argument("--failure-probe", action="store_true")
         parser.add_argument("--transport-waiter", action="store_true")
         parser.add_argument("--node-pyodide", action="store_true")
+        parser.add_argument("--integration-probe", action="store_true")
         args = parser.parse_args()
         asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
                          concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh,
                          failure_probe=args.failure_probe, transport_waiter=args.transport_waiter,
-                         node_pyodide=args.node_pyodide))
+                         node_pyodide=args.node_pyodide, integration_probe=args.integration_probe))
     except Exception as exc:
         import traceback
         from pathlib import Path

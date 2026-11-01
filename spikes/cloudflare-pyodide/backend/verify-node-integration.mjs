@@ -1,0 +1,25 @@
+// Offline receipt verification only. No service calls or credentials.
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const bytes=readFileSync(new URL('../results/node-integration-resume/success.json',import.meta.url));
+assert.equal(createHash('sha256').update(bytes).digest('hex'),'7b5c96ff7c651a8145afc1826fa57c3f9f9ac07a7a5a9388d0ce993c957dc1eb');
+const receipt=JSON.parse(bytes);
+assert.equal(receipt.qualification_passed,true);
+assert.deepEqual(receipt.running_after_cleanup,[]);
+assert.equal(receipt.volumes_deleted,false);
+assert.equal(receipt.cloud_invocations,0);
+assert.equal(receipt.physical_termination_verified,false);
+assert.ok(receipt.commands.every(c=>c.exit_code===0));
+const run=receipt.canonical_result;
+for(const key of ['integration_read_verified','canonical_claim_verified','canonical_terminal_consumption_verified','lost_ack_reconnect_verified','fixture_worker_cascade_cleanup_verified']) assert.equal(run[key],true,key);
+assert.equal(run.launches,1);
+assert.equal(run.independent_document_value,70);
+assert.equal(run.credential_revoked_after_terminal_status,401);
+assert.equal(run.result.runtime,'official-pyodide-on-node');
+assert.equal(run.result.result.result.integration_value,42);
+assert.equal(run.result.result.result.integration_peer_status,403);
+assert.equal(run.result.result.result.credential_redaction_probe,'[REDACTED]');
+assert.deepEqual(run.result.api_calls.filter(c=>c.path==='/api/sdk/integrations/get').map(c=>c.status),[200,403]);
+assert.equal(run.result.api_calls.filter(c=>c.path.endsWith('/documents/upsert')&&c.status===200).length,1);
+console.log('Actual guest Pyodide integration read, tenant denial and canonical completion receipt verified.');
