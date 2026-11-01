@@ -1,5 +1,12 @@
 # Dependency qualification: native compatibility first
 
+CT128 follow-up: matching pydantic-core 2.50.2 and PyYAML 6.0.3 wheels executed
+under official Pyodide 314.0.6 with the expected cp314/PyEmscripten ABI. Selected
+unchanged upstream tests passed (32 serializer cases and 261 native YAML cases).
+See backend/NATIVE-PACKAGE-QUALIFICATION.md and results/native-package-resume.
+This is independent package evidence; Cloudflare workerd startup and deployed
+package acceptance remain unqualified because its distinct bundle is unavailable.
+
 This is the required procedure for subsequent experiments in this spike.
 An unavailable wheel or a failed import does not establish runtime incompatibility.
 Prefer an upstream-compatible native build over replacement code.

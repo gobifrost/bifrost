@@ -369,3 +369,19 @@ acquired and no runtime fixture was invoked. See backend/RUNTIME-BUNDLE-SUPPLY.m
 and results/ct128-run73-supply-review.json. Next: publisher restores anonymous
 availability or an already lawful matching file is supplied via the approved
 owner inbox. No credentials, R2 route, mirror or different bundle substituted.
+
+## Resume: actual native package tests instead of waiting on supply
+
+| Hypothesis | Change / command | Observed result / artifact | Next step |
+|---|---|---|---|
+| The reconstructed workerd URL might be wrong | ct128-native-selection.py, native binary verbose, network=none | Exact same URL selected; DNS refused before GET; native-selection.json | Keep publisher supply gate distinct |
+| Matching native wheels can execute in the official interpreter | ct128-pyodide-package-qualification.py | Hash-verified official 314.0.6 core; expected Python/ABI observed; native validation/YAML checks pass | Actual upstream package assertions |
+| The native serializer works beyond import/smoke | ct128-pydantic-upstream-tests.py | 32 unchanged upstream tests pass, JUnit 0 failures/errors/skips | Cloudflare-specific qualification still required |
+| Native YAML scanner/parser/emitter match upstream fixtures | ct128-pyyaml-upstream-tests.py | 261 cases pass; first observer parser failure and stopped-container-name conflict preserved | Continue SDK/engine runtime gates after workerd supply |
+
+Results and exact hashes: results/native-package-resume. The old pydantic-core
+tag lookup failed; wheel metadata and exact pinned source sdist resolved the
+monorepo source location. No moving-main test substitution. No shared conftest/GC
+or full package-suite acceptance claimed. All guest containers stopped, no OOM.
+No failed vendor GET was retried, no source wheel replaced, and no cloud/R2 or
+heavy laptop tests ran. Node Pyodide is a package test harness, not a new backend.

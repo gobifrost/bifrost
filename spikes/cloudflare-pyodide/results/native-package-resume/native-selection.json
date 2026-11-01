@@ -1,0 +1,35 @@
+{
+  "command": [
+    "docker",
+    "run",
+    "--name",
+    "pyodide-ddf316c1-native-selection",
+    "--network=none",
+    "--cpus=0.5",
+    "--memory=512m",
+    "--memory-swap=512m",
+    "--pids-limit=64",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/native-bundle-selection-resume,dst=/selection",
+    "--entrypoint",
+    "/spike/node_modules/@cloudflare/workerd-linux-64/bin/workerd",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "serve",
+    "--verbose",
+    "-I",
+    "/spike/node_modules",
+    "/selection/selection.capnp"
+  ],
+  "network": "none",
+  "cloud_invocations": 0,
+  "started_at_epoch": 1793548591.101855,
+  "physical_termination_verified": false,
+  "exit_code": 1,
+  "selected_urls": [
+    "https://pyodide-capnp-bin.edgeworker.net/pyodide_314.0.6_2026-08-17_6.capnp.bin"
+  ],
+  "log_sha256": "5b287127a36d40deb2a8449a4f8ad1d6649c1287752117af30c98f3e465b3a36",
+  "finished_at_epoch": 1793548592.0764797
+}

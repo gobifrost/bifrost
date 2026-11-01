@@ -5,6 +5,9 @@ the subsequent pinned Pyodide runtime attempt is blocked before Python startup
 by an HTTP 403 for its exact official bundle. See
 [CT128 runtime frontier](backend/CT128-RUNTIME-FRONTIER.md) for preserved evidence,
 the prepared (unexecuted) timestamped termination fixture and remaining gates.
+Independent [native package qualification](backend/NATIVE-PACKAGE-QUALIFICATION.md)
+now runs official Pyodide 314.0.6 in CT128: 32 upstream pydantic-core and 261
+PyYAML native cases pass. This does not replace or qualify Cloudflare's bundle.
 
 **YELLOW for fixed, trusted, short workflows. RED for arbitrary untrusted Python
 under the current termination contract, including fresh isolates.** Real upstream `engine.execute()` and unmodified SDK
