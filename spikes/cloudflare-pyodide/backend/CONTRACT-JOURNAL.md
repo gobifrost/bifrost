@@ -45,17 +45,44 @@ acceptance, explicit rejection, replay, retirement, owner rotation before commit
 and before ACK, and terminal overwrite prevention. Existing engine/SDK proof at
 08f149c99 remains distinct.
 
+## Full consumer reconciliation increment
+
+`reconcile_workflow` now delegates to the actual upstream workflow consumer and
+uses `ExecutionInfo.attach_transport_metadata` for parent-owned sync metadata.
+It requires a matching consumer worker and execution identity and a canonical
+result envelope. It does not translate raw engine output or invent a result
+status. Upstream's normal-return callback contract means **terminal consumed**,
+including its deliberately ignored stale replay; it does not mean the replay
+wrote a new result. This mirrors the unchanged remote bridge's ACK behavior.
+Exceptions and owner replacement before ACK retain the journal entry.
+
+The ten-test local run passed in 12.41 seconds, including one real full-consumer
+qualification with PostgreSQL and Redis. Its transport fails after the callback
+completes but before journal ACK. The execution is durably Success with value 70,
+its real Redis log stream has been staged into one PostgreSQL log row and
+acknowledged, and its active cache entry is removed. Reconnect adopts the same
+task and replays the result through the same upstream consumer: no second launch,
+no second log row and no second completion-metrics call. A guest sync flag cannot
+override the parent's metadata. Three negative cases reject mismatched worker,
+mismatched execution, and noncanonical result success type before effects.
+
+Raw evidence: `../results/consumer-reconciliation-junit.xml`. The physical launch
+remains a deterministic fixture. This is not fresh engine/cloud execution proof.
+Claims are fixture-created and deleted in teardown, **not canonically acquired
+or released by a working executor**. Pub/sub and built-in event functions run
+normally, but no event subscriber or external delivery receipt is asserted.
+
 ## Next safe implementation
 
-Connect a test-only host driver to the full upstream workflow consumer callback
-and authoritative claim acquisition, then test disconnect after durable commit
-but before ACK. A boolean repository rejection cannot alone distinguish a stale
-attempt from an already committed result: use the canonical consumer/recovery
-path, not a guessed success ACK. This experiment deliberately retains rejected
-results rather than silently discarding them. Qualify logs/event receipts and
-claim release in that same test before wiring a physical Worker invocation.
+Acquire and release the dispatch using upstream `worker_pool.claims` and its
+canonical supervisor, then qualify interruption before launch and after claim.
+Extract/reuse the pure result-envelope construction currently embedded in
+`simple_worker.py` before connecting actual Pyodide output: do not maintain a
+second envelope codec. Whole-host loss and interrupted post-commit follow-up
+work still need recovery qualification. This increment injects disconnect after
+the full callback, not at every individual post-commit instruction.
 
-The final targeted run passed all nine tests in 8.23 seconds; raw JUnit is
+The initial targeted run passed all nine tests in 8.23 seconds; raw JUnit is
 `../results/attempt-journal-junit.xml`. This comprises six new journal contracts
 and three existing owner/fence contracts. Fixture rows are deleted in teardown;
 the journal cleanup test additionally proves that retirement refuses unfinished

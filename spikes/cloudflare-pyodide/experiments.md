@@ -112,3 +112,19 @@ Expanded final qualification: nine tests passed in 8.23 seconds, raw
 `results/attempt-journal-junit.xml`, including the real canonical execution
 repository write and rejection of a subsequent overwrite. This does not prove
 the full workflow consumer's log/event/claim-release effects.
+
+## Full consumer terminal replay
+
+The preceding PR-only rate-limit turn was no implementation progress. Continued
+locally from f8cc75e451a304c1a9e8084d898bf8badb536e75 without another GitHub poll.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| Reuse the actual consumer to resolve post-completion replay without a second result authority | `reconcile_workflow`, upstream ExecutionInfo metadata and consumer callback; `./test.sh tests/unit/dev/test_pyodide_attempt_journal.py -q` | Ten passed in 12.41s; actual PostgreSQL result and single log row, Redis log ACK/cache cleanup, owner reconnect with no relaunch; `consumer-reconciliation-junit.xml` | Canonical dispatch acquisition/release and interruption before launch |
+| Guest terminal metadata cannot select another execution or override parent sync behavior | Strict execution/consumer identity and canonical envelope type; actual parent metadata attachment | Three negative admission tests pass; guest sync=True does not create a sync-result queue entry for parent sync=False | Reuse/extract upstream simple_worker envelope builder before physical Worker connection |
+
+No upstream consumer/remote_pool/launcher code changed. The injected failure is
+after the real consumer completes, before journal ACK; individual post-commit
+interruption windows and whole-host loss remain unqualified. Claims and cleanup
+are fixture-only. Physical execution is a deterministic callback, not a new cloud
+test. CPU physical-stop incompatibility remains unchanged.

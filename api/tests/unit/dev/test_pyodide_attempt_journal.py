@@ -1,22 +1,25 @@
 """Real PostgreSQL fencing; physical launch is a deterministic local callback.
 
-No cloud invocation and no claim of canonical workflow result persistence.
+No cloud invocation or claim of physical Worker termination.
 """
 from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from src.models.enums import ExecutionStatus
-from src.models.orm.executions import Execution
+from src.models.orm.executions import Execution, ExecutionLog
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.repositories.executions import update_execution
 from src.worker.remote import ownership
@@ -220,3 +223,115 @@ async def test_running_route_cannot_be_acknowledged_or_cleaned_up(owner):
         assert await task == {"status": "Success"}
     assert await journal.reconcile_terminal(lease, "route", accept)
     await journal.retire()
+
+
+@pytest.mark.asyncio
+async def test_full_consumer_commit_lost_ack_reconciles_without_relaunch_or_duplicate_logs(
+    owner, async_session_factory, monkeypatch,
+):
+    from bifrost._logging import append_log_to_stream_async
+    from src.core.cache import execution_logs_stream_key, get_redis
+    from src.core.cache.keys import active_execution_key
+    from src.core.redis_client import ActiveExecution, RESULT_KEY_PREFIX
+    from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+    from src.services.execution.process_pool import ExecutionInfo
+
+    monkeypatch.setattr("src.core.database.get_session_factory", lambda: async_session_factory)
+    lease = await owner(1)
+    subject = uuid4()
+    execution_id = str(subject)
+    metadata = ActiveExecution(execution_id=execution_id, workflow_id=None,
+                               workflow_name="pyodide-consumer-contract", org_id=None,
+                               user_id=None, user_email=None, user_name="test", sync=False, event=None)
+    execution = ExecutionInfo(execution_id, datetime.now(timezone.utc), 30, metadata)
+    consumer = WorkflowExecutionConsumer(pool=SimpleNamespace(on_result=None))
+    consumer.owner_worker_id = lease.worker_id
+    metrics = AsyncMock(wraps=consumer._record_completion_metrics)
+    monkeypatch.setattr(consumer, "_record_completion_metrics", metrics)
+    original = consumer._handle_result
+
+    async def lose_ack(result):
+        await original(result)
+        raise ConnectionError("transport lost after canonical completion")
+
+    journal = AttemptJournal()
+    launch = AsyncMock(return_value={"execution_id": execution_id, "success": True,
+                                    "status": "Success", "result": {"value": 70},
+                                    "duration_ms": 1, "sync": True})
+    async with async_session_factory() as session:
+        session.add(Execution(id=subject, workflow_name="pyodide-consumer-contract",
+                              executed_by_name="test", status=ExecutionStatus.RUNNING,
+                              started_at=datetime.now(timezone.utc)))
+        await session.flush()
+        session.add(ExecutionWorkerClaim(worker_id=lease.worker_id,
+                                        family="workflow_execution", subject_id=subject))
+        await session.commit()
+    try:
+        async with get_redis() as redis:
+            await redis.set(active_execution_key(execution_id), json.dumps(metadata), ex=60)
+        assert await append_log_to_stream_async(execution_id, "INFO", "canonical consumer proof")
+        task = await journal.dispatch(lease, "route", execution_id, launch)
+        assert (await task)["result"] == {"value": 70}
+        monkeypatch.setattr(consumer, "_handle_result", lose_ack)
+        with pytest.raises(ConnectionError, match="after canonical completion"):
+            await journal.reconcile_workflow(lease, "route", consumer, execution)
+        assert not journal.inventory()[0]["acknowledged"]
+        async with async_session_factory() as session:
+            row = await session.get(Execution, subject)
+            assert row is not None and row.status == ExecutionStatus.SUCCESS
+            assert row.result == {"value": 70}
+        async with get_redis() as redis:
+            assert not await redis.exists(active_execution_key(execution_id))
+            assert not await redis.exists(RESULT_KEY_PREFIX + execution_id)
+            assert await redis.xlen(execution_logs_stream_key(execution_id)) == 0
+
+        # Same physical route survives reconnect. Upstream consumes its stale
+        # terminal replay normally, which permits ACK without rewriting the run.
+        replacement = await owner(2)
+        monkeypatch.setattr(consumer, "_handle_result", original)
+        assert await journal.dispatch(replacement, "route", execution_id, launch) is task
+        assert await journal.reconcile_workflow(replacement, "route", consumer, execution)
+        launch.assert_awaited_once()
+        metrics.assert_awaited_once()
+        async with async_session_factory() as session:
+            logs = (await session.scalars(select(ExecutionLog).where(
+                ExecutionLog.execution_id == subject))).all()
+            assert [log.message for log in logs] == ["canonical consumer proof"]
+        await journal.retire()
+    finally:
+        async with get_redis() as redis:
+            await redis.delete(active_execution_key(execution_id), execution_logs_stream_key(execution_id),
+                               RESULT_KEY_PREFIX + execution_id)
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionLog).where(ExecutionLog.execution_id == subject))
+            await session.execute(delete(ExecutionWorkerClaim).where(ExecutionWorkerClaim.subject_id == subject))
+            await session.execute(delete(Execution).where(Execution.id == subject))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result", [
+    {"execution_id": "another-execution", "success": True},
+    {"execution_id": "execution", "success": "true"},
+])
+async def test_workflow_adapter_rejects_guest_identity_or_noncanonical_envelope(owner, result):
+    lease = await owner(1)
+    journal = AttemptJournal()
+    task = await journal.dispatch(lease, "route", "execution", AsyncMock(return_value=result))
+    assert await task == result
+    consumer = SimpleNamespace(owner_worker_id=lease.worker_id, _handle_result=AsyncMock())
+    execution = SimpleNamespace(execution_id="execution")
+    with pytest.raises(ValueError):
+        await journal.reconcile_workflow(lease, "route", consumer, execution)
+    consumer._handle_result.assert_not_awaited()
+    assert not journal.inventory()[0]["acknowledged"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_adapter_rejects_another_workers_consumer_before_effects(owner):
+    lease = await owner(1)
+    journal = AttemptJournal()
+    consumer = SimpleNamespace(owner_worker_id=uuid4(), _handle_result=AsyncMock())
+    with pytest.raises(ValueError, match="another worker"):
+        await journal.reconcile_workflow(lease, "route", consumer, SimpleNamespace())
+    consumer._handle_result.assert_not_awaited()

@@ -9,11 +9,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.worker.remote.fencing import LeaseRef, remote_owner_context
 from src.worker.remote.ownership import RemoteOwnerLease, owns_remote_session
 from src.worker.remote.protocol import CredentialRouteChanged
+
+if TYPE_CHECKING:
+    from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+    from src.services.execution.process_pool import ExecutionInfo
 
 
 @dataclass
@@ -98,3 +102,27 @@ class AttemptJournal:
                 raise RuntimeError("unacknowledged physical routes remain")
             self.routes.clear()
             self._retired = True
+
+    async def reconcile_workflow(
+        self, lease: RemoteOwnerLease, route_id: str,
+        consumer: WorkflowExecutionConsumer, execution: ExecutionInfo,
+    ) -> bool:
+        """Use upstream's normal-return terminal-consumption/ACK contract.
+
+        A consumed stale replay is not a claim that this result was persisted.
+        This mirrors Bridge._deliver_terminal; exceptions retain transport state.
+        ExecutionInfo and consumer identity belong to the canonical parent, never
+        the guest. The caller must acquire the dispatch claim before launching.
+        """
+        if consumer.owner_worker_id != lease.worker_id:
+            raise ValueError("consumer belongs to another worker")
+
+        async def consume(_route: str, subject: str, result: dict[str, Any]) -> bool:
+            if execution.execution_id != subject or result.get("execution_id") != subject:
+                raise ValueError("terminal execution identity conflict")
+            if not isinstance(result.get("success"), bool):
+                raise ValueError("canonical result envelope required")
+            await consumer._handle_result(execution.attach_transport_metadata(result))
+            return True
+
+        return await self.reconcile_terminal(lease, route_id, consume)
