@@ -222,7 +222,7 @@ the frozen benchmark client and infrastructure are identified separately.
 | M / 8 GiB SDK-only, offered 3.90625/s | Correctness preflight 127/127; confirmation 3,735/3,735 correct by deadline; end-to-end p95 0.583503 s; all gates passed | Valid SDK-only pass at this offered rate; no mixed or hosting-capacity claim. |
 | Mixed load and conditional soaks | First 4 GB hour: 8,113/8,113 arrivals correct by deadline; latency, throughput and backlog gates passed, but retained-Event quota counter delta was −11 | Invalid measurement. Remaining long windows stopped with verified cleanup; no stock mixed capacity or sustained growth claim. |
 | Browser app path | 24/24 correct actions and durable records; verified cleanup | Descriptive timing only; see the omitted-timer finding below. |
-| Stock retention rehearsal | Running after the stopped mixed campaign | Earlier candidate storage evidence stays separate. |
+| Stock retention rehearsal | Complete: 41 successful fixtures and one expected failure; all 42 execution rows and 329 log rows removed; cleanup verified | Stock fixture sizing/deletion evidence; no long-term growth, backup, restore or billing claim. |
 | Fixed-count scaling and zero-warm elasticity | [Declared experiment](2026-10-31-worker-scaling-experiment.md); tooling prepared in a separate checkout, with Docker verification queued | Neither scaling efficiency nor cold-start capacity has been measured yet. |
 
 The complete 4 GB SDK raw artifact is retained under
@@ -258,6 +258,16 @@ is a supported explanation rather than a reconstruction of the eleven lost
 counts. The raw window remains unchanged. A benchmark-only collector repair
 and a new declared campaign are required before another capacity claim; this
 does not identify a platform fault.
+
+The [stock retention scalar baseline](baselines/retention-2026-11-01-stock.json)
+pins the raw fixture receipt before backdating only its 42 executions by 31
+days. The unchanged 30-day maintenance policy previewed and deleted all 42;
+their 329 log rows were also absent afterward. Twenty repetitive 5 MB results
+occupied 1,146,375 result-column bytes, versus 100,001,518 bytes for twenty
+seeded high-entropy results of the same input size. Immediate PostgreSQL
+allocation remained about 404 MiB after deletion. These figures establish
+payload-dependent sizing and deletion behavior, not 30 days of observed growth
+or later vacuum reclamation.
 
 ### Collector Validation (October 31)
 

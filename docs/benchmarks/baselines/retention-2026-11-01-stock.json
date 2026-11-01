@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "baseline_id": "retention-2026-11-01-stock-v1",
+  "kind": "storage-retention-rehearsal",
+  "status": "storage_rehearsal_complete",
+  "capacity_certification": false,
+  "source": {
+    "private_result_path": "/home/jack/bifrost-bench-evidence/runs/retention-stock-20261031-r1/result.json",
+    "raw_result_sha256": "86d9d86817aa2b221adb4c577eeef1dc51cd9d7c7221436c754cdcb157c82dd1",
+    "terminal_receipt_path": "/home/jack/bifrost-bench-evidence/runs/retention-stock-20261031-r1/fixture-terminal-receipt.json",
+    "terminal_receipt_sha256": "007b2c59ccda7171f296ebef740a12641036a492e6cb2a8457656bbc7837e676",
+    "fixture_workflow_sha256": "d754d66bf3cc88e3e217e01ed982a063a58254b68b49f2d236f7f99645dadf1f",
+    "fixture_runner_sha256": "b7851d70df986efe6c77bcb6ec0392dc7c6ffd9526be912a3ca1251cb37b8741"
+  },
+  "runtime": {
+    "api_tag": "bifrost-api:kind-a74e45295998-stock-e611d31bb",
+    "api_host_id": "sha256:a15c4761740ae3ac918c2e0280464f25756d08fa8d03485b2e155c6d387bb692",
+    "api_config_id": "sha256:b4e0f9b7650557e3c4d272da4ff48b667f04ba168488c99220719460c0db475b",
+    "api_manifest_id": "sha256:04026602d39e8ab4e3b024e0c7a0b613e894d11d859072afe937b5febff4e4b3"
+  },
+  "fixture": {
+    "version": "retention-fixture-v1",
+    "payload_bytes_per_large_execution": 5000000,
+    "log_lines_per_large_execution": 8,
+    "entropy_5mb_success": 20,
+    "repetitive_5mb_success": 20,
+    "small_success": 1,
+    "small_failed": 1,
+    "expected_total": 42,
+    "expected_success": 41,
+    "expected_failed": 1
+  },
+  "outcomes": {
+    "terminal_total": 42,
+    "success": 41,
+    "failed": 1,
+    "expected_fixture_outcome_check": "pass",
+    "scope": "expected fixture outcomes only; no statistical production reliability claim"
+  },
+  "retention": {
+    "configured_days": 30,
+    "backdate_age_days": 31,
+    "backdating_scope": "fixture records only; this is an explicit deletion rehearsal, not 30-day storage growth",
+    "dry_run_workflow_runs": 42,
+    "dry_run_events": 0,
+    "dry_run_agent_runs": 0,
+    "workflow_runs_deleted": 42,
+    "events_deleted": 0,
+    "agent_runs_deleted": 0,
+    "execution_log_orphans": 0,
+    "actual_retention_status": "succeeded",
+    "audit_artifact_retention": "settings_only",
+    "fixture_executions_before": 42,
+    "fixture_log_rows_before": 329,
+    "fixture_executions_after": 0,
+    "fixture_log_rows_after": 0
+  },
+  "storage_bytes": {
+    "before_retention": {
+      "postgres_database": 147692567,
+      "postgres_wal_retained": 251658240,
+      "postgres_allocated": 423997440,
+      "object_logical": 1981658,
+      "object_allocated": 2453504,
+      "container_logs": 1154465
+    },
+    "after_small_success": {
+      "postgres_database": 41851927,
+      "postgres_wal_retained": 150994944,
+      "postgres_allocated": 217460736,
+      "object_logical": 1981658,
+      "object_allocated": 2441216,
+      "container_logs": 365158
+    },
+    "after_small_failed": {
+      "postgres_database": 41909271,
+      "postgres_wal_retained": 150994944,
+      "postgres_allocated": 217518080,
+      "object_logical": 1981658,
+      "object_allocated": 2441216,
+      "container_logs": 385150
+    },
+    "after_repetitive_5mb": {
+      "postgres_database": 43719703,
+      "postgres_wal_retained": 150994944,
+      "postgres_allocated": 219328512,
+      "object_logical": 1981658,
+      "object_allocated": 2453504,
+      "container_logs": 741913
+    },
+    "after_entropy_5mb": {
+      "postgres_database": 147790871,
+      "postgres_wal_retained": 251658240,
+      "postgres_allocated": 424091648,
+      "object_logical": 1981658,
+      "object_allocated": 2453504,
+      "container_logs": 1146274
+    },
+    "seeded": {
+      "postgres_database": 41573399,
+      "postgres_wal_retained": 150994944,
+      "postgres_allocated": 217182208,
+      "object_logical": 1981658,
+      "object_allocated": 2441216,
+      "container_logs": 350900
+    },
+    "after_retention": {
+      "postgres_database": 147725335,
+      "postgres_wal_retained": 251658240,
+      "postgres_allocated": 424030208,
+      "object_logical": 1981658,
+      "object_allocated": 2453504,
+      "container_logs": 1179132
+    }
+  },
+  "cleanup": {
+    "verified": true,
+    "finished_at": "2026-11-01T02:26:28+00:00"
+  },
+  "scope": "Stock-runtime retention and storage deletion rehearsal. It does not establish capacity, billing, or 30-day growth.",
+  "harness_git_sha": "e62bad1dfbc0943eeb04610fc86d3f1e7651a708",
+  "result_column_bytes_by_case": {
+    "entropy_5mb": {
+      "executions": 20,
+      "payload_utf8_bytes": 100000000,
+      "result_column_bytes": 100001518
+    },
+    "repetitive_5mb": {
+      "executions": 20,
+      "payload_utf8_bytes": 100000000,
+      "result_column_bytes": 1146375
+    },
+    "small_failed": {
+      "executions": 1,
+      "payload_utf8_bytes": 0,
+      "result_column_bytes": 0
+    },
+    "small_success": {
+      "executions": 1,
+      "payload_utf8_bytes": 0,
+      "result_column_bytes": 71
+    }
+  },
+  "storage_limits": "Sampled database logical bytes, retained WAL, allocated PostgreSQL and object-store bytes overlap and are not additive or cloud billable storage. Immediate post-delete sample does not measure later vacuum reclamation. Backup/restore, versions, audit/artifact cleanup and long-term growth remain unmeasured."
+}
