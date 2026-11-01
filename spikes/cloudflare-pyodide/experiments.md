@@ -356,3 +356,16 @@ Package ABI and execution remain unqualified in this guest. Detailed commands,
 source hashes, denial and required future cloud proof are in
 backend/CT128-RUNTIME-FRONTIER.md. All owned containers stopped; no heavy laptop,
 cloud execution, credentials, resource expansion or baseline/control-auth rerun.
+
+## Run73: authorized publisher supply investigation
+
+Hypothesis: the publisher exposes a supported authenticated/release/cache route
+for the exact bundle. Source inspection at workerd 7caf6dee verifies anonymous
+canonical GET and integrity-checked local cache; no consumer login header.
+Existing-identity GitHub release inspection lists five native binaries, not the
+bundle. Read-only stopped task-container and selected task-cache filename
+inspection found no matching copy. The old 403 was not retried. No asset was
+acquired and no runtime fixture was invoked. See backend/RUNTIME-BUNDLE-SUPPLY.md
+and results/ct128-run73-supply-review.json. Next: publisher restores anonymous
+availability or an already lawful matching file is supplied via the approved
+owner inbox. No credentials, R2 route, mirror or different bundle substituted.
