@@ -31,3 +31,16 @@ The earlier SDK verifier now reads its exact published fixture revision rather t
 The v1 diagnostic does not retain the provider's inner error, so it establishes fixture failure rather than proving a particular HTTP status. Source review found both setup defects: `shared.sdk_integrations.get_sdk_integration_dict` requires `integrations.read`, and without an organization mapping the service selects integration defaults rather than this org config. No production authorization or engine code was changed.
 
 The supervisor refuses existing output paths and active containers; future execution needs a new reviewed exclusive run/packet name. Do not overwrite these receipts to rerun. This Node qualification does not establish Cloudflare SDK execution, fresh isolate security or physical CPU termination. Execution admission remains disabled. The exact workerd bundle's recorded 403 and the cloud hold remain unchanged.
+
+## Subsequent encrypted synthetic secret case
+
+`backend/ct128-node-secret-qualification.py` executed the same real canonical/API/SDK path with `--integration-probe --integration-secret-probe`. The fixture generated a fresh synthetic value in memory, encrypted it with upstream `encrypt_secret` into a test-only SECRET config row and declared a secret schema key. The workflow verified the decrypted value against a pinned SHA256 digest, then intentionally returned it and logged it. The unchanged SDK registered the secret and the unchanged engine redacted both outputs. No production secret, OAuth credential, encryption-key change or persistent access was involved.
+
+Receipt: `results/node-secret-resume/success.json`, SHA256 `4a4523b7bc77a8d26a0635e870dac17614f6177df9bfc3d8a912dbe4ef4d471b`, matched on transfer. Exact tested additional canonical fixture SHA256 `5ebf9c12d5727807922921f31767e09d8c5be0e71a6b064cf4a9b89604a0c9cf`; API/runtime/provider pins and resource bounds are unchanged from above. Supervisor elapsed 61.566 seconds, all commands exit 0. One launch, two persisted logs, terminal credential 401, lost-ACK reconciliation and cleanup passed. No running owned containers remain; volumes retained. An after-completion Docker memory read returned 0B for the stopped container and is **not a memory measurement**.
+
+```sh
+node spikes/cloudflare-pyodide/backend/verify-node-secret.mjs
+node --test spikes/cloudflare-pyodide/probe-io.test.mjs
+```
+
+The eight diagnostic boundary regressions also pass. The trusted fixture's existing raw-secret guard withheld evidence if the synthetic plaintext survived serialized provider/canonical output; the preserved successful receipt contains only redacted probe values and a digest in pinned source. This case adds encrypted integration-secret result/structured-log coverage. It does not establish OAuth refresh, exception/stdout redaction, transformed-secret protection, comprehensive memory isolation or Cloudflare execution. Next useful independent qualification is actual WASM memory usage for this dependency closure; Node RSS must not be presented as Cloudflare isolate memory.

@@ -23,7 +23,7 @@ from sqlalchemy import delete, select
 
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
-               node_pyodide=False, integration_probe=False):
+               node_pyodide=False, integration_probe=False, integration_secret_probe=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -43,6 +43,8 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
         raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
     expected_success = not failure_probe
+    if integration_secret_probe and not integration_probe:
+        raise RuntimeError("Synthetic integration-secret qualification requires integration fixture")
     if integration_probe and (isolation_label is not None or refresh_probe or expired_access or concurrent_refresh
                               or interrupt_refresh or failure_probe or transport_waiter):
         raise RuntimeError("Integration qualification is a separate fixed single-run fixture")
@@ -79,6 +81,14 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     helper = f"pyodide_helper_{suffix}"
     key, table = f"pyodide-config-{suffix}", f"pyodide-table-{suffix}"
     integration_name = f"pyodide-integration-{suffix}"
+    integration_secret = f"synthetic-integration-{uuid4().hex}" if integration_secret_probe else None
+    integration_secret_code = f'''    import hashlib
+    synthetic_secret = integration.config.get("qualification_secret")
+    if not isinstance(synthetic_secret, str) or hashlib.sha256(synthetic_secret.encode()).hexdigest() != {hashlib.sha256(integration_secret.encode()).hexdigest() if integration_secret else None!r}:
+        raise RuntimeError("Synthetic integration secret was not decrypted correctly")
+    isolation["integration_secret_probe"] = synthetic_secret
+    logging.getLogger(__name__).warning("integration secret=%s", synthetic_secret)
+''' if integration_secret_probe else ""
     canary_code = "    isolation = {}\n"
     if isolation_label is not None:
         canary_code = f'''    import builtins, json
@@ -183,6 +193,7 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     else:
         raise RuntimeError("Cross-tenant integration read was not denied")
     isolation["integration_value"] = integration.config["qualification_value"]
+{integration_secret_code.rstrip()}
 ''' if integration_probe else ""
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
@@ -230,6 +241,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     await asyncio.sleep(0.05)
             return json.loads(other_value)
     secrets = []
+    if integration_secret is not None:
+        secrets.append(integration_secret)
     storage = RepoStorage()
     heartbeat = None
     ref = None
@@ -251,6 +264,13 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 await world._add(Config(key="qualification_value", value={"value": 42}, config_type=ConfigType.INT,
                     organization_id=org.id, integration_id=integration.id, config_schema_id=schema.id,
                     updated_by=str(user.id)))
+                if integration_secret_probe:
+                    from src.core.security import encrypt_secret
+                    secret_schema = await world._add(IntegrationConfigSchema(integration_id=integration.id,
+                        key="qualification_secret", type="secret"))
+                    await world._add(Config(key="qualification_secret", value={"value": encrypt_secret(integration_secret)},
+                        config_type=ConfigType.SECRET, organization_id=org.id, integration_id=integration.id,
+                        config_schema_id=secret_schema.id, updated_by=str(user.id)))
             await world.assign(user, role.id, ("organization", org.id))
             workflow = await world.workflow(org)
             workflow.path, workflow.function_name, workflow.timeout_seconds = path, "qualified", 30
@@ -434,6 +454,10 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     assert result["result"]["integration_value"] == 42
                                     assert result["result"]["integration_peer_status"] == 403
                                     report["integration_read_verified"] = True
+                                if integration_secret_probe:
+                                    assert result["result"]["integration_secret_probe"] == "[REDACTED]"
+                                    assert any(log["message"] == "integration secret=[REDACTED]" for log in result["logs"])
+                                    report["integration_secret_decryption_and_redaction_verified"] = True
                                 if isolation_label is not None:
                                     value = result["result"]
                                     assert value["tenant_label"] == isolation_label and value["peer_sdk_status"] == 403
@@ -610,12 +634,14 @@ if __name__ == "__main__":
         parser.add_argument("--transport-waiter", action="store_true")
         parser.add_argument("--node-pyodide", action="store_true")
         parser.add_argument("--integration-probe", action="store_true")
+        parser.add_argument("--integration-secret-probe", action="store_true")
         args = parser.parse_args()
         asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
                          concurrent_refresh=args.concurrent_refresh, interrupt_refresh=args.interrupt_refresh,
                          failure_probe=args.failure_probe, transport_waiter=args.transport_waiter,
-                         node_pyodide=args.node_pyodide, integration_probe=args.integration_probe))
+                         node_pyodide=args.node_pyodide, integration_probe=args.integration_probe,
+                         integration_secret_probe=args.integration_secret_probe))
     except Exception as exc:
         import traceback
         from pathlib import Path

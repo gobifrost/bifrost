@@ -1,0 +1,24 @@
+// Offline check of the preserved real SDK/guest/API execution, not a new run.
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const bytes=readFileSync(new URL('../results/node-secret-resume/success.json',import.meta.url));
+assert.equal(createHash('sha256').update(bytes).digest('hex'),'4a4523b7bc77a8d26a0635e870dac17614f6177df9bfc3d8a912dbe4ef4d471b');
+const receipt=JSON.parse(bytes);
+assert.equal(receipt.qualification_passed,true);
+assert.deepEqual(receipt.running_after_cleanup,[]);
+assert.equal(receipt.volumes_deleted,false);
+assert.equal(receipt.cloud_invocations,0);
+assert.equal(receipt.physical_termination_verified,false);
+assert.ok(receipt.commands.every(c=>c.exit_code===0));
+const run=receipt.canonical_result;
+for(const key of ['integration_secret_decryption_and_redaction_verified','canonical_claim_verified','canonical_terminal_consumption_verified','lost_ack_reconnect_verified','fixture_worker_cascade_cleanup_verified']) assert.equal(run[key],true,key);
+assert.equal(run.launches,1);
+assert.equal(run.persisted_log_count,2);
+assert.equal(run.credential_revoked_after_terminal_status,401);
+assert.equal(run.result.runtime,'official-pyodide-on-node');
+assert.equal(run.result.result.result.integration_secret_probe,'[REDACTED]');
+assert.equal(run.result.result.result.integration_value,42);
+assert.equal(run.result.result.result.integration_peer_status,403);
+assert.ok(run.result.result.logs.some(log=>log.message==='integration secret=[REDACTED]'));
+console.log('Actual encrypted synthetic integration secret decryption, result/log redaction and canonical reconciliation verified.');
