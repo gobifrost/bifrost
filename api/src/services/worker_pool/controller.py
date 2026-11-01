@@ -159,6 +159,12 @@ class WorkerCapacityController(ABC):
         """Reconcile one physical resource without changing domain ownership."""
         raise NotImplementedError
 
+    def _cleanup_scope(self) -> Any:
+        return (
+            ExecutionWorker.state.in_(self.cleanup_states)
+            & (ExecutionWorker.ended_at >= _now() - LOST_JOB_CLEANUP)
+        )
+
     async def reconcile(self) -> None:
         # Before anything that can fail on the Kubernetes API, so the
         # reconciler never mistakes a struggling controller for none.
@@ -176,11 +182,7 @@ class WorkerCapacityController(ABC):
                 await db.scalars(
                     select(ExecutionWorker.id).where(
                         self._managed_scope(),
-                        ExecutionWorker.state.in_(LIVE_STATES)
-                        | (
-                            (ExecutionWorker.state.in_(self.cleanup_states))
-                            & (ExecutionWorker.ended_at >= _now() - LOST_JOB_CLEANUP)
-                        ),
+                        ExecutionWorker.state.in_(LIVE_STATES) | self._cleanup_scope(),
                     )
                 )
             ).all()

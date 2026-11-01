@@ -390,6 +390,7 @@ async def test_cleanup_survives_provider_outage_beyond_one_hour_and_controller_r
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker.state == terminal_state
         assert worker.capacity_resource_uid == resource["resource_uid"]
+        assert worker.capacity_resource_deleted_at == later
     before = sum(path.endswith(str(worker_id)) for _, path in capacity.provider.requests)
     await restarted.reconcile()
     assert sum(path.endswith(str(worker_id)) for _, path in capacity.provider.requests) == before

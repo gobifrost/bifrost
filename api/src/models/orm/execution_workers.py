@@ -39,6 +39,8 @@ class ExecutionWorker(Base):
     kubernetes_pod_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     capacity_scope: Mapped[str | None] = mapped_column(String(128), nullable=True)
     capacity_resource_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Durable provider cleanup receipt; loss/retirement and immutable UID remain intact.
+    capacity_resource_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The physical launcher and the API replica controlling it are distinct
     # identities.  A websocket is only a transport for this persisted fence.
     remote_launcher_id: Mapped[UUID | None] = mapped_column(unique=True, nullable=True)
@@ -114,6 +116,13 @@ class ExecutionWorker(Base):
 
     __table_args__ = (
         Index("ix_execution_workers_state", "state"),
+        Index(
+            "ix_execution_workers_external_cleanup", "capacity_scope",
+            postgresql_where=text(
+                "form = 'external' AND state IN ('lost', 'retired') "
+                "AND capacity_resource_deleted_at IS NULL"
+            ),
+        ),
         Index("ix_execution_workers_remote_owner_lease", "remote_owner_lease_expires_at"),
     )
 

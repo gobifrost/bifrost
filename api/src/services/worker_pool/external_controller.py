@@ -41,6 +41,13 @@ class ExternalWorkerPoolController(WorkerCapacityController):
     def _managed_scope(self) -> Any:
         return and_(ExecutionWorker.form == "external", ExecutionWorker.capacity_scope == self.profile.scope)
 
+    def _cleanup_scope(self) -> Any:
+        # An outage must not turn an unconfirmed physical deletion into an orphan.
+        return and_(
+            ExecutionWorker.state.in_(self.cleanup_states),
+            ExecutionWorker.capacity_resource_deleted_at.is_(None),
+        )
+
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
         return {"capacity_scope": self.profile.scope, "version": self.profile.worker_version}
 
@@ -74,10 +81,13 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             state, uid, limit = worker.state, worker.capacity_resource_uid, worker.memory_limit_bytes
             version = worker.version
             created_at = worker.created_at
+            deleted_at = worker.capacity_resource_deleted_at
         if state == "reserved" and version != self.profile.worker_version:
             # A provider rollout cannot relabel an already reserved incarnation.
             # Fence it before cleanup; queued demand may reserve a fresh UUID.
             await self._record_loss(worker_id, uid, "provider_version_changed", False)
+            return
+        if state in self.cleanup_states and deleted_at is not None:
             return
         resource = await self.client.get(worker_id, self.profile.scope)
         if uid is not None and resource is not None and resource.resource_uid != uid:
@@ -85,6 +95,16 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         if state in self.cleanup_states:
             if resource is not None and resource.state != "deleted":
                 await self.client.remove(worker_id, self.profile.scope, resource.resource_uid)
+            # GET absence/a deleted tombstone or a validated DELETE response confirms
+            # cleanup. Persist only for this still-terminal, unchanged incarnation.
+            async with get_db_context() as db:
+                await db.execute(update(ExecutionWorker).where(
+                    ExecutionWorker.id == worker_id, self._managed_scope(),
+                    ExecutionWorker.state.in_(self.cleanup_states),
+                    ExecutionWorker.capacity_resource_uid == uid,
+                    ExecutionWorker.capacity_resource_deleted_at.is_(None),
+                ).values(capacity_resource_deleted_at=_now()))
+                await db.commit()
             return
         if resource is not None and resource.worker_version != version:
             raise CapacityProtocolError("Provider resource build changed for an existing incarnation")
