@@ -90,6 +90,46 @@ async def test_duplicate_dispatch_and_reconnect_never_repeat_physical_launch(own
 
 
 @pytest.mark.asyncio
+async def test_cancelled_transport_waiter_preserves_result_for_reconnect(owner):
+    lease = await owner(1)
+    journal = AttemptJournal()
+    started, release = asyncio.Event(), asyncio.Event()
+    launches = 0
+
+    async def launch():
+        nonlocal launches
+        launches += 1
+        started.set()
+        await release.wait()
+        return {"status": "Success", "result": 70}
+
+    receipt = await journal.dispatch(lease, "route", "execution", launch)
+
+    async def wait_for_result():
+        return await receipt
+
+    waiter = asyncio.create_task(wait_for_result())
+    try:
+        await started.wait()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert journal.inventory() == [{"route_id": "route", "execution_id": "execution",
+                                        "terminal": False, "acknowledged": False}]
+    finally:
+        release.set()
+    replacement = await owner(2)
+    assert await journal.dispatch(replacement, "route", "execution", launch) is receipt
+    assert await receipt == {"status": "Success", "result": 70}
+    accept = AsyncMock(return_value=True)
+    assert await journal.reconcile_terminal(replacement, "route", accept)
+    assert launches == 1
+    accept.assert_awaited_once_with("route", "execution", {"status": "Success", "result": 70})
+    await journal.retire()
+    assert journal.inventory() == []
+
+
+@pytest.mark.asyncio
 async def test_terminal_replay_requires_acceptance_and_preserves_tombstone(owner):
     lease = await owner(1)
     journal = AttemptJournal()

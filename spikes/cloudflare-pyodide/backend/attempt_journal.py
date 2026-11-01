@@ -20,10 +20,25 @@ if TYPE_CHECKING:
     from src.services.execution.process_pool import ExecutionInfo
 
 
+class AttemptResult:
+    """Shared result receipt; cancelling a waiter does not cancel collection.
+
+    This protects transport ownership only. It neither stops the provider nor
+    establishes physical termination, and intentionally exposes no cancel API.
+    """
+
+    def __init__(self, task: asyncio.Task[dict[str, Any]]) -> None:
+        self._task = task
+
+    def __await__(self):
+        return asyncio.shield(self._task).__await__()
+
+
 @dataclass
 class Route:
     execution_id: str
     task: asyncio.Task[dict[str, Any]]
+    receipt: AttemptResult
     acknowledged: bool = False
 
 
@@ -47,7 +62,7 @@ class AttemptJournal:
     async def dispatch(
         self, lease: RemoteOwnerLease, route_id: str, execution_id: str,
         launch: Callable[[], Awaitable[dict[str, Any]]],
-    ) -> asyncio.Task[dict[str, Any]]:
+    ) -> AttemptResult:
         async with self._lock:
             if self._retired:
                 raise RuntimeError("launcher retired")
@@ -57,12 +72,13 @@ class AttemptJournal:
             if previous is not None:
                 if previous.execution_id != execution_id:
                     raise ValueError("route identity conflict")
-                return previous.task
+                return previous.receipt
             if len(self.routes) >= self.capacity:
                 raise RuntimeError("journal full; canonical retirement required")
             task = asyncio.create_task(launch())
-            self.routes[route_id] = Route(execution_id, task)
-            return task
+            receipt = AttemptResult(task)
+            self.routes[route_id] = Route(execution_id, task, receipt)
+            return receipt
 
     def inventory(self) -> list[dict[str, Any]]:
         return [{"route_id": key, "execution_id": route.execution_id,

@@ -14,7 +14,10 @@ The upstream contract remains authoritative:
   terminal overwrites. Full consumer completion still owns logs/events/metrics.
 
 The journal reserves a physical route before launching it. Concurrent duplicates
-receive the same task. A reused route with a different execution is rejected.
+receive the same awaitable result receipt. Each wait shields the retained
+collection task: cancelling a transport waiter cannot cancel collection or
+erase the result needed by a replacement owner. The receipt exposes no cancel
+method. A reused route with a different execution is rejected.
 Reconnect can adopt its inventory and deliver its retained result without
 relaunching. Failed/rejected acceptance retains the result. ACK requires both an
 explicit canonical acceptance and a still-current owner after acceptance.
@@ -120,3 +123,37 @@ does not establish physical termination of an isolate. The observed catchable
 cloud CPU failure remains a material blocker for arbitrary untrusted workflows.
 No cloud invocation, endpoint reopening, credentials, spending, persistent access
 or production platform mutation is part of this increment.
+
+## Transport waiter interruption
+
+The original journal returned its raw asyncio task. A cancelled caller awaiting
+that task propagated cancellation into result collection; the route appeared
+terminal but had no result to reconcile. The new regression reproduced this
+before the fix (`../results/transport-waiter-before.xml`). Dispatch now returns
+one shared `AttemptResult` receipt that shields each waiter independently while
+the journal retains the collection task. Reconnect still returns the identical
+receipt and cannot launch again. Canonical acceptance and retirement are
+unchanged.
+
+The regression uses actual PostgreSQL owner rotation, an explicitly gated local
+launch callback, cancellation of its transport waiter, result adoption, terminal
+acceptance and cleanup. It is not an actual isolate interruption experiment,
+host-loss recovery, physical-stop proof or new deployed acceptance. A provider
+collection task that itself fails remains an unresolved provider failure; this
+change does not synthesize a terminal workflow result or retry its effects.
+
+After the fix, all 29 journal, owner and fencing cases passed in 15.75 seconds:
+
+```bash
+./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q
+```
+
+`../results/transport-waiter-after.xml` retains the raw result. The initial
+quality invocation was refused by the existing stack lock while tests ran;
+quality was then started sequentially after test completion. No lock control
+was altered or bypassed.
+
+`./test.sh quality api` subsequently passed with zero Pyright errors/warnings
+and clean Ruff (`../results/transport-waiter-quality.txt`). A focused Docker
+Ruff check also passed for the companion module and regression test. No broader
+suite or actual provider invocation was run for this host transport change.

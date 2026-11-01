@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="28.273" timestamp="2026-11-01T03:07:08.826797+00:00" hostname="ed8a29078b39"><testcase classname="tests.unit.dev.test_pyodide_attempt_journal" name="test_cancelled_transport_waiter_preserves_result_for_reconnect" time="0.891"><failure message="AssertionError: assert [{'route_id': 'route', 'execution_id': 'execution', 'terminal': True, 'acknowledged': False}] == [{'route_id': 'route', 'execution_id': 'execution', 'terminal': False, 'acknowledged': False}]&#10;  &#10;  At index 0 diff: {'route_id': 'route', 'execution_id': 'execution', 'terminal': True, 'acknowledged': False} != {'route_id': 'route', 'execution_id': 'execution', 'terminal': False, 'acknowledged': False}&#10;  &#10;  Full diff:&#10;    [&#10;        {&#10;            'acknowledged': False,&#10;            'execution_id': 'execution',&#10;            'route_id': 'route',&#10;  -         'terminal': False,&#10;  ?                     ^^^^&#10;  +         'terminal': True,&#10;  ?                     ^^^&#10;        },&#10;    ]">tests/unit/dev/test_pyodide_attempt_journal.py:117: in test_cancelled_transport_waiter_preserves_result_for_reconnect
+    assert journal.inventory() == [{"route_id": "route", "execution_id": "execution",
+E   AssertionError: assert [{'route_id': 'route', 'execution_id': 'execution', 'terminal': True, 'acknowledged': False}] == [{'route_id': 'route', 'execution_id': 'execution', 'terminal': False, 'acknowledged': False}]
+E     
+E     At index 0 diff: {'route_id': 'route', 'execution_id': 'execution', 'terminal': True, 'acknowledged': False} != {'route_id': 'route', 'execution_id': 'execution', 'terminal': False, 'acknowledged': False}
+E     
+E     Full diff:
+E       [
+E           {
+E               'acknowledged': False,
+E               'execution_id': 'execution',
+E               'route_id': 'route',
+E     -         'terminal': False,
+E     ?                     ^^^^
+E     +         'terminal': True,
+E     ?                     ^^^
+E           },
+E       ]</failure></testcase></testsuite></testsuites>

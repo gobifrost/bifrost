@@ -192,3 +192,20 @@ qualifies the earlier one-log claim to its after-full-callback window. This is
 upstream's documented at-least-once log behavior, not a new Pyodide divergence.
 Callbacks are deterministic fixtures, so no actual Worker/CPU/cancellation or
 new end-to-end/cloud acceptance evidence is claimed by this matrix.
+
+## Transport waiter cancellation retention
+
+Continued from d352dc663a0dfe40d38892a25b9b78725f0041ee. Only the companion
+journal and its local contract regression changed; shared Linux/Containers
+execution code and production resources remain unchanged.
+
+| Hypothesis | Change / command | Observed result / artifact | Next experiment |
+|---|---|---|---|
+| A disconnected caller cannot destroy a retained physical-route result | Cancel a waiter before gated launch completion, rotate real PostgreSQL owner, adopt/reconcile and retire | Before fix: failed, raw task cancelled; transport-waiter-before.xml | Shield collection without claiming physical stop |
+| One shared shielded receipt preserves duplicate/reconnect semantics | Return AttemptResult instead of raw task; `./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q` | 29 passed, 15.75 s; transport-waiter-after.xml | Actual provider transport interruption still needs separate qualification |
+
+No new cloud calls, endpoint reopening or credential changes. This test uses a
+deterministic launch callback, not a fresh Python Worker. Whole-host loss and
+physical CPU termination remain unresolved. Quality's first invocation was
+refused while the test command held the stack lock; it was started sequentially
+after that command completed, without bypassing the lock.
