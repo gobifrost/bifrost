@@ -4,18 +4,21 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from pyodide_refresh import install, refresh_sync
+import asyncio
+import pyodide_refresh
+from pyodide_refresh import install, refresh_sync, refresh_async
 
 
 class PyodideRefreshTests(unittest.TestCase):
-    def test_install_only_replaces_sync_physical_bridge(self):
-        sdk = SimpleNamespace(refresh_connection_access_token=Mock())
-        original_async = sdk.refresh_connection_access_token
+    def test_install_replaces_physical_bridges_without_replacing_core(self):
+        core = Mock()
+        sdk = SimpleNamespace(_refresh_locked=core)
         with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk)}):
             install()
             install()
         self.assertIs(sdk._refresh_connection_access_token_sync, refresh_sync)
-        self.assertIs(sdk.refresh_connection_access_token, original_async)
+        self.assertIs(sdk.refresh_connection_access_token, refresh_async)
+        self.assertIs(sdk._refresh_locked, core)
 
     def test_delegates_and_registers_returned_token(self):
         pending = object()
@@ -40,3 +43,55 @@ class PyodideRefreshTests(unittest.TestCase):
                 refresh_sync("https://test.invalid", "observed")
         self.assertEqual(sdk.refresh_connection_access_token.call_count, 1)
         sdk._register_refreshed.assert_not_called()
+
+
+class CooperativeRefreshTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        pyodide_refresh._locks.clear()
+        self.assertFalse(pyodide_refresh._pending)
+
+    async def test_same_connection_core_never_runs_concurrently(self):
+        active = 0
+        maximum = 0
+        calls = []
+
+        async def core(url, coordinator, observed):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            calls.append((url, coordinator, observed))
+            await asyncio.sleep(0)
+            active -= 1
+            return "replacement"
+
+        coordinator = object()
+        sdk = SimpleNamespace(_refresh_locked=core,
+            _refresh_coordinator=Mock(return_value=coordinator), _register_refreshed=Mock())
+        with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk)}):
+            values = await asyncio.gather(*(refresh_async("https://test.invalid/", "observed") for _ in range(3)))
+        self.assertEqual(values, ["replacement"] * 3)
+        self.assertEqual(maximum, 1)
+        self.assertEqual(calls, [("https://test.invalid", coordinator, "observed")] * 3)
+
+    async def test_cancelled_waiter_does_not_cancel_core_completion(self):
+        started, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def core(*_args):
+            started.set()
+            await release.wait()
+            completed.set()
+            return "replacement"
+
+        sdk = SimpleNamespace(_refresh_locked=core,
+            _refresh_coordinator=Mock(return_value=object()), _register_refreshed=Mock())
+        with patch.dict(sys.modules, {"bifrost": SimpleNamespace(client=sdk)}):
+            waiter = asyncio.create_task(refresh_async("https://test.invalid", "observed"))
+            await started.wait()
+            waiter.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await waiter
+            self.assertFalse(completed.is_set())
+            self.assertEqual(len(pyodide_refresh._pending), 1)
+            release.set()
+            await asyncio.gather(*pyodide_refresh._pending)
+            self.assertTrue(completed.is_set())

@@ -21,7 +21,8 @@ import httpx
 from sqlalchemy import delete, select
 
 
-async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False):
+async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
+               concurrent_refresh=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -34,6 +35,8 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
         raise RuntimeError("Refresh qualification is a separate fixed single-run fixture")
     if expired_access and (refresh_probe or isolation_label is not None):
         raise RuntimeError("Expired-access qualification is a separate fixed single-run fixture")
+    if concurrent_refresh and (refresh_probe or expired_access or isolation_label is not None):
+        raise RuntimeError("Concurrent refresh is a separate fixed single-run fixture")
 
     from src.core.database import init_db, get_engine, close_db, get_db_context
     from src.core.module_cache import set_module, invalidate_module
@@ -93,6 +96,28 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
                     "    replacement = await get_client().refresh_access_token()\n"
                     "    if replacement is None:\n"
                     "        raise RuntimeError('SDK refresh returned no replacement credential')\n") if refresh_probe else ""
+    if concurrent_refresh:
+        refresh_code = '''    import asyncio
+    from bifrost.client import get_client
+    client = get_client()
+    observed = os.environ["BIFROST_ACCESS_TOKEN"]
+    ready = 0
+    start = asyncio.Event()
+    async def refresh_one(index):
+        nonlocal ready
+        ready += 1
+        if ready == 3:
+            start.set()
+        await start.wait()
+        if index == 2:
+            return client._refresh_access_token_sync(observed)
+        return await client.refresh_access_token(observed)
+    replacements = await asyncio.gather(*(refresh_one(index) for index in range(3)))
+    if any(token is None for token in replacements) or len(set(replacements)) != 1:
+        raise RuntimeError("Concurrent SDK refresh did not converge")
+    refresh_evidence = {"refresh_callers": ready, "same_replacement": True,
+                        "synchronous_callers": 1, "asynchronous_callers": 2}
+'''
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
 import logging, os
@@ -100,11 +125,12 @@ import logging, os
 async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_key: str | None = None):
 {canary_code.rstrip()}
     value = await config.get({key!r})
+    refresh_evidence = {{}}
 {refresh_code.rstrip()}
     doc = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
     logging.getLogger(__name__).warning("canonical local Pyodide proof")
     return {{"value": doc.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
-             "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"], **isolation}}
+             "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"], **isolation, **refresh_evidence}}
 '''
     sources = {path: source, f"{helper}.py": "def fold(n):\n    return sum(range(1,n+1))\n"}
     manifest = {name: hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()}
@@ -114,6 +140,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
         report["refresh_probe"] = True
     if expired_access:
         report["expired_access_probe"] = True
+    if concurrent_refresh:
+        report["concurrent_refresh_probe"] = True
     if isolation_label is not None:
         report["isolation_label"] = isolation_label
         report["rendezvous_batch"] = batch
@@ -273,7 +301,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     report["provider_end_ms"] = int(time.time() * 1000)
                                 self.evidence = response.json()
                                 result = self.evidence["result"]
-                                if refresh_probe or expired_access:
+                                if refresh_probe or expired_access or concurrent_refresh:
                                     document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
                                                              params={"scope": str(org.id)})
                                     diagnostic = {**report,
@@ -286,6 +314,11 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     if result["success"] is True:
                                         assert any(call["path"] == "/auth/refresh" and call["status"] == 200
                                                    for call in self.evidence["api_calls"])
+                                        if concurrent_refresh:
+                                            assert result["result"]["refresh_callers"] == 3
+                                            assert result["result"]["same_replacement"] is True
+                                            assert sum(call["path"] == "/auth/refresh"
+                                                       for call in self.evidence["api_calls"]) == 1
                                 assert result["success"] is True and result["result"]["value"] == expected_value
                                 if isolation_label is not None:
                                     value = result["result"]
@@ -357,7 +390,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     revoked = await api.post("/api/sdk/config/get", headers={"Authorization": f"Bearer {pool.token}"},
                                              json={"key": key})
                     assert revoked.status_code == 401
-                    if refresh_probe or expired_access:
+                    if refresh_probe or expired_access or concurrent_refresh:
                         refresh_revoked = await api.post("/auth/refresh",
                             json={"refresh_token": pool.refresh_token})
                         assert refresh_revoked.status_code == 401
@@ -414,9 +447,11 @@ if __name__ == "__main__":
         parser.add_argument("--batch")
         parser.add_argument("--refresh-probe", action="store_true")
         parser.add_argument("--expired-access", action="store_true")
+        parser.add_argument("--concurrent-refresh", action="store_true")
         args = parser.parse_args()
         asyncio.run(main(isolation_label=args.isolation_label, batch=args.batch,
-                         refresh_probe=args.refresh_probe, expired_access=args.expired_access))
+                         refresh_probe=args.refresh_probe, expired_access=args.expired_access,
+                         concurrent_refresh=args.concurrent_refresh))
     except Exception as exc:
         import traceback
         from pathlib import Path

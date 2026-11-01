@@ -1,5 +1,9 @@
 # Challenge-driven cold-module refresh
 
+This records the bridge qualified at 4939d3d61. The subsequent
+[mixed-call qualification](CONCURRENT-REFRESH.md) replaces physical serialization
+cooperatively while retaining upstream's refresh core, and rechecks this cold path.
+
 The real isolated API refuses a validly signed but expired run access token with
 `401` and `Bearer error="invalid_token", error_description="refresh_required"`.
 Without an adapter, upstream's synchronous cold-module refresh fails with
@@ -54,7 +58,7 @@ attached to that stack, from the spike directory:
 
 ```sh
 node backend/canonical-refresh.mjs --run canonical-refresh-challenge-adapted challenge
-node backend/verify-refresh-challenge.mjs
+node backend/verify-refresh-challenge.mjs --commit 4939d3d61623692bf310bb482057b4588d10d213
 python -m unittest discover -s backend -p 'test_*.py' -v
 ```
 
