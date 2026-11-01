@@ -5,7 +5,12 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import type { ChatProjection } from "@/lib/chat-runtime";
+import {
+	hydrateChatProjection,
+	makeEmptyChatProjection,
+	stageOptimisticUserTurn,
+	type ChatProjection,
+} from "@/lib/chat-runtime";
 
 type ChatCallback = (event: Record<string, unknown>) => void;
 type ConnectionCallback = (connected: boolean) => void;
@@ -120,6 +125,7 @@ function wrapper() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks.store.hydrateConversationProjection.mockReset();
 	mocks.callbacks.chat = undefined;
 	mocks.callbacks.connection = undefined;
 	mocks.callbacks.platformJob = undefined;
@@ -177,7 +183,9 @@ describe("useChatStream", () => {
 		});
 
 		await waitFor(() =>
-			expect(mocks.store.hydrateConversationProjection).toHaveBeenCalledWith(
+			expect(
+				mocks.store.hydrateConversationProjection,
+			).toHaveBeenCalledWith(
 				"conversation-1",
 				expect.objectContaining({ context_usage: contextUsage }),
 				expect.any(Array),
@@ -269,6 +277,229 @@ describe("useChatStream", () => {
 		expect(
 			mocks.store.stageOptimisticUserTurn.mock.invocationCallOrder[0],
 		).toBeLessThan(vi.mocked(createChatRun).mock.invocationCallOrder[0]);
+	});
+
+	it.each(["connection", "replay"])(
+		"keeps an accepted run retryable after a %s observation failure",
+		async (failure) => {
+			const { result, rerender } = renderHook(
+				() => useChatStream({ conversationId: "conversation-1" }),
+				{ wrapper: wrapper() },
+			);
+			await waitFor(() => expect(result.current.isRestoring).toBe(false));
+			await waitFor(() =>
+				expect(getChatRunState).toHaveBeenCalledTimes(1),
+			);
+			mocks.generatedIds.push("accepted-run", "accepted-message");
+			vi.mocked(createChatRun).mockResolvedValue({
+				run_id: "accepted-run",
+				status: "queued",
+			} as never);
+			mocks.store.hydrateConversationProjection.mockImplementation(
+				(id, snapshot) => {
+					mocks.store.projectionsByConversation[id] =
+						hydrateChatProjection(
+							mocks.store.projectionsByConversation[id],
+							snapshot,
+						);
+				},
+			);
+			// Without a replay, the optimistic projection remains pending. The POST
+			// acknowledgment must still allow restoration to retry that run.
+			mocks.store.projectionsByConversation["conversation-1"] =
+				stageOptimisticUserTurn(
+					makeEmptyChatProjection("conversation-1"),
+					{
+						conversation_id: "conversation-1",
+						run_id: "accepted-run",
+						user_message_id: "accepted-message",
+						local_id: "accepted-message",
+						content: "hello",
+						created_at: "2026-11-01T00:00:00Z",
+					},
+				);
+			rerender();
+			const observationError = new Error("Synthetic observation failure");
+			if (failure === "connection") {
+				vi.mocked(webSocketService.connectToChat).mockRejectedValue(
+					observationError,
+				);
+			} else {
+				vi.mocked(getChatRunState).mockRejectedValue(observationError);
+			}
+
+			await act(async () => {
+				await expect(
+					result.current.sendMessage("hello"),
+				).resolves.toBeUndefined();
+			});
+
+			await waitFor(() => expect(result.current.restoreError).toBe(true));
+			expect(mocks.store.applyChatRunEvent).not.toHaveBeenCalled();
+			expect(mocks.store.setStreamError).not.toHaveBeenCalled();
+			vi.mocked(webSocketService.connectToChat).mockResolvedValue(
+				undefined,
+			);
+			vi.mocked(getChatRunState).mockResolvedValue(
+				makeState("running") as never,
+			);
+			const replayCalls = vi.mocked(getChatRunState).mock.calls.length;
+			act(() => result.current.retryRestore());
+			await waitFor(() =>
+				expect(result.current.restoreError).toBe(false),
+			);
+			await waitFor(() =>
+				expect(getChatRunState).toHaveBeenCalledTimes(replayCalls + 1),
+			);
+			expect(createChatRun).toHaveBeenCalledTimes(1);
+		},
+	);
+
+	it("still rejects a failed command submission", async () => {
+		const { result } = renderHook(
+			() => useChatStream({ conversationId: "conversation-1" }),
+			{ wrapper: wrapper() },
+		);
+		await waitFor(() => expect(getChatRunState).toHaveBeenCalledTimes(1));
+		const submissionError = new Error("Synthetic submission failure");
+		vi.mocked(createChatRun).mockRejectedValueOnce(submissionError);
+
+		await act(async () => {
+			await expect(result.current.sendMessage("hello")).rejects.toBe(
+				submissionError,
+			);
+		});
+		expect(mocks.store.applyChatRunEvent).toHaveBeenCalledWith(
+			"conversation-1",
+			expect.objectContaining({ status: "failed", kind: "error" }),
+		);
+	});
+
+	it("acknowledges the target run when navigation occurs during submission", async () => {
+		const { result, rerender } = renderHook(
+			({ id }) => useChatStream({ conversationId: id }),
+			{ wrapper: wrapper(), initialProps: { id: "conversation-1" } },
+		);
+		await waitFor(() => expect(getChatRunState).toHaveBeenCalledTimes(1));
+		mocks.generatedIds.push("run-1", "message-1");
+		mocks.store.hydrateConversationProjection.mockImplementation(
+			(id, snapshot) => {
+				mocks.store.projectionsByConversation[id] =
+					hydrateChatProjection(
+						mocks.store.projectionsByConversation[id] ??
+							makeEmptyChatProjection(id),
+						snapshot,
+					);
+			},
+		);
+		let accept!: (
+			response: Awaited<ReturnType<typeof createChatRun>>,
+		) => void;
+		vi.mocked(createChatRun).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					accept = resolve;
+				}),
+		);
+		let submission!: Promise<void>;
+		act(() => {
+			submission = result.current.sendMessage("hello");
+		});
+		mocks.store.projectionsByConversation["conversation-1"] =
+			stageOptimisticUserTurn(makeEmptyChatProjection("conversation-1"), {
+				conversation_id: "conversation-1",
+				run_id: "run-1",
+				user_message_id: "message-1",
+				local_id: "message-1",
+				content: "hello",
+				created_at: "2026-11-01T00:00:00Z",
+			});
+		rerender({ id: "conversation-2" });
+		await waitFor(() =>
+			expect(getChatRunState).toHaveBeenCalledWith("conversation-2"),
+		);
+		await act(async () => {
+			accept({ run_id: "run-1", status: "queued" } as never);
+			await submission;
+		});
+		expect(
+			mocks.store.projectionsByConversation["conversation-1"].runs[
+				"run-1"
+			].status,
+		).toBe("queued");
+		expect(
+			vi
+				.mocked(webSocketService.connectToChat)
+				.mock.calls.filter(([id]) => id === "conversation-1"),
+		).toHaveLength(1);
+	});
+
+	it.each([
+		["running", 5],
+		["succeeded", 0],
+	])(
+		"preserves %s run state when merging an older acknowledgment",
+		(status, sequence) => {
+			const projection = hydrateChatProjection(
+				makeEmptyChatProjection("conversation-1"),
+				{
+					conversation_id: "conversation-1",
+					runs: {
+						"run-1": {
+							run_id: "run-1",
+							status,
+							last_sequence: sequence,
+						},
+					},
+				},
+			);
+			const acknowledged = hydrateChatProjection(projection, {
+				conversation_id: "conversation-1",
+				runs: {
+					"run-1": {
+						run_id: "run-1",
+						status: "queued",
+						last_sequence: 0,
+					},
+				},
+			});
+			expect(acknowledged.runs["run-1"].status).toBe(status);
+			expect(acknowledged.runs["run-1"].last_sequence).toBe(sequence);
+		},
+	);
+
+	it("ignores an accepted-run replay superseded by a reconnect", async () => {
+		const { result } = renderHook(
+			() => useChatStream({ conversationId: "conversation-1" }),
+			{ wrapper: wrapper() },
+		);
+		await waitFor(() => expect(getChatRunState).toHaveBeenCalledTimes(1));
+		let resolveOld!: (
+			state: Awaited<ReturnType<typeof getChatRunState>>,
+		) => void;
+		vi.mocked(getChatRunState).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveOld = resolve;
+				}),
+		);
+		let submission!: Promise<void>;
+		act(() => {
+			submission = result.current.sendMessage("hello");
+		});
+		await waitFor(() => expect(getChatRunState).toHaveBeenCalledTimes(2));
+		act(() => mocks.callbacks.connection?.(true));
+		await waitFor(() => expect(getChatRunState).toHaveBeenCalledTimes(3));
+		await waitFor(() => expect(result.current.isRestoring).toBe(false));
+		const hydrations =
+			mocks.store.hydrateConversationProjection.mock.calls.length;
+		await act(async () => {
+			resolveOld(makeState("running") as never);
+			await submission;
+		});
+		expect(mocks.store.hydrateConversationProjection).toHaveBeenCalledTimes(
+			hydrations,
+		);
 	});
 
 	it("batches token events before updating the projection", async () => {
@@ -455,23 +686,42 @@ describe("useChatStream", () => {
 });
 
 it("surfaces restoration failure and retries through projection hydration", async () => {
-	vi.mocked(getChatRunState).mockRejectedValueOnce(new Error("Synthetic restore failure"));
-	const { result } = renderHook(() => useChatStream({ conversationId: "conversation-1" }), { wrapper: wrapper() });
+	vi.mocked(getChatRunState).mockRejectedValueOnce(
+		new Error("Synthetic restore failure"),
+	);
+	const { result } = renderHook(
+		() => useChatStream({ conversationId: "conversation-1" }),
+		{ wrapper: wrapper() },
+	);
 	await waitFor(() => expect(result.current.restoreError).toBe(true));
 	expect(mocks.store.hydrateConversationProjection).not.toHaveBeenCalled();
 	act(() => result.current.retryRestore());
 	await waitFor(() => expect(result.current.restoreError).toBe(false));
 	await waitFor(() => expect(result.current.isRestoring).toBe(false));
 	expect(getChatRunState).toHaveBeenCalledTimes(2);
-	expect(mocks.store.hydrateConversationProjection).toHaveBeenCalledWith("conversation-1", expect.objectContaining({ conversation_id: "conversation-1" }), []);
+	expect(mocks.store.hydrateConversationProjection).toHaveBeenCalledWith(
+		"conversation-1",
+		expect.objectContaining({ conversation_id: "conversation-1" }),
+		[],
+	);
 });
 
 it("clears restoration errors after reconnect and ignores an older failed replay", async () => {
-	vi.mocked(getChatRunState).mockRejectedValueOnce(new Error("Synthetic initial failure"));
-	const { result } = renderHook(() => useChatStream({ conversationId: "conversation-1" }), { wrapper: wrapper() });
+	vi.mocked(getChatRunState).mockRejectedValueOnce(
+		new Error("Synthetic initial failure"),
+	);
+	const { result } = renderHook(
+		() => useChatStream({ conversationId: "conversation-1" }),
+		{ wrapper: wrapper() },
+	);
 	await waitFor(() => expect(result.current.restoreError).toBe(true));
 	let rejectOld!: (error: Error) => void;
-	vi.mocked(getChatRunState).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject; }));
+	vi.mocked(getChatRunState).mockImplementationOnce(
+		() =>
+			new Promise((_resolve, reject) => {
+				rejectOld = reject;
+			}),
+	);
 	act(() => mocks.callbacks.connection?.(true));
 	await waitFor(() => expect(result.current.isRestoring).toBe(true));
 	act(() => mocks.callbacks.connection?.(true));
