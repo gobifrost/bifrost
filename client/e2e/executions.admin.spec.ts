@@ -450,7 +450,7 @@ test.describe("Execution History", () => {
 	});
 
 	test(
-		"[EXEC-02 desktop] actual rerun creates a new execution with the expected output",
+		"[EXEC-02 desktop] edited rerun creates a new execution with the expected output",
 		{ tag: "@smoke" },
 		async ({ page, api }) => {
 			const originalExecutionId = await startExecution(api, workflowId, {
@@ -464,10 +464,22 @@ test.describe("Execution History", () => {
 				.getByRole("button", { name: "Rerun", exact: true })
 				.click();
 			await expect(
-				page.getByRole("alertdialog", { name: "Rerun Workflow?" }),
+				page.getByRole("dialog", { name: "Rerun Workflow" }),
 			).toBeVisible();
-			await page
-				.getByRole("button", { name: "Yes, rerun workflow" })
+			const dialog = page.getByRole("dialog", { name: "Rerun Workflow" });
+			await expect(dialog.getByLabel("message")).toHaveValue("exec-02");
+			await dialog.getByLabel("message").fill("exec-02 edited");
+			await dialog.screenshot({
+				path: "playwright-results/rerun-workflow-desktop.png",
+			});
+			await page.setViewportSize({ width: 390, height: 844 });
+			await expectNoHorizontalOverflow(page);
+			await dialog.screenshot({
+				path: "playwright-results/rerun-workflow-mobile.png",
+			});
+			await page.setViewportSize({ width: 1440, height: 900 });
+			await dialog
+				.getByRole("button", { name: "Rerun Workflow" })
 				.click();
 
 			await expect(page).toHaveURL(
@@ -482,7 +494,13 @@ test.describe("Execution History", () => {
 			expect(rerunExecutionId).toBeTruthy();
 			expect(rerunExecutionId).not.toBe(originalExecutionId);
 
-			await waitForTerminalSuccess(api, rerunExecutionId!);
+			const rerun = await waitForTerminalSuccess(api, rerunExecutionId!);
+			expect(rerun.input_data).toMatchObject({
+				message: "exec-02 edited",
+			});
+			expect(
+				(await getExecution(api, originalExecutionId)).input_data,
+			).toMatchObject({ message: "exec-02" });
 			await page.reload();
 			await openExecutionDetail(page, rerunExecutionId!);
 			await expect(
@@ -490,7 +508,7 @@ test.describe("Execution History", () => {
 			).toBeVisible();
 			await expect(
 				page.getByRole("tabpanel", { name: "Result", exact: true }),
-			).toContainText("exec-02");
+			).toContainText("exec-02 edited");
 			await expect(
 				page.getByRole("tabpanel", { name: "Result", exact: true }),
 			).toContainText(workflowMarker);

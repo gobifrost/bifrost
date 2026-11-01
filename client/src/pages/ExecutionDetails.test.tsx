@@ -1,4 +1,9 @@
 import { ExecutionDetails } from "./ExecutionDetails";
+import { executeWorkflowWithContext } from "@/hooks/useWorkflows";
+const mockWorkflowParameters = vi.hoisted(() => vi.fn());
+vi.mock("@/services/workflowParameters", () => ({
+	useWorkflowParameters: mockWorkflowParameters,
+}));
 /**
  * Tests for admin-only controls in ExecutionDetails.
  */
@@ -85,7 +90,7 @@ vi.mock("@/components/PageLoader", () => ({
 	PageLoader: () => <div>Loading...</div>,
 }));
 
-vi.mock("@/components/execution", () => ({
+vi.mock("@/components/execution", async () => ({
 	ExecutionResultPanel: () => (
 		<div data-testid="result-panel">Result body</div>
 	),
@@ -105,8 +110,9 @@ vi.mock("@/components/execution", () => ({
 	),
 	ExecutionSidebar: () => <aside>Sidebar</aside>,
 	ExecutionCancelDialog: () => null,
-	ExecutionRerunDialog: ({ open }: { open: boolean }) =>
-		open ? <div role="dialog">Rerun dialog</div> : null,
+	ExecutionRerunDialog: (
+		await import("@/components/execution/ExecutionDialogs")
+	).ExecutionRerunDialog,
 	ExecutionMetadataBar: ({ workflowName }: { workflowName: string }) => (
 		<div>{workflowName}</div>
 	),
@@ -153,6 +159,7 @@ const executionQueryKey = [
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockWorkflowParameters.mockReturnValue({ data: [], isError: false });
 	mockStreamState = undefined;
 	mockAuth.mockReturnValue({
 		isPlatformAdmin: false,
@@ -734,6 +741,122 @@ describe("Execution review continuity", () => {
 		await user.click(
 			screen.getByRole("button", { name: "Rerun execution" }),
 		);
-		expect(screen.getByRole("dialog")).toHaveTextContent("Rerun dialog");
+		expect(
+			screen.getByRole("dialog", { name: "Rerun Workflow" }),
+		).toBeVisible();
+	});
+});
+
+describe("ExecutionDetails — editable rerun", () => {
+	beforeEach(() => {
+		mockAuth.mockReturnValue({
+			isPlatformAdmin: true,
+			hasRole: () => false,
+			user: { id: "user-1" },
+		});
+		mockUseExecution.mockReturnValue({
+			data: { ...execution, input_data: { message: "previous" } },
+			isLoading: false,
+			error: null,
+		});
+		mockWorkflowParameters.mockReturnValue({
+			data: [
+				{
+					name: "message",
+					label: "Message",
+					type: "str",
+					required: true,
+				},
+			],
+			isError: false,
+		});
+		vi.mocked(executeWorkflowWithContext).mockResolvedValue({
+			execution_id: "new-execution",
+		} as Awaited<ReturnType<typeof executeWorkflowWithContext>>);
+	});
+
+	it.each([false, true])(
+		"submits edited values from the shared dialog (embedded=%s)",
+		async (embedded) => {
+			const onExecutionChange = vi.fn();
+			const { user } = renderWithProviders(
+				<ExecutionDetails
+					executionId={execution.execution_id}
+					embedded={embedded}
+					onExecutionChange={onExecutionChange}
+				/>,
+			);
+			await user.click(
+				screen.getByRole("button", {
+					name: embedded ? "Rerun execution" : "Rerun",
+				}),
+			);
+			expect(
+				screen.getByRole("textbox", { name: /Message/ }),
+			).toHaveValue("previous");
+			await user.clear(screen.getByRole("textbox", { name: /Message/ }));
+			await user.type(
+				screen.getByRole("textbox", { name: /Message/ }),
+				"edited",
+			);
+			await user.click(
+				screen.getByRole("button", { name: "Rerun Workflow" }),
+			);
+			await waitFor(() =>
+				expect(executeWorkflowWithContext).toHaveBeenCalledWith(
+					execution.workflow_id,
+					{ message: "edited" },
+				),
+			);
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+			if (embedded)
+				expect(onExecutionChange).toHaveBeenCalledWith("new-execution");
+		},
+	);
+
+	it("starts each opening from the original input after cancellation", async () => {
+		const { user } = await renderPage();
+		await user.click(
+			screen.getByRole("button", { name: "Rerun" }),
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: /Message/ }),
+			" discarded",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Cancel" }),
+		);
+		expect(executeWorkflowWithContext).not.toHaveBeenCalled();
+		await user.click(
+			screen.getByRole("button", { name: "Rerun" }),
+		);
+		expect(screen.getByRole("textbox", { name: /Message/ })).toHaveValue(
+			"previous",
+		);
+	});
+
+	it("preserves edited input after a failed execution request", async () => {
+		vi.mocked(executeWorkflowWithContext).mockRejectedValueOnce(
+			new Error("Unavailable"),
+		);
+		const { user } = await renderPage();
+		await user.click(
+			screen.getByRole("button", { name: "Rerun" }),
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: /Message/ }),
+			" edited",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Rerun Workflow" }),
+		);
+		await waitFor(() =>
+			expect(screen.getByRole("alert")).toHaveTextContent(
+				"Your edited input is ready to retry",
+			),
+		);
+		expect(screen.getByRole("textbox", { name: /Message/ })).toHaveValue(
+			"previous edited",
+		);
 	});
 });
