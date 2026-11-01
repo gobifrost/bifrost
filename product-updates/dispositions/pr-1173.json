@@ -1,0 +1,13 @@
+{
+  "key": "pr:1173",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal activation of the already approved #1170, #1171 and #1172 Product Updates; no additional customer-facing behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1173",
+      "GitHub recognizes MTG-Thomas as a co-author on landed commits 6dde44b158e4de938db34c2cf129b0d12dacc4d2 (#1170) and 13f807f4dfac7b0e68ed6f5de2e0544efd25a578 (#1172). The prepared image highlight shows Thomas alone, retains the mandatory launcher upgrade notice and verified settings link, and preserves all 36 prior announcements and all 313 prior PR records. Content validation, image preparation and 44 Product Updates toolchain tests passed. Exact commands and complete #1172 queue acceptance are recorded in docs/experiments/external-capacity-cleanup-acceptance.md."
+    ]
+  }
+}

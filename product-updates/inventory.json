@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
-  "collected_at": "2026-10-31T19:34:44Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...55f66591ac3b75e952ec27aae74e6789e5d92efa",
+  "target_ref": "13f807f4dfac7b0e68ed6f5de2e0544efd25a578",
+  "collected_at": "2026-11-01T19:57:31Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...13f807f4dfac7b0e68ed6f5de2e0544efd25a578",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2195,6 +2195,34 @@
       "subject": "Report daily aggregate installation usage (#1163)",
       "prs": [
         1163
+      ]
+    },
+    {
+      "sha": "02c0c1543abffadfbaff3b2ea6e846786f772b17",
+      "subject": "Activate usage reporting notice in Product Updates (#1166)",
+      "prs": [
+        1166
+      ]
+    },
+    {
+      "sha": "6dde44b158e4de938db34c2cf129b0d12dacc4d2",
+      "subject": "Fix fresh-worker Git Sync bootstrap and isolate overlap tests (#1170)",
+      "prs": [
+        1170
+      ]
+    },
+    {
+      "sha": "c167b594d9e0fe84944e7a1d567640d911091b47",
+      "subject": "Review and edit workflow inputs before rerunning (#1171)",
+      "prs": [
+        1171
+      ]
+    },
+    {
+      "sha": "13f807f4dfac7b0e68ed6f5de2e0544efd25a578",
+      "subject": "Scale Worker Capacity Through External Providers (#1172)",
+      "prs": [
+        1172
       ]
     }
   ],
@@ -6276,6 +6304,76 @@
       "merge_commit": "55f66591ac3b75e952ec27aae74e6789e5d92efa",
       "body": "Production installations now report a persistent random installation ID, build version, and previous-day workflow and agent run totals to `https://reports.gobifrost.com/usage` by default. Development, testing, debug, and unversioned builds are excluded. `BIFROST_USAGE_REPORTING_ENABLED=false` excludes staging/database clones and provides a permanent opt-out.\n\nThe existing elected scheduler checks at startup and hourly. PostgreSQL stores the installation identity and the last successfully reported UTC day. Only HTTP 204 marks delivery complete; a failed delivery remains eligible for the next check. The fixed seven-field payload excludes customer identities and content. Reports remain unauthenticated and self-reported, as requested. The reporting application retains no source IP addresses, user agents, referrers, or request headers; Worker request logging is disabled. Cloudflare provider-level processing is described separately in the runbook.\n\nDocker Compose and Kubernetes expose the environment setting. The README and usage-reporting runbook document the exact payload, defaults, clone behavior, and Cloudflare privacy boundary. Receiver source remains in the separate private infrastructure repository.\n\n## Validation\n\n- `./test.sh quality api` \u2014 Pyright and Ruff pass.\n- `./test.sh tests/unit/test_usage_reporting.py tests/unit/scheduler/test_control.py tests/unit/services/test_scheduler_diagnostics.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 41 passed, zero skipped. The PostgreSQL happy path uses an HTTP mock transport; no reports are sent to the public receiver. The integration case takes about 0.1 seconds.\n- `./test.sh quality repo` \u2014 repository checks run with a temporary GitHub CONNECT tunnel after the host resolver failed; TLS verification stays enabled and no host DNS settings are changed.\n- `./test.sh tests/unit/test_usage_reporting.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 83 passed after the test-style cleanup and additive contract fingerprint refresh; existing CLI/SDK shapes and minimum CLI version are unchanged.\n- `./test.sh tests/e2e/platform/test_scheduler_diagnostics.py tests/e2e/platform/test_usage_reporting.py -v --durations=0` \u2014 five passed after adding the reporting task to the live diagnostics catalogue expectation; request calls take under 0.3 seconds, with about 6.6 seconds spent in existing authenticated-user fixture setup.\n- Receiver: `BIFROST_REPORTING_TEST_IMAGE=bifrost-test-client-check:latest ./test.sh usage-reporting` in the private infrastructure repo \u2014 all seven Worker/D1 tests, TypeScript checks, and dry-run build pass.\n- Full backend, frontend, and browser suites were not run locally. No frontend or API route/CLI contract changed.\n\n## Product Updates\n\n- [x] Highlight \u2014 Daily Installation Usage Reporting; canonical entry `c0959ccb-e319-4cba-9b98-1da422ba9700` documents the reporting default and permanent opt-out.\n\nCloses #1165.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1163"
+    },
+    {
+      "number": 1166,
+      "title": "Activate usage reporting notice in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1166",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-10-31T20:01:03Z",
+      "merge_commit": "02c0c1543abffadfbaff3b2ea6e846786f772b17",
+      "body": "The usage-reporting notice is approved in #1163, but builds with the older cached inventory withhold it because its source is absent. Refresh the cumulative verified inventory through the landed reporting change so the notice appears in the built Product Updates feed.\n\nThe notice lists every transmitted field, states default-enabled daily reporting and permanent opt-out, and explicitly says our reporting service retains no IP addresses or request metadata. Historical source and contributor metadata are retained; announcement UUID and prose are unchanged.\n\n## Validation\n\n- Product Updates content validation passes against the refreshed source cutoff.\n- The prepared image bundle contains the reporting notice and its nonretention/opt-out wording.\n- Every previously visible announcement remains in the prepared bundle.\n- `./test.sh quality repo` checks repository hygiene and the Product Updates test suite.\n- No application source changed; backend and browser suites are not rerun locally for this metadata-only activation.\n\n## Product Updates\n\n- [x] Omit \u2014 internal activation of the already approved #1163 notice; no additional customer-facing behavior.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1166"
+    },
+    {
+      "number": 1170,
+      "title": "Fix fresh-worker Git Sync bootstrap and isolate overlap tests",
+      "url": "https://github.com/gobifrost/bifrost/pull/1170",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-01T17:22:22Z",
+      "merge_commit": "6dde44b158e4de938db34c2cf129b0d12dacc4d2",
+      "body": "Thomas Bray\u2019s original fix and overlap coverage from #1140, with maintainer repairs for E2E fixture isolation. His commits are preserved. GitHub rejected pushing the repair to the organization-owned fork, so this PR carries the tested work forward.\n\nA fresh worker currently refuses Sync because it has no local checkout baseline, even when another worker already fetched the persisted workspace. Bootstrap only an entirely empty checkout before the existing fingerprint check; keep stale checkouts and local work protected.\n\nThe overlap test verifies a running execution retains loaded v1 code, can late-import v2, and a queued execution starts entirely on v2. Earlier E2E fixtures now remove their own committed records, including remapped workspace-import IDs and listeners intentionally preserved by Solution deletion. Separate executor cache mounts let this test clear and restore both local checkouts without sharing caches or pinning jobs. Suite reset clears those caches through the container UID.\n\n## Product Updates\n\n- [x] Other: Fresh Git workers can sync a fetched workspace without a second Fetch. Existing stale-checkout protections remain unchanged.\n\n## Validation\n\n- The two newly leaking fixtures immediately followed by native overlap: 3 passed in 35.00 seconds; command exit zero.\n- Failed CI partition, all repaired fixtures, and focused Git/harness coverage: 949 tests completed, zero JUnit failures/errors/skips; Docker test-container exit zero. The outer command returned SIGTERM after completion; this is documented rather than claimed as a successful outer-shell exit.\n- Cache reset and harness contracts: 25 passed; both cache directories, including hidden sentinels, reset to empty.\n- `./test.sh quality api`: Pyright and Ruff passed, command exit zero.\n- Bash syntax, Compose configuration, and canonical Product Updates validation passed.\n- Detailed commands, earlier 1,012-test verification, and failure dispositions are in `docs/experiments/workspace-sync-execution-overlap.md`.\n\nFull repository-wide backend/client/browser acceptance belongs to the merge queue; those complete suites were not run locally. This retains live-import behavior and does not introduce atomic releases or enqueue-time code pinning.\n\nCo-authored-by: Thomas Bray <87775189+MTG-Thomas@users.noreply.github.com>",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1170",
+      "contributions": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 1170,
+          "role": "original implementation",
+          "evidence_ref": "https://github.com/gobifrost/bifrost/commit/6dde44b158e4de938db34c2cf129b0d12dacc4d2"
+        }
+      ]
+    },
+    {
+      "number": 1171,
+      "title": "Review and edit workflow inputs before rerunning",
+      "url": "https://github.com/gobifrost/bifrost/pull/1171",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-01T19:22:34Z",
+      "merge_commit": "c167b594d9e0fe84944e7a1d567640d911091b47",
+      "body": "## Product Updates\n\n- [x] Highlight \u2014 approved entry `3c08c353-228b-4d49-8223-389deb934a13` and disposition `product-updates/dispositions/pr-1171.json`.\n\n## Summary\n\nRerun opens the standard workflow fields with the previous execution's inputs filled in, allowing edits before starting a new execution. Both the full execution page and embedded history preview use the same dialog. Cancelling leaves the original run unchanged; a failed submission preserves edited inputs.\n\nJSON, object, and list parameters use the existing shared Monaco JSON code editor across fresh runs, reruns, the editor Run panel, and form-builder test launches. Draft formatting is preserved and editor model paths are unique. The dialog header and action buttons remain visible while fields scroll on phones.\n\nA parameter-only read endpoint shares the existing execution authorization/resolution logic, preserving execute-only access, workflow sharing, organization reach, and Solution boundaries. Submission continues through the existing execute endpoint. The new read is registered as the REST-only `workflows.parameters` operation with fresh generated inventory/reference metadata.\n\nGit Sync deletion detection also follows the existing export eligibility for integration configs, preserving configs whose soft-deleted parent integrations are intentionally excluded from workspace manifests.\n\nCloses #1169, requested by [wilhil](https://github.com/wilhil). Uses the requested single-Rerun-button dialog interaction.\n\n## Validation\n\n- 80 focused client tests passed, including structured-value parsing, draft preservation, independent editor models, disabled editing, fresh-run/rerun consumers, and existing JSON/YAML editor consumers.\n- Five live parameter authorization tests passed; shared execution-service, access-list launch-note, and CLI-contract selection: 58 passed.\n- Operation catalog, inventory, and skill-appendix freshness: 21 passed.\n- `./test.sh quality api`, `npm run tsc --prefix client`, and `npm run lint --prefix client` passed.\n- `./test.sh client e2e --screenshots e2e/executions.admin.spec.ts --grep 'EXEC-02'` passed (one feature journey plus authentication setup). It verifies text and JSON prefill, editing, parsed JSON object persistence, the new execution result, and unchanged original input.\n- Production client build passed as part of the browser run.\n- Git Sync regression reproduced with an omitted integration config before the fix; direct deletion-sweep and live sync/execution overlap tests passed afterward (2 tests). Existing exclusion and explicit config-deletion consumers passed (3 tests). API quality passed after the repair.\n- Live debug screenshots reviewed at desktop and phone widths in dark mode and desktop light mode; dropdown selection and Escape dismissal verified.\n\nComplete backend, complete Vitest, complete Playwright, and pre-pr suites were not run locally. The merge queue remains the complete-suite gate.\n\n## Preview\n\n[Open the synthetic execution](https://bifrost-f0f3c468-3lkw.eu1.netbird.services/history/3f53191e-456e-4850-9e70-d07d23593b64), then select **Rerun**. Login details are available from this worktree's `./debug.sh status`.\n\nScreenshot review approved; marked ready and requested merge through the protected merge queue.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1171"
+    },
+    {
+      "number": 1172,
+      "title": "Scale Worker Capacity Through External Providers",
+      "url": "https://github.com/gobifrost/bifrost/pull/1172",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-01T19:56:08Z",
+      "merge_commit": "13f807f4dfac7b0e68ed6f5de2e0544efd25a578",
+      "body": "Thomas Bray\u2019s external worker-capacity contribution from #1160, including his cleanup correction at `6cc0d8693d7ffa9ea90e07930da07a6824441651`. His original commits are preserved. This replacement is required because the company fork grants the maintainer read access only.\n\n## Summary\n\nWorkflows, agents, summaries, platform jobs, and supervised services use the existing PostgreSQL admission and execution system while an external provider supplies physical worker capacity. Provider calls carry resource metadata rather than job payloads.\n\nLost and retired external resources remain eligible for cleanup until deletion is confirmed, including after prolonged outages, controller restarts, registry retention, and delayed preparation. A maintainer repair clears active startup platform jobs from isolated worker-pool tests; both running and cancelling regressions fail before the repair and pass afterward. Agent-indexer tests also use the shared transaction rollback so synthetic workflows do not leak into later Git Sync tests. Production concurrency and deletion-confirmation checks are unchanged.\n\n## Validation\n\n- 341 focused backend tests passed, including cleanup, capacity, summary/backfill, service, private transport, Git workspace, and DTO/CLI contracts.\n- 13 live E2E checks passed after merging current main, including the ordered indexer/Sync regression, automatic summaries, service lifecycle/recovery, and workflow parameter authorization.\n- All 23 tests in the two changed settings components passed. TypeScript and ESLint passed; ESLint retains one existing console warning in the review-pack seed helper.\n- Dockerized API Pyright and Ruff passed. The branch includes current main, `c167b594d9e0fe84944e7a1d567640d911091b47`.\n- The three agent-indexer tests followed by native workspace/execution overlap passed in the exposing order; independent database readback confirmed no owned rows remained.\n- Exact commands and durable failure disposition: `docs/experiments/external-capacity-cleanup-acceptance.md`.\n\nFull local suites and a deployed-provider outage rehearsal were not rerun. The merge queue remains the complete-suite gate. Thomas\u2019s documented runtime-family qualification limits remain; merging source does not claim deployment acceptance for Cloudflare video, automatic-provider supervised services, or Hyperdrive SQL. This does not resolve #1105\u2019s separate static-launcher policy.\n\n## Review and Product Updates\n\nThe original cleanup blocker is resolved in the preserved candidate, with the additional test isolation repair independently reviewed. Manual sensitive-path review covered authenticated provider transport, immutable resource identity, deletion receipts, retention/migration safety, physical admission and summary claim fencing.\n\nHighlight: approved canonical entry `b3129848-c1d8-4f70-8294-effe7168a82a` and `product-updates/dispositions/pr-1172.json`. The notice retains the required physical-launcher upgrade because APIs no longer execute summaries and links to the verified Workers Settings route. Thomas remains the credited contributor; the cumulative feed inventory will be refreshed after landing to activate the entry with verified contribution metadata.\n\nCo-authored-by: Thomas Bray <87775189+MTG-Thomas@users.noreply.github.com>",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1172",
+      "contributions": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 1172,
+          "role": "original implementation",
+          "evidence_ref": "https://github.com/gobifrost/bifrost/commit/13f807f4dfac7b0e68ed6f5de2e0544efd25a578"
+        }
+      ]
     }
   ]
 }
