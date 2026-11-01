@@ -23,8 +23,8 @@ spec:
         - name: scripts
           mountPath: /bench
       resources:
-        requests: {cpu: "1", memory: 512Mi}
-        limits: {cpu: "1", memory: 512Mi}
+        requests: {cpu: 500m, memory: 512Mi}
+        limits: {cpu: "2", memory: 512Mi}
   volumes:
     - name: scripts
       configMap:

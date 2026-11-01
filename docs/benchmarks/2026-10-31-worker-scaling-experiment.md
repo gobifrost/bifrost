@@ -1,7 +1,9 @@
 # Worker Scaling and Idle-Floor Experiment
 
-Status: tooling reviewed and verified by 501 benchmark unit tests plus Ruff;
-the declared nine-arm run has started, with no completed arm yet. This is an isolated
+Status: tooling reviewed and verified by 501 benchmark unit tests plus Ruff.
+The first cold arm completed 33 correct requests but was invalidated by driver
+CPU throttling. Its raw evidence and cleanup receipt are retained. A new run
+requires the driver resource correction below and a fresh declaration. This is an isolated
 benchmark of the captured, unmodified production image. It does not authorize
 platform fixes, new PRs, deployments or production policy changes.
 
@@ -22,6 +24,16 @@ four workers. The quota stays the same across arms; actual admitted requests,
 Pod lifetimes and measured use are recorded separately. This is larger than
 the original 4 decimal GB envelope. Node images remain cached, so a cold arm
 measures Pod/process startup on an existing node.
+
+The benchmark driver sits outside the tenant envelope. The invalid first run
+gave concurrent driver and observation processes a shared one-CPU limit; eight
+sampled intervals exceeded the frozen 5% infrastructure-throttling gate. The
+corrected driver requests 500m CPU and can burst to two CPUs, with the same
+512Mi memory limit. Tenant resources, workload and validity gates stay fixed.
+The guarded eight-CPU node had 1050m of system/operator requests; adding the
+maximum tenant's 5200m and 1500m of benchmark infrastructure requests totals
+7750m. A two-CPU driver request would not fit this node. Actual host contention
+remains gated; request placement alone does not prove a valid measurement.
 
 Read the effective stored policy through the supported authenticated
 `GET /api/admin/kubernetes/execution` before and after measurement. Retain only
