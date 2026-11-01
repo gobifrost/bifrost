@@ -30,7 +30,7 @@ green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 | Oversized payload/memory exhaustion | Bounded transport tests; historical local/cloud memory artifacts | Negative probes exist. No measured safe per-run peak or capacity admission for current engine; synthetic 1 GiB fixture budget is not isolate capacity. |
 | Cold/warm latency and concurrency | Historical benchmarks; warm tenant receipt; minimal cold reproducer | Warm local pair passes. Cold local pair fails in native workerd without BiFrost or packages. No production p95/p99 claim. |
 | CPU/peak memory/bundle/SDK overhead/cost | Historical raw benchmark/metric artifacts and bundle receipts | Measurements and estimates separated. Full Linux pool comparison, current peak/CPU and complete per-1,000 execution economics remain missing. |
-| Python↔JS marshaling overhead | End-to-end timings include interop | Isolated contribution of marshaling is unmeasured. |
+| Python↔JS marshaling overhead | backend/INTEROP.md and raw interop-local.json | Bounded local FFI/JSON microbenchmark now measured; null conversion mismatch explicit. Full SDK/cloud contribution remains unmeasured. |
 | Linux compatibility | Focused engine/consumer tests and ordinary CI | Default Linux seams retained; every new candidate still requires its normal CI/review. |
 | Reviewable upstream contribution | Public personal fork; draft PR #1161 | Published experimental source. Maintainer research review at f8cc75e does not accept later heads or the backend. |
 

@@ -34,6 +34,11 @@ The current tested package lock selects CPython `cp314`, ABI `cp314`, platform
 `pyemscripten_2026_0_wasm32`, and Pyodide 314.0.7. A future runtime update requires
 requalification. Never retag an incompatible wheel to bypass the resolver.
 
+Runtime observation caveat: the later built-in-only local interop fixture
+self-reported Pyodide 314.0.6 under workerd 1.20261023.1, despite the resolver/lock
+selection above. See backend/INTEROP.md. Record the running interpreter version
+as well as resolver metadata; the lock alone cannot establish runtime identity.
+
 For a missing-wheel candidate, retain the source archive/commit and digest;
 pin pyodide-build, cross-build environment, Emscripten, compiler/linker flags,
 Python headers and dependent libraries. Verify their compatibility with the

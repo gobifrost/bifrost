@@ -1,0 +1,124 @@
+{
+  "status": 200,
+  "body": {
+    "pyodide_version": "314.0.6",
+    "correctness": true,
+    "null_probe": {
+      "direct_equal": true,
+      "js_json_equal": false
+    },
+    "rows": [
+      {
+        "text_bytes": 128,
+        "python_json_bytes": 310,
+        "loops_per_sample": 100,
+        "samples_ms_per_operation": {
+          "python_json_roundtrip": [
+            0.07000207901000977,
+            0.020003318786621094,
+            0.03999948501586914,
+            0.009999275207519531,
+            0.019998550415039062
+          ],
+          "ffi_roundtrip": [
+            0.29999732971191406,
+            0.08999824523925781,
+            0.040001869201660156,
+            0.019998550415039062,
+            0.03000020980834961
+          ],
+          "js_json_roundtrip": [
+            0.32000064849853516,
+            0.26999950408935547,
+            0.09999752044677734,
+            0.04999876022338867,
+            0.05000114440917969
+          ]
+        },
+        "median_ms_per_operation": {
+          "python_json_roundtrip": 0.020003318786621094,
+          "ffi_roundtrip": 0.040001869201660156,
+          "js_json_roundtrip": 0.09999752044677734
+        }
+      },
+      {
+        "text_bytes": 4096,
+        "python_json_bytes": 4278,
+        "loops_per_sample": 50,
+        "samples_ms_per_operation": {
+          "python_json_roundtrip": [
+            0.020003318786621094,
+            0.020003318786621094,
+            0.040001869201660156,
+            0.039997100830078125,
+            0.020003318786621094
+          ],
+          "ffi_roundtrip": [
+            0.039997100830078125,
+            0.040001869201660156,
+            0.040001869201660156,
+            0.039997100830078125,
+            0.10000228881835938
+          ],
+          "js_json_roundtrip": [
+            0.09999752044677734,
+            0.07999897003173828,
+            0.09999752044677734,
+            0.039997100830078125,
+            0.06000041961669922
+          ]
+        },
+        "median_ms_per_operation": {
+          "python_json_roundtrip": 0.020003318786621094,
+          "ffi_roundtrip": 0.040001869201660156,
+          "js_json_roundtrip": 0.07999897003173828
+        }
+      },
+      {
+        "text_bytes": 65536,
+        "python_json_bytes": 65718,
+        "loops_per_sample": 10,
+        "samples_ms_per_operation": {
+          "python_json_roundtrip": [
+            0.29997825622558594,
+            1.099991798400879,
+            0.30002593994140625,
+            0.6999731063842773,
+            0.3000020980834961
+          ],
+          "ffi_roundtrip": [
+            0.40001869201660156,
+            1.4999866485595703,
+            0.599980354309082,
+            0.4000425338745117,
+            0.20000934600830078
+          ],
+          "js_json_roundtrip": [
+            0.7000207901000977,
+            5.700016021728516,
+            1.2999773025512695,
+            1.7999887466430664,
+            0.9000062942504883
+          ]
+        },
+        "median_ms_per_operation": {
+          "python_json_roundtrip": 0.30002593994140625,
+          "ffi_roundtrip": 0.4000425338745117,
+          "js_json_roundtrip": 1.2999773025512695
+        }
+      }
+    ]
+  },
+  "runtime": "local-workerd",
+  "wrangler": "4.156.0",
+  "started_ms": 1793496935077,
+  "total_observer_wall_ms": 6463,
+  "cloud_invocations": 0,
+  "cpu_ms": null,
+  "peak_memory_bytes": null,
+  "source_sha256": {
+    "interop-entry.mjs": "38f19afe611bf9692f1dfce81db5b0e2687d0aa48a8dccb9ba5149d240205e34",
+    "wrangler.interop.jsonc": "0f9edbc87a79d26dc178b5b0cc583d29ce73e0f33e9233b8e4913f693883bb78",
+    "interop-benchmark.mjs": "c09d611309c542937d7cedc3839932047be1955e40846eaac4388836aaba04e9"
+  }
+}
