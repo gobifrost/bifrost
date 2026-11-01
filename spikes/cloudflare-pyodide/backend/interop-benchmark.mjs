@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFile,writeFile,access} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
+import {withExclusiveReceipt} from './exclusive-receipt.mjs';
 import {createHash} from 'node:crypto';
 const [mode]=process.argv.slice(2);
 const receipt=new URL('../results/interop-local.json',import.meta.url);
@@ -21,8 +22,7 @@ function verify(report) {
   }
 }
 if(mode==='--run') {
-  try {await access(receipt);throw new Error('Preserve existing receipt; invocation refused');}
-  catch(error){if(error.code!=='ENOENT')throw error;}
+  await withExclusiveReceipt(receipt, async save => {
   const started=Date.now();
   const code=`import('/spike/probe-io.mjs').then(async({boundedJson})=>{const r=await fetch('http://127.0.0.1:8801',{method:'POST',signal:AbortSignal.timeout(60000)});console.log(JSON.stringify({status:r.status,body:await boundedJson(r)}))})`;
   let observation;
@@ -36,12 +36,13 @@ if(mode==='--run') {
   const report={...observation,runtime:'local-workerd',wrangler:'4.156.0',
     started_ms:started,total_observer_wall_ms:Date.now()-started,
     cloud_invocations:0,cpu_ms:null,peak_memory_bytes:null,source_sha256:{}};
-  for(const name of ['interop-entry.mjs','wrangler.interop.jsonc','interop-benchmark.mjs']) {
+  for(const name of ['interop-entry.mjs','wrangler.interop.jsonc','interop-benchmark.mjs','exclusive-receipt.mjs']) {
     report.source_sha256[name]=hash(await readFile(new URL(name,import.meta.url)));
   }
-  await writeFile(receipt,JSON.stringify(report,null,2)+'\n',{flag:'wx'});
+  await save(report);
   verify(report);
   console.log('Local interop measurement captured and correctness checked');
+  });
 } else if(mode==='--verify') {
   const report=JSON.parse(await readFile(receipt,'utf8'));verify(report);
   for(const [name,digest] of Object.entries(report.source_sha256)) assert.equal(hash(await readFile(new URL(name,import.meta.url))),digest);

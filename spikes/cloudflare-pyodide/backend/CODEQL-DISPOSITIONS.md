@@ -33,3 +33,9 @@ the shared helper. Historical receipts remain unchanged.
 Verification: node --test backend/exclusive-receipt.test.mjs (2 passed),
 node --check for both callers, git diff --check. No Docker/cloud invocation.
 This is local helper coverage, not fresh CodeQL or execution acceptance.
+
+Finding 1841 in interop-benchmark.mjs used the same check-before-invocation
+pattern. It now uses the exclusive receipt helper before the benchmark effect,
+and includes that helper in its source manifest. Verification: the two shared
+helper regression tests and caller syntax check pass. The benchmark was not
+invoked; existing interop measurements remain historical and unchanged.
