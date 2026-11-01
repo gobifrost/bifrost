@@ -102,3 +102,36 @@ analyzer. Auto-merge was disabled while addressing the comment.
 All **128 tests passed** in 10.89 seconds, including delayed preparation, cleanup,
 and both active-startup fixture regressions. This is test code only; the prior
 341-test, four live-runtime, and frontend checks cover unchanged product source.
+
+## Queue-Exposed AgentIndexer Transaction Isolation
+
+Queue run [41339255384](https://github.com/gobifrost/bifrost/actions/runs/41339255384)
+passed its unit suites, lint/types, image builds, browser smoke and two backend
+E2E shards. Shard 3 found an additional fixture leak: the three AgentIndexer
+database tests left `test_wf_tools_alias` and `test_wf_tool_ids` workflow rows
+without workspace source. The later native overlap Sync correctly stopped for
+deletion confirmation. The deletion guard remains unchanged.
+
+`AgentIndexer` only reads and writes through its supplied session. These tests
+flush but never commit. Their autouse `cleanup_agents` fixture deleted only part
+of the test graph and then committed, accidentally persisting the workflows.
+Removing that fixture restores the standard `db_session` rollback, which owns
+the agents, junctions, profiles, providers and workflows as one transaction.
+There is no external storage or independent-session side effect to clean up.
+Independent review confirmed that transaction boundary.
+
+```bash
+./test.sh tests/e2e/platform/test_agent_indexer.py tests/e2e/platform/test_workspace_sync_execution_overlap.py -q --durations=0
+```
+
+Before the repair: **three passed, one failed** in 18.77 seconds, reproducing the
+same two pending workflow deletions as CI. The overlap test alone passed after
+a fresh reset (**one passed** in 16.21 seconds), confirming the exposing test
+order rather than dismissing the failure as intermittent. No retries, skips,
+timeout increases or delete confirmations were added.
+
+After removing the committing cleanup fixture, the same ordered invocation
+passed all **four tests** in 15.34 seconds. The overlap case continues to run
+the real Fetch, Sync and worker-import boundaries with delete confirmation off.
+An independent PostgreSQL readback found zero owned workflow, agent, profile
+and provider rows afterward. Dockerized API Pyright and Ruff passed again.
