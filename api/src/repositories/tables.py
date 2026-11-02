@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from shared.policies.probe import make_seed_admin_bypass
 from src.core.log_safety import log_safe
@@ -14,6 +15,22 @@ from src.models.orm.tables import Table
 from src.repositories.org_scoped import OrgScopedRepository
 
 logger = logging.getLogger(__name__)
+
+_AD_HOC_TABLE_NAME_INDEXES = frozenset(
+    {
+        "ix_tables_org_name_unique",
+        "ix_tables_global_name_unique",
+    }
+)
+
+
+def is_ad_hoc_table_name_conflict(exc: IntegrityError) -> bool:
+    """Whether PostgreSQL rejected one of the ad-hoc table name indexes."""
+    orig = getattr(exc, "orig", None)
+    constraint_name = getattr(orig, "constraint_name", None) or getattr(
+        getattr(orig, "__cause__", None), "constraint_name", None
+    )
+    return constraint_name in _AD_HOC_TABLE_NAME_INDEXES
 
 
 class TableRepository(OrgScopedRepository[Table]):

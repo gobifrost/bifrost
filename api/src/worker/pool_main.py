@@ -32,7 +32,7 @@ from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
 from shared.version import get_version
-from src.config import Settings, get_settings
+from src.config import get_settings
 from src.core.database import close_db, get_db_context, get_engine, init_db
 from src.core.redis_client import PendingExecution
 from src.jobs.schedulers.platform_jobs import (
@@ -108,22 +108,6 @@ POLICY_REFRESH_SECONDS = 10.0
 # it back; idle, it waits for a wake-up and sweeps every SWEEP_SECONDS, which
 # is also how often it recovers jobs whose runner lease expired.
 PLATFORM_JOB_POLL_SECONDS = 2.0
-
-
-def executor_database_settings(settings: Settings) -> Settings:
-    """Keep every connection the executor may open, instead of discarding overflow.
-
-    An executor uses the database on every claim and every run. SQLAlchemy
-    closes overflow connections when they are returned, so with a small pool
-    each run reconnected (and re-read asyncpg's type catalogue) on the hot
-    path. The total stays ``pool_size + max_overflow``; only the churn goes.
-    """
-    return settings.model_copy(
-        update={
-            "database_pool_size": settings.database_pool_size + settings.database_max_overflow,
-            "database_max_overflow": 0,
-        }
-    )
 
 
 class PoolWorker:
@@ -269,7 +253,7 @@ class PoolWorker:
 
     async def _initialize_runtime(self) -> bool:
         """Initialize this process's database runtime and join the worker pool."""
-        get_engine(executor_database_settings(self.settings))
+        get_engine(self.settings)
         await init_db()
         await wait_for_schema(get_engine())
         from sqlalchemy.orm import configure_mappers
