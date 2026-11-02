@@ -40,6 +40,7 @@ def measure(cluster, label: str, out: Path, *, delay_s: float = 105, duration_s:
         raise FileExistsError(out)
     if delay_s < 0 or duration_s <= 0:
         raise ValueError("counter timing must be positive")
+    out.parent.mkdir(parents=True, exist_ok=True)
     expected = cluster.api_pod_records()
     evidence = {"status": "pending", "api_pods": expected, "replicas": [],
                 "delay_s": delay_s, "duration_s": duration_s,
