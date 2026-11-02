@@ -6,8 +6,13 @@
     "status": "draft",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1204",
-      "Port of MTG fork PR #1255; development image default identity only."
+      "Port of MTG fork PR #1255; development image default identity only.",
+      "Security assessment: development-image default identity only; production keeps its existing root entrypoint that drops to bifrost via gosu; no entrypoint, permission or capability behavior changed."
     ]
   },
-  "reason": "The API development image defaults to the existing unprivileged bifrost user. Production privilege dropping is unchanged."
+  "reason": "The API development image defaults to the existing unprivileged bifrost user. Production privilege dropping is unchanged.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1204"
+  }
 }
