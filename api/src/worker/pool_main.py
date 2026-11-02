@@ -717,14 +717,22 @@ class PoolWorker:
 
     async def _wake_listener(self) -> None:
         """Turn acceptance hints into an immediate claim attempt."""
-        from src.services.work_dispatch import listen_for_pool_wake
+        from src.services.work_dispatch import (
+            DISPATCH_WAKE_FAMILIES,
+            WAKE_PACKAGE,
+            WAKE_PLATFORM_JOB,
+            WAKE_SERVICE,
+            listen_for_pool_wake,
+        )
 
         await listen_for_pool_wake(
             self.settings.redis_url,
-            self._wake,
-            self._platform_wake,
-            self._service_wake,
-            self._package_wake,
+            {
+                **{family: self._wake for family in DISPATCH_WAKE_FAMILIES},
+                WAKE_PLATFORM_JOB: self._platform_wake,
+                WAKE_SERVICE: self._service_wake,
+                WAKE_PACKAGE: self._package_wake,
+            },
         )
 
     async def _package_loop(self) -> None:

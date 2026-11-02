@@ -115,7 +115,7 @@ async def test_enqueue_wakes_executors_only_once_the_job_is_committed(
 
         await session.commit()
         await asyncio.sleep(0)
-        wake.assert_awaited_once_with()
+        wake.assert_awaited_once_with(work_dispatch.WAKE_PLATFORM_JOB)
 
         await session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
         await session.commit()

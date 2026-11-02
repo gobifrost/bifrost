@@ -431,6 +431,7 @@ async def test_indexer_creates_missing_definition(monkeypatch):
 
     row = _service_row("service")
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     mock_db.execute = AsyncMock(
         side_effect=[
             _result(scalar_one_or_none=row),
@@ -445,7 +446,9 @@ async def test_indexer_creates_missing_definition(monkeypatch):
 
     added = [call[0][0] for call in mock_db.add.call_args_list]
     assert any(isinstance(a, ServiceDefinition) for a in added)
-    wake.assert_called_once_with(mock_db)
+    from src.services.work_dispatch import WAKE_SERVICE
+
+    wake.assert_called_once_with(mock_db, WAKE_SERVICE)
 
 
 @pytest.mark.asyncio

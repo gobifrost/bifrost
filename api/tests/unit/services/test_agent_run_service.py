@@ -34,7 +34,7 @@ def env(monkeypatch):
 
     monkeypatch.setattr(agent_run_dispatch, "get_redis", redis_context)
 
-    async def wake() -> None:
+    async def wake(_family: str) -> None:
         calls.append("wake")
 
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)

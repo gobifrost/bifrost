@@ -30,13 +30,13 @@ from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerCla
 from src.models.orm.work_dispatches import WorkDispatch
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.services.memory_requests import SUMMARY_REQUEST_BYTES
-from src.services.work_dispatch import hand_off, stage_dispatch, take_dispatch_payload
+from src.services.work_dispatch import WAKE_AGENT_SUMMARY, hand_off, stage_dispatch, take_dispatch_payload
 from src.core.database import get_db_context
 from src.worker.remote.fencing import fence_remote_owner
 
 logger = logging.getLogger(__name__)
 
-FAMILY = "agent_summary"
+FAMILY = WAKE_AGENT_SUMMARY
 HANDLER = "agent.summarize"
 BACKFILL_HANDLER = "agent.summarize_backfill"
 HANDLER_VERSION = 1
@@ -145,7 +145,7 @@ async def hand_off_summary(dispatch: WorkDispatch | None) -> None:
     if dispatch is None:
         return
     try:
-        await hand_off()
+        await hand_off(FAMILY)
     except Exception:
         logger.warning(
             "Summary hand-off failed; the reconciler will retry",
@@ -226,7 +226,7 @@ async def release_summary(*, worker_id: UUID, run_id: UUID, dispatch_id: UUID, c
             ))
         await db.commit()
     if released is not None:
-        await hand_off()
+        await hand_off(FAMILY)
 
 
 async def fail_remote_summary(*, worker_id: UUID, run_id: UUID, claim_id: UUID, reason: str) -> None:
