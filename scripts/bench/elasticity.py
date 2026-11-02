@@ -41,8 +41,7 @@ LIVE_STATES = frozenset({"reserved", "starting", "ready", "draining"})
 
 def build_profile(warm_workers: int, max_workers: int) -> dict:
     """Return the fixed max-four envelope while changing only the requested arm."""
-    if type(warm_workers) is not int or type(max_workers) is not int or max_workers not in (1, 2, 4) or not 0 <= warm_workers <= max_workers:
-        raise ValueError("arms require non-negative warm workers through max workers 1, 2, or 4")
+    _validate_arm_controls(warm_workers, max_workers)
     profile = copy.deepcopy(run.load_profile("4gb-capacity"))
     profile["quota"] = {"cpu": "5200m", "memory": "5664Mi", "storage": "50Gi", "pods": 20, "pvcs": 4}
     profile["components"] = {
@@ -56,6 +55,30 @@ def build_profile(warm_workers: int, max_workers: int) -> dict:
     profile["worker_policy"] = {"warm_workers": warm_workers, "max_workers": max_workers,
                                 "worker_memory_mib": 1024, "largest_worker_mib": 1024, "idle_seconds": 300}
     profile["settle_s"] = 0
+    return profile
+
+
+def _validate_arm_controls(warm_workers: object, max_workers: object) -> tuple[int, int]:
+    """Accept only a discrete max arm and an integer warm floor within it."""
+    if (type(warm_workers) is not int or type(max_workers) is not int
+            or max_workers not in (1, 2, 4) or not 0 <= warm_workers <= max_workers):
+        raise ValueError("arms require non-negative integer warm workers through max workers 1, 2, or 4")
+    return warm_workers, max_workers
+
+
+def _arm_profile(warm_workers: int, max_workers: int, profile_name: str | None) -> dict:
+    """Load an explicit sizing profile or retain the historical generated profile."""
+    _validate_arm_controls(warm_workers, max_workers)
+    if profile_name is None:
+        return build_profile(warm_workers, max_workers)
+    profile = run.load_profile(profile_name)
+    policy = profile.get("worker_policy")
+    if not isinstance(policy, dict):
+        raise ValueError("named elasticity profile needs a worker_policy")
+    observed_warm, observed_max = policy.get("warm_workers"), policy.get("max_workers")
+    _validate_arm_controls(observed_warm, observed_max)
+    if (observed_warm, observed_max) != (warm_workers, max_workers):
+        raise ValueError("named elasticity profile policy does not match requested arm")
     return profile
 
 
@@ -274,11 +297,13 @@ def _resource_evidence(host: search.HostSampler, bounds: dict[str, dict[str, flo
     }
 
 
-def run_arm(warm_workers: int, max_workers: int, api_image: str, out: Path, *, cluster: Cluster | None = None) -> Path:
+def run_arm(warm_workers: int, max_workers: int, api_image: str, out: Path, *, cluster: Cluster | None = None,
+            profile_name: str | None = None) -> Path:
     """Run exactly one requested arm and retain phase checkpoints before each next action."""
     if out.exists():
         raise ValueError(f"elasticity output must be fresh: {out}")
-    profile = build_profile(warm_workers, max_workers)
+    profile = _arm_profile(warm_workers, max_workers, profile_name)
+    deploy.check_profile(profile)
     requested = {name: profile["worker_policy"][name] for name in POLICY_FIELDS}
     selected = cluster or Cluster()
     selected.verify()
@@ -378,15 +403,16 @@ def run_arm(warm_workers: int, max_workers: int, api_image: str, out: Path, *, c
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--warm-workers", required=True, type=int, choices=(0, 1))
+    parser.add_argument("--warm-workers", required=True, type=int)
     parser.add_argument("--max-workers", required=True, type=int, choices=(1, 2, 4))
+    parser.add_argument("--profile")
     parser.add_argument("--api-image", required=True)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOCK_PATH.open("a+") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        print(run_arm(args.warm_workers, args.max_workers, args.api_image, args.out))
+        print(run_arm(args.warm_workers, args.max_workers, args.api_image, args.out, profile_name=args.profile))
 
 
 if __name__ == "__main__":

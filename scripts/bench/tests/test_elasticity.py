@@ -140,7 +140,50 @@ class ElasticityControlsTest(unittest.TestCase):
             timeline = Path(raw) / "result" / "timeline.jsonl"
             self.assertIn('"raw": "checkpoint"', timeline.read_text(encoding="utf-8"))
 
-    def test_warm_four_is_a_valid_shared_profile_but_not_an_elastic_cli_arm(self) -> None:
+    def test_named_profile_is_loaded_checked_and_passed_to_the_arm(self) -> None:
+        cluster, current = Mock(), Mock()
+        current.result = {}
+        profile = elasticity.build_profile(1, 2)
+        with TemporaryDirectory() as raw, patch.object(elasticity.run, "Run", return_value=current) as run_record, \
+             patch.object(elasticity.run, "load_profile", return_value=profile) as load_profile, \
+             patch.object(elasticity.deploy, "check_profile") as check_profile, \
+             patch.object(elasticity.deploy, "reset", side_effect=RuntimeError("stop after validation")), \
+             patch.object(elasticity.run, "_prepare") as prepare:
+            with self.assertRaisesRegex(RuntimeError, "stop after validation"):
+                elasticity.run_arm(1, 2, "candidate:local", Path(raw) / "result", cluster=cluster,
+                                   profile_name="4gb-elasticity-warm1-max2")
+
+        load_profile.assert_called_once_with("4gb-elasticity-warm1-max2")
+        check_profile.assert_called_once_with(profile)
+        self.assertIs(run_record.call_args.args[3], profile)
+        prepare.assert_not_called()
+
+    def test_named_profile_policy_must_match_the_requested_arm_before_cluster_access(self) -> None:
+        profile = elasticity.build_profile(1, 2)
+        profile["worker_policy"]["warm_workers"] = 0
+        with TemporaryDirectory() as raw, patch.object(elasticity.run, "load_profile", return_value=profile), \
+             patch.object(elasticity, "Cluster") as cluster:
+            with self.assertRaisesRegex(ValueError, "does not match requested arm"):
+                elasticity.run_arm(1, 2, "candidate:local", Path(raw) / "result",
+                                   profile_name="4gb-elasticity-warm1-max2")
+        cluster.assert_not_called()
+
+    def test_cli_passes_the_optional_named_profile_to_the_arm(self) -> None:
+        with TemporaryDirectory() as raw:
+            directory = Path(raw)
+            out = directory / "result"
+            with patch.object(sys, "argv", [
+                "elasticity.py", "--warm-workers", "2", "--max-workers", "4",
+                "--api-image", "candidate:local", "--out", str(out), "--profile", "4gb-elasticity-warm2-max4",
+            ]), patch.object(elasticity, "LOCK_PATH", directory / "elasticity.lock"), \
+                    patch.object(elasticity, "run_arm", return_value=out) as run_arm:
+                elasticity.main()
+
+        run_arm.assert_called_once_with(
+            2, 4, "candidate:local", out, profile_name="4gb-elasticity-warm2-max4",
+        )
+
+    def test_warm_four_is_a_valid_max_four_arm(self) -> None:
         self.assertEqual(elasticity.build_profile(4, 4)["worker_policy"]["warm_workers"], 4)
 
 
