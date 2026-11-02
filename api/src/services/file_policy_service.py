@@ -578,7 +578,12 @@ class FilePolicyService:
 
         rule_repo = PolicyRuleRepository(self.db, org_id=organization_id)
         try:
-            await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
+            await resolve_policy_refs(
+                policies,
+                repo=rule_repo,
+                action_domain="file",
+                solution_id=solution_id,
+            )
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
             logger.warning(
                 "unresolvable file policy ref; denying file access: %s",
