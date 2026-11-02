@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 from urllib.parse import urlsplit
@@ -50,12 +51,41 @@ async def cleanup_fixture_audit(world, engine):
             await session.commit()
 
 
-async def main() -> None:
-    if os.environ.get("BIFROST_ENVIRONMENT") != "testing" or os.environ.get("TEST_API_URL") != "http://api:8000":
-        raise RuntimeError("Only the repository disposable Docker test stack is admitted")
+def reserve_development_invocation(execution_id):
+    """Reserve once before sending; keep uncertain requests charged."""
+    import fcntl
+    from pathlib import Path
+
+    ledger = Path('/qualification/private/invocations.jsonl')
+    with ledger.open('a+') as reservations:
+        fcntl.flock(reservations, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        reservations.seek(0)
+        count = sum(1 for line in reservations if line.strip())
+        if count >= 20:
+            raise RuntimeError('Fresh development invocation budget exhausted')
+        reservations.write(json.dumps({'reservation': count + 1, 'execution_id': str(execution_id)}) + '\n')
+        reservations.flush()
+        os.fsync(reservations.fileno())
+
+
+async def main(*, dev_qualification=False, integration_probe=False, fresh_probe=False) -> None:
     database = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
-    if database.hostname != "pgbouncer" or database.path != "/bifrost_test":
-        raise RuntimeError("Disposable test database target is required")
+    provider_url = "http://bifrost-pyodide-ddf316c1:8799"
+    provider_headers = {}
+    if dev_qualification:
+        from pathlib import Path
+        profile = json.loads(Path('/qualification/private/profile.json').read_text())
+        if (profile.get('deployment') != 'pyodide-ddf316c1-dev-2037ac0'
+            or os.environ.get('BIFROST_ENVIRONMENT') != 'development'
+            or database.hostname != 'pgbouncer' or database.path != '/bifrost'
+            or profile.get('expires_at_ms', 0) <= time.time() * 1000):
+            raise RuntimeError('Owned isolated development qualification required')
+        provider_url = 'https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev'
+        provider_headers = {'X-Dev-Auth': profile['DEV_AUTH'], 'User-Agent': 'bifrost-pyodide-dev-qualification/1.0'}
+    elif (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
+          or os.environ.get("TEST_API_URL") != "http://api:8000"
+          or database.hostname != "pgbouncer" or database.path != "/bifrost_test"):
+        raise RuntimeError("Only the repository disposable Docker test stack is admitted")
 
     from src.core.database import close_db, get_engine, init_db
     from src.core.module_cache import invalidate_module, set_module
@@ -71,6 +101,40 @@ async def main() -> None:
     helper_path = f"{helper}.py"
     config_key = f"pyodide-qualification-{suffix}"
     table = f"pyodide-qualification-{suffix}"
+    integration_name = f'pyodide-integration-{suffix}'
+    integration_secret = f'synthetic-{uuid4().hex}' if integration_probe else None
+    fresh_code = f'''    import builtins, json
+    from pathlib import Path
+    marker = Path('/tmp/bifrost-cloud-qualification-canary')
+    fresh = {{'builtins_before': getattr(builtins, '_bifrost_cloud_canary', None),
+             'module_before': getattr(json, '_bifrost_cloud_canary', None),
+             'environment_before': os.environ.get('BIFROST_CLOUD_CANARY'),
+             'tmp_before': marker.read_text() if marker.exists() else None}}
+    if any(value is not None for value in fresh.values()):
+        raise RuntimeError('Cross-run contamination detected before SDK effects')
+    builtins._bifrost_cloud_canary = {suffix!r}
+    json._bifrost_cloud_canary = {suffix!r}
+    os.environ['BIFROST_CLOUD_CANARY'] = {suffix!r}
+    marker.write_text({suffix!r})
+''' if fresh_probe else '    fresh = {}\n'
+    integration_code = f'''    import hashlib, httpx
+    from bifrost import integrations
+    integration = await integrations.get({integration_name!r})
+    if integration.config['qualification_value'] != 42:
+        raise RuntimeError('Integration configuration mismatch')
+    if hashlib.sha256(integration.config['qualification_secret'].encode()).hexdigest() != {hashlib.sha256(integration_secret.encode()).hexdigest() if integration_secret else None!r}:
+        raise RuntimeError('Integration secret mismatch')
+    try:
+        await integrations.get({integration_name!r}, scope=forbidden_scope)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 403:
+            raise
+    else:
+        raise RuntimeError('Cross-tenant integration read allowed')
+    logging.getLogger(__name__).warning('integration secret=%s', integration.config['qualification_secret'])
+    fresh['integration_value'] = 42
+    fresh['integration_secret_probe'] = integration.config['qualification_secret']
+''' if integration_probe else ''
     source = f'''
 import logging
 import os
@@ -78,16 +142,18 @@ from bifrost import workflow, config, tables
 from {helper} import fold
 
 @workflow
-async def qualified(n: int = 7):
+async def qualified(n: int = 7, forbidden_scope: str | None = None):
+{fresh_code.rstrip()}
     value = await config.get({config_key!r})
+{integration_code.rstrip()}
     document = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
     logging.getLogger(__name__).warning("authorized local Pyodide workflow")
     return {{"value": document.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
-             "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"]}}
+             "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"], **fresh}}
 '''
     sources = {path: source, helper_path: "def fold(n):\n    return sum(range(1, n + 1))\n"}
     manifest = {name: hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()}
-    report = {"runtime": "local-workerd-real-upstream-worker", "canonical_claim_verified": False,
+    report = {"runtime": "cloudflare-real-upstream-worker" if dev_qualification else "local-workerd-real-upstream-worker", "canonical_claim_verified": False,
               "canonical_terminal_acceptance_verified": False, "workspace_sha256": manifest}
     access_token = None
     try:
@@ -95,7 +161,22 @@ async def qualified(n: int = 7):
             organization = await world.organization()
             other = await world.organization()
             user = await world.person(organization)
-            role = await world.role("configs.read", "configs.readwrite", "tables.read", "tables.readwrite")
+            role = await world.role("configs.read", "configs.readwrite", "tables.read", "tables.readwrite",
+                                    *(("integrations.read", "secrets.read") if integration_probe else ()))
+            if integration_probe:
+                from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
+                from src.models.orm.config import Config
+                from src.models.enums import ConfigType
+                from src.core.security import encrypt_secret
+                integration = await world._add(Integration(name=integration_name))
+                await world._add(IntegrationMapping(integration_id=integration.id, organization_id=organization.id,
+                                                   entity_id='synthetic-cloud-qualification'))
+                for key, kind, value in [('qualification_value', ConfigType.INT, 42),
+                                         ('qualification_secret', ConfigType.SECRET, encrypt_secret(integration_secret))]:
+                    schema = await world._add(IntegrationConfigSchema(integration_id=integration.id, key=key, type=kind.value))
+                    await world._add(Config(key=key, value={'value': value}, config_type=kind,
+                                           organization_id=organization.id, integration_id=integration.id,
+                                           config_schema_id=schema.id, updated_by=str(user.id)))
             await world.assign(user, role.id, ("organization", organization.id))
             workflow = await world.workflow(organization)
             workflow.path = path
@@ -119,23 +200,47 @@ async def qualified(n: int = 7):
                 denied = await api.post("/api/sdk/config/get", headers=headers,
                                        json={"key": config_key, "scope": str(other.id)})
                 assert denied.status_code == 403, f"Cross-tenant status {denied.status_code}"
+                module_preflight = await api.get('/api/sdk/modules/' + path, headers=headers)
+                report['internal_module_preflight_status'] = module_preflight.status_code
+                if module_preflight.status_code != 200:
+                    print(json.dumps(report))
+                    raise RuntimeError('Internal API module preflight failed before provider invocation')
                 context = {"execution_id": str(execution.id), "workflow_id": str(workflow.id),
                            "name": workflow.name, "function_name": "qualified", "file_path": path,
-                           "content_hash": manifest[path], "parameters": {"n": 7},
+                           "content_hash": manifest[path], "parameters": {"n": 7, "forbidden_scope": str(other.id)},
                            "caller": {"user_id": str(user.id), "email": user.email, "name": user.name},
                            "organization": {"id": str(organization.id), "name": organization.name, "is_active": True,
                                             "is_provider": False},
                            "engine_token": access_token, "engine_refresh_token": credentials.refresh_token,
                            "timeout_seconds": 30, "transient": True, "no_cache": True}
                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
-                    response = await provider.post("http://bifrost-pyodide-ddf316c1:8799",
+                    if dev_qualification:
+                        payload = {'execution_id': str(execution.id), 'context': context, 'manifest': manifest}
+                        # Explicitly reject canonical mode rather than pretending
+                        # this physical-runtime fixture implements platform dispatch.
+                        reserve_development_invocation(execution.id)
+                        rejected = await provider.post(provider_url, headers=provider_headers,
+                            json={**payload, 'mode': 'canonical', 'worker_id': str(uuid4())})
+                        assert rejected.status_code == 422
+                        reserve_development_invocation(execution.id)
+                        invalid = await provider.post(provider_url, headers=provider_headers,
+                            json={**payload, 'context': {**context, 'engine_token': 'synthetic-invalid-runtime-token'}})
+                        invalid_result = invalid.json()
+                        assert invalid.status_code == 502 and invalid_result['phase'] == 'module-preflight'
+                        assert invalid_result['module_status'] == 401
+                        report['unsupported_canonical_mode_status'] = rejected.status_code
+                        report['invalid_runtime_credential_module_status'] = invalid_result['module_status']
+                        reserve_development_invocation(execution.id)
+                    response = await provider.post(provider_url, headers=provider_headers,
                                                    json={"execution_id": str(execution.id), "context": context,
                                                          "manifest": manifest})
-                    assert response.status_code == 200, f"Local provider status {response.status_code}"
                     evidence = response.json()
                 encoded = json.dumps(evidence)
-                if access_token in encoded or (credentials.refresh_token and credentials.refresh_token in encoded):
+                if any(secret and secret in encoded for secret in [access_token, credentials.refresh_token, integration_secret]):
                     raise RuntimeError("Runtime credential was exposed; evidence not emitted")
+                if response.status_code != 200:
+                    print(json.dumps({**report, 'provider_status': response.status_code, 'failure': evidence}))
+                    raise RuntimeError('Cloud provider rejected qualification')
                 result = evidence["result"]
                 if result.get("status") != "Success":
                     report["failure"] = evidence
@@ -143,6 +248,13 @@ async def qualified(n: int = 7):
                     raise RuntimeError("Actual upstream worker did not complete successfully")
                 assert result["result"]["value"] == 70
                 assert result["result"]["parent_secret_present"] is False
+                if fresh_probe:
+                    assert all(result['result'][key] is None for key in ('builtins_before', 'module_before', 'environment_before', 'tmp_before'))
+                    report['fresh_run_canaries_clear'] = True
+                if integration_probe:
+                    assert result['result']['integration_value'] == 42
+                    assert result['result']['integration_secret_probe'] == '[REDACTED]'
+                    report['integration_read_secret_redaction_peer_denial_verified'] = True
                 assert result["metrics"]["code_hash"] == manifest[path]
                 readback = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
                                          params={"scope": str(organization.id)})

@@ -1,0 +1,575 @@
+[
+  {
+    "guest_log": "cloud-qualification-1793645751195174459.private.log",
+    "receipt": {
+      "runtime": "cloudflare-real-upstream-worker",
+      "canonical_claim_verified": false,
+      "canonical_terminal_acceptance_verified": false,
+      "workspace_sha256": {
+        "workflows/pyodide_qualification_81e8b7677093497fbb88f40ba8d883d7.py": "dc899d7cf52b40d3417a3269cea90c081bee54f55b7b4ce7053da6c765ca8588",
+        "pyodide_helper_81e8b7677093497fbb88f40ba8d883d7.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4"
+      },
+      "internal_module_preflight_status": 200,
+      "result": {
+        "result": {
+          "status": "Success",
+          "result": {
+            "value": 70,
+            "parent_secret_present": false,
+            "credential_redaction_probe": "[REDACTED]"
+          },
+          "duration_ms": 410,
+          "logs": [
+            {
+              "timestamp": "2026-11-02T18:56:03.147000+00:00",
+              "level": "warning",
+              "message": "authorized local Pyodide workflow",
+              "source": "workflow"
+            }
+          ],
+          "variables": {
+            "n": 7,
+            "value": 42,
+            "document": {
+              "id": "proof",
+              "table_id": "a45293d3-a6b2-4ffb-b95e-ee3db577605b",
+              "data": {
+                "value": 70
+              },
+              "created_at": "2026-11-02T18:56:03.143486+00:00",
+              "updated_at": "2026-11-02T18:56:03.143486+00:00",
+              "created_by": "c3bd1d95-05a7-4433-b291-4a616e65c080",
+              "updated_by": "c3bd1d95-05a7-4433-b291-4a616e65c080"
+            }
+          },
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null,
+          "execution_context": {
+            "user_id": "c3bd1d95-05a7-4433-b291-4a616e65c080",
+            "email": "token-d07312fa@example.test",
+            "name": "Person 5f5a",
+            "scope": "ea8f7eaa-2f13-464f-850c-148bb361cae4",
+            "organization": {
+              "id": "ea8f7eaa-2f13-464f-850c-148bb361cae4",
+              "name": "Token World 1aeb9f91",
+              "is_active": true,
+              "is_provider": false
+            },
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "8207552c-e987-4f69-ba2e-68ca6d96bc20",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 30,
+            "workflow_name": "token_7c37492a",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://test-api.invalid",
+            "parameters": {
+              "n": 7
+            },
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "metrics": {
+            "peak_memory_bytes": null,
+            "peak_process_rss_bytes": null,
+            "cpu_user_seconds": null,
+            "cpu_system_seconds": null,
+            "cpu_total_seconds": null,
+            "code_hash": "dc899d7cf52b40d3417a3269cea90c081bee54f55b7b4ce7053da6c765ca8588"
+          }
+        },
+        "bootstrap": {
+          "execution_child": true,
+          "engine_client_available": true
+        },
+        "api_calls": [
+          {
+            "path": "/api/sdk/modules/workflows/pyodide_qualification_81e8b7677093497fbb88f40ba8d883d7.py",
+            "method": "GET",
+            "status": 200
+          }
+        ]
+      },
+      "independent_document_value": 70,
+      "cross_tenant_status": 403,
+      "credential_version": 2,
+      "live_then_fixture_terminal_status": [
+        200,
+        401
+      ],
+      "ended_run_status": 401
+    }
+  },
+  {
+    "guest_log": "cloud-qualification-1793645889602555441.private.log",
+    "receipt": {
+      "runtime": "cloudflare-real-upstream-worker",
+      "canonical_claim_verified": false,
+      "canonical_terminal_acceptance_verified": false,
+      "workspace_sha256": {
+        "workflows/pyodide_qualification_105f9cd705714f9cb62916f0a67d7b72.py": "30d031d96f23e85cb9b8cb4d0e5acfd2d1b3c9d5dde438a73e0f3986f8f33045",
+        "pyodide_helper_105f9cd705714f9cb62916f0a67d7b72.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4"
+      },
+      "internal_module_preflight_status": 200,
+      "fresh_run_canaries_clear": true,
+      "integration_read_secret_redaction_peer_denial_verified": true,
+      "result": {
+        "result": {
+          "status": "Success",
+          "result": {
+            "value": 70,
+            "parent_secret_present": false,
+            "credential_redaction_probe": "[REDACTED]",
+            "builtins_before": null,
+            "module_before": null,
+            "environment_before": null,
+            "tmp_before": null,
+            "integration_value": 42,
+            "integration_secret_probe": "[REDACTED]"
+          },
+          "duration_ms": 730,
+          "logs": [
+            {
+              "timestamp": "2026-11-02T18:58:27.076000+00:00",
+              "level": "warning",
+              "message": "integration secret=[REDACTED]",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-02T18:58:27.076999+00:00",
+              "level": "warning",
+              "message": "authorized local Pyodide workflow",
+              "source": "workflow"
+            }
+          ],
+          "variables": {
+            "n": 7,
+            "forbidden_scope": "3e6875bf-02e4-4953-95a5-9cd49b626a58",
+            "marker": "<PosixPath>",
+            "fresh": {
+              "builtins_before": null,
+              "module_before": null,
+              "environment_before": null,
+              "tmp_before": null,
+              "integration_value": 42,
+              "integration_secret_probe": "[REDACTED]"
+            },
+            "value": 42,
+            "integration": {
+              "integration_id": "adf45fe9-10b7-4ce3-b5e9-5c122220551e",
+              "entity_id": "synthetic-cloud-qualification",
+              "entity_name": null,
+              "config": {
+                "qualification_value": 42,
+                "qualification_secret": "[REDACTED]"
+              },
+              "oauth": null,
+              "config_secret_keys": [
+                "qualification_secret"
+              ]
+            },
+            "document": {
+              "id": "proof",
+              "table_id": "d73ca439-2f9a-4e89-b2c6-8a31785bea76",
+              "data": {
+                "value": 70
+              },
+              "created_at": "2026-11-02T18:58:27.098670+00:00",
+              "updated_at": "2026-11-02T18:58:27.098670+00:00",
+              "created_by": "6069eb02-71b2-49cd-be34-41deb8df4a06",
+              "updated_by": "6069eb02-71b2-49cd-be34-41deb8df4a06"
+            }
+          },
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null,
+          "execution_context": {
+            "user_id": "6069eb02-71b2-49cd-be34-41deb8df4a06",
+            "email": "token-86372ff9@example.test",
+            "name": "Person 72b6",
+            "scope": "304f52ef-ea63-4b2c-88ce-7779a336fc4b",
+            "organization": {
+              "id": "304f52ef-ea63-4b2c-88ce-7779a336fc4b",
+              "name": "Token World eef9d132",
+              "is_active": true,
+              "is_provider": false
+            },
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "4869f0a9-0bb4-412e-8277-71464081887f",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 30,
+            "workflow_name": "token_3ff28b6d",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://test-api.invalid",
+            "parameters": {
+              "n": 7,
+              "forbidden_scope": "3e6875bf-02e4-4953-95a5-9cd49b626a58"
+            },
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "metrics": {
+            "peak_memory_bytes": null,
+            "peak_process_rss_bytes": null,
+            "cpu_user_seconds": null,
+            "cpu_system_seconds": null,
+            "cpu_total_seconds": null,
+            "code_hash": "30d031d96f23e85cb9b8cb4d0e5acfd2d1b3c9d5dde438a73e0f3986f8f33045"
+          }
+        },
+        "bootstrap": {
+          "execution_child": true,
+          "engine_client_available": true
+        },
+        "api_calls": [
+          {
+            "path": "/api/sdk/modules/workflows/pyodide_qualification_105f9cd705714f9cb62916f0a67d7b72.py",
+            "method": "GET",
+            "status": 200
+          }
+        ]
+      },
+      "independent_document_value": 70,
+      "cross_tenant_status": 403,
+      "credential_version": 2,
+      "live_then_fixture_terminal_status": [
+        200,
+        401
+      ],
+      "ended_run_status": 401
+    }
+  },
+  {
+    "guest_log": "cloud-qualification-1793645932979727898.private.log",
+    "receipt": {
+      "runtime": "cloudflare-real-upstream-worker",
+      "canonical_claim_verified": false,
+      "canonical_terminal_acceptance_verified": false,
+      "workspace_sha256": {
+        "workflows/pyodide_qualification_089b0863c0094cb296e00d1a37174bb8.py": "640f9466077c9d96d17f4a91396c79598730bf41d92ae84a2dc8d560f123252c",
+        "pyodide_helper_089b0863c0094cb296e00d1a37174bb8.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4"
+      },
+      "internal_module_preflight_status": 200,
+      "fresh_run_canaries_clear": true,
+      "integration_read_secret_redaction_peer_denial_verified": true,
+      "result": {
+        "result": {
+          "status": "Success",
+          "result": {
+            "value": 70,
+            "parent_secret_present": false,
+            "credential_redaction_probe": "[REDACTED]",
+            "builtins_before": null,
+            "module_before": null,
+            "environment_before": null,
+            "tmp_before": null,
+            "integration_value": 42,
+            "integration_secret_probe": "[REDACTED]"
+          },
+          "duration_ms": 620,
+          "logs": [
+            {
+              "timestamp": "2026-11-02T18:59:03.151000+00:00",
+              "level": "warning",
+              "message": "integration secret=[REDACTED]",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-02T18:59:03.152000+00:00",
+              "level": "warning",
+              "message": "authorized local Pyodide workflow",
+              "source": "workflow"
+            }
+          ],
+          "variables": {
+            "n": 7,
+            "forbidden_scope": "485c8a9a-b931-4aa0-9986-698bd8ab0c5c",
+            "marker": "<PosixPath>",
+            "fresh": {
+              "builtins_before": null,
+              "module_before": null,
+              "environment_before": null,
+              "tmp_before": null,
+              "integration_value": 42,
+              "integration_secret_probe": "[REDACTED]"
+            },
+            "value": 42,
+            "integration": {
+              "integration_id": "6b7b60ba-eb4f-4895-a70b-fb47c9de3b86",
+              "entity_id": "synthetic-cloud-qualification",
+              "entity_name": null,
+              "config": {
+                "qualification_value": 42,
+                "qualification_secret": "[REDACTED]"
+              },
+              "oauth": null,
+              "config_secret_keys": [
+                "qualification_secret"
+              ]
+            },
+            "document": {
+              "id": "proof",
+              "table_id": "9421814a-a318-466d-a83a-a81c73bb65e7",
+              "data": {
+                "value": 70
+              },
+              "created_at": "2026-11-02T18:59:03.152322+00:00",
+              "updated_at": "2026-11-02T18:59:03.152322+00:00",
+              "created_by": "d59ac44b-2c9c-44f3-bb18-4061c04be956",
+              "updated_by": "d59ac44b-2c9c-44f3-bb18-4061c04be956"
+            }
+          },
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null,
+          "execution_context": {
+            "user_id": "d59ac44b-2c9c-44f3-bb18-4061c04be956",
+            "email": "token-f75f2cdd@example.test",
+            "name": "Person 9d08",
+            "scope": "2ea4a575-a686-455e-b5ba-f54f538d4f00",
+            "organization": {
+              "id": "2ea4a575-a686-455e-b5ba-f54f538d4f00",
+              "name": "Token World c32b81d5",
+              "is_active": true,
+              "is_provider": false
+            },
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "4646004d-5ec9-470e-9652-f1844dc0084c",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 30,
+            "workflow_name": "token_ca3642b6",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://test-api.invalid",
+            "parameters": {
+              "n": 7,
+              "forbidden_scope": "485c8a9a-b931-4aa0-9986-698bd8ab0c5c"
+            },
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "metrics": {
+            "peak_memory_bytes": null,
+            "peak_process_rss_bytes": null,
+            "cpu_user_seconds": null,
+            "cpu_system_seconds": null,
+            "cpu_total_seconds": null,
+            "code_hash": "640f9466077c9d96d17f4a91396c79598730bf41d92ae84a2dc8d560f123252c"
+          }
+        },
+        "bootstrap": {
+          "execution_child": true,
+          "engine_client_available": true
+        },
+        "api_calls": [
+          {
+            "path": "/api/sdk/modules/workflows/pyodide_qualification_089b0863c0094cb296e00d1a37174bb8.py",
+            "method": "GET",
+            "status": 200
+          }
+        ]
+      },
+      "independent_document_value": 70,
+      "cross_tenant_status": 403,
+      "credential_version": 2,
+      "live_then_fixture_terminal_status": [
+        200,
+        401
+      ],
+      "ended_run_status": 401
+    }
+  },
+  {
+    "guest_log": "cloud-qualification-1793646086264082836.private.log",
+    "receipt": {
+      "runtime": "cloudflare-real-upstream-worker",
+      "canonical_claim_verified": false,
+      "canonical_terminal_acceptance_verified": false,
+      "workspace_sha256": {
+        "workflows/pyodide_qualification_c30815d619d549f0846a30d29b5465e1.py": "d57f2752548404e94a1b6e0a25a9768d3d6f66ea586a5361cdff923523bc06a3",
+        "pyodide_helper_c30815d619d549f0846a30d29b5465e1.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4"
+      },
+      "internal_module_preflight_status": 200,
+      "unsupported_canonical_mode_status": 422,
+      "invalid_runtime_credential_module_status": 401,
+      "fresh_run_canaries_clear": true,
+      "integration_read_secret_redaction_peer_denial_verified": true,
+      "result": {
+        "result": {
+          "status": "Success",
+          "result": {
+            "value": 70,
+            "parent_secret_present": false,
+            "credential_redaction_probe": "[REDACTED]",
+            "builtins_before": null,
+            "module_before": null,
+            "environment_before": null,
+            "tmp_before": null,
+            "integration_value": 42,
+            "integration_secret_probe": "[REDACTED]"
+          },
+          "duration_ms": 665,
+          "logs": [
+            {
+              "timestamp": "2026-11-02T19:01:35.654000+00:00",
+              "level": "warning",
+              "message": "integration secret=[REDACTED]",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-11-02T19:01:35.655000+00:00",
+              "level": "warning",
+              "message": "authorized local Pyodide workflow",
+              "source": "workflow"
+            }
+          ],
+          "variables": {
+            "n": 7,
+            "forbidden_scope": "1d09d9d5-7211-4619-a73c-50ff4d90e84c",
+            "marker": "<PosixPath>",
+            "fresh": {
+              "builtins_before": null,
+              "module_before": null,
+              "environment_before": null,
+              "tmp_before": null,
+              "integration_value": 42,
+              "integration_secret_probe": "[REDACTED]"
+            },
+            "value": 42,
+            "integration": {
+              "integration_id": "fa03e65a-1f3d-4c1d-9969-aa0f8bea44af",
+              "entity_id": "synthetic-cloud-qualification",
+              "entity_name": null,
+              "config": {
+                "qualification_value": 42,
+                "qualification_secret": "[REDACTED]"
+              },
+              "oauth": null,
+              "config_secret_keys": [
+                "qualification_secret"
+              ]
+            },
+            "document": {
+              "id": "proof",
+              "table_id": "fed28aca-a949-450b-ab35-eb659ab6b5cf",
+              "data": {
+                "value": 70
+              },
+              "created_at": "2026-11-02T19:01:35.639671+00:00",
+              "updated_at": "2026-11-02T19:01:35.639671+00:00",
+              "created_by": "756077b8-0e27-4aac-83fe-22cead918f33",
+              "updated_by": "756077b8-0e27-4aac-83fe-22cead918f33"
+            }
+          },
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null,
+          "execution_context": {
+            "user_id": "756077b8-0e27-4aac-83fe-22cead918f33",
+            "email": "token-43f71430@example.test",
+            "name": "Person f3af",
+            "scope": "586c518b-3b7d-4062-8648-e31abe1c290b",
+            "organization": {
+              "id": "586c518b-3b7d-4062-8648-e31abe1c290b",
+              "name": "Token World 9501fb8e",
+              "is_active": true,
+              "is_provider": false
+            },
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "d6e0d9d5-2dd4-4d54-8401-3f535529215a",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 30,
+            "workflow_name": "token_e7aa5796",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "https://test-api.invalid",
+            "parameters": {
+              "n": 7,
+              "forbidden_scope": "1d09d9d5-7211-4619-a73c-50ff4d90e84c"
+            },
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "metrics": {
+            "peak_memory_bytes": null,
+            "peak_process_rss_bytes": null,
+            "cpu_user_seconds": null,
+            "cpu_system_seconds": null,
+            "cpu_total_seconds": null,
+            "code_hash": "d57f2752548404e94a1b6e0a25a9768d3d6f66ea586a5361cdff923523bc06a3"
+          }
+        },
+        "bootstrap": {
+          "execution_child": true,
+          "engine_client_available": true
+        },
+        "api_calls": [
+          {
+            "path": "/api/sdk/modules/workflows/pyodide_qualification_c30815d619d549f0846a30d29b5465e1.py",
+            "method": "GET",
+            "status": 200
+          }
+        ],
+        "api_calls_scope": "parent_module_preflight_only"
+      },
+      "independent_document_value": 70,
+      "cross_tenant_status": 403,
+      "credential_version": 2,
+      "live_then_fixture_terminal_status": [
+        200,
+        401
+      ],
+      "ended_run_status": 401
+    }
+  }
+]

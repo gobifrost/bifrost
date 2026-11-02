@@ -1,0 +1,19 @@
+# Deployed dev-stack experiment log, 2026-11-02
+
+All deployment/account actions used cf CLI. Base source: `2037ac0d9ec95e94a77ce440001ae016d4215407`; public runtime artifact hash and actual successful raw receipts are recorded in README and `cloud-sdk-success.json`. Uncommitted fixture overlay hashes are captured in `source-manifest.json`. No production resources, account credential copies or new business queue.
+
+| Hypothesis | Specific change / command | Observed result | Next |
+|---|---|---|---|
+| Default dev client fits its original cap | `debug.sh up`, Vite capped 768 MiB | API ready, Vite OOM/137; retained state | Compile static frontend |
+| Static UI can run on Workers | Guest `npm run build -- --outDir /out`, bounded 5 GiB; `cf deploy` | Build exit 0; actual cloud assets/UI 200, API readiness 200, unauthenticated API 401 | Authenticate |
+| Guest urllib can qualify workers.dev unchanged | `python3 verify_edge.py` | Cloudflare 1010 | Official documented descriptive User-Agent |
+| Application identification resolves 1010 | Same fixture, application User-Agent | Authenticated workflow/table/form/agent/integration reads 200 | Real Python SDK |
+| Real engine can use global fetch to another same-zone Worker | `cf deploy` executor, `python3 run_cloud_qualification.py` | Internal module read 200, cloud text/plain module preflight 404; no fake success | Supported Service Binding |
+| Removing inherited virtual Host fixes routing | Delete Host before fixed-destination fetch | Still Cloudflare 404 | Service Binding |
+| Service Binding fixes physical API hop | Bind `DEV_API` to existing UI Worker | Actual Python imports, workspace helper and config read pass; table path exceeds four-subrequest cap | Bounded SDK request budget |
+| Eight requests cover config/table fixture | Set dev child cap 8; same upstream SDK | Cloud success, independent table readback 70, peer403, ended token401 | Integration and fresh state |
+| Integration secret read and fresh state work | Cap 12; `run_cloud_qualification.py --integration-fresh` | Three actual successful runs: integration42, decrypted secret checked/redacted, peer403, four canaries absent before effects | Canonical mode/invalid identity rejection |
+| Physical fixture must reject unsupported orchestration | Same run sends canonical-mode and invalid-token controls first | 422 before execution; module API401; authorized workflow succeeds | Canonical adapter remains separate work |
+| Bounded window can close without removing dev data | `DEV_EXECUTOR_OPEN=false DEV_EXECUTOR_EXPIRES_AT=0 cf deploy`; `cf workers secrets delete DEV_AUTH --worker ... --force` | Public endpoint404, secret list empty, qualification rows0, volumes retained | Normal CI/review |
+
+Six Node transport/routing regression tests and guest network-disabled bounded Ruff check passed. Actual cloud receipts cover the engine/SDK boundary; they do not establish canonical scheduling/claim/terminal acceptance, duplicate-effect safety, hostile isolation or CPU physical cancellation. Existing Linux/local-workerd canonical receipts remain separate evidence.

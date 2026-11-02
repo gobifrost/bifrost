@@ -1,0 +1,28 @@
+{
+  "source": "2037ac0d9ec95e94a77ce440001ae016d4215407",
+  "edge": "https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev",
+  "authenticated_reads": {
+    "/api/workflows": {
+      "status": 200,
+      "response_type": "list"
+    },
+    "/api/tables": {
+      "status": 200,
+      "response_type": "dict"
+    },
+    "/api/forms": {
+      "status": 200,
+      "response_type": "list"
+    },
+    "/api/agents": {
+      "status": 200,
+      "response_type": "list"
+    },
+    "/api/integrations": {
+      "status": 200,
+      "response_type": "dict"
+    }
+  },
+  "user_agent": "bifrost-pyodide-dev-qualification/1.0",
+  "scope": "Cloudflare static UI and API proxy; upstream API executes on CT128"
+}

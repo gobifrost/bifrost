@@ -1,0 +1,20 @@
+{
+  "base_source": "2037ac0d9ec95e94a77ce440001ae016d4215407",
+  "last_tested_fixture_sha256": "cd03f6c4404287ec9f104b96436e75a69848af7c8319cf432001d883bee5702f",
+  "runtime_artifact_sha256": "e1cca587e10cb755d49df0f2325c038a361a25f7031142a9e9e896a3c004bd39",
+  "successful_open_version": "0196e183-467e-446d-8cfa-3a0c89e1506b",
+  "final_closed_version": "6ae88855-3338-43d7-85e7-4b1700e86f70",
+  "final_deployment": "e52f84d9-77e2-4a74-8219-4fcb4402d54f",
+  "http_invocation_reservations": 13,
+  "maximum_http_invocation_reservations": 20,
+  "successful_python_runs": 4,
+  "integration_fresh_canary_runs": 3,
+  "temporary_secret_count_after_cleanup": 0,
+  "closed_endpoint_http_status_with_retired_secret": 404,
+  "qualification_rows_remaining": {"tables": 0, "workflows": 0, "configs": 0},
+  "canonical_cloud_dispatch_verified": false,
+  "physical_termination_verified": false,
+  "billable_cpu_ms": null,
+  "cloud_peak_memory_bytes": null,
+  "actual_incremental_cost": null
+}

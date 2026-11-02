@@ -1,0 +1,5 @@
+frontend/assets/
+frontend/.cloudflare/
+executor/.cloudflare/
+runtime/
+*.private*
