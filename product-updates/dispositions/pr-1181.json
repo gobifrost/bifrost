@@ -1,0 +1,13 @@
+{
+  "key": "pr:1181",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal activation of the approved SDK performance notice from PR #1180; no new customer-facing behavior or prose.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1181",
+      "Canonical validation, image preparation and 44 tooling tests passed. Root independently verified all 38 prior eligible notices retain their titles, prose, revisions, classifications and contributors; only the approved SDK notice was added."
+    ]
+  }
+}

@@ -263,7 +263,9 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         if external is None:
             external = self.is_external
         from src.core.cache.keys import (
+            CONFIG_CACHE_COMPLETE_FIELD,
             TTL_CONFIG,
+            config_cache_field,
             config_hash_key_versioned,
         )
         from src.core.cache.redis_client import get_shared_redis
@@ -273,6 +275,8 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         if external and self.org_id is None:
             return {}
 
+        cache = None
+        cache_hash_key = None
         # External reads skip the cache (the cached org key holds the
         # global-merged view — reusing it would re-leak global).
         if not external:
@@ -280,16 +284,13 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
                 redis = await get_shared_redis()
                 hash_key = await config_hash_key_versioned(redis, org_id_str)
                 cached = await redis.hgetall(hash_key)  # type: ignore[misc]
-                if cached:
-                    out: dict[str, Any] = {}
-                    for key, value in cached.items():
-                        key_str = key.decode() if isinstance(key, bytes) else key
-                        value_str = value.decode() if isinstance(value, bytes) else value
-                        try:
-                            out[key_str] = json.loads(value_str)
-                        except json.JSONDecodeError:
-                            out[key_str] = {"value": value_str, "type": "string"}
-                    return out
+                complete = cached.get(CONFIG_CACHE_COMPLETE_FIELD)
+                if complete is None:
+                    complete = cached.get(CONFIG_CACHE_COMPLETE_FIELD.encode())
+                if complete in ("1", b"1"):
+                    return self._decode_cached_config(cached)
+                cache = redis
+                cache_hash_key = hash_key
             except Exception as e:
                 logger.warning(f"Config cache read failed: {e}")
 
@@ -333,13 +334,31 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
                 }
 
         # Only the org+global (non-external) view is cached under the org key.
-        if config_dict and not external:
+        # The completion field shares this one hash with JSON-encoded user
+        # fields. That makes an empty view cacheable in one atomic Redis value
+        # without a marker that can outlive its data.
+        if cache is not None and cache_hash_key is not None:
             try:
-                redis = await get_shared_redis()
-                hash_key = await config_hash_key_versioned(redis, org_id_str)
-                mapping = {key: json.dumps(value) for key, value in config_dict.items()}
-                await redis.hset(hash_key, mapping=mapping)  # type: ignore[misc]
-                await redis.expire(hash_key, TTL_CONFIG)
+                # Do not fill a generation that changed while SQL was running.
+                # A concurrent write made the observed snapshot unreachable.
+                if (
+                    await config_hash_key_versioned(cache, org_id_str)
+                    == cache_hash_key
+                ):
+                    pipe = cache.pipeline(transaction=True)
+                    pipe.delete(cache_hash_key)
+                    pipe.hset(
+                        cache_hash_key,
+                        mapping={
+                            CONFIG_CACHE_COMPLETE_FIELD: "1",
+                            **{
+                                config_cache_field(key): json.dumps(value)
+                                for key, value in config_dict.items()
+                            },
+                        },
+                    )
+                    pipe.expire(cache_hash_key, TTL_CONFIG)
+                    await pipe.execute()
             except Exception as e:
                 logger.warning(f"Config cache write failed: {e}")
 
@@ -347,6 +366,121 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
             f"Loaded {len(config_dict)} config entries for org={log_safe(org_id_str)}"
         )
         return config_dict
+
+    @staticmethod
+    def _decode_cached_config(cached: dict[Any, Any]) -> dict[str, Any]:
+        """Decode a complete Redis config hash without exposing cache metadata."""
+        out: dict[str, Any] = {}
+        from src.core.cache.keys import CONFIG_CACHE_COMPLETE_FIELD
+
+        for key, value in cached.items():
+            field = key.decode() if isinstance(key, bytes) else key
+            if not isinstance(field, str):
+                raise ValueError("Config cache field is not a string")
+            if field == CONFIG_CACHE_COMPLETE_FIELD:
+                continue
+            value_str = value.decode() if isinstance(value, bytes) else value
+            try:
+                key_str = json.loads(field)
+                if not isinstance(key_str, str):
+                    raise ValueError("Config cache user field is not a JSON string")
+                entry = json.loads(value_str)
+                if not isinstance(entry, dict):
+                    raise ValueError("Config cache value is not an object")
+                out[key_str] = entry
+            except (TypeError, json.JSONDecodeError) as e:
+                raise ValueError("Malformed config cache entry") from e
+        return out
+
+    @staticmethod
+    def _sdk_entry(config: ConfigModel) -> dict[str, Any]:
+        value = config.value.get("value") if isinstance(config.value, dict) else config.value
+        return {
+            "value": value,
+            "type": config.config_type.value if config.config_type else "string",
+        }
+
+    async def get_for_sdk(
+        self,
+        key: str,
+        *,
+        external: bool | None = None,
+    ) -> dict[str, Any] | None:
+        """Return one SDK config entry without materializing the full view.
+
+        A warm complete view uses one ``HMGET`` for the completion field and
+        exactly the requested user field.
+        A cold internal read builds the existing complete merged view once;
+        that gives both positive and missing keys a durable cached answer
+        without ever HSET-ing a partial view. External and cache-failure
+        reads use narrow database queries and never share this cache.
+        """
+        if external is None:
+            external = self.is_external
+        if external and self.org_id is None:
+            return None
+
+        if not external:
+            from src.core.cache.keys import (
+                CONFIG_CACHE_COMPLETE_FIELD,
+                config_cache_field,
+                config_hash_key_versioned,
+            )
+            from src.core.cache.redis_client import get_shared_redis
+
+            cache_cold = False
+            try:
+                redis = await get_shared_redis()
+                hash_key = await config_hash_key_versioned(
+                    redis, str(self.org_id) if self.org_id is not None else None
+                )
+                complete, cached = await redis.hmget(  # type: ignore[misc]
+                    hash_key,
+                    [CONFIG_CACHE_COMPLETE_FIELD, config_cache_field(key)],
+                )
+                if complete in ("1", b"1"):
+                    if cached is None:
+                        return None
+                    return self._decode_cached_config(
+                        {config_cache_field(key): cached}
+                    )[key]
+
+                cache_cold = True
+            except Exception as e:
+                logger.warning(f"Config cache keyed read failed: {e}")
+
+            if cache_cold:
+                # A cold internal keyed read must populate the shared complete
+                # view once. Otherwise a repeatedly missing key would repeat
+                # its database query forever. Keep this outside the Redis
+                # boundary so SQL failures retain their original error and
+                # are never retried as a cache fallback.
+                return (await self.merged_for_sdk(external=False)).get(key)
+
+        global_config = None
+        if not external:
+            global_result = await self.session.execute(
+                select(self.model).where(
+                    self.model.key == key,
+                    self.model.organization_id.is_(None),
+                    self.model.integration_id.is_(None),
+                )
+            )
+            global_config = global_result.scalar_one_or_none()
+
+        if self.org_id is not None:
+            org_result = await self.session.execute(
+                select(self.model).where(
+                    self.model.key == key,
+                    self.model.organization_id == self.org_id,
+                    self.model.integration_id.is_(None),
+                )
+            )
+            org_config = org_result.scalar_one_or_none()
+            if org_config is not None:
+                return self._sdk_entry(org_config)
+
+        return self._sdk_entry(global_config) if global_config is not None else None
 
     async def get_config_strict(self, key: str) -> ConfigModel | None:
         """Get a config strictly in current org scope."""

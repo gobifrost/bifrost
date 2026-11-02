@@ -24,7 +24,13 @@ from src.services.worker_pool.liveness import silent_executor
 from src.services.worker_pool.recovery import announce_lost_runs, end_runs_of_lost_worker
 from src.services.worker_pool.sizing import JobSizing
 from src.worker.remote.protocol import WORKER_DRAIN_GRACE_SECONDS
-from src.services.work_dispatch import listen_for_pool_wake, wait_for_next_pass
+from src.services.work_dispatch import (
+    DISPATCH_WAKE_FAMILIES,
+    WAKE_PLATFORM_JOB,
+    WAKE_SERVICE,
+    listen_for_pool_wake,
+    wait_for_next_pass,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +198,16 @@ async def external_worker_pool_loop(stop_event: asyncio.Event, settings: Setting
         )
         controller: ExternalWorkerPoolController | None = None
         wake = asyncio.Event()
-        listener = asyncio.create_task(listen_for_pool_wake(settings.redis_url, wake))
+        listener = asyncio.create_task(
+            listen_for_pool_wake(
+                settings.redis_url,
+                {
+                    **{family: wake for family in DISPATCH_WAKE_FAMILIES},
+                    WAKE_PLATFORM_JOB: wake,
+                    WAKE_SERVICE: wake,
+                },
+            )
+        )
         try:
             while not stop_event.is_set():
                 started = time.monotonic()

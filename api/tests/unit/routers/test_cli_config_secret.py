@@ -59,9 +59,9 @@ class TestConfigGetDecryptsSecrets:
         encrypted = encrypt_secret(plaintext)
 
         mock_resolver = AsyncMock()
-        mock_resolver.merged_for_sdk = AsyncMock(return_value={
-            "test_secret": {"value": encrypted, "type": "secret"},
-        })
+        mock_resolver.get_for_sdk = AsyncMock(
+            return_value={"value": encrypted, "type": "secret"}
+        )
 
         caller = _secrets_reader_caller()
 
@@ -86,9 +86,9 @@ class TestConfigGetDecryptsSecrets:
         from src.models.contracts.cli import CLIConfigGetRequest, CLIConfigValue
 
         mock_resolver = AsyncMock()
-        mock_resolver.merged_for_sdk = AsyncMock(return_value={
-            "bad_secret": {"value": "not-valid-encrypted-data", "type": "secret"},
-        })
+        mock_resolver.get_for_sdk = AsyncMock(
+            return_value={"value": "not-valid-encrypted-data", "type": "secret"}
+        )
 
         caller = _secrets_reader_caller()
 
@@ -112,9 +112,9 @@ class TestConfigGetDecryptsSecrets:
         plain_value = "just_a_string"
 
         mock_resolver = AsyncMock()
-        mock_resolver.merged_for_sdk = AsyncMock(return_value={
-            "normal_key": {"value": plain_value, "type": "string"},
-        })
+        mock_resolver.get_for_sdk = AsyncMock(
+            return_value={"value": plain_value, "type": "string"}
+        )
 
         caller = admin_caller()
 

@@ -14,6 +14,7 @@ parity:
 - HTTP adapter status/detail parity.
 """
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import ANY, patch
 from uuid import uuid4
@@ -21,8 +22,10 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from shared.policies.probe import make_seed_admin_bypass
+from shared.table_documents import DocumentRepository
 from shared.sdk_table_metadata import (
     SDKTableMetadataError,
     create_sdk_table,
@@ -35,7 +38,9 @@ from src.models.contracts.cli import (
     SDKTableInfo,
     SDKTableListRequest,
 )
-from src.models.orm.tables import Table
+from src.models.contracts.tables import TableCreate
+from src.models.orm.tables import Document, Table
+from src.repositories.tables import TableRepository
 from src.services.authorization.context import (
     AuthorizationContext,
     Boundary,
@@ -295,6 +300,270 @@ class TestCreateService:
             )
         assert exc.value.status_code == 404
         assert exc.value.detail == "Tables must be declared by the solution manifest"
+
+    async def test_create_does_not_mislabel_non_name_integrity_error(self, db_session):
+        """A concurrent-name 409 must not hide an unrelated database failure."""
+        missing_org_id = uuid4()
+
+        with pytest.raises(IntegrityError):
+            await create_sdk_table(
+                db_session,
+                name=_table_name("missing_org"),
+                table_schema=None,
+                description=None,
+                org_id=missing_org_id,
+                caller=_caller(missing_org_id),
+                solution_present=False,
+            )
+
+    async def test_concurrent_first_create_keeps_one_table_and_both_documents(
+        self, db_session, async_session_factory, monkeypatch
+    ):
+        """Independent sessions race past the lookup; the database chooses one table.
+
+        The losing first-use creator receives the ordinary 409, then both
+        callers can write their initial document to the surviving table.
+        """
+        org = await _seed_org(db_session)
+        await db_session.commit()
+        name = _table_name("concurrent")
+        lookup_complete = asyncio.Event()
+        lookup_lock = asyncio.Lock()
+        lookups = 0
+        original_lookup = TableRepository.get_by_name_strict
+
+        async def synchronize_absent_lookups(self, *args, **kwargs):
+            nonlocal lookups
+            result = await original_lookup(self, *args, **kwargs)
+            if result is None:
+                async with lookup_lock:
+                    lookups += 1
+                    if lookups == 2:
+                        lookup_complete.set()
+                await lookup_complete.wait()
+            return result
+
+        monkeypatch.setattr(
+            TableRepository, "get_by_name_strict", synchronize_absent_lookups
+        )
+
+        async def create_from_independent_session() -> tuple[str, str | None]:
+            async with async_session_factory() as session:
+                try:
+                    result = await create_sdk_table(
+                        session,
+                        name=name,
+                        table_schema=None,
+                        description=None,
+                        org_id=org.id,
+                        caller=_caller(org.id),
+                        solution_present=False,
+                    )
+                    return "created", result["id"]
+                except SDKTableMetadataError as exc:
+                    assert exc.status_code == 409
+                    assert exc.detail == f"Table '{name}' already exists"
+                    return "conflict", None
+
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                create_from_independent_session(), create_from_independent_session()
+            ),
+            timeout=10,
+        )
+
+        assert sorted(status for status, _ in outcomes) == ["conflict", "created"]
+
+        async def write_first_document(document_id: str) -> None:
+            async with async_session_factory() as session:
+                table = (
+                    await session.execute(
+                        select(Table).where(
+                            Table.name == name,
+                            Table.organization_id == org.id,
+                            Table.solution_id.is_(None),
+                        )
+                    )
+                ).scalar_one()
+                await DocumentRepository(session, table).insert(
+                    {"writer": document_id},
+                    created_by="writer@test.local",
+                    doc_id=document_id,
+                )
+                await session.commit()
+
+        await asyncio.gather(write_first_document("first"), write_first_document("second"))
+
+        async with async_session_factory() as session:
+            tables = (
+                await session.execute(
+                    select(Table).where(
+                        Table.name == name,
+                        Table.organization_id == org.id,
+                        Table.solution_id.is_(None),
+                    )
+                )
+            ).scalars().all()
+            assert len(tables) == 1
+            documents = (
+                await session.execute(
+                    select(Document).where(Document.table_id == tables[0].id)
+                )
+            ).scalars().all()
+            assert {document.id for document in documents} == {"first", "second"}
+
+    async def test_concurrent_repository_create_preserves_outer_transaction(
+        self, db_session, async_session_factory, monkeypatch
+    ):
+        """A duplicate race keeps the losing repository session usable."""
+        org = await _seed_org(db_session)
+        await db_session.commit()
+        name = _table_name("concurrent_repository")
+        lookup_complete = asyncio.Event()
+        lookup_lock = asyncio.Lock()
+        lookups = 0
+        original_lookup = TableRepository.get_by_name_strict
+
+        async def synchronize_absent_lookups(self, *args, **kwargs):
+            nonlocal lookups
+            result = await original_lookup(self, *args, **kwargs)
+            if result is None:
+                async with lookup_lock:
+                    lookups += 1
+                    if lookups == 2:
+                        lookup_complete.set()
+                await lookup_complete.wait()
+            return result
+
+        monkeypatch.setattr(
+            TableRepository, "get_by_name_strict", synchronize_absent_lookups
+        )
+
+        async def create_from_independent_session() -> tuple[str, str | None]:
+            async with async_session_factory() as session:
+                async with session.begin():
+                    repo = TableRepository(session, org.id)
+                    try:
+                        table = await repo.create_table(
+                            TableCreate(name=name), created_by="writer@test.local"
+                        )
+                        return "created", str(table.id)
+                    except ValueError as exc:
+                        assert str(exc) == f"Table '{name}' already exists"
+                        assert await session.scalar(select(1)) == 1
+                        return "conflict", None
+
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                create_from_independent_session(), create_from_independent_session()
+            ),
+            timeout=10,
+        )
+
+        assert sorted(status for status, _ in outcomes) == ["conflict", "created"]
+
+        async with async_session_factory() as session:
+            tables = (
+                await session.execute(
+                    select(Table).where(
+                        Table.name == name,
+                        Table.organization_id == org.id,
+                        Table.solution_id.is_(None),
+                    )
+                )
+            ).scalars().all()
+            assert len(tables) == 1
+
+    async def test_database_uniqueness_keeps_repo_scopes_and_solution_namespaces(
+        self, db_session, async_session_factory
+    ):
+        """The repaired indexes constrain only their intended namespaces."""
+        org_a = await _seed_org(db_session)
+        org_b = await _seed_org(db_session)
+        solution_a = await _seed_solution(db_session, org_id=org_a.id)
+        solution_b = await _seed_solution(db_session, org_id=org_a.id)
+        await db_session.commit()
+        name = _table_name("namespace")
+
+        async def insert_table(*, org_id=None, solution_id=None) -> None:
+            async with async_session_factory() as session:
+                session.add(
+                    Table(
+                        name=name,
+                        organization_id=org_id,
+                        solution_id=solution_id,
+                        access=make_seed_admin_bypass(),
+                    )
+                )
+                await session.commit()
+
+        await insert_table(org_id=org_a.id)
+        await insert_table(org_id=org_b.id)
+        await insert_table()
+        await insert_table(org_id=org_a.id, solution_id=solution_a.id)
+        await insert_table(org_id=org_a.id, solution_id=solution_b.id)
+
+        with pytest.raises(IntegrityError):
+            await insert_table(org_id=org_a.id)
+        with pytest.raises(IntegrityError):
+            await insert_table()
+        with pytest.raises(IntegrityError):
+            await insert_table(org_id=org_a.id, solution_id=solution_a.id)
+
+    async def test_concurrent_rest_create_returns_the_normal_conflict_response(
+        self, db_session, async_session_factory, monkeypatch
+    ):
+        """The SDK's first-write REST create path maps the index race to 409."""
+        from src.routers.tables import create_table
+
+        org = await _seed_org(db_session)
+        await db_session.commit()
+        name = _table_name("concurrent_rest")
+        lookup_complete = asyncio.Event()
+        lookup_lock = asyncio.Lock()
+        lookups = 0
+        original_lookup = TableRepository.get_by_name_strict
+
+        async def synchronize_absent_lookups(self, *args, **kwargs):
+            nonlocal lookups
+            result = await original_lookup(self, *args, **kwargs)
+            if result is None:
+                async with lookup_lock:
+                    lookups += 1
+                    if lookups == 2:
+                        lookup_complete.set()
+                await lookup_complete.wait()
+            return result
+
+        monkeypatch.setattr(
+            TableRepository, "get_by_name_strict", synchronize_absent_lookups
+        )
+
+        async def create_from_independent_session() -> str:
+            async with async_session_factory() as session:
+                user = _user(org_id=org.id)
+                try:
+                    await create_table(
+                        TableCreate(name=name),
+                        _ctx(session, user, org_id=org.id),
+                        user,
+                        scope=None,
+                    )
+                    await session.commit()
+                    return "created"
+                except HTTPException as exc:
+                    assert exc.status_code == 409
+                    assert exc.detail == f"Table '{name}' already exists"
+                    return "conflict"
+
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                create_from_independent_session(), create_from_independent_session()
+            ),
+            timeout=10,
+        )
+
+        assert sorted(outcomes) == ["conflict", "created"]
 
 
 @pytest.mark.asyncio
