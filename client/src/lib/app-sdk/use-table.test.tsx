@@ -1068,5 +1068,97 @@ describe("useTable", () => {
       expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b"]);
       expect(result.current.rows[0]?.note).toBe("edited");
     });
+
+    it("never drops an updated row: a key past the window edge pins it there", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }], 5),
+      );
+      const { result } = await mount({ order_by: "name", pageSize: 2 });
+
+      emit("update", { id: "a", name: "Zulu" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["b", "a"]);
+      expect(result.current.total).toBe(5);
+    });
+
+    it("ignores an update for a row not in the window", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }]),
+      );
+      const { result } = await mount({ order_by: "name" });
+
+      emit("update", { id: "x", name: "Bravo2" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b"]);
+    });
+
+    it("on page > 1, places an insert that sorts within the window", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "m", name: "Mike" }, { id: "o", name: "Oscar" }], 4),
+      );
+      const { result } = await mount({ order_by: "name", pageSize: 3, page: 2 });
+
+      emit("insert", { id: "n", name: "November" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["m", "n", "o"]);
+      expect(result.current.total).toBe(5);
+    });
+
+    it("desc on a full page: places a mid-window insert and drops one past the end", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "y", name: "Yankee" }, { id: "w", name: "Whiskey" }], 5),
+      );
+      const { result } = await mount({ order_by: "name", order_dir: "desc", pageSize: 2 });
+
+      emit("insert", { id: "x", name: "X-ray" });
+      expect(result.current.rows.map((r) => r.id)).toEqual(["y", "x"]);
+
+      emit("insert", { id: "a", name: "Alpha" });
+      expect(result.current.rows.map((r) => r.id)).toEqual(["y", "x"]);
+      expect(result.current.total).toBe(7);
+    });
+
+    it("replaces instead of duplicating an insert for an id already in the window", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }]),
+      );
+      const { result } = await mount({ order_by: "name" });
+
+      emit("insert", { id: "a", name: "Alpha", note: "again" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b"]);
+      expect(result.current.rows[0]?.note).toBe("again");
+    });
+
+    it("without order_by, desc puts a new row first on page 1", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "b", name: "Bravo" }, { id: "a", name: "Alpha" }], 5),
+      );
+      const { result } = await mount({ order_dir: "desc", pageSize: 2 });
+
+      emit("insert", { id: "c", name: "Charlie" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["c", "b"]);
+      expect(result.current.total).toBe(6);
+    });
+
+    it("without order_by, desc on page > 1 leaves the window unchanged", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "b", name: "Bravo" }, { id: "a", name: "Alpha" }], 4),
+      );
+      const { result } = await mount({ order_dir: "desc", pageSize: 2, page: 2 });
+
+      emit("insert", { id: "c", name: "Charlie" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["b", "a"]);
+      expect(result.current.total).toBe(5);
+    });
   });
 });

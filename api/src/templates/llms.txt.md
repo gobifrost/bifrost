@@ -371,7 +371,7 @@ Query options:
 | `order_dir` | `"asc" \| "desc"` | `"asc"` | Sort direction |
 | `scope` | `string` | app's org / caller's org | Org scope override |
 
-Live updates: `insert` events bump `total`. With `order_by`, the row is placed at its sorted position and the window trims to `pageSize`; inserts that sort after the last row of a full page (or, on `page > 1`, before the first row) belong to another page and are not shown. Without `order_by`, inserts append iff there's room. `update` replaces in place (with `order_by`, a changed sort key moves the row within the window); `delete` removes from the window and decrements `total`.
+Live updates: `insert` events bump `total`. With `order_by`, the row is placed at its sorted position and the window trims to `pageSize`; inserts that sort after the last row of a full page (or, on `page > 1`, before the first row) belong to another page and are not shown. Without `order_by` the server orders by `created_at`, so a new row is the newest: ascending (the default) appends iff there's room; `order_dir: "desc"` places it first on page 1 and leaves later pages unchanged. An insert for a row already in the window replaces it rather than duplicating it. `update` replaces in place (with `order_by`, a changed sort key moves the row within the window); `delete` removes from the window and decrements `total`.
 
 #### `useInfiniteTable(name, query?)`
 

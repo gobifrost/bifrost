@@ -260,8 +260,9 @@ export function flattenDocument(doc: DocumentPublic): TableRow {
  *   - With `order_by` set, live `insert` events are placed at their sorted
  *     position (matching the server's `tables.query` ordering) and updates
  *     that change the sort field move the row to its new position. Without
- *     `order_by`, inserts are appended (server default order is
- *     `created_at` ascending, so new rows sort last).
+ *     `order_by` the server orders by `created_at`, so a new row is the
+ *     newest: appended when ascending (the default), placed first on page 1
+ *     when `order_dir: "desc"`.
  *   - Live `insert` events that fall outside the current page are dropped
  *     to keep the visible window stable (`total` still increments):
  *     an insert sorting after the last row of a full page, or — on
@@ -462,10 +463,12 @@ const COLUMN_FIELDS = new Set([
   "updated_at",
 ]);
 
-// Approximates the database's default `en_US.UTF-8` text collation
-// (case-insensitive first, punctuation significant). ICU and glibc can
-// disagree on exotic inputs; a reconnect/invalidation snapshot corrects any
-// drift.
+// Approximates the database's default `en_US.UTF-8` text collation (case
+// differences are secondary). It is not exact: ICU treats punctuation and
+// spaces as significant, while glibc's en_US ignores them at the first level
+// (e.g. text "-5" vs "10" order differently), and number text can differ
+// from Postgres `->>` output for exponent/decimal forms (1e21, 1.0). A
+// reconnect/invalidation snapshot replaces any drift with the server order.
 const collator = new Intl.Collator("en-US");
 
 /**
@@ -535,8 +538,14 @@ function sortedIndex(
  *
  * Window semantics:
  *   - `insert` matching the subscribe filter: increment `total` regardless.
- *     Without `order_by`: append iff there's room in the window (a full
- *     page keeps its rows; the insert is off-screen). With `order_by`:
+ *     An insert for an id already in the window replaces that row instead
+ *     of duplicating it (`total` is still bumped — rows and total are
+ *     separate state, so a racing duplicate can leave `total` one high
+ *     until the next snapshot).
+ *     Without `order_by` the server orders by `created_at, id`, so a new
+ *     row is newest: ascending, append iff there's room in the window (a
+ *     full page keeps its rows; the insert is off-screen); descending,
+ *     prepend on page 1 and drop on later pages. With `order_by`:
  *     insert at the row's sorted position, then trim to `pageSize` (the
  *     displaced trailing row belongs to the next page). The insert is
  *     dropped when it sorts after the last row of a full page, or, on
@@ -566,7 +575,20 @@ export function applyPagedEvent(
   if (evt.action === "insert") {
     const inserted = evt.row as unknown as TableRow;
     setRows((prev) => {
+      // Already in the window (e.g. an upsert's insert racing a refresh
+      // snapshot that included it): replace rather than duplicate the row.
+      if (prev.some((r) => r.id === inserted.id)) {
+        return prev.map((r) => (r.id === inserted.id ? inserted : r));
+      }
       if (!order_by) {
+        // Server default order is `created_at, id` in `order_dir`. Ascending:
+        // the newest row sorts last, so append iff there's room. Descending:
+        // it sorts first — prepend on page 1; on later pages it belongs to
+        // an earlier page.
+        if (order_dir === "desc") {
+          if (page > 1) return prev;
+          return [inserted, ...prev].slice(0, pageSize);
+        }
         const next = [...prev, inserted];
         return next.length > pageSize ? next.slice(0, pageSize) : next;
       }
