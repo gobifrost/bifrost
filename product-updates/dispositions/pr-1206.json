@@ -1,0 +1,14 @@
+{
+  "key": "pr:1206",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Large file copies can use conditional streaming with S3-compatible storage that does not guarantee conditional part copies.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1206",
+      "Proposed compatibility summary; maintainer content review pending. No human approval is asserted."
+    ]
+  }
+}
