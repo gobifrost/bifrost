@@ -69,6 +69,45 @@ async def owner(async_session_factory, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_distinct_live_remote_owner_cannot_adopt_another_launchers_route(owner, async_session_factory):
+    lease = await owner(1)
+    other_worker = uuid4()
+    async with async_session_factory() as session:
+        session.add(ExecutionWorker(id=other_worker, form="static", state="ready",
+                                   resource_class="standard", slots=1,
+                                   supported_handlers=["workflow.execute"]))
+        await session.commit()
+    journal = AttemptJournal()
+    launch = AsyncMock(return_value={"execution_id": "execution", "success": True})
+    try:
+        other = await ownership.acquire_remote_owner(worker_id=other_worker, owner_id=uuid4(),
+            launcher_id=uuid4(), nonce_digest=f"{uuid4().int:064x}", hello_sequence=1, credential_protocol=2)
+        assert other is not None
+        assert await ownership.owns_remote_session(lease)
+        assert await ownership.owns_remote_session(other)
+        receipt = await journal.dispatch(lease, "route", "execution", launch)
+        await receipt
+        with pytest.raises(ValueError, match="route owner conflict"):
+            await journal.dispatch(other, "route", "execution", launch)
+        accept = AsyncMock(return_value=True)
+        with pytest.raises(ValueError, match="route owner conflict"):
+            await journal.reconcile_terminal(other, "route", accept)
+        accept.assert_not_awaited()
+        replacement = await owner(2)
+        replay = await journal.dispatch(replacement, "route", "execution", launch)
+        assert replay is receipt
+        accepted = await journal.reconcile_terminal(replacement, "route", accept)
+        assert accepted is True
+        launch.assert_awaited_once()
+        accept.assert_awaited_once()
+        await journal.retire()
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == other_worker))
+            await session.commit()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_dispatch_and_reconnect_never_repeat_physical_launch(owner):
     lease = await owner(1)
     journal = AttemptJournal(capacity=1)

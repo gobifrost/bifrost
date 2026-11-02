@@ -476,3 +476,19 @@ explicitly false SDK/cloud/physical-stop qualification flags. Actual upstream
 semantics on guest Pyodide pass; the workerd supply and fresh physical-stop
 requirements remain. Next independent boundary is real SDK transport/API work
 on the isolated guest stack, without a stub or a new authoritative job queue.
+
+## Retained route principal, 2026-11-02
+
+Hypothesis: live-session validation alone does not bind a journal route to its
+original physical worker/launcher. Six focused cases against the real journal
+reproduced five failures and one reconnect control pass. Change: pin canonical
+worker_id/launcher_id per route and reject conflicts before receipt/ACK access;
+allow legitimate API-owner/session rotation for the same launcher. Commands:
+`python -m unittest -v test_attempt_journal_owners` and repository
+`./test.sh tests/unit/dev/test_pyodide_attempt_journal.py -q` on CT128.
+Observed: six focused cases and38 full journal cases pass, including two actual
+PostgreSQL-backed live remote sessions; Ruff passes. Guest receipt/overlay hashes
+and baseline/final logs are in results/route-ownership; supervisor elapsed115.249s,
+owned test project stopped, volumes/dev services preserved. No cloud invocation.
+Next: coordinated canonical physical-handle/admission extension and provider
+physical-stop proof; this companion repair does not satisfy those gates.

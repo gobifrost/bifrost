@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from src.worker.remote.fencing import LeaseRef, remote_owner_context
 from src.worker.remote.ownership import RemoteOwnerLease, owns_remote_session
@@ -37,9 +38,17 @@ class AttemptResult:
 @dataclass
 class Route:
     execution_id: str
+    worker_id: UUID
+    launcher_id: UUID
     task: asyncio.Task[dict[str, Any]]
     receipt: AttemptResult
     acknowledged: bool = False
+
+    def require_owner(self, lease: RemoteOwnerLease) -> None:
+        # API owner/session generations may rotate on reconnect. Physical
+        # worker/launcher identity must not change when adopting a receipt.
+        if (self.worker_id, self.launcher_id) != (lease.worker_id, lease.launcher_id):
+            raise ValueError("route owner conflict")
 
 
 class AttemptJournal:
@@ -70,6 +79,7 @@ class AttemptJournal:
                 raise CredentialRouteChanged("stale physical dispatch owner")
             previous = self.routes.get(route_id)
             if previous is not None:
+                previous.require_owner(lease)
                 if previous.execution_id != execution_id:
                     raise ValueError("route identity conflict")
                 return previous.receipt
@@ -77,7 +87,7 @@ class AttemptJournal:
                 raise RuntimeError("journal full; canonical retirement required")
             task = asyncio.create_task(launch())
             receipt = AttemptResult(task)
-            self.routes[route_id] = Route(execution_id, task, receipt)
+            self.routes[route_id] = Route(execution_id, lease.worker_id, lease.launcher_id, task, receipt)
             return receipt
 
     def inventory(self) -> list[dict[str, Any]]:
@@ -109,6 +119,7 @@ class AttemptJournal:
             if not await owns_remote_session(lease):
                 raise CredentialRouteChanged("stale terminal owner")
             route = self.routes[route_id]
+            route.require_owner(lease)
             if route.acknowledged:
                 return True
             if not route.task.done():
@@ -178,6 +189,7 @@ class AttemptJournal:
             if not await owns_remote_session(lease):
                 raise CredentialRouteChanged("stale retained result owner")
             route = self.routes[route_id]
+            route.require_owner(lease)
             if route.execution_id != execution.execution_id:
                 raise ValueError("retained execution identity conflict")
             if route.acknowledged:
