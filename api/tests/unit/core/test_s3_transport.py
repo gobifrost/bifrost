@@ -85,6 +85,34 @@ def regional_transport_for(handler: httpx.MockTransport, **kwargs) -> S3Transpor
     )
 
 
+async def test_conditional_range_get_keeps_signed_headers_and_range_metadata():
+    def handler(request):
+        assert request.headers["if-match"] == '"source"'
+        assert request.headers["range"] == "bytes=4-7"
+        assert "if-match" in request.headers["authorization"]
+        assert "range" in request.headers["authorization"]
+        return httpx.Response(206, headers={"Content-Length": "4", "Content-Range": "bytes 4-7/10", "ETag": '"source"'}, stream=RawStream(b"efgh"))
+
+    async with transport_for(httpx.MockTransport(handler)) as client:
+        result = await client.get_object(Bucket="bucket", Key="source", IfMatch='"source"', Range="bytes=4-7")
+        assert result["ContentRange"] == "bytes 4-7/10"
+        assert await result["Body"].read() == b"efgh"
+
+
+async def test_conditional_range_get_rejects_a_stale_source_without_retry():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(412, content=b"<Error><Code>PreconditionFailed</Code></Error>")
+
+    async with transport_for(httpx.MockTransport(handler)) as client:
+        with pytest.raises(S3Error) as caught:
+            await client.get_object(Bucket="bucket", Key="source", IfMatch='"stale"', Range="bytes=0-3")
+    assert caught.value.status_code == 412
+    assert len(calls) == 1
+
+
 def test_default_credentials_provider_is_reused_per_process(monkeypatch) -> None:
     first, second = object(), object()
     factory = Mock(side_effect=[first, second])
