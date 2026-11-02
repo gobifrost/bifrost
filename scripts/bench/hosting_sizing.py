@@ -166,7 +166,7 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
         samples: list[dict] = []
 
         def observed(sample: dict, observed_phase: str) -> None:
-            if "probe_failure" not in sample:
+            if "worker_db" in sample and "pods" in sample:
                 samples.append(sample)
             checkpoint(f"{phase}:observed:{observed_phase}", sample)
 

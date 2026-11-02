@@ -178,14 +178,42 @@ class HostingSizingTest(unittest.TestCase):
         confirm.assert_not_called()
         self.assertEqual(result["confirmation"], "skipped for mixed diagnostic")
 
+    def test_worker_evidence_uses_observation_frames_not_action_summary(self) -> None:
+        loaded = profile()
+        cluster, _prepared, patches = self._harness(loaded, ["pass"])
+
+        def during(_cluster, phase, checkpoint, action, on_result=None):
+            checkpoint(worker_sample(), phase)
+            value = action()
+            if on_result:
+                on_result(value)
+            checkpoint({"action_result": value}, f"{phase}_result")
+            return value
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+                 patch.object(hosting_sizing.elasticity, "_during", side_effect=during), patches[8], patches[9], patches[10], patches[11]:
+                hosting_sizing.run_campaign("hosting-4gb-fixed-workers-2", "candidate:local", directory / "out",
+                                            cluster=cluster, rates=(2,), ensure_fixture=self._fixture(directory))
+            result = json.loads((directory / "out" / "result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result["steps"][0]["overall"], "pass")
+        self.assertEqual(result["steps"][0]["fixed_worker_evidence"], {
+            "status": "observed", "required_ready": 2, "samples": 1,
+            "scope": "five-second sequential observations during warmup, measure, and drain",
+        })
+
     def test_raw_step_is_saved_before_a_worker_observer_failure_invalidates_the_campaign(self) -> None:
         loaded = profile()
         cluster, _prepared, patches = self._harness(loaded, ["pass"])
 
-        def observer_failure(_cluster, _phase, _checkpoint, action, on_result=None):
+        def observer_failure(_cluster, phase, checkpoint, action, on_result=None):
+            checkpoint(worker_sample(), phase)
             value = action()
             if on_result:
                 on_result(value)
+            checkpoint({"action_result": value}, f"{phase}_result")
             raise RuntimeError("observer failed after raw step")
 
         with tempfile.TemporaryDirectory() as raw:
@@ -198,6 +226,7 @@ class HostingSizingTest(unittest.TestCase):
             result = json.loads((directory / "out" / "result.json").read_text(encoding="utf-8"))
 
         self.assertEqual(result["steps"][0]["rate"], 2)
+        self.assertEqual(result["steps"][0]["fixed_worker_evidence"]["status"], "observed")
         self.assertEqual(result["status"], "invalid")
 
     def test_fixed_profile_must_use_an_exact_positive_worker_count_before_cluster_access(self) -> None:
