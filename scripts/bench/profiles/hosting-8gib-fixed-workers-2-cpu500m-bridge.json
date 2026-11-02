@@ -1,0 +1,5 @@
+{
+  "extends": "hosting-8gib-fixed-workers-2",
+  "description": "BENCHMARK-ONLY hosting sizing bridge: 8 GiB tenant envelope with two fixed 500m / 1024Mi workers, matching the aggregate worker CPU of the regular four-worker 250m arm. Retains the full M capacity workload and gates.",
+  "worker_cpu": "500m"
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "m-capacity",
+  "description": "BENCHMARK-ONLY hosting sizing arm: 4 decimal GB tenant envelope with one fixed 500m / 512Mi worker. Retains the full M capacity workload and gates.",
+  "quota": {"cpu": "4", "memory": "4G", "storage": "50Gi", "pods": 20, "pvcs": 4},
+  "components": {
+    "api": {"replicas": 2, "cpu": "750m", "memory": "512Mi"},
+    "client": {"replicas": 1, "cpu": "50m", "memory": "64Mi"},
+    "redis": {"cpu": "100m", "memory": "64Mi"},
+    "postgres": {"cpu": "750m", "memory": "768Mi", "storage": "20Gi"},
+    "pooler": {"cpu": "100m", "memory": "128Mi"}
+  },
+  "worker_cpu": "500m",
+  "worker_policy": {"warm_workers": 1, "max_workers": 1, "worker_memory_mib": 512, "largest_worker_mib": 512}
+}
