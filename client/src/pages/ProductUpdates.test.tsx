@@ -53,7 +53,9 @@ describe("ProductUpdates", () => {
 		await waitFor(() =>
 			expect(source.acknowledge).toHaveBeenCalledWith(["entry-1"]),
 		);
-		expect(screen.queryByRole("link", { name: "Done" })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("link", { name: "Done" }),
+		).not.toBeInTheDocument();
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 

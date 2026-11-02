@@ -1,0 +1,14 @@
+{
+  "key": "pr:1192",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "What's New now scrolls across the full page content area and no longer shows a modal-style Done control.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1192",
+      "Reviewed the layout repair against the reported narrow-column scrolling and modal-style dedicated page. Regression coverage targets page scrolling from the gutter and absence of Done."
+    ]
+  }
+}

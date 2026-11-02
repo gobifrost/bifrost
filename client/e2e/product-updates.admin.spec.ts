@@ -35,9 +35,17 @@ test("What's New scrolls as a page from beside the feed", async ({ page }) => {
 	// This point is in the wide page gutter, outside the centered feed column.
 	await page.mouse.move(bounds.x + 40, bounds.y + 200);
 	await page.mouse.wheel(0, 600);
-	await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-	await expect(page.getByRole("heading", { name: "What's New" })).not.toBeInViewport();
+	await expect
+		.poll(() => main.evaluate((element) => element.scrollTop))
+		.toBeGreaterThan(0);
+	await expect(
+		page.getByRole("heading", { name: "What's New" }),
+	).not.toBeInViewport();
 
-	await main.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-	await expect(page.getByRole("navigation", { name: "Bifrost community links" })).toBeInViewport();
+	await main.evaluate((element) => {
+		element.scrollTop = element.scrollHeight;
+	});
+	await expect(
+		page.getByRole("navigation", { name: "Bifrost community links" }),
+	).toBeInViewport();
 });
