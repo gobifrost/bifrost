@@ -25,3 +25,14 @@ At 70% of a confirmed SDK rate, delete exactly one captured API Pod during a bou
 ## Deliverables
 
 For each size: tested useful worker ceiling, confirmed or bounded SDK workflows/s, mixed-load observations, latency/queue/drain, per-component and total CPU/memory, throttling/health faults, SQL/connection pressure, database/WAL/log/object growth, cold/warm burst costs and API replacement behavior. Record hard allocation separately from observed use and reserve. Preserve every invalid/failed/incomplete cell, immutable profiles/images/source hashes, raw records and cleanup receipts. No pricing, arbitrary-customer workflow or full-HA claim follows from this local synthetic campaign.
+
+## Bounded Resource Alternative
+
+The initial 4 GB CPU-heavy probe produced `Runner memory pressure` failures on
+512 MiB workers. Keep the original arm and its failure. Add exactly one resource
+alternative: one 1024 MiB / 1000m worker, with the same total worker CPU, memory,
+two APIs and namespace reserve as two 512 MiB / 500m workers. Run its terminal
+probes and the same SDK ramp/strict confirmation. This is a fixture allocation
+comparison, not a platform fix. Do not describe two 512 MiB workers as comfortable
+for the heavier classes based on SDK-only successes. If the larger worker also
+fails, preserve that limitation without another resource search.

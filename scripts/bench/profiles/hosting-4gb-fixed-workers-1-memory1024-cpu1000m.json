@@ -1,0 +1,6 @@
+{
+  "extends": "hosting-4gb-fixed-workers-2",
+  "description": "BENCHMARK-ONLY 4 GB alternative after 512Mi workers rejected the CPU-heavy probe: one 1000m / 1024Mi worker preserves the same aggregate worker resources and namespace reserve as two 500m / 512Mi workers.",
+  "worker_cpu": "1000m",
+  "worker_policy": {"warm_workers": 1, "max_workers": 1, "worker_memory_mib": 1024, "largest_worker_mib": 1024, "idle_seconds": 300}
+}
