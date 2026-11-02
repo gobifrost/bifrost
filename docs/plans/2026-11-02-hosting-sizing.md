@@ -61,3 +61,12 @@ but saves the full result only when the checkpoint phase changes; explicit raw
 result and final saves remain durable. This reduces benchmark observer overhead
 only. It is not a runtime performance result. This amendment authorizes no
 platform change, PR, or deployment.
+
+## Reduced R4 Follow-ons
+
+R4 narrows the remaining campaign to exactly two general-profile strict 4/s
+checks: the 4 GB one-large-worker profile and the 8 GiB four-worker profile.
+After those checks, run the two mixed-workload arms, then the four cold/warm
+arms, and run the two availability arms last. The worker-count and CPU-control
+comparisons are deferred. This reduced matrix provides no linear worker-scaling
+proof; retain the unrun controls and that limitation in the evidence.
