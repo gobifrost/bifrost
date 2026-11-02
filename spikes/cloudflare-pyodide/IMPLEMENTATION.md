@@ -1,7 +1,8 @@
 # Upstream Python Worker backend acceptance
 
 Current requirement-level status is in [ACCEPTANCE.md](ACCEPTANCE.md), reconciled
-including the source-built bundle and actual-workerd receipts. The chronological sections below preserve earlier stopping
+including the source-built bundle, actual-workerd receipts and deployed
+credentialed engine/SDK proof in [dev/README.md](dev/README.md). The chronological sections below preserve earlier stopping
 points and must not be read as current PR or runtime state. Local canonical SDK,
 tenant and warm concurrency proofs now exist; deployed canonical acceptance and
 physical termination remain incomplete.

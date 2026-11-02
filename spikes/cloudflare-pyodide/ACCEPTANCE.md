@@ -1,6 +1,7 @@
 # Backend acceptance ledger
 
-Reconciled against preserved source/evidence on 2026-11-01, including the exact
+Reconciled against preserved source/evidence on 2026-11-02, including the deployed
+engine/SDK dev-stack receipts in [dev/README.md](dev/README.md) and the exact
 publisher build and actual-workerd ABI/timed-cancellation receipts in SOURCE-RUNTIME-QUALIFICATION.md.
 Matched Linux/workerd workloads are in WORKERD-BENCHMARK.md; the explicit
 lost-worker/stale-result/log-drain boundary is in backend/WORKER-LOSS-RECOVERY.md.
@@ -14,22 +15,22 @@ green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 | Required guarantee / artifact | Current authoritative evidence | Status and missing proof |
 |---|---|---|
 | Deployable Worker and exact setup | Wrangler configs, README, historical cloud version receipts in IMPLEMENTATION.md | Prototype exists; production provider is not enabled. |
-| Current upstream engine and SDK, genuine run identity | WORKERD-SDK-QUALIFICATION.md; preserved Node and historical local receipts | Actual engine/SDK now passes cold and warm in CT128 workerd with canonical run identity; no deployed canonical execution or complete signed-dispatch integration. |
-| Parameters, async execution, workspace imports, logs/errors | Current-engine cloud fixtures and local canonical receipts | Cloud fixtures use synthetic context; credentialed fixtures are local. |
+| Current upstream engine and SDK, genuine run identity | WORKERD-SDK-QUALIFICATION.md; dev/cloud-sdk-success.json | Four actual deployed Cloudflare engine/SDK runs pass with real run-scoped identity against isolated CT128 dev API. No deployed canonical claim/terminal execution or complete signed-dispatch integration. |
+| Parameters, async execution, workspace imports, logs/errors | Current-engine cloud fixtures, local canonical receipts and dev/cloud-sdk-success.json | Deployed credentialed async workflows load pinned workspace helpers, return values and capture redacted structured logs. Canonical cloud error/terminal persistence remains unqualified. |
 | Actual canonical error and output channels | backend/WORKFLOW-FAILURE.md; failure-terminal receipt | Genuine ValueError and redacted structured logs persist/reconcile; stdout is absent in shared engine path. Runtime qualification deliberately still fails that assertion. |
-| Integration/config reads and table writes | WORKERD-SDK-QUALIFICATION.md; actual guest API 200/peer 403, independent table readback 70 | Actual workerd integration SDK and canonical consumption pass. Synthetic encrypted secret decrypts correctly and result/log probes redact; OAuth and authenticated cloud-to-BiFrost end-to-end remain unqualified. |
+| Integration/config reads and table writes | WORKERD-SDK-QUALIFICATION.md; dev/cloud-sdk-success.json | Actual deployed SDK config/integration reads and table writes pass against the isolated dev API, including encrypted synthetic secret decryption/redaction, peer403 and independent table70. OAuth and canonical end-to-end cloud dispatch remain unqualified. |
 | Dependency closure and pinned provenance | Runtime manifest/source hashes, packaged closure and module-response tests | Tested closure exists. Broad package compatibility and missing-wheel builds are not implied. |
-| Runtime versus resolver identity | backend/RUNTIME-PROVENANCE.md; SOURCE-RUNTIME-QUALIFICATION.md; full-closure fingerprint and bootstrap guard | Exact source-built bundle matches existing hash; actual network-disabled workerd ABI/native validation passes. Deployed runtime still needs separate qualification. |
-| Native dependency qualification | backend/NATIVE-PACKAGE-QUALIFICATION.md; native-package-resume raw results | Existing matching native Pydantic/PyYAML WASM wheels execute under official guest Pyodide: 32 selected upstream pydantic-core tests and 261 selected PyYAML native cases pass. No wheel compilation was needed. This is neither full package-suite nor actual Cloudflare wheel acceptance. |
+| Runtime versus resolver identity | backend/RUNTIME-PROVENANCE.md; SOURCE-RUNTIME-QUALIFICATION.md; dev runtime hash and bootstrap guard | Exact source-built bundle and ABI/native validation pass locally; the pinned engine closure also passes the runtime guard during actual deployed SDK execution. Broad deployed package-suite acceptance remains separate. |
+| Native dependency qualification | backend/NATIVE-PACKAGE-QUALIFICATION.md; native-package-resume raw results; dev cloud receipts | Existing matching native Pydantic/PyYAML WASM wheels execute under official guest Pyodide: 32 selected upstream pydantic-core tests and 261 selected PyYAML native cases pass. No compilation was needed. The packaged closure executes the real engine/SDK on Cloudflare; those package suites have not been rerun inside deployed Workers. |
 | Dynamic workspace/source integrity | Actual helper import; module/resolution integrity checks | Fixed loose-workspace path passes. Solution/artifact-workspace remapping is rejected. Trusted production artifact selection is not integrated. |
 | Canonical dispatch ownership/fencing | Actual stage/claim/consumer tests; journal PostgreSQL tests | Local pass. Transport journal survives reconnect only, not host loss; it is not a second queue. |
 | Eligibility before claim | `results/preclaim-eligibility.xml`; backend/PRECLAIM-ELIGIBILITY.md | Existing handler non-advertisement blocks unqualified providers. Selective runtime requirements are not persisted/integrated. |
 | Unsupported rejection before effects | Fixture admission tests and local 422 duration observation | Fixed fixture only; not arbitrary-code classification or authorization. |
-| Run/tenant credential scope and revocation | Two-tenant SDK 403s, terminal 401s, no parent signing secret | Local actual API proof. Cloud credential transport/reachability untested. |
+| Run/tenant credential scope and revocation | Two-tenant local SDK403s; dev cloud SDK receipts | Actual cloud-to-dev transport passes with run credentials, peer403, invalid token401 and ended fixture401. Parent signing key is absent. Canonical cloud dispatch credential issuance/revocation timing remains incomplete. |
 | Live control-session authentication | backend/CONTROL-AUTH.md; canonical-refresh-control-auth.json | Real signed hello/reconnect and invalid-proof/replay/stale-socket rejection pass on isolated API. Empty handlers and no inventory kept execution unadmitted; this does not qualify physical-route adoption. |
 | Signed control to isolate dispatch | backend/REMOTE-HANDLE-BOUNDARY.md; five ACK/callback characterization tests | Current remote pool requires Linux PID ACK; opaque ACK is not supported and is rejected after send. Combined signed-control/isolate dispatch remains incomplete. Shared control files were not changed without a coordinated handoff. |
 | SDK refresh lifecycle | SDK-REFRESH, REFRESH-CHALLENGE, CONCURRENT-REFRESH and REFRESH-INTERRUPTION under backend/ | Local cold challenge/replay, mixed convergence and SDK waiter cancellation after actual API issuance pass. Terminal access/refresh revoked. Whole-execution/isolate interruption and cloud remain unqualified. |
-| Fresh security boundary and contamination | Fresh cloud state probes; local simultaneous builtins/env/module/tmp canaries | Positive fixed-fixture evidence, not complete hostile isolation acceptance. |
+| Fresh security boundary and contamination | Fresh cloud state probes; local simultaneous canaries; three deployed credentialed fresh-state runs | Builtins/env/module/tmp markers are absent before effects across actual fresh credentialed cloud runs. Positive fixed-fixture evidence, not complete hostile isolation or physical-termination acceptance. |
 | Duplicate physical dispatch | Journal single-launch checks, transport-waiter JUnit, backend/TRANSPORT-INTERRUPTION.md and backend/PROVIDER-INTERRUPTION.md | Actual SDK waiter detachment and provider-process interruption retain one launch. Real interruption produces RemoteProtocolError/no result; explicit upstream recovery fails the run without redispatch. Whole-host recovery/detection remain unqualified. |
 | Terminal idempotency/stale rejection | Canonical claim/consumer PostgreSQL tests | Durable terminal state preserved. Mid-callback notification/cache/accounting cleanup is not repaired by stale replay. |
 | Real successful result after declared worker loss | backend/WORKER-LOSS-RECOVERY.md; actual workerd SDK and canonical recovery service | Failed state/timestamp preserved across late success/lost ACK/reconnect. Access/refresh are 401 before delivery; one launch/upsert, no redispatch. Explicit upstream terminal-log drain persists two logs; repeat drains zero. Automatic loss detection and interrupted-host recovery are not proved. |
@@ -66,11 +67,14 @@ pass that counterexample before capability advertisement can change.
 
 ## Authority and next implementation boundary
 
-No new cloud invocation, endpoint reopening, spending, runtime security changes,
-persistent credential/grant or canary extension is currently authorized. The
-approved bounded cloud experiment is retired. Local work can continue; deployed
-acceptance needs a separately authorized target, exact bounded experiment and
-cleanup obligations. Do not reactivate the old budget or weaken the goal.
+Thomas subsequently authorized the isolated pve-t340 dev stack, cf CLI deployment
+to the existing account and CT128 expansion. The 2026-11-02 bounded private
+qualification window is now retired after 13 reserved requests, verified public
+closure and temporary-secret deletion. The bounded dev UI remains available.
+Continue implementation within that dev scope, reconciling a fresh bounded
+experiment and cleanup before further cloud work; never reuse a retired ledger.
+This does not authorize production routing, unlimited spending, new grants or
+weakening runtime/security guarantees.
 
 The next shared implementation is the persisted runtime requirement and provider
 qualification comparison described in backend/PRECLAIM-ELIGIBILITY.md. It must
