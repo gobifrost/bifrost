@@ -1,0 +1,5 @@
+{
+  "extends": "hosting-4gb-fixed-workers-1-memory1024-cpu1000m",
+  "description": "BENCHMARK-ONLY warm-floor arm for the single larger 4 GB worker alternative.",
+  "worker_policy": {"warm_workers": 1, "max_workers": 1, "worker_memory_mib": 1024, "largest_worker_mib": 1024, "idle_seconds": 300}
+}

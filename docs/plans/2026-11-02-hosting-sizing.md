@@ -36,3 +36,10 @@ probes and the same SDK ramp/strict confirmation. This is a fixture allocation
 comparison, not a platform fix. Do not describe two 512 MiB workers as comfortable
 for the heavier classes based on SDK-only successes. If the larger worker also
 fails, preserve that limitation without another resource search.
+
+Use that one-larger-worker 4 GB alternative for the mixed, warm-zero/warm-one
+(maximum one) and API replacement arms. Keep the two-small-worker SDK diagnostic
+and its failed memory probe. The originally declared 4 GB two-small-worker
+elastic/mixed/availability follow-ons are superseded by this explicit resource
+alternative; their unrun status must remain visible. The number of elastic arms
+stays four. The 8 GiB follow-ons keep their original four-worker allocation.
