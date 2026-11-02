@@ -3,7 +3,7 @@
 This declaration defines a benchmark-only N2 diagnostic for the candidate image
 `bifrost-api:kind-a74e45295998-queue-position-coalesced-r1`. It targets the
 8-workflows/second cohort after the required 2/s and 4/s warm-state cohorts.
-It is not a platform fix, production deployment, capacity claim, or certificate.
+The measurement is not a production deployment, capacity claim, or certificate.
 
 The candidate is expected to move queue-position refresh out of admission and
 claim while preserving durable queue state, normal Pending/Running/terminal
@@ -16,7 +16,7 @@ Run the bounded N2 arm with a fresh output directory and the archived fixture:
 
 ```bash
 python3 scripts/bench/queue_position_coalesced.py \
-  --owner-root <candidate-runtime-root> \
+  --owner-root /home/jack/GitHub/bifrost/.worktrees/bench-capacity \
   --out <fresh-candidate-output> --table-fixture <archived-fixture.py>
 ```
 
