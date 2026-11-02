@@ -331,6 +331,10 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
                         current.result["sustainable_rate"] = midpoint
             else:
                 current.result.update(status="ramp-complete", stopped="continued-midpoint-failure")
+                if confirm:
+                    value = strict_confirmation(continuation["last_pass"])
+                    if value["overall"] == "pass":
+                        current.result["sustainable_rate"] = continuation["last_pass"]
         else:
             preflight_ids, preflight_api = fresh("preflight")
             candidate = preflight.run(selected, preflight_ids, rates[0], plan, out / "preflight-logs",

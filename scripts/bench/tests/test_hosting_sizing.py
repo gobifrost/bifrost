@@ -332,6 +332,29 @@ class HostingSizingTest(unittest.TestCase):
         self.assertEqual(result["status"], "ramp-stopped")
         self.assertEqual(result["stopped"], "inconclusive")
 
+    def test_continuation_confirms_prior_highest_pass_after_ordinary_midpoint_failure(self) -> None:
+        loaded = profile()
+        prior = interrupted_prior(loaded)
+        cluster, prepared, patches = self._harness(loaded, ["fail"])
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = directory / "r2.json"
+            source.write_text(json.dumps(prior), encoding="utf-8")
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], \
+                 patches[8], patches[9] as trials, patches[10] as confirm, patches[11]:
+                hosting_sizing.run_campaign(
+                    "hosting-4gb-fixed-workers-2", "candidate:local", directory / "continued",
+                    cluster=cluster, rates=(2, 4, 8, 16), confirm=True,
+                    ensure_fixture=self._fixture(directory), prior_result=source,
+                )
+            result = json.loads((directory / "continued" / "result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([call.args[2] for call in trials.call_args_list], [6])
+        confirm.assert_called_once()
+        self.assertEqual(confirm.call_args.args[2], 4)
+        self.assertEqual(len(prepared), 2)
+        self.assertEqual(result["sustainable_rate"], 4)
+
     def test_continuation_rejects_mismatched_or_invalid_prior_before_mutation(self) -> None:
         loaded = profile()
         cases = {
