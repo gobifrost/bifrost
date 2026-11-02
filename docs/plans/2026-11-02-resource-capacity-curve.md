@@ -22,6 +22,12 @@ Report successful event rate and correct-by-deadline arrival cohorts separately,
 
 If workers remain underused while throughput flattens, inspect API/Redis/Postgres saturation before adding worker resources. The existing all-pending queue-position publication path is a code-supported candidate: valid overload evidence recorded thousands of Redis publishes per second. A resource-allocation contrast must keep the runtime, workload and worker allocation fixed and change the suspected shared component alone. It is a diagnostic, not a platform fix. Preserve failed and host-invalid observations. Confirm a useful operating point only after locating the limiting resource.
 
+## Conditional Redis CPU contrast
+
+The first two completed worker counts both pass 4/s and fail at 8/s with no host invalidity. At 8/s, one worker averages 0.233 CPU and two workers together average 0.223 CPU, while Redis reaches its 100m CPU limit. After finishing N4, if it shows the same ceiling, run one N2 contrast using `hosting-resource-curve-redis-cpu`: Redis alone receives 500m rather than 100m. Keep both APIs, database, memory, worker count/CPU, frozen runtime, catalog, arrival seeds, rates and gates unchanged. This raises total requests from 3.8 to 4.2 CPU at the same 4.75 GiB memory. It tests whether another 400m allocated to Redis improves useful throughput. Do not tune further services or implement a platform fix in this experiment.
+
+Use the unchanged four-rate campaign and its existing stop rule. Retain the extra allocation whether it helps or fails. A positive result establishes sensitivity to this resource change; it does not remove the existing queue-publication amplification or prove cloud throughput.
+
 ## Host and cost comparison
 
 The reference Premium AMD hardware inputs are 8 GiB/4 vCPU and 16 GiB/8 vCPU; one larger node and two smaller nodes have equal advertised aggregate resources. Use observed Kubernetes allocatable resources, per-pod requests, other scheduled infrastructure, storage placement, and explicit reserve. The existing observed 8 GiB node has 3890m CPU and 6568236Ki allocatable before other namespaces. The four-worker diagnostic does not fit that node. A namespace quota is not a host size.

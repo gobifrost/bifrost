@@ -1,0 +1,11 @@
+{
+  "extends": "hosting-8gib-fixed-workers-1",
+  "description": "BENCHMARK-ONLY resource contrast: retain all shared components and worker allocations; raise only Redis CPU from 100m to 500m. Run resource_curve.py with --counts 2.",
+  "components": {
+    "api": {"replicas": 2, "cpu": "750m", "memory": "512Mi"},
+    "client": {"replicas": 1, "cpu": "50m", "memory": "64Mi"},
+    "redis": {"cpu": "500m", "memory": "64Mi"},
+    "postgres": {"cpu": "750m", "memory": "1536Mi", "storage": "20Gi"},
+    "pooler": {"cpu": "100m", "memory": "128Mi"}
+  }
+}
