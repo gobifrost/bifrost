@@ -492,3 +492,23 @@ and baseline/final logs are in results/route-ownership; supervisor elapsed115.24
 owned test project stopped, volumes/dev services preserved. No cloud invocation.
 Next: coordinated canonical physical-handle/admission extension and provider
 physical-stop proof; this companion repair does not satisfy those gates.
+
+## Shared printed-output capture, 2026-11-02
+
+Hypothesis: missing stdout is discarded pure-Python engine buffers, not Pyodide
+transport/native-package incompatibility. The first fixture missed required
+organization metadata (five TypeErrors retained); corrected fixture against
+unchanged engine reproduced four failures and one structured-log control pass.
+Change: one shared capture context flushes stdout/stderr through existing
+redaction, returned logs and authenticated log delivery on success/failure.
+Commands: `ct128-stream-capture.py --after` runs repository ./test.sh for capture,
+credential redaction, execution contract and logging-lock consumers, then
+Ruff/Pyright. All37 cases and both checkers pass. `--pyodide` runs the actual
+modified engine with the pinned guest closure: Success70, redacted stdout/stderr,
+Failed/ValueError and redacted pre-error output; no mocked engine or SDK calls.
+Artifacts: results/stream-capture, backend/STREAM-CAPTURE.md and source verifier.
+CT128 only; owned test project stopped, volumes/dev services preserved. No cloud
+deployment/invocation. Canonical Product Updates draft fix disposition validates
+in the cached guest image. Next: pin modified engine into a separately qualified
+runtime closure and prove actual credentialed log persistence; old failed
+canonical stdout fixture and deployed runtime receipts retain original pins.

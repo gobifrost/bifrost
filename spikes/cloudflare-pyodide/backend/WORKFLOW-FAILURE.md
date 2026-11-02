@@ -1,5 +1,12 @@
 # Real canonical failure and the stdout boundary
 
+Update2026-11-02: the shared-engine repair in [STREAM-CAPTURE.md](STREAM-CAPTURE.md)
+now passes37 native tests plus actual guest Pyodide success/failure/redaction
+controls. The historical canonical/cloud fixture below still uses its original
+engine pin and remains a failed stdout qualification. Its receipts and assertions
+were not rewritten. Credentialed persistence and deployed acceptance of the new
+engine revision still require a subsequent fixed-source run.
+
 A genuine scoped workflow reads config, prints its run credential, emits a
 structured warning containing that credential, then raises ValueError containing
 it before any document write. Actual engine/SDK execution returns ValueError,
