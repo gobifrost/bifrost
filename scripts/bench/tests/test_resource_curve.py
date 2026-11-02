@@ -190,6 +190,20 @@ class ResourceCurveTest(unittest.TestCase):
         self.assertEqual([count["status"] for count in result["counts"]], ["preflight-stopped"] * 3)
         self.assertTrue(all(count["cleanup"]["verified"] for count in result["counts"]))
 
+    def test_real_report_writer_accepts_the_diagnostic_result(self) -> None:
+        real_run = resource_curve.run.Run
+        real_profile = resource_curve.profile_for
+        environment = {"images": {}, "git_sha": "test", "kind_version": "test", "cnpg_version": "test",
+                       "host": {"cpus": 8, "load_average": [0, 0, 0]}, "external_nodes": []}
+        with tempfile.TemporaryDirectory() as raw, self.harness([], preflight="fail") as harness:
+            with patch.object(resource_curve.run, "Run", real_run), \
+                 patch.object(resource_curve.run, "environment", return_value=environment), \
+                 patch.object(resource_curve, "profile_for", side_effect=real_profile):
+                resource_curve.run_campaign(resource_curve.FROZEN_IMAGE, Path(raw) / "out", owner_root=Path("/owner"),
+                                            ensure_fixture=self.fixture(Path(raw)), cluster=harness[0], counts=(1,))
+            report = (Path(raw) / "out" / "report.md").read_text()
+        self.assertIn("## Short Diagnostic", report)
+
 
 if __name__ == "__main__":
     unittest.main()

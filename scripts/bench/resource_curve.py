@@ -91,6 +91,7 @@ def run_campaign(api_image: str, out: Path, *, owner_root: Path | None, ensure_f
     current = run.Run(selected, "capacity", "hosting-8gib-resource-curve", base, "fake", out, api_image)
     current.result.update({
         "mode": "resource-curve-warm-sdk-diagnostic", "api_image": api_image, "base_profile": base_profile,
+        "mix_name": "sdk-heavy", "not_capacity_certification": True,
         "counts": [], "status": "preparing",
         "declaration": {
             "scope": "diagnostic warm sequential cohorts, not reset per rate, no cloud throughput/no 0.1% certificate",
