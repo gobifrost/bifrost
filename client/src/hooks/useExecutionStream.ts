@@ -61,6 +61,7 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 
 		let unsubscribeUpdate: (() => void) | null = null;
 		let unsubscribeLog: (() => void) | null = null;
+		let disposed = false;
 
 		// Connect and subscribe
 		const init = async () => {
@@ -70,6 +71,7 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 				// Connect to WebSocket with execution channel
 				const channel = `execution:${executionId}`;
 				await webSocketService.connect([channel]);
+				if (disposed) return;
 
 				performance.mark(`ws-connect-end-${executionId}`);
 				performance.measure(
@@ -139,6 +141,7 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 					},
 				);
 			} catch (error) {
+				if (disposed) return;
 				console.error("[useExecutionStream] Failed to connect:", error);
 				const errorMessage =
 					error instanceof Error ? error.message : String(error);
@@ -154,6 +157,7 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 
 		// Cleanup on unmount or when executionId changes
 		return () => {
+			disposed = true;
 			if (unsubscribeUpdate) {
 				unsubscribeUpdate();
 			}
@@ -196,10 +200,12 @@ export function useNewExecutions(options: { enabled?: boolean } = {}) {
 		}
 
 		let unsubscribe: (() => void) | null = null;
+		let disposed = false;
 
 		const init = async () => {
 			try {
 				await webSocketService.connect();
+				if (disposed) return;
 				setIsConnected(webSocketService.isConnected());
 
 				// Subscribe to new execution notifications
@@ -210,6 +216,7 @@ export function useNewExecutions(options: { enabled?: boolean } = {}) {
 					]);
 				});
 			} catch (error) {
+				if (disposed) return;
 				console.error("[useNewExecutions] Failed to connect:", error);
 				setIsConnected(false);
 			}
@@ -218,6 +225,7 @@ export function useNewExecutions(options: { enabled?: boolean } = {}) {
 		init();
 
 		return () => {
+			disposed = true;
 			if (unsubscribe) {
 				unsubscribe();
 			}
@@ -284,11 +292,13 @@ export function useExecutionHistory(
 		}
 
 		let unsubscribe: (() => void) | null = null;
+		let disposed = false;
 
 		const init = async () => {
 			try {
 				// Connect to WebSocket with history channel
 				await webSocketService.connect([channel]);
+				if (disposed) return;
 
 				if (!webSocketService.isConnected()) {
 					setIsConnected(false);
@@ -363,6 +373,7 @@ export function useExecutionHistory(
 					},
 				);
 			} catch (error) {
+				if (disposed) return;
 				console.error(
 					"[useExecutionHistory] Failed to connect:",
 					error,
@@ -375,6 +386,7 @@ export function useExecutionHistory(
 
 		// Cleanup
 		return () => {
+			disposed = true;
 			if (unsubscribe) {
 				unsubscribe();
 			}
