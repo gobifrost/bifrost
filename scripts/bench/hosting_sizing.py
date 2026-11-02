@@ -41,6 +41,7 @@ NONFINITE_REPORTER_ERROR = {
     "class": "ValueError",
     "message": "Out of range float values are not JSON compliant: inf",
 }
+EXTERNAL_CPU_INVALID = re.compile(r"external CPU above 1\.5 cores in [1-9][0-9]*/[1-9][0-9]* intervals")
 
 
 def parse_rates(value: str) -> tuple[float, ...]:
@@ -171,9 +172,103 @@ def _prior_result(path: Path, profile_name: str, profile: dict, api_image: str, 
     }
 
 
+def _confirm_valid_prior(path: Path, profile_name: str, profile: dict, api_image: str, rates: tuple[float, ...],
+                         mix_name: str, workers: int) -> dict:
+    """Accept a cleaned SDK ramp stopped only by the external CPU guard."""
+    source = path.resolve()
+    contents = source.read_bytes()
+    loaded = jsoncodec.decode(json.loads(contents))
+    if loaded.get("error") not in (None, NONFINITE_REPORTER_ERROR):
+        raise ValueError("prior result has an unrecognized error")
+    if loaded.get("status") not in {"ramp-stopped", "invalid"}:
+        raise ValueError("prior result is not a terminal stopped ramp")
+    if (loaded.get("mode") != "hosting-sizing-fixed-worker" or loaded.get("profile_name") != profile_name
+            or loaded.get("profile") != profile or loaded.get("mix_name") != mix_name
+            or loaded.get("api_image") != api_image or loaded.get("rates") != list(rates)
+            or loaded.get("workers") != workers or loaded.get("confirmation") != "requested"):
+        raise ValueError("prior result profile, configuration, image, or declared rates do not match")
+    if loaded.get("sustainable_rate") is not None or loaded.get("confirmations") != []:
+        raise ValueError("prior result already contains confirmation evidence")
+    cleanup = loaded.get("cleanup")
+    if not isinstance(cleanup, dict) or cleanup.get("verified") is not True or not isinstance(loaded.get("finished_at"), str):
+        raise ValueError("prior result is not a cleaned terminal run")
+    preflight = loaded.get("preflight")
+    if not isinstance(preflight, dict) or preflight.get("overall") != "pass":
+        raise ValueError("prior result requires a passing preflight")
+    proof = hosting._immutable_provenance(loaded.get("api_image_provenance"), "prior API image provenance")
+    if proof["tag"] != api_image:
+        raise ValueError("prior result API image proof does not match the selected image")
+    provenance = loaded.get("api_image_provenance")
+    if not isinstance(provenance, dict) or not isinstance(provenance.get("api_pods"), list) or not provenance["api_pods"]:
+        raise ValueError("prior result must retain every ready API replica image proof")
+    api_pods = provenance["api_pods"]
+    steps = loaded.get("steps")
+    if not isinstance(steps, list) or len(steps) < 2:
+        raise ValueError("prior result requires an SDK prefix ending in an external CPU invalidation")
+
+    def complete(step: dict, *, clean: bool) -> None:
+        evidence = step.get("fixed_worker_evidence")
+        if (not isinstance(evidence, dict) or evidence.get("status") != "observed"
+                or evidence.get("required_ready") != workers
+                or type(evidence.get("samples")) is not int or evidence["samples"] < 1):
+            raise ValueError("prior result lacks complete fixed-worker evidence")
+        identity = step.get("api_identity")
+        before = identity.get("before") if isinstance(identity, dict) else None
+        if (not isinstance(identity, dict) or identity.get("stable") is not True or before != identity.get("after")
+                or not isinstance(before, list) or len(before) != len(api_pods)
+                or any(not isinstance(record, dict) or not isinstance(record.get("pod"), str)
+                       or not isinstance(record.get("pod_uid"), str) or not record["pod"] or not record["pod_uid"]
+                       for record in before)):
+            raise ValueError("prior result lacks stable complete API identity evidence")
+        validity = step.get("validity")
+        if not isinstance(validity, dict) or (clean and validity.get("invalid") != []):
+            raise ValueError("prior result has invalid step evidence")
+
+    passes: list[float] = []
+    ordinary_failure: float | None = None
+    terminal_selection: dict | None = None
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict) or type(step.get("rate")) not in (int, float):
+            raise ValueError("prior result has malformed SDK steps")
+        status = step.get("overall")
+        if index == len(steps) - 1:
+            if status != "invalid":
+                raise ValueError("prior result must terminate at an external CPU invalidation")
+            complete(step, clean=False)
+            invalid = step["validity"].get("invalid")
+            if (not isinstance(invalid, list) or len(invalid) != 1 or not isinstance(invalid[0], str)
+                    or EXTERNAL_CPU_INVALID.fullmatch(invalid[0]) is None):
+                raise ValueError("prior result terminal invalidation is not the external CPU guard")
+            if ordinary_failure is None and index >= len(rates):
+                raise ValueError("prior result terminal invalidation exceeds the declared SDK rates")
+            expected = ((passes[-1] + ordinary_failure) / 2 if ordinary_failure is not None else rates[index])
+            if step["rate"] != expected:
+                raise ValueError("prior result terminal invalidation is not the declared SDK prefix or midpoint")
+            terminal_selection = {"rate": step["rate"], "external_cpu_guard": invalid[0]}
+            continue
+        if (index >= len(rates) or status not in {"pass", "fail"} or ordinary_failure is not None
+                or step["rate"] != rates[index]):
+            raise ValueError("prior result is not a complete ordered SDK prefix")
+        complete(step, clean=True)
+        if status == "pass":
+            passes.append(step["rate"])
+        else:
+            ordinary_failure = step["rate"]
+    if not passes:
+        raise ValueError("prior result has no valid passing SDK rate")
+    if terminal_selection is None:
+        raise ValueError("prior result has no terminal external CPU invalidation")
+    return {
+        "source": {"path": str(source), "sha256": hashlib.sha256(contents).hexdigest()},
+        "runtime_api_image_proof": copy.deepcopy(proof), "highest_pass": passes[-1],
+        "terminal_selection": terminal_selection,
+    }
+
+
 def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[float, ...] = DEFAULT_RATES,
                  mix_name: str = "sdk-heavy", confirm: bool = False, cluster: Cluster | None = None,
-                 owner_root: Path | None = None, ensure_fixture: Path, prior_result: Path | None = None) -> Path:
+                 owner_root: Path | None = None, ensure_fixture: Path, prior_result: Path | None = None,
+                 confirm_valid_prior: Path | None = None) -> Path:
     """Run one fixed-worker sizing campaign; the CLI caller owns the host lock."""
     if out.exists():
         raise FileExistsError(f"refusing to replace sizing evidence: {out}")
@@ -185,8 +280,12 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
         raise ValueError("SDK rates must be strictly increasing without duplicates")
     if mix_name == "mixed" and len(rates) != 1:
         raise ValueError("mixed diagnostic requires one explicit offered rate")
+    if prior_result is not None and confirm_valid_prior is not None:
+        raise ValueError("prior-result and confirm-valid-prior are mutually exclusive")
     if prior_result is not None and mix_name != "sdk-heavy":
         raise ValueError("prior-result continuation is limited to the SDK sizing ramp")
+    if confirm_valid_prior is not None and (mix_name != "sdk-heavy" or not confirm):
+        raise ValueError("confirm-valid-prior requires requested SDK confirmation")
     if not ensure_fixture.is_file():
         raise FileNotFoundError(f"canonical bench_writes fixture is missing: {ensure_fixture}")
 
@@ -195,6 +294,8 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
     plan = _plan(profile, mix_name)
     continuation = (_prior_result(prior_result, profile_name, profile, api_image, rates, mix_name, workers)
                     if prior_result is not None else None)
+    valid_prior = (_confirm_valid_prior(confirm_valid_prior, profile_name, profile, api_image, rates, mix_name, workers)
+                   if confirm_valid_prior is not None else None)
     deploy.check_profile(profile)
     selected = cluster or Cluster(owner_root)
     selected.verify()
@@ -220,13 +321,25 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
                 "inherited_steps": copy.deepcopy(continuation["steps"]),
             },
         })
+    if valid_prior:
+        current.result["confirmation_prior"] = {
+            "source": valid_prior["source"], "highest_valid_pass": valid_prior["highest_pass"],
+            "terminal_selection": valid_prior["terminal_selection"],
+            "runtime_api_image_proof": valid_prior["runtime_api_image_proof"],
+        }
     current.save()
     checkpoints = out / "timeline.jsonl"
+    last_saved_checkpoint_phase: str | None = None
 
-    def checkpoint(phase: str, value: dict) -> None:
+    def checkpoint(phase: str, value: dict) -> bool:
+        nonlocal last_saved_checkpoint_phase
         _append_checkpoint(checkpoints, phase, value)
         current.result["last_checkpoint"] = {"phase": phase}
-        current.save()
+        if phase != last_saved_checkpoint_phase:
+            current.save()
+            last_saved_checkpoint_phase = phase
+            return True
+        return False
 
     def fresh(phase: str) -> tuple[dict, list[dict]]:
         current.result.update(status="seeding", stage=phase)
@@ -303,7 +416,8 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
         def retain_confirmation_segment(segment: dict) -> None:
             raw = copy.deepcopy(segment)
             current.result.setdefault("confirmation_segments", []).append(raw)
-            checkpoint("strict-confirmation:segment", {"segment": raw})
+            if not checkpoint("strict-confirmation:segment", {"segment": raw}):
+                current.save()
 
         return measured(
             "strict-confirmation", ids, identities,
@@ -317,7 +431,12 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
 
     failure: BaseException | None = None
     try:
-        if continuation:
+        if valid_prior:
+            value = strict_confirmation(valid_prior["highest_pass"])
+            current.result.update(status="complete", stopped=None if value["overall"] == "pass" else value["overall"])
+            if value["overall"] == "pass":
+                current.result["sustainable_rate"] = valid_prior["highest_pass"]
+        elif continuation:
             midpoint = (continuation["last_pass"] + continuation["first_failure"]) / 2
             ids, identities = fresh("sdk-midpoint")
             midpoint_value = run_rate("sdk-midpoint", midpoint, ids, identities)
@@ -407,7 +526,9 @@ def main() -> None:
     parser.add_argument("--mix", choices=("sdk-heavy", "mixed"), default="sdk-heavy")
     parser.add_argument("--confirm", action="store_true")
     parser.add_argument("--table-fixture", required=True, type=Path)
-    parser.add_argument("--prior-result", type=Path)
+    prior = parser.add_mutually_exclusive_group()
+    prior.add_argument("--prior-result", type=Path)
+    prior.add_argument("--confirm-valid-prior", type=Path)
     args = parser.parse_args()
     elasticity.LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with elasticity.LOCK_PATH.open("a+") as lock:
@@ -417,7 +538,7 @@ def main() -> None:
             raise SystemExit("benchmark host lock is held; no sizing load was started") from error
         print(run_campaign(args.profile, args.api_image, args.out, rates=args.rates, mix_name=args.mix,
                            confirm=args.confirm, owner_root=args.owner_root, ensure_fixture=args.table_fixture,
-                           prior_result=args.prior_result))
+                           prior_result=args.prior_result, confirm_valid_prior=args.confirm_valid_prior))
 
 
 if __name__ == "__main__":

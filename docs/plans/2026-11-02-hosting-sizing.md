@@ -43,3 +43,21 @@ and its failed memory probe. The originally declared 4 GB two-small-worker
 elastic/mixed/availability follow-ons are superseded by this explicit resource
 alternative; their unrun status must remain visible. The number of elastic arms
 stays four. The 8 GiB follow-ons keep their original four-worker allocation.
+
+## Host-Invalid Follow-up Confirmation
+
+Higher host-invalid diagnostic steps remain invalid and stop their original
+searches. The three originally planned strict confirmations were not run. A
+separate, fresh strict check may confirm the highest valid diagnostic pass at
+4/s for each final profile. It establishes a lower bound only: it does not
+promote an invalid 6/s step, establish a maximum, retry a confirmation, or
+descend after a failed confirmation. Keep the original R3 unrun entries and
+their raw source artifacts unchanged. Run two-API availability only after this
+new strict check passes.
+
+R3 checkpointing rewrote result artifacts of about 20 MB for each observer
+frame. The confirmation harness now appends and fsyncs every raw timeline frame
+but saves the full result only when the checkpoint phase changes; explicit raw
+result and final saves remain durable. This reduces benchmark observer overhead
+only. It is not a runtime performance result. This amendment authorizes no
+platform change, PR, or deployment.

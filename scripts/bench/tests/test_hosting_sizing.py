@@ -72,15 +72,35 @@ def interrupted_prior(loaded: dict) -> dict:
     }
 
 
+def valid_confirmation_prior(loaded: dict) -> dict:
+    host_invalid = prior_step(6.0, "invalid")
+    host_invalid["validity"] = {
+        "invalid": ["external CPU above 1.5 cores in 11/58 intervals"],
+        "warnings": ["possible external memory pressure (unproven)"],
+    }
+    return {
+        "status": "ramp-stopped", "error": None, "finished_at": "2026-11-02T00:00:00+00:00",
+        "cleanup": {"verified": True},
+        "profile_name": "hosting-4gb-fixed-workers-2", "profile": loaded,
+        "mode": "hosting-sizing-fixed-worker", "mix_name": "sdk-heavy", "api_image": "candidate:local",
+        "api_image_provenance": api_provenance(), "rates": [2.0, 4.0, 8.0, 16.0], "workers": 2,
+        "preflight": {"overall": "pass"}, "confirmation": "requested", "confirmations": [],
+        "sustainable_rate": None,
+        "steps": [prior_step(2.0, "pass"), prior_step(4.0, "pass"), prior_step(8.0, "fail"), host_invalid],
+    }
+
+
 class MemoryRun:
     instances: list["MemoryRun"] = []
 
     def __init__(self, _cluster, _kind, _profile_name, _profile, _backend, out, _api_image) -> None:
         self.out = out
         self.result: dict = {"api_image_provenance": {"api_pods": []}}
+        self.save_count = 0
         self.instances.append(self)
 
     def save(self) -> None:
+        self.save_count += 1
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "result.json").write_text(json.dumps(self.result), encoding="utf-8")
 
@@ -238,6 +258,37 @@ class HostingSizingTest(unittest.TestCase):
             "scope": "five-second sequential observations during warmup, measure, and drain",
         })
 
+    def test_repeated_worker_frames_are_durable_without_rewriting_the_full_result(self) -> None:
+        loaded = profile()
+        cluster, _prepared, patches = self._harness(loaded, ["pass"])
+        save_counts: list[int] = []
+
+        def during(_cluster, phase, checkpoint, action, on_result=None):
+            checkpoint(worker_sample(), phase)
+            save_counts.append(MemoryRun.instances[-1].save_count)
+            checkpoint(worker_sample(), phase)
+            save_counts.append(MemoryRun.instances[-1].save_count)
+            value = action()
+            if on_result:
+                on_result(value)
+            checkpoint({"action_result": value}, f"{phase}_result")
+            return value
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], \
+                 patch.object(hosting_sizing.elasticity, "_during", side_effect=during), patches[8], patches[9], patches[10], patches[11]:
+                hosting_sizing.run_campaign("hosting-4gb-fixed-workers-2", "candidate:local", directory / "out",
+                                            cluster=cluster, mix_name="mixed", rates=(2,),
+                                            ensure_fixture=self._fixture(directory))
+            result = json.loads((directory / "out" / "result.json").read_text(encoding="utf-8"))
+            timeline = [json.loads(line) for line in (directory / "out" / "timeline.jsonl").read_text(encoding="utf-8").splitlines()]
+
+        repeated = [entry for entry in timeline if entry["phase"] == "mixed-diagnostic:observed:mixed-diagnostic"]
+        self.assertEqual(len(repeated), 2)
+        self.assertEqual(save_counts[0], save_counts[1])
+        self.assertEqual(result["last_checkpoint"], {"phase": "mixed-diagnostic:complete"})
+
     def test_raw_step_is_saved_before_a_worker_observer_failure_invalidates_the_campaign(self) -> None:
         loaded = profile()
         cluster, _prepared, patches = self._harness(loaded, ["pass"])
@@ -381,6 +432,83 @@ class HostingSizingTest(unittest.TestCase):
                         )
                 reset.assert_not_called()
                 self.assertFalse((directory / "continued").exists())
+
+    def test_confirm_valid_prior_runs_one_fresh_confirmation_without_replaying_the_ramp(self) -> None:
+        loaded = profile()
+        prior = valid_confirmation_prior(loaded)
+        cluster, prepared, patches = self._harness(loaded, [])
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = directory / "r3.json"
+            source.write_text(json.dumps(prior), encoding="utf-8")
+            original = source.read_bytes()
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], \
+                 patches[8] as preflight, patches[9] as trials, patches[10] as confirm, patches[11]:
+                hosting_sizing.run_campaign(
+                    "hosting-4gb-fixed-workers-2", "candidate:local", directory / "confirmation",
+                    cluster=cluster, rates=(2, 4, 8, 16), confirm=True,
+                    ensure_fixture=self._fixture(directory), confirm_valid_prior=source,
+                )
+            result = json.loads((directory / "confirmation" / "result.json").read_text(encoding="utf-8"))
+            self.assertEqual(source.read_bytes(), original)
+
+        preflight.assert_not_called()
+        trials.assert_not_called()
+        confirm.assert_called_once()
+        self.assertEqual(confirm.call_args.args[2], 4)
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["sustainable_rate"], 4)
+        self.assertEqual(result["steps"], [])
+        self.assertEqual(result["confirmation_prior"]["highest_valid_pass"], 4)
+        self.assertEqual(result["confirmation_prior"]["terminal_selection"], {
+            "rate": 6.0, "external_cpu_guard": "external CPU above 1.5 cores in 11/58 intervals",
+        })
+
+    def test_confirm_valid_prior_rejects_bad_sources_before_mutation(self) -> None:
+        loaded = profile()
+        cases = {
+            "profile": lambda prior: prior.update(profile_name="other"),
+            "image": lambda prior: prior["api_image_provenance"]["api_pods"][1].update(digest="sha256:other"),
+            "worker": lambda prior: prior["steps"][1]["fixed_worker_evidence"].update(status="invalid"),
+            "confirmation": lambda prior: prior["confirmations"].append({"overall": "fail"}),
+            "error": lambda prior: prior.update(error={"class": "RuntimeError", "message": "operator stop"}),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as raw:
+                prior = valid_confirmation_prior(loaded)
+                mutate(prior)
+                directory = Path(raw)
+                source = directory / "prior.json"
+                source.write_text(json.dumps(prior), encoding="utf-8")
+                cluster, _prepared, patches = self._harness(loaded, [])
+                with patches[0], patches[1], patches[2], patches[3], patches[4] as reset:
+                    with self.assertRaises(ValueError):
+                        hosting_sizing.run_campaign(
+                            "hosting-4gb-fixed-workers-2", "candidate:local", directory / "confirmation",
+                            cluster=cluster, rates=(2, 4, 8, 16), confirm=True,
+                            ensure_fixture=self._fixture(directory), confirm_valid_prior=source,
+                        )
+                reset.assert_not_called()
+                self.assertFalse((directory / "confirmation").exists())
+
+    def test_confirm_valid_prior_requires_requested_sdk_confirmation_before_mutation(self) -> None:
+        loaded = profile()
+        prior = valid_confirmation_prior(loaded)
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = directory / "prior.json"
+            source.write_text(json.dumps(prior), encoding="utf-8")
+            cluster, _prepared, patches = self._harness(loaded, [])
+            with patches[0], patches[1], patches[2], patches[3], patches[4] as reset:
+                with self.assertRaisesRegex(ValueError, "requested SDK confirmation"):
+                    hosting_sizing.run_campaign(
+                        "hosting-4gb-fixed-workers-2", "candidate:local", directory / "confirmation",
+                        cluster=cluster, rates=(2, 4, 8, 16), confirm=False,
+                        ensure_fixture=self._fixture(directory), confirm_valid_prior=source,
+                    )
+            reset.assert_not_called()
+            self.assertFalse((directory / "confirmation").exists())
 
     def test_fixed_profile_must_use_an_exact_positive_worker_count_before_cluster_access(self) -> None:
         loaded = profile()
