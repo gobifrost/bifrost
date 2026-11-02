@@ -49,9 +49,9 @@ class FilePolicyEvalCache:
 
     principals: dict[int, tuple[Any, Any]] = field(default_factory=dict)
     policy_rows: dict[tuple[Any, ...], list[FilePolicy]] = field(default_factory=dict)
-    resolved: dict[tuple[UUID | None, UUID], tuple[FilePolicies, bool]] = field(
-        default_factory=dict
-    )
+    resolved: dict[
+        tuple[UUID | None, UUID | None, UUID], tuple[FilePolicies, bool]
+    ] = field(default_factory=dict)
     preresolved: set[tuple[int, UUID]] = field(default_factory=set)
     metadata: dict[tuple[Any, ...], FileMetadata | None] = field(default_factory=dict)
 
