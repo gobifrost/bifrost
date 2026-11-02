@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "13f807f4dfac7b0e68ed6f5de2e0544efd25a578",
-  "collected_at": "2026-11-01T19:57:31Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...13f807f4dfac7b0e68ed6f5de2e0544efd25a578",
+  "target_ref": "ac696c7fbc1da5f9485eda684e1b66a459731661",
+  "collected_at": "2026-11-02T07:14:24Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...ac696c7fbc1da5f9485eda684e1b66a459731661",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2223,6 +2223,27 @@
       "subject": "Scale Worker Capacity Through External Providers (#1172)",
       "prs": [
         1172
+      ]
+    },
+    {
+      "sha": "1aeaae71d8569bd7ebe66b670c3711d295bdebc9",
+      "subject": "Activate Landed Workflow and Worker Product Updates (#1173)",
+      "prs": [
+        1173
+      ]
+    },
+    {
+      "sha": "457134dffb8ec7af12b0a9be437e66a3bc7b7400",
+      "subject": "Restore execution slide-out content padding (#1175)",
+      "prs": [
+        1175
+      ]
+    },
+    {
+      "sha": "ac696c7fbc1da5f9485eda684e1b66a459731661",
+      "subject": "Reduce SDK query amplification and reuse bounded database connections (#1180)",
+      "prs": [
+        1180
       ]
     }
   ],
@@ -6363,7 +6384,7 @@
       },
       "merged_at": "2026-11-01T19:56:08Z",
       "merge_commit": "13f807f4dfac7b0e68ed6f5de2e0544efd25a578",
-      "body": "Thomas Bray\u2019s external worker-capacity contribution from #1160, including his cleanup correction at `6cc0d8693d7ffa9ea90e07930da07a6824441651`. His original commits are preserved. This replacement is required because the company fork grants the maintainer read access only.\n\n## Summary\n\nWorkflows, agents, summaries, platform jobs, and supervised services use the existing PostgreSQL admission and execution system while an external provider supplies physical worker capacity. Provider calls carry resource metadata rather than job payloads.\n\nLost and retired external resources remain eligible for cleanup until deletion is confirmed, including after prolonged outages, controller restarts, registry retention, and delayed preparation. A maintainer repair clears active startup platform jobs from isolated worker-pool tests; both running and cancelling regressions fail before the repair and pass afterward. Agent-indexer tests also use the shared transaction rollback so synthetic workflows do not leak into later Git Sync tests. Production concurrency and deletion-confirmation checks are unchanged.\n\n## Validation\n\n- 341 focused backend tests passed, including cleanup, capacity, summary/backfill, service, private transport, Git workspace, and DTO/CLI contracts.\n- 13 live E2E checks passed after merging current main, including the ordered indexer/Sync regression, automatic summaries, service lifecycle/recovery, and workflow parameter authorization.\n- All 23 tests in the two changed settings components passed. TypeScript and ESLint passed; ESLint retains one existing console warning in the review-pack seed helper.\n- Dockerized API Pyright and Ruff passed. The branch includes current main, `c167b594d9e0fe84944e7a1d567640d911091b47`.\n- The three agent-indexer tests followed by native workspace/execution overlap passed in the exposing order; independent database readback confirmed no owned rows remained.\n- Exact commands and durable failure disposition: `docs/experiments/external-capacity-cleanup-acceptance.md`.\n\nFull local suites and a deployed-provider outage rehearsal were not rerun. The merge queue remains the complete-suite gate. Thomas\u2019s documented runtime-family qualification limits remain; merging source does not claim deployment acceptance for Cloudflare video, automatic-provider supervised services, or Hyperdrive SQL. This does not resolve #1105\u2019s separate static-launcher policy.\n\n## Review and Product Updates\n\nThe original cleanup blocker is resolved in the preserved candidate, with the additional test isolation repair independently reviewed. Manual sensitive-path review covered authenticated provider transport, immutable resource identity, deletion receipts, retention/migration safety, physical admission and summary claim fencing.\n\nHighlight: approved canonical entry `b3129848-c1d8-4f70-8294-effe7168a82a` and `product-updates/dispositions/pr-1172.json`. The notice retains the required physical-launcher upgrade because APIs no longer execute summaries and links to the verified Workers Settings route. Thomas remains the credited contributor; the cumulative feed inventory will be refreshed after landing to activate the entry with verified contribution metadata.\n\nCo-authored-by: Thomas Bray <87775189+MTG-Thomas@users.noreply.github.com>",
+      "body": "Thomas Bray\u2019s external worker-capacity contribution from #1160, including his cleanup correction at `6cc0d8693d7ffa9ea90e07930da07a6824441651`. His original commits are preserved. This replacement is required because the company fork grants the maintainer read access only.\n\n## Summary\n\nWorkflows, agents, summaries, platform jobs, and supervised services use the existing PostgreSQL admission and execution system while an external provider supplies physical worker capacity. Provider calls carry resource metadata rather than job payloads.\n\nLost and retired external resources remain eligible for cleanup until deletion is confirmed, including after prolonged outages, controller restarts, registry retention, and delayed preparation. A maintainer repair clears active startup platform jobs from isolated worker-pool tests; both running and cancelling regressions fail before the repair and pass afterward. Agent-indexer tests also use the shared transaction rollback so synthetic workflows do not leak into later Git Sync tests. Production concurrency and deletion-confirmation checks are unchanged.\n\n## Validation\n\n- 341 focused backend tests passed, including cleanup, capacity, summary/backfill, service, private transport, Git workspace, and DTO/CLI contracts.\n- 13 live E2E checks passed after merging current main, including the ordered indexer/Sync regression, automatic summaries, service lifecycle/recovery, and workflow parameter authorization.\n- All 23 tests in the two changed settings components passed. TypeScript and ESLint passed; ESLint retains one existing console warning in the review-pack seed helper.\n- Dockerized API Pyright and Ruff passed. The branch includes current main, `c167b594d9e0fe84944e7a1d567640d911091b47`.\n- The three agent-indexer tests followed by native workspace/execution overlap passed in the exposing order; independent database readback confirmed no owned rows remained.\n- Exact commands and durable failure disposition: `docs/experiments/external-capacity-cleanup-acceptance.md`.\n\nFull local suites and a deployed-provider outage rehearsal were not rerun. The merge queue remains the complete-suite gate. Thomas\u2019s documented runtime-family qualification limits remain; merging source does not claim deployment acceptance for Cloudflare video, automatic-provider supervised services, or Hyperdrive SQL. This does not resolve #1105\u2019s separate static-launcher policy.\n\n## Review and Product Updates\n\nThe original cleanup blocker is resolved in the preserved candidate, with the additional test isolation repair independently reviewed. Manual sensitive-path review covered authenticated provider transport, immutable resource identity, deletion receipts, retention/migration safety, physical admission and summary claim fencing.\n\nHighlight: approved canonical entry `b3129848-c1d8-4f70-8294-effe7168a82a` and `product-updates/dispositions/pr-1172.json`. The notice retains the required physical-launcher upgrade because APIs no longer execute summaries and links to the verified Workers Settings route. Thomas remains the credited contributor. [#1173](https://github.com/gobifrost/bifrost/pull/1173) activated the approved entry with verified landed contribution metadata; the prepared highlight credits Thomas alone and retains the launcher upgrade notice.\n\nCo-authored-by: Thomas Bray <87775189+MTG-Thomas@users.noreply.github.com>",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1172",
       "contributions": [
         {
@@ -6374,6 +6395,45 @@
           "evidence_ref": "https://github.com/gobifrost/bifrost/commit/13f807f4dfac7b0e68ed6f5de2e0544efd25a578"
         }
       ]
+    },
+    {
+      "number": 1173,
+      "title": "Activate Landed Workflow and Worker Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1173",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-01T20:34:51Z",
+      "merge_commit": "1aeaae71d8569bd7ebe66b670c3711d295bdebc9",
+      "body": "The cached Product Updates inventory predates the landed workflow and worker changes, withholding their approved notices. Refresh the cumulative metadata through #1172 so the approved rerun and external-capacity highlights are eligible in built images. Record Thomas Bray\u2019s verified original-implementation credit for #1170 and #1172 from GitHub\u2019s actual landed commit-author metadata.\n\nThe prepared external-capacity highlight shows Thomas as its sole visible contributor and retains the mandatory physical-launcher upgrade notice and Workers Settings link. All 36 prior announcements and all 313 prior source records remain intact; the prepared feed now contains 38 announcements. Announcement UUIDs, approved prose, and application code are unchanged.\n\nValidation: canonical content validation and image preparation pass; all 44 Product Updates toolchain tests pass. Prepared-bundle assertions verify attribution, upgrade wording, settings link, prior announcement retention, and unchanged historical PR records. The verification note records #1172\u2019s successful complete merge-queue acceptance and landed co-author check. Backend/client/browser suites were not repeated locally for this metadata-only change; the native merge queue remains the complete-suite gate.\n\nProduct Updates: omit this internal activation; the customer-facing changes are already approved under #1170, #1171, and #1172. No formal release is created.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1173"
+    },
+    {
+      "number": 1175,
+      "title": "Restore execution slide-out content padding",
+      "url": "https://github.com/gobifrost/bifrost/pull/1175",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-01T23:55:03Z",
+      "merge_commit": "457134dffb8ec7af12b0a9be437e66a3bc7b7400",
+      "body": "## Summary\n\nRestore the 16px inset around execution details in the slide-out drawer. The embedded details lost their padding during #732; the desktop preview supplies its own inset, while the drawer did not. Add padding at the drawer host and extend the existing browser happy path to check the heading and inspector edges across Result, Input, and Logs at desktop and phone widths.\n\nFixes #1174\n\n## Verification\n\n- `./test.sh client unit src/pages/ExecutionHistory/components/ExecutionDrawer.test.tsx src/pages/ExecutionHistory/components/ExecutionPreviewPanel.test.tsx src/pages/ExecutionDetails.test.tsx` \u2014 31 passed.\n- `./test.sh client e2e e2e/executions.admin.spec.ts --grep 'EXEC-04'` \u2014 passed against the production client build; checked 1440px and 390px widths and reviewed both screenshots.\n- `cd client && npm run tsc && npm run lint` \u2014 passed; one existing no-console warning in the review seed script.\n- `git diff --check` \u2014 passed.\n\nFull backend and client suites were not run locally; the merge queue supplies the complete gate. Current main was merged before opening; its only new change is product-update metadata and documentation.\n\n## Product Updates\n\n- [x] Other \u2014 Restore spacing around execution details in the slide-out drawer.\n- [ ] Highlight\n- [ ] Omit",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1175"
+    },
+    {
+      "number": 1180,
+      "title": "Reduce SDK query amplification and reuse bounded database connections",
+      "url": "https://github.com/gobifrost/bifrost/pull/1180",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-02T07:07:18Z",
+      "merge_commit": "ac696c7fbc1da5f9485eda684e1b66a459731661",
+      "body": "## Summary\n\nSDK-heavy workflows repeatedly loaded authorization facts already captured for audit evidence, queried uncached empty config views, woke unrelated dispatch controllers, and discarded main-pool connections after bursts. Reuse captured audit evidence without weakening live authorization, cache complete config snapshots with generation invalidation, route wake hints by work family, and retain the existing bounded connection allowance in the shared engine.\n\n**No new configuration knobs.** The default API peak remains 26 connections across main, dispatch and liveness pools; idle retention can rise from 10 to 20 after demand uses those slots. Custom bounded peaks and SQLAlchemy unlimited settings are preserved. Workers retain their existing connection budget.\n\nConcurrent first-time table creation could also create duplicate ad-hoc records because prior migrations removed the unique indexes. Restore those indexes in one forward migration, keep Solution namespaces separate, and preserve the ordinary duplicate error inside a repository savepoint. **Installations with duplicate ad-hoc names in one org/global scope must resolve those records before upgrading.** The locked preflight reports affected IDs and changes no data. Read-only production preflight found zero duplicate groups. See `docs/runbooks/table-name-uniqueness.md`. This consolidates and supersedes draft #1164.\n\n## Hosting Results\n\nMatched warm SDK diagnostics, one API and two workers, unchanged canonical resource limits/PgBouncer:\n\n| Envelope / Offered Load | p95 Before \u2192 After | API CPU Before \u2192 After | Correct Within Deadline, Both Arms |\n|---|---:|---:|---:|\n| 4 decimal GB / 4 per second | 3.178s \u2192 0.567s | 0.718 \u2192 0.520 cores | 472/472 |\n| M (8 GiB) / 4 per second | 2.412s \u2192 0.548s | 0.696 \u2192 0.513 cores | 472/472 |\n\nBoth high-rate pairs have no validity flags. Main-pool openings fell from 218/195 to zero in the approximately 60-second counter windows. Worker charged memory stayed essentially unchanged; namespace peaks rose about 36/56 MiB. All 2,772 measured arrivals across eight windows completed correctly; the lower-rate 4 GB candidate observation retains its external-CPU flag. No timed window was replayed. These short windows establish efficiency improvements, not maximum/sustainable capacity, cold-start latency, or long-term storage costs.\n\n`docs/benchmarks/2026-11-02-sdk-hosting.md` and its machine-readable baseline preserve every window, allocation, SQL/pool counter, storage delta, validity flag, image/source proof and raw hash. The separately reviewed final delta only consolidates table metadata creation; all other runtime hashes match the measured image, and captured logs contain no metadata-create calls during those workloads.\n\n## Validation\n\n- Astra approved the final source, pool policy, locked migration, shared duplicate contract and exact upgrade notice.\n- Focused coverage includes pool budgets/sentinels, worker lifecycle/recovery, cache/audit/wake consumers, concurrency, migration upgrades and non-destructive duplicate refusal. Earlier SDK coverage passed 381 distinct unit cases; 52 live checks and 36 final scoped unit/live cases passed. API Pyright/Ruff passed with zero errors/warnings.\n- Exact commands and overlapping case counts are recorded in `docs/plans/2026-11-02-sdk-release-candidate.md`. Full suites were not run locally; the merge queue remains the complete-suite gate.\n- Typed wakes remain hints over durable database claims. Mixed-version producers can temporarily wait for the existing 15-second sweep; coordinate API/worker rollout.\n\n## Product Updates\n\n- [x] Highlight \u2014 `e1d92810-89a7-40b2-9df1-a0b8482d734c`; approved notice and conditional duplicate-table upgrade action in the canonical PR 1180 disposition.\n- [ ] Other\n- [ ] Omit\n\n\nCI disposition: the first broad backend run passed 11,251 cases and exposed missing Redis cache-read classifications in the access inventory. Added explicit registrations/reasons without weakening the scanner or changing runtime code. The complete inventory plus config tests passed 75 cases; API Pyright/Ruff passed with zero errors or warnings.\n\nQueue disposition: merge-group shard 3 exposed an existing shared-credential leak in the ephemeral CLI subprocess test. Forced epoch change reproduced child success followed by unusable parent refresh. The test now inherits the existing independent CLI session, forces child refresh, and proves the parent remains usable. All 27 focused fixture/CLI event/file cases and API quality passed; no runtime code, retry, timeout, or connection policy changed. The other two integration shards and browser smoke had passed.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1180"
     }
   ]
 }
