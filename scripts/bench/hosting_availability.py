@@ -35,6 +35,7 @@ import deploy  # noqa: E402
 import elasticity  # noqa: E402
 import guard  # noqa: E402
 import hosting_sizing  # noqa: E402
+import jsoncodec  # noqa: E402
 import run  # noqa: E402
 import search  # noqa: E402
 from cluster import Cluster  # noqa: E402
@@ -125,12 +126,13 @@ def _captured_ready_pod(cluster: Cluster, captured: dict) -> dict:
 def _append_checkpoint(path: Path, phase: str, value: dict) -> None:
     """Durably retain a safe partial result before the next benchmark action."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    entry = jsoncodec.encode({
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "phase": phase,
+        "value": value,
+    })
     with path.open("a", encoding="utf-8") as output:
-        output.write(json.dumps({
-            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "phase": phase,
-            "value": value,
-        }, sort_keys=True, allow_nan=False) + "\n")
+        output.write(json.dumps(entry, sort_keys=True, allow_nan=False) + "\n")
         output.flush()
         os.fsync(output.fileno())
 

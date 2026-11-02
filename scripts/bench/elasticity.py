@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 
 import deploy  # noqa: E402
 import hostmetrics  # noqa: E402
+import jsoncodec  # noqa: E402
 import resource_summary  # noqa: E402
 import run  # noqa: E402
 import search  # noqa: E402
@@ -209,7 +210,7 @@ def observe_idle_floor(cluster: Cluster, warm_workers: int, checkpoint: Callable
 
 
 def _write_jsonl(path: Path, value: dict) -> None:
-    line = json.dumps(value, sort_keys=True, allow_nan=False) + "\n"
+    line = json.dumps(jsoncodec.encode(value), sort_keys=True, allow_nan=False) + "\n"
     with path.open("a", encoding="utf-8") as output:
         output.write(line)
         output.flush()

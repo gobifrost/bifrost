@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import sys
 import unittest
 from copy import deepcopy
@@ -10,6 +12,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import elasticity  # noqa: E402
+import jsoncodec  # noqa: E402
 
 
 class ElasticityControlsTest(unittest.TestCase):
@@ -185,6 +188,18 @@ class ElasticityControlsTest(unittest.TestCase):
 
     def test_warm_four_is_a_valid_max_four_arm(self) -> None:
         self.assertEqual(elasticity.build_profile(4, 4)["worker_policy"]["warm_workers"], 4)
+
+    def test_jsonl_strictly_encodes_failed_gate_infinity_without_mutating_evidence(self) -> None:
+        evidence = {"overall": "fail", "verdict": {"reliability": {"wf-sdk": {"upper_bound": float("inf")}}}}
+        with TemporaryDirectory() as raw:
+            output = Path(raw) / "timeline.jsonl"
+            elasticity._write_jsonl(output, evidence)
+            encoded = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertIsNone(encoded["verdict"]["reliability"]["wf-sdk"]["upper_bound"])
+        self.assertEqual(encoded["non_finite_numbers"][0]["kind"], "positive_infinity")
+        self.assertTrue(math.isinf(jsoncodec.decode(encoded)["verdict"]["reliability"]["wf-sdk"]["upper_bound"]))
+        self.assertTrue(math.isinf(evidence["verdict"]["reliability"]["wf-sdk"]["upper_bound"]))
 
 
 if __name__ == "__main__":

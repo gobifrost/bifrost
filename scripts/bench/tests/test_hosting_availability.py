@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import math
 import sys
 import tempfile
 import threading
@@ -13,6 +14,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import hosting_availability  # noqa: E402
+import jsoncodec  # noqa: E402
 
 
 def _api_pod(name: str, uid: str, *, ready: bool = True, deleting: bool = False) -> dict:
@@ -119,6 +121,18 @@ class HostingAvailabilityTest(unittest.TestCase):
 
         self.assertEqual((target["metadata"]["name"], survivor["metadata"]["uid"]), ("bifrost-api-a", "uid-b"))
         cluster.api_pod.assert_not_called()
+
+    def test_checkpoint_strictly_encodes_failed_gate_infinity_without_mutating_evidence(self) -> None:
+        evidence = {"overall": "fail", "verdict": {"latency": {"wf-sdk": {"ci_upper_s": float("inf")}}}}
+        with tempfile.TemporaryDirectory() as raw:
+            checkpoint_path = Path(raw) / "timeline.jsonl"
+            hosting_availability._append_checkpoint(checkpoint_path, "search:outcomes", evidence)
+            encoded = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(encoded["value"]["verdict"]["latency"]["wf-sdk"]["ci_upper_s"])
+        self.assertEqual(encoded["non_finite_numbers"][0]["kind"], "positive_infinity")
+        self.assertTrue(math.isinf(jsoncodec.decode(encoded)["value"]["verdict"]["latency"]["wf-sdk"]["ci_upper_s"]))
+        self.assertTrue(math.isinf(evidence["verdict"]["latency"]["wf-sdk"]["ci_upper_s"]))
 
     def test_run_resets_prepares_full_profile_holds_the_fixed_floor_and_retains_one_fault_attempt(self) -> None:
         profile = _profile()
