@@ -67,3 +67,14 @@ The measured image remains immutable at source `960856144`. Final runtime source
 ./test.sh tests/unit/sdk/test_sdk_table_metadata.py tests/unit/routers/test_tables_policy_publish.py tests/unit/routers/test_tables_management_permissions.py tests/e2e/platform/test_sdk_tables_writes_local.py -v --durations=0
 ./test.sh quality api
 ```
+
+## CI Access-Inventory Repair
+
+The source PR's first broad backend unit run passed 11,251 cases and failed the Redis-read inventory tripwire. The new organization invalidation-generation read and config point read lacked inventory classifications, and the conservative scanner also counts two ordinary dictionary completion-marker lookups in the merged reader. The registry now identifies each read and explains the dictionary matches; no scanner exclusion or runtime change was added.
+
+```bash
+./test.sh tests/unit/test_access_list.py tests/unit/test_sdk_config_single_key.py -v --durations=0
+./test.sh quality api
+```
+
+The focused inventory/config run passed all 75 cases in 69.20 seconds, including the exact CI failure and the scanner's own regression coverage. API Pyright/Ruff also passed with zero errors or warnings. This is a test-inventory repair; the measured runtime sources and hosting results remain unchanged.

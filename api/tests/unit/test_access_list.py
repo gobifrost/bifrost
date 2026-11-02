@@ -2142,6 +2142,9 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
+    "src.core.cache.keys.config_hash_key_versioned": (
+        1, "Organization cache invalidation generation; does not grant access or select a principal.",
+    ),
     "src.core.locks.DistributedLockService.get_lock_info": (1, "Lock diagnostics."),
     "src.core.module_cache.clear_module_cache": (1, "Lists cached module keys to delete them."),
     "src.core.pubsub.publish_chat_run_event": (
@@ -2165,9 +2168,13 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.jobs.consumers.agent_run.AgentRunConsumer._cancel_watcher": (1, "Cancel flag; only stops a run."),
     "src.jobs.schedulers.worker_metrics_sampling.sample_worker_metrics": (1, "Worker metrics."),
     "src.jobs.schedulers.workflow_operation_usage_flush._drain_day_key": (1, "Operation usage counters."),
+    "src.repositories.config.ConfigRepository.get_for_sdk": (
+        1, "Point read of database-backed config after caller authorization; external callers bypass this cache.",
+    ),
     "src.repositories.config.ConfigRepository.merged_for_sdk": (
-        1,
-        "Cached org config values, written from the database.",
+        3,
+        "Database-backed config for an authorized caller; external callers bypass this cache. "
+        "The scanner also counts two completion-marker dict.get calls on the hgetall result.",
     ),
     "src.routers.events._get_rate_limited_count": (1, "Rate-limit counter."),
     "src.routers.files.list_active_watchers": (1, "Active file watchers (diagnostics)."),
