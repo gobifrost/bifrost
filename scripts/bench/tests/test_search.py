@@ -44,6 +44,37 @@ class ConfirmationDecisionTest(unittest.TestCase):
         self.assertEqual(search.confirmation_seed({"seed": 17}), 1017)
         self.assertEqual(search.confirmation_seed({"seed": 17}, 2), 1019)
 
+    def test_confirm_retains_each_raw_segment_before_assessment_and_forwards_checkpoints(self) -> None:
+        first = {
+            "overall": "pass", "verdict": {"reliability": {"wf": {}}},
+            "records": [], "window": (0.0, 1.0),
+        }
+        second = {
+            "overall": "pass", "verdict": {"reliability": {"wf": {}}},
+            "records": [], "window": (1.0, 2.0),
+        }
+        retained: list[dict] = []
+        raw_checkpoints: list[dict] = []
+        raw_checkpoint = raw_checkpoints.append
+        with patch.object(search.capacity, "observations_needed", return_value=10), \
+             patch.object(search, "run_step", side_effect=[first, second]) as run_step, \
+             patch.object(search.capacity, "reliability_evidence", return_value=("pass", 10)), \
+             patch.object(search, "confirmation_decision", side_effect=[("extend", 20), ("pass", 20)]):
+            result = search.confirm(
+                Mock(), {}, 2.0,
+                {"mix": {"wf": 1.0}, "thresholds": {}, "seed": 17}, {},
+                on_segment=lambda step: retained.append(dict(step)),
+                checkpoint=raw_checkpoint,
+            )
+
+        self.assertEqual(retained, [
+            {"overall": "pass", "verdict": {"reliability": {"wf": {}}}, "records": [], "window": (0.0, 1.0)},
+            {"overall": "pass", "verdict": {"reliability": {"wf": {}}}, "records": [], "window": (1.0, 2.0)},
+        ])
+        self.assertNotIn("reliability_evidence", retained[0])
+        self.assertEqual(result["segments"], 2)
+        self.assertTrue(all(call.kwargs["checkpoint"] is raw_checkpoint for call in run_step.call_args_list))
+
     def test_checkpoint_persists_raw_sent_and_outcomes_before_later_gates(self) -> None:
         sent = {
             "started": 1_000.0,

@@ -9,6 +9,7 @@ failure it may take one midpoint between that failure and the last pass.
 from __future__ import annotations
 
 import argparse
+import copy
 import fcntl
 import json
 import math
@@ -255,9 +256,19 @@ def run_campaign(profile_name: str, api_image: str, out: Path, *, rates: tuple[f
 
             if current.result["status"] == "ramp-complete" and confirm and last_pass is not None:
                 ids, identities = fresh("strict-confirmation")
+
+                def retain_confirmation_segment(segment: dict) -> None:
+                    raw = copy.deepcopy(segment)
+                    current.result.setdefault("confirmation_segments", []).append(raw)
+                    checkpoint("strict-confirmation:segment", {"segment": raw})
+
                 value = measured(
                     "strict-confirmation", ids, identities,
-                    lambda: search.confirm(selected, ids, last_pass, plan, plan["disk"]),
+                    lambda: search.confirm(
+                        selected, ids, last_pass, plan, plan["disk"],
+                        on_segment=retain_confirmation_segment,
+                        checkpoint=lambda raw: checkpoint("strict-confirmation:raw", raw),
+                    ),
                     "confirmations",
                 )
                 if value["overall"] == "pass":

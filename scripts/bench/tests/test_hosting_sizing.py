@@ -113,6 +113,8 @@ class HostingSizingTest(unittest.TestCase):
         self.assertEqual([call.args[2] for call in trials.call_args_list], [2, 4, 3])
         confirm.assert_called_once()
         self.assertEqual(confirm.call_args.args[2], 3)
+        self.assertIn("on_segment", confirm.call_args.kwargs)
+        self.assertIn("checkpoint", confirm.call_args.kwargs)
         self.assertEqual(len(prepared), 5)  # preflight + three rate arms + one confirmation arm
         self.assertEqual(reset.call_count, 6)  # every fresh seed plus final teardown
         check.assert_called_once_with(loaded)
@@ -133,6 +135,33 @@ class HostingSizingTest(unittest.TestCase):
         self.assertEqual(trials.call_count, 1)
         confirm.assert_not_called()
         self.assertEqual(result["stopped"], "invalid")
+
+    def test_confirmation_retains_raw_segment_and_partial_checkpoint_before_assessment(self) -> None:
+        loaded = profile()
+        cluster, _prepared, patches = self._harness(loaded, ["pass", "fail", "pass"])
+
+        def confirm(*_args, **kwargs):
+            raw = {"overall": "pass", "rate": 3, "sent": {"requests": ["request"]}}
+            kwargs["checkpoint"]({"sent": raw["sent"]})
+            kwargs["on_segment"](raw)
+            raw["reliability_evidence"] = {"wf-sdk": ("pass", 100)}
+            return {"overall": "pass", "validity": {"invalid": []}}
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], \
+                 patches[8], patches[9], patch.object(hosting_sizing.search, "confirm", side_effect=confirm), patches[11]:
+                hosting_sizing.run_campaign("hosting-4gb-fixed-workers-2", "candidate:local", directory / "out",
+                                            cluster=cluster, rates=(2, 4), confirm=True,
+                                            ensure_fixture=self._fixture(directory))
+            result = json.loads((directory / "out" / "result.json").read_text(encoding="utf-8"))
+            timeline = (directory / "out" / "timeline.jsonl").read_text(encoding="utf-8")
+
+        self.assertEqual(result["confirmation_segments"], [
+            {"overall": "pass", "rate": 3, "sent": {"requests": ["request"]}},
+        ])
+        self.assertIn('"phase": "strict-confirmation:raw"', timeline)
+        self.assertIn('"phase": "strict-confirmation:segment"', timeline)
 
     def test_mixed_diagnostic_requires_one_rate_and_skips_strict_confirmation(self) -> None:
         loaded = profile()

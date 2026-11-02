@@ -332,7 +332,9 @@ def confirmation_seed(plan: dict, segment: int = 0) -> int:
     return plan["seed"] + 1000 + segment
 
 
-def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str, str]) -> dict:
+def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str, str], *,
+            on_segment: Callable[[dict], None] | None = None,
+            checkpoint: Callable[[dict], None] | None = None) -> dict:
     """Confirmation at ``rate``: strict drift tolerance and a 0.1 % per-class failure bound.
 
     Segments run (state continuing) until ``confirmation_decision`` settles;
@@ -344,7 +346,10 @@ def confirm(cluster: Cluster, ids: dict, rate: float, plan: dict, disk: dict[str
     while True:
         window_s, capped = confirmation_seconds(rate, plan["mix"], observations)
         loose = {**plan, "thresholds": {**plan["thresholds"], "failure_upper": 1.0}}
-        step = run_step(cluster, ids, rate, loose, confirmation_seed(plan, len(segments)), disk, window_s=window_s, confirm=True)
+        step = run_step(cluster, ids, rate, loose, confirmation_seed(plan, len(segments)), disk,
+                        window_s=window_s, confirm=True, checkpoint=checkpoint)
+        if on_segment is not None:
+            on_segment(step)
         segments.append(step)
         evidence = {}
         for name in step["verdict"]["reliability"]:
