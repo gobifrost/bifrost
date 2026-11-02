@@ -1135,6 +1135,22 @@ describe("useTable", () => {
       expect(result.current.rows[0]?.note).toBe("again");
     });
 
+    it("moves a duplicate insert whose sort key changed, like an update", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([
+          { id: "a", name: "Alpha" },
+          { id: "b", name: "Bravo" },
+          { id: "c", name: "Charlie" },
+        ]),
+      );
+      const { result } = await mount({ order_by: "name" });
+
+      emit("insert", { id: "a", name: "Delta" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["b", "c", "a"]);
+    });
+
     it("without order_by, desc puts a new row first on page 1", async () => {
       vi.stubGlobal(
         "fetch",

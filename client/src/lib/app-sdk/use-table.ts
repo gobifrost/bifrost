@@ -531,6 +531,25 @@ function sortedIndex(
 }
 
 /**
+ * Replace the row at `at` with `row`. With `order_by`, a changed sort key
+ * moves it to its sorted position within the window (never dropping it).
+ */
+function replaceAt(
+  rows: TableRow[],
+  at: number,
+  row: TableRow,
+  order_by?: string,
+  order_dir?: "asc" | "desc",
+): TableRow[] {
+  if (!order_by || sortKey(rows[at]!, order_by) === sortKey(row, order_by)) {
+    return rows.map((r, i) => (i === at ? row : r));
+  }
+  const rest = [...rows.slice(0, at), ...rows.slice(at + 1)];
+  const idx = sortedIndex(rest, row, order_by, order_dir);
+  return [...rest.slice(0, idx), row, ...rest.slice(idx)];
+}
+
+/**
  * Apply a `TableChangeEvent` to the current page's rows, keeping the visible
  * window at `pageSize` rows and updating `total` so pagination UI stays in
  * sync. Used by `useTable` (paged); the unbounded variant `applyEvent` is for
@@ -538,8 +557,8 @@ function sortedIndex(
  *
  * Window semantics:
  *   - `insert` matching the subscribe filter: increment `total` regardless.
- *     An insert for an id already in the window replaces that row instead
- *     of duplicating it (`total` is still bumped — rows and total are
+ *     An insert for an id already in the window is applied like an
+ *     `update` instead of duplicating the row (`total` is still bumped — rows and total are
  *     separate state, so a racing duplicate can leave `total` one high
  *     until the next snapshot).
  *     Without `order_by` the server orders by `created_at, id`, so a new
@@ -576,10 +595,9 @@ export function applyPagedEvent(
     const inserted = evt.row as unknown as TableRow;
     setRows((prev) => {
       // Already in the window (e.g. an upsert's insert racing a refresh
-      // snapshot that included it): replace rather than duplicate the row.
-      if (prev.some((r) => r.id === inserted.id)) {
-        return prev.map((r) => (r.id === inserted.id ? inserted : r));
-      }
+      // snapshot that included it): apply it like an update, not a duplicate.
+      const dup = prev.findIndex((r) => r.id === inserted.id);
+      if (dup !== -1) return replaceAt(prev, dup, inserted, order_by, order_dir);
       if (!order_by) {
         // Server default order is `created_at, id` in `order_dir`. Ascending:
         // the newest row sorts last, so append iff there's room. Descending:
@@ -606,18 +624,8 @@ export function applyPagedEvent(
   if (evt.action === "update") {
     const updated = evt.row as unknown as TableRow;
     setRows((prev) => {
-      if (!order_by) {
-        return prev.map((r) => (r.id === updated.id ? updated : r));
-      }
       const at = prev.findIndex((r) => r.id === updated.id);
-      if (at === -1) return prev;
-      // Unchanged sort key: keep the server-provided position.
-      if (sortKey(prev[at]!, order_by) === sortKey(updated, order_by)) {
-        return prev.map((r, i) => (i === at ? updated : r));
-      }
-      const rest = [...prev.slice(0, at), ...prev.slice(at + 1)];
-      const idx = sortedIndex(rest, updated, order_by, order_dir);
-      return [...rest.slice(0, idx), updated, ...rest.slice(idx)];
+      return at === -1 ? prev : replaceAt(prev, at, updated, order_by, order_dir);
     });
     return;
   }
