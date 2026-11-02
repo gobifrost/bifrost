@@ -1,0 +1,13 @@
+{
+  "key": "pr:1204",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1204",
+      "Port of MTG fork PR #1255; development image default identity only."
+    ]
+  },
+  "reason": "The API development image defaults to the existing unprivileged bifrost user. Production privilege dropping is unchanged."
+}

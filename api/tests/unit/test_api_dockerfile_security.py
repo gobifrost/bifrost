@@ -3,12 +3,10 @@
 from pathlib import Path
 
 
-def _dockerfile_path(name: str) -> Path:
-    """Locate the Compose-mounted Dockerfile or its checkout counterpart."""
-    mounted = Path("/app/api") / name
-    if mounted.is_file():
-        return mounted
-    return Path(__file__).resolve().parents[3] / "api" / name
+def _api_dir() -> Path:
+    """Locate the Compose-mounted API directory or its checkout counterpart."""
+    mounted = Path("/app/api")
+    return mounted if mounted.is_dir() else Path(__file__).resolve().parents[3] / "api"
 
 
 def _runtime_stage_lines(path: Path) -> list[str]:
@@ -19,14 +17,20 @@ def _runtime_stage_lines(path: Path) -> list[str]:
     return lines[runtime_start:]
 
 
-def test_api_images_default_to_unprivileged_runtime_user():
-    for relative_path in ("api/Dockerfile", "api/Dockerfile.dev"):
-        runtime_lines = _runtime_stage_lines(_dockerfile_path(Path(relative_path).name))
-        user_lines = [
-            line.strip() for line in runtime_lines if line.startswith("USER ")
-        ]
+def test_dev_image_defaults_to_unprivileged_runtime_user():
+    runtime_lines = _runtime_stage_lines(_api_dir() / "Dockerfile.dev")
+    user_lines = [line.strip() for line in runtime_lines if line.startswith("USER ")]
 
-        assert user_lines == ["USER bifrost"], relative_path
-        assert runtime_lines.index("USER bifrost") < runtime_lines.index(
-            'ENTRYPOINT ["/entrypoint.sh"]'
-        )
+    assert user_lines == ["USER bifrost"]
+    assert runtime_lines.index("USER bifrost") < runtime_lines.index(
+        'ENTRYPOINT ["/entrypoint.sh"]'
+    )
+
+
+def test_production_image_drops_privileges_before_serving():
+    """Production either starts unprivileged or drops via the entrypoint."""
+    runtime_lines = _runtime_stage_lines(_api_dir() / "Dockerfile")
+    starts_unprivileged = any(line.strip() == "USER bifrost" for line in runtime_lines)
+    entrypoint = (_api_dir() / "entrypoint.sh").read_text()
+
+    assert starts_unprivileged or "gosu bifrost" in entrypoint
