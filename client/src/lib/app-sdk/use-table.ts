@@ -86,7 +86,17 @@ export interface UseTableQuery {
    * `DocumentQuery.limit` contract.
    */
   pageSize?: number;
-  /** Field name to sort by. Defaults to `updated_at` server-side. */
+  /**
+   * JSONB data field to sort by (server: `data->>order_by`, compared as
+   * text, `id` ascending as tiebreaker). When omitted the server orders by
+   * the `created_at` column. Column names (`created_at`, `updated_at`,
+   * `id`, ...) are NOT supported here — the server looks them up in the
+   * JSONB `data`, where they are normally absent, so the result is
+   * effectively ordered by `id`.
+   *
+   * Live inserts (and updates that change this field) are placed at their
+   * sorted position in `rows`; see `applyPagedEvent` for the exact rules.
+   */
   order_by?: string;
   /** Sort direction. Defaults to `asc` server-side. */
   order_dir?: "asc" | "desc";
@@ -247,9 +257,17 @@ export function flattenDocument(doc: DocumentPublic): TableRow {
  * Pagination semantics:
  *   - `total` is the count of rows matching `where` across all pages, not
  *     the count returned in `rows`. Drives "Page X of Y" UI.
+ *   - With `order_by` set, live `insert` events are placed at their sorted
+ *     position (matching the server's `tables.query` ordering) and updates
+ *     that change the sort field move the row to its new position. Without
+ *     `order_by`, inserts are appended (server default order is
+ *     `created_at` ascending, so new rows sort last).
  *   - Live `insert` events that fall outside the current page are dropped
- *     to keep the visible window stable; navigating to the page they belong
- *     to via a `page` re-render reissues the snapshot and they appear.
+ *     to keep the visible window stable (`total` still increments):
+ *     an insert sorting after the last row of a full page, or — on
+ *     `page > 1` — before the first row (it belongs to an earlier page).
+ *     Navigating via a `page` re-render reissues the snapshot and they
+ *     appear where they belong.
  *
  * @param name - Table name (or id) to query and subscribe to
  * @param query - Optional `where` / `page` / `pageSize` / order / scope
@@ -362,7 +380,11 @@ export function useTable(
               refreshAuthoritativeSnapshot();
               return;
             }
-            applyPagedEvent(evt, pageSize, setRows, setTotal);
+            applyPagedEvent(evt, pageSize, setRows, setTotal, {
+              order_by,
+              order_dir,
+              page,
+            });
           },
           () => {
             // Events can be missed while the transport is down. Once the
@@ -421,6 +443,90 @@ export function applyEvent(
   }
 }
 
+export interface RowOrder {
+  order_by?: string;
+  order_dir?: "asc" | "desc";
+}
+
+/**
+ * Fields that the flat row shape fills from Document columns. They shadow
+ * any same-named key in the JSONB `data`, so the client cannot see the
+ * value the server actually sorts on (`data->>field`).
+ */
+const COLUMN_FIELDS = new Set([
+  "id",
+  "table_id",
+  "created_by",
+  "updated_by",
+  "created_at",
+  "updated_at",
+]);
+
+// Approximates the database's default `en_US.UTF-8` text collation
+// (case-insensitive first, punctuation significant). ICU and glibc can
+// disagree on exotic inputs; a reconnect/invalidation snapshot corrects any
+// drift.
+const collator = new Intl.Collator("en-US");
+
+/**
+ * Client-side equivalent of the server's `data->>order_by` sort key:
+ * strings as-is, numbers/booleans as their JSON text, objects/arrays as
+ * JSON, missing/null as SQL NULL.
+ */
+function sortKey(row: TableRow, field: string): string | null {
+  // The server sorts column names by the (normally absent) JSONB key, i.e.
+  // NULL for every row — treat them as NULL so placement falls through to
+  // the `id` tiebreaker exactly like the server does.
+  if (COLUMN_FIELDS.has(field)) return null;
+  const v = row[field];
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return JSON.stringify(v);
+}
+
+/**
+ * Compare two rows the way `tables.query` orders them when `order_by` is
+ * set: `ORDER BY data->>order_by [DESC], id`. Values compare as text (so
+ * `10` sorts before `9`), NULLs sort last ascending / first descending
+ * (Postgres default), and the `id` tiebreaker is always ascending.
+ */
+export function compareRows(
+  a: TableRow,
+  b: TableRow,
+  order_by: string,
+  order_dir: "asc" | "desc" = "asc",
+): number {
+  const ka = sortKey(a, order_by);
+  const kb = sortKey(b, order_by);
+  let c = 0;
+  if (ka !== kb) {
+    if (ka === null) c = 1;
+    else if (kb === null) c = -1;
+    else c = collator.compare(ka, kb);
+  }
+  if (order_dir === "desc") c = -c;
+  if (c !== 0) return c;
+  return collator.compare(String(a.id), String(b.id));
+}
+
+/** Index of the first row in `sorted` that `row` sorts strictly before. */
+function sortedIndex(
+  sorted: TableRow[],
+  row: TableRow,
+  order_by: string,
+  order_dir?: "asc" | "desc",
+): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (compareRows(row, sorted[mid]!, order_by, order_dir) < 0) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
 /**
  * Apply a `TableChangeEvent` to the current page's rows, keeping the visible
  * window at `pageSize` rows and updating `total` so pagination UI stays in
@@ -428,27 +534,48 @@ export function applyEvent(
  * `useInfiniteTable`.
  *
  * Window semantics:
- *   - `insert` matching the subscribe filter: append iff there's room in the
- *     window, then trim to `pageSize`. Increment `total` regardless.
- *   - `update`: replace the row in place. The matching-filter check is the
- *     server's job — events only arrive if the filter still matches.
+ *   - `insert` matching the subscribe filter: increment `total` regardless.
+ *     Without `order_by`: append iff there's room in the window (a full
+ *     page keeps its rows; the insert is off-screen). With `order_by`:
+ *     insert at the row's sorted position, then trim to `pageSize` (the
+ *     displaced trailing row belongs to the next page). The insert is
+ *     dropped when it sorts after the last row of a full page, or, on
+ *     `page > 1`, before the first row — it belongs to an earlier page, and
+ *     the row that page would push onto this one is not known client-side.
+ *   - `update`: replace the row in place. With `order_by`, if the sort key
+ *     changed, the row is moved to its sorted position within the window. It is never dropped, even
+ *     if its new key sorts past a window edge — it is pinned at that edge
+ *     until the next snapshot. Updates for rows not in the window are
+ *     ignored. The matching-filter check is the server's job — events only
+ *     arrive if the filter still matches.
  *   - `delete`: remove from the window if present, decrement `total`.
  *
- * Note: an insert that arrives when the page is full pushes the most recent
- * row off the visible end. That keeps the page at exactly `pageSize` rows;
- * the displaced row reappears on the next page once the user navigates.
+ * Client placement mirrors the server's text ordering (see `compareRows`);
+ * a reconnect or `table_invalidated` snapshot replaces the window with the
+ * authoritative order if they ever disagree.
  */
 export function applyPagedEvent(
   evt: TableChangeEvent,
   pageSize: number,
   setRows: (updater: (prev: TableRow[]) => TableRow[]) => void,
   setTotal: (updater: (prev: number) => number) => void,
+  order: RowOrder & { page?: number } = {},
 ) {
+  const { order_by, order_dir, page = 1 } = order;
   if (evt.type !== "document_change") return;
   if (evt.action === "insert") {
     const inserted = evt.row as unknown as TableRow;
     setRows((prev) => {
-      const next = [...prev, inserted];
+      if (!order_by) {
+        const next = [...prev, inserted];
+        return next.length > pageSize ? next.slice(0, pageSize) : next;
+      }
+      const idx = sortedIndex(prev, inserted, order_by, order_dir);
+      // Sorts before this page's first row: belongs to an earlier page.
+      if (page > 1 && idx === 0) return prev;
+      // Sorts after the last row of a full page: belongs to a later page.
+      if (idx === prev.length && prev.length >= pageSize) return prev;
+      const next = [...prev.slice(0, idx), inserted, ...prev.slice(idx)];
       return next.length > pageSize ? next.slice(0, pageSize) : next;
     });
     setTotal((t) => t + 1);
@@ -456,7 +583,20 @@ export function applyPagedEvent(
   }
   if (evt.action === "update") {
     const updated = evt.row as unknown as TableRow;
-    setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    setRows((prev) => {
+      if (!order_by) {
+        return prev.map((r) => (r.id === updated.id ? updated : r));
+      }
+      const at = prev.findIndex((r) => r.id === updated.id);
+      if (at === -1) return prev;
+      // Unchanged sort key: keep the server-provided position.
+      if (sortKey(prev[at]!, order_by) === sortKey(updated, order_by)) {
+        return prev.map((r, i) => (i === at ? updated : r));
+      }
+      const rest = [...prev.slice(0, at), ...prev.slice(at + 1)];
+      const idx = sortedIndex(rest, updated, order_by, order_dir);
+      return [...rest.slice(0, idx), updated, ...rest.slice(idx)];
+    });
     return;
   }
   if (evt.action === "delete") {

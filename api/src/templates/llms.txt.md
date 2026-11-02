@@ -367,11 +367,11 @@ Query options:
 | `where` | `DocumentFilter` | none | Filter conditions, see DSL below |
 | `page` | `number` | `1` | 1-indexed page number |
 | `pageSize` | `number` | `100` | Rows per page (server cap 1000) |
-| `order_by` | `string` | `updated_at` | Field name to sort by |
+| `order_by` | `string` | `created_at` column | JSONB data field to sort by (compared as text, `id` tiebreaker) |
 | `order_dir` | `"asc" \| "desc"` | `"asc"` | Sort direction |
 | `scope` | `string` | app's org / caller's org | Org scope override |
 
-Live updates: `insert` events bump `total` and append to the visible window iff there's room (out-of-window inserts trim to `pageSize`); `update` replaces in place; `delete` removes from the window and decrements `total`.
+Live updates: `insert` events bump `total`. With `order_by`, the row is placed at its sorted position and the window trims to `pageSize`; inserts that sort after the last row of a full page (or, on `page > 1`, before the first row) belong to another page and are not shown. Without `order_by`, inserts append iff there's room. `update` replaces in place (with `order_by`, a changed sort key moves the row within the window); `delete` removes from the window and decrements `total`.
 
 #### `useInfiniteTable(name, query?)`
 

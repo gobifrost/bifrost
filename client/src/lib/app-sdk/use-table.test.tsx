@@ -912,4 +912,161 @@ describe("useTable", () => {
       expect(result.current.total).toBe(1);
     });
   });
+
+  describe("live ordering (order_by)", () => {
+    function snapshot(docs: Array<{ id: string; name?: unknown }>, total = docs.length) {
+      return vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            documents: docs.map(({ id, ...data }) => ({ id, data })),
+            table_id: "tbl-uuid",
+            total,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+
+    function emit(action: "insert" | "update", row: Record<string, unknown>) {
+      act(() => {
+        lastOnEvent?.({
+          type: "document_change",
+          action,
+          row: { table_id: "tbl-uuid", ...row },
+          table_id: "tbl-uuid",
+        });
+      });
+    }
+
+    async function mount(query: Parameters<typeof useTable>[1]) {
+      const hook = renderHook(() => useTable("t1", query));
+      await waitFor(() => expect(hook.result.current.loading).toBe(false));
+      await waitFor(() => expect(lastOnEvent).not.toBeNull());
+      return hook;
+    }
+
+    it("places an ascending insert at its sorted position, not the end", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([
+          { id: "a", name: "Alpha" },
+          { id: "c", name: "Charlie" },
+          { id: "d", name: "delta" },
+        ]),
+      );
+      const { result } = await mount({ order_by: "name", pageSize: 200 });
+
+      // Text collation is case-insensitive first, so "bravo" sorts between
+      // "Alpha" and "Charlie" like the server's en_US ORDER BY.
+      emit("insert", { id: "b", name: "bravo" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b", "c", "d"]);
+      expect(result.current.total).toBe(4);
+    });
+
+    it("respects order_dir desc with NULLs first (Postgres default)", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "n" }, { id: "c", name: "Charlie" }, { id: "a", name: "Alpha" }]),
+      );
+      const { result } = await mount({ order_by: "name", order_dir: "desc" });
+
+      emit("insert", { id: "b", name: "Bravo" });
+      emit("insert", { id: "z", name: null });
+
+      // NULLs tie with each other and fall back to id ascending.
+      expect(result.current.rows.map((r) => r.id)).toEqual(["n", "z", "c", "b", "a"]);
+    });
+
+    it("compares numbers as text, matching the server's data->> ordering", async () => {
+      vi.stubGlobal("fetch", snapshot([{ id: "10", name: 10 }, { id: "9", name: 9 }]));
+      const { result } = await mount({ order_by: "name" });
+
+      emit("insert", { id: "2", name: 2 });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["10", "2", "9"]);
+    });
+
+    it("appends when no order_by is set (server default created_at asc)", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "a", name: "Zulu" }, { id: "b", name: "Yankee" }]),
+      );
+      const { result } = await mount({});
+
+      emit("insert", { id: "c", name: "Alpha" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b", "c"]);
+    });
+
+    it("drops an insert that sorts after the last row of a full page, still bumps total", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }], 5),
+      );
+      const { result } = await mount({ order_by: "name", pageSize: 2 });
+
+      emit("insert", { id: "z", name: "Zulu" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b"]);
+      expect(result.current.total).toBe(6);
+    });
+
+    it("inserts mid-page on a full page and pushes the trailing row off", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "a", name: "Alpha" }, { id: "c", name: "Charlie" }], 5),
+      );
+      const { result } = await mount({ order_by: "name", pageSize: 2 });
+
+      emit("insert", { id: "b", name: "Bravo" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b"]);
+      expect(result.current.total).toBe(6);
+    });
+
+    it("on page > 1, drops an insert that sorts before the first row", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "m", name: "Mike" }, { id: "o", name: "Oscar" }], 4),
+      );
+      const { result } = await mount({ order_by: "name", pageSize: 2, page: 2 });
+
+      emit("insert", { id: "a", name: "Alpha" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["m", "o"]);
+      expect(result.current.total).toBe(5);
+    });
+
+    it("moves an updated row when its sort key changes", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([
+          { id: "a", name: "Alpha" },
+          { id: "b", name: "Bravo" },
+          { id: "c", name: "Charlie" },
+        ]),
+      );
+      const { result } = await mount({ order_by: "name" });
+
+      emit("update", { id: "a", name: "Delta" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["b", "c", "a"]);
+      expect(result.current.rows[2]?.name).toBe("Delta");
+      expect(result.current.total).toBe(3);
+    });
+
+    it("keeps an updated row in place when its sort key is unchanged", async () => {
+      vi.stubGlobal(
+        "fetch",
+        snapshot([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }]),
+      );
+      const { result } = await mount({ order_by: "name" });
+
+      emit("update", { id: "a", name: "Alpha", note: "edited" });
+
+      expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b"]);
+      expect(result.current.rows[0]?.note).toBe("edited");
+    });
+  });
 });
