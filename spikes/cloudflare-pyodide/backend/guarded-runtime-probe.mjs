@@ -4,7 +4,11 @@ import {readFile} from 'node:fs/promises';
 import {withExclusiveReceipt} from './exclusive-receipt.mjs';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
-const [mode,name='guarded-runtime-final']=process.argv.slice(2);
+const [mode,name='guarded-runtime-final',...options]=process.argv.slice(2);
+if(options.length && (mode!=='--verify' || options.length!==2 || options[0]!=='--commit' || !/^[a-f0-9]{40}$/.test(options[1]))) {
+  throw new Error('Historical verification requires --verify <receipt> --commit <full tested SHA>');
+}
+const historicalCommit=options[1];
 if(!/^guarded-runtime(?:-[a-z0-9-]+)?$/.test(name)) throw new Error('Fixed guarded-runtime receipt name required');
 const receipt=new URL(`../results/${name}.json`,import.meta.url);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -28,7 +32,13 @@ if(mode==='--run') {
   const r=JSON.parse(await readFile(receipt,'utf8'));
   assert.equal(r.status,200);assert.equal(r.body.drift_rejected,true);
   assert.equal(r.body.upstream_worker_imported,true);assert.deepEqual(r.body.effects_after_rejection,[]);
-  for(const [name,digest] of Object.entries(r.source_sha256)) assert.equal(hash(await readFile(new URL(name,import.meta.url))),digest);
+  for(const [name,digest] of Object.entries(r.source_sha256)) {
+    const bytes=historicalCommit ? (await promisify(execFile)('git',
+      ['show',`${historicalCommit}:spikes/cloudflare-pyodide/backend/${name}`],
+      {cwd:new URL('../../../',import.meta.url),encoding:'buffer',maxBuffer:2*1024*1024})).stdout :
+      await readFile(new URL(name,import.meta.url));
+    assert.equal(hash(bytes),digest,name);
+  }
   const manifest=JSON.parse(await readFile(new URL('../results/guarded-runtime-manifest.json',import.meta.url),'utf8'));
   assert.equal(manifest.payload_sha256,r.payload_sha256);
   assert.equal(manifest.files['runtime_guard.py'],r.source_sha256['runtime_guard.py']);

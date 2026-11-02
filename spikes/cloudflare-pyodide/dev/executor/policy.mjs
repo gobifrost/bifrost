@@ -13,3 +13,12 @@ export function apiTarget(url, origin) {
   target.search = incoming.search;
   return target;
 }
+
+export function attemptPayload(body, publicUrl) {
+  const url = new URL(publicUrl);
+  if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new TypeError('Trusted root HTTPS public URL required');
+  }
+  return {action: 'execute', execution_id: body.execution_id, context: body.context,
+    api_url: 'https://test-api.invalid', public_url: url.origin};
+}

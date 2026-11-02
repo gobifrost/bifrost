@@ -57,11 +57,15 @@ def reserve_development_invocation(execution_id):
     from pathlib import Path
 
     ledger = Path('/qualification/private/invocations.jsonl')
+    profile = json.loads(Path('/qualification/private/profile.json').read_text())
+    limit = profile.get('maximum_invocations', 20)
+    if type(limit) is not int or not 1 <= limit <= 20:
+        raise RuntimeError('Invalid bounded development invocation limit')
     with ledger.open('a+') as reservations:
         fcntl.flock(reservations, fcntl.LOCK_EX | fcntl.LOCK_NB)
         reservations.seek(0)
         count = sum(1 for line in reservations if line.strip())
-        if count >= 20:
+        if count >= limit:
             raise RuntimeError('Fresh development invocation budget exhausted')
         reservations.write(json.dumps({'reservation': count + 1, 'execution_id': str(execution_id)}) + '\n')
         reservations.flush()
@@ -149,6 +153,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
     document = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
     logging.getLogger(__name__).warning("authorized local Pyodide workflow")
     return {{"value": document.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
+             "transport_url": os.environ["BIFROST_API_URL"],
              "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"], **fresh}}
 '''
     sources = {path: source, helper_path: "def fold(n):\n    return sum(range(1, n + 1))\n"}
@@ -215,7 +220,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                            "timeout_seconds": 30, "transient": True, "no_cache": True}
                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
                     if dev_qualification:
-                        payload = {'execution_id': str(execution.id), 'context': context, 'manifest': manifest}
+                        payload = {'execution_id': str(execution.id), 'context': context, 'manifest': manifest,
+                                   'api_url': 'https://attacker.invalid', 'public_url': 'https://attacker.invalid'}
                         # Explicitly reject canonical mode rather than pretending
                         # this physical-runtime fixture implements platform dispatch.
                         reserve_development_invocation(execution.id)
@@ -233,7 +239,9 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                         reserve_development_invocation(execution.id)
                     response = await provider.post(provider_url, headers=provider_headers,
                                                    json={"execution_id": str(execution.id), "context": context,
-                                                         "manifest": manifest})
+                                                         "manifest": manifest,
+                                                         **({'api_url': 'https://attacker.invalid', 'public_url': 'https://attacker.invalid'}
+                                                            if dev_qualification else {})})
                     evidence = response.json()
                 encoded = json.dumps(evidence)
                 if any(secret and secret in encoded for secret in [access_token, credentials.refresh_token, integration_secret]):
@@ -248,6 +256,12 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                     raise RuntimeError("Actual upstream worker did not complete successfully")
                 assert result["result"]["value"] == 70
                 assert result["result"]["parent_secret_present"] is False
+                if dev_qualification:
+                    expected_public = 'https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev'
+                    assert result['execution_context']['public_url'] == expected_public
+                    assert result['result']['transport_url'] == 'https://test-api.invalid'
+                    report['trusted_public_url_verified'] = expected_public
+                    report['virtual_sdk_transport_preserved'] = True
                 if fresh_probe:
                     assert all(result['result'][key] is None for key in ('builtins_before', 'module_before', 'environment_before', 'tmp_before'))
                     report['fresh_run_canaries_clear'] = True
@@ -282,6 +296,10 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                                    json={"key": config_key})
             assert ended.status_code == 401
             report["ended_run_status"] = ended.status_code
+            if dev_qualification:
+                revoked_refresh = await api.post('http://api:8000/auth/refresh', json={'refresh_token': credentials.refresh_token})
+                assert revoked_refresh.status_code == 401
+                report['ended_refresh_status'] = revoked_refresh.status_code
         print(json.dumps(report))
     finally:
         for name in sources:

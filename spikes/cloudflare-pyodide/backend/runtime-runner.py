@@ -25,11 +25,11 @@ class UnknownResources:
         return ResourceMetrics(None, None, None, None, None)
 
 
-async def run_authorized_attempt(execution_id, context, api_url):
+async def run_authorized_attempt(execution_id, context, api_url, *, public_url=None):
     import os
 
     # This module runs only in the fresh child, never in the trusted supervisor.
     # No SECRET_KEY, database or Cloudflare management credential is supplied.
     os.environ["BIFROST_API_URL"] = api_url
     return await run_execution(execution_id, context,
-        resource_observer=UnknownResources(), public_url=api_url)
+        resource_observer=UnknownResources(), public_url=api_url if public_url is None else public_url)

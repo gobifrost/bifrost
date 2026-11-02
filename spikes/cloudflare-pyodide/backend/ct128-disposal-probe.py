@@ -18,7 +18,7 @@ def out(args):
     return subprocess.check_output(args, text=True, timeout=30).strip()
 
 
-def main():
+def main(*, memory='1g'):
     if out(['hostname']) != 'bifrost-pyodide-test-01' or shutil.disk_usage(ROOT).used > 24 * 1024**3:
         raise RuntimeError('Assigned guest/disk guard failed')
     RUN.mkdir()
@@ -40,8 +40,8 @@ def main():
                                 for p in (RUN / 'packet').rglob('*') if p.is_file()}}
     started = time.monotonic()
     try:
-        command = ['docker', 'run', '-d', '--name', NAME, '--network=none', '--cpus=1', '--memory=1g',
-                   '--memory-swap=1g', '--pids-limit=256', '--mount', f'type=bind,src={SPIKE},dst=/spike,readonly',
+        command = ['docker', 'run', '-d', '--name', NAME, '--network=none', '--cpus=1', '--memory=' + memory,
+                   '--memory-swap=' + memory, '--pids-limit=256', '--mount', f'type=bind,src={SPIKE},dst=/spike,readonly',
                    '--mount', f'type=bind,src={SPIKE}/node_modules,dst=/qualification/packet/node_modules,readonly',
                    '--mount', f'type=bind,src={RUN},dst=/qualification',
                    '--mount', f'type=bind,src={CACHE},dst=/bundle-cache,readonly',

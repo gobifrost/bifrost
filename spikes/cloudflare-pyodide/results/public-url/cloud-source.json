@@ -1,0 +1,26 @@
+{
+    "open_version":  "69646acf-2a5d-4733-acb5-e0e9e0103651",
+    "source_state":  "tracked task overlay; exact file hashes below",
+    "command":  "python3 run_cloud_qualification.py --integration-fresh --private-directory cloud-private-public-url-v1",
+    "control_limits":  "1CPU/768MiB/no swap/128 PIDs/180s",
+    "fixture_requests_reserved":  3,
+    "upstream_closure_source":  "785b560b9973020e1c13401383e1a73a87a54940",
+    "dev_api_source":  "2037ac0d9ec95e94a77ce440001ae016d4215407",
+    "total_worker_http_requests":  4,
+    "runtime_sha256":  "7576c38299adfb147952df5b44d6b3c32ee3b3519251f9a63b27bdc9fbe5c9d1",
+    "guest":  "pve-t340 CT128",
+    "base_commit":  "452a58e4f8dea84ecb09845b1e01d0cd4e5b7fac",
+    "exit_code":  0,
+    "image":  "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+    "files":  {
+                  "dev/executor/python-entry.mjs":  "a0fc8853dc3a5cf224fae46af395a60188d4e35d8a1a0fc9397039d577d0ab43",
+                  "backend/runtime-runner.py":  "341b2414a1167a2fb9850114619d5caf1882bc4a60ee73f699afb1d7c856c471",
+                  "dev/executor/entry.mjs":  "8c269981ded77d20bc8c742bc7cc2d6f03dbecf2dc5f159e9521da8f0f22df92",
+                  "backend/runtime-code.mjs":  "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+                  "dev/executor/cloudflare.config.ts":  "d58efd67ceeb0cc76db368611dff3070c61252b85b30a646e162297d5048198b",
+                  "backend/authorized-local.py":  "a1db9d81b147d77f56ab651099e4295d651bd6b4108990734a85751959dcf123",
+                  "dev/run_cloud_qualification.py":  "93d86201e0afa15cb139cc75bab4b04648ffbdd93ac1f34105b7db54b7c2b5e5",
+                  "dev/stage_runtime.mjs":  "73bda7e5102a480d41d33686091614265e47cf315ab7880d31c232e487f657f2",
+                  "dev/executor/policy.mjs":  "8c4227b92e2011857851a6299542ff8aec748477acf9d99e5ae2c9a5482e025c"
+              }
+}

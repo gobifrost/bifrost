@@ -93,7 +93,7 @@ Stop the first supervisor before running the guarded probe:
 ```sh
 wrangler dev --config backend/wrangler.guarded-runtime.jsonc --port 8803 --ip 127.0.0.1
 node backend/guarded-runtime-probe.mjs --run
-node backend/guarded-runtime-probe.mjs --verify
+node backend/guarded-runtime-probe.mjs --verify guarded-runtime-final --commit d09c4e113efea3ba9e3c8c94b42a6dfc6b5474fa
 ```
 
 The retained invocations run Wrangler/observers through the existing local

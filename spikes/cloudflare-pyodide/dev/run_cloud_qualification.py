@@ -5,15 +5,19 @@ from pathlib import Path
 import subprocess
 import time
 import argparse
+import re
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--integration-fresh', action='store_true')
+parser.add_argument('--private-directory', default='cloud-private')
 args = parser.parse_args()
+if not re.fullmatch(r'cloud-private(?:-[a-z0-9-]{1,48})?', args.private_directory):
+    raise RuntimeError('Owned private-directory name required')
 
 ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
 RUN = ROOT / 'dev-deploy-2037ac0'
 CHECKOUT = ROOT / 'dev-2037ac0'
-PRIVATE = RUN / 'cloud-private'
+PRIVATE = RUN / args.private_directory
 if subprocess.check_output(['hostname'], text=True).strip() != 'bifrost-pyodide-test-01':
     raise RuntimeError('Assigned guest required')
 PRIVATE.mkdir(mode=0o700, exist_ok=True)

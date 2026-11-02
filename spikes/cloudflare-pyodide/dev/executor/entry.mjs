@@ -5,7 +5,7 @@ import {boundedJson} from '../../probe-io.mjs';
 import {verifyModuleResponse} from '../../backend/module-response.mjs';
 import {verifyResolutionResponse} from '../../backend/resolution-response.mjs';
 import {fixtureRejection} from '../../backend/fixture-admission.mjs';
-import {apiTarget} from './policy.mjs';
+import {apiTarget, attemptPayload} from './policy.mjs';
 import {pythonEntry} from './python-entry.mjs';
 
 export class DevApi extends WorkerEntrypoint {
@@ -36,6 +36,9 @@ export default {
     const body = await boundedJson(request, 262144);
     const rejection = fixtureRejection(body, 0);
     if (rejection || body.fixture_mode !== undefined || body.mode !== undefined) return Response.json({error: 'Fixture not admitted', reason: rejection ?? 'unsupported_mode'}, {status: 422});
+    let payload;
+    try { payload = attemptPayload(body, env.API_ORIGIN); }
+    catch { return new Response('Invalid dev public URL configuration', {status: 503}); }
     const calls = [];
     try {
       const api = ctx.exports.DevApi({props: {manifest: body.manifest}});
@@ -52,11 +55,10 @@ export default {
       code.limits = {...code.limits, subRequests: 12};
       const child = env.LOADER.load(code);
       const response = await child.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
-        method: 'POST', body: JSON.stringify({action: 'execute',
-          execution_id: body.execution_id, context: body.context, api_url: 'https://test-api.invalid'}),
+        method: 'POST', body: JSON.stringify(payload),
       }));
-      const payload = await boundedJson(response);
-      return Response.json({result: payload.upstream_result, bootstrap: payload.bootstrap, api_calls: calls,
+      const output = await boundedJson(response);
+      return Response.json({result: output.upstream_result, bootstrap: output.bootstrap, api_calls: calls,
         api_calls_scope: 'parent_module_preflight_only'});
     } catch (error) {
       // Exception strings can contain workflow data or credentials.
