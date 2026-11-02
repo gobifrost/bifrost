@@ -322,3 +322,62 @@ class TestSdkConfigMutationLiveE2E:
                 json={"key": key},
             )
             assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.e2e
+class TestSdkConfigCacheInvalidationLiveE2E:
+    """The versioned config view never retains empty or stale keyed reads."""
+
+    def test_create_update_and_delete_replace_a_warmed_empty_or_full_view(
+        self, e2e_client, org1_service_headers
+    ):
+        key = f"slive_cache_{_uid()}"
+
+        def get():
+            response = e2e_client.post(
+                "/api/sdk/config/get",
+                headers=org1_service_headers,
+                json={"key": key},
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        def list_values():
+            response = e2e_client.post(
+                "/api/sdk/config/list",
+                headers=org1_service_headers,
+                json={},
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        def set_value(value):
+            response = e2e_client.post(
+                "/api/sdk/config/set",
+                headers=org1_service_headers,
+                json={"key": key, "value": value},
+            )
+            assert response.status_code == 204, response.text
+
+        # A complete empty view records a cache entry without reserving a user
+        # config key. Creation must invalidate that negative result.
+        assert key not in list_values()
+        assert get() is None
+        set_value("created")
+        assert get()["value"] == "created"
+
+        # Rewarm the complete view before each mutation so the assertions
+        # catch stale cache data, not just database persistence.
+        assert list_values()[key] == "created"
+        set_value("updated")
+        assert get()["value"] == "updated"
+
+        assert list_values()[key] == "updated"
+        deleted = e2e_client.post(
+            "/api/sdk/config/delete",
+            headers=org1_service_headers,
+            json={"key": key},
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json() is True
+        assert get() is None

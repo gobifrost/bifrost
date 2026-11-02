@@ -84,7 +84,7 @@ async def test_a_change_wakes_executors_once_it_commits(sessions, monkeypatch) -
         wake.assert_not_awaited()  # executors would find nothing to apply yet
         await db.commit()
         await asyncio.sleep(0)
-        wake.assert_awaited_once_with()
+        wake.assert_awaited_once_with(work_dispatch.WAKE_PACKAGE)
 
 
 async def test_concurrent_changes_commit_in_generation_order(sessions) -> None:  # type: ignore[no-untyped-def]

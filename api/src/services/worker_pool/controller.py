@@ -52,7 +52,13 @@ from src.models.orm.workflows import Workflow
 from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
 from src.services.memory_requests import LAUNCHABLE_KEY, workflow_request_sql
 from src.services.service_lifecycle import pending_service_statement
-from src.services.work_dispatch import listen_for_pool_wake, wait_for_next_pass
+from src.services.work_dispatch import (
+    DISPATCH_WAKE_FAMILIES,
+    WAKE_PLATFORM_JOB,
+    WAKE_SERVICE,
+    listen_for_pool_wake,
+    wait_for_next_pass,
+)
 from src.services.worker_pool.claims import CAPACITY_LOCK, REMOTE_WORKER_HANDLER_NAMES
 from src.services.worker_pool.demand import pending_local_platform_job_ids
 from src.services.worker_pool.manifest import (
@@ -825,7 +831,15 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
         controller = WorkerPoolController(client, settings, spec)
         wake = asyncio.Event()
         listener = asyncio.create_task(
-            listen_for_pool_wake(settings.redis_url, wake), name="worker-pool-controller-wake"
+            listen_for_pool_wake(
+                settings.redis_url,
+                {
+                    **{family: wake for family in DISPATCH_WAKE_FAMILIES},
+                    WAKE_PLATFORM_JOB: wake,
+                    WAKE_SERVICE: wake,
+                },
+            ),
+            name="worker-pool-controller-wake",
         )
         try:
             while not stop_event.is_set():

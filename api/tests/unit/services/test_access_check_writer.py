@@ -889,6 +889,147 @@ async def test_enforced_denial_keeps_the_roles_that_decided_the_request(db_sessi
     assert row.details["trace"]["steps"][-1]["status"] == "stopped"
 
 
+async def test_an_enforced_decision_reuses_its_captured_authority_facts(db_session: AsyncSession) -> None:
+    from shared import access_checks
+    from fastapi import HTTPException
+    from src.core.principal import UserPrincipal
+    from src.services import access_check_writer
+    from src.services.authorization.enforce import load_caller, require_permission
+
+    home = await _org(db_session)
+    person = await _person(db_session, home)
+    token = access_checks.collect_person(person.id)
+    try:
+        caller = await load_caller(db_session, UserPrincipal(
+            user_id=person.id, email=person.email, organization_id=home.id,
+        ))
+        with pytest.raises(HTTPException):
+            require_permission(caller, "users.impersonate", home.id)
+        collector = access_checks.current()
+    finally:
+        access_checks.stop_collecting(token)
+    assert collector is not None
+
+    async def authority_reload(*_args, **_kwargs):
+        raise AssertionError("a captured decision must not reload authority")
+
+    with (
+        patch.object(access_check_writer, "load_run_user", authority_reload),
+        patch.object(access_check_writer, "load_powers", authority_reload),
+    ):
+        await flush(db_session, collector, **ROUTE)
+
+    [row] = await _person_rows(db_session, person.id)
+    assert (row.outcome, row.details["enforced"]) == ("failure", True)
+
+
+async def test_a_captured_permission_success_without_a_row_skips_the_audit_fk_lookup(db_session: AsyncSession) -> None:
+    from shared import access_checks
+    from src.core.principal import UserPrincipal
+    from src.services import access_check_writer
+    from src.services.authorization.enforce import load_caller, require_permission
+
+    home = await _org(db_session)
+    person = await _impersonator(db_session, home, home)
+    token = access_checks.collect_person(person.id)
+    try:
+        caller = await load_caller(db_session, UserPrincipal(
+            user_id=person.id, email=person.email, organization_id=home.id,
+        ))
+        require_permission(caller, "users.impersonate", home.id)
+        collector = access_checks.current()
+    finally:
+        access_checks.stop_collecting(token)
+    assert collector is not None
+
+    fk_lookups: list[UUID | None] = []
+    real_lookup = access_check_writer._audit_run_user_id
+
+    async def counted_fk_lookup(db, run_user_id):
+        fk_lookups.append(run_user_id)
+        return await real_lookup(db, run_user_id)
+
+    with patch.object(access_check_writer, "_audit_run_user_id", counted_fk_lookup):
+        await flush(db_session, collector, **ROUTE)
+
+    assert fk_lookups == []
+    assert await _person_rows(db_session, person.id) == []
+
+
+async def test_an_undecided_note_in_a_mixed_collector_reloads_current_authority(db_session: AsyncSession) -> None:
+    from shared import access_checks
+    from fastapi import HTTPException
+    from src.core.principal import UserPrincipal
+    from src.services import access_check_writer
+    from src.services.authorization.enforce import load_caller, require_permission
+
+    home, other = await _org(db_session), await _org(db_session)
+    person = await _person(db_session, home)
+    token = access_checks.collect_run(uuid4(), person.id, _WORKFLOW_ID)
+    try:
+        caller = await load_caller(db_session, UserPrincipal(
+            user_id=person.id, email=person.email, organization_id=home.id,
+        ))
+        with pytest.raises(HTTPException):
+            require_permission(caller, "users.impersonate", other.id)
+        access_checks.note("scope_switch", other.id)
+        collector = access_checks.current()
+    finally:
+        access_checks.stop_collecting(token)
+    assert collector is not None
+
+    load_users: list[UUID] = []
+    load_powers_for: list[UUID | None] = []
+    real_load_user, real_load_powers = access_check_writer.load_run_user, access_check_writer.load_powers
+
+    async def counted_user(db, user_id):
+        load_users.append(user_id)
+        return await real_load_user(db, user_id)
+
+    async def counted_powers(db, workflow_id):
+        load_powers_for.append(workflow_id)
+        return await real_load_powers(db, workflow_id)
+
+    with (
+        patch.object(access_check_writer, "load_run_user", counted_user),
+        patch.object(access_check_writer, "load_powers", counted_powers),
+    ):
+        await flush(db_session, collector, **ROUTE)
+
+    assert load_users == [person.id]
+    assert load_powers_for == [_WORKFLOW_ID]
+    assert {row.resource_type for row in await _rows(db_session, collector)} == {"permission", "scope_switch"}
+
+
+async def test_a_captured_run_as_decision_keeps_its_fresh_audit_subject(db_session: AsyncSession) -> None:
+    from src.services import access_check_writer
+    from src.services.authorization.explain import check_run_as
+
+    home = await _org(db_session)
+    person = await _impersonator(db_session, home, home)
+    target = await _person(db_session, home)
+    run_user = await access_check_writer.load_run_user(db_session, person.id)
+    run_as_target = await access_check_writer.load_run_as_target(db_session, target.id)
+    assert run_user is not None and run_as_target is not None
+    note = Note(
+        "run_as",
+        home.id,
+        {"run_as_user_id": str(target.id), "enforced": True},
+        (run_user, check_run_as(run_user, None, run_as_target)),
+    )
+    loads: list[UUID] = []
+    real_load_user = access_check_writer.load_run_user
+
+    async def counted_user(db, user_id):
+        loads.append(user_id)
+        return await real_load_user(db, user_id)
+
+    with patch.object(access_check_writer, "load_run_user", counted_user):
+        await flush(db_session, _person_collector(person.id, note), **ROUTE)
+
+    assert loads == [person.id]
+
+
 async def test_deleted_original_user_does_not_erase_an_enforced_decision(db_session: AsyncSession) -> None:
     from shared import access_checks
     from fastapi import HTTPException

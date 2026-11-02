@@ -198,6 +198,7 @@ class ControlPlane:
         or claimed in time, and fail work no executor can ever hold."""
         from src.config import get_settings
         from src.services.work_dispatch import (
+            DISPATCH_WAKE_FAMILIES,
             listen_for_pool_wake,
             reconcile_work_dispatches,
             wait_for_next_pass,
@@ -208,7 +209,11 @@ class ControlPlane:
         reachability = Reachability()
         wake = asyncio.Event()
         listener = asyncio.create_task(
-            listen_for_pool_wake(get_settings().redis_url, wake), name="dispatch-reconciler-wake"
+            listen_for_pool_wake(
+                get_settings().redis_url,
+                {family: wake for family in DISPATCH_WAKE_FAMILIES},
+            ),
+            name="dispatch-reconciler-wake",
         )
         try:
             while not self._stop_event.is_set():

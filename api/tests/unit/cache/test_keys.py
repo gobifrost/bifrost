@@ -4,14 +4,19 @@ Unit tests for cache key generation.
 Tests the Redis key generation functions to ensure consistent patterns.
 """
 
+from unittest.mock import AsyncMock
 
 from src.core.cache.keys import (
+    CONFIG_CACHE_COMPLETE_FIELD,
     TTL_CONFIG,
     TTL_FORMS,
     TTL_ORGS,
     TTL_ROLES,
+    config_cache_field,
     config_hash_key,
+    config_hash_key_versioned,
     config_key,
+    config_scope_version_key,
     execution_logs_stream_key,
     form_key,
     forms_hash_key,
@@ -52,6 +57,25 @@ class TestConfigKeys:
         """Individual config key for global scope."""
         key = config_key(None, "database_url")
         assert key == "bifrost:global:config:database_url"
+
+    def test_config_completion_field_cannot_collide_with_encoded_user_fields(self):
+        assert CONFIG_CACHE_COMPLETE_FIELD == "complete"
+        assert config_cache_field("complete") == '"complete"'
+
+    def test_org_scope_version_key(self):
+        assert config_scope_version_key("org-123") == "bifrost:org:org-123:config_version"
+
+    async def test_versioned_config_keys_include_global_and_org_generations(self):
+        redis = AsyncMock()
+        redis.get = AsyncMock(side_effect=[b"4", b"7"])
+        assert await config_hash_key_versioned(redis, "org-123") == (
+            "bifrost:org:org-123:config:g4:o7:v2"
+        )
+
+    async def test_global_versioned_config_key_uses_global_generation(self):
+        redis = AsyncMock()
+        redis.get = AsyncMock(return_value=b"4")
+        assert await config_hash_key_versioned(redis, None) == "bifrost:global:config:v4:v2"
 
 
 class TestFormsKeys:
