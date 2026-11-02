@@ -1,0 +1,14 @@
+{
+  "key": "pr:1191",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Live table rows in apps now appear in their sorted position when a record is created or its sort field changes.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1191",
+      "New use-table ordering tests fail on main (5 of 9) and pass with the fix; app-sdk vitest suite 284/284 passing."
+    ]
+  }
+}
