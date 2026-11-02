@@ -125,10 +125,19 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
         if settings is None:
             settings = get_settings()
 
+        pool_size = settings.database_pool_size
+        max_overflow = settings.database_max_overflow
+        # Retain the existing bounded connection allowance after a burst.
+        # QueuePool discards returned overflow connections, which otherwise
+        # repeats connection setup on this process's main request/claim path.
+        # Preserve SQLAlchemy's unlimited sentinels (size 0, overflow -1).
+        if pool_size > 0 and max_overflow >= 0:
+            pool_size, max_overflow = pool_size + max_overflow, 0
+
         _engine = create_pool_engine(
             settings.database_url,
-            pool_size=settings.database_pool_size,
-            max_overflow=settings.database_max_overflow,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
             pool_timeout=30,  # Fail fast when pool is exhausted
             echo=settings.debug,
         )

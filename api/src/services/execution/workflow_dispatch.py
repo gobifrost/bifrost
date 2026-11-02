@@ -26,11 +26,11 @@ from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
 from src.services.durable_impersonation import pending_durable_impersonation
 from src.services.memory_requests import workflow_request_bytes
-from src.services.work_dispatch import hand_off, stage_dispatch, take_dispatch_payload
+from src.services.work_dispatch import WAKE_WORKFLOW, hand_off, stage_dispatch, take_dispatch_payload
 
 logger = logging.getLogger(__name__)
 
-FAMILY = "workflow_execution"
+FAMILY = WAKE_WORKFLOW
 HANDLER = "workflow.execute"
 HANDLER_VERSION = 1
 
@@ -162,7 +162,7 @@ async def hand_off_workflow_run(accepted: AcceptedRun) -> None:
                 extra={"execution_id": accepted.pending["execution_id"]},
                 exc_info=True,
             )
-    await hand_off()
+    await hand_off(FAMILY)
 
 
 async def claim_workflow_dispatch(
@@ -237,7 +237,7 @@ async def release_workflow_run(
                 extra={"execution_id": str(execution_id)},
                 exc_info=True,
             )
-    await hand_off()
+    await hand_off(FAMILY)
 
 
 async def lock_waiting_run(db: AsyncSession, execution_id: UUID) -> bool | None:

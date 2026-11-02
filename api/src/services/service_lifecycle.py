@@ -34,7 +34,7 @@ from shared.run_lineage import unattended_lineage
 from src.services.memory_requests import workflow_request_sql
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
-from src.services.work_dispatch import wake_pool_workers_after_commit
+from src.services.work_dispatch import WAKE_SERVICE, wake_pool_workers_after_commit
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ async def ensure_definition_for_workflow(
     )
     db.add(definition)
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
     logger.info(
         "Created service definition for workflow %s (%s)",
         workflow.name,
@@ -142,7 +142,7 @@ async def sync_service_organization(db: AsyncSession, workflow: Workflow) -> Non
     definition.organization_id = workflow.organization_id
     definition.updated_at = _now()
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
 
 
 async def sync_definition_for_registration(
@@ -298,7 +298,7 @@ async def set_enabled(
         if definition.blocked_reason == "disabled":
             definition.blocked_reason = None
             definition.restart_eligible_at = None
-        wake_pool_workers_after_commit(db)
+        wake_pool_workers_after_commit(db, WAKE_SERVICE)
     definition.updated_at = _now()
     await db.flush()
     return definition
@@ -315,7 +315,7 @@ async def start_service(db: AsyncSession, definition: ServiceDefinition) -> Serv
     definition.restart_eligible_at = None
     definition.updated_at = _now()
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
     return definition
 
 
@@ -342,7 +342,7 @@ async def restart_service(db: AsyncSession, definition: ServiceDefinition) -> Se
     await _request_attempt_stop(db, definition.id)
     definition.updated_at = _now()
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
     return definition
 
 

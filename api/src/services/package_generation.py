@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
 from src.models.orm.package_changes import PackageChange
-from src.services.work_dispatch import wake_pool_workers_after_commit
+from src.services.work_dispatch import WAKE_PACKAGE, wake_pool_workers_after_commit
 
 
 # Held until the recording transaction ends, so generations commit in order
@@ -37,7 +37,7 @@ async def record_package_change(
     )
     db.add(PackageChange(action=action, package=package, version=version, run_id=run_id))
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_PACKAGE)
 
 
 async def current_package_generation() -> int:

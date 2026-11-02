@@ -269,7 +269,7 @@ async def test_accepted_runs_are_claimable_and_wake_the_executors(db) -> None:
             )
         ).scalar_one()
     assert dispatch.assigned_worker_id is None
-    db.wake.assert_awaited_once()
+    db.wake.assert_awaited_once_with(workflow_dispatch.FAMILY)
     # An unclaimed dispatch stays put until its claim deadline.
     async with db.sessions() as session:
         await session.execute(
@@ -576,7 +576,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert [(entry.execution_id, entry.queued_at) for entry in queued] == [
         (UUID(execution_id), claim.queued_at)
     ]
-    db.wake.assert_awaited_once()
+    db.wake.assert_awaited_once_with(workflow_dispatch.FAMILY)
     second = await _static_executor("second")
     again = await _claim(second)
     assert again is not None and again.claimed is not None
@@ -615,7 +615,7 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     await liveness.end_silent_static_executors()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     await work_dispatch.reconcile_work_dispatches()
-    wake.assert_awaited_once_with()  # the released run is offered to idle executors at once
+    wake.assert_awaited_once_with(work_dispatch.WAKE_AGENT_RUN)  # the released run is offered to idle executors at once
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -1501,7 +1501,7 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
     assert (lost.status, lost.error_message) == (ExecutionStatus.FAILED, recovery.CLAIM_NOT_STARTED)
     assert started.status == ExecutionStatus.RUNNING
     assert agent_dispatch.assigned_worker_id is None
-    wake.assert_awaited_once_with()  # idle executors look for the released run now
+    wake.assert_awaited_once_with(work_dispatch.WAKE_AGENT_RUN)  # idle executors look for the released run now
 
 
 # --- sizing by memory -----------------------------------------------------------

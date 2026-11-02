@@ -35,7 +35,7 @@ from src.services.platform_job_memory_profiles import (
     record_platform_job_memory_profile,
 )
 from src.services.notification_service import get_notification_service
-from src.services.work_dispatch import wake_pool_workers_after_commit
+from src.services.work_dispatch import WAKE_PLATFORM_JOB, wake_pool_workers_after_commit
 
 logger = logging.getLogger(__name__)
 ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requested")
@@ -320,7 +320,7 @@ async def enqueue_platform_job(
     )
     db.add(job)
     # Local executors claim it; the Kubernetes build controller places it.
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_PLATFORM_JOB)
     await db.flush()
     return job, False
 

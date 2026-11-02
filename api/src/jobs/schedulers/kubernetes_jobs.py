@@ -44,7 +44,7 @@ from src.services.kubernetes_execution import load_kubernetes_policy
 from src.services.memory_requests import MIB
 from src.services.platform_jobs import publish_platform_job_update
 from src.services.worker_pool.manifest import WorkerJobSpec, resolve_job_spec_when_ready
-from src.services.work_dispatch import listen_for_pool_wake, wait_for_next_pass
+from src.services.work_dispatch import WAKE_PLATFORM_JOB, listen_for_pool_wake, wait_for_next_pass
 from src.services.worker_pool.sizing import load_job_sizing
 
 logger = logging.getLogger(__name__)
@@ -305,7 +305,10 @@ async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
         controller = KubernetesBuildController(client, settings, spec)
         wake = asyncio.Event()
         listener = asyncio.create_task(
-            listen_for_pool_wake(settings.redis_url, wake), name="kubernetes-build-wake"
+            listen_for_pool_wake(
+                settings.redis_url, {WAKE_PLATFORM_JOB: wake}
+            ),
+            name="kubernetes-build-wake",
         )
         try:
             while not shutdown_event.is_set():

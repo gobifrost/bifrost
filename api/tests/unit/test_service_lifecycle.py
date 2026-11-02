@@ -1003,7 +1003,9 @@ async def test_every_change_that_makes_a_service_claimable_wakes_executors(
     await service_lifecycle.start_service(db_session, definition)
     await service_lifecycle.restart_service(db_session, definition)
     assert wake.call_count == 4
-    wake.assert_called_with(db_session)
+    from src.services.work_dispatch import WAKE_SERVICE
+
+    wake.assert_called_with(db_session, WAKE_SERVICE)
 
 
 @pytest.mark.asyncio

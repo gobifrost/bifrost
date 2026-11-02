@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from shared.policies.probe import make_seed_admin_bypass
 from src.core.log_safety import log_safe
@@ -14,6 +15,22 @@ from src.models.orm.tables import Table
 from src.repositories.org_scoped import OrgScopedRepository
 
 logger = logging.getLogger(__name__)
+
+_AD_HOC_TABLE_NAME_INDEXES = frozenset(
+    {
+        "ix_tables_org_name_unique",
+        "ix_tables_global_name_unique",
+    }
+)
+
+
+def is_ad_hoc_table_name_conflict(exc: IntegrityError) -> bool:
+    """Whether PostgreSQL rejected one of the ad-hoc table name indexes."""
+    orig = getattr(exc, "orig", None)
+    constraint_name = getattr(orig, "constraint_name", None) or getattr(
+        getattr(orig, "__cause__", None), "constraint_name", None
+    )
+    return constraint_name in _AD_HOC_TABLE_NAME_INDEXES
 
 
 class TableRepository(OrgScopedRepository[Table]):
@@ -96,8 +113,18 @@ class TableRepository(OrgScopedRepository[Table]):
             created_by=created_by,
             access=access_json,
         )
-        self.session.add(table)
-        await self.session.flush()
+        # The lookup above is advisory: concurrent requests can both observe an
+        # absent name.  Keep the unique-index conflict in a savepoint so callers
+        # can receive the repository's normal duplicate contract without
+        # invalidating their enclosing transaction.
+        try:
+            async with self.session.begin_nested():
+                self.session.add(table)
+                await self.session.flush()
+        except IntegrityError as exc:
+            if is_ad_hoc_table_name_conflict(exc):
+                raise ValueError(f"Table '{data.name}' already exists") from exc
+            raise
         await self.session.refresh(table)
 
         logger.info(f"Created table '{log_safe(data.name)}' in org {self.org_id}")
