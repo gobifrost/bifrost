@@ -19,8 +19,9 @@ RATES = (2.0, 4.0, 8.0)
 BASE_PROFILE = "hosting-8gib-fixed-workers-1"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+def run_candidate(image: str, description: str) -> None:
+    """Run one fixed-image N2 queue-position diagnostic candidate."""
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--owner-root", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--table-fixture", required=True, type=Path)
@@ -28,18 +29,22 @@ def main() -> None:
 
     # Delegate locking, cleanup, provenance, and all workload gates to the
     # resource-curve runner. This arm varies only the candidate runtime image.
-    resource_curve.FROZEN_IMAGE = CANDIDATE_IMAGE
+    resource_curve.FROZEN_IMAGE = image
     resource_curve.RATES = RATES
     sys.argv = [
         "resource_curve.py",
         "--owner-root", str(args.owner_root),
-        "--api-image", CANDIDATE_IMAGE,
+        "--api-image", image,
         "--out", str(args.out),
         "--table-fixture", str(args.table_fixture),
         "--base-profile", BASE_PROFILE,
         "--counts", ",".join(map(str, COUNTS)),
     ]
     resource_curve.main()
+
+
+def main() -> None:
+    run_candidate(CANDIDATE_IMAGE, __doc__)
 
 
 if __name__ == "__main__":
