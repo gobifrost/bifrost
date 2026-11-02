@@ -328,8 +328,9 @@ def run(manifest_path: Path, out: Path) -> Path:
         ids = bench_run._prepare(cluster, current, profile, "fake", image["tag"])
         current.result["ids"] = ids
         bench_run.capture_idle_db(current, profile)
-        api_pod, api_uid = cluster.api_pod()
-        current.expected_api_uid = api_uid
+        api_pods = cluster.api_pod_records()
+        api_pod = api_pods[0]["pod"]
+        current.expected_api_pods = tuple((record["pod"], record["pod_uid"]) for record in api_pods)
         counters_before, counters_started = cluster.db_counters(), time.monotonic()
         current.result["database_growth_counters"] = {"before": counters_before, "after": None}
         current.save()

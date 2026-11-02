@@ -192,7 +192,7 @@ class Run:
                  api_image: str | None = None) -> None:
         self.cluster = cluster
         self.out = out
-        self.expected_api_uid: str | None = None
+        self.expected_api_pods: tuple[tuple[str, str], ...] | None = None
         self.result: dict = {
             "schema_version": jsoncodec.SCHEMA_VERSION,
             "kind": kind,
@@ -222,13 +222,15 @@ class Run:
 
 
 def snapshot(current: Run, label: str) -> None:
-    """Capture one standard process, container, worker, and database snapshot."""
-    pod, uid = current.cluster.api_pod()
-    if current.expected_api_uid is not None and uid != current.expected_api_uid:
+    """Capture aggregate resources plus one labeled deterministic API smaps sample."""
+    api_pods = current.cluster.api_pod_records()
+    api_identities = tuple((record["pod"], record["pod_uid"]) for record in api_pods)
+    if current.expected_api_pods is not None and api_identities != current.expected_api_pods:
         current.result["api_pod_changes"] += 1
         current.save()
-        raise SystemExit(f"API pod was replaced during the run (before '{label}'); see {current.out}")
-    current.expected_api_uid = uid
+        raise SystemExit(f"API replica identities changed during the run (before '{label}'); see {current.out}")
+    current.expected_api_pods = api_identities
+    pod, uid = api_pods[0]["pod"], api_pods[0]["pod_uid"]
     summary = smaps.summarize(current.cluster.smaps(pod, "api"))
     db = current.cluster.db_counters()
     region = summary.regions.get
@@ -241,6 +243,11 @@ def snapshot(current: Run, label: str) -> None:
         "label": label,
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "api_pod": pod,
+        "api_pods": api_pods,
+        "api_sample": {
+            "pod": pod, "pod_uid": uid,
+            "selection": "sorted ready API replica sample for smaps",
+        },
         "api": {
             "rss_mib": round(summary.rss_kib / 1024, 1),
             "pss_mib": round(summary.pss_kib / 1024, 1),
@@ -265,7 +272,7 @@ def snapshot(current: Run, label: str) -> None:
     })
     current.save()
     api = current.result["snapshots"][-1]["api"]
-    print(f"  [{label}] API {api['rss_mib']:.0f} MiB", flush=True)
+    print(f"  [{label}] API sample {api['rss_mib']:.0f} MiB", flush=True)
 
 
 def _counter_window_error(error: stats.DbCounterWindowError) -> dict:
@@ -339,10 +346,10 @@ def _prepare(cluster: Cluster, current: Run, profile: dict, backend: str | None,
     ids = cluster.exec_python("bench-driver", LOADGEN, ["prepare", json.dumps({"classes": _loadgen_classes(profile)})], timeout_s=900)
     check_destinations(cluster, ids)
     cluster.restart_api()
-    current.result["api_image_provenance"]["api_pod"] = cluster.api_image_evidence(current.result["api_image_provenance"])
+    current.result["api_image_provenance"].update(cluster.api_image_evidence(current.result["api_image_provenance"]))
     current.result["deployed_images"] = deployed_images(cluster)
     current.save()
-    current.expected_api_uid = None
+    current.expected_api_pods = None
     time.sleep(profile["settle_s"])
     return ids
 

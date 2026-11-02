@@ -109,6 +109,17 @@ def soak() -> dict:
 
 
 class HostingTest(unittest.TestCase):
+    def test_immutable_provenance_checks_each_recorded_api_replica(self) -> None:
+        provenance = image_provenance(with_pod=False)
+        provenance["api_pods"] = [
+            {"pod": "api-a", "pod_uid": "a", "image_id": "docker://sha256:config", "digest": "sha256:config"},
+            {"pod": "api-b", "pod_uid": "b", "image_id": "docker://sha256:config", "digest": "sha256:config"},
+        ]
+        self.assertEqual(hosting._immutable_provenance(provenance, "artifact")["cri_config_id"], "sha256:config")
+        provenance["api_pods"][1]["digest"] = "sha256:other"
+        with self.assertRaisesRegex(ValueError, r"api_pods\[1\] digest"):
+            hosting._immutable_provenance(provenance, "artifact")
+
     def scenario(self, directory: Path, *, node_cpu: str = "8", node_price: float | None = 40) -> dict:
         return {
             "evidence": {"campaign": write_reference(directory / "campaign.json", campaign()),

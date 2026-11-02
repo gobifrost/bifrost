@@ -52,6 +52,15 @@ class StatsSummaryTest(unittest.TestCase):
 
 
 class ProbeDeadlineTest(unittest.TestCase):
+    def test_constructor_binds_guard_identity_to_an_explicit_owner_root(self) -> None:
+        owner = Path("/tmp/bench-capacity-owner")
+        identity = Mock()
+        with patch.object(cluster.guard, "expected_identity", return_value=identity) as expected:
+            instance = cluster.Cluster(owner)
+        expected.assert_called_once_with(owner.resolve())
+        self.assertIs(instance.identity, identity)
+        self.assertEqual(instance.owner_root, owner.resolve())
+
     def test_status_probe_passes_its_deadline_to_kubectl(self) -> None:
         instance = cluster.Cluster.__new__(cluster.Cluster)
         instance.kubeconfig = Path("/tmp/bench-probe-kubeconfig")
@@ -60,6 +69,17 @@ class ProbeDeadlineTest(unittest.TestCase):
         with patch.object(cluster.subprocess, "run", return_value=Mock(returncode=0, stdout="{}")) as run:
             self.assertEqual(instance.kubectl("get", "pods", timeout_s=2.5), "{}")
         self.assertEqual(run.call_args.kwargs["timeout"], 2.5)
+
+    def test_restart_waits_for_the_complete_ready_api_replica_set(self) -> None:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+        instance.kubectl = Mock()
+        instance.ready_api_pods = Mock(return_value=[{"metadata": {"name": "bifrost-api-a"}}])
+        instance.restart_api()
+        instance.kubectl.assert_has_calls([
+            (("rollout", "restart", "deployment/bifrost-api"),),
+            (("rollout", "status", "deployment/bifrost-api", "--timeout=900s"),),
+        ])
+        instance.ready_api_pods.assert_called_once_with()
 
     def test_database_probe_passes_its_deadline_to_the_existing_driver(self) -> None:
         instance = cluster.Cluster.__new__(cluster.Cluster)
@@ -143,7 +163,10 @@ class WorkerProcessesTest(unittest.TestCase):
 class LogSourcesTest(unittest.TestCase):
     def test_api_and_worker_log_sources_include_container_and_immutable_pod_identity(self) -> None:
         instance = cluster.Cluster.__new__(cluster.Cluster)
-        instance._ready_api_pod = lambda: {"metadata": {"name": "bifrost-api-1", "uid": "api-uid"}}
+        instance.ready_api_pods = lambda: [
+            {"metadata": {"name": "bifrost-api-2", "uid": "api-uid-2"}},
+            {"metadata": {"name": "bifrost-api-1", "uid": "api-uid-1"}},
+        ]
         pods = {"items": [
             {"metadata": {"name": "bifrost-worker-1", "uid": "worker-uid"},
              "status": {"containerStatuses": [{"name": "worker"}]}},
@@ -156,12 +179,81 @@ class LogSourcesTest(unittest.TestCase):
             return f"logs:{args[1]}:{args[3]}"
 
         instance.kubectl = kubectl
-        self.assertEqual(instance.api_log_source(), {
-            "pod": "bifrost-api-1", "pod_uid": "api-uid", "container": "api", "logs": "logs:bifrost-api-1:api",
-        })
+        self.assertEqual(instance.api_log_sources(), [
+            {"pod": "bifrost-api-1", "pod_uid": "api-uid-1", "container": "api", "logs": "logs:bifrost-api-1:api"},
+            {"pod": "bifrost-api-2", "pod_uid": "api-uid-2", "container": "api", "logs": "logs:bifrost-api-2:api"},
+        ])
         self.assertEqual(instance.worker_log_sources(), [{
             "pod": "bifrost-worker-1", "pod_uid": "worker-uid", "container": "worker", "logs": "logs:bifrost-worker-1:worker",
         }])
+
+
+class ApiPodsTest(unittest.TestCase):
+    @staticmethod
+    def _pod(name: str, uid: str, *, ready: bool = True, deleting: bool = False, image_id: str = "") -> dict:
+        metadata = {"name": name, "uid": uid}
+        if deleting:
+            metadata["deletionTimestamp"] = "2026-11-02T00:00:00Z"
+        return {
+            "metadata": metadata,
+            "status": {
+                "conditions": [{"type": "Ready", "status": "True" if ready else "False"}],
+                "containerStatuses": [{"name": "api", "imageID": image_id}],
+            },
+        }
+
+    def _cluster(self, replicas: int, pods: list[dict]) -> cluster.Cluster:
+        instance = cluster.Cluster.__new__(cluster.Cluster)
+
+        def kubectl(*args, **_kwargs):
+            if args[:3] == ("get", "deployment/bifrost-api", "-o"):
+                return json.dumps({"spec": {"replicas": replicas}})
+            if args[:4] == ("get", "pods", "-l", "app.kubernetes.io/name=bifrost-api"):
+                return json.dumps({"items": pods})
+            raise AssertionError(args)
+
+        instance.kubectl = kubectl
+        return instance
+
+    def test_ready_api_pods_requires_exact_active_ready_replicas_and_sorts_records(self) -> None:
+        instance = self._cluster(2, [self._pod("bifrost-api-b", "b"), self._pod("bifrost-api-a", "a")])
+        self.assertEqual(instance.api_pod_records(), [
+            {"pod": "bifrost-api-a", "pod_uid": "a"}, {"pod": "bifrost-api-b", "pod_uid": "b"},
+        ])
+        self.assertEqual(instance.api_pod(), ("bifrost-api-a", "a"))
+
+    def test_ready_api_pods_rejects_zero_unready_and_extra_active_replicas(self) -> None:
+        for replicas, pods, message in (
+            (0, [], "positive replica count"),
+            (2, [self._pod("bifrost-api-a", "a"), self._pod("bifrost-api-b", "b", ready=False)], "expected 2 ready API pods"),
+            (1, [self._pod("bifrost-api-a", "a"), self._pod("bifrost-api-b", "b")], "expected 1 active API pods"),
+        ):
+            with self.subTest(replicas=replicas, message=message):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    self._cluster(replicas, pods).ready_api_pods()
+
+    def test_image_evidence_checks_every_ready_replica_and_keeps_single_api_field(self) -> None:
+        instance = self._cluster(2, [
+            self._pod("bifrost-api-a", "a", image_id=f"containerd://{CONFIG}"),
+            self._pod("bifrost-api-b", "b", image_id=f"containerd://{CONFIG}"),
+        ])
+        provenance = {"node": {"index_id": INDEX, "manifest_id": MANIFEST, "config_id": CONFIG}}
+        self.assertEqual(instance.api_image_evidence(provenance), {
+            "api_pods": [
+                {"pod": "bifrost-api-a", "pod_uid": "a", "image_id": f"containerd://{CONFIG}", "digest": CONFIG},
+                {"pod": "bifrost-api-b", "pod_uid": "b", "image_id": f"containerd://{CONFIG}", "digest": CONFIG},
+            ],
+        })
+
+        single = self._cluster(1, [self._pod("bifrost-api-a", "a", image_id=f"containerd://{CONFIG}")])
+        self.assertEqual(single.api_image_evidence(provenance)["api_pod"]["pod"], "bifrost-api-a")
+
+        wrong = self._cluster(2, [
+            self._pod("bifrost-api-a", "a", image_id=f"containerd://{CONFIG}"),
+            self._pod("bifrost-api-b", "b", image_id=f"containerd://{OTHER}"),
+        ])
+        with self.assertRaisesRegex(RuntimeError, "outside the verified OCI chain"):
+            wrong.api_image_evidence(provenance)
 
 
 if __name__ == "__main__":
@@ -303,10 +395,10 @@ class ImageProvenanceTest(unittest.TestCase):
 
     def test_api_pod_image_outside_the_verified_chain_fails(self) -> None:
         instance = cluster.Cluster.__new__(cluster.Cluster)
-        instance._ready_api_pod = lambda: {
+        instance.ready_api_pods = lambda: [{
             "metadata": {"name": "bifrost-api-1", "uid": "api-uid"},
             "status": {"containerStatuses": [{"name": "api", "imageID": f"docker-pullable://api@{OTHER}"}]},
-        }
+        }]
         provenance = {"node": {"index_id": INDEX, "manifest_id": MANIFEST, "config_id": CONFIG}}
         with self.assertRaisesRegex(RuntimeError, "outside the verified OCI chain"):
             instance.api_image_evidence(provenance)

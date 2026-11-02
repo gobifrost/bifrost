@@ -279,7 +279,7 @@ class _SegmentRun:
 
     def __init__(self, cluster: Cluster, out: Path, result: dict) -> None:
         self.cluster, self.out, self.result = cluster, out, result
-        self.expected_api_uid: str | None = None
+        self.expected_api_pods: tuple[tuple[str, str], ...] | None = None
 
     def save(self) -> None:
         _atomic_replace(self.out, json.dumps(jsoncodec.encode(self.result), indent=2, allow_nan=False).encode("utf-8"))

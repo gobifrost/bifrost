@@ -180,7 +180,7 @@ class RunHarnessTest(unittest.TestCase):
             result={},
             driver=Mock(return_value={"import_fixture": run.import_diagnostic.fixture_metadata(fixture)}),
             save=Mock(),
-            expected_api_uid=None,
+            expected_api_pods=None,
         )
         profile = {"imports_diagnostic": True, "seed": {}, "worker_policy": {}, "table_docs": 0, "settle_s": 0}
         with patch.object(run, "_image_record", return_value={"id": "sha256:selected"}), \
@@ -471,13 +471,16 @@ class RunHarnessTest(unittest.TestCase):
             "cri_config_id": "sha256:config",
         }
         cluster.image_provenance.return_value = provenance
-        cluster.api_image_evidence.return_value = {"image_id": "containerd://sha256:config", "digest": "sha256:config"}
+        cluster.api_image_evidence.return_value = {
+            "api_pod": {"image_id": "containerd://sha256:config", "digest": "sha256:config"},
+            "api_pods": [{"image_id": "containerd://sha256:config", "digest": "sha256:config"}],
+        }
         cluster.kubectl.return_value = '{"items": []}'
         cluster.exec_python.return_value = {"connections": {}}
         current = SimpleNamespace(
             result={"images": {"api": {"id": "sha256:host"}}},
             driver=Mock(return_value={"seeded": True}),
-            expected_api_uid="old",
+            expected_api_pods=(("old", "old"),),
             save=Mock(),
         )
         profile = run.load_profile("m-capacity")
@@ -497,7 +500,7 @@ class RunHarnessTest(unittest.TestCase):
         self.assertEqual(loadgen_payload["classes"], ["agent-chat", "agent-tools", "wf-io", "wf-noop", "wf-sdk"])
         self.assertEqual(current.save.call_count, 4)
         self.assertNotIn("admission_rejection", current.result)
-        self.assertIsNone(current.expected_api_uid)
+        self.assertIsNone(current.expected_api_pods)
 
     def test_prepare_saves_admission_rejection_evidence_before_raising(self) -> None:
         pods = [{"metadata": {"name": "bifrost-worker-rejected"}}]
@@ -510,7 +513,7 @@ class RunHarnessTest(unittest.TestCase):
         current = SimpleNamespace(
             result={},
             save=lambda: saved.append(deepcopy(current.result)),
-            expected_api_uid=None,
+            expected_api_pods=None,
         )
         with patch.object(run, "_image_record", return_value={"id": "sha256:selected"}), \
              patch.object(run.deploy, "apply", side_effect=rejection):
@@ -713,7 +716,10 @@ class RunHarnessTest(unittest.TestCase):
 
     def test_snapshot_records_processes_for_each_worker(self) -> None:
         cluster = FakeCluster()
-        cluster.api_pod = Mock(return_value=("bifrost-api-1", "api-uid"))
+        cluster.api_pod_records = Mock(return_value=[
+            {"pod": "bifrost-api-1", "pod_uid": "api-uid-1"},
+            {"pod": "bifrost-api-2", "pod_uid": "api-uid-2"},
+        ])
         cluster.smaps = Mock(return_value="ignored")
         cluster.db_counters = Mock(return_value={
             "db_bytes": 0, "wal_bytes": 0, "wal_generated_bytes": 0, "wal_stats_reset": None,
@@ -734,11 +740,44 @@ class RunHarnessTest(unittest.TestCase):
             current.snapshot("idle")
 
         self.assertEqual(current.result["snapshots"][0]["worker_processes"], processes)
+        self.assertEqual(current.result["snapshots"][0]["api_pods"], [
+            {"pod": "bifrost-api-1", "pod_uid": "api-uid-1"},
+            {"pod": "bifrost-api-2", "pod_uid": "api-uid-2"},
+        ])
+        self.assertEqual(current.result["snapshots"][0]["api_sample"], {
+            "pod": "bifrost-api-1", "pod_uid": "api-uid-1",
+            "selection": "sorted ready API replica sample for smaps",
+        })
         self.assertEqual(current.result["snapshots"][0]["wal_generated_bytes"], 0)
         self.assertEqual(current.result["snapshots"][0]["wal_generated_mib"], 0.0)
         self.assertIsNone(current.result["snapshots"][0]["wal_stats_reset"])
         self.assertEqual(cluster.worker_processes.call_args_list[0].args, ("worker-a",))
         self.assertEqual(cluster.worker_processes.call_args_list[1].args, ("worker-b",))
+
+    def test_snapshot_rejects_any_api_replica_identity_change(self) -> None:
+        cluster = FakeCluster()
+        cluster.api_pod_records = Mock(side_effect=[
+            [{"pod": "bifrost-api-1", "pod_uid": "api-uid-1"}, {"pod": "bifrost-api-2", "pod_uid": "api-uid-2"}],
+            [{"pod": "bifrost-api-1", "pod_uid": "api-uid-1"}, {"pod": "bifrost-api-2", "pod_uid": "replacement-uid"}],
+        ])
+        cluster.smaps = Mock(return_value="ignored")
+        cluster.db_counters = Mock(return_value={
+            "db_bytes": 0, "wal_bytes": 0, "wal_generated_bytes": 0, "wal_stats_reset": None,
+        })
+        cluster.container_stats = Mock(return_value=[])
+        cluster.worker_pods = Mock(return_value=[])
+        cluster.worker_image_evidence = Mock(return_value={})
+        summary = SimpleNamespace(rss_kib=0, pss_kib=0, thp_kib=0, regions={})
+
+        with tempfile.TemporaryDirectory() as temporary, self._common_patches(cluster), \
+             patch.object(run.smaps, "summarize", return_value=summary), \
+             patch.object(run.report, "render", return_value="report"):
+            current = run.Run(cluster, "classes", "m", run.load_profile("m"), "fake", Path(temporary) / "snapshot")
+            current.snapshot("before")
+            with self.assertRaisesRegex(SystemExit, "API replica identities changed"):
+                current.snapshot("after")
+
+        self.assertEqual(current.result["api_pod_changes"], 1)
 
     def test_selected_image_must_exist_before_deployment(self) -> None:
         cluster = FakeCluster()

@@ -267,7 +267,7 @@ def capture(cluster, out: Path, name: str, pass_number: int, execution_ids: list
     traces: list[dict] = []
     invalid: list[str] = []
     sources: list[dict] = []
-    items = [cluster.api_log_source(), *cluster.worker_log_sources()]
+    items = [*cluster.api_log_sources(), *cluster.worker_log_sources()]
     for item in items:
         source = {"pod": item["pod"], "pod_uid": item["pod_uid"], "container": item["container"]}
         path = directory / f"{name}-pass-{pass_number}-{source['pod']}-{source['pod_uid']}.log"

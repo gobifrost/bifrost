@@ -149,13 +149,22 @@ def _immutable_provenance(value: object, label: str) -> dict[str, Any]:
     }
     if not all(immutable[key] for key in ("tag", "host_id", "cri_config_id")):
         raise ValueError(f"{label} lacks immutable API image-chain fields")
-    api_pod = provenance.get("api_pod")
-    if api_pod is not None:
-        pod = _object(api_pod, f"{label}.api_pod")
-        # Pod name/UID are intentionally dynamic.  The harness already proves
-        # image_id is in its OCI chain; retain the stable digest-to-CRI check.
-        if pod.get("digest") != immutable["cri_config_id"]:
-            raise ValueError(f"{label}.api_pod digest does not match the selected CRI config")
+    api_pods = provenance.get("api_pods")
+    if api_pods is not None:
+        if not isinstance(api_pods, list) or not api_pods:
+            raise ValueError(f"{label}.api_pods must retain every ready API replica")
+        for index, value in enumerate(api_pods):
+            pod = _object(value, f"{label}.api_pods[{index}]")
+            # Pod name/UID are intentionally dynamic.  The harness proves each
+            # image_id is in its OCI chain; retain every digest-to-CRI check.
+            if pod.get("digest") != immutable["cri_config_id"]:
+                raise ValueError(f"{label}.api_pods[{index}] digest does not match the selected CRI config")
+    else:
+        api_pod = provenance.get("api_pod")
+        if api_pod is not None:
+            pod = _object(api_pod, f"{label}.api_pod")
+            if pod.get("digest") != immutable["cri_config_id"]:
+                raise ValueError(f"{label}.api_pod digest does not match the selected CRI config")
     return immutable
 
 

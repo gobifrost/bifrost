@@ -266,8 +266,16 @@ def parse_worker_processes(text: str) -> list[dict]:
 
 
 class Cluster:
-    def __init__(self) -> None:
-        self.identity = guard.expected_identity(ROOT)
+    def __init__(self, owner_root: Path | None = None) -> None:
+        """Bind this observer to the guarded Kind owner worktree.
+
+        The harness source may live in a different worktree from the guarded
+        cluster it observes.  An explicit owner root retains the full
+        identity, kubeconfig, node, and sentinel verification path; it is not
+        an environment override or a way to adopt an arbitrary cluster.
+        """
+        self.owner_root = (owner_root or ROOT).resolve()
+        self.identity = guard.expected_identity(self.owner_root)
         self.kubeconfig = self.identity.kubeconfig
         self.context = self.identity.context
         self.namespace = guard.TENANT_NS
@@ -313,6 +321,7 @@ class Cluster:
     def restart_api(self) -> None:
         self.kubectl("rollout", "restart", "deployment/bifrost-api")
         self.kubectl("rollout", "status", "deployment/bifrost-api", "--timeout=900s")
+        self.ready_api_pods()
 
     def _node_command(self, *args: str) -> str:
         """Read from the already guarded Kind node without changing its image store."""
@@ -346,16 +355,42 @@ class Cluster:
             raise RuntimeError(f"Kind tag {image} resolves to {cri_id}, expected config {chain['config_id']}")
         return {"tag": image, "host_id": host_id, "node": chain, "cri_config_id": cri_id}
 
-    def _ready_api_pod(self) -> dict:
+    def ready_api_pods(self) -> list[dict]:
+        """All ready API replicas, exactly matching the live Deployment spec.
+
+        The profile controls the Deployment replica count.  Every observation
+        therefore re-reads that desired count and rejects zero, unready, or
+        surplus active replicas rather than silently sampling a subset.
+        """
+        deployment = json.loads(self.kubectl("get", "deployment/bifrost-api", "-o", "json"))
+        replicas = deployment.get("spec", {}).get("replicas")
+        if type(replicas) is not int or replicas < 1:
+            raise RuntimeError(f"API deployment needs a positive replica count, found {replicas!r}")
         pods = json.loads(self.kubectl("get", "pods", "-l", "app.kubernetes.io/name=bifrost-api", "-o", "json"))
+        active = [pod for pod in pods["items"] if pod.get("metadata", {}).get("deletionTimestamp") is None]
         ready = [
-            pod for pod in pods["items"]
-            if pod["metadata"].get("deletionTimestamp") is None
-            and any(c.get("type") == "Ready" and c.get("status") == "True" for c in pod["status"].get("conditions", []))
+            pod for pod in active
+            if any(c.get("type") == "Ready" and c.get("status") == "True" for c in pod["status"].get("conditions", []))
         ]
-        if len(ready) != 1:
-            raise RuntimeError(f"expected one ready API pod, found {len(ready)}")
-        return ready[0]
+        if len(active) != replicas:
+            raise RuntimeError(f"expected {replicas} active API pods, found {len(active)}")
+        if len(ready) != replicas:
+            raise RuntimeError(f"expected {replicas} ready API pods, found {len(ready)}")
+        try:
+            return sorted(ready, key=lambda pod: (pod["metadata"]["name"], pod["metadata"]["uid"]))
+        except (KeyError, TypeError) as error:
+            raise RuntimeError("ready API pod is missing its immutable name or UID") from error
+
+    def api_pod_records(self) -> list[dict]:
+        """Sorted immutable identities for every ready API replica."""
+        return [
+            {"pod": pod["metadata"]["name"], "pod_uid": pod["metadata"]["uid"]}
+            for pod in self.ready_api_pods()
+        ]
+
+    def _ready_api_pod(self) -> dict:
+        """The deterministic sample pod for one-pod maintenance operations."""
+        return self.ready_api_pods()[0]
 
     @staticmethod
     def _verified_image(image_id: str, provenance: dict) -> str:
@@ -366,18 +401,28 @@ class Cluster:
         return digest
 
     def api_image_evidence(self, provenance: dict) -> dict:
-        """The ready API container imageID, proved against the pre-deploy OCI chain."""
-        pod = self._ready_api_pod()
-        statuses = [status for status in pod["status"].get("containerStatuses", []) if status.get("name") == "api"]
-        if len(statuses) != 1:
-            raise RuntimeError(f"expected one API container status in {pod['metadata']['name']}")
-        image_id = statuses[0].get("imageID", "")
-        return {
-            "pod": pod["metadata"]["name"],
-            "pod_uid": pod["metadata"]["uid"],
-            "image_id": image_id,
-            "digest": self._verified_image(image_id, provenance),
-        }
+        """Every ready API imageID, proved against the pre-deploy OCI chain.
+
+        ``api_pod`` remains for legacy single-replica artifacts.  Multi-replica
+        artifacts use ``api_pods`` exclusively so they cannot be mistaken for
+        evidence about one replica only.
+        """
+        evidence: list[dict] = []
+        for pod in self.ready_api_pods():
+            statuses = [status for status in pod["status"].get("containerStatuses", []) if status.get("name") == "api"]
+            if len(statuses) != 1:
+                raise RuntimeError(f"expected one API container status in {pod['metadata']['name']}")
+            image_id = statuses[0].get("imageID", "")
+            evidence.append({
+                "pod": pod["metadata"]["name"],
+                "pod_uid": pod["metadata"]["uid"],
+                "image_id": image_id,
+                "digest": self._verified_image(image_id, provenance),
+            })
+        result: dict = {"api_pods": evidence}
+        if len(evidence) == 1:
+            result["api_pod"] = evidence[0]
+        return result
 
     def worker_image_evidence(self, provenance: dict) -> dict[str, dict]:
         """Ready worker container imageIDs, if workers exist at a snapshot boundary."""
@@ -397,7 +442,7 @@ class Cluster:
         return evidence
 
     def api_pod(self) -> tuple[str, str]:
-        """Name and UID of the single ready API pod."""
+        """Deterministic ready API sample for SQL and smaps maintenance only."""
         pod = self._ready_api_pod()
         return pod["metadata"]["name"], pod["metadata"]["uid"]
 
@@ -417,14 +462,20 @@ class Cluster:
         names = self.kubectl("get", "pods", "--field-selector=status.phase=Running", "-o", "name").split()
         return [name.removeprefix("pod/") for name in names if name.startswith("pod/bifrost-worker-")]
 
+    def api_log_sources(self) -> list[dict]:
+        """Bounded API log tails for every ready replica with immutable identity."""
+        sources = []
+        for pod in sorted(self.ready_api_pods(), key=lambda pod: (pod["metadata"]["name"], pod["metadata"]["uid"])):
+            name, uid = pod["metadata"]["name"], pod["metadata"]["uid"]
+            sources.append({
+                "pod": name, "pod_uid": uid, "container": "api",
+                "logs": self.kubectl("logs", name, "-c", "api", "--tail=1000", check=False),
+            })
+        return sources
+
     def api_log_source(self) -> dict:
-        """Bounded API log tail with immutable pod identity."""
-        pod = self._ready_api_pod()
-        name, uid = pod["metadata"]["name"], pod["metadata"]["uid"]
-        return {
-            "pod": name, "pod_uid": uid, "container": "api",
-            "logs": self.kubectl("logs", name, "-c", "api", "--tail=1000", check=False),
-        }
+        """Legacy deterministic API log sample; callers needing evidence use ``api_log_sources``."""
+        return self.api_log_sources()[0]
 
     def worker_log_sources(self) -> list[dict]:
         """Bounded worker logs with immutable pod identity, including just-finished Jobs."""

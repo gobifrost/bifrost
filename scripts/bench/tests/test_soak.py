@@ -41,7 +41,7 @@ class FakeRun:
     def __init__(self, *args: object) -> None:
         self.out = args[5]
         self.result: dict = {"snapshots": []}
-        self.expected_api_uid: str | None = None
+        self.expected_api_pods: tuple[tuple[str, str], ...] | None = None
         self.events: list[str] = []
         self._save_lock = threading.RLock()
         FakeRun.instances.append(self)
@@ -74,6 +74,9 @@ class FakeCluster:
 
     def api_pod(self) -> tuple[str, str]:
         return "bifrost-api-test", "api-uid"
+
+    def api_pod_records(self) -> list[dict]:
+        return [{"pod": "bifrost-api-test", "pod_uid": "api-uid"}]
 
     def db_counters(self) -> dict:
         self.calls.append("db_counters")

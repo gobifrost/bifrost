@@ -33,8 +33,11 @@ class FakeCluster:
     def worker_log_sources(self) -> list[dict]:
         return [{"container": "worker", **row} for row in self.logs]
 
-    def api_log_source(self) -> dict:
-        return {"pod": "api-a", "pod_uid": "api-uid-a", "container": "api", "logs": "API ready"}
+    def api_log_sources(self) -> list[dict]:
+        return [
+            {"pod": "api-a", "pod_uid": "api-uid-a", "container": "api", "logs": "API ready"},
+            {"pod": "api-b", "pod_uid": "api-uid-b", "container": "api", "logs": "API ready"},
+        ]
 
 
 class ImportDiagnosticTest(unittest.TestCase):
@@ -97,7 +100,7 @@ class ImportDiagnosticTest(unittest.TestCase):
             evidence = import_diagnostic.capture(FakeCluster([{"pod": "worker-a", "pod_uid": "uid-a", "logs": lines}]), Path(temporary), "wf-import-graph", 1, ["one"])
         self.assertEqual(evidence["overall"], "pass")
         self.assertEqual(evidence["events"][0]["source"]["pod_uid"], "uid-a")
-        self.assertEqual(evidence["sources"][0]["container"], "api")
+        self.assertEqual([source["pod_uid"] for source in evidence["sources"][:2]], ["api-uid-a", "api-uid-b"])
         self.assertTrue(evidence["sources"][0]["raw_log_path"].endswith(".log"))
 
     def test_capture_marks_missing_duplicate_and_invalid_events_invalid(self) -> None:
