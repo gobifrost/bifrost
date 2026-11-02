@@ -27,7 +27,6 @@ from hosting_sizing import _counter_label, _fixture, _stable_api  # noqa: E402
 
 COUNTS = (1, 2, 4)
 RATES = (2.0, 4.0, 8.0, 16.0)
-FIXTURE_ORG = "00000000-0000-0000-0000-000000000002"
 FROZEN_IMAGE = "bifrost-api:kind-a74e45295998-hosting-sizing-r1"
 
 
