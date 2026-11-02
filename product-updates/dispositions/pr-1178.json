@@ -1,0 +1,16 @@
+{
+    "entry_ids":  [
+
+                  ],
+    "classification":  "other",
+    "key":  "pr:1178",
+    "summary":  "Execution views stop retaining obsolete listeners after navigation.",
+    "category":  "fix",
+    "review":  {
+                   "evidence":  [
+                                    "https://github.com/gobifrost/bifrost/pull/1178",
+                                    "Pending upstream copy review. Deferred lifecycle regressions verify listener cleanup and stale-scope ownership."
+                                ],
+                   "status":  "draft"
+               }
+}
