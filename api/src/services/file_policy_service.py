@@ -492,11 +492,13 @@ class FilePolicyService:
         if policy_row is None:
             return FilePolicyDecision(False, user, empty_policies)
 
-        resolved_key = (organization_id, policy_row.id)
+        resolved_key = (organization_id, solution_id, policy_row.id)
         if cache is not None and resolved_key in cache.resolved:
             policies, usable = cache.resolved[resolved_key]
         else:
-            policies, usable = await self._resolved_policies(policy_row, organization_id)
+            policies, usable = await self._resolved_policies(
+                policy_row, organization_id, solution_id
+            )
             if cache is not None:
                 cache.resolved[resolved_key] = (policies, usable)
         if not usable:
@@ -560,7 +562,10 @@ class FilePolicyService:
         return principal
 
     async def _resolved_policies(
-        self, policy_row: FilePolicy, organization_id: UUID | None
+        self,
+        policy_row: FilePolicy,
+        organization_id: UUID | None,
+        solution_id: UUID | None = None,
     ) -> tuple[FilePolicies, bool]:
         """Validated, ref-resolved policies for a row, and whether they can grant.
 

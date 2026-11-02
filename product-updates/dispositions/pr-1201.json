@@ -1,0 +1,18 @@
+{
+  "key": "pr:1201",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "Workspace lock files use a private per-user directory and refuse symlinks, legacy entity files are removed on update/delete, Solution file-policy refs resolve in solution scope, duplicate migration paths are escaped, and deploy zips reject symlinks.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1201"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1201",
+      "Port of MTG fork PRs #1252, #1272, #1276, #1331 and #1334; the upstream file-policy helper now threads solution_id."
+    ]
+  },
+  "category": "hardening"
+}
