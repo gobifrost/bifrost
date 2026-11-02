@@ -696,7 +696,7 @@ class WorkflowExecutionConsumer:
         RUNNING) in its claim transaction, or None when the run had already
         moved on (cancelled): the dispatch is then discarded.
         """
-        from src.services.execution.queue_tracker import publish_queue_positions
+        from src.services.execution.queue_tracker import request_queue_position_refresh
 
         dispatch_started = time.perf_counter()
         execution_id = message_data.get("execution_id", "")
@@ -712,16 +712,7 @@ class WorkflowExecutionConsumer:
         # waits on a private Redis result list while pool admission remains
         # fully enforced.
         if not is_sync:
-            # PostgreSQL already owns this claim. Queue notifications must not
-            # strand it before a child starts when publication is unavailable.
-            try:
-                await publish_queue_positions()
-            except Exception:
-                logger.warning(
-                    "Could not update execution queue tracking",
-                    extra={"execution_id": execution_id},
-                    exc_info=True,
-                )
+            request_queue_position_refresh()
 
         if claimed is None:
             logger.info(
