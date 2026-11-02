@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -35,6 +36,39 @@ def worker_sample(workers: int = 2) -> dict:
         "pods": {"status": "observed", "pods": [{
             "pod_uid": f"worker-{index}", "phase": "Running", "ready": {"value": True}, "deletion_at": None,
         } for index in range(workers)]},
+    }
+
+
+def api_provenance(image: str = "candidate:local") -> dict:
+    digest = "sha256:config"
+    return {
+        "tag": image, "host_id": "sha256:host", "cri_config_id": digest,
+        "node": {"config_id": digest, "index_id": "sha256:index", "manifest_id": "sha256:manifest"},
+        "api_pods": [
+            {"pod": "api-a", "pod_uid": "uid-a", "image_id": digest, "digest": digest},
+            {"pod": "api-b", "pod_uid": "uid-b", "image_id": digest, "digest": digest},
+        ],
+    }
+
+
+def prior_step(rate: float, overall: str) -> dict:
+    identities = [{"pod": "api-a", "pod_uid": "uid-a"}, {"pod": "api-b", "pod_uid": "uid-b"}]
+    return {
+        "rate": rate, "overall": overall, "validity": {"invalid": []},
+        "api_identity": {"before": identities, "after": deepcopy(identities), "stable": True},
+        "fixed_worker_evidence": {"status": "observed", "required_ready": 2, "samples": 10},
+    }
+
+
+def interrupted_prior(loaded: dict) -> dict:
+    return {
+        "status": "invalid",
+        "error": {"class": "ValueError", "message": "Out of range float values are not JSON compliant: inf"},
+        "profile_name": "hosting-4gb-fixed-workers-2", "profile": loaded,
+        "mode": "hosting-sizing-fixed-worker", "mix_name": "sdk-heavy", "api_image": "candidate:local",
+        "api_image_provenance": api_provenance(), "rates": [2.0, 4.0, 8.0, 16.0], "workers": 2,
+        "preflight": {"overall": "pass"}, "confirmations": [],
+        "steps": [prior_step(2.0, "pass"), prior_step(4.0, "pass"), prior_step(8.0, "fail")],
     }
 
 
@@ -228,6 +262,102 @@ class HostingSizingTest(unittest.TestCase):
         self.assertEqual(result["steps"][0]["rate"], 2)
         self.assertEqual(result["steps"][0]["fixed_worker_evidence"]["status"], "observed")
         self.assertEqual(result["status"], "invalid")
+
+    def test_checkpoint_encodes_nonfinite_failed_step_and_confirmation_segment_evidence(self) -> None:
+        failed_step = {
+            "overall": "fail",
+            "verdict": {"latency": {"wf-sdk": {"e2e_p95_ci_upper_s": float("inf")}}},
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "timeline.jsonl"
+            hosting_sizing._append_checkpoint(
+                output, "sdk-rate-2:observed:sdk-rate-2_result", {"action_result": failed_step},
+            )
+            hosting_sizing._append_checkpoint(output, "strict-confirmation:segment", {"segment": failed_step})
+            action_checkpoint, segment_checkpoint = map(json.loads, output.read_text(encoding="utf-8").splitlines())
+
+        self.assertIsNone(action_checkpoint["action_result"]["verdict"]["latency"]["wf-sdk"]["e2e_p95_ci_upper_s"])
+        self.assertEqual(action_checkpoint["non_finite_numbers"], [{
+            "path": ["action_result", "verdict", "latency", "wf-sdk", "e2e_p95_ci_upper_s"],
+            "kind": "positive_infinity",
+        }])
+        self.assertIsNone(segment_checkpoint["segment"]["verdict"]["latency"]["wf-sdk"]["e2e_p95_ci_upper_s"])
+        self.assertEqual(segment_checkpoint["non_finite_numbers"][0]["path"][0], "segment")
+
+    def test_continuation_runs_only_midpoint_then_confirms_it(self) -> None:
+        loaded = profile()
+        prior = interrupted_prior(loaded)
+        cluster, prepared, patches = self._harness(loaded, ["pass"])
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = directory / "r2.json"
+            source.write_text(json.dumps(prior), encoding="utf-8")
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], \
+                 patches[8] as preflight, patches[9] as trials, patches[10] as confirm, patches[11]:
+                hosting_sizing.run_campaign(
+                    "hosting-4gb-fixed-workers-2", "candidate:local", directory / "continued",
+                    cluster=cluster, rates=(2, 4, 8, 16), confirm=True,
+                    ensure_fixture=self._fixture(directory), prior_result=source,
+                )
+            result = json.loads((directory / "continued" / "result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([call.args[2] for call in trials.call_args_list], [6])
+        preflight.assert_not_called()
+        confirm.assert_called_once()
+        self.assertEqual(confirm.call_args.args[2], 6)
+        self.assertEqual(len(prepared), 2)
+        self.assertEqual([step["rate"] for step in result["steps"]], [2, 4, 8, 6])
+        self.assertEqual(result["continuation"]["inherited_steps"], prior["steps"])
+        self.assertEqual(result["sustainable_rate"], 6)
+
+    def test_continuation_stops_on_invalid_midpoint_without_confirmation(self) -> None:
+        loaded = profile()
+        prior = interrupted_prior(loaded)
+        cluster, _prepared, patches = self._harness(loaded, ["inconclusive"])
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            source = directory / "r2.json"
+            source.write_text(json.dumps(prior), encoding="utf-8")
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], \
+                 patches[8], patches[9] as trials, patches[10] as confirm, patches[11]:
+                hosting_sizing.run_campaign(
+                    "hosting-4gb-fixed-workers-2", "candidate:local", directory / "continued",
+                    cluster=cluster, rates=(2, 4, 8, 16), confirm=True,
+                    ensure_fixture=self._fixture(directory), prior_result=source,
+                )
+            result = json.loads((directory / "continued" / "result.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([call.args[2] for call in trials.call_args_list], [6])
+        confirm.assert_not_called()
+        self.assertEqual(result["status"], "ramp-stopped")
+        self.assertEqual(result["stopped"], "inconclusive")
+
+    def test_continuation_rejects_mismatched_or_invalid_prior_before_mutation(self) -> None:
+        loaded = profile()
+        cases = {
+            "profile": lambda prior: prior.update(profile_name="other"),
+            "worker-evidence": lambda prior: prior["steps"][0]["fixed_worker_evidence"].update(status="invalid"),
+            "unrelated-error": lambda prior: prior["error"].update(message="interrupted by operator"),
+            "rate-sequence": lambda prior: prior["steps"][1].update(rate=3.0),
+            "image-proof": lambda prior: prior["api_image_provenance"]["api_pods"][1].update(digest="sha256:other"),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as raw:
+                prior = interrupted_prior(loaded)
+                mutate(prior)
+                directory = Path(raw)
+                source = directory / "prior.json"
+                source.write_text(json.dumps(prior), encoding="utf-8")
+                cluster, _prepared, patches = self._harness(loaded, [])
+                with patches[0], patches[1], patches[2], patches[3], patches[4] as reset:
+                    with self.assertRaises(ValueError):
+                        hosting_sizing.run_campaign(
+                            "hosting-4gb-fixed-workers-2", "candidate:local", directory / "continued",
+                            cluster=cluster, rates=(2, 4, 8, 16), confirm=True,
+                            ensure_fixture=self._fixture(directory), prior_result=source,
+                        )
+                reset.assert_not_called()
+                self.assertFalse((directory / "continued").exists())
 
     def test_fixed_profile_must_use_an_exact_positive_worker_count_before_cluster_access(self) -> None:
         loaded = profile()
