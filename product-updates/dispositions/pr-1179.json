@@ -1,0 +1,16 @@
+{
+    "entry_ids":  [
+
+                  ],
+    "classification":  "other",
+    "key":  "pr:1179",
+    "summary":  "Chat restoration errors no longer mark accepted runs failed.",
+    "category":  "fix",
+    "review":  {
+                   "evidence":  [
+                                    "https://github.com/gobifrost/bifrost/pull/1179",
+                                    "Pending upstream copy review. Regression coverage verifies accepted submissions, restoration retry, navigation and replay ownership."
+                                ],
+                   "status":  "draft"
+               }
+}
