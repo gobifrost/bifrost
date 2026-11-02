@@ -113,8 +113,18 @@ class TableRepository(OrgScopedRepository[Table]):
             created_by=created_by,
             access=access_json,
         )
-        self.session.add(table)
-        await self.session.flush()
+        # The lookup above is advisory: concurrent requests can both observe an
+        # absent name.  Keep the unique-index conflict in a savepoint so callers
+        # can receive the repository's normal duplicate contract without
+        # invalidating their enclosing transaction.
+        try:
+            async with self.session.begin_nested():
+                self.session.add(table)
+                await self.session.flush()
+        except IntegrityError as exc:
+            if is_ad_hoc_table_name_conflict(exc):
+                raise ValueError(f"Table '{data.name}' already exists") from exc
+            raise
         await self.session.refresh(table)
 
         logger.info(f"Created table '{log_safe(data.name)}' in org {self.org_id}")

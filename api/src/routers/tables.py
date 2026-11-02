@@ -69,7 +69,7 @@ from src.models.orm.organizations import Organization
 from src.models.orm.tables import Table
 from src.services.audit import emit_audit
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
-from src.repositories.tables import TableRepository, is_ad_hoc_table_name_conflict
+from src.repositories.tables import TableRepository
 from src.core.pubsub import (
     publish_policy_changed,
 )
@@ -226,14 +226,6 @@ async def create_table(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
-    except IntegrityError as e:
-        await ctx.db.rollback()
-        if not is_ad_hoc_table_name_conflict(e):
-            raise
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Table '{data.name}' already exists",
-        ) from None
 
     await emit_audit(
         ctx.db,

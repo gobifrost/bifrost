@@ -412,6 +412,68 @@ class TestCreateService:
             ).scalars().all()
             assert {document.id for document in documents} == {"first", "second"}
 
+    async def test_concurrent_repository_create_preserves_outer_transaction(
+        self, db_session, async_session_factory, monkeypatch
+    ):
+        """A duplicate race keeps the losing repository session usable."""
+        org = await _seed_org(db_session)
+        await db_session.commit()
+        name = _table_name("concurrent_repository")
+        lookup_complete = asyncio.Event()
+        lookup_lock = asyncio.Lock()
+        lookups = 0
+        original_lookup = TableRepository.get_by_name_strict
+
+        async def synchronize_absent_lookups(self, *args, **kwargs):
+            nonlocal lookups
+            result = await original_lookup(self, *args, **kwargs)
+            if result is None:
+                async with lookup_lock:
+                    lookups += 1
+                    if lookups == 2:
+                        lookup_complete.set()
+                await lookup_complete.wait()
+            return result
+
+        monkeypatch.setattr(
+            TableRepository, "get_by_name_strict", synchronize_absent_lookups
+        )
+
+        async def create_from_independent_session() -> tuple[str, str | None]:
+            async with async_session_factory() as session:
+                async with session.begin():
+                    repo = TableRepository(session, org.id)
+                    try:
+                        table = await repo.create_table(
+                            TableCreate(name=name), created_by="writer@test.local"
+                        )
+                        return "created", str(table.id)
+                    except ValueError as exc:
+                        assert str(exc) == f"Table '{name}' already exists"
+                        assert await session.scalar(select(1)) == 1
+                        return "conflict", None
+
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                create_from_independent_session(), create_from_independent_session()
+            ),
+            timeout=10,
+        )
+
+        assert sorted(status for status, _ in outcomes) == ["conflict", "created"]
+
+        async with async_session_factory() as session:
+            tables = (
+                await session.execute(
+                    select(Table).where(
+                        Table.name == name,
+                        Table.organization_id == org.id,
+                        Table.solution_id.is_(None),
+                    )
+                )
+            ).scalars().all()
+            assert len(tables) == 1
+
     async def test_database_uniqueness_keeps_repo_scopes_and_solution_namespaces(
         self, db_session, async_session_factory
     ):
