@@ -1,5 +1,5 @@
 {
   "extends": "hosting-8gib-fixed-workers-4",
   "description": "BENCHMARK-ONLY hosting sizing arm: 8 GiB tenant envelope with elastic workers, warm floor one and final ceiling four. Retains the full M capacity workload and gates.",
-  "worker_policy": {"warm_workers": 1, "max_workers": 4, "worker_memory_mib": 1024, "largest_worker_mib": 1024}
+  "worker_policy": {"warm_workers": 1, "max_workers": 4, "worker_memory_mib": 1024, "largest_worker_mib": 1024, "idle_seconds": 300}
 }

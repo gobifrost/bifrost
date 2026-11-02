@@ -69,6 +69,7 @@ class HostingSizingProfileTest(unittest.TestCase):
                     "max_workers": expected["workers"],
                     "worker_memory_mib": expected["worker_mib"],
                     "largest_worker_mib": expected["worker_mib"],
+                    "idle_seconds": 300,
                 })
 
     def test_patched_api_and_pooler_resources_match_the_profile_effective_requests(self) -> None:

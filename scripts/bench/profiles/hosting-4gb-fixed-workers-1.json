@@ -10,5 +10,5 @@
     "pooler": {"cpu": "100m", "memory": "128Mi"}
   },
   "worker_cpu": "500m",
-  "worker_policy": {"warm_workers": 1, "max_workers": 1, "worker_memory_mib": 512, "largest_worker_mib": 512}
+  "worker_policy": {"warm_workers": 1, "max_workers": 1, "worker_memory_mib": 512, "largest_worker_mib": 512, "idle_seconds": 300}
 }
