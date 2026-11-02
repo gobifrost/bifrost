@@ -78,3 +78,16 @@ The source PR's first broad backend unit run passed 11,251 cases and failed the 
 ```
 
 The focused inventory/config run passed all 75 cases in 69.20 seconds, including the exact CI failure and the scanner's own regression coverage. API Pyright/Ruff also passed with zero errors or warnings. This is a test-inventory repair; the measured runtime sources and hosting results remain unchanged.
+
+## Queue Authentication-Fixture Repair
+
+The first merge-group run passed backend/client unit tests, two of three backend integration shards, lint/type checks, both candidate builds and browser smoke. Shard 3 exposed a pre-existing cross-process fixture leak: the ephemeral CLI subprocess test copied the shared REST user's single-use refresh pair. A child-side authority-epoch refresh consumed that pair without updating the parent fixture, causing the later shared REST requests to fail authentication.
+
+A deterministic reproduction forced a committed authority-epoch change before the child request and then refreshed the parent. The child succeeded but the parent failed to refresh (one failure in 4.37 seconds), proving the leak without a timing dependency. The existing test now inherits the independent CLI fixture's environment credentials and retains both the forced child refresh and the parent-refresh assertion. No runtime authentication, retries, timeouts, pool settings or benchmark sources changed. Read-only review confirmed the session isolation and the observed CI failure sequence.
+
+```bash
+./test.sh tests/e2e/platform/test_cli_ephemeral_login.py tests/e2e/platform/test_cli_events.py tests/e2e/platform/test_cli_push_pull.py tests/unit/test_e2e_fixture_refresh.py -v --durations=0
+./test.sh quality api
+```
+
+The repaired test and its downstream CLI event/file consumers passed all 27 selected cases in 9.80 seconds; API Pyright/Ruff passed with zero errors or warnings. The new regression's call took 0.83 seconds and fixture setup 0.31 seconds. It adds no workflow/deploy/build job: the only new operations are the committed epoch bump and explicit parent refresh.

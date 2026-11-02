@@ -20,6 +20,8 @@ import subprocess
 import sys
 
 import httpx
+import pytest
+from sqlalchemy import text
 
 
 def _mfa_required_for_password(api_url: str) -> bool:
@@ -61,14 +63,18 @@ def test_ephemeral_login_refuses_mfa_required(e2e_api_url, platform_admin):
     assert "MFA" in result.stderr, "refusal should explain that MFA is required"
 
 
-def test_ephemeral_env_vars_authenticate_bifrost_api_subprocess(
-    e2e_api_url, platform_admin
+@pytest.mark.asyncio
+async def test_ephemeral_env_vars_authenticate_bifrost_api_subprocess(
+    cli_client, platform_admin, db_session, human_minter
 ):
-    """Real fixture tokens injected through BIFROST_* authenticate ``bifrost api``."""
+    """The CLI's independent env credentials survive a subprocess refresh."""
+    # cli_client exports its own real credential family through BIFROST_*.
+    # A child can rotate that pair without stranding the shared REST fixture.
     child_env = os.environ.copy()
-    child_env["BIFROST_API_URL"] = e2e_api_url
-    child_env["BIFROST_ACCESS_TOKEN"] = platform_admin.access_token
-    child_env["BIFROST_REFRESH_TOKEN"] = platform_admin.refresh_token
+
+    # Exercise a real refresh in the child, independent of preceding tests.
+    await db_session.execute(text("SELECT authz_epoch_bump_once()"))
+    await db_session.commit()
 
     result = subprocess.run(
         _bifrost_cli() + ["api", "GET", "/api/integrations"],
@@ -79,3 +85,5 @@ def test_ephemeral_env_vars_authenticate_bifrost_api_subprocess(
     )
 
     assert result.returncode == 0, "env-token subprocess API request should succeed"
+    # The child must not consume the shared REST fixture's refresh family.
+    human_minter(platform_admin)
