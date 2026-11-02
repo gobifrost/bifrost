@@ -5,6 +5,7 @@ import io
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -104,6 +105,12 @@ class HostingAvailabilityTest(unittest.TestCase):
     def setUp(self) -> None:
         ReadyInjector.instances.clear()
 
+    @staticmethod
+    def _fixture(directory: Path) -> Path:
+        source = directory / "ensure_bench_writes.py"
+        source.write_text("fixture", encoding="utf-8")
+        return source
+
     def test_raw_api_capture_requires_exactly_two_ready_labelled_tenant_replicas(self) -> None:
         cluster = Mock()
         cluster.kubectl.return_value = json.dumps({"items": [_api_pod("bifrost-api-a", "uid-a"), _api_pod("bifrost-api-b", "uid-b")]})
@@ -122,6 +129,8 @@ class HostingAvailabilityTest(unittest.TestCase):
         def step(_cluster, _ids, rate, _plan, _seed, _disk, **kwargs):
             kwargs["on_event"]({"event": "started", "started": 1.0})
             kwargs["on_event"]({"event": "request_sent", "request_id": "request", "sent": 12.0})
+            kwargs["checkpoint"]({"phase": "sent", "sent": {"requests": [{"id": "request"}]}})
+            kwargs["checkpoint"]({"phase": "outcomes", "outcomes": {"duplicates": []}})
             return {"overall": "pass", "rate": rate, "storage": {"before": {"ok": True}, "after": {"ok": True}}}
 
         with tempfile.TemporaryDirectory() as directory, \
@@ -136,8 +145,12 @@ class HostingAvailabilityTest(unittest.TestCase):
              patch.object(hosting_availability, "ApiAvailabilityInjector", ReadyInjector), \
              patch.object(hosting_availability.search, "run_step", side_effect=step) as run_step:
             out = Path(directory) / "availability"
-            self.assertEqual(hosting_availability.run_arm("hosting-4gb-fixed-workers-2", "candidate:local", out, 3.0, cluster=cluster), out)
+            fixture = self._fixture(Path(directory))
+            cluster.exec_python.return_value = {"status": "pass", "table_rows": 1, "documents": 0}
+            self.assertEqual(hosting_availability.run_arm("hosting-4gb-fixed-workers-2", "candidate:local", out, 3.0,
+                                                          cluster=cluster, ensure_fixture=fixture), out)
             result = json.loads((out / "result.json").read_text(encoding="utf-8"))
+            timeline = (out / "timeline.jsonl").read_text(encoding="utf-8")
 
         check_profile.assert_called_once_with(profile)
         prepare.assert_called_once_with(cluster, unittest.mock.ANY, profile, "fake", "candidate:local")
@@ -146,6 +159,13 @@ class HostingAvailabilityTest(unittest.TestCase):
         self.assertEqual(run_step.call_args.args[2], 3.0)
         self.assertEqual(run_step.call_args.args[3]["mix"], {"wf-sdk": 100})
         self.assertEqual(run_step.call_args.kwargs["on_event"], ReadyInjector.instances[0].observe)
+        self.assertIn("checkpoint", run_step.call_args.kwargs)
+        self.assertEqual(result["search_checkpoints"], {
+            "sent": {"phase": "sent", "sent": {"requests": [{"id": "request"}]}},
+            "outcomes": {"phase": "outcomes", "outcomes": {"duplicates": []}},
+        })
+        self.assertIn('"phase": "search:outcomes"', timeline)
+        cluster.exec_python.assert_called_once()
         self.assertEqual(result["availability"]["fault"]["status"], "ready")
         self.assertEqual(result["availability"]["storage_endpoints"], {"before": {"ok": True}, "after": {"ok": True}})
         self.assertTrue(result["cleanup"]["verified"])
@@ -155,8 +175,18 @@ class HostingAvailabilityTest(unittest.TestCase):
              patch.object(hosting_availability.run, "load_profile", return_value=_profile(warm_workers=0)) as load, \
              patch.object(hosting_availability, "Cluster") as cluster:
             with self.assertRaisesRegex(ValueError, "fixed worker floor"):
-                hosting_availability.run_arm("hosting-4gb-elastic-warm0-max2", "candidate:local", Path(directory) / "out", 1.0)
+                hosting_availability.run_arm("hosting-4gb-elastic-warm0-max2", "candidate:local", Path(directory) / "out", 1.0,
+                                             ensure_fixture=self._fixture(Path(directory)))
         load.assert_called_once_with("hosting-4gb-elastic-warm0-max2")
+        cluster.assert_not_called()
+
+    def test_run_requires_a_canonical_table_fixture_before_cluster_access(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(hosting_availability.run, "load_profile", return_value=_profile()), \
+             patch.object(hosting_availability, "Cluster") as cluster:
+            with self.assertRaisesRegex(FileNotFoundError, "canonical bench_writes fixture"):
+                hosting_availability.run_arm("hosting-4gb-fixed-workers-2", "candidate:local", Path(directory) / "out", 1.0,
+                                             ensure_fixture=Path(directory) / "missing.py")
         cluster.assert_not_called()
 
     def test_fault_failure_is_saved_before_the_final_reset_and_propagates(self) -> None:
@@ -177,13 +207,32 @@ class HostingAvailabilityTest(unittest.TestCase):
              patch.object(hosting_availability.search, "run_step", return_value=step):
             out = Path(directory) / "availability"
             with self.assertRaisesRegex(RuntimeError, "did not prove"):
-                hosting_availability.run_arm("hosting-4gb-fixed-workers-2", "candidate:local", out, 3.0, cluster=cluster)
+                fixture = self._fixture(Path(directory))
+                cluster.exec_python.return_value = {"status": "pass", "table_rows": 1, "documents": 0}
+                hosting_availability.run_arm("hosting-4gb-fixed-workers-2", "candidate:local", out, 3.0,
+                                             cluster=cluster, ensure_fixture=fixture)
             result = json.loads((out / "result.json").read_text(encoding="utf-8"))
 
         self.assertEqual(result["status"], "invalid")
         self.assertEqual(result["availability"]["fault"]["status"], "error")
         self.assertTrue(result["cleanup"]["verified"])
         self.assertEqual(reset.call_count, 2)
+
+    def test_replacement_wait_records_each_raw_survivor_sample_and_aborts_on_unready_survivor(self) -> None:
+        target = _api_pod("bifrost-api-a", "uid-a")
+        survivor = _api_pod("bifrost-api-b", "uid-b")
+        cluster = Mock()
+        cluster.kubectl.return_value = json.dumps({"items": [target, _api_pod("bifrost-api-b", "uid-b", ready=False)]})
+        samples: list[dict] = []
+
+        with self.assertRaisesRegex(RuntimeError, "survivor API Pod disappeared or became unready"):
+            hosting_availability.wait_for_replacement(
+                cluster, target, survivor, {}, threading.Event(), on_sample=samples.append,
+            )
+
+        self.assertEqual(len(samples), 1)
+        self.assertEqual(samples[0]["survivor"], {"name": "bifrost-api-b", "uid": "uid-b", "present": True, "ready": False})
+        cluster.api_pod.assert_not_called()
 
     def test_api_delete_uses_a_loopback_uid_precondition_proxy(self) -> None:
         class Proxy:
@@ -236,12 +285,13 @@ class HostingAvailabilityTest(unittest.TestCase):
         with patch.object(hosting_availability, "host_lock", return_value=contextlib.nullcontext()) as locked, \
              patch.object(hosting_availability, "Cluster", return_value=selected) as cluster, \
              patch.object(hosting_availability, "run_arm", return_value=Path("/tmp/result")) as arm, \
-             patch.object(sys, "argv", ["hosting_availability.py", "--profile", "hosting-4gb-fixed-workers-2", "--owner-root", "/tmp/owner", "--api-image", "candidate:local", "--out", "/tmp/result", "--rate", "3"]):
+            patch.object(sys, "argv", ["hosting_availability.py", "--profile", "hosting-4gb-fixed-workers-2", "--owner-root", "/tmp/owner", "--api-image", "candidate:local", "--out", "/tmp/result", "--rate", "3", "--table-fixture", "/tmp/ensure.py"]):
             hosting_availability.main()
 
         locked.assert_called_once_with()
         cluster.assert_called_once_with(Path("/tmp/owner"))
-        arm.assert_called_once_with("hosting-4gb-fixed-workers-2", "candidate:local", Path("/tmp/result"), 3.0, cluster=selected)
+        arm.assert_called_once_with("hosting-4gb-fixed-workers-2", "candidate:local", Path("/tmp/result"), 3.0,
+                                    cluster=selected, ensure_fixture=Path("/tmp/ensure.py"))
 
 
 if __name__ == "__main__":

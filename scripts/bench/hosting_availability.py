@@ -14,6 +14,7 @@ import copy
 import fcntl
 import json
 import math
+import os
 import re
 import select
 import subprocess
@@ -33,6 +34,7 @@ sys.path.insert(0, str(HERE))
 import deploy  # noqa: E402
 import elasticity  # noqa: E402
 import guard  # noqa: E402
+import hosting_sizing  # noqa: E402
 import run  # noqa: E402
 import search  # noqa: E402
 from cluster import Cluster  # noqa: E402
@@ -120,6 +122,19 @@ def _captured_ready_pod(cluster: Cluster, captured: dict) -> dict:
     return matching[0]
 
 
+def _append_checkpoint(path: Path, phase: str, value: dict) -> None:
+    """Durably retain a safe partial result before the next benchmark action."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps({
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "phase": phase,
+            "value": value,
+        }, sort_keys=True, allow_nan=False) + "\n")
+        output.flush()
+        os.fsync(output.fileno())
+
+
 def delete_api_pod_uid(cluster: Cluster, target: dict) -> dict:
     """Delete one captured API Pod through a loopback-only UID-precondition proxy."""
     cluster.verify()
@@ -173,12 +188,24 @@ def delete_api_pod_uid(cluster: Cluster, target: dict) -> dict:
 
 
 def wait_for_replacement(cluster: Cluster, target: dict, survivor: dict, provenance: dict,
-                         cancelled: threading.Event, *, timeout_s: float = FAULT_TIMEOUT_S) -> dict:
-    """Prove the untouched survivor and a distinct replacement become ready together."""
+                         cancelled: threading.Event, *, timeout_s: float = FAULT_TIMEOUT_S,
+                         on_sample: Callable[[dict], None] | None = None) -> dict:
+    """Prove the survivor stays Ready at every raw poll until a replacement is Ready."""
     target_identity, survivor_identity = _identity(target), _identity(survivor)
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         pods = _raw_api_pods(cluster)
+        survivor_matches = [pod for pod in pods if _identity(pod) == survivor_identity]
+        survivor_ready = len(survivor_matches) == 1 and _ready_api(survivor_matches[0])
+        sample = {
+            "at_epoch_s": time.time(),
+            "survivor": {**survivor_identity, "present": len(survivor_matches) == 1, "ready": survivor_ready},
+            "api_pods": [{**_identity(pod), "ready": _ready_api(pod)} for pod in pods],
+        }
+        if on_sample is not None:
+            on_sample(sample)
+        if not survivor_ready:
+            raise RuntimeError("survivor API Pod disappeared or became unready during replacement wait")
         ready = [pod for pod in pods if _ready_api(pod)]
         identities = {_identity(pod)["uid"] for pod in ready}
         replacement = [pod for pod in ready if _identity(pod)["uid"] not in {
@@ -217,6 +244,10 @@ class ApiAvailabilityInjector:
 
     def _save(self) -> None:
         self.checkpoint(copy.deepcopy(self.state))
+
+    def _record_survivor_sample(self, sample: dict) -> None:
+        self.state.setdefault("survivor_timeline", []).append(sample)
+        self._save()
 
     def start(self) -> None:
         self._save()
@@ -276,6 +307,7 @@ class ApiAvailabilityInjector:
             self._save()
             self.state.update(wait_for_replacement(
                 self.cluster, target, self.survivor, self.state["api_image_provenance"], self._cancel,
+                on_sample=self._record_survivor_sample,
             ))
             self.state["status"] = "ready"
         except BaseException as error:
@@ -315,12 +347,15 @@ def _plan(profile: dict) -> dict:
     return {**capacity, "mix": mixes["sdk-heavy"]}
 
 
-def run_arm(profile_name: str, api_image: str, out: Path, rate: float, *, cluster: Cluster | None = None) -> Path:
+def run_arm(profile_name: str, api_image: str, out: Path, rate: float, *, cluster: Cluster | None = None,
+            ensure_fixture: Path) -> Path:
     """Run one fresh fixed-floor availability fault at the caller's offered SDK rate."""
     if type(rate) not in (int, float) or isinstance(rate, bool) or not math.isfinite(rate) or rate <= 0:
         raise ValueError("rate must be finite and greater than zero")
     if out.exists():
         raise FileExistsError(f"availability output must be fresh: {out}")
+    if not ensure_fixture.is_file():
+        raise FileNotFoundError(f"canonical bench_writes fixture is missing: {ensure_fixture}")
     profile, controls = _fixed_sizing_profile(profile_name)
     plan = _plan(profile)
     deploy.check_profile(profile)
@@ -340,18 +375,37 @@ def run_arm(profile_name: str, api_image: str, out: Path, rate: float, *, cluste
         },
     })
     current.save()
+    checkpoints = out / "timeline.jsonl"
+    checkpoint_lock = threading.Lock()
+
+    def persist_checkpoint(phase: str, value: dict) -> None:
+        with checkpoint_lock:
+            _append_checkpoint(checkpoints, phase, value)
+            current.result["last_checkpoint"] = {"phase": phase}
+            current.save()
+
     injector: ApiAvailabilityInjector | None = None
     failure: BaseException | None = None
     try:
         deploy.reset(selected)
         ids = run._prepare(selected, current, profile, "fake", api_image)
+        fixture = hosting_sizing._fixture(selected, ensure_fixture)
+        current.result["availability"]["table_fixture"] = fixture
+        current.save()
         current.result["availability"]["policy_before"] = elasticity._assert_policy(selected, controls)
         current.result["availability"]["fixed_floor"] = elasticity.wait_for_floor(selected, controls["warm_workers"])
         target, survivor = capture_api_pair(selected)
 
         def checkpoint(state: dict) -> None:
             current.result["availability"]["fault"] = state
-            current.save()
+            persist_checkpoint("fault", state)
+
+        def search_checkpoint(raw: dict) -> None:
+            phase = raw.get("phase")
+            if not isinstance(phase, str) or not phase:
+                raise RuntimeError("SDK search checkpoint has no phase")
+            current.result.setdefault("search_checkpoints", {})[phase] = copy.deepcopy(raw)
+            persist_checkpoint(f"search:{phase}", raw)
 
         injector = ApiAvailabilityInjector(
             selected, target, survivor,
@@ -362,6 +416,7 @@ def run_arm(profile_name: str, api_image: str, out: Path, rate: float, *, cluste
         injector.start()
         step = search.run_step(
             selected, ids, float(rate), plan, plan["seed"], plan["disk"], on_event=injector.observe,
+            checkpoint=search_checkpoint,
         )
         current.result["step"] = step
         current.result["availability"]["storage_endpoints"] = step.get("storage")
@@ -402,9 +457,12 @@ def main() -> None:
     parser.add_argument("--api-image", required=True, help="selected local API image name:tag")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--rate", required=True, type=float, help="one offered SDK arrival rate per second")
+    parser.add_argument("--table-fixture", required=True, type=Path,
+                        help="canonical fixture script that creates the empty bench_writes table")
     args = parser.parse_args()
     with host_lock():
-        print(run_arm(args.profile, args.api_image, args.out, args.rate, cluster=Cluster(args.owner_root)), flush=True)
+        print(run_arm(args.profile, args.api_image, args.out, args.rate, cluster=Cluster(args.owner_root),
+                      ensure_fixture=args.table_fixture), flush=True)
 
 
 if __name__ == "__main__":
