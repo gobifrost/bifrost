@@ -1,0 +1,18 @@
+{
+  "key": "pr:1203",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "Bot Framework token validation shares one JWKS refresh and records failed unknown-key attempts, so forged tokens cannot force an outbound fetch on every request.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1203"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1203",
+      "Port of MTG fork PR #1224; unknown-kid refresh throttling with four regression tests."
+    ]
+  },
+  "category": "hardening"
+}
