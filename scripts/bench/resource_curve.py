@@ -40,7 +40,7 @@ def profile_for(workers: int, base_profile: str = "hosting-8gib-fixed-workers-1"
     profile["worker_policy"] = {"warm_workers": workers, "max_workers": workers,
                                 "worker_memory_mib": 1024, "largest_worker_mib": 1024,
                                 "idle_seconds": 300}
-    profile["capacity"] = {**profile["capacity"], "warmup_s": 30, "window_min_s": 120,
+    profile["capacity"] = {**profile["capacity"], "warmup_s": 30, "window_min_s": 300,
                            "drain_s": 60}
     deploy.check_profile(profile)
     return profile
@@ -96,7 +96,7 @@ def run_campaign(api_image: str, out: Path, *, owner_root: Path | None, ensure_f
         "declaration": {
             "scope": "diagnostic warm sequential cohorts, not reset per rate, no cloud throughput/no 0.1% certificate",
             "rates": list(RATES), "workers": list(counts), "cohorts": "one seeded warm tenant per count; UUID-scoped loadgen requests per rate",
-            "timing": "warmup 30 s, measurement max(120 s, 480/rate), drain 60 s",
+            "timing": "warmup 30 s, measurement max(300 s, 480/rate), drain 60 s",
             "stop": "first fail, invalid, or inconclusive stops that count; no retry, midpoint, descent, or strict certificate",
         },
     })

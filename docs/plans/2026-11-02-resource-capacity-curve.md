@@ -12,7 +12,7 @@ Run one finite warm SDK diagnostic at exactly one, two, and four workers. Each w
 | 2 | 3800m | 4.75 GiB |
 | 4 | 5100m | 6.75 GiB |
 
-Prepare the catalog once per worker count. After correctness preflight, offer 2, 4, 8 and 16 SDK workflows/s in order. Each rate uses its own UUID-scoped cohort on the same warm tenant, with 30 seconds warmup, a measurement window of max(120 seconds, 480/rate), and 60 seconds drain. Stop that count on its first failure, invalidity, or inconclusive result; reset before the next count. There is no retry, midpoint search, or strict reliability certification in this discovery pass. A passing ceiling is a lower bound. An invalid rate is never a capacity upper bound.
+Prepare the catalog once per worker count. After correctness preflight, offer 2, 4, 8 and 16 SDK workflows/s in order. Each rate uses its own UUID-scoped cohort on the same warm tenant, with 30 seconds warmup, a measurement window of max(300 seconds, 480/rate), and 60 seconds drain. Stop that count on its first failure, invalidity, or inconclusive result; reset before the next count. There is no retry, midpoint search, or strict reliability certification in this discovery pass. A passing ceiling is a lower bound. An invalid rate is never a capacity upper bound.
 
 Reuse the existing durable reconciliation, latency/backlog/fault gates, host contention checks, per-pod resource samples, all-API identity/provenance checks, exact fixed-worker observations, SQL/connection counters, and storage snapshots. Retain raw results before observer classification. Append timeline frames durably and serialize the full report at phase boundaries. Finally verify namespace cleanup.
 
@@ -35,3 +35,5 @@ Before any paid cloud validation, prepare the exact node/topology commands, synt
 ## Existing retained evidence
 
 R1 probes and R2/R3 SDK ramps remain authoritative individual observations. R4's general 4 GB profile (one 1 CPU / 1 GiB worker) completed a strict 936-second SDK confirmation: 3731/3731 measured-cohort arrivals correct by deadline, observed completion p95 0.6562435627 seconds, no host invalidity, cleanup verified at 2026-11-02T19:30:52Z. It confirms an operating point, not a maximum or host-packing result. R4 mixed, elasticity and availability follow-ons were intentionally stopped before starting to prioritize the resource curve.
+
+The first discovery attempt used a 120-second minimum and is retained as inconclusive: with two-second backlog sampling it can supply only five doubled minimum blocks, while the existing gate requires ten. The mathematical 240-second minimum supplies ten under the minimum block length. Use the existing 300-second ramp minimum to retain sampling headroom; a regression test exercises the real bootstrap calculation. Longer dependence can still make an individual point inconclusive. The runtime, workload, allocations and statistical gate remain unchanged.

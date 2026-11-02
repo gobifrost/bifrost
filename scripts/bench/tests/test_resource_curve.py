@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import resource_curve  # noqa: E402
+import capacity  # noqa: E402
 
 
 def worker_frame(count: int) -> dict:
@@ -104,6 +105,15 @@ class ResourceCurveTest(unittest.TestCase):
             "pooler": {"cpu": "100m", "memory": "128Mi"},
         })
         self.assertEqual(resource_curve.search.window_seconds(2, {"wf-sdk": 100}, 120, 480), 240)
+
+    def test_minimum_window_has_enough_backlog_blocks_for_the_existing_gate(self) -> None:
+        plan = resource_curve.profile_for(1)["capacity"]
+        seconds = resource_curve.search.window_seconds(4, {"wf-sdk": 100}, plan["window_min_s"], 480)
+        # loadgen.step samples backlog every two seconds. The gate requires ten
+        # doubled blocks, and its minimum block length is six samples.
+        points = [(float(at), 0.0) for at in range(0, int(seconds), 2)]
+        evidence = capacity.residual_block_bootstrap_upper(points, seed=1, resamples=1)
+        self.assertTrue(evidence["conclusive"], evidence)
 
     def test_base_profile_keeps_shared_components_for_a_bounded_contrast(self) -> None:
         base = {"components": {"api": {"replicas": 2, "cpu": "1250m", "memory": "512Mi"},
