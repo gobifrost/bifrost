@@ -1,0 +1,95 @@
+{
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "packet_sha256": {
+    "guest-disposal-entry.mjs": "b37737d0b8f9d4246bb66db89ed8b4c583e0647c3636194adb57db1ca814991b",
+    "wrangler.config.ts": "8d52911bcee8a1fe659c6592d14060835a11dea346db76f2adf246355491924d",
+    "package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "cloudflare.config.ts": "aab3f98512a0004d5edb91fa03be6ebe80a5eade0e3958114fb8dab68224478d"
+  },
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-disposal-probe-v3",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/node_modules,dst=/qualification/packet/node_modules,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/disposal-probe-v3,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+    "--env",
+    "HOME=/qualification/home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--workdir",
+    "/qualification/packet",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "/spike/node_modules/cf/bin/cf",
+    "dev"
+  ],
+  "observer_exit_code": 0,
+  "observation": {
+    "status": 200,
+    "body": {
+      "features": {
+        "worker_dispose": {
+          "available": false
+        },
+        "worker_async_dispose": {
+          "available": false
+        },
+        "entrypoint_dispose": {
+          "available": false
+        },
+        "entrypoint_async_dispose": {
+          "available": false
+        }
+      },
+      "abi": {
+        "python": [
+          3,
+          14,
+          2
+        ],
+        "pyodide": "314.0.6",
+        "soabi": "cpython-314-wasm32-emscripten"
+      },
+      "completed_call_dispose_returned": false,
+      "physical_termination_verified": false,
+      "cloud_invocations": 0
+    }
+  },
+  "runtime_probe_passed": true,
+  "state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 694446,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-02T22:49:21.220692331Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 9.368446097243577
+}
