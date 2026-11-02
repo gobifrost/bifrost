@@ -1,0 +1,79 @@
+{
+  "source": "1017cca1795540f75b9781d87137822a4a42d685",
+  "source_overlay_sha256": {
+    "api/src/services/execution/process_pool.py": "598593cb02afd9efab6c9c6db6935a6bca4e799d47792e63b9f139b5c7b92417",
+    "api/tests/unit/execution/test_result_transport_identity.py": "973f0882f7ac1fda9d5c39cb94efd7868b9eebcdf24ee2ed3cc817326a68f53e"
+  },
+  "project": "bifrost-test-8e9f191a",
+  "cloud_invocations": 0,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/execution/test_result_transport_identity.py",
+        "tests/unit/execution/test_process_pool.py::TestProcessPoolManagerResultHandling",
+        "tests/unit/execution/test_process_pool.py::TestResultTransportMetadata",
+        "tests/unit/dev/test_thin_remote_pool.py",
+        "tests/unit/dev/test_pyodide_attempt_journal.py",
+        "-q"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-8e9f191a",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "ruff",
+        "check",
+        "src/services/execution/process_pool.py",
+        "tests/unit/execution/test_result_transport_identity.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-8e9f191a",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "pyright",
+        "src/services/execution/process_pool.py",
+        "tests/unit/execution/test_result_transport_identity.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "qualification_passed": true,
+  "junit": {
+    "cases": 65,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

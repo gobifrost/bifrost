@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -752,4 +752,71 @@ async def test_unqualified_provider_cannot_claim_even_reserved_work(
     finally:
         async with async_session_factory() as session:
             await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == linux))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_remote_result_cannot_complete_another_run_claimed_by_the_same_worker(
+    owner, async_session_factory, monkeypatch,
+):
+    from src.core.cache import get_redis
+    from src.core.cache.keys import active_execution_key
+    from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.remote_pool import ThinRemoteProcessPool
+    from tests.unit.dev.test_thin_remote_pool import _Transport, _active
+
+    monkeypatch.setattr('src.core.database.get_session_factory', lambda: async_session_factory)
+    lease = await owner(1)
+    selected, other = uuid4(), uuid4()
+    pool = ThinRemoteProcessPool(_Transport())
+    consumer = WorkflowExecutionConsumer(pool=pool)
+    consumer.owner_worker_id = lease.worker_id
+    async with async_session_factory() as session:
+        for subject in (selected, other):
+            session.add(Execution(id=subject, workflow_name='route-identity-contract',
+                                  executed_by_name='test', status=ExecutionStatus.RUNNING,
+                                  started_at=datetime.now(timezone.utc)))
+        await session.flush()
+        for subject in (selected, other):
+            session.add(ExecutionWorkerClaim(worker_id=lease.worker_id,
+                                            family='workflow_execution', subject_id=subject))
+        await session.commit()
+    try:
+        metadata = _active(str(selected))
+        metadata['sync'] = False
+        metadata['workflow_id'] = None
+        metadata['user_id'] = None
+        async with get_redis() as redis:
+            await redis.set(active_execution_key(str(selected)), json.dumps(metadata), ex=60)
+        with (
+            patch.object(pool, '_write_context_to_redis', new_callable=AsyncMock),
+            patch.object(pool, '_write_active_execution_lease', new_callable=AsyncMock),
+        ):
+            await pool.route_execution(str(selected), {'timeout_seconds': 30}, metadata)
+        route = next(iter(pool.processes))
+        event = {'event': 'result', 'route_id': route, 'result': {
+            'execution_id': str(other), 'success': True, 'status': 'Success',
+            'result': {'value': 70}, 'duration_ms': 1}}
+        with remote_owner_context(LeaseRef(lease)):
+            await pool.handle_event(event)
+            await pool.handle_event(event)  # Consumed route cannot replay into the other claim.
+        async with async_session_factory() as session:
+            selected_row = await session.get(Execution, selected)
+            other_row = await session.get(Execution, other)
+            assert selected_row is not None and selected_row.status == ExecutionStatus.SUCCESS
+            assert selected_row.result == {'value': 70}
+            assert other_row is not None and other_row.status == ExecutionStatus.RUNNING
+            assert other_row.result is None
+            other_claim = await session.scalar(select(ExecutionWorkerClaim).where(
+                ExecutionWorkerClaim.subject_id == other))
+            assert other_claim is not None and other_claim.worker_id == lease.worker_id
+        assert pool.processes == {}
+    finally:
+        async with get_redis() as redis:
+            await redis.delete(active_execution_key(str(selected)), active_execution_key(str(other)))
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionLog).where(ExecutionLog.execution_id.in_([selected, other])))
+            await session.execute(delete(ExecutionWorkerClaim).where(ExecutionWorkerClaim.subject_id.in_([selected, other])))
+            await session.execute(delete(Execution).where(Execution.id.in_([selected, other])))
             await session.commit()

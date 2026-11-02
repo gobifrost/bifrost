@@ -1,0 +1,32 @@
+{
+  "source": "1017cca1795540f75b9781d87137822a4a42d685",
+  "fixture_sha256": "7cb922662fdfe7ac20462279472ce138264447f7e0743be04d620c6e33c7c433",
+  "compose_sha256": "51932daa0c59c835c0c9ad7382d107228afcd0116788e1bcfd7aa3e365706bc2",
+  "project": "bifrost-test-8e9f191a",
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/execution/test_result_transport_identity.py",
+        "-q"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "cloud_invocations": 0,
+  "scope": "real process-pool metadata/remote callback with transport doubles; no physical execution",
+  "junit": {
+    "cases": 6,
+    "failures": 4,
+    "errors": 0,
+    "skipped": 0
+  }
+}
