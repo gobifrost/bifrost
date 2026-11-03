@@ -749,6 +749,7 @@ class BifrostClient:
         try:
             await asyncio.Future()
         except asyncio.CancelledError:
+            # Cancellation is the shutdown signal; release owned pools below.
             pass
         finally:
             if owner_pid == os.getpid():
