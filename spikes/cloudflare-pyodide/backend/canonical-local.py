@@ -502,28 +502,28 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
 
                                 observer = asyncio.create_task(observe_write_for_interruption()) if provider_interruption_probe or late_settlement_probe else None
                                 try:
-                                    async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
+                                    async with (nullcontext() if stream_pool_probe else httpx.AsyncClient(timeout=90, follow_redirects=False)) as provider:
                                         request_body = json.loads(json.dumps({"mode": "canonical", "worker_id": str(worker.id),
                                             "execution_id": execution_id, "context": child_context, "manifest": manifest,
                                             **({"fixture_mode": "refresh_interruption"} if interrupt_refresh else {})}, default=str))
                                         if stream_pool_probe:
-                                            from invocation_stream import InvocationStream
+                                            from http_invocation import HttpInvocation
 
-                                            reader = InvocationStream(execution_id, on_accepted)
-                                            async with provider.stream('POST', 'http://bifrost-pyodide-ddf316c1:8799',
-                                                headers={'Accept': 'application/x-ndjson'}, json=request_body) as response:
-                                                self.evidence = await reader.collect(response)
+                                            invocation = HttpInvocation('http://bifrost-pyodide-ddf316c1:8799', request_body, on_accepted)
+                                            self.evidence = await invocation.collect()
+                                            report['http_invocation_component_verified'] = True
                                             report['terminal_collected_monotonic'] = time.monotonic()
                                         else:
                                             response = await provider.post("http://bifrost-pyodide-ddf316c1:8799",
                                             extensions={"trace": trace_provider} if transport_waiter else {},
                                             json=request_body)
-                                        if provider_interruption_probe:
+                                        if provider_interruption_probe and not stream_pool_probe:
                                             response.raise_for_status()
                                 finally:
                                     if observer is not None:
                                         await cancel_and_join(observer)
-                                assert response.status_code == 200, f"Provider status {response.status_code}"
+                                if not stream_pool_probe:
+                                    assert response.status_code == 200, f"Provider status {response.status_code}"
                                 if isolation_label is not None:
                                     report["provider_end_ms"] = int(time.time() * 1000)
                                 if not stream_pool_probe:

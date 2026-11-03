@@ -1,5 +1,9 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest transport increment: [per-attempt HTTP invocation](backend/HTTP-INVOCATION.md).
+Real local engine/SDK execution and late terminal reconciliation pass through
+the extracted component. Same-relay concurrency and deployed cancellation remain open.
+
 Latest lifecycle qualification: [late finite completion after Timeout](backend/LATE-SETTLEMENT.md).
 An actual 40-second engine/SDK success now returns after canonical Timeout; the
 real result/ACK path releases its held handle without overwriting the outcome,

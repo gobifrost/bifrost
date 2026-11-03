@@ -86,6 +86,11 @@ normal result/ACK path, preserving the canonical outcome. The provider is still
 running before fixture teardown: normal invocation settlement needs no process
 kill. This is finite awaited-work evidence, not arbitrary-code cancellation.
 
+The [per-attempt HTTP component](HTTP-INVOCATION.md) now owns the HTTP session
+through terminal EOF independently of scheduling authority. The same real local
+late-completion path passes through it; this extraction adds no RPC object or
+waitUntil lifetime. Same-relay multi-attempt execution remains unqualified.
+
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle
 retention change does not isolate its two causes. The aborted I/O case reported

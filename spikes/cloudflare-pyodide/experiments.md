@@ -703,3 +703,20 @@ results/canonical-failure-repaired/v4.json and the source-bound verifier. The
 old failed receipt still verifies against d352dc663; no old hashes/flags changed.
 Next remains negotiated physical handles/admission and deployed canonical
 control, with provider physical termination a material untrusted-workload gate.
+
+## Per-attempt HTTP component, 2026-11-03
+
+Hypothesis: the physical HTTP operation can be extracted without changing native
+scheduling/result ownership. Change: immutable single-use request and per-attempt
+HTTP session, existing streamed frame decoder; native harness calls this component.
+Command: timeout 430 python3 inbox/http-component-v1/ct128-canonical-failure.py
+--http-component on CT128. Result: four phases exit 0, real upstream engine/SDK
+read/module/upsert70, canonical Timeout preserved, genuine late Success/EOF,
+lost ACK/replay, one launch; provider remains running before owned cleanup.
+Supervisor102.420s includes deliberate40s await. Separate four native unit cases,
+Ruff and Pyright pass in bounded network-disabled Docker. No cloud calls.
+Artifact: backend/HTTP-INVOCATION.md, results/http-component/v1.json and verifier.
+Historical late-settlement verifier now binds d7620e68e rather than changed source.
+Next: replace singleton native transport route state, then qualify multiple
+attempts through the same native relay/session. This is not deployed CPU-stop
+or arbitrary-workload admission proof; no second queue or retry owner introduced.

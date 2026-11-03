@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const source = path => execFileSync('git', ['show', 'd7620e68ee66b1df522d7d073fe8fc58dab83bf2:' + path]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const report = JSON.parse(await readFile(new URL('../results/late-settlement/v1.json', import.meta.url)));
 const prior = JSON.parse(await readFile(new URL('../results/attempt-deadline/v3.json', import.meta.url)));
@@ -16,10 +18,10 @@ assert.equal(report.provider_state_before_cleanup.OOMKilled, false);
 assert.equal(report.provider_process_stop_verified, undefined);
 for (const name of ['canonical-local.py', 'ct128-canonical-failure.py', 'attempt_deadline.py',
   'task_cleanup.py', 'invocation_stream.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  assert.equal(hash(source('spikes/cloudflare-pyodide/backend/' + name)), report.packet_sha256[name], name);
 }
 for (const [path, digest] of Object.entries(report.api_overlay_sha256)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(source(path)), digest, path);
 }
 const run = report.late_settlement_result;
 for (const name of ['late_settlement_probe', 'canonical_timeout_preserved', 'deadline_obligation_held_until_actual_terminal',

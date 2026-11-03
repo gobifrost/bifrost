@@ -1,0 +1,6 @@
+{
+  "environment": "CT128 cached native Docker image; network none; 0.5 CPU/1 GiB/64 PIDs; NODE_OPTIONS=--max-old-space-size=768",
+  "unit_tests": {"command": "python -m unittest -v test_http_invocation", "count": 4, "exit_code": 0},
+  "ruff": {"command": "ruff check --no-cache http_invocation.py test_http_invocation.py canonical-local.py ct128-canonical-failure.py", "exit_code": 0},
+  "pyright": {"command": "pyright --project /qualification/pyright-guest-fixtures.json http_invocation.py test_http_invocation.py canonical-local.py ct128-canonical-failure.py", "exit_code": 0, "errors": 0, "warnings": 0}
+}
