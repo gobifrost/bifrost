@@ -1,5 +1,9 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest native request work: [attempt-scoped collection](backend/WORKFLOW-REQUEST-MUX.md).
+Concurrent synthetic collectors retain separate results; owner-rotation failures
+were reproduced and repaired. Full same-pool concurrent engine/SDK proof remains open.
+
 Latest transport increment: [per-attempt HTTP invocation](backend/HTTP-INVOCATION.md).
 Real local engine/SDK execution and late terminal reconciliation pass through
 the extracted component. Same-relay concurrency and deployed cancellation remain open.

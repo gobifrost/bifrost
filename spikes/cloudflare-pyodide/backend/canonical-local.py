@@ -404,6 +404,10 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
             heartbeat = asyncio.create_task(renew())
             journal = journal_type()
 
+            from workflow_request_mux import WorkflowRequestMux
+
+            request_mux = WorkflowRequestMux(lambda: ref.lease.session_generation)
+
             class LocalPool:
                 launches = 0
                 evidence = None
@@ -442,13 +446,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     # A retained route must not serialize later mutations into
                     # a renewed execution window or different credential set.
                     dispatch_context = json.loads(json.dumps(context, default=str))
-                    accepted = asyncio.get_running_loop().create_future() if stream_pool_probe else None
-
-                    def on_accepted(handle):
-                        report['dispatch_accepted_monotonic'] = time.monotonic()
-                        accepted.set_result(handle)
-
-                    async def launch():
+                    async def launch(accepted_callback=None):
                         self.launches += 1
                         headers = {"Authorization": f"Bearer {self.token}"}
                         async with httpx.AsyncClient(base_url="http://api:8000", timeout=60) as api:
@@ -509,7 +507,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                         if stream_pool_probe:
                                             from http_invocation import HttpInvocation
 
-                                            invocation = HttpInvocation('http://bifrost-pyodide-ddf316c1:8799', request_body, on_accepted)
+                                            invocation = HttpInvocation('http://bifrost-pyodide-ddf316c1:8799', request_body, accepted_callback)
                                             self.evidence = await invocation.collect()
                                             report['http_invocation_component_verified'] = True
                                             report['terminal_collected_monotonic'] = time.monotonic()
@@ -597,11 +595,31 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
 
                         outer = self
 
+                        async def collect_request(payload, accepted_callback):
+                            nonlocal dispatch_context
+                            dispatch_context = payload['context']
+
+                            def on_accepted(handle):
+                                report['dispatch_accepted_monotonic'] = time.monotonic()
+                                accepted_callback(handle)
+
+                            return await launch(on_accepted)
+
+                        if stream_pool_probe:
+                            request_mux.bind(execution_id, collect_request)
+
                         class Transport:
                             connected = True
                             hostname = 'local-workerd-qualification'
-                            result = None
-                            collection = None
+                            _result = None
+
+                            @property
+                            def collection(self):
+                                return request_mux.collection(execution_id) if stream_pool_probe else None
+
+                            @property
+                            def result(self):
+                                return request_mux.result(execution_id) if stream_pool_probe else self._result
 
                             @property
                             def lease(self):
@@ -618,20 +636,13 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 nonlocal dispatch_context
                                 if action != 'workflow' or expected_generation != ref.lease.session_generation:
                                     raise ConnectionError('Fixed workflow transport/session only')
-                                dispatch_context = json.loads(json.dumps(payload['context'], default=str))
                                 try:
                                     if stream_pool_probe:
-                                        async def collect():
-                                            self.result = await launch()
-                                            return self.result
-
-                                        self.collection = asyncio.create_task(collect())
-                                        await asyncio.wait((accepted, self.collection), return_when=asyncio.FIRST_COMPLETED)
-                                        if not accepted.done():
-                                            await self.collection
-                                            raise ConnectionError('Stream completed without accepted frame')
-                                        return {'runtime_handle': accepted.result()}
-                                    self.result = await launch()
+                                        response = await request_mux.request(action, payload, expected_generation=expected_generation)
+                                        report['request_mux_verified'] = True
+                                        return response
+                                    dispatch_context = json.loads(json.dumps(payload['context'], default=str))
+                                    self._result = await launch()
                                 except Exception as exc:
                                     # The remote request may already have made
                                     # effects. Preserve uncertainty in the real

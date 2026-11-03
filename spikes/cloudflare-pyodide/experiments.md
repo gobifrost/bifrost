@@ -720,3 +720,29 @@ Historical late-settlement verifier now binds d7620e68e rather than changed sour
 Next: replace singleton native transport route state, then qualify multiple
 attempts through the same native relay/session. This is not deployed CPU-stop
 or arbitrary-workload admission proof; no second queue or retry owner introduced.
+
+## Attempt-scoped request collection, 2026-11-03
+
+Hypothesis: independently retained collection slots can preserve native workflow
+identity across concurrent request waiters without a new scheduling authority.
+Change: WorkflowRequestMux binds trusted collectors per execution, snapshots
+native payloads, retains one accepted future/task/result per run, refuses changed
+duplicates, and leaves collection live when a request waiter is cancelled.
+Command: native network-disabled python -m unittest -v test_workflow_request_mux
+ test_http_invocation on CT128; targeted Ruff/Pyright against four changed files.
+Five exposing mux cases initially fail two assertions: replacement-generation
+retained ACK and owner rotation before scheduled collector start. Both repaired
+by immutable admission generation and boundary rechecks. Source/fail-first
+summary retained. V2 assertions passed but exposed an unobserved retained task in
+the ownership-race test; V3 explicitly awaits/asserts that failure, no task cancel.
+Final nine-case run passes without that warning; Ruff/Pyright pass. Real single-
+attempt engine/SDK late-settlement runs v1 and v3 pass independently; v4 binds the
+final harness context-update ordering. No cloud calls or shared API edits.
+Artifacts: backend/WORKFLOW-REQUEST-MUX.md, results/request-mux and source verifier.
+Next: remove remaining singleton validator fields and instantiate one actual
+native pool/worker/session for two engine/SDK runs, then bounded terminal-ACK
+retirement. Synthetic concurrency is not that acceptance, nor CPU-stop proof.
+
+Final request-mux V4 passes all four real phases, supervisor102.210s, provider
+still running/no OOM before owned cleanup and no running owned test containers
+afterwards. Nine focused cases and Ruff/Pyright pass on the exact final packet.
