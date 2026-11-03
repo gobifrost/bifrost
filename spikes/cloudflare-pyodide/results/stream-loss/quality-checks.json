@@ -1,0 +1,40 @@
+{
+    "scope":  "Focused static checks for the local accepted-stream-loss fixture",
+    "guest":  "CT128/bifrost-pyodide-test-01",
+    "image":  "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "initial_pyright":  {
+                            "command":  "pyright provider-response-loss.py ct128-canonical-failure.py",
+                            "cwd":  "/qualification",
+                            "exit_code":  1,
+                            "errors":  43,
+                            "disposition":  "Standalone harness omitted native source/config. Conditional deadline bindings also made explicit in v2; original v1 source and runtime receipt retained."
+                        },
+    "intermediate_pyright":  {
+                                 "command":  "pyright --project /app/pyrightconfig.json /qualification/provider-response-loss.py /qualification/ct128-canonical-failure.py",
+                                 "cwd":  "/app",
+                                 "exit_code":  1,
+                                 "errors":  1,
+                                 "disposition":  "Companion invocation_stream import path absent. Task config extends native config and adds /app plus /qualification; no diagnostic suppression."
+                             },
+    "final_pyright":  {
+                          "command":  "pyright --project /qualification/pyright-guest-fixtures.json /qualification/provider-response-loss.py /qualification/ct128-canonical-failure.py",
+                          "exit_code":  0,
+                          "errors":  0,
+                          "warnings":  0
+                      },
+    "ruff":  {
+                 "command":  "ruff check --no-cache provider-response-loss.py ct128-canonical-failure.py",
+                 "exit_code":  0
+             },
+    "resource_bounds":  {
+                            "network":  "none",
+                            "cpus":  0.5,
+                            "memory_mib":  512,
+                            "pids":  64
+                        },
+    "native_overlay_readback":  {
+                                    "api/src/worker/remote/protocol.py":  "91db42936f3235599243af681d24886fbb79180a7020633dfafe35887b3956d5",
+                                    "api/src/worker/remote/remote_pool.py":  "abb9a48eeaa2475f2cf42367073c64e8b50f24b2d1f7479493d5b0c433ba429a"
+                                },
+    "cloud_invocations":  0
+}

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(await readFile(new URL('../results/stream-pool/v1.json', import.meta.url)));
 assert.equal(receipt.qualification_passed, true);
@@ -9,7 +10,7 @@ assert.deepEqual(receipt.running_after_cleanup, []);
 assert.equal(receipt.provider_state_before_cleanup.OOMKilled, false);
 for (const name of ['canonical-local.py', 'authorized-local-entry.mjs', 'ct128-canonical-failure.py',
   'invocation-stream.mjs', 'invocation_stream.py', 'task_cleanup.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), receipt.packet_sha256[name], name);
+  assert.equal(hash(execFileSync('git', ['show', `2487819b5:spikes/cloudflare-pyodide/backend/${name}`])), receipt.packet_sha256[name], name);
 }
 for (const name of ['authorized-local-entry.mjs', 'invocation-stream.mjs']) {
   assert.equal(receipt.packet_sha256['project/backend/' + name], receipt.packet_sha256[name]);

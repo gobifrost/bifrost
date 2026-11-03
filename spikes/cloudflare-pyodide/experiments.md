@@ -1,5 +1,23 @@
 # Compact experiment log
 
+## Accepted stream loss with retained native result, 2026-11-03
+
+Hypothesis: a real broken accepted stream can preserve the original native
+invocation and reconcile an authenticated retained terminal event without a
+second launch or renewed deadline. The TCP fixture forwards accepted, retains
+the real engine/SDK result through upstream Launcher, then closes without the
+terminal frame/chunked EOF. `ct128-canonical-failure.py --stream-loss` v1 passes:
+RemoteProtocolError, canonical Running, busy invocation retained, duplicate receipt,
+owner rotation/stale rejection, Success/70 through real pool/consumer, lost ACK,
+access+refresh401 and cleanup. Control reconnect is explicitly simulated.
+Standalone Pyright initially failed from absent native/companion import context
+and conditional bindings; added an extends-only fixture import config and made
+deadline bindings explicit, preserving diagnostics and the v1 artifact. V2 uses
+`--stream-loss --revision 2`, with separate source/receipt and Ruff/Pyright checks.
+Artifacts: backend/STREAM-LOSS-RECONCILIATION.md, results/stream-loss, source-bound
+verifier. Next: interruption without a retained terminal event. No cloud calls,
+untrusted admission, physical-stop inference or changes to shared native sources.
+
 ## Prompt opaque acceptance with awaited response lifetime, 2026-11-03
 
 Hypothesis: the real pool can bind an invocation before completion without an

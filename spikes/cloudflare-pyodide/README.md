@@ -1,9 +1,10 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
-Latest integration: [early invocation ACK and awaited result streaming](backend/STREAMED-INVOCATION.md).
+Latest integration: [accepted stream loss and canonical reconciliation](backend/STREAM-LOSS-RECONCILIATION.md).
 The real ThinRemoteProcessPool now passes a local workerd engine/SDK run and
 canonical lost-ACK replay without a fake PID. Prompt dispatch ACK now passes
-locally; this private adapter still awaits authorized runtime selection and deployed resource/
+locally, including retained-result recovery after stream loss. This private
+adapter still awaits authorized runtime selection and deployed resource/
 cancellation qualification; public Pyodide admission remains disabled.
 
 Current lifecycle assessment: [normal completion and abnormal cancellation](backend/LIFECYCLE.md).

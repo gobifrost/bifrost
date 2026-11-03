@@ -68,8 +68,8 @@ node spikes/cloudflare-pyodide/backend/verify-physical-pool.mjs
 node spikes/cloudflare-pyodide/backend/verify-stream-pool.mjs
 ```
 
-Next safe increment: qualify a lost stream after acceptance against retained
-canonical ownership, without redispatch or renewed deadline. Restarted-provider
+The [lost-stream follow-on](STREAM-LOSS-RECONCILIATION.md) now qualifies retained
+canonical ownership without redispatch or a renewed deadline locally. Restarted-provider
 inventory, authorized runtime negotiation, deployed enforcement/accounting and
 untrusted isolation remain separate acceptance gates. No cloud reopening,
 spending or untrusted admission is authorized by this result.

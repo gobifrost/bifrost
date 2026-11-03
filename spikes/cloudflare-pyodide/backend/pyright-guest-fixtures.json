@@ -1,0 +1,4 @@
+{
+  "extends": "/app/pyrightconfig.json",
+  "extraPaths": ["/app", "/qualification"]
+}

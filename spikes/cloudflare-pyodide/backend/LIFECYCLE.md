@@ -55,6 +55,12 @@ explicitly observes already-started work continuing. This is normal completion
 and transport evidence, not physical-stop acceptance. No returned RpcTarget
 object is introduced by this HTTP path.
 
+The [accepted-stream-loss fixture](STREAM-LOSS-RECONCILIATION.md) now preserves
+an uncertain native invocation, owner fencing and the original deadline while
+recovering an upstream Launcher-retained result. It does not infer failure or
+retry from a broken response. The control reconnect is simulated; recovery of
+a terminal result never received by the launcher remains unqualified.
+
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle
 retention change does not isolate its two causes. The aborted I/O case reported

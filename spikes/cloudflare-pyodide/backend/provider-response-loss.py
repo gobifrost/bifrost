@@ -4,13 +4,14 @@ import importlib.util
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 
 
-async def main(*, recover_retained=False, deadline_probe=False):
+async def main(*, recover_retained=False, deadline_probe=False, stream_probe=False):
     from sqlalchemy import select
     from src.core.database import close_db, get_db_context, init_db
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
@@ -23,6 +24,7 @@ async def main(*, recover_retained=False, deadline_probe=False):
     fixture = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fixture)
     original_post = httpx.AsyncClient.post
+    original_stream = httpx.AsyncClient.stream
     original_process = WorkflowExecutionConsumer.process_message
     observed = asyncio.get_running_loop().create_future()
     report = {"runtime": "local-workerd-canonical-response-loss", "provider_response_loss_probe": True,
@@ -52,10 +54,28 @@ async def main(*, recover_retained=False, deadline_probe=False):
             body = await reader.readexactly(size)
             request = json.loads(body)
             async with httpx.AsyncClient(timeout=90, follow_redirects=False) as upstream:
-                response = await original_post(upstream, "http://bifrost-pyodide-ddf316c1:8799",
+                if stream_probe:
+                    from invocation_stream import InvocationStream
+
+                    def forward_accepted(handle):
+                        line = (json.dumps({'protocol': 1, 'type': 'accepted',
+                            'execution_id': request['execution_id'], 'runtime_handle': handle}) + '\n').encode()
+                        writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n'
+                                     b'Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n')
+                        writer.write(f'{len(line):x}\r\n'.encode() + line + b'\r\n')
+                        report.update(stream_accepted_forwarded=True, accepted_runtime_handle=handle)
+
+                    collector = InvocationStream(request['execution_id'], forward_accepted)
+                    async with original_stream(upstream, 'POST', 'http://bifrost-pyodide-ddf316c1:8799',
+                        content=body, headers={'Content-Type': 'application/json', 'Accept': 'application/x-ndjson'}) as response:
+                        evidence = await collector.collect(response)
+                    await writer.drain()
+                    report['terminal_frame_deliberately_withheld'] = True
+                else:
+                    response = await original_post(upstream, "http://bifrost-pyodide-ddf316c1:8799",
                                                content=body, headers={"Content-Type": "application/json"})
-                assert response.status_code == 200 and len(response.content) <= 262144
-                evidence = response.json()
+                    assert response.status_code == 200 and len(response.content) <= 262144
+                    evidence = response.json()
                 assert evidence["result"]["success"] is True
                 assert evidence["result"]["result"]["value"] == 70
                 assert evidence["result"]["result"]["credential_redaction_probe"] == "[REDACTED]"
@@ -70,10 +90,10 @@ async def main(*, recover_retained=False, deadline_probe=False):
                     headers={"Authorization": "Bearer " + context["engine_token"]},
                     params={"scope": context["organization"]["id"]})
                 assert document.status_code == 200 and document.json()["data"]["value"] == 70
-            report.update(provider_success_before_drop=True, independent_document_value=70,
-                          successful_upserts=1, response_bytes_discarded=len(response.content))
+            report.update(provider_success_before_drop=True, independent_document_value=70, successful_upserts=1)
+            if not stream_probe:
+                report['response_bytes_discarded'] = len(response.content)
             if deadline_probe:
-                from datetime import datetime, timezone
                 deadline = datetime.fromisoformat(context['workflow_deadline'])
                 remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
                 if not 0 < remaining < 30:
@@ -120,7 +140,8 @@ async def main(*, recover_retained=False, deadline_probe=False):
                 assert len(launcher.pending_terminal) == 1
                 report["upstream_retained_before_response_drop"] = True
             observed.set_result(True)
-            # The caller receives no HTTP response bytes, despite completed effects.
+            # Streaming case receives acceptance, but neither terminal frame nor
+            # chunked EOF. Legacy case receives no HTTP response bytes.
         except Exception as exc:
             if not observed.done():
                 observed.set_exception(exc)
@@ -141,6 +162,11 @@ async def main(*, recover_retained=False, deadline_probe=False):
             if provider_request:
                 report["collector_error_type"] = "RemoteProtocolError"
             raise
+
+    def intercepted_stream(client, method, url, *args, **kwargs):
+        if str(url) == 'http://bifrost-pyodide-ddf316c1:8799':
+            url = f'http://127.0.0.1:{port}'
+        return original_stream(client, method, url, *args, **kwargs)
 
     async def capture_process(consumer, message, claimed):
         nonlocal pool_seen, fixture_worker_id, fixture_execution_id, launcher, lease_ref
@@ -171,11 +197,32 @@ async def main(*, recover_retained=False, deadline_probe=False):
         try:
             await pool_seen.receipt
         except httpx.RemoteProtocolError:
-            pass  # Assert and inspect the exact observed failure below; never ACK it.
+            report['collector_error_type'] = 'RemoteProtocolError'
         else:
             raise AssertionError("Collector must report the actual socket loss")
         await observed
         assert pool_seen.evidence is None and pool_seen.launches == 1
+        reconciler = consumer
+        original_deadline = None
+        if stream_probe:
+            from types import SimpleNamespace
+
+            handle = pool_seen.physical_pool.processes[pool_seen.physical_route]
+            original_deadline = pool_seen.info.started_at + timedelta(seconds=pool_seen.info.timeout_seconds)
+            if (handle.process.remote_pid is not None or handle.process.runtime_handle != report['accepted_runtime_handle']
+                or pool_seen.physical_pool._build_heartbeat()['busy_count'] != 1):
+                raise RuntimeError('Lost stream discarded or fabricated the accepted invocation obligation')
+            inventory = pool_seen.journal.inventory()
+            if len(inventory) != 1 or inventory[0]['collection_state'] != 'failed' or inventory[0]['acknowledged']:
+                raise RuntimeError('Lost stream incorrectly acknowledged its failed collection')
+
+            async def through_pool(result):
+                await pool_seen.physical_pool.handle_event({'event': 'result',
+                    'route_id': pool_seen.physical_route, 'result': result})
+
+            reconciler = SimpleNamespace(owner_worker_id=consumer.owner_worker_id, _handle_result=through_pool)
+            report.update(stream_loss_probe=True, opaque_obligation_retained_after_loss=True,
+                failed_collection_unacknowledged=True, original_deadline=original_deadline.isoformat())
         async with get_db_context() as db:
             from uuid import UUID
             row = await db.get(Execution, UUID(message["execution_id"]))
@@ -206,8 +253,16 @@ async def main(*, recover_retained=False, deadline_probe=False):
             assert current is not None
             lease_ref.lease = current
             event_id, event = next(iter(launcher.pending_terminal.items()))
+            original_cutoff = None
+            if stream_probe:
+                async def forbidden_stream_relaunch():
+                    raise AssertionError('Accepted invocation must not be redispatched')
+
+                duplicate = await pool_seen.journal.dispatch(current, 'route', fixture_execution_id, forbidden_stream_relaunch)
+                if duplicate is not pool_seen.receipt:
+                    raise RuntimeError('Stream loss replaced the original receipt')
+                report['duplicate_reused_failed_receipt'] = True
             if deadline_probe:
-                from datetime import datetime, timedelta, timezone
                 original_cutoff = datetime.fromisoformat(report['canonical_deadline'])
                 if datetime.now(timezone.utc) <= original_cutoff:
                     raise RuntimeError('Reconnect did not cross original deadline')
@@ -231,12 +286,18 @@ async def main(*, recover_retained=False, deadline_probe=False):
                 assert active.status_code == 200
                 report["credential_active_after_owner_reconnect_status"] = active.status_code
             try:
-                await pool_seen.journal.reconcile_retained_workflow(stale, "route", event, consumer, pool_seen.info)
+                await pool_seen.journal.reconcile_retained_workflow(stale, "route", event, reconciler, pool_seen.info)
             except CredentialRouteChanged:
                 report["stale_retained_owner_rejected"] = True
             else:
                 raise AssertionError("Stale owner accepted retained result")
-            assert await pool_seen.journal.reconcile_retained_workflow(current, "route", event, consumer, pool_seen.info)
+            assert await pool_seen.journal.reconcile_retained_workflow(current, "route", event, reconciler, pool_seen.info)
+            if stream_probe:
+                assert original_deadline is not None
+                if (pool_seen.physical_pool.processes or pool_seen.physical_pool._build_heartbeat()['busy_count'] != 0
+                    or pool_seen.info.started_at + timedelta(seconds=pool_seen.info.timeout_seconds) != original_deadline):
+                    raise RuntimeError('Retained terminal reconciliation failed route cleanup or renewed deadline')
+                report.update(native_opaque_route_released_after_reconciliation=True, original_deadline_preserved=True)
             async with get_db_context() as db:
                 row = await db.get(Execution, UUID(fixture_execution_id))
                 assert row.status == ExecutionStatus.SUCCESS and row.result["value"] == 70
@@ -267,7 +328,7 @@ async def main(*, recover_retained=False, deadline_probe=False):
                 report["retained_event_survived_lost_ack"] = True
             else:
                 raise AssertionError("First ACK unexpectedly delivered")
-            assert await pool_seen.journal.reconcile_retained_workflow(current, "route", event, consumer, pool_seen.info)
+            assert await pool_seen.journal.reconcile_retained_workflow(current, "route", event, reconciler, pool_seen.info)
             await bridge.acknowledge(event_id)
             launcher.session_generation = current.session_generation
 
@@ -299,6 +360,7 @@ async def main(*, recover_retained=False, deadline_probe=False):
                               refresh_revoked_by_canonical_success_status=refresh.status_code)
             assert pool_seen.launches == 1
             if deadline_probe:
+                assert original_cutoff is not None
                 if pool_seen.info.started_at + timedelta(seconds=pool_seen.info.timeout_seconds) != original_cutoff:
                     raise RuntimeError('Terminal ACK replay changed original deadline')
                 report['terminal_ack_preserved_deadline'] = True
@@ -307,9 +369,10 @@ async def main(*, recover_retained=False, deadline_probe=False):
 
     try:
         with patch.object(httpx.AsyncClient, "post", intercepted_post), \
+             patch.object(httpx.AsyncClient, "stream", intercepted_stream if stream_probe else original_stream), \
              patch.object(WorkflowExecutionConsumer, "process_message", capture_process):
             try:
-                await fixture.main()
+                await fixture.main(stream_pool_probe=stream_probe)
             except httpx.RemoteProtocolError:
                 # Collection is outside upstream's routing/setup error handler.
                 assert pool_seen is not None and report.get("canonical_success_result_missing") is True
@@ -347,9 +410,10 @@ async def main(*, recover_retained=False, deadline_probe=False):
 
 
 if __name__ == "__main__":
-    assert sys.argv[1:] in (["--response-loss"], ["--retained-response"], ["--deadline-response-loss"], ["--deadline-retained-response"])
+    assert sys.argv[1:] in (["--response-loss"], ["--retained-response"], ["--deadline-response-loss"], ["--deadline-retained-response"], ['--stream-retained-response'])
     try:
-        asyncio.run(main(recover_retained=sys.argv[1] in ("--retained-response", "--deadline-retained-response"),
+        asyncio.run(main(recover_retained=sys.argv[1] in ("--retained-response", "--deadline-retained-response", '--stream-retained-response'),
+                         stream_probe=sys.argv[1] == '--stream-retained-response',
                          deadline_probe=sys.argv[1] in ("--deadline-response-loss", "--deadline-retained-response")))
     except Exception as exc:
         print(json.dumps({"runtime": "local-workerd-canonical-response-loss", "error_type": type(exc).__name__}))

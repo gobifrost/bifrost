@@ -21,11 +21,11 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, revision=1):
     global PACKET, RUN, NAME
-    physical_pool = physical_pool or stream_pool
+    physical_pool = physical_pool or stream_pool or stream_loss
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -45,7 +45,7 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
             raise RuntimeError('Incomplete qualification packet: ' + relative)
     if egress_gate and not (PACKET / 'project/backend/attempt-egress.mjs').is_file():
         raise RuntimeError('Missing egress gate in qualification packet')
-    if (deadline_response_loss or deadline_retained) and not (PACKET / 'provider-response-loss.py').is_file():
+    if (deadline_response_loss or deadline_retained or stream_loss) and not (PACKET / 'provider-response-loss.py').is_file():
         raise RuntimeError('Missing response-loss probe in qualification packet')
     if hashlib.sha256((PACKET / 'project/backend/generated-runtime.mjs').read_bytes()).hexdigest() != 'bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0':
         raise RuntimeError('Qualified runtime closure changed')
@@ -79,8 +79,8 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
         [*compose, '--profile', 'test', 'run', '--rm', '--no-deps',
          '--volume', f'{CHECKOUT}/spikes/cloudflare-pyodide:/spike:ro',
          '--volume', f'{PACKET}:/qualification:ro', 'test-runner',
-         'python', '/qualification/provider-response-loss.py' if deadline_response_loss or deadline_retained else '/qualification/canonical-local.py',
-         '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
+         'python', '/qualification/provider-response-loss.py' if deadline_response_loss or deadline_retained or stream_loss else '/qualification/canonical-local.py',
+         '--stream-retained-response' if stream_loss else '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
          else '--deadline-response-loss' if deadline_response_loss else '--failure-probe']]
     report = {'api_source': SOURCE, 'runtime_engine_source': 'f49d4ba99cebd24aa497f1244833b940e640885f',
         'project': project, 'cloud_invocations': 0, 'physical_termination_verified': False,
@@ -110,7 +110,14 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
             if result.returncode:
                 raise RuntimeError('Canonical failure qualification failed; inspect private log')
         records = [json.loads(line) for line in (RUN / 'phase-3.private.log').read_text().splitlines() if line.startswith('{')]
-        if deadline_response_loss or deadline_retained:
+        if stream_loss:
+            probe = next(row for row in reversed(records) if row.get('stream_loss_probe'))
+            if (not probe.get('local_recovery_verified') or probe.get('launches') != 1
+                or not probe.get('native_opaque_route_released_after_reconciliation')
+                or not probe.get('fixture_execution_cleanup_verified') or not probe.get('original_deadline_preserved')):
+                raise RuntimeError('Accepted stream loss did not preserve canonical recovery/cleanup')
+            report['stream_loss_result'] = probe
+        elif deadline_response_loss or deadline_retained:
             probe = next(row for row in reversed(records) if row.get('deadline_response_loss_probe'))
             if (probe.get('launches') != 1 or not probe.get('canonical_success_result_missing')
                 or not probe.get('fixture_execution_cleanup_verified') or probe.get('independent_post_deadline_value') != 71):
@@ -158,7 +165,9 @@ if __name__ == '__main__':
     mode.add_argument('--deadline-retained', action='store_true')
     mode.add_argument('--physical-pool', action='store_true')
     mode.add_argument('--stream-pool', action='store_true')
+    mode.add_argument('--stream-loss', action='store_true')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
     main(egress_gate=args.egress_gate, deadline_response_loss=args.deadline_response_loss,
-         deadline_retained=args.deadline_retained, physical_pool=args.physical_pool, stream_pool=args.stream_pool, revision=args.revision)
+         deadline_retained=args.deadline_retained, physical_pool=args.physical_pool, stream_pool=args.stream_pool,
+         stream_loss=args.stream_loss, revision=args.revision)
