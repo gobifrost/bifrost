@@ -23,8 +23,8 @@ from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False):
-    if sum((source_change, late_result, retained_http)) > 1:
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False):
+    if sum((source_change, late_result, retained_http, oversized_result)) > 1:
         raise ValueError('One fixture mode required')
     if deadline_ack_loss and not late_result:
         raise ValueError('Deadline ACK loss requires finite late-result mode')
@@ -131,6 +131,10 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
              'credential': os.environ['BIFROST_ACCESS_TOKEN']}}
 '''
                 sources[slot['path']] = source
+                if oversized_result and slot['label'] == 'fails-first':
+                    sources[slot['path']] = source.replace(
+                        "        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])",
+                        "        return {'payload': 'x' * 300000}")
                 if late_result and slot['label'] == 'fails-first':
                     sources[slot['path']] = source.replace(
                         f"    while await config.get({slot['gate']!r}) is not True:\n        await asyncio.sleep(0.25)\n",
@@ -471,8 +475,17 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                                 changed_dependency_rejected_before_workflow_effects=True,
                                 source_rejection_error_type=result['error_type'],
                                 source_integrity_diagnostic_seen='Workspace module digest mismatch' in json.dumps(failed_evidence))
-                        elif result['success'] or result['error_type'] != 'ValueError':
+                        elif result['success'] or result['error_type'] != ('ExecutorFrameTooLargeError' if oversized_result else 'ValueError'):
                             raise RuntimeError('Expected first workflow error missing')
+                        if oversized_result:
+                            evidence = adapter.attempt(str(failed['execution'].id)).evidence
+                            outcome = evidence.get('provider_outcome', {})
+                            if (outcome.get('execute_returned') is not True
+                                or outcome.get('engine_outcome_delivered') is not False
+                                or outcome.get('frame_limit_bytes') != 262144
+                                or len(json.dumps(evidence).encode()) >= 2048):
+                                raise RuntimeError('Oversized terminal delivery failure evidence invalid')
+                            report['oversized_terminal_failure_verified'] = True
                         failure_consume_gate.set()
                         try:
                             if retained_http:
@@ -668,8 +681,9 @@ if __name__ == '__main__':
     parser.add_argument('--late-result', action='store_true')
     parser.add_argument('--retained-http', action='store_true')
     parser.add_argument('--deadline-ack-loss', action='store_true')
+    parser.add_argument('--oversized-result', action='store_true')
     parser.add_argument('--startup-inventory', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
-                     deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory))
+                     deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result))

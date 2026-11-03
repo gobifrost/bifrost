@@ -36,7 +36,26 @@ RangeError remaining distinct. Containers used `--rm`; packet evidence remains.
 Tested implementation SHA256:
 `7f1b0297249aaa59e0db97b19ad2f9d144af8460890457caecc67ee066bf83ed`.
 
-Next: exercise this failure through the genuine upstream engine/SDK and canonical
-terminal callback, including existing effects and independent peer completion.
-That integration is not established by these transport tests. Admission remains
-disabled; abnormal cancellation and deployed enforcement remain separate gates.
+## Genuine upstream integration
+
+`ct128-canonical-failure.py --oversized-result --revision 1` passed on CT128.
+The first real engine workflow performed its SDK table write, then returned
+300000 payload characters. The bounded failure traversed the actual upstream
+terminal callback: canonical Failed, null result, explicit output-budget error,
+and one persisted redacted log. The peer remained authorized while live and
+completed Success with value 78. Both final credentials returned 401.
+
+Injected post-commit ACK loss, owner reconnect, stale-owner rejection and replay
+preserved canonical state/log IDs. Native reservations were 2,2,1,0; real
+PostgreSQL accounting and fixture cleanup passed. Provider was alive without OOM
+before owned cleanup; no owned containers remained running. Supervisor duration
+73.625 seconds includes stack setup/prewarm/work/cleanup, not startup latency.
+Ruff and Pyright passed for both changed Python fixture files.
+
+Raw receipt: `../results/output-budget/receipt-v1.json`, including exact source,
+runtime, image and packet hashes. Check with `node backend/verify-output-budget.mjs`
+from the spike directory. The engine/SDK and native API pins are separate fields;
+this does not establish parity with a newer upstream main.
+
+Admission remains disabled. Larger child responses, memory exhaustion, full
+native startup, deployed retention and abnormal cancellation remain open gates.

@@ -1069,3 +1069,16 @@ This is cache projection, not full/signed startup, compatibility of every listed
 package or admission. Shared configure/memory/control/shutdown interfaces recorded
 for Eddie/review, not independently edited. Next: qualify those remaining physical
 contracts and output/memory/deployed gates while keeping admission disabled.
+
+### 2026-11-03 — consumed oversized output through canonical reporting
+Hypothesis: a completed invocation can report its bounded output-delivery failure
+without replaying already completed SDK effects or losing canonical ownership.
+Change: --oversized-result real engine/SDK fixture, retaining existing duplicate,
+lost-ACK, reconnect, stale-owner, peer and cleanup checks.
+Command: CT128 ct128-canonical-failure.py --oversized-result --revision 1.
+Observed: exit0, canonical Failed/null result/output-budget error and persisted log;
+peer Success78; both credentials401; reservations2,2,1,0; owned running containers[].
+Source-bound raw receipt and verifier: results/output-budget, backend/OUTPUT-BUDGET.md.
+Ruff/Pyright and receipt verifier pass. No cloud calls or CPU-stop claim.
+Next: larger child-response uncertainty, memory and JSON marshaling fidelity;
+shared startup and deployed abnormal-cancellation gates remain open.
