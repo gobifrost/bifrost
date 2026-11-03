@@ -1,5 +1,9 @@
 # Fresh runtime staging includes the SDK cleanup module
 
+Follow-up: [explicit current SDK artifact staging](QUALIFIED-RUNTIME-STAGING.md)
+now assembles the full locally qualified payload separately, without changing
+the historical input pin or authorizing a cloud deployment.
+
 The current backend runtime-code.mjs imports sdk-cleanup-code.mjs, but the dev
 stager copied only runtime-code.mjs. A fresh stage therefore could not import its
 loader. A previously populated directory or historical deployed version is not

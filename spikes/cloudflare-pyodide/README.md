@@ -17,6 +17,8 @@ executor. Public/untrusted admission stays disabled. Start with
 * [Fresh loader staging](dev/LOADER-STAGING.md): missing SDK cleanup JavaScript
   dependency is now copied and hash-recorded. Fresh-directory assembly passes;
   no deployed Python/SDK compatibility claim is added by that packaging test.
+  [Explicit current artifact staging](dev/QUALIFIED-RUNTIME-STAGING.md) preserves
+  the exact SDK bundle bytes and imports the full loader offline on CT128.
 
 * [Upstream SDK #1217 real execution](backend/SDK1217-EXECUTION.md): config/table
   operations pass with the exact SDK update and pure wheel. [Awaited SDK close](backend/SDK-CLOSE.md)

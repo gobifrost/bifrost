@@ -1,0 +1,29 @@
+{
+  "provenance": {
+    "bundle_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+    "bundle_bytes": 15287043,
+    "module_count": 466,
+    "sdk_source": "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
+    "engine_source": "f49d4ba99cebd24aa497f1244833b940e640885f",
+    "closure_source": "785b560b9973020e1c13401383e1a73a87a54940",
+    "loader_files_sha256": {
+      "runtime-code.mjs": "8cffaf4f9f08b505554e124347ad4324df64d5ebce63aa7b2118f6a7f547a52f",
+      "sdk-cleanup-code.mjs": "fb86cd80e5d06cd8b7dc3f83a6a70196b8ee5b65e30339fcce5539994ac4862f"
+    },
+    "artifact_bytes_preserved": true,
+    "scope": "Offline staging of locally qualified code; no new runtime or deployed qualification"
+  },
+  "constructed_module_count": 468,
+  "sdk_cleanup_injected": true,
+  "existing_output_refused": true,
+  "source_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+  "staging_sources_sha256": {
+    "stage-qualified-runtime.mjs": "a5f7bc36f3e13ebd1d100ff8d40234d6a2e2d0dbe5a3381e19edd024c35b036c",
+    "stage-runtime-loader.mjs": "1d5c945f0a8b9361b549647658dde3b472c2d170941979d1ee9b0c48079e4e2d",
+    "qualify-staged-runtime.mjs": "0df952a2abf53031605c53233cbe490d5da2873e131168ff74592c08695abcab"
+  },
+  "node_version": "v26.12.1",
+  "python_executed": false,
+  "cloud_invocations": 0,
+  "scope": "Full actual qualified artifact assembled/imported in Node only"
+}
