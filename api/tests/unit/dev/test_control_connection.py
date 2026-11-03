@@ -241,3 +241,59 @@ def test_neither_template_profile_inherits_control_credentials(monkeypatch, prof
     assert HEADERS_ENV not in environment
     assert environment["BIFROST_SECRET_KEY"] == "synthetic-instance-secret"
     assert HEADERS_ENV in os.environ
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authenticated", [True, False])
+@pytest.mark.parametrize("error_kind", ["close", "exception"])
+async def test_background_transport_logging_respects_control_authentication(
+    monkeypatch, caplog, authenticated, error_kind,
+):
+    from websockets.exceptions import ConnectionClosedError
+    from websockets.frames import Close
+
+    from src.worker.remote.launcher import Launcher, _run_launcher
+
+    if authenticated:
+        monkeypatch.setenv(HEADERS_ENV, json.dumps(HEADERS))
+    else:
+        monkeypatch.delenv(HEADERS_ENV, raising=False)
+    monkeypatch.setenv("BIFROST_API_URL", "https://api.example")
+    monkeypatch.setenv("BIFROST_SECRET_KEY", "synthetic-instance-secret")
+    detail = json.dumps(HEADERS)
+    error = (ConnectionClosedError(Close(1011, detail), None) if error_kind == "close"
+             else RuntimeError(detail))
+    # The initial inventory succeeds, then the background job's send fails.
+    socket = Mock(send=AsyncMock(side_effect=[None, error]), close=AsyncMock())
+
+    @asynccontextmanager
+    async def connected(_url, _headers):
+        yield socket
+
+    async def hello(launcher, _requirements):
+        launcher.session_generation = 1
+
+    async def receive(launcher, *_args):
+        process = Mock(wait=AsyncMock(return_value=0))
+        launcher.jobs["route"] = process
+        background = launcher.task(launcher.wait_job("route", process))
+        await asyncio.gather(background, return_exceptions=True)
+        assert "route" not in launcher.jobs
+        assert len(launcher.pending_terminal) == 1
+        launcher.retired.set()
+
+    caplog.set_level(logging.ERROR)
+    with (
+        patch("src.worker.remote.launcher.connect_control", new=connected),
+        patch("src.worker.remote.launcher.load_launcher_identity", return_value=Mock()),
+        patch.object(Launcher, "hello", new=hello),
+        patch.object(Launcher, "start", new=AsyncMock()),
+        patch.object(Launcher, "stop", new=AsyncMock()),
+        patch("src.worker.remote.launcher._receive_control_commands", new=receive),
+        patch.object(asyncio.get_running_loop(), "add_signal_handler"),
+    ):
+        assert await _run_launcher() == 0
+
+    assert "Launcher supervision failed" in caplog.text
+    assert all((value not in caplog.text) == authenticated for value in HEADERS.values())
+    socket.close.assert_awaited_once_with(code=1011, reason="Launcher supervision failed")

@@ -176,10 +176,12 @@ class Launcher:
         secret: str,
         on_ready: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
+        authenticated_control: bool = False,
     ) -> None:
         self.socket = socket
         self.identity = identity
         self.secret = secret
+        self._authenticated_control = authenticated_control
         self.session_generation = 0
         self._sequence = 0
         self._last_command_sequence = 0
@@ -229,7 +231,11 @@ class Launcher:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    raise ConnectionError("remote control transport is unavailable") from exc
+                    # Background task logging must not recover credentials
+                    # echoed in a transport exception or WebSocket close reason.
+                    raise ConnectionError("remote control transport is unavailable") from (
+                        None if self._authenticated_control else exc
+                    )
                 sent += 1
             self._sequence += sent
 
@@ -805,6 +811,7 @@ async def _run_launcher(
                             candidate = Launcher(
                                 socket, identity=identity, secret=secret,
                                 on_ready=on_ready, on_stop=on_stop,
+                                authenticated_control=bool(control_headers),
                             )
                         else:
                             # A lost welcome may follow a committed enrollment.
