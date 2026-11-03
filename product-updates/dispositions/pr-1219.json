@@ -1,0 +1,15 @@
+{
+  "key": "pr:1219",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Adds documentation, license text, and disclosure guidance to the installable coding-assistant plugin for catalog submission. No platform behavior changes or customer announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1219",
+      "https://github.com/gobifrost/bifrost/issues/381",
+      "https://github.com/hashgraph-online/awesome-codex-plugins/pull/643",
+      "Documentation-only packaging repair; the license matches the repository license byte for byte, and disclosure guidance defers to the canonical security policy."
+    ]
+  }
+}
