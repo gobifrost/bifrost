@@ -18,7 +18,8 @@
       "Authentication remains fail-closed: RS256, issuer, audience, expiry, service URL matching, HTTPS, and Teams key endorsement checks are retained; metadata issuer and signing-key host validation are unchanged.",
       "Verification: head CI Unit Tests, Lint & Type Check, and CodeQL succeeded. Added regression coverage exercises concurrent unknown keys, failed-refresh cooldown, cache readers waiting on the lock, and generation/cooldown reuse. No live Microsoft authentication was exercised.",
       "Accepted limits: cooldown is per API process; legitimate new keys can wait up to five minutes; cold/expired-cache fetch failures are outside the unknown-key cooldown. No actionable defect found in the scoped patch.",
-      "Copy review: existing Other / hardening summary accurately describes the scoped unknown-key refresh behavior."
+      "Copy review: existing Other / hardening summary accurately describes the scoped unknown-key refresh behavior.",
+      "Local verification on current-main-based review/1203-jwks-throttle: ./test.sh tests/unit/services/test_webhook_adapters.py -q passed 49 tests (JUnit: zero failures/errors/skips); ./test.sh quality api passed Pyright with zero errors/warnings and Ruff. Product Updates validate and normalized merge-group validate-event passed. Full suites and live Microsoft authentication were not run. An initial overlapping quality invocation was rejected by the test-stack lock before checks ran; quality passed after the test owner finished."
     ]
   },
   "category": "hardening"
