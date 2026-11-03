@@ -159,6 +159,27 @@ class TestSyncDown:
     """Tests for sync_down operation."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("etag, expected_mtime", [
+        ("6654c734ccab8f440ff0825eb443dc7f", 100),  # MD5 of v1: unchanged
+        ("1b267619c4812cc46ee281747884ca50e", 0),  # MD5 of v2: same-size edit
+        ("opaque-multipart-2", 0),
+    ])
+    async def test_equal_stats_only_skip_verified_content(self, manager, tmp_path, etag, expected_mtime):
+        import os
+        from datetime import datetime, timezone
+
+        from src.services.repo_storage import S3FileMetadata
+
+        local = tmp_path / "note.txt"
+        local.write_bytes(b"v1")
+        os.utime(local, (100, 100))
+        metadata = S3FileMetadata(etag=etag, size=2, last_modified=datetime.fromtimestamp(100, timezone.utc))
+        with patch("src.services.repo_storage.RepoStorage.list_with_metadata", AsyncMock(return_value={"note.txt": metadata})):
+            await manager._invalidate_ambiguous_sync_timestamps(tmp_path)
+        assert local.stat().st_mtime == expected_mtime
+        assert local.read_bytes() == b"v1"
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("restore", ["workspace", "checkpoint"])
     async def test_empty_repository_survives_file_only_storage_round_trip(self, manager, tmp_path, restore):
         import shutil

@@ -1552,7 +1552,8 @@ it("keeps failed export downloads available for retry", async () => {
 it("distinguishes failed README lookup from missing instructions and retries", async () => {
 	mockGetSolutionReadme
 		.mockRejectedValueOnce(new Error("Synthetic README failure"))
-		.mockResolvedValueOnce({ readme: "# Recovered setup instructions" });
+		// The shared editor supports level-two and level-three headings.
+		.mockResolvedValueOnce({ readme: "## Recovered setup instructions" });
 	const { user } = await renderPage();
 	await screen.findByTestId("solution-detail");
 	expect(await screen.findByRole("alert")).toHaveTextContent(
