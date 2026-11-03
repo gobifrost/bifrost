@@ -1,5 +1,9 @@
 # Isolated development deployment
 
+Current preparation: [guarded canonical candidate](CANONICAL-CANDIDATE.md) builds
+offline with cf CLI; [closed-guard/API alignment](CANONICAL-ALIGNMENT.md) verifies
+local denial and an actual dev-schema mismatch. This candidate is not deployed.
+
 Latest cancellation qualification: [deployed incoming disconnect](REQUEST-SIGNAL-CLOUD.md).
 The parent and I/O delivery controls pass; CPU physical termination remains
 unproved. The temporary flag, endpoint and guard were retired after the test.

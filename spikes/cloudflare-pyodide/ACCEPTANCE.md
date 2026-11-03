@@ -95,6 +95,9 @@ companion reports delivery uncertainty; persistence repair is not implemented.
 dev/CANONICAL-CANDIDATE.md adds a separate guarded SDK-only canonical candidate.
 Actual network-disabled cf CLI dry run builds it with closed emitted defaults;
 no deployment or runtime acceptance is claimed for this new entry.
+The later closed-guard local check returns403 before parsing/execution. Actual
+dev-schema readback lacks four canonical worker columns; API/source alignment
+remains a live acceptance prerequisite. No schema/source upgrade was applied.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

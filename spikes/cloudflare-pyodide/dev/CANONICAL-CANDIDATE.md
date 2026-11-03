@@ -87,3 +87,8 @@ Recheck capacity before further heavy tests. The supported cf build passed;
 a separate direct Wrangler version probe lacked standalone esbuild resolution.
 Installed package metadata confirmed Wrangler 4.156.0. This packet uses cf CLI,
 not that unsupported standalone invocation.
+
+The later closed-guard and actual schema readbacks are in CANONICAL-ALIGNMENT.md.
+The compiled bundle/source map are now retained in a checksum-verified archive;
+restore the verified members before any future prebuilt use. Source and pinned
+runtime inputs remain available, and no live deployment has been performed.
