@@ -1,8 +1,11 @@
-# Python RPC cancellation counterexample
+# Local RPC work continued after client abort
 
 Hypothesis: cancellation of a Python RPC execution context might stop CPU work
-where forwarding a fetch abort signal did not. The bounded guest experiment
-falsified this workaround for the tested local runtime.
+where forwarding a fetch abort signal did not prevent later effects. The bounded
+guest experiment observed continuation after client disconnection, but did not
+record receipt of cancellation by the parent or RPC execution context. See the
+later [incoming signal qualification](REQUEST-SIGNAL-QUALIFICATION.md) before
+interpreting this as an executor cancellation test.
 
 `guest-rpc-termination-entry.mjs` creates a fresh Python Dynamic Worker and calls
 its fixed `run` method through actual RPC. The child reports `before`, computes a
@@ -19,7 +22,8 @@ Observed actual local workerd result:
 | Catch-capable finite loop | 2209.678 | — | 19116.693 | No local quota exception observed |
 | External request abort | 2152.830 | 2163.138 | 3829.473 | Effect 1666.335 ms after abort |
 
-The last result is a physical-stop counterexample, not merely an absent response.
+The last result proves a later effect after client abort, not physical-stop
+acceptance or confirmed delivery of cancellation to the RPC execution context.
 The RPC response serialized the Python mapping as `{}` in this synthetic fixture;
 it is not workflow-result or Python-to-JavaScript mapping compatibility evidence.
 The termination result uses independently timestamped callbacks, not that body.
@@ -59,6 +63,7 @@ experiment tests execution-context cancellation, not an undocumented disposer.
 Documentation/source inspection cannot establish deployed behavior.
 
 The proposed executor profile still needs an independently verifiable stop/deadline
-mechanism preserving upstream guarantees. Fetch abort and RPC context cancellation
-have both failed locally. Deployed Cloudflare physical-stop and late-result fencing
+mechanism preserving upstream guarantees. Both tested client-abort paths allowed
+later local effects; incoming/RPC cancellation delivery was not qualified.
+Deployed Cloudflare physical-stop and late-result fencing
 proof remain required; cloud tests are held. Untrusted admission stays disabled.

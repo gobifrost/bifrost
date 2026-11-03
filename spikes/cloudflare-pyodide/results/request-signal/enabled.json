@@ -1,0 +1,146 @@
+{
+  "mode": "enabled",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "source_base": "cceccf3abe81af72820991a07fd00f7263fd455a",
+  "packet_sha256": {
+    "request-signal-probe.mjs": "e43a62662248b4a2369fc3e8a960cb83c0ef5eea25309064ea40ca147597813c",
+    "request-signal-entry.mjs": "ebb8428f02d6a707a9a58023a64eecc62486e5be0ced6afb3a9c563276613ea2",
+    "request-signal.test.mjs": "6ab7e44fb7f7299933502ba8c069b45d0a89d7e96432994bc5fac877eb10e66e",
+    "wrangler.config.ts": "ffa9d2962c38d9ffb1a51275d4f87c14d1c603416e92313db2206a4b529dc216",
+    "package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "request-signal-driver.mjs": "493711a24e0de0885acc624badee6c1900cb0fb096104c1bce67403f574d6512",
+    "cloudflare.config.ts": "cfa6933fe9e9dbd171a27d9dbd5075cb29d53dcfc24a62edee6127374de9ba8a"
+  },
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-request-signal-enabled",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/node_modules,dst=/qualification/packet/node_modules,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/request-signal-v1-enabled,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+    "--env",
+    "HOME=/qualification/home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--env",
+    "REQUEST_SIGNAL_MODE=enabled",
+    "--workdir",
+    "/qualification/packet",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "/spike/node_modules/cf/bin/cf",
+    "dev"
+  ],
+  "driver_exit_code": 0,
+  "observation": {
+    "runtime": "local-workerd",
+    "request_signal_mode": "enabled",
+    "records": [
+      {
+        "id": "66ab2566-10b7-42be-b414-b2b7e96bb20c",
+        "mode": "control",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 3781.154644
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 4036.679168
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": {
+            "python": [
+              3,
+              14,
+              2
+            ],
+            "pyodide": "314.0.6",
+            "soabi": "cpython-314-wasm32-emscripten"
+          }
+        }
+      },
+      {
+        "id": "d2154195-12bd-41d7-b495-2a8e857dcf60",
+        "mode": "io_abort",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 2211.6855429999996
+          },
+          {
+            "event": "abort_requested",
+            "elapsed_ms": 2223.2938030000005
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 2464.721900999999
+          }
+        ],
+        "outcome": {
+          "error_type": "AbortError"
+        }
+      },
+      {
+        "id": "6cc6f256-18fb-47b7-8993-631e66b1b8ad",
+        "mode": "cpu_abort",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 2131.9316069999986
+          },
+          {
+            "event": "abort_requested",
+            "elapsed_ms": 2142.195465999999
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 3766.5289009999997
+          }
+        ],
+        "outcome": {
+          "error_type": "AbortError"
+        }
+      }
+    ],
+    "physical_termination_verified": false,
+    "cloud_invocations": 0
+  },
+  "state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 1051449,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T01:57:18.510109288Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 20.112884724978358
+}
