@@ -1,0 +1,11 @@
+{
+  "key": "pr:1223",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Evaluate tuning dry-runs against full-length agent prompts and report inconclusive model output as failed instead of passing.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1223"]
+  }
+}
