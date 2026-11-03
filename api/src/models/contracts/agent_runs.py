@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.models.contracts.agents import AGENT_PROMPT_MAX_LENGTH
 from src.models.contracts.executions import AIUsagePublicSimple, AIUsageTotalsSimple
 
 
@@ -155,7 +156,7 @@ class VerdictResponse(BaseModel):
 class DryRunRequest(BaseModel):
     """Evaluate a proposed system prompt against a single completed run."""
 
-    proposed_prompt: str = Field(min_length=1, max_length=20000)
+    proposed_prompt: str = Field(min_length=1, max_length=AGENT_PROMPT_MAX_LENGTH)
 
 
 class DryRunResponse(BaseModel):
@@ -166,6 +167,7 @@ class DryRunResponse(BaseModel):
     reasoning: str
     alternative_action: str | None = None
     confidence: float
+    evaluation_failed: bool = False
 
 
 class PausedResponse(BaseModel):
