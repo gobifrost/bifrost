@@ -1313,3 +1313,18 @@ Artifact: backend/CAPABILITY-CONTRACT.md; results/capability-contract.
 Limits: trusted-host declaration check, not discovery/sandbox or upstream API.
 Next: canonical no-send refusal acknowledgement/retirement remains open; inspect
 existing upstream failure/recovery semantics locally without shared-writer collision.
+
+## 2026-11-03 — Canonical setup refusal consumption gap
+Hypothesis: the existing setup-error return might acknowledge known no-send failure.
+Probe actual consumer with mocked accepted/refused/raising persistence; .5CPU1GiB
+network-disabled CT128 Docker,60s bound; python setup-refusal-probe.py exit0,
+Ruff/Pyrightpass. Accepted and refused writes both returnNone/publish1history1sync1,
+no owner_worker_id argument. Raisingwritepropagates/no terminal publication.
+Normal failure path separately passes owner, checkswritten and publishespostcommit.
+Artifact: backend/SETUP-REFUSAL-CONTRACT.md; results/setup-refusal pins exactnative
+consumer/repository/fencing and probe. This is mock-boundary evidence, not a real
+DB race or production incident. No canonical source edits, fakeACK, rerun, cloud,
+access or settings change. Refusal retirement remains deliberately blocked until
+shared canonical consumption/ownership is reconciled; earliercoordinationdenialkept.
+Next independent local work: qualify fresh-runtime package/dependency admission
+against exact inventory while retaining dynamic-requirement and untrusted holds.

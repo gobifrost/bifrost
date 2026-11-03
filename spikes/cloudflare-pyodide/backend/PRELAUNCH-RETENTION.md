@@ -57,3 +57,7 @@ exchange, not an execution approval denial and not a completed handoff.
 Required prerequisite: reviewer reconciliation of the existing caller/native-run
 receipt, then shared-interface ownership evidence through that same approved
 route. It does not require a new credential, grant or production change.
+
+Follow-on: [setup failure acknowledgement probe](SETUP-REFUSAL-CONTRACT.md)
+reproduces accepted/refused persistence both returning normally and publishing
+failure. Generic setup completion cannot yet serve as the companion refusal ACK.

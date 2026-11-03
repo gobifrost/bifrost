@@ -1,0 +1,22 @@
+Workflow execution error: 00000000-0000-0000-0000-000000000001
+Traceback (most recent call last):
+  File "/app/src/jobs/consumers/workflow_execution.py", line 1000, in process_message
+    await self._pool.route_execution(
+    ...<21 lines>...
+    )
+  File "/usr/local/lib/python3.14/unittest/mock.py", line 2333, in _execute_mock_call
+    raise effect
+ValueError: Synthetic known prelaunch refusal
+Workflow execution error: 00000000-0000-0000-0000-000000000001
+Traceback (most recent call last):
+  File "/app/src/jobs/consumers/workflow_execution.py", line 1000, in process_message
+    await self._pool.route_execution(
+    ...<21 lines>...
+    )
+  File "/usr/local/lib/python3.14/unittest/mock.py", line 2333, in _execute_mock_call
+    raise effect
+ValueError: Synthetic known prelaunch refusal
+{"scope": "actual upstream consumer with mocked persistence/publication/credentials", "database_tested": false, "cloud_invocations": 0, "observations": [{"case": "write_accepted", "returned_none": true, "error_type": null, "update_owner_argument_present": false, "execution_id_matches": true, "failure_publications": 1, "history_publications": 1, "sync_results": 1}, {"case": "write_refused", "returned_none": true, "error_type": null, "update_owner_argument_present": false, "execution_id_matches": true, "failure_publications": 1, "history_publications": 1, "sync_results": 1}, {"case": "write_raises", "returned_none": false, "error_type": "ConnectionError", "update_owner_argument_present": false, "execution_id_matches": true, "failure_publications": 0, "history_publications": 0, "sync_results": 0}]}
+All checks passed!
+venv .venv subdirectory not found in venv path /.
+0 errors, 0 warnings, 0 informations
