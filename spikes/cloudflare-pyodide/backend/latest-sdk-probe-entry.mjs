@@ -19,7 +19,19 @@ class Default(WorkerEntrypoint):
                 from bifrost.client import BifrostClient
                 client = BifrostClient("https://unused.invalid", "synthetic-unusable-probe-value")
                 result["constructor"] = {"created": True}
-                client._sync_http.close()
+                import asyncio
+                http = client._get_async_client()
+                loop = asyncio.get_running_loop()
+                owned = client._loop_clients[loop]
+                await owned.started.wait()
+                before = owned.cleanup.done()
+                await client.close()
+                result["client_close"] = {"cleanup_pending_before": not before,
+                    "cleanup_done": owned.cleanup.done(), "async_closed": http.is_closed,
+                    "sync_closed": client._sync_http.is_closed,
+                    "loop_registry_empty": not client._loop_clients}
+                await client.close()
+                result["client_close"]["second_close_returned"] = True
             except Exception as error:
                 result["constructor"] = {"created": False, "error_type": type(error).__name__}
         if result["probes"]["certifi"]["imported"]:

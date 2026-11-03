@@ -7,8 +7,9 @@ executor. Public/untrusted admission stays disabled. Start with
 [the acceptance ledger](ACCEPTANCE.md), then these recent increments:
 
 * [Upstream SDK #1217 real execution](backend/SDK1217-EXECUTION.md): config/table
-  operations pass with the exact SDK update and pure wheel; custom TLS and new
-  client-lifetime qualification remain open. Earlier receipts retain their pins.
+  operations pass with the exact SDK update and pure wheel. [Awaited SDK close](backend/SDK-CLOSE.md)
+  passes with both SDK versions; custom TLS and interrupted cleanup remain open.
+  Earlier receipts retain their pins.
 * [Lossless JSON and measured parent overhead](backend/JSON-TRANSPORT-PERFORMANCE.md)
 * [Output-frame and child-body budgets](backend/BODY-BUDGET.md)
 * [Local memory boundary](backend/MEMORY-PRESSURE.md)

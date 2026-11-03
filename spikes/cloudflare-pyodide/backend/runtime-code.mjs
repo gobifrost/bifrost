@@ -48,11 +48,15 @@ class Default(WorkerEntrypoint):
         if body["action"] == "execute_envelope":
             from src.services.execution.result_envelope import execution_result_envelope
         started = time.perf_counter()
-        result = await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"])
+        try:
+            result = await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"])
+        finally:
+            from bifrost.client import get_client
+            await get_client().close()
         if body["action"] == "execute_envelope":
             result = execution_result_envelope(body["execution_id"], body["worker_id"], result,
                 duration_ms=int((time.perf_counter()-started)*1000), metrics=result.get("metrics") or {})
-        return Response.json(result)
+        return Response.json(result, headers={"X-Spike-SDK-Close-Returned": "true"})
 `;
 
 export function runtimeCode(outbound=null,entrypoint=main) {

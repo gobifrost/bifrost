@@ -46,8 +46,9 @@ runtime is the existing Pyodide314.0.6/CPython3.14.2/Emscripten5.0.3 ABI. No
 Cloudflare deployment/invocation, new grant/credential, spending or shared
 Containers-owner file change occurred.
 
-Remaining: explicit new SDK client/loop lifetime cleanup qualification, refresh
-and error paths under this SDK version, and TLS-option admission. This ordinary
+Follow-on SDK-CLOSE.md qualifies awaited normal SDK close with both versions and
+the real loop-owned cleanup primitive. Remaining: interrupted close, refresh
+under this SDK version, and TLS-option admission. This ordinary
 virtual-API test does not validate custom CA/client-certificate/proxy settings or
 the TLS certificate-store discrepancy recorded in SDK1217-QUALIFICATION.md.
 Do not enable admission or claim deployed canonical acceptance from it.

@@ -10,7 +10,7 @@ for (const [local, packet] of [
   ['authorized-local-entry.mjs', 'project/backend/authorized-local-entry.mjs'],
   ['terminal-response.mjs', 'project/backend/terminal-response.mjs'],
 ]) {
-  const source = local.endsWith('.py')
+  const source = local.endsWith('.py') || local === 'authorized-local-entry.mjs'
     ? execFileSync('git', ['show', '0876489190900cf99e23b6dde3757c05566c513c:spikes/cloudflare-pyodide/backend/' + local])
     : readFileSync(new URL('backend/' + local, root));
   assert.equal(createHash('sha256').update(source).digest('hex'),

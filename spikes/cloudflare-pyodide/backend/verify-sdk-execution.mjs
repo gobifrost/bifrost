@@ -17,7 +17,10 @@ for (const path of ['bifrost/client.py', 'bifrost/_tls.py', 'bifrost/_workspace_
   assert.equal(hash(execFileSync('git', ['show', manifest.sdk_commit + ':api/' + path])), manifest.overlay_sha256[path]);
 }
 for (const name of ['ct128-canonical-failure.py', 'add-certifi-overlay.py', 'merge-sdk-overlay.mjs']) {
-  assert.equal(hash(readFileSync(new URL('backend/' + name, root))), receipt.packet_sha256[name], name);
+  const source = name === 'ct128-canonical-failure.py'
+    ? execFileSync('git', ['show', '151ee99625f5b3aa55ccccd285511f8ceda7b08d:spikes/cloudflare-pyodide/backend/' + name])
+    : readFileSync(new URL('backend/' + name, root));
+  assert.equal(hash(source), receipt.packet_sha256[name], name);
 }
 assert.equal(receipt.qualification_passed, true);
 assert.equal(receipt.cloud_invocations, 0);

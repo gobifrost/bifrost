@@ -1227,3 +1227,18 @@ Ruff/Pyright and source-bound verifier pass. No upstream engine rewrite/nativebu
 Artifact: backend/SDK1217-EXECUTION.md, merge script, results/sdk-execution.
 Next: updated SDK client lifetime/refresh and explicit TLS-option refusal; custom
 TLS/deployed cancellation/memory/isolation/startup gates remain. No cloud call.
+
+### 2026-11-03 — await SDK cleanup before normal response
+Actual SDK1217 close primitive in local Worker: live async/sync clients and pending
+loop cleanup task; await publicclose =>both closed/taskdone/registryempty; second
+close returns. No request or run identity in primitive probe.
+Runtime main now awaits actual get_client().close() in finally before response.
+Close-returned header becomes companion runtime_cleanup diagnostic, outside engine
+result; exceptions propagate, no suppression/background waitUntil/isolate kill.
+Actual updated SDK --sdk-update --revision2 and baseline --api-prepare --revision91
+both exit0 with real SDK effects, expected error/Success78, close-returned true on
+both attempts, replay/fencing/401/accounting2,2,1,0 and cleanup. Ruff/Pyright pass.
+Artifacts: backend/SDK-CLOSE.md, verifier, results/sdk-close three raw receipts.
+Next: updated refresh and interrupted cleanup, TLS admission and deployed
+memory/cancellation/isolation gates. Normal resource completion != CPU-stop proof.
+No cloud call, privilege/settings change or shared platform code edit.

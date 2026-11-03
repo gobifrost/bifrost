@@ -88,15 +88,17 @@ export default {
             worker_id:body.worker_id,execution_id:body.execution_id,
             context:body.context,api_url:'https://test-api.invalid'}),
         }));
+      const runtime_cleanup={sdk_close_returned:response.headers.get('X-Spike-SDK-Close-Returned')==='true'};
       const terminal=await terminalResponse(response);
       if(terminal.oversized) return {runtime_handle:id,
+        runtime_cleanup,
         result:{type:'result',execution_id:body.execution_id,success:false,
           error_type:'ExecutorBodyTooLargeError',
           error:'Executor response exceeds retention budget; workflow effects may already exist'},
         provider_outcome:{kind:'terminal_body_too_large',response_eof:true,
           engine_outcome_delivered:false,response_bytes:terminal.response_bytes,
           retention_limit_bytes:1048576,drain_limit_bytes:4194304}};
-      return {runtime_handle:id,result:terminal.value,api_calls:calls,
+      return {runtime_handle:id,result:terminal.value,api_calls:calls,runtime_cleanup,
         ...(gate ? {refresh_gate_events:gate.events} : {})};
       };
       if(request.headers.get('Accept')==='application/x-ndjson') {

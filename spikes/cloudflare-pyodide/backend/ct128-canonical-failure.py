@@ -202,6 +202,9 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
                 or list(probe.get('launches', {}).values()) != [1, 1]):
                 raise RuntimeError('Shared pool did not qualify two independent native attempts')
             report['shared_pool_result'] = probe
+            if sdk_update and not all(attempt['evidence'].get('runtime_cleanup', {}).get('sdk_close_returned') is True
+                                      for attempt in probe['attempts'].values()):
+                raise RuntimeError('Awaited SDK close missing from updated runtime completion')
             if oversized_result and not probe.get('oversized_terminal_failure_verified'):
                 raise RuntimeError('Oversized terminal failure was not qualified')
             if startup_inventory and (not probe.get('native_runtime_cache_projection_verified')
