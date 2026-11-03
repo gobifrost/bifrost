@@ -40,6 +40,11 @@ backend/HTTPS-DEADLINE.md adds a causal local in-flight vendor write test:
 Timeout/revocation and reserved capacity precede destination commit; new writes
 are refused and late success cannot overwrite Timeout. The pre-deadline effect
 still commits after release, explicitly preserving the uncertainty boundary.
+The pre-deadline HTTP body-cancellation qualification in backend/HTTPS-DISCONNECT.md
+fails locally: cleanup is not delivered before release and a follow-up vendor
+effect occurs. Direct stream-cancel unit coverage does not qualify incoming HTTP
+delivery. No child-abort, physical-stop or deployed conclusion follows; this
+remains a material cancellation/admission gap.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains
