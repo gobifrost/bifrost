@@ -61,13 +61,21 @@ class MCPConfigService:
             MCPConfig with current settings, or defaults if not configured
         """
         result = await self.session.execute(
-            select(SystemConfig).where(
+            select(SystemConfig)
+            .where(
                 SystemConfig.category == MCP_CONFIG_CATEGORY,
                 SystemConfig.key == MCP_CONFIG_KEY,
                 SystemConfig.organization_id.is_(None),  # Platform-wide config
             )
+            .order_by(SystemConfig.updated_at.desc(), SystemConfig.id.desc())
         )
-        config = result.scalars().first()
+        configs = list(result.scalars().all())
+        if len(configs) > 1:
+            logger.warning(
+                "Duplicate MCP config rows detected; collapsing to latest",
+                extra={"row_count": len(configs)},
+            )
+        config = configs[0] if configs else None
 
         if config is None or config.value_json is None:
             # Return defaults
@@ -110,21 +118,31 @@ class MCPConfigService:
 
         # Check if config exists
         result = await self.session.execute(
-            select(SystemConfig).where(
+            select(SystemConfig)
+            .where(
                 SystemConfig.category == MCP_CONFIG_CATEGORY,
                 SystemConfig.key == MCP_CONFIG_KEY,
                 SystemConfig.organization_id.is_(None),
             )
+            .order_by(SystemConfig.updated_at.desc(), SystemConfig.id.desc())
         )
-        existing = result.scalars().first()
+        existing_rows = list(result.scalars().all())
+        existing = existing_rows[0] if existing_rows else None
 
         now = datetime.now(timezone.utc)
 
         if existing:
-            # Update existing
-            existing.value_json = config_data
-            existing.updated_by = updated_by
-            existing.updated_at = now
+            # Update ALL matching rows so duplicates collapse to one coherent
+            # state instead of leaving a stale row behind for .first() to flake on.
+            for row in existing_rows:
+                row.value_json = config_data
+                row.updated_by = updated_by
+                row.updated_at = now
+            if len(existing_rows) > 1:
+                logger.warning(
+                    "Duplicate MCP config rows collapsed on save",
+                    extra={"row_count": len(existing_rows)},
+                )
             logger.info(f"MCP config updated by {updated_by}")
         else:
             # Create new

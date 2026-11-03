@@ -471,7 +471,7 @@ class TestMCPConfigService:
 
         # Mock no config found
         mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         service = MCPConfigService(mock_session)
@@ -498,7 +498,7 @@ class TestMCPConfigService:
         mock_config.updated_by = "admin@test.com"
 
         mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = mock_config
+        mock_result.scalars.return_value.all.return_value = [mock_config]
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         service = MCPConfigService(mock_session)
@@ -517,7 +517,7 @@ class TestMCPConfigService:
 
         # Mock no existing config
         mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_session.execute = AsyncMock(return_value=mock_result)
         mock_session.add = MagicMock()
 
@@ -542,7 +542,7 @@ class TestMCPConfigService:
         mock_config = MagicMock()
         mock_config.value_json = {"enabled": True}
         mock_result = MagicMock()
-        mock_result.scalars.return_value.first.return_value = mock_config
+        mock_result.scalars.return_value.all.return_value = [mock_config]
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         service = MCPConfigService(mock_session)
@@ -556,6 +556,68 @@ class TestMCPConfigService:
         assert config.enabled is False
         assert mock_config.value_json["enabled"] is False
         assert mock_config.updated_by == "admin@test.com"
+
+    @pytest.mark.asyncio
+    async def test_get_config_collapses_duplicates_to_latest(self, mock_session):
+        """Duplicate rows: get returns the latest (disabled) row, not a stale one."""
+        from src.services.mcp_server.config_service import MCPConfigService
+
+        old_row = MagicMock()
+        old_row.value_json = {"enabled": True}
+        old_row.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        old_row.updated_by = "old@test.com"
+        new_row = MagicMock()
+        new_row.value_json = {"enabled": False}
+        new_row.updated_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        new_row.updated_by = "new@test.com"
+
+        mock_result = MagicMock()
+        # ORDER BY updated_at DESC, id DESC puts newest first
+        mock_result.scalars.return_value.all.return_value = [new_row, old_row]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        service = MCPConfigService(mock_session)
+        config = await service.get_config()
+
+        assert config.enabled is False
+        assert config.configured_by == "new@test.com"
+
+    @pytest.mark.asyncio
+    async def test_save_config_updates_all_duplicate_rows(self, mock_session):
+        """Save must leave no stale row behind for a later read to flake on."""
+        from src.services.mcp_server.config_service import MCPConfigService
+
+        row_a = MagicMock()
+        row_a.value_json = {"enabled": True}
+        row_b = MagicMock()
+        row_b.value_json = {"enabled": False}
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [row_a, row_b]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        service = MCPConfigService(mock_session)
+        config = await service.save_config(
+            enabled=False,
+            updated_by="admin@test.com",
+        )
+
+        assert row_a.value_json["enabled"] is False
+        assert row_b.value_json["enabled"] is False
+        assert config.enabled is False
+        mock_session.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_config_removes_all_duplicate_rows(self, mock_session):
+        """Bulk DELETE wipes every duplicate row (rowcount > 1)."""
+        from src.services.mcp_server.config_service import MCPConfigService
+
+        mock_result = MagicMock()
+        mock_result.rowcount = 2
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        service = MCPConfigService(mock_session)
+        assert await service.delete_config() is True
 
     @pytest.mark.asyncio
     async def test_delete_config_removes_existing(self, mock_session):
