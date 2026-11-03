@@ -49,6 +49,12 @@ class OAuthProviderPreferenceConflict(ValueError):
     """Raised when deleting the provider used by an active preference."""
 
 
+#: Refusal details for SSO-only enforcement (routers share these so the
+#: login, MFA, registration, passkey, and profile surfaces stay consistent).
+PASSWORD_SSO_ONLY_DETAIL = "Password login is disabled (SSO-only). Sign in with SSO."
+PASSKEY_SSO_ONLY_DETAIL = "Passkey login is disabled (SSO-only)."
+
+
 @dataclass
 class OAuthProviderConfig:
     """Internal representation of OAuth provider configuration."""
@@ -168,6 +174,32 @@ class OAuthConfigService:
             return OAuthLoginPreference()
         return OAuthLoginPreference.model_validate(config.value_json)
 
+    async def _is_login_method_allowed_for(
+        self, enabled: bool, is_admin: bool
+    ) -> bool:
+        """Shared core for the password/passkey enforcement helpers."""
+        if enabled or is_admin:
+            return True
+        # First-run bootstrap (no users exist): the first user becomes
+        # PlatformAdmin through the password or passkey setup path as today.
+        from src.repositories.users import UserRepository
+
+        return not await UserRepository(self.db).has_any_users()
+
+    async def is_password_allowed_for(self, is_admin: bool) -> bool:
+        """Whether password login/creation is allowed for this caller."""
+        preference = await self.get_login_preference()
+        return await self._is_login_method_allowed_for(
+            preference.password_login_enabled, is_admin
+        )
+
+    async def is_passkey_allowed_for(self, is_admin: bool) -> bool:
+        """Whether passkey login/enrollment is allowed for this caller."""
+        preference = await self.get_login_preference()
+        return await self._is_login_method_allowed_for(
+            preference.passkey_login_enabled, is_admin
+        )
+
     async def set_login_preference(
         self,
         preference: OAuthLoginPreference,
@@ -183,6 +215,15 @@ class OAuthConfigService:
                     f"{preference.default_sso_provider.title()} SSO must be configured "
                     "before it can be preferred"
                 )
+
+        if (
+            not preference.password_login_enabled
+            or not preference.passkey_login_enabled
+        ) and not await self.get_available_providers():
+            raise OAuthLoginPreferenceError(
+                "An SSO provider must be configured before disabling "
+                "password or passkey login"
+            )
 
         result = await self.db.execute(
             select(SystemConfig).where(
@@ -345,6 +386,16 @@ class OAuthConfigService:
             raise OAuthProviderPreferenceConflict(
                 f"Disable preferred SSO redirect before removing {provider.title()}"
             )
+        if (
+            not preference.password_login_enabled
+            or not preference.passkey_login_enabled
+        ):
+            available = await self.get_available_providers()
+            if provider in available and len(available) == 1:
+                raise OAuthProviderPreferenceConflict(
+                    f"Re-enable password and passkey login before removing "
+                    f"{provider.title()} (last SSO provider)"
+                )
 
         if provider == "microsoft":
             keys = [
@@ -370,7 +421,10 @@ class OAuthConfigService:
         await self._delete_config_keys(keys)
         if preference.default_sso_provider == provider:
             await self.set_login_preference(
-                OAuthLoginPreference(),
+                OAuthLoginPreference(
+                    password_login_enabled=preference.password_login_enabled,
+                    passkey_login_enabled=preference.passkey_login_enabled,
+                ),
                 updated_by=updated_by,
             )
         logger.info(f"OAuth config deleted for provider: {log_safe(provider)}")

@@ -43,6 +43,14 @@ class OAuthLoginPreference(BaseModel):
         default=None,
         description="Configured SSO provider used for the preferred redirect",
     )
+    password_login_enabled: bool = Field(
+        default=True,
+        description="Whether password login is available to non-admins",
+    )
+    passkey_login_enabled: bool = Field(
+        default=True,
+        description="Whether passkey login/enrollment is available to non-admins",
+    )
 
     @model_validator(mode="after")
     def require_provider_when_enabled(self) -> "OAuthLoginPreference":

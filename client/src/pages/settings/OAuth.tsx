@@ -1,4 +1,8 @@
-import { PreferredSignIn } from "./oauth/PreferredSignIn";
+import {
+	LoginPolicy,
+	PreferredSignIn,
+	type LoginPreferenceValue,
+} from "./oauth/PreferredSignIn";
 import { OAuthReadError } from "./oauth/OAuthReadError";
 import { OAuthProviderCard } from "./oauth/OAuthProviderCard";
 /**
@@ -29,8 +33,6 @@ import {
 	useTestOAuthConfig,
 } from "@/services/oauth-config";
 
-type OAuthProvider = "microsoft" | "google" | "oidc";
-
 export function OAuth() {
 	// Form state for each provider
 	const [microsoftForm, setMicrosoftForm] = useState({
@@ -48,10 +50,8 @@ export function OAuth() {
 		client_secret: "",
 		display_name: "SSO",
 	});
-	const [loginPreferenceDraft, setLoginPreferenceDraft] = useState<{
-		auto_redirect_to_sso: boolean;
-		default_sso_provider: OAuthProvider | null;
-	} | null>(null);
+	const [loginPreferenceDraft, setLoginPreferenceDraft] =
+		useState<LoginPreferenceValue | null>(null);
 
 	// Load configurations
 	const {
@@ -108,21 +108,31 @@ export function OAuth() {
 	const defaultSsoProvider = loginPreferenceDraft
 		? loginPreferenceDraft.default_sso_provider
 		: (configData?.login_preference.default_sso_provider ?? null);
+	const passwordLoginEnabled =
+		loginPreferenceDraft?.password_login_enabled ??
+		configData?.login_preference.password_login_enabled ??
+		true;
+	const passkeyLoginEnabled =
+		loginPreferenceDraft?.passkey_login_enabled ??
+		configData?.login_preference.passkey_login_enabled ??
+		true;
 
 	const saveLoginPreference = async () => {
 		if (updateLoginPreference.isPending) return;
 		try {
-			await updateLoginPreference.mutateAsync({
-				body: {
-					auto_redirect_to_sso: autoRedirectToSso,
-					default_sso_provider: defaultSsoProvider ?? null,
-				},
-			});
+			// Built as a detached object so the payload shape stays explicit.
+			const body = {
+				auto_redirect_to_sso: autoRedirectToSso,
+				default_sso_provider: defaultSsoProvider ?? null,
+				password_login_enabled: passwordLoginEnabled,
+				passkey_login_enabled: passkeyLoginEnabled,
+			};
+			await updateLoginPreference.mutateAsync({ body });
 			await refetch();
 			setLoginPreferenceDraft(null);
-			toast.success("Preferred sign-in updated");
+			toast.success("Login preference updated");
 		} catch (error) {
-			toast.error("Failed to update preferred sign-in", {
+			toast.error("Failed to update login preference", {
 				description:
 					error instanceof Error ? error.message : "Unknown error",
 			});
@@ -136,9 +146,28 @@ export function OAuth() {
 				configuredProviders={configuredProviders}
 				autoRedirectToSso={autoRedirectToSso}
 				defaultSsoProvider={defaultSsoProvider}
+				passwordLoginEnabled={passwordLoginEnabled}
+				passkeyLoginEnabled={passkeyLoginEnabled}
 				pending={updateLoginPreference.isPending}
 				failed={updateLoginPreference.isError}
 				onChange={setLoginPreferenceDraft}
+				onSave={() => {
+					void saveLoginPreference();
+				}}
+			/>
+			<LoginPolicy
+				passwordLoginEnabled={passwordLoginEnabled}
+				passkeyLoginEnabled={passkeyLoginEnabled}
+				hasProviders={configuredProviders.length > 0}
+				pending={updateLoginPreference.isPending}
+				failed={updateLoginPreference.isError}
+				onChange={(policy) => {
+					setLoginPreferenceDraft({
+						auto_redirect_to_sso: autoRedirectToSso,
+						default_sso_provider: defaultSsoProvider,
+						...policy,
+					});
+				}}
 				onSave={() => {
 					void saveLoginPreference();
 				}}

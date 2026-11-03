@@ -37,10 +37,18 @@ from src.services.passkey_service import PasskeyService
 
 # Import login response generation from auth router
 from src.routers.auth import _generate_login_tokens, LoginResponse
+from src.services.oauth_config_service import PASSKEY_SSO_ONLY_DETAIL
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/passkeys", tags=["passkeys"])
+
+
+async def _passkey_allowed_for(db: DbSession, is_admin: bool) -> bool:
+    """Whether passkey use is allowed under the SSO-only policy."""
+    from src.services.oauth_config_service import OAuthConfigService
+
+    return await OAuthConfigService(db).is_passkey_allowed_for(is_admin)
 
 
 def _refuse_impersonation_enrollment(user: CurrentActiveUser) -> None:
@@ -71,6 +79,11 @@ async def get_registration_options(
 ) -> PasskeyRegistrationOptionsResponse:
     """Generate WebAuthn registration options for the current user."""
     _refuse_impersonation_enrollment(user)
+    if not await _passkey_allowed_for(db, user.is_platform_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSKEY_SSO_ONLY_DETAIL,
+        )
     service = PasskeyService(db)
 
     try:
@@ -103,6 +116,11 @@ async def verify_registration(
 ) -> PasskeyRegistrationVerifyResponse:
     """Verify and complete passkey registration."""
     _refuse_impersonation_enrollment(user)
+    if not await _passkey_allowed_for(db, user.is_platform_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSKEY_SSO_ONLY_DETAIL,
+        )
     service = PasskeyService(db)
 
     try:
@@ -156,6 +174,20 @@ async def get_authentication_options(
     db: DbSession,
 ) -> PasskeyAuthOptionsResponse:
     """Generate WebAuthn authentication options (public endpoint)."""
+    if request.email:
+        # Resolve the caller by email where available; unknown emails take
+        # the generic path (no user enumeration change).
+        from src.repositories.users import UserRepository
+
+        user = await UserRepository(db).get_by_email(request.email)
+        allowed = True if user is None else await _passkey_allowed_for(db, user.is_superuser)
+    else:
+        allowed = await _passkey_allowed_for(db, False)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSKEY_SSO_ONLY_DETAIL,
+        )
     service = PasskeyService(db)
 
     try:
@@ -199,6 +231,12 @@ async def verify_authentication(
             credential_json=credential_json,
         )
 
+        if not await _passkey_allowed_for(db, user.is_superuser):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=PASSKEY_SSO_ONLY_DETAIL,
+            )
+
         await db.commit()
 
         logger.info(f"Passkey authentication successful for user {user.id}")
@@ -212,6 +250,8 @@ async def verify_authentication(
             detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to verify authentication: {e}")
         raise HTTPException(

@@ -39,6 +39,8 @@ class TestOAuthLoginPreference:
             assert response.json()["login_preference"] == {
                 "auto_redirect_to_sso": True,
                 "default_sso_provider": "microsoft",
+                "password_login_enabled": True,
+                "passkey_login_enabled": True,
             }
 
             response = e2e_client.get("/auth/status")
@@ -74,6 +76,8 @@ class TestOAuthLoginPreference:
             assert response.json()["login_preference"] == {
                 "auto_redirect_to_sso": False,
                 "default_sso_provider": None,
+                "password_login_enabled": True,
+                "passkey_login_enabled": True,
             }
         finally:
             e2e_client.put(

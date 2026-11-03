@@ -178,6 +178,8 @@ test.describe.serial("SSO settings acceptance", () => {
 		expect(settings.login_preference).toEqual({
 			auto_redirect_to_sso: false,
 			default_sso_provider: "google",
+			password_login_enabled: true,
+			passkey_login_enabled: true,
 		});
 
 		await page.reload();

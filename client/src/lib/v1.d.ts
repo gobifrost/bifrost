@@ -14355,6 +14355,11 @@ export interface components {
             needs_setup: boolean;
             /** Password Login Enabled */
             password_login_enabled: boolean;
+            /**
+             * Passkey Login Enabled
+             * @default true
+             */
+            passkey_login_enabled: boolean;
             /** Mfa Required For Password */
             mfa_required_for_password: boolean;
             /** Oauth Providers */
@@ -23568,6 +23573,18 @@ export interface components {
              * @description Configured SSO provider used for the preferred redirect
              */
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
+            /**
+             * Password Login Enabled
+             * @description Whether password login is available to non-admins
+             * @default true
+             */
+            password_login_enabled: boolean;
+            /**
+             * Passkey Login Enabled
+             * @description Whether passkey login/enrollment is available to non-admins
+             * @default true
+             */
+            passkey_login_enabled: boolean;
         };
         /**
          * OAuthProviderConfigResponse
