@@ -1,0 +1,14 @@
+{
+  "key": "pr:1222",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Developer-facing plugin instructions, migration plan templates, and standalone Rewst extraction tooling. No installed Bifrost platform runtime, UI, or API behavior changes.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1222",
+      "The public package contains no customer migration state or credentials. The extraction helper is explicitly invoked by the operator and does not install a server-side workflow.",
+      "Focused validation: 15 offline extraction tests, Ruff, skill validation, plugin mirror freshness, Markdown links and JSON examples, GitHub Action pins, and diff whitespace checks passed."
+    ]
+  }
+}
