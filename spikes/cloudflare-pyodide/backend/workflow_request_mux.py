@@ -13,8 +13,11 @@ class WorkflowRequestMux:
     def __init__(self, generation):
         self._generation = generation
         self._slots = {}
+        self._retired = False
 
     def bind(self, execution_id, collector):
+        if self._retired:
+            raise RuntimeError('Workflow collector transport retired')
         if execution_id in self._slots:
             raise RuntimeError('Execution collector already bound')
         self._slots[execution_id] = {
@@ -28,8 +31,28 @@ class WorkflowRequestMux:
     def result(self, execution_id):
         return self._slots[execution_id]['result']
 
+    @property
+    def retained_count(self):
+        return len(self._slots)
+
+    def retire(self):
+        """Call after acknowledged transport-journal retirement; keep uncertainty.
+
+        Completed collection alone is not canonical ACK. This component has no
+        terminal authority. The caller first retires the companion transport
+        journal after acknowledgements through the actual upstream consumer.
+        """
+        for slot in self._slots.values():
+            task = slot['collection']
+            if task is None or not task.done() or task.cancelled() or task.exception() is not None:
+                raise RuntimeError('Unsettled workflow collection remains')
+        self._slots.clear()
+        self._retired = True
+
     async def request(self, action, payload, *, expected_generation=None):
         # Fence before looking up a retained dispatch, including duplicate reads.
+        if self._retired:
+            raise ConnectionError('Workflow collector transport retired')
         admitted_generation = self._generation()
         if action != 'workflow' or expected_generation != admitted_generation:
             raise ConnectionError('Workflow transport/session rejected')

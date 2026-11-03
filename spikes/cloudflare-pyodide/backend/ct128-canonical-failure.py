@@ -21,14 +21,14 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, shared_pool=False, revision=1):
     global PACKET, RUN, NAME
     http_component = http_component or request_mux
     late_settlement = late_settlement or http_component
     stream_interruption = stream_interruption or automatic_loss or attempt_deadline
-    physical_pool = physical_pool or stream_pool or stream_loss or stream_interruption or late_settlement
+    physical_pool = physical_pool or stream_pool or stream_loss or stream_interruption or late_settlement or shared_pool
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('shared-pool' if shared_pool else 'request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -46,7 +46,7 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
     api_overlay = {path: hashlib.sha256((CHECKOUT / path).read_bytes()).hexdigest() for path in
                    ('api/src/worker/remote/protocol.py', 'api/src/worker/remote/remote_pool.py')}
     image_id = out(['docker', 'image', 'inspect', 'bifrost-test-api-dev:bifrost-test-7ddfac36', '--format', '{{.Id}}'])
-    if (stream_interruption or late_settlement) and (api_overlay['api/src/worker/remote/remote_pool.py'] !=
+    if (stream_interruption or late_settlement or shared_pool) and (api_overlay['api/src/worker/remote/remote_pool.py'] !=
         'dd14eb91761041a0f6ea6ea974295c2c610ad43c9e50e46dbb14028ef9f81789'
         or api_overlay['api/src/worker/remote/protocol.py'] != '91db42936f3235599243af681d24886fbb79180a7020633dfafe35887b3956d5'
         or image_id != 'sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b'):
@@ -98,6 +98,8 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
          'python', '/qualification/provider-response-loss.py' if deadline_response_loss or deadline_retained or stream_loss else '/qualification/canonical-local.py',
          '--late-settlement-probe' if late_settlement else '--attempt-deadline-probe' if attempt_deadline else '--automatic-loss-probe' if automatic_loss else '--stream-interruption-probe' if stream_interruption else '--stream-retained-response' if stream_loss else '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
          else '--deadline-response-loss' if deadline_response_loss else '--failure-probe']]
+    if shared_pool:
+        commands[-1][-2:] = ['/qualification/shared-native-pool.py']
     report = {'api_source': SOURCE, 'runtime_engine_source': 'f49d4ba99cebd24aa497f1244833b940e640885f',
         'project': project, 'cloud_invocations': 0, 'physical_termination_verified': False,
         'qualification_passed': False, 'commands': [], 'compose_sha256': compose_hash,
@@ -161,7 +163,14 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
             if exit_code:
                 raise RuntimeError('Canonical failure qualification failed; inspect private log')
         records = [json.loads(line) for line in (RUN / 'phase-3.private.log').read_text().splitlines() if line.startswith('{')]
-        if late_settlement:
+        if shared_pool:
+            probe = next(row for row in reversed(records) if row.get('shared_native_pool_probe'))
+            if (not probe.get('single_native_pool_verified') or not probe.get('both_real_sdk_effects_held_concurrently')
+                or not probe.get('mux_retired_after_canonical_ack') or len(probe.get('attempts', {})) != 2
+                or list(probe.get('launches', {}).values()) != [1, 1]):
+                raise RuntimeError('Shared pool did not qualify two independent native attempts')
+            report['shared_pool_result'] = probe
+        elif late_settlement:
             probe = next(row for row in reversed(records) if row.get('late_settlement_probe'))
             if (not probe.get('canonical_timeout_preserved') or not probe.get('actual_terminal_released_handle')
                 or not probe.get('fixture_worker_cascade_cleanup_verified') or probe.get('launches') != 1):
@@ -248,10 +257,12 @@ if __name__ == '__main__':
     mode.add_argument('--late-settlement', action='store_true')
     mode.add_argument('--http-component', action='store_true')
     mode.add_argument('--request-mux', action='store_true')
+    mode.add_argument('--shared-pool', action='store_true')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
     main(egress_gate=args.egress_gate, deadline_response_loss=args.deadline_response_loss,
          deadline_retained=args.deadline_retained, physical_pool=args.physical_pool, stream_pool=args.stream_pool,
          stream_loss=args.stream_loss, stream_interruption=args.stream_interruption,
          automatic_loss=args.automatic_loss, attempt_deadline=args.attempt_deadline,
-         late_settlement=args.late_settlement, http_component=args.http_component, request_mux=args.request_mux, revision=args.revision)
+         late_settlement=args.late_settlement, http_component=args.http_component, request_mux=args.request_mux,
+         shared_pool=args.shared_pool, revision=args.revision)

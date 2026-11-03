@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const source = path => execFileSync('git', ['show', 'dbf854732be5ad3c4b9f79f837edf213e075496f:' + path]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const base = new URL('../results/request-mux/', import.meta.url);
 const bytes = name => readFile(new URL(name, base));
@@ -24,10 +26,10 @@ for (const name of ['unit_tests', 'ruff', 'pyright']) assert.equal(quality[name]
 for (const name of ['workflow_request_mux.py', 'test_workflow_request_mux.py',
   'canonical-local.py', 'ct128-canonical-failure.py', 'http_invocation.py',
   'invocation_stream.py', 'attempt_deadline.py', 'task_cleanup.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), final.packet_sha256[name], name);
+  assert.equal(hash(source('spikes/cloudflare-pyodide/backend/' + name)), final.packet_sha256[name], name);
 }
 for (const [path, digest] of Object.entries(final.api_overlay_sha256)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(source(path)), digest, path);
 }
 for (const report of [first, intermediate, final]) {
   assert.equal(report.qualification_passed, true);
@@ -52,4 +54,4 @@ for (const report of [first, intermediate, final]) {
   assert.ok(run.dispatch_accepted_monotonic < run.terminal_collected_monotonic);
   assert.ok(run.result.api_calls.some(call => call.path === '/api/sdk/runtime/logs' && call.status === 410));
 }
-console.log('Attempt-scoped native request tests and real single-attempt engine/SDK late settlement verified; full same-pool concurrency and deployed cancellation remain unqualified.');
+console.log('Historical attempt-scoped request and real single-attempt lifecycle receipts verified. This artifact alone does not qualify shared-pool execution or deployed cancellation.');

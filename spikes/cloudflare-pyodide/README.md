@@ -1,12 +1,17 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest real concurrency qualification: [one native pool, two tenant workflows](backend/SHARED-NATIVE-POOL.md).
+Both actual engine/SDK runs reach independent effects concurrently; failure,
+lost ACK and owner reconnect preserve the successful peer. This is warm local
+qualification, with public admission and deployed cancellation still unaccepted.
+
 Latest native request work: [attempt-scoped collection](backend/WORKFLOW-REQUEST-MUX.md).
 Concurrent synthetic collectors retain separate results; owner-rotation failures
-were reproduced and repaired. Full same-pool concurrent engine/SDK proof remains open.
+were reproduced and repaired. The shared-pool follow-on above adds real local execution.
 
 Latest transport increment: [per-attempt HTTP invocation](backend/HTTP-INVOCATION.md).
 Real local engine/SDK execution and late terminal reconciliation pass through
-the extracted component. Same-relay concurrency and deployed cancellation remain open.
+the extracted component. Combined deployed lifecycle and cancellation remain open.
 
 Latest lifecycle qualification: [late finite completion after Timeout](backend/LATE-SETTLEMENT.md).
 An actual 40-second engine/SDK success now returns after canonical Timeout; the

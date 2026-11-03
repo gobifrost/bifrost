@@ -89,7 +89,10 @@ kill. This is finite awaited-work evidence, not arbitrary-code cancellation.
 The [per-attempt HTTP component](HTTP-INVOCATION.md) now owns the HTTP session
 through terminal EOF independently of scheduling authority. The same real local
 late-completion path passes through it; this extraction adds no RPC object or
-waitUntil lifetime. Same-relay multi-attempt execution remains unqualified.
+waitUntil lifetime. The [shared native pool qualification](SHARED-NATIVE-POOL.md)
+now exercises two actual tenant runs through one local pool, preserving peer
+credentials/obligations during failure ACK loss and owner reconnect. It uses
+credential-free prewarm with fresh children, not cold-start or deployed proof.
 
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle

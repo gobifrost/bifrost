@@ -19,8 +19,10 @@ test containers were stopped afterwards; no cloud invocations occurred.
 Four focused native unit cases separately cover immutable identity/credentials,
 single-use POST, concurrent framing/session separation, redirect refusal and
 request admission bounds. Mock framing tests are not parallel engine/SDK proof.
-The fixed native transport still stores singleton route state: same-relay,
-multi-attempt qualification remains the next implementation increment.
+That fixed single-run transport stores singleton route state. The later
+[shared-pool fixture](SHARED-NATIVE-POOL.md) instead uses per-attempt slots and
+qualifies two real tenant runs through one local native pool. A reusable
+deployment adapter and combined deployed lifecycle remain outstanding.
 
 The guest receipt records image, source, workspace and runtime packet hashes:
 [raw receipt](../results/http-component/v1.json). Same CT128 2 CPU/8 GiB allocation;

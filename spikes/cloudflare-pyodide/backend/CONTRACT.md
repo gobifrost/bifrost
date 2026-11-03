@@ -59,6 +59,13 @@ the deployed engine/SDK samples. The combined deployed contract remains
 unaccepted; the public host still rejects the experimental profile. The companion
 packages actual upstream source rather than another engine.
 
+The [shared native pool qualification](SHARED-NATIVE-POOL.md) now runs two actual
+tenant engine/SDK attempts through one local pool with fresh children. Failure
+ACK loss, real ownership-generation rotation, independent credential revocation
+and obligation/accounting release pass without relaunching either workflow.
+The control connection is fixture-supplied; this is not public profile startup,
+combined deployed control authentication or arbitrary untrusted admission.
+
 ### Health, workflow outcome and provider settlement are separate facts
 
 The [automatic recovery experiment](AUTOMATIC-RECOVERY.md) establishes why a

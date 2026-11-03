@@ -132,6 +132,42 @@ class MuxTests(IsolatedAsyncioTestCase):
             await mux.collection('a')
         self.assertEqual(calls, [])
 
+    async def test_retirement_refuses_pending_then_forgets_only_settled_slots(self):
+        mux = WorkflowRequestMux(lambda: 1)
+        release = asyncio.Event()
+
+        async def collect(request, accepted):
+            accepted('handle:a')
+            await release.wait()
+            return {'execution_id': request['execution_id']}
+
+        mux.bind('a', collect)
+        await mux.request('workflow', payload('a'), expected_generation=1)
+        with self.assertRaisesRegex(RuntimeError, 'Unsettled'):
+            mux.retire()
+        self.assertEqual(mux.retained_count, 1)
+        release.set()
+        await mux.collection('a')
+        mux.retire()
+        self.assertEqual(mux.retained_count, 0)
+        with self.assertRaisesRegex(ConnectionError, 'retired'):
+            await mux.request('workflow', payload('a'), expected_generation=1)
+        with self.assertRaisesRegex(RuntimeError, 'retired'):
+            mux.bind('a', collect)
+
+    async def test_retirement_keeps_failed_collection_uncertain(self):
+        mux = WorkflowRequestMux(lambda: 1)
+
+        async def collect(_request, _accepted):
+            raise ConnectionError('synthetic stream loss')
+
+        mux.bind('a', collect)
+        with self.assertRaises(ConnectionError):
+            await mux.request('workflow', payload('a'), expected_generation=1)
+        with self.assertRaisesRegex(RuntimeError, 'Unsettled'):
+            mux.retire()
+        self.assertEqual(mux.retained_count, 1)
+
 
 if __name__ == '__main__':
     main()

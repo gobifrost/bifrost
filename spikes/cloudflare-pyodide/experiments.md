@@ -746,3 +746,36 @@ retirement. Synthetic concurrency is not that acceptance, nor CPU-stop proof.
 Final request-mux V4 passes all four real phases, supervisor102.210s, provider
 still running/no OOM before owned cleanup and no running owned test containers
 afterwards. Nine focused cases and Ruff/Pyright pass on the exact final packet.
+
+## Shared actual native pool, 2026-11-03
+
+Hypothesis: two real run-scoped engine/SDK workflows can share one native pool
+without sharing mutable credential/result state or losing peer obligations.
+Change: dedicated fixed two-tenant fixture with per-attempt slots, one real
+ThinRemoteProcessPool/consumer/worker/launcher, existing request mux and journal.
+Each run retains the existing two-module admission shape and30s deadline. One
+credential-free prewarm precedes claims; known cold concurrent initialization
+failure is retained, not reclassified as passing cold proof. New mux retirement
+refuses pending/failed collection and follows actual consumer ACK/journal retire.
+Initial V1 quality:11tests/Ruff pass; Pyright finds one callback/local name
+collision before real invocation. Rename persisted local, preserve initialsource.
+V2 command: timeout430 python3 inbox/shared-pool-v2/ct128-canonical-failure.py
+--shared-pool --revision2. Four phases pass72.174s. Both actual SDK effects70/78
+are independently observed while both workflows wait. Release failure first,
+realValueError/redaction/Failed, loseACK, rotateactualownerlease, rejectstale
+terminal, replaywithoutchangingcompleted_at/logIDs, retainlivepeercredential200
+andfailed401, duplicatepeerreceiptwithoutlaunch, thenSuccess78andall401/retire.
+V3 adds canonical heartbeat/reservation readbacks as busycounts2,2,1,0; passes
+72.499s. V4 requalifies exact final packet after clarifying companion-journal
+versus upstream-API terminology. Eleven focused guest cases/Ruff/Pyright pass.
+Artifacts: backend/SHARED-NATIVE-POOL.md, results/shared-pool raw receipts/source
+and source-bound verifier. Provider staysrunning/noOOM untilownedcleanup; no
+cloudcall or API-sourceedit. Controlsocketreconnect is fixture-supplied, despite
+actualPGownership/claims/consumer: not combinedsigned-control/deployedacceptance.
+Next: extract the shared fixture adapter into reusable private backend code,
+keep canonical token/provenance authority, and qualify supported startup without
+inventing Linux commands. Public admission and abnormalCPUstop remain unaccepted.
+
+Final shared-pool V4 passes four phases, supervisor72.338s; nativebusy2,2,1,0,
+canonicalpeer/settledaccountingverified,11focusedcasesandRuff/Pyrightpass.
+Provideralive/noOOMbeforecleanup;ownedrunningcontainersaftercleanupempty.

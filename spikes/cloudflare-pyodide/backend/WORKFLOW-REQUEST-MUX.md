@@ -51,11 +51,12 @@ focused native tests, Ruff and Pyright pass. It still creates a native pool
 per fixed fixture and its workflow validator uses singleton credential/evidence
 fields. Consequently this change is preparation for a shared native relay, not
 acceptance of multiple real engine runs through one pool/owner session.
-The next increment must move those validator fields into per-attempt state and
-qualify two actual run-scoped identities through one native pool, including one
-failed/stale terminal without disturbing its peer. It must also define bounded
-retirement after canonical ACK; this component currently retains its bound slots
-for the fixed fixture lifetime and is not a long-running admitted executor.
+The [shared-pool follow-on](SHARED-NATIVE-POOL.md) moves those fields into
+per-attempt slots in a separate dedicated fixture and qualifies two actual
+run-scoped identities through one native pool. Guarded mux retirement now
+follows actual canonical journal retirement there. The earlier single-run
+fixture and its exact historical receipt remain preserved; a reusable admitted
+deployment adapter is still outstanding.
 
 Same CT128 2 CPU/8 GiB allocation and existing cached pins. No cloud deployment,
 invocation, new credentials, runtime setting or admission change. Deployed CPU
