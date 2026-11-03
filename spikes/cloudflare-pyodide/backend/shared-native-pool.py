@@ -17,7 +17,7 @@ from task_cleanup import cancel_and_join
 from workspace_prepare import prepare_workspace, WorkspacePreparationError
 
 
-async def main(*, source_change=False):
+async def main(*, source_change=False, late_result=False):
     database = urlsplit(os.environ.get('BIFROST_DATABASE_URL', ''))
     if (os.environ.get('BIFROST_ENVIRONMENT') != 'testing'
         or os.environ.get('TEST_API_URL') != 'http://api:8000'
@@ -34,6 +34,7 @@ async def main(*, source_change=False):
     from src.models.orm.config import Config
     from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
     from src.models.orm.work_dispatches import WorkDispatch
+    from src.models.orm.tables import Document, Table
     from src.services.execution.memory_monitor import effective_memory_sample
     from src.services.execution.workflow_dispatch import stage_workflow_run
     from src.services.repo_storage import RepoStorage
@@ -113,6 +114,17 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
              'credential': os.environ['BIFROST_ACCESS_TOKEN']}}
 '''
                 sources[slot['path']] = source
+                if late_result and slot['label'] == 'fails-first':
+                    sources[slot['path']] = source.replace(
+                        f"    while await config.get({slot['gate']!r}) is not True:\n        await asyncio.sleep(0.25)\n",
+                        "    await asyncio.sleep(40)\n"
+                        "    try:\n"
+                        f"        await tables.upsert({slot['table']!r}, id='late-denied', data={{'value': 999}})\n"
+                        "    except Exception as exc:\n"
+                        "        late_write_error = type(exc).__name__\n"
+                        "    else:\n"
+                        "        raise RuntimeError('Post-deadline write unexpectedly accepted')\n"
+                    ).replace("    if True:\n        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])\n", "")
                 pending = pending_execution_record(execution_id=execution_id, workflow_id=str(slot['workflow'].id),
                     parameters={'n': slot['n'], 'peer_scope': str(peer['org'].id), 'peer_key': peer['key']},
                     org_id=str(slot['org'].id), user_id=str(slot['user'].id), user_name=slot['user'].name,
@@ -170,7 +182,7 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
             await beat()
             heartbeat = asyncio.create_task(renew())
             failure_consume_gate = asyncio.Event()
-            lose_failure_ack = True
+            lose_failure_ack = not late_result
 
             async def canonical_result(result):
                 nonlocal lose_failure_ack
@@ -294,120 +306,192 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         if response.status_code != 204:
                             raise RuntimeError('Authorized synthetic fixture release failed')
 
-                    if not source_change:
-                        await release(failed)
-                    result = await failed['receipt']
-                    if source_change:
-                        failed_evidence = adapter.attempt(str(failed['execution'].id)).evidence
-                        absent = await api.get(f"/api/tables/{failed['table']}/documents/proof",
-                            headers={'Authorization': 'Bearer ' + failed['token']}, params={'scope': str(failed['org'].id)})
-                        if (result['success'] or result['error_type'] == 'ValueError' or absent.status_code != 404
-                            or any(not call['path'].startswith('/api/sdk/modules/')
-                                   and call['path'] not in ('/api/sdk/modules-resolve', '/api/sdk/runtime/logs')
-                                   for call in failed_evidence['api_calls'])):
-                            raise RuntimeError('Changed dependency did not fail before workflow SDK effects')
-                        report.update(source_change_probe=True, failed_document_status_before_terminal=absent.status_code,
-                            changed_dependency_rejected_before_workflow_effects=True,
-                            source_rejection_error_type=result['error_type'],
-                            source_integrity_diagnostic_seen='Workspace module digest mismatch' in json.dumps(failed_evidence))
-                    elif result['success'] or result['error_type'] != 'ValueError':
-                        raise RuntimeError('Expected first workflow error missing')
-                    failure_consume_gate.set()
-                    try:
-                        await adapter.attempt(str(failed['execution'].id)).delivery
-                    except ConnectionError as exc:
-                        if str(exc) != 'Injected shared failure ACK loss':
-                            raise
-                    else:
-                        raise RuntimeError('Lost ACK was not observed')
+                    if late_result:
+                        failure_consume_gate.set()
+                        first = adapter.attempt(str(failed['execution'].id))
+                        cutoff = first.info.started_at + timedelta(seconds=first.info.timeout_seconds)
+                        await release(peer)
+                        await adapter.attempt(str(peer['execution'].id)).delivery
+                        if native._build_heartbeat()['busy_count'] != 1:
+                            raise RuntimeError('Normal peer did not independently settle')
+                        report['native_busy_counts'].append(1)
+                        liveness.update(active_runs=1, runs_handled=1,
+                                        memory_reserved_bytes=requests[str(failed['execution'].id)])
+                        await beat()
+                        old = ref.lease
+                        ref.lease = await connect(2)
+                        await beat()
+                        if not (await first.deadline)['expired']:
+                            raise RuntimeError('Finite workflow completed before original deadline')
+                        if (first.info.started_at + timedelta(seconds=first.info.timeout_seconds) != cutoff
+                            or mux.collection(str(failed['execution'].id)).done()
+                            or native._build_heartbeat()['busy_count'] != 1):
+                            raise RuntimeError('Logical timeout reset cutoff or released physical work')
+                        report['native_busy_counts'].append(1)
 
-                    async def failed_snapshot():
+                        async def timeout_snapshot():
+                            async with get_db_context() as db:
+                                row = await db.get(Execution, failed['execution'].id)
+                                ids = sorted(str(value) for value in await db.scalars(select(ExecutionLog.id).where(
+                                    ExecutionLog.execution_id == failed['execution'].id)))
+                                return row.status, row.result, row.error_message, row.completed_at, ids
+
+                        before = await timeout_snapshot()
+                        if before[0] != ExecutionStatus.TIMEOUT or before[1] is not None or before[3] is None:
+                            raise RuntimeError('Canonical Timeout did not precede physical settlement')
+                        await beat()
                         async with get_db_context() as db:
-                            row = await db.get(Execution, failed['execution'].id)
-                            log_ids = sorted(str(value) for value in await db.scalars(select(ExecutionLog.id).where(
-                                ExecutionLog.execution_id == failed['execution'].id)))
-                            return row.status, row.result, row.error_message, row.completed_at, log_ids
-
-                    first_commit = await failed_snapshot()
-                    if source_change:
-                        peer_attempt = adapter.attempt(str(peer['execution'].id))
-                        peer_evidence = peer_attempt.evidence
-                        peer_result = None if peer_evidence is None else peer_evidence['result']
-                        cutoff = peer['info'].started_at + timedelta(seconds=peer['info'].timeout_seconds)
-                        diagnostic = {'source_change_peer_diagnostic': True,
-                            'native_busy_count': native._build_heartbeat()['busy_count'],
-                            'peer_collection_done': mux.collection(str(peer['execution'].id)).done(),
-                            'peer_success': None if peer_result is None else peer_result['success'],
-                            'peer_error_type': None if peer_result is None else peer_result.get('error_type'),
-                            'peer_last_calls': [] if peer_evidence is None else peer_evidence['api_calls'][-5:],
-                            'peer_remaining_deadline_ms': (cutoff - datetime.now(timezone.utc)).total_seconds() * 1000,
-                            'source_error_type': result['error_type']}
-                        encoded_diagnostic = json.dumps(diagnostic)
-                        if any(secret and secret in encoded_diagnostic for secret in secrets):
-                            raise RuntimeError('Credential exposure: source-change diagnostic withheld')
-                        print(encoded_diagnostic, flush=True)
-                    if native._build_heartbeat()['busy_count'] != 2 or mux.collection(str(peer['execution'].id)).done():
-                        raise RuntimeError('Failure ACK loss disturbed live peer')
-                    report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
-                    old = ref.lease
-                    ref.lease = await connect(2)
-                    await beat()
-                    try:
-                        await adapter.reconcile(str(failed['execution'].id), lease=old)
-                    except CredentialRouteChanged:
-                        report['stale_terminal_owner_rejected'] = True
+                            row = await db.get(ExecutionWorker, worker_id)
+                            if row.active_runs != 1 or row.memory_reserved_bytes != requests[str(failed['execution'].id)]:
+                                raise RuntimeError('Timeout released unsettled worker accounting')
+                        revoked = await api.post('/api/sdk/config/get',
+                            headers={'Authorization': 'Bearer ' + failed['token']}, json={'key': failed['key']})
+                        if revoked.status_code != 401:
+                            raise RuntimeError('Runtime capability remained usable after Timeout')
+                        from attempt_deadline import report_expired_workflow
+                        try:
+                            await report_expired_workflow(old, consumer, first.info)
+                        except CredentialRouteChanged:
+                            report['stale_deadline_owner_rejected'] = True
+                        else:
+                            raise RuntimeError('Stale deadline owner consumed timeout')
+                        late = await first.receipt
+                        await first.delivery
+                        if not late['success'] or late['result']['value'] != failed['value']:
+                            raise RuntimeError('Actual finite invocation did not return late success')
+                        if await timeout_snapshot() != before or native.processes:
+                            raise RuntimeError('Late success changed canonical Timeout or retained settled capacity')
+                        calls = first.evidence['api_calls']
+                        if not any(call['status'] == 410 and '/documents/upsert' in call['path'] for call in calls):
+                            raise RuntimeError('No actual denied post-deadline SDK write observed')
+                        async with get_db_context() as db:
+                            table_id = await db.scalar(select(Table.id).where(Table.name == failed['table']))
+                            if table_id is None or await db.get(Document, (table_id, 'late-denied')) is not None:
+                                raise RuntimeError('Denied late SDK write left a document')
+                        report['native_busy_counts'].append(0)
+                        liveness.update(active_runs=0, runs_handled=2, memory_reserved_bytes=0)
+                        await beat()
+                        report.update(integrated_late_result_verified=True, original_cutoff_preserved=True,
+                            timeout_committed_before_physical_settlement=True, late_success_preserved_timeout=True,
+                            post_deadline_sdk_write_denied=True, denied_document_absent=True,
+                            post_deadline_sdk_write_status=410,
+                            access_revoked_before_late_result_status=revoked.status_code,
+                            automatic_terminal_delivery_verified=True)
                     else:
-                        raise RuntimeError('Stale terminal owner accepted')
-                    acknowledged = await adapter.reconcile(str(failed['execution'].id))
-                    if not acknowledged or native._build_heartbeat()['busy_count'] != 1 or peer['route'] not in native.processes:
-                        raise RuntimeError('Failure reconciliation did not preserve peer obligation')
-                    report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
-                    liveness.update(active_runs=1, runs_handled=1,
-                                    memory_reserved_bytes=requests[str(peer['execution'].id)])
-                    await beat()
-                    async with get_db_context() as db:
-                        worker_row = await db.get(ExecutionWorker, worker_id)
-                        if (worker_row.active_runs != 1 or worker_row.runs_handled != 1
-                            or worker_row.memory_reserved_bytes != requests[str(peer['execution'].id)]):
-                            raise RuntimeError('Canonical worker accounting did not retain just the peer')
-                    report['canonical_peer_accounting_verified'] = True
-                    if await failed_snapshot() != first_commit:
-                        raise RuntimeError('Failure ACK replay duplicated canonical state/logs')
-                    report['failed_replay_unchanged_verified'] = True
+                        if not source_change:
+                            await release(failed)
+                        result = await failed['receipt']
+                        if source_change:
+                            failed_evidence = adapter.attempt(str(failed['execution'].id)).evidence
+                            absent = await api.get(f"/api/tables/{failed['table']}/documents/proof",
+                                headers={'Authorization': 'Bearer ' + failed['token']}, params={'scope': str(failed['org'].id)})
+                            if (result['success'] or result['error_type'] == 'ValueError' or absent.status_code != 404
+                                or any(not call['path'].startswith('/api/sdk/modules/')
+                                       and call['path'] not in ('/api/sdk/modules-resolve', '/api/sdk/runtime/logs')
+                                       for call in failed_evidence['api_calls'])):
+                                raise RuntimeError('Changed dependency did not fail before workflow SDK effects')
+                            report.update(source_change_probe=True, failed_document_status_before_terminal=absent.status_code,
+                                changed_dependency_rejected_before_workflow_effects=True,
+                                source_rejection_error_type=result['error_type'],
+                                source_integrity_diagnostic_seen='Workspace module digest mismatch' in json.dumps(failed_evidence))
+                        elif result['success'] or result['error_type'] != 'ValueError':
+                            raise RuntimeError('Expected first workflow error missing')
+                        failure_consume_gate.set()
+                        try:
+                            await adapter.attempt(str(failed['execution'].id)).delivery
+                        except ConnectionError as exc:
+                            if str(exc) != 'Injected shared failure ACK loss':
+                                raise
+                        else:
+                            raise RuntimeError('Lost ACK was not observed')
 
-                    await adapter.route_execution(execution_id=str(peer['execution'].id), context=peer['original_context'],
-                        active_execution=peer['original_active'], credential_route=adapter.credential_route())
-                    if adapter.attempt(str(peer['execution'].id)).receipt is not peer['receipt']:
-                        raise RuntimeError('Peer duplicate did not reuse original receipt')
-                    peer_access = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + peer['token']},
-                                                 json={'key': peer['key']})
-                    failed_access = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + failed['token']},
-                                                   json={'key': failed['key']})
-                    if peer_access.status_code != 200 or failed_access.status_code != 401:
-                        raise RuntimeError('Terminal credential state leaked between attempts')
-                    report.update(peer_live_after_failure_reconcile=True, failed_access_status=401, peer_access_status=200,
-                                  duplicate_dispatch_reused_peer=True, lost_ack_reconnect_verified=True)
-                    await release(peer)
-                    success = await peer['receipt']
-                    if not success['success'] or success['result']['value'] != peer['value']:
-                        raise RuntimeError('Independent successful peer result mismatch')
-                    delivered = await adapter.attempt(str(peer['execution'].id)).delivery
-                    if not delivered['acknowledged'] or native.processes or native._build_heartbeat()['busy_count'] != 0:
-                        raise RuntimeError('Final settled peer obligation remained')
-                    report['automatic_terminal_delivery_verified'] = True
-                    report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
-                    liveness.update(active_runs=0, runs_handled=2, memory_reserved_bytes=0)
-                    await beat()
-                    async with get_db_context() as db:
-                        worker_row = await db.get(ExecutionWorker, worker_id)
-                        if worker_row.active_runs != 0 or worker_row.runs_handled != 2 or worker_row.memory_reserved_bytes != 0:
-                            raise RuntimeError('Canonical settled worker accounting was not released')
-                    report['canonical_settled_accounting_verified'] = True
+                        async def failed_snapshot():
+                            async with get_db_context() as db:
+                                row = await db.get(Execution, failed['execution'].id)
+                                log_ids = sorted(str(value) for value in await db.scalars(select(ExecutionLog.id).where(
+                                    ExecutionLog.execution_id == failed['execution'].id)))
+                                return row.status, row.result, row.error_message, row.completed_at, log_ids
+
+                        first_commit = await failed_snapshot()
+                        if source_change:
+                            peer_attempt = adapter.attempt(str(peer['execution'].id))
+                            peer_evidence = peer_attempt.evidence
+                            peer_result = None if peer_evidence is None else peer_evidence['result']
+                            cutoff = peer['info'].started_at + timedelta(seconds=peer['info'].timeout_seconds)
+                            diagnostic = {'source_change_peer_diagnostic': True,
+                                'native_busy_count': native._build_heartbeat()['busy_count'],
+                                'peer_collection_done': mux.collection(str(peer['execution'].id)).done(),
+                                'peer_success': None if peer_result is None else peer_result['success'],
+                                'peer_error_type': None if peer_result is None else peer_result.get('error_type'),
+                                'peer_last_calls': [] if peer_evidence is None else peer_evidence['api_calls'][-5:],
+                                'peer_remaining_deadline_ms': (cutoff - datetime.now(timezone.utc)).total_seconds() * 1000,
+                                'source_error_type': result['error_type']}
+                            encoded_diagnostic = json.dumps(diagnostic)
+                            if any(secret and secret in encoded_diagnostic for secret in secrets):
+                                raise RuntimeError('Credential exposure: source-change diagnostic withheld')
+                            print(encoded_diagnostic, flush=True)
+                        if native._build_heartbeat()['busy_count'] != 2 or mux.collection(str(peer['execution'].id)).done():
+                            raise RuntimeError('Failure ACK loss disturbed live peer')
+                        report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
+                        old = ref.lease
+                        ref.lease = await connect(2)
+                        await beat()
+                        try:
+                            await adapter.reconcile(str(failed['execution'].id), lease=old)
+                        except CredentialRouteChanged:
+                            report['stale_terminal_owner_rejected'] = True
+                        else:
+                            raise RuntimeError('Stale terminal owner accepted')
+                        acknowledged = await adapter.reconcile(str(failed['execution'].id))
+                        if not acknowledged or native._build_heartbeat()['busy_count'] != 1 or peer['route'] not in native.processes:
+                            raise RuntimeError('Failure reconciliation did not preserve peer obligation')
+                        report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
+                        liveness.update(active_runs=1, runs_handled=1,
+                                        memory_reserved_bytes=requests[str(peer['execution'].id)])
+                        await beat()
+                        async with get_db_context() as db:
+                            worker_row = await db.get(ExecutionWorker, worker_id)
+                            if (worker_row.active_runs != 1 or worker_row.runs_handled != 1
+                                or worker_row.memory_reserved_bytes != requests[str(peer['execution'].id)]):
+                                raise RuntimeError('Canonical worker accounting did not retain just the peer')
+                        report['canonical_peer_accounting_verified'] = True
+                        if await failed_snapshot() != first_commit:
+                            raise RuntimeError('Failure ACK replay duplicated canonical state/logs')
+                        report['failed_replay_unchanged_verified'] = True
+
+                        await adapter.route_execution(execution_id=str(peer['execution'].id), context=peer['original_context'],
+                            active_execution=peer['original_active'], credential_route=adapter.credential_route())
+                        if adapter.attempt(str(peer['execution'].id)).receipt is not peer['receipt']:
+                            raise RuntimeError('Peer duplicate did not reuse original receipt')
+                        peer_access = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + peer['token']},
+                                                     json={'key': peer['key']})
+                        failed_access = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + failed['token']},
+                                                       json={'key': failed['key']})
+                        if peer_access.status_code != 200 or failed_access.status_code != 401:
+                            raise RuntimeError('Terminal credential state leaked between attempts')
+                        report.update(peer_live_after_failure_reconcile=True, failed_access_status=401, peer_access_status=200,
+                                      duplicate_dispatch_reused_peer=True, lost_ack_reconnect_verified=True)
+                        await release(peer)
+                        success = await peer['receipt']
+                        if not success['success'] or success['result']['value'] != peer['value']:
+                            raise RuntimeError('Independent successful peer result mismatch')
+                        delivered = await adapter.attempt(str(peer['execution'].id)).delivery
+                        if not delivered['acknowledged'] or native.processes or native._build_heartbeat()['busy_count'] != 0:
+                            raise RuntimeError('Final settled peer obligation remained')
+                        report['automatic_terminal_delivery_verified'] = True
+                        report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
+                        liveness.update(active_runs=0, runs_handled=2, memory_reserved_bytes=0)
+                        await beat()
+                        async with get_db_context() as db:
+                            worker_row = await db.get(ExecutionWorker, worker_id)
+                            if worker_row.active_runs != 0 or worker_row.runs_handled != 2 or worker_row.memory_reserved_bytes != 0:
+                                raise RuntimeError('Canonical settled worker accounting was not released')
+                        report['canonical_settled_accounting_verified'] = True
                     for run, slot in slots.items():
                         attempt = adapter.attempt(run)
                         slot['evidence'], slot['terminal_monotonic'] = attempt.evidence, attempt.terminal_monotonic
                         report['launches'][run] = attempt.launches
-                        status = ExecutionStatus.FAILED if slot is failed else ExecutionStatus.SUCCESS
+                        status = (ExecutionStatus.TIMEOUT if late_result else ExecutionStatus.FAILED) if slot is failed else ExecutionStatus.SUCCESS
                         async with get_db_context() as db:
                             row = await db.get(Execution, slot['execution'].id)
                             logs = list(await db.scalars(select(ExecutionLog.message).where(ExecutionLog.execution_id == slot['execution'].id)))
@@ -472,6 +556,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--source-change', action='store_true')
+    parser.add_argument('--late-result', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main(source_change=args.source_change))
+    asyncio.run(main(source_change=args.source_change, late_result=args.late_result))

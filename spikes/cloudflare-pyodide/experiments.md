@@ -927,3 +927,26 @@ change. Artifact: backend/OWNED-DEADLINE.md, source-bound verifier and raw resul
 Next: actual finite late result through this integrated adapter, proving Timeout
 and revocation while the physical obligation stays held, then stale late-result
 consumption without overwrite. Deployed CPU-stop remains a separate unproven gate.
+
+### Actual private-adapter timeout and finite late result
+Hypothesis: reconnecting native deadline supervision preserves canonical Timeout
+while physical collection remains pending, and late success cannot overwrite it.
+Change: --late-adapter fixture mode, normal peer plus40s finite async child under
+original30s cutoff; reconnect before cutoff, real late SDK write and SQL absence
+check. Commands: checked-in results/late-adapter/pyodide-late-adapter-v2.sh;
+timeout -k 5 430 python3 inbox/late-adapter-v2/ct128-canonical-failure.py
+--late-adapter --revision 2. V1 failed because its SDK assertion required401 while
+existing attempt-egress returns410 locally; exact failed source/receipt retained.
+V2 requires410 at SDK gate and independently401 from revoked API credential;
+no runtime workaround/status alternatives. Observed: canonicalTimeout precedes
+physical settlement; native+PG reservationheld; currentowner reports/staleowner
+rejected; late actualSuccess70 engine45168ms leaves canonicalTimeout/null result/
+error/completion/logIDs unchanged; denied document absent; normalpeerSuccess78,
+one launch each, busy2,1,1,0 and retirement/cleanup pass. Total112.335s includes
+setup/prewarm/waits/cleanup. Ruff/Pyright pass; prior39unit evidence retained by
+identical helper/adapter/test hashes rather than rerun. Artifact:
+backend/LATE-ADAPTER.md, source-bound verifier and raw results/late-adapter.
+No cloud/admission/resource/security-setting change or physicalCPUstop proof.
+Next: fail-first pre-ACK transport-loss capacity test; source inspection suggests
+Httpx errors can reach native definitive-failure branch despite started collection.
+Then supported startup/registration and independent deployed abnormal enforcement.
