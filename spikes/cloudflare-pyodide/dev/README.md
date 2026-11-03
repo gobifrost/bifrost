@@ -21,6 +21,14 @@ The compiled UI executes on Workers. API requests are proxied to the temporary o
 
 ## Real upstream engine and SDK on Cloudflare
 
+The later [stream-log qualification](STREAM-LOGS.md) overlays the shared engine
+revision f49d4ba99 into a separately pinned runtime artifact. Actual deployed
+stdout/stderr are redacted and persist through existing upstream log recovery
+into PostgreSQL, alongside config/table SDK success. Earlier receipts below
+retain their original closure/source pins. Current stage_runtime.mjs replaces
+only that qualified engine and the companion bootstrap; it verifies both pins
+and leaves all453 other module/native artifacts unchanged.
+
 `cloud-sdk-success.json` contains four successful actual deployed Python Worker executions, including three integration/fresh-state runs. The fixture uses upstream `run_execution`, engine, virtual imports, SDK, run-credential issuance and API authorization; no SDK responses are mocked. Its isolated fixture rows use the existing committed token-test world and are cleaned up. This is explicitly not a production execution adapter or a substitute authoritative job queue.
 
 Observed:

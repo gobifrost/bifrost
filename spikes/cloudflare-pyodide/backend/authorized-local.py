@@ -37,7 +37,7 @@ async def cleanup_fixture_audit(world, engine):
     """Same exact-fixture audit teardown as upstream worker SDK HTTP tests."""
     from sqlalchemy import delete, or_
     from sqlalchemy.ext.asyncio import AsyncSession
-    from src.models.orm import AuditLog, Execution, Organization, User
+    from src.models.orm import AuditLog, Execution, ExecutionLog, Organization, User
 
     try:
         yield
@@ -46,6 +46,7 @@ async def cleanup_fixture_audit(world, engine):
         users = [row_id for model, row_id in world._created if model is User]
         executions = [row_id for model, row_id in world._created if model is Execution]
         async with AsyncSession(engine) as session:
+            await session.execute(delete(ExecutionLog).where(ExecutionLog.execution_id.in_(executions)))
             await session.execute(delete(AuditLog).where(or_(AuditLog.organization_id.in_(orgs),
                 AuditLog.user_id.in_(users), AuditLog.execution_id.in_(executions))))
             await session.commit()
@@ -72,7 +73,7 @@ def reserve_development_invocation(execution_id):
         os.fsync(reservations.fileno())
 
 
-async def main(*, dev_qualification=False, integration_probe=False, fresh_probe=False) -> None:
+async def main(*, dev_qualification=False, integration_probe=False, fresh_probe=False, stream_probe=False) -> None:
     database = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     provider_url = "http://bifrost-pyodide-ddf316c1:8799"
     provider_headers = {}
@@ -139,6 +140,10 @@ async def main(*, dev_qualification=False, integration_probe=False, fresh_probe=
     fresh['integration_value'] = 42
     fresh['integration_secret_probe'] = integration.config['qualification_secret']
 ''' if integration_probe else ''
+    stream_code = '''    import sys
+    print('stream stdout credential=' + os.environ['BIFROST_ACCESS_TOKEN'])
+    print('stream stderr credential=' + os.environ['BIFROST_ACCESS_TOKEN'], file=sys.stderr)
+''' if stream_probe else ''
     source = f'''
 import logging
 import os
@@ -151,6 +156,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
     value = await config.get({config_key!r})
 {integration_code.rstrip()}
     document = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
+{stream_code.rstrip()}
     logging.getLogger(__name__).warning("authorized local Pyodide workflow")
     return {{"value": document.data["value"], "parent_secret_present": "BIFROST_SECRET_KEY" in os.environ,
              "transport_url": os.environ["BIFROST_API_URL"],
@@ -270,6 +276,11 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                     assert result['result']['integration_secret_probe'] == '[REDACTED]'
                     report['integration_read_secret_redaction_peer_denial_verified'] = True
                 assert result["metrics"]["code_hash"] == manifest[path]
+                if stream_probe:
+                    messages = [row['message'] for row in result['logs']]
+                    for message in ('stream stdout credential=[REDACTED]', 'stream stderr credential=[REDACTED]'):
+                        assert messages.count(message) == 1
+                    report['printed_streams_returned_redacted'] = True
                 readback = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
                                          params={"scope": str(organization.id)})
                 assert readback.status_code == 200
@@ -285,6 +296,29 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                 assert before.status_code == 200
                 execution.status = ExecutionStatus.SUCCESS
                 await world.session.commit()
+                if stream_probe:
+                    from bifrost._logging import recover_terminal_execution_logs
+                    from sqlalchemy import select
+                    from src.models.orm.executions import ExecutionLog
+                    from src.core.cache import get_redis
+                    from src.core.cache.keys import execution_logs_stream_key
+                    recovered = await recover_terminal_execution_logs([str(execution.id)], limit=1)
+                    rows = (await world.session.scalars(select(ExecutionLog).where(
+                        ExecutionLog.execution_id == execution.id))).all()
+                    messages = [row.message for row in rows]
+                    if any(secret and secret in json.dumps(messages) for secret in (
+                        access_token, credentials.refresh_token, integration_secret)):
+                        raise RuntimeError('Persisted logs exposed a runtime secret; evidence withheld')
+                    for message in ('stream stdout credential=[REDACTED]', 'stream stderr credential=[REDACTED]'):
+                        assert messages.count(message) == 1
+                    report['persisted_printed_logs'] = [{'level': row.level, 'message': row.message} for row in rows]
+                    report['terminal_log_recovery'] = recovered
+                    repeated = await recover_terminal_execution_logs([str(execution.id)], limit=1)
+                    assert repeated['flushed'] == 0
+                    report['repeat_log_recovery'] = repeated
+                    async with get_redis() as redis:
+                        assert await redis.xlen(execution_logs_stream_key(str(execution.id))) == 0
+                    report['runtime_log_stream_drained'] = True
                 terminal = await api.post("/api/sdk/config/get", headers=headers, json={"key": config_key})
                 assert terminal.status_code == 401
                 report["live_then_fixture_terminal_status"] = [before.status_code, terminal.status_code]

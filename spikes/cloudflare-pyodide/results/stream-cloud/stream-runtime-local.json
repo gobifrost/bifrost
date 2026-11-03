@@ -1,0 +1,250 @@
+{
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "bundle_sha256": "3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260",
+  "cache_wrapper_sha256": "9f9ad4a47455ff2f29a5600471855260f88f0bc42a690917fa47a46ce34bffe7",
+  "cf_cli_version": "1.0.0-beta.26",
+  "wrangler_version": "4.156.0",
+  "image_id": "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+  "packet_sha256": {
+    "entry.mjs": "7fa4eb1726671c292e38138e03d5d4a4ab85cb5409ed0d594af3dfc3a34bbcb4",
+    "runtime-provenance.json": "7cefbd47f060712ed8a4e70cefd85130cb49f5bceabfb459e76af7305115402a",
+    "runtime-code.mjs": "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+    "wrangler.config.ts": "8d52911bcee8a1fe659c6592d14060835a11dea346db76f2adf246355491924d",
+    "package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "python-entry.mjs": "a0fc8853dc3a5cf224fae46af395a60188d4e35d8a1a0fc9397039d577d0ab43",
+    "policy.mjs": "8c4227b92e2011857851a6299542ff8aec748477acf9d99e5ae2c9a5482e025c",
+    "generated-runtime.mjs": "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+    "cloudflare.config.ts": "01e26e9273b9e369d6ae97658ebd9b1d42dbd29a9989343d76f03dee93883676"
+  },
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-stream-runtime-v1",
+    "--network=none",
+    "--cpus=1",
+    "--memory=2g",
+    "--memory-swap=2g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/node_modules,dst=/qualification/packet/node_modules,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/stream-runtime-v1,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+    "--env",
+    "HOME=/qualification/home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--workdir",
+    "/qualification/packet",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "/spike/node_modules/cf/bin/cf",
+    "dev"
+  ],
+  "observer_exit_code": 0,
+  "observation": {
+    "status": 200,
+    "body": {
+      "abi": {
+        "python": [
+          3,
+          14,
+          2
+        ],
+        "pyodide": "314.0.6",
+        "soabi": "cpython-314-wasm32-emscripten"
+      },
+      "records": [
+        {
+          "mode": "legacy",
+          "upstream_result": {
+            "status": "Success",
+            "result": {
+              "public_url": "https://test-api.invalid",
+              "transport_url": "https://test-api.invalid",
+              "execution_id": "00000000-0000-0000-0000-000000000001",
+              "parent_secret_present": false
+            },
+            "duration_ms": 1,
+            "logs": [],
+            "variables": {
+              "result": {
+                "public_url": "https://test-api.invalid",
+                "transport_url": "https://test-api.invalid",
+                "execution_id": "00000000-0000-0000-0000-000000000001",
+                "parent_secret_present": false
+              }
+            },
+            "integration_calls": [],
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            },
+            "error_message": null,
+            "error_type": null,
+            "cached": false,
+            "cache_expires_at": null,
+            "execution_context": {
+              "user_id": "00000000-0000-0000-0000-000000000002",
+              "email": "probe@example.invalid",
+              "name": "Probe",
+              "scope": "GLOBAL",
+              "organization": null,
+              "is_platform_admin": false,
+              "is_function_key": false,
+              "execution_id": "00000000-0000-0000-0000-000000000001",
+              "workflow_deadline": null,
+              "workflow_timeout_seconds": 10,
+              "workflow_name": "fixed-public-url-conformance",
+              "is_agent": false,
+              "artifact_workspace_id": null,
+              "public_url": "https://test-api.invalid",
+              "parameters": {},
+              "startup": null,
+              "form_inputs": {},
+              "embed": {},
+              "roi": {
+                "time_saved": 0,
+                "value": 0
+              }
+            },
+            "metrics": {
+              "peak_memory_bytes": null,
+              "peak_process_rss_bytes": null,
+              "cpu_user_seconds": null,
+              "cpu_system_seconds": null,
+              "cpu_total_seconds": null,
+              "code_hash": null
+            }
+          },
+          "bootstrap": {
+            "execution_child": true,
+            "engine_client_available": true,
+            "abi": {
+              "pyodide": "314.0.6",
+              "python": [
+                3,
+                14,
+                2
+              ],
+              "cache_tag": "cpython-314",
+              "soabi": "cpython-314-wasm32-emscripten",
+              "platform": "emscripten-5.0.3-wasm32"
+            }
+          }
+        },
+        {
+          "mode": "explicit",
+          "upstream_result": {
+            "status": "Success",
+            "result": {
+              "public_url": "https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev",
+              "transport_url": "https://test-api.invalid",
+              "execution_id": "00000000-0000-0000-0000-000000000001",
+              "parent_secret_present": false
+            },
+            "duration_ms": 2,
+            "logs": [],
+            "variables": {
+              "result": {
+                "public_url": "https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev",
+                "transport_url": "https://test-api.invalid",
+                "execution_id": "00000000-0000-0000-0000-000000000001",
+                "parent_secret_present": false
+              }
+            },
+            "integration_calls": [],
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            },
+            "error_message": null,
+            "error_type": null,
+            "cached": false,
+            "cache_expires_at": null,
+            "execution_context": {
+              "user_id": "00000000-0000-0000-0000-000000000002",
+              "email": "probe@example.invalid",
+              "name": "Probe",
+              "scope": "GLOBAL",
+              "organization": null,
+              "is_platform_admin": false,
+              "is_function_key": false,
+              "execution_id": "00000000-0000-0000-0000-000000000001",
+              "workflow_deadline": null,
+              "workflow_timeout_seconds": 10,
+              "workflow_name": "fixed-public-url-conformance",
+              "is_agent": false,
+              "artifact_workspace_id": null,
+              "public_url": "https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev",
+              "parameters": {},
+              "startup": null,
+              "form_inputs": {},
+              "embed": {},
+              "roi": {
+                "time_saved": 0,
+                "value": 0
+              }
+            },
+            "metrics": {
+              "peak_memory_bytes": null,
+              "peak_process_rss_bytes": null,
+              "cpu_user_seconds": null,
+              "cpu_system_seconds": null,
+              "cpu_total_seconds": null,
+              "code_hash": null
+            }
+          },
+          "bootstrap": {
+            "execution_child": true,
+            "engine_client_available": true,
+            "abi": {
+              "pyodide": "314.0.6",
+              "python": [
+                3,
+                14,
+                2
+              ],
+              "cache_tag": "cpython-314",
+              "soabi": "cpython-314-wasm32-emscripten",
+              "platform": "emscripten-5.0.3-wasm32"
+            }
+          }
+        }
+      ],
+      "sdk_api_calls": 0,
+      "genuine_run_authorization_qualified": false,
+      "physical_termination_verified": false,
+      "cloud_invocations": 0
+    }
+  },
+  "runtime_probe_passed": true,
+  "state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 821595,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-02T23:53:41.377494091Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 16.3130649109371
+}

@@ -1,0 +1,13 @@
+{
+    "closed_version":  "5f6826d4-4fcb-4698-b1e8-1a4a1d3f574f",
+    "incremental_cost_cap_usd":  0.1,
+    "observed_at":  "2026-11-02T23:59:12.1740299+00:00",
+    "closed_deployment":  "200bfbcd-c0aa-49b8-8e4d-2b0355234ff4",
+    "expiry_ms":  1793665477614,
+    "open_version":  "512022a3-6b85-4878-82f6-1fcb7848e97c",
+    "secret_names":  [
+
+                     ],
+    "retired_guard_status":  404,
+    "maximum_invocations":  5
+}

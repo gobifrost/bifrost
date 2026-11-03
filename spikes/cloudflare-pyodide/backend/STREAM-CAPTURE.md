@@ -1,5 +1,10 @@
 # Shared engine printed-output repair
 
+Deployed follow-up: [dev/STREAM-LOGS.md](../dev/STREAM-LOGS.md) now records actual
+Cloudflare success-path stdout/stderr delivery and PostgreSQL persistence using
+real run credentials and this exact engine revision. It does not replace the
+historical canonical failure fixture or prove canonical cloud dispatch.
+
 The recorded canonical failure fixture exposed a shared engine defect: execute redirected stdout/stderr into StringIO objects but never read them. This is pure Python execution logic, not a missing wheel or an unsupported operating-system dependency. The fix belongs in the upstream engine, rather than a companion print implementation that Linux would not share.
 
 The isolated contribution replaces the discarded buffers with one capture context. On normal return or an exception it restores the original process streams, collects complete and partial printed lines, applies the existing credential/header sanitizer using secrets registered during execution, and appends the rows to existing result logs. Stdout has level info; stderr has level error. Literal printed level prefixes remain literal text. Rows retain the existing workflow/script source. The same sanitized messages use the existing authenticated runtime-log transport, so canonical persistence need not invent another log endpoint. Transport exceptions are nonfatal and only their type is reported; their potentially secret-bearing text is withheld.

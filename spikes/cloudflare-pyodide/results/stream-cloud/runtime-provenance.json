@@ -1,0 +1,9 @@
+{
+  "base_runtime_sha256": "e1cca587e10cb755d49df0f2325c038a361a25f7031142a9e9e896a3c004bd39",
+  "runtime_sha256": "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+  "bootstrap_sha256": "341b2414a1167a2fb9850114619d5caf1882bc4a60ee73f699afb1d7c856c471",
+  "engine_sha256": "6690efa6fc513a0f457c30cfed59da091bf3ae292d186bc72cd436c871759c21",
+  "engine_source": "f49d4ba99cebd24aa497f1244833b940e640885f",
+  "upstream_source": "785b560b9973020e1c13401383e1a73a87a54940",
+  "note": "Companion bootstrap and qualified upstream engine stream-capture revision replaced; all other engine/SDK modules and native packages retain the pinned base closure"
+}

@@ -24,7 +24,7 @@ Keep the original public base artifact separately. `stage_runtime.mjs` verifies 
 ```sh
 node spikes/cloudflare-pyodide/dev/stage_runtime.mjs <original-pinned-base-artifact>
 node --test spikes/cloudflare-pyodide/dev/executor/policy.test.mjs spikes/cloudflare-pyodide/dev/stage_runtime.test.mjs
-node spikes/cloudflare-pyodide/dev/verify-public-url.mjs
+node spikes/cloudflare-pyodide/dev/verify-public-url.mjs --commit ff4a339b434b58c88abac8d0c33057a52002aec1
 ```
 
 The guest fixture uses `public-url-fixture/` plus the staged generated runtime/runtime-code, actual executor python-entry/policy modules and provenance file. `ct128-public-url.py` reuses the bounded cf CLI supervisor from `backend/ct128-disposal-probe.py`; its copy must be staged beside that helper inside the owned guest packet. The helper refuses to overwrite the existing run directory. The two bootstrap-delegation unittest cases run in the cached guest image, separately from actual runtime acceptance. Five Node policy/integrity regressions and focused guest Ruff pass.
@@ -35,4 +35,4 @@ The new window had a five-request/$0.10/30-minute cap. Three fixture requests we
 
 Cleanup used cf CLI to deploy workersDev=false/expiry0 and delete DEV_AUTH. Final version `7e90a551-d0ae-4cdb-b38d-f1ac7ed11c20` has no secrets; the public endpoint returned404 even with the retired guard. The qualification container exited0 and was removed; dev services and volumes were preserved. `cloud-cleanup.json` and `cloud-source.json` distinguish deployed evidence, closure provenance and cleanup. Physical termination and canonical cloud dispatch remain incomplete; untrusted admission stays disabled.
 
-Historical guard verification now accepts an explicit tested commit so bootstrap development does not rewrite or invalidate the old receipt. The retained guard result verifies against `d09c4e113efea3ba9e3c8c94b42a6dfc6b5474fa`, while the refresh challenge retains its existing `4939d3d61623692bf310bb482057b4588d10d213` pin. No old expected hashes/results were replaced.
+Historical source verification accepts an explicit tested commit so later runtime/fixture development does not rewrite the old receipt. The public-URL cloud source files verify against ff4a339b434b58c88abac8d0c33057a52002aec1. The retained guard verifies against d09c4e113efea3ba9e3c8c94b42a6dfc6b5474fa, while the refresh challenge retains its existing4939d3d61623692bf310bb482057b4588d10d213 pin. No old expected hashes/results were replaced. Current staging now additionally overlays the qualified engine revision; see STREAM-LOGS.md for its separate artifact and deployed evidence.
