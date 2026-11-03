@@ -6,6 +6,18 @@ SDK proofs kept separately. This is experimental YELLOW, not a production
 executor. Public/untrusted admission stays disabled. Start with
 [the acceptance ledger](ACCEPTANCE.md), then these recent increments:
 
+* [Startup repair candidate](backend/STARTUP-CANDIDATE.md): 12 source/mock cases,
+  [six real Redis cases](backend/STARTUP-REDIS.md), and one
+  [signed Linux workflow/retirement](backend/STARTUP-LINUX.md) pass with an isolated
+  API overlay. Shared-source adoption is still coordinated and unapplied.
+* [Actual in-flight HTTP cancellation](backend/HTTP-CONTEXT-LIFETIME.md): local
+  connection closure and retained-context control, with bounded effect observation.
+  [CPU continuation/effect refusal](backend/CPU-EGRESS-DEADLINE.md) separately proves
+  capability expiry while finite CPU work continues; neither proves CPU stop.
+* [Fresh loader staging](dev/LOADER-STAGING.md): missing SDK cleanup JavaScript
+  dependency is now copied and hash-recorded. Fresh-directory assembly passes;
+  no deployed Python/SDK compatibility claim is added by that packaging test.
+
 * [Upstream SDK #1217 real execution](backend/SDK1217-EXECUTION.md): config/table
   operations pass with the exact SDK update and pure wheel. [Awaited SDK close](backend/SDK-CLOSE.md)
   passes with both SDK versions; custom TLS and interrupted cleanup remain open.

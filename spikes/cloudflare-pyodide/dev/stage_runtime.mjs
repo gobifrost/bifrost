@@ -1,5 +1,6 @@
 import {readFile, mkdir, writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {stageRuntimeLoader} from './stage-runtime-loader.mjs';
 const path = process.argv[2];
 if (!path) throw new Error('Supply the public prepared generated-runtime.mjs artifact');
 const bytes = await readFile(path);
@@ -27,8 +28,9 @@ if (sha256(engine) !== '6690efa6fc513a0f457c30cfed59da091bf3ae292d186bc72cd436c8
 modules[enginePath] = {py: engine};
 const output = Buffer.from(prefix + JSON.stringify(modules) + ';\n');
 await writeFile(new URL('generated-runtime.mjs', directory), output);
-await writeFile(new URL('runtime-code.mjs', directory), await readFile(new URL('../backend/runtime-code.mjs', import.meta.url)));
+const loaderFiles = await stageRuntimeLoader(directory);
 const provenance = {base_runtime_sha256: digest,
+  loader_files_sha256: loaderFiles,
   runtime_sha256: createHash('sha256').update(output).digest('hex'),
   bootstrap_sha256: createHash('sha256').update(bootstrap).digest('hex'),
   engine_sha256: sha256(engine),
