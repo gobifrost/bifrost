@@ -13,7 +13,7 @@ import httpx
 from attempt_journal import AttemptJournal, AttemptResult
 from attempt_deadline import report_expired_workflow, supervise_attempt_deadline
 from http_invocation import HttpInvocation
-from runtime_inventory import validate_inventory
+from runtime_inventory import validate_inventory, bind_package_requirements
 from workflow_request_mux import WorkflowRequestMux
 
 from src.services.execution.process_pool import CredentialRoute
@@ -131,7 +131,7 @@ class PrivateHttpWorkflowPool:
     def credential_route(self):
         return CredentialRoute(2, self._ref.lease.session_generation)
 
-    def bind_manifest(self, execution_id, manifest, *, requirements):
+    def bind_manifest(self, execution_id, manifest, *, requirements, packages):
         """Bind trusted-host provenance/requirements, not user authorization.
 
         Requirements describe reviewed code under these pins. They neither
@@ -147,13 +147,15 @@ class PrivateHttpWorkflowPool:
             or any(not isinstance(item, str) or item not in SUPPORTED_REQUIREMENTS for item in requirements)
             or len(set(requirements)) != len(requirements)):
             raise ValueError('Explicit supported workload requirements required before binding')
+        bound_packages = bind_package_requirements(self._runtime_inventory, packages)
         for path, digest in manifest.items():
             if (not isinstance(path, str) or len(path) > 512 or '\\' in path
                 or str(PurePosixPath(path)) != path or PurePosixPath(path).is_absolute()
                 or '..' in PurePosixPath(path).parts or not path.endswith('.py')
                 or not isinstance(digest, str) or re.fullmatch('[a-f0-9]{64}', digest) is None):
                 raise ValueError('Canonical relative Python paths and SHA256 digests required')
-        self._plans[execution_id] = {'manifest': dict(manifest), 'requirements': tuple(sorted(requirements))}
+        self._plans[execution_id] = {'manifest': dict(manifest), 'requirements': tuple(sorted(requirements)),
+                                    'packages': bound_packages}
 
     def attempt(self, execution_id):
         """Trusted-parent receipt access; never expose as a public result API."""

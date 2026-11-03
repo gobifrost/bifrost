@@ -287,10 +287,12 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     # Fixture source is authored/reviewed here, not classified
                     # from arbitrary user declarations. This remains private.
                     requirements = ['json', 'async-workflow', 'pinned-workspace', 'bifrost-http-sdk']
-                    adapter.bind_manifest(execution_id, prepared.manifest, requirements=requirements)
+                    packages = {'httpx': '0.28.1', 'pydantic': '2.14.2', 'pydantic-core': '2.50.2'}
+                    adapter.bind_manifest(execution_id, prepared.manifest, requirements=requirements, packages=packages)
                     slot['preparation'] = {'observations': prepared.observations,
                         'response_bytes': prepared.response_bytes, 'manifest': prepared.manifest,
                         'requirements': requirements,
+                        'packages': packages,
                         'original_content_hash': original_context.get('content_hash')}
                     slot['original_context'] = prepared.context
                     slot['original_active'] = json.loads(json.dumps(active_execution, default=str))
@@ -334,9 +336,9 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     response = await warmup.post('http://bifrost-pyodide-ddf316c1:8799/__fixture_warmup')
                     if response.status_code != 200:
                         raise RuntimeError('Credential-free local initialization failed')
+                    observed = response.json()
+                    adapter.bind_runtime_inventory(observed)
                     if startup_inventory:
-                        observed = response.json()
-                        adapter.bind_runtime_inventory(observed)
                         with remote_owner_context(ref):
                             if not await renew_remote_owner(ref.lease):
                                 raise RuntimeError('Owner lost before runtime cache registration')

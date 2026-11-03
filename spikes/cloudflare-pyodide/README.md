@@ -12,6 +12,9 @@ executor. Public/untrusted admission stays disabled. Start with
   Earlier receipts retain their pins.
 * [Owned SDK close completion](backend/OWNED-SDK-CLOSE.md): cooperative waiter
   cancellation no longer skips sync close; actual platform interruption remains unproved.
+* [Exact package binding](backend/PACKAGE-BINDING.md): declared versions must
+  match the observed pinned runtime before dispatch; compatibility still needs
+  execution evidence.
 * [Private declared-capability check](backend/CAPABILITY-CONTRACT.md): pinned,
   reviewed workflows require an explicit supported declaration before dispatch;
   arbitrary-code discovery and admission remain unsupported.

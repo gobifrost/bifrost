@@ -3,7 +3,7 @@ import copy
 from unittest import TestCase, main
 
 from runtime_guard import QUALIFIED_LOCAL_RUNTIME, RuntimeCompatibilityError
-from runtime_inventory import validate_inventory
+from runtime_inventory import validate_inventory, bind_package_requirements
 
 
 def probe():
@@ -13,6 +13,23 @@ def probe():
 
 
 class InventoryTests(TestCase):
+    def test_exact_package_match_normalizes_names_and_snapshots_input(self):
+        requirements = {'Pydantic_Core': '1.0.0'}
+        bound = bind_package_requirements(validate_inventory(probe()), requirements)
+        requirements['Pydantic_Core'] = 'changed'
+        self.assertEqual(bound, {'pydantic-core': '1.0.0'})
+
+    def test_missing_mismatched_ambiguous_or_unobserved_packages_refused(self):
+        for requirements in [{'httpx': '2.0.0'}, {'missing': '1'},
+                             {'pydantic_core': '1.0.0', 'pydantic-core': '1.0.0'},
+                             {'httpx': None}, {'httpx': '>=1'}, {'bad name': '1'},
+                             {'httpx': '1\nsecret'}, [], None]:
+            with self.subTest(requirements=requirements), self.assertRaises(ValueError):
+                bind_package_requirements(validate_inventory(probe()), requirements)
+        with self.assertRaises(ValueError):
+            bind_package_requirements(None, {'httpx': '1.0.0'})
+        self.assertEqual(bind_package_requirements(None, {}), {})
+
     def test_valid_inventory_is_snapshotted(self):
         original = probe()
         frozen = validate_inventory(original)

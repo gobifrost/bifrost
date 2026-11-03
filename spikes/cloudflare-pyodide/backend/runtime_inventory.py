@@ -30,3 +30,27 @@ def validate_inventory(probe):
     if not {'httpx', 'pydantic', 'pydantic-core'} <= seen:
         raise ValueError('Required engine/SDK packages absent from inventory')
     return json.loads(json.dumps(probe, allow_nan=False))
+
+
+def bind_package_requirements(inventory, requirements):
+    """Match exact distribution versions; metadata is not behavior qualification."""
+    if not isinstance(requirements, dict) or len(requirements) > 32:
+        raise ValueError('Explicit bounded package requirements required')
+    bound = {}
+    for name, version in requirements.items():
+        if (not isinstance(name, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', name) is None
+            or not isinstance(version, str) or not 1 <= len(version) <= 128
+            or not version.isascii() or any(char.isspace() or ord(char) < 33 for char in version)):
+            raise ValueError('Exact package identities required')
+        canonical = re.sub(r'[-_.]+', '-', name).lower()
+        if canonical in bound:
+            raise ValueError('Ambiguous package requirement')
+        bound[canonical] = version
+    if bound:
+        if inventory is None:
+            raise ValueError('Observed runtime inventory required before package binding')
+        observed = {re.sub(r'[-_.]+', '-', item['name']).lower(): item['version']
+                    for item in inventory['packages']}
+        if any(observed.get(name) != version for name, version in bound.items()):
+            raise ValueError('Required package/version absent from pinned runtime')
+    return dict(sorted(bound.items()))

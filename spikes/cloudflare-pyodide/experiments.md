@@ -1328,3 +1328,20 @@ access or settings change. Refusal retirement remains deliberately blocked until
 shared canonical consumption/ownership is reconciled; earliercoordinationdenialkept.
 Next independent local work: qualify fresh-runtime package/dependency admission
 against exact inventory while retaining dynamic-requirement and untrusted holds.
+
+## 2026-11-03 — Exact package declaration binding
+Hypothesis: pinned runtime inventory can refuse missing/mismatched declared
+packages before physical launch, without a second package manager or scheduler.
+Change: mandatory packages mapping on private bind_manifest, bounded canonical
+name/exactversion matching against validated immutable inventory, plan snapshot.
+Warmup inventory now bound before claims; no additional warmup invocation.
+CT128 python -m unittest -v test_private_http_pool test_runtime_inventory:33pass;
+Ruff/Pyrightpass. Actual ct128-canonical-failure.py --sdk-refresh --revision4 exit0
+in92.312s; recordedpackagepins actualSDKeffects/refresh/redaction, duplicate/fence/
+replay/revocation/accounting2,2,1,0/cleanup pass. No new dependency/build/clouduse.
+Artifacts: backend/PACKAGE-BINDING.md, verifier, results/package-binding.
+Metadata equality does not establish arbitrary dependency behavior; bundle/ABI
+pins and behavioral qualification remain necessary, untrusted admission disabled.
+Next: preserve dependency admission evidence in a canonical provider profile;
+full host startup/no-send consumption require shared boundary reconciliation,
+and deployed cancellation/isolation/memory remain cloud acceptance gates.

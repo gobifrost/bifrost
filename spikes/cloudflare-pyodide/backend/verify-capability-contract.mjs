@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const read = name => readFileSync(new URL('results/capability-contract/' + name, root), 'utf8');
 const receipt = JSON.parse(read('receipt.json'));
 for (const name of ['private_http_pool.py', 'shared-native-pool.py', 'test_private_http_pool.py']) {
-  const digest = createHash('sha256').update(readFileSync(new URL('backend/' + name, root))).digest('hex');
+  const digest = createHash('sha256').update(execFileSync('git', ['show',
+    '3966e2fcfe15a26448fe74cbb167a19d1bf7cd8f:spikes/cloudflare-pyodide/backend/' + name])).digest('hex');
   assert.equal(digest, receipt.packet_sha256[name], name);
 }
 assert.match(read('before.txt'), /FAILED \(errors=9\)/);
