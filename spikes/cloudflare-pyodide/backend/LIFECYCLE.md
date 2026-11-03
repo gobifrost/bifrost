@@ -76,6 +76,10 @@ The [existing API control qualification](AUTOMATIC-RECOVERY.md) now recovers rea
 relay silence without direct fixture recovery calls or clock manipulation. Its
 negative control preserves Running while a relay stays healthy after provider
 loss, so executor heartbeat must not be treated as invocation liveness.
+The [per-attempt deadline adapter](ATTEMPT-DEADLINE.md) now persists Timeout at
+the original cutoff while the relay stays Ready and the physical obligation
+stays held. It propagates a lost post-commit delivery receipt and replays through
+the existing consumer. No CPU-stop or deployed-accounting claim follows.
 
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle

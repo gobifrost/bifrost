@@ -27,8 +27,10 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
                node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False,
                worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False, stream_pool_probe=False,
-               stream_interruption_probe=False, automatic_loss_probe=False):
-    stream_interruption_probe = stream_interruption_probe or automatic_loss_probe
+               stream_interruption_probe=False, automatic_loss_probe=False, attempt_deadline_probe=False):
+    if automatic_loss_probe and attempt_deadline_probe:
+        raise RuntimeError('Relay loss and attempt deadline are separate fixed probes')
+    stream_interruption_probe = stream_interruption_probe or automatic_loss_probe or attempt_deadline_probe
     if stream_interruption_probe:
         if any((isolation_label is not None, refresh_probe, expired_access, concurrent_refresh, interrupt_refresh,
                 failure_probe, transport_waiter, node_pyodide, benchmark_probe, worker_loss_probe)):
@@ -730,10 +732,51 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         if running.status != ExecutionStatus.RUNNING:
                             raise RuntimeError('Transport failure fabricated a canonical terminal result')
                         report['canonical_before_recovery_status'] = running.status.value
-                        if not automatic_loss_probe:
+                        if not automatic_loss_probe and not attempt_deadline_probe:
                             lost = await end_runs_of_lost_worker(db, worker.id)
                             await db.commit()
-                    if automatic_loss_probe:
+                    if attempt_deadline_probe:
+                        from attempt_deadline import report_expired_workflow, supervise_attempt_deadline
+
+                        try:
+                            await report_expired_workflow(ref.lease, consumer, pool.info)
+                        except ValueError as early:
+                            if str(early) != 'Original dispatch deadline has not expired':
+                                raise
+                        else:
+                            raise RuntimeError('Early deadline report was accepted')
+                        cutoff = pool.info.started_at + timedelta(seconds=pool.info.timeout_seconds)
+                        remaining = (cutoff - datetime.now(timezone.utc)).total_seconds()
+                        if remaining <= 0:
+                            raise RuntimeError('Deadline positive-control window was missed')
+                        original_deadline_callback = consumer._handle_result
+
+                        async def lose_deadline_receipt(result):
+                            await original_deadline_callback(result)
+                            raise ConnectionError('Injected deadline receipt loss after canonical commit')
+
+                        consumer._handle_result = lose_deadline_receipt
+                        try:
+                            await supervise_attempt_deadline(ref.lease, consumer, pool.info,
+                                                             pool.physical_pool.transport.collection)
+                        except ConnectionError as loss:
+                            if str(loss) != 'Injected deadline receipt loss after canonical commit':
+                                raise
+                            report['deadline_delivery_receipt_lost'] = True
+                        else:
+                            raise RuntimeError('Deadline delivery receipt loss was not observed')
+                        finally:
+                            consumer._handle_result = original_deadline_callback
+                        await report_expired_workflow(ref.lease, consumer, pool.info)
+                        async with get_db_context() as db:
+                            relay = await db.get(ExecutionWorker, worker.id)
+                            if relay.state != 'ready' or heartbeat.done():
+                                raise RuntimeError('Per-attempt deadline incorrectly required relay loss')
+                        report.update(attempt_deadline_probe=True, early_deadline_rejected=True,
+                            owned_deadline_supervisor_verified=True,
+                            deadline_replay_consumed=True, relay_remains_ready=True,
+                            no_worker_wide_recovery=True)
+                    elif automatic_loss_probe:
                         from sqlalchemy import func
                         from src.scheduler.control import DISPATCH_SWEEP_SECONDS
                         from src.services.worker_pool.liveness import HEARTBEAT_LOST_AFTER
@@ -787,8 +830,10 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         document = await db.scalar(select(Document).join(Table, Table.id == Document.table_id).where(
                             Table.name == table, Table.organization_id == org.id, Document.id == 'proof'))
                         persisted = list(await db.scalars(select(ExecutionLog.message).where(ExecutionLog.execution_id == execution.id)))
-                        if (failed.status != ExecutionStatus.FAILED or failed.result is not None or
-                                failed.error_message != EXECUTOR_LOST or dispatch is not None or document.data['value'] != expected_value):
+                        terminal_status = ExecutionStatus.TIMEOUT if attempt_deadline_probe else ExecutionStatus.FAILED
+                        terminal_error = f'Execution timed out after {pool.info.timeout_seconds}s' if attempt_deadline_probe else EXECUTOR_LOST
+                        if (failed.status != terminal_status or failed.result is not None or
+                                failed.error_message != terminal_error or dispatch is not None or document.data['value'] != expected_value):
                             raise RuntimeError('Interrupted recovery state or durable effect mismatch')
                         if persisted != ['integration secret=[REDACTED]']:
                             raise RuntimeError('Pre-interruption structured log recovery/redaction failed')
@@ -832,7 +877,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                             duplicate_reused_failed_receipt=not automatic_loss_probe,
                             physical_stop_inferred_from_canonical_failure=False)
                     report.update(canonical_claim_verified=True, canonical_terminal_consumption_verified=False,
-                        provider_interruption_recovery_verified=True, canonical_recovery_status='Failed',
+                        provider_interruption_recovery_verified=True, canonical_recovery_status=terminal_status.value,
                         runtime_access_after_recovery_status=401, runtime_refresh_after_recovery_status=401,
                         no_redispatch_verified=True, launches=pool.launches, result_envelope_received=False,
                         collection_inventory=inventory, terminal_log_drain=drained, repeated_terminal_log_drain=repeated,
@@ -1014,8 +1059,10 @@ if __name__ == "__main__":
         parser.add_argument("--stream-pool-probe", action="store_true")
         parser.add_argument("--stream-interruption-probe", action="store_true")
         parser.add_argument("--automatic-loss-probe", action="store_true")
+        parser.add_argument("--attempt-deadline-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(automatic_loss_probe=args.automatic_loss_probe, stream_interruption_probe=args.stream_interruption_probe,
+        asyncio.run(main(attempt_deadline_probe=args.attempt_deadline_probe,
+                         automatic_loss_probe=args.automatic_loss_probe, stream_interruption_probe=args.stream_interruption_probe,
                          stream_pool_probe=args.stream_pool_probe, physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
                          worker_loss_probe=args.worker_loss_probe, benchmark_probe=args.benchmark_probe,
                          isolation_label=args.isolation_label, batch=args.batch,

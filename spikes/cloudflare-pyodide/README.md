@@ -4,11 +4,18 @@ Latest native contract repair: [opaque inventory uncertainty](backend/INVENTORY-
 44 focused native cases pass, including Linux controls, terminal replay and owner
 fencing. Missing invocation inventory no longer fabricates a Linux crash result.
 
-Latest control-plane qualification: [automatic relay-loss recovery](backend/AUTOMATIC-RECOVERY.md).
+Latest implementation: [per-attempt deadline with a healthy relay](backend/ATTEMPT-DEADLINE.md).
+An owned native timer now delivers the original cutoff through upstream's result
+consumer, persists Timeout and revokes credentials without releasing an unresolved
+invocation. Lost delivery receipt/replay and ten focused helper tests pass locally.
+Production startup/admission and deployed physical settlement remain unaccepted.
+
+The [automatic relay-loss recovery qualification](backend/AUTOMATIC-RECOVERY.md)
+separately proves the existing API loop's worker-loss path.
 The existing API loop automatically ends the run after real relay silence,
 revokes credentials and fences stale dispatch. The negative control leaves the
-run Running while a relay heartbeats despite provider loss: per-invocation
-failure/deadline handling is still missing. The prior
+run Running while a relay heartbeats despite provider loss; the deadline adapter
+above addresses the cutoff path, with full runtime integration still pending. The prior
 [streamed provider interruption](backend/STREAM-PROVIDER-INTERRUPTION.md) and this
 follow-on both retain unresolved physical obligations; neither establishes
 Cloudflare per-isolate cancellation acceptance.

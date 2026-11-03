@@ -17,10 +17,10 @@ assert.deepEqual(report.running_after_cleanup, []);
 assert.equal(report.provider_process_stop_verified, true);
 for (const name of ['canonical-local.py', 'ct128-canonical-failure.py', 'task_cleanup.py',
   'invocation_stream.py', 'pyright-guest-fixtures.json']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  assert.equal(hash(execFileSync('git', ['show', `f2cc3f29c:spikes/cloudflare-pyodide/backend/${name}`])), report.packet_sha256[name], name);
 }
 for (const [path, digest] of Object.entries(report.api_overlay_sha256)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(execFileSync('git', ['show', `f2cc3f29c:${path}`])), digest, path);
 }
 assert.equal(report.packet_sha256['project/backend/generated-runtime.mjs'],
   'bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0');

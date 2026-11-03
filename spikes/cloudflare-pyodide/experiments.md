@@ -1,5 +1,25 @@
 # Compact experiment log
 
+## Owned per-attempt deadline delivery without worker-wide failure, 2026-11-03
+
+Hypothesis: the native companion can deliver an authorized original cutoff through
+the real consumer without clearing unresolved physical work or killing the relay.
+V1 explicit delivery passes real Timeout/access+refresh401/replay after SDK70.
+V2 adds owned timer and lost post-commit receipt; runtime fails because the
+shielded AttemptResult awaitable is not a Future for asyncio.wait. Preserve that
+receipt/error; V3 passes the retained transport Task and rejects wrong types.
+A separate real20ms scheduler-stall test exposes a deadline race (1/1 fail);
+recheck the immutable UTC cutoff before accepting timely completion. No clock
+patch, timeout extension or diagnostic suppression. V3 all four runtime phases
+exit0, supervisor93.280s, live Ready relay, upstream Timeout/one launch/log,
+post-commit receipt loss propagated/replayed, original handle/timing/Busy resource
+obligation held. Ten native helper tests plus Ruff/Pyright pass. Command:
+`ct128-canonical-failure.py --attempt-deadline --revision 3`; artifact
+backend/ATTEMPT-DEADLINE.md, results/attempt-deadline and source-bound verifier.
+No native shared-source or cloud/admission change. Next: actual late result/EOF
+settles the held handle after logical Timeout without overwriting it; deployed
+physical enforcement remains a separate gate.
+
 ## Existing API automatic recovery with real heartbeat silence, 2026-11-03
 
 Hypothesis: canonical relay-loss recovery needs no new queue, but healthy relay

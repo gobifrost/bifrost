@@ -66,7 +66,9 @@ the already qualified 512 MiB/1 GiB respective bounds; no diagnostic suppression
 Executor health, canonical workflow outcome and physical provider settlement are
 three separate facts. Reusing upstream worker-loss recovery is viable; treating
 one lost invocation as a dead multi-invocation relay would end unrelated work.
-The remaining adapter needs per-invocation uncertain-outcome/deadline handling
-while preserving authorization, no-redispatch semantics and resource obligations.
+The subsequent [deadline adapter](ATTEMPT-DEADLINE.md) now delivers the original
+per-attempt cutoff through the real result consumer, with a healthy relay and
+held physical obligation. Full invocation supervision/settlement and production
+runtime integration remain pending.
 See the updated [contract assessment](CONTRACT.md). This evidence authorizes no
 cloud invocation, admission change, spending, credentials or production rollout.
