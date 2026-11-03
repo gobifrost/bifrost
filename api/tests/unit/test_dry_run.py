@@ -233,17 +233,17 @@ def test_parse_evaluator_output_accepts_trailing_prose():
         '{"a": 1}',
         # Wrong field types must fail, not coerce.
         '{"would_still_decide_same": "yes", "reasoning": "r", '
-        '"alternative_action": null, "confidence": 0.5}',
+        + '"alternative_action": null, "confidence": 0.5}',
         '{"would_still_decide_same": 1, "reasoning": "r", '
-        '"alternative_action": null, "confidence": 0.5}',
+        + '"alternative_action": null, "confidence": 0.5}',
         '{"would_still_decide_same": true, "reasoning": "r", '
-        '"alternative_action": null, "confidence": "high"}',
+        + '"alternative_action": null, "confidence": "high"}',
         '{"would_still_decide_same": true, "reasoning": "r", '
-        '"alternative_action": null, "confidence": true}',
+        + '"alternative_action": null, "confidence": true}',
         '{"would_still_decide_same": true, "reasoning": 42, '
-        '"alternative_action": null, "confidence": 0.5}',
+        + '"alternative_action": null, "confidence": 0.5}',
         '{"would_still_decide_same": true, "reasoning": "r", '
-        '"alternative_action": 5, "confidence": 0.5}',
+        + '"alternative_action": 5, "confidence": 0.5}',
         "[1, 2, 3]",
     ],
 )
