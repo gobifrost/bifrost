@@ -1,0 +1,125 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--network=none",
+        "--cpus=.5",
+        "--memory=1g",
+        "--memory-swap=1g",
+        "--pids-limit=64",
+        "-v",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/retained-contract-v1:/qualification:ro",
+        "-v",
+        "/opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0/api:/app:ro",
+        "-w",
+        "/qualification",
+        "-e",
+        "PYTHONPATH=/app:/qualification",
+        "-e",
+        "BIFROST_ENVIRONMENT=testing",
+        "-e",
+        "BIFROST_SECRET_KEY=synthetic-unit-fixture-not-an-authenticator",
+        "-e",
+        "NODE_OPTIONS=--max-old-space-size=768",
+        "bifrost-test-api-dev:bifrost-test-7ddfac36",
+        "python",
+        "-m",
+        "unittest",
+        "-v",
+        "test_private_http_pool",
+        "test_attempt_delivery",
+        "test_workflow_request_mux",
+        "test_http_invocation",
+        "test_workspace_prepare",
+        "test_attempt_deadline",
+        "test_attempt_journal_owners"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--network=none",
+        "--cpus=.5",
+        "--memory=1g",
+        "--memory-swap=1g",
+        "--pids-limit=64",
+        "-v",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/retained-contract-v1:/qualification:ro",
+        "-v",
+        "/opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0/api:/app:ro",
+        "-w",
+        "/qualification",
+        "-e",
+        "PYTHONPATH=/app:/qualification",
+        "-e",
+        "BIFROST_ENVIRONMENT=testing",
+        "-e",
+        "BIFROST_SECRET_KEY=synthetic-unit-fixture-not-an-authenticator",
+        "-e",
+        "NODE_OPTIONS=--max-old-space-size=768",
+        "bifrost-test-api-dev:bifrost-test-7ddfac36",
+        "sh",
+        "-c",
+        "ruff check --no-cache attempt_journal.py private_http_pool.py workflow_request_mux.py test_private_http_pool.py ct128-retained-contract.py && pyright --project pyright-guest-fixtures.json attempt_journal.py private_http_pool.py workflow_request_mux.py test_private_http_pool.py ct128-retained-contract.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/dev/test_pyodide_attempt_journal.py",
+        "-q"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "qualification_passed": true,
+  "before_sha256": "f8c05fc45b351e25d87f00f6a2a2cd536244400c92cd602c9f94f1bac3fbbf9c",
+  "packet_sha256": {
+    "ct128-retained-contract.py": "943bd00d4fb0765f92c315664c3f9d1d503a9f818f720afdc0915c6751a0c7b8",
+    "test_attempt_deadline.py": "88f3feb8e264f1ae215d68645127786879d7be8279f7d474c620d659fc11cca7",
+    "attempt_journal.py": "00fc58be27d921445b7f51934a8b29434b97998a1dc818733ba5e39c2edf4e09",
+    "test_attempt_journal_owners.py": "0e80934c4ef896a4ec5e6bb61022b413adf1836db35901e915141d7763ea190d",
+    "ct128-canonical-failure.py": "684b898629870f49a53e436dd5b4bebd7c8c5a0b36b8cde299b7f6756d1f8f4f",
+    "test_http_invocation.py": "2c98ec1972a585e61ee0aeb4f9007f8f4cc3d630c510f0b2d69b2134448765a8",
+    "http_invocation.py": "8d865526d58b5387d708ea6d0fbdd10b82618e133ad27e9da5bc8b14078591b4",
+    "workspace_prepare.py": "a91b2d9c0738afd42d77d8d4e9d3662217e2b1b06e47a0e56d0822635064fa99",
+    "test_private_http_pool.py": "0d546e60a3f8451616f9922fd2fe243b8dda52ba749de5c398ba212060337713",
+    "test_workspace_prepare.py": "2deb99514da3aa596f953621e8f45623c3b7dd8226970260771b0bcd6fc87406",
+    "task_cleanup.py": "ba97cbfdf25823e6324849d4571c3bb13ae2dd9c10eb16ca3fdad2e8856a906c",
+    "workflow_request_mux.py": "1fcb76b1f9e3d33937eacf4fa38cbb24a4c7891a7dbf2e6c6cc29446d7c74246",
+    "test_workflow_request_mux.py": "71509d49ab7da86deca256526e56c30311d8cab0882074e27104dd4f83c27ec0",
+    "attempt_deadline.py": "b03e447b326c009234c95ca77dc486991541901959659f3c91ace6c11336bd2d",
+    "shared-native-pool.py": "c9c7f0322ccf769faeaa39d45faabb91469692d1c051078379a413d924248198",
+    "canonical-local.py": "310a8b0f15acac9c807d44cfb641f2972ee9cd1d5bc1d36997103f016b7d291d",
+    "test_attempt_delivery.py": "edea0ece3833cd982425bb3f5ada84e63b65d83feaef50a23fb98a66dbeaecd2",
+    "invocation_stream.py": "c2ccd824555a03da1390ca0f2641ed1659804498bf88a0a6617fa805df24e0bd",
+    "private_http_pool.py": "bd183129b53a6e659031ee183ef6c668201844511366129416210b12d5ee51f8"
+  },
+  "postgres_test_sha256": "371f15e138ce618104831f48cc4b9f3da6a66e63a12bd217b65a2c025b3d7039",
+  "junit": {
+    "cases": 38,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "running_after_cleanup": [],
+  "prototype_restored": true,
+  "elapsed_seconds": 115.39192685717717
+}

@@ -966,3 +966,22 @@ realSDKfaultclaim, cloudcall, runtime/securitysetting or credentialchange.
 No physical stop inferred. Next: real localengine/HTTP pre-ACK fault and trusted
 retained-terminaladoption; oversizedcontextpreflightbeforebookkeeping also needs
 inspection. Startup/registration and deployed CPU enforcement remain later gates.
+
+### Companion retained terminal adoption through canonical acceptance
+Hypothesis: a trusted retained HTTP terminal can resolve a failed receipt without
+rerunning code or fabricating an upstream launcher event. Change: journal generic
+trusted-transport acceptance reused by the existing launcher method; private HTTP
+adoption validates identity/handle/immutable bounded evidence and marks mux state
+reconciled only after canonical ACK. Original failed receipt remains unchanged.
+Command: timeout -k 5 300 python3 inbox/retained-contract-v1/ct128-retained-contract.py.
+Observed: 48 native unit cases, 38 actual PostgreSQL journal cases, Ruff/Pyright
+all pass. Tests cover lost ACK, changed evidence, wrong identity, stale owner,
+original ReadError retention, one POST, retirement after acceptance. Owned stack
+stopped; prototype overlay restored and independently read back at prior hash.
+Supervisor total 115.392s includes stack lifecycle. Artifact:
+backend/RETAINED-CONTRACT.md, source-bound verifier and results/retained-contract.
+No cloud, shared upstream source, credentials or runtime settings changed.
+This is a companion proposal, not an upstream/public API or authenticated HTTP
+retention implementation. Next: actual provider-stream retention with pre-ACK
+loss and real engine/SDK effects. Deadline callback recovery, oversized context
+preflight, startup and deployed abnormal enforcement remain acceptance gaps.

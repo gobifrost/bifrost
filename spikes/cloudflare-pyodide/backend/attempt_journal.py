@@ -189,13 +189,32 @@ class AttemptJournal:
         if (not isinstance(result, dict) or result.get("execution_id") != execution.execution_id
             or not isinstance(result.get("success"), bool)):
             raise ValueError("canonical retained result envelope required")
+
+        async def consume(_route: str, _subject: str, terminal: dict[str, Any]) -> bool:
+            await consumer._handle_result(execution.attach_transport_metadata(terminal))
+            return True
+
+        return await self.reconcile_retained_terminal(lease, route_id, result, consume)
+
+    async def reconcile_retained_terminal(
+        self, lease: RemoteOwnerLease, route_id: str, result: dict[str, Any],
+        accept: Callable[[str, str, dict[str, Any]], Awaitable[bool]],
+    ) -> bool:
+        """Consume trusted transport-retained evidence after failed collection.
+
+        The caller authenticates its physical transport and validates evidence;
+        this method neither authenticates guests nor defines an upstream API.
+        Canonical acceptance, owner fencing and failed-receipt retention match
+        the launcher-retained workflow path without inventing a launcher event.
+        """
         async with self._lock:
             route = self.routes[route_id]
         async with route.delivery_lock:
             if not await owns_remote_session(lease):
                 raise CredentialRouteChanged("stale retained result owner")
             route.require_owner(lease)
-            if route.execution_id != execution.execution_id:
+            if (not isinstance(result, dict) or result.get('execution_id') != route.execution_id
+                or not isinstance(result.get('success'), bool)):
                 raise ValueError("retained execution identity conflict")
             if route.acknowledged:
                 return True
@@ -204,7 +223,8 @@ class AttemptJournal:
             if not route.task.cancelled() and route.task.exception() is None:
                 raise ValueError("local result already available; use normal reconciliation")
             with remote_owner_context(LeaseRef(lease)):
-                await consumer._handle_result(execution.attach_transport_metadata(result))
+                if not await accept(route_id, route.execution_id, result):
+                    return False
             if not await owns_remote_session(lease):
                 raise CredentialRouteChanged("owner replaced before retained result ACK")
             route.acknowledged = True

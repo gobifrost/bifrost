@@ -212,6 +212,59 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         self.redis_write.assert_not_awaited()
         self.assertEqual(self.pool.native.service_processes, {})
 
+    async def test_retained_terminal_adoption_keeps_failed_receipt_and_recovers_lost_ack(self):
+        ack, finish = self.provider(lose=True)
+        ack.set()
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        finish.set()
+        with self.assertRaises(httpx.ReadError):
+            await attempt.delivery
+        evidence = {'runtime_handle': attempt.invocation.runtime_handle,
+                    'result': {'execution_id': self.run, 'success': True, 'result': 7}}
+        self.callback.side_effect = ConnectionError('Synthetic retained ACK loss')
+        with self.assertRaisesRegex(ConnectionError, 'retained ACK loss'):
+            await self.pool.reconcile_retained(self.run, evidence)
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        with self.assertRaises(ValueError):
+            await self.pool.reconcile_retained(self.run, {**evidence, 'result': {**evidence['result'], 'result': 9}})
+        self.callback.side_effect = None
+        self.assertTrue(await self.pool.reconcile_retained(self.run, evidence))
+        self.assertTrue(await self.pool.reconcile_retained(self.run, evidence))
+        self.assertEqual(self.callback.await_count, 2)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        with self.assertRaises(httpx.ReadError):
+            await attempt.receipt
+        await self.pool.retire()
+
+    async def test_retained_terminal_refuses_wrong_identity_and_stale_owner_before_callback(self):
+        ack, finish = self.provider(lose=True)
+        ack.set()
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        finish.set()
+        with self.assertRaises(httpx.ReadError):
+            await attempt.delivery
+        result = {'execution_id': self.run, 'success': True}
+        for evidence in [
+            {'runtime_handle': 'another-handle', 'result': result},
+            {'runtime_handle': attempt.invocation.runtime_handle, 'result': {**result, 'execution_id': str(uuid4())}},
+            {'runtime_handle': attempt.invocation.runtime_handle, 'result': {**result, 'success': 'yes'}},
+        ]:
+            with self.assertRaises(ValueError):
+                await self.pool.reconcile_retained(self.run, evidence)
+        evidence = {'runtime_handle': attempt.invocation.runtime_handle, 'result': result}
+        self.owner.return_value = False
+        with self.assertRaises(CredentialRouteChanged):
+            await self.pool.reconcile_retained(self.run, evidence)
+        self.callback.assert_not_awaited()
+        self.assertIsNone(attempt.retained_fingerprint)
+        self.owner.return_value = True
+        self.assertTrue(await self.pool.reconcile_retained(self.run, evidence))
+        await self.pool.retire()
+
     async def test_original_deadline_reports_before_launch_ack_without_releasing_capacity(self):
         self.context['timeout_seconds'] = 1
         ack, finish = self.provider()

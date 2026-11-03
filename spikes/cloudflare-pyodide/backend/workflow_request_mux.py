@@ -23,6 +23,7 @@ class WorkflowRequestMux:
         self._slots[execution_id] = {
             'collector': collector, 'payload': None, 'accepted': None,
             'collection': None, 'result': None, 'generation': None,
+            'retained_acknowledged': False,
         }
 
     def collection(self, execution_id):
@@ -30,6 +31,18 @@ class WorkflowRequestMux:
 
     def result(self, execution_id):
         return self._slots[execution_id]['result']
+
+    def acknowledge_retained(self, execution_id, result):
+        """Trusted parent calls only after canonical retained-result ACK."""
+        slot = self._slots[execution_id]
+        task = slot['collection']
+        if (task is None or not task.done()
+            or (not task.cancelled() and task.exception() is None)
+            or not isinstance(result, dict) or result.get('execution_id') != execution_id
+            or not isinstance(result.get('success'), bool)):
+            raise ValueError('Failed collection and canonical retained result required')
+        slot['result'] = result
+        slot['retained_acknowledged'] = True
 
     @property
     def retained_count(self):
@@ -44,7 +57,8 @@ class WorkflowRequestMux:
         """
         for slot in self._slots.values():
             task = slot['collection']
-            if task is None or not task.done() or task.cancelled() or task.exception() is not None:
+            if (task is None or not task.done()
+                or ((task.cancelled() or task.exception() is not None) and not slot['retained_acknowledged'])):
                 raise RuntimeError('Unsettled workflow collection remains')
         self._slots.clear()
         self._retired = True

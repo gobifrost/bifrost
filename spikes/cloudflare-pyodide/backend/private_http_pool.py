@@ -165,6 +165,7 @@ class PrivateHttpWorkflowPool:
                 route=None, receipt=None, accepted_monotonic=None, terminal_monotonic=None, launches=0,
                 routed=asyncio.get_running_loop().create_future(),
                 settled=asyncio.get_running_loop().create_future(), _deadline_task=None)
+            slot.retained_fingerprint = None
             self._attempts[execution_id] = slot
 
             async def collect(payload, accepted):
@@ -230,6 +231,51 @@ class PrivateHttpWorkflowPool:
         """Replay only logical timeout through the current canonical owner."""
         slot = self._attempts[execution_id]
         await report_expired_workflow(self._ref.lease, self._deadline_consumer, slot.info)
+
+    async def reconcile_retained(self, execution_id, evidence, *, lease=None):
+        """Trusted parent only: validated retained HTTP terminal, never rerun code.
+
+        This companion operation is not an upstream launcher event or public
+        authentication surface. Caller must authenticate the evidence source.
+        """
+        slot = self._attempts[execution_id]
+        owner = self._ref.lease if lease is None else lease
+        if not await owns_remote_session(owner):
+            raise CredentialRouteChanged('Stale retained HTTP result owner')
+        route = self.journal.routes[execution_id]
+        route.require_owner(owner)
+        if not route.task.done():
+            return False
+        if not route.task.cancelled() and route.task.exception() is None:
+            raise ValueError('Normal collection requires normal reconciliation')
+        encoded = json.dumps(evidence, sort_keys=True, separators=(',', ':'), allow_nan=False)
+        if len(encoded.encode()) > 262144:
+            raise ValueError('Bounded retained HTTP evidence required')
+        frozen = json.loads(encoded)
+        handle = frozen.get('runtime_handle') if isinstance(frozen, dict) else None
+        result = frozen.get('result') if isinstance(frozen, dict) else None
+        known = None if slot.invocation is None else slot.invocation.runtime_handle
+        if (not isinstance(handle, str) or re.fullmatch(r'[A-Za-z0-9._:-]{1,255}', handle) is None
+            or (known is not None and known != handle) or not isinstance(result, dict)
+            or result.get('execution_id') != execution_id or not isinstance(result.get('success'), bool)):
+            raise ValueError('Matching retained HTTP terminal required')
+        if slot.retained_fingerprint is not None and slot.retained_fingerprint != encoded:
+            raise ValueError('Retained HTTP terminal changed; reconcile original evidence')
+        slot.retained_fingerprint = encoded
+
+        async def consume(_route, _subject, terminal):
+            await self._deliver(terminal)
+            return True
+
+        acknowledged = await self.journal.reconcile_retained_terminal(owner, execution_id, result, consume)
+        if acknowledged:
+            self.mux.acknowledge_retained(execution_id, result)
+            slot.evidence = frozen
+            slot.terminal_monotonic = time.monotonic()
+            if not slot.settled.done():
+                slot.settled.set_result({'acknowledged': True})
+            await slot.deadline
+        return acknowledged
 
     async def reconcile(self, execution_id, *, lease=None):
         slot = self._attempts[execution_id]

@@ -15,7 +15,7 @@ for (const [manifest, before] of [['source.sha256', false], ['before-source.sha2
     const name = path.split('/').at(-1);
     const source = before && name === 'private_http_pool.py'
       ? execFileSync('git', ['show', '50093038cbc4f9ddde61264c453393464a717485:spikes/cloudflare-pyodide/backend/' + name])
-      : await readFile(new URL('./' + name, import.meta.url));
+      : execFileSync('git', ['show', 'de30250c169f3dc3ce5578bcd6bdd4801cb49611:spikes/cloudflare-pyodide/backend/' + name]);
     assert.equal(hash(source), digest, name);
   }
 }
