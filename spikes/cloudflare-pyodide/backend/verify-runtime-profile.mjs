@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const base = new URL('../results/runtime-profile/', import.meta.url);
 const bytes = name => readFile(new URL(name, base));
 const read = async name => JSON.parse(await bytes(name));
@@ -28,7 +29,8 @@ const paths = {'protocol.py': '../../../api/src/worker/remote/protocol.py',
   'test_runtime_profile.py': '../../../api/tests/unit/worker/remote/test_runtime_profile.py',
   'control-auth.py': './control-auth.py', 'ct128-runtime-profile.py': './ct128-runtime-profile.py'};
 for (const [name, path] of Object.entries(paths)) {
-  assert.equal(hash(await readFile(new URL(path, import.meta.url))), final.packet_sha256[name], name);
+  const sourcePath = path.startsWith('../../../') ? path.slice(9) : 'spikes/cloudflare-pyodide/backend/' + path.slice(2);
+  assert.equal(hash(execFileSync('git', ['show', `eca8fdc99:${sourcePath}`])), final.packet_sha256[name], name);
 }
 assert.equal(hash(await bytes('original-runner.txt')), first.packet_sha256['ct128-runtime-profile.py']);
 assert.equal(hash(await bytes('original-resume-runner.txt')), second.packet_sha256['ct128-runtime-profile.py']);

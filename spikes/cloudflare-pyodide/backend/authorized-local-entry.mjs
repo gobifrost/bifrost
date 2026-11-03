@@ -73,7 +73,7 @@ export default {
             worker_id:body.worker_id,execution_id:body.execution_id,
             context:body.context,api_url:'https://test-api.invalid'}),
         }));
-      return Response.json({result:await boundedJson(response),api_calls:calls,
+      return Response.json({runtime_handle:id,result:await boundedJson(response),api_calls:calls,
         ...(gate ? {refresh_gate_events:gate.events} : {})});
     } finally { egress.close();egressGates.delete(id);gate?.close();refreshGates.delete(id);observations.delete(id); }
     });

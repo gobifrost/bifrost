@@ -1,5 +1,10 @@
 # Authenticated dispatch: remaining physical-handle boundary
 
+[Opaque workflow handles](OPAQUE-WORKFLOW-HANDLES.md) now pass a real local
+engine/SDK run through upstream ThinRemoteProcessPool, without a fake PID.
+This explicit private-adapter profile is still rejected by public admission;
+it is not yet negotiated production eligibility or physical cancellation.
+
 [Signed runtime identity](SIGNED-RUNTIME-PROFILE.md) now preserves legacy Linux
 hellos and rejects unsupported/unsigned profiles before admission. This new
 contribution does not yet accept an isolate profile or opaque execution handle.

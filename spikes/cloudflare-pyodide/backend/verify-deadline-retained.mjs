@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const report = JSON.parse(await readFile(new URL('../results/deadline-retained/v1.json', import.meta.url), 'utf8'));
 assert.equal(report.qualification_passed, true);
 assert.equal(report.cloud_invocations, 0);
@@ -12,7 +13,8 @@ assert.equal(report.api_source, '1d33150eb376b71f8a81b427920eda1b0447f829');
 assert.equal(report.runtime_engine_source, 'f49d4ba99cebd24aa497f1244833b940e640885f');
 for (const name of ['canonical-local.py', 'provider-response-loss.py', 'ct128-canonical-failure.py',
   'attempt-egress.mjs', 'authorized-local-entry.mjs', 'fixture-admission.mjs', 'task_cleanup.py']) {
-  assert.equal(createHash('sha256').update(await readFile(new URL('./' + name, import.meta.url))).digest('hex'), report.packet_sha256[name], name);
+  const bytes = execFileSync('git', ['show', `f7a692552:spikes/cloudflare-pyodide/backend/${name}`]);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), report.packet_sha256[name], name);
 }
 for (const name of ['attempt-egress.mjs', 'authorized-local-entry.mjs', 'fixture-admission.mjs']) {
   assert.equal(report.packet_sha256[name], report.packet_sha256['project/backend/' + name], name);

@@ -1,5 +1,11 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest integration: [actual upstream pool with opaque workflow handles](backend/OPAQUE-WORKFLOW-HANDLES.md).
+The real ThinRemoteProcessPool now passes a local workerd engine/SDK run and
+canonical lost-ACK replay without a fake PID. This private adapter still awaits
+prompt dispatch ACKs, authorized runtime selection and deployed resource/
+cancellation qualification; public Pyodide admission remains disabled.
+
 Current lifecycle assessment: [normal completion and abnormal cancellation](backend/LIFECYCLE.md).
 Normal success requires awaited work, completed streams and released returned
 RPC stubs, not destruction of an isolate. The [local native tail controls](backend/TAIL-OBSERVER-QUALIFICATION.md)

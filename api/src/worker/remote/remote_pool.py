@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Protocol, cast
@@ -32,6 +33,7 @@ from src.services.execution.process_pool import (
     ProcessState,
     ServiceInfo,
 )
+from src.worker.remote.protocol import CLOUDFLARE_PYTHON_RUNTIME_PROFILE, LINUX_RUNTIME_PROFILE
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,7 @@ class _RemoteProcess:
     def __init__(self) -> None:
         self.exitcode: int | None = None
         self.remote_pid: int | None = None
+        self.runtime_handle: str | None = None
 
     def is_alive(self) -> bool:
         return self.exitcode is None
@@ -90,13 +93,17 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         transport: ThinRemoteTransport,
         *,
         worker_id: str | None = None,
+        runtime_profile: str = LINUX_RUNTIME_PROFILE,
         **kwargs: Any,
     ) -> None:
+        if runtime_profile not in (LINUX_RUNTIME_PROFILE, CLOUDFLARE_PYTHON_RUNTIME_PROFILE):
+            raise ValueError("Unsupported physical runtime profile")
         identity = worker_id or (
             f"thin-remote:{os.environ.get('HOSTNAME', 'api')}"
         )
         super().__init__(worker_id=identity, **kwargs)
         self.transport = transport
+        self.runtime_profile = runtime_profile
         self._routes: dict[str, ProcessHandle] = {}
         self._route_metrics: dict[str, dict[str, float | int]] = {}
         self._remote_memory_current = -1
@@ -141,6 +148,8 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                 raise ConnectionError("Remote API ownership was replaced")
             for entry in entries:
                 route_id, kind = entry.get("route_id"), entry.get("kind")
+                if self.runtime_profile != LINUX_RUNTIME_PROFILE and kind != "workflow":
+                    raise ValueError("Physical runtime supports workflow inventory only")
                 if not isinstance(route_id, str) or route_id in observed:
                     continue
                 observed.add(route_id)
@@ -175,6 +184,12 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                         handle = self._adopt_handle(route_id, entry, started_at)
                         handle.current_execution = execution
                         self.processes[route_id] = handle
+                    elif self.runtime_profile != LINUX_RUNTIME_PROFILE:
+                        existing = handle.current_execution
+                        if (existing is None or existing.execution_id != execution.execution_id
+                            or existing.started_at != started_at or existing.timeout_seconds != execution.timeout_seconds):
+                            raise ValueError("Inventory changed immutable workflow timing or identity")
+                        self._bind_workflow_handle(handle, entry)
                     await self._write_active_execution_lease(execution)
                     workflows[str(subject)] = request_bytes
                 elif kind == "service":
@@ -283,9 +298,12 @@ class ThinRemoteProcessPool(ProcessPoolManager):
             id=route_id, process=_RemoteProcess(), pid=None, state=ProcessState.BUSY,
             work_queue=None, result_queue=None, started_at=started_at,
         )
-        pid = entry.get("pid")
-        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
-            handle.process.remote_pid = pid
+        if self.runtime_profile == LINUX_RUNTIME_PROFILE:
+            pid = entry.get("pid")
+            if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+                handle.process.remote_pid = pid
+        else:
+            self._bind_workflow_handle(handle, entry)
         self._routes[route_id] = handle
         return handle
 
@@ -558,7 +576,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                     },
                     expected_generation=None if credential_route is None else credential_route.generation,
                 )
-                handle.process.remote_pid = self._remote_pid_from_ack(response)
+                self._bind_workflow_handle(handle, response)
             except (ConnectionError, TimeoutError):
                 # The child may already exist. Inventory resolves this exact
                 # route after reconnect; reporting failure now could duplicate
@@ -593,6 +611,8 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         ``credential_route`` fences the context's credentials to the launcher
         session they were minted for, as in ``route_execution``.
         """
+        if self.runtime_profile != LINUX_RUNTIME_PROFILE:
+            raise RuntimeError("Physical runtime does not support persistent services")
         validate_execution_context(context)
         self._ensure_remote_capacity()
         route_id = self._service_route_id(attempt_id)
@@ -652,6 +672,27 @@ class ThinRemoteProcessPool(ProcessPoolManager):
             raise ConnectionError("Remote launcher ACK is missing a valid PID; launch state unknown")
         return pid
 
+    def _bind_workflow_handle(self, handle: ProcessHandle, response: object) -> None:
+        """Bind a negotiated physical identity, never infer one from the ACK.
+
+        An invalid post-dispatch reply is uncertain, not evidence of no launch.
+        Linux keeps its existing PID wire representation. An opaque invocation
+        does not acquire a fake PID or promise a physical termination primitive.
+        """
+        if self.runtime_profile == LINUX_RUNTIME_PROFILE:
+            handle.process.remote_pid = self._remote_pid_from_ack(response)
+            return
+        if not isinstance(response, dict):
+            raise ConnectionError("Opaque workflow handle missing; launch state unknown")
+        value = response.get("runtime_handle")
+        if (not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9._:-]{1,255}", value) is None
+            or "pid" in response):
+            raise ConnectionError("Opaque workflow handle missing or invalid; launch state unknown")
+        previous = handle.process.runtime_handle
+        if previous is not None and previous != value:
+            raise ConnectionError("Physical workflow handle changed; reconciliation required")
+        handle.process.runtime_handle = value
+
     async def _request_terminate(
         self,
         route_id: str,
@@ -663,6 +704,8 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         handle = self._routes.get(route_id)
         if handle is None:
             return
+        if self.runtime_profile != LINUX_RUNTIME_PROFILE:
+            raise RuntimeError("Physical cancellation is not qualified for this runtime")
         handle.state = ProcessState.KILLED
         handle.killed_at = datetime.now(timezone.utc)
         await self.transport.request(
@@ -898,7 +941,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
             for handle in self.service_processes.values()
             if handle.service is not None and handle.process.remote_pid is not None
         ]
-        return {
+        heartbeat: dict[str, Any] = {
             "type": "worker_heartbeat",
             "worker_id": self.worker_id,
             "hostname": self.transport.hostname,
@@ -916,3 +959,18 @@ class ThinRemoteProcessPool(ProcessPoolManager):
             "memory_current_bytes": self._remote_memory_current,
             "memory_max_bytes": self._remote_memory_limit,
         }
+        if self.runtime_profile != LINUX_RUNTIME_PROFILE:
+            # OS-process diagnostics retain their existing integer-PID contract.
+            # Invocations, including uncertain ACKs, still count toward load.
+            invocations = [{
+                "runtime_profile": self.runtime_profile,
+                "runtime_handle": handle.process.runtime_handle,
+                "route_id": handle.id,
+                "execution_id": handle.current_execution.execution_id,
+                "state": handle.state.value,
+                "memory_bytes": self._route_metrics.get(handle.id, {}).get("rss_bytes"),
+                "cpu_seconds": self._route_metrics.get(handle.id, {}).get("cpu_seconds"),
+            } for handle in self.processes.values() if handle.current_execution is not None]
+            heartbeat["runtime_invocations"] = invocations
+            heartbeat["pool_size"] = heartbeat["busy_count"] = len(invocations)
+        return heartbeat

@@ -26,7 +26,7 @@ from task_cleanup import cancel_and_join
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
                node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False,
-               worker_loss_probe=False, provider_interruption_probe=False):
+               worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False):
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -46,6 +46,10 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
         raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
     expected_success = not failure_probe
+    if physical_pool_probe and any((isolation_label is not None, refresh_probe, expired_access, concurrent_refresh,
+        interrupt_refresh, failure_probe, transport_waiter, node_pyodide, integration_probe, benchmark_probe,
+        worker_loss_probe, provider_interruption_probe)):
+        raise RuntimeError('Opaque pool qualification uses the fixed normal SDK fixture only')
     if provider_interruption_probe and (worker_loss_probe or benchmark_probe or failure_probe or refresh_probe
                                        or expired_access or concurrent_refresh or interrupt_refresh
                                        or isolation_label is not None or transport_waiter or not integration_secret_probe):
@@ -537,7 +541,71 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     await rendezvous("effects_done", {"done": True})
                             return result
 
-                    task = await journal.dispatch(ref.lease, "route", execution_id, launch)
+                    if physical_pool_probe:
+                        from src.services.execution.memory_monitor import effective_memory_sample
+                        from src.worker.remote.remote_pool import ThinRemoteProcessPool
+                        from src.worker.remote.protocol import CLOUDFLARE_PYTHON_RUNTIME_PROFILE
+
+                        outer = self
+
+                        class Transport:
+                            connected = True
+                            hostname = 'local-workerd-qualification'
+                            result = None
+
+                            @property
+                            def lease(self):
+                                return ref.lease
+
+                            def memory(self):
+                                # Controller cgroup only, not isolate memory.
+                                return effective_memory_sample()
+
+                            def memory_request_bytes(self, _key):
+                                return liveness['memory_reserved_bytes']
+
+                            async def request(self, action, payload, *, expected_generation=None):
+                                nonlocal dispatch_context
+                                if action != 'workflow' or expected_generation != ref.lease.session_generation:
+                                    raise ConnectionError('Fixed workflow transport/session only')
+                                dispatch_context = json.loads(json.dumps(payload['context'], default=str))
+                                try:
+                                    self.result = await launch()
+                                except Exception as exc:
+                                    # The remote request may already have made
+                                    # effects. Preserve uncertainty in the real
+                                    # pool rather than claiming launch rejection.
+                                    raise ConnectionError('Fixed HTTP collection uncertain') from exc
+                                return {'runtime_handle': outer.evidence.get('runtime_handle')}
+
+                        async def native_result(result):
+                            await consumer._handle_result(result)
+
+                        transport = Transport()
+                        self.physical_pool = ThinRemoteProcessPool(transport, worker_id=str(worker.id),
+                            runtime_profile=CLOUDFLARE_PYTHON_RUNTIME_PROFILE, on_result=native_result)
+                        await self.physical_pool.route_execution(execution_id, context, active_execution,
+                                                                 credential_route=credential_route)
+                        self.physical_route, handle = next(iter(self.physical_pool.processes.items()))
+                        self.info = handle.current_execution
+
+                        async def retained_result():
+                            if transport.result is None:
+                                raise ConnectionError('No collected physical result; reconciliation required')
+                            if (handle.process.remote_pid is not None or not handle.process.runtime_handle
+                                or handle.process.runtime_handle != self.evidence['runtime_handle']):
+                                raise RuntimeError('Actual invocation has fabricated or mismatched PID/handle')
+                            heartbeat = self.physical_pool._build_heartbeat()
+                            if heartbeat['processes'] != [] or heartbeat['busy_count'] != 1:
+                                raise RuntimeError('Opaque invocation vanished from load accounting')
+                            report.update(physical_pool_probe=True, actual_opaque_handle=handle.process.runtime_handle,
+                                opaque_invocation_count=heartbeat['busy_count'], no_pid_fabricated=True,
+                                controller_memory_not_isolate_memory=True, dispatch_ack_after_workflow_completion=True)
+                            return transport.result
+
+                        task = await journal.dispatch(ref.lease, 'route', execution_id, retained_result)
+                    else:
+                        task = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     duplicate = await journal.dispatch(ref.lease, "route", execution_id, launch)
                     assert task is duplicate
                     # Upstream awaits routing acceptance, not the workflow result.
@@ -548,6 +616,15 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
             pool.journal = journal  # Trusted-parent transport, never supplied to the child.
             consumer = WorkflowExecutionConsumer(pool=pool)
             consumer.owner_worker_id = worker.id
+            terminal_consumer = consumer
+            if physical_pool_probe:
+                from types import SimpleNamespace
+
+                async def through_physical_pool(result):
+                    await pool.physical_pool.handle_event({'event': 'result', 'route_id': pool.physical_route,
+                                                          'result': result})
+
+                terminal_consumer = SimpleNamespace(owner_worker_id=worker.id, _handle_result=through_physical_pool)
             try:
                 with remote_owner_context(ref):
                     claim = await claim_next(worker.id, fits_bytes=2**30, budget_bytes=2**30)
@@ -668,7 +745,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
 
                     consumer._handle_result = lose_ack
                     try:
-                        await journal.reconcile_workflow(ref.lease, "route", consumer, pool.info)
+                        await journal.reconcile_workflow(ref.lease, "route", terminal_consumer, pool.info)
                     except ConnectionError as exc:
                         assert str(exc) == "Injected loss after canonical completion"
                     else:
@@ -705,8 +782,12 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     ref.lease = await connect(2)
                     await beat()
                     consumer._handle_result = original
-                    reconciled = await journal.reconcile_workflow(ref.lease, "route", consumer, pool.info)
+                    reconciled = await journal.reconcile_workflow(ref.lease, "route", terminal_consumer, pool.info)
                     assert reconciled
+                    if physical_pool_probe:
+                        if pool.physical_pool.processes or pool.physical_pool._build_heartbeat()['busy_count'] != 0:
+                            raise RuntimeError('Canonical ACK did not release native opaque route')
+                        report['native_opaque_route_released_after_terminal_ack'] = True
                     async with get_db_context() as db:
                         logs_after = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
                         assert logs_after == logs_before
@@ -803,8 +884,9 @@ if __name__ == "__main__":
         parser.add_argument("--benchmark-probe", action="store_true")
         parser.add_argument("--worker-loss-probe", action="store_true")
         parser.add_argument("--provider-interruption-probe", action="store_true")
+        parser.add_argument("--physical-pool-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(provider_interruption_probe=args.provider_interruption_probe,
+        asyncio.run(main(physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
                          worker_loss_probe=args.worker_loss_probe, benchmark_probe=args.benchmark_probe,
                          isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,

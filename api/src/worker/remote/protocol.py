@@ -42,6 +42,10 @@ CREDENTIAL_PROTOCOL = 2
 # An omitted profile is the existing Linux protocol, with unchanged signed
 # bytes. Other physical runtimes require explicit authenticated negotiation.
 LINUX_RUNTIME_PROFILE = "linux-process-v1"
+# Experimental physical adapter identity. The control host does not admit it;
+# workload eligibility and deployed resource/cancellation qualification remain
+# separate from this pool-level representation.
+CLOUDFLARE_PYTHON_RUNTIME_PROFILE = "cloudflare-python-v1"
 
 # Exact handler versions a physical launcher can execute. Older launchers
 # advertised no list and implemented only workflow and agent-run commands.
