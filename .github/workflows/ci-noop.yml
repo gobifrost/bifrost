@@ -56,6 +56,17 @@ permissions:
   contents: read
 
 jobs:
+  skill-tools:
+    runs-on: ubuntu-latest
+    name: Skill Tools
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check packaged skills and extraction helper
+        run: |
+          python3 scripts/check_skill_mirrors.py
+          python3 -B -m unittest scripts.test_rewst_extraction
+
   lint:
     runs-on: ubuntu-latest
     name: Lint & Type Check

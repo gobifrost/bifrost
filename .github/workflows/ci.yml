@@ -85,6 +85,9 @@ jobs:
       - name: Check E2E shard allocation
         run: python3 -m unittest scripts.test_e2e_shard
 
+      - name: Check Rewst extraction helper offline
+        run: python3 -B -m unittest scripts.test_rewst_extraction
+
       # Codex skill mirrors (plugins/bifrost/skills/, .codex/skills/) are
       # generated from the canonical .claude/skills/ source. Regenerate and fail
       # if the committed mirrors drift. NOTE: ci.yml paths-ignore skips CI for
