@@ -387,7 +387,7 @@ const { rows, loadMore, hasMore, loading, error } = useInfiniteTable("contacts",
 
 Returns `{ rows, loadMore, hasMore, loading, error }`. `loadMore()` fetches the next page and appends to `rows`. `hasMore` flips false when a partial page comes back. After page 1 the hook automatically uses `skip_count: true` for speed.
 
-Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both wire live updates the same way.
+Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both apply live updates in `order_by` order. In `useInfiniteTable` the loaded rows stay the server's ordered prefix: an insert that sorts past the loaded rows while `hasMore` is true is left for `loadMore()` to fetch, and the next page's offset follows inserts and deletes, so `loadMore()` neither skips nor repeats rows.
 
 #### `tables.*` direct calls
 

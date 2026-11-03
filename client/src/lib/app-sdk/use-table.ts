@@ -419,22 +419,57 @@ export function useTable(
   return { rows, total, totalPages, loading, error };
 }
 
+/**
+ * Apply a `TableChangeEvent` to an accumulated, unbounded list (used by
+ * `useInfiniteTable`). The loaded rows are the server's ordered prefix —
+ * pages `0..n` concatenated — so the next `loadMore()` offset is
+ * `rows.length`. Events keep that invariant:
+ *
+ *   - `insert`: placed at its sorted position (see `compareRows`). Without
+ *     `order_by` the server orders by `created_at, id`, so a new row is the
+ *     newest: last when ascending, first when descending. An insert that
+ *     sorts after the last loaded row while `hasMore()` is true belongs to a
+ *     page not yet loaded and is dropped — `loadMore()` will fetch it. An
+ *     insert for an id already loaded is applied like an `update`.
+ *   - `update`: replaced in place; with `order_by`, a changed sort key moves
+ *     the row within the loaded rows (never dropped; see `replaceAt`).
+ *   - `delete`: removed if loaded.
+ *
+ * A row whose update moves it past the loaded prefix can make the next page
+ * skip one row until the next snapshot; `loadMore()` dedupes by id, so it
+ * never shows a row twice.
+ */
 export function applyEvent(
   evt: TableChangeEvent,
   setRows: (updater: (prev: TableRow[]) => TableRow[]) => void,
+  order: RowOrder & { hasMore?: () => boolean } = {},
 ) {
+  const { order_by, order_dir, hasMore = () => false } = order;
   if (evt.type !== "document_change") return;
   if (evt.action === "insert") {
     // Websocket emits flat rows from server-side `_row_from_doc`; cast
     // through unknown because the OpenAPI-generated `row` type still
     // describes the nested-`data` shape.
     const inserted = evt.row as unknown as TableRow;
-    setRows((prev) => [...prev, inserted]);
+    setRows((prev) => {
+      const dup = prev.findIndex((r) => r.id === inserted.id);
+      if (dup !== -1) return replaceAt(prev, dup, inserted, order_by, order_dir);
+      const idx = order_by
+        ? sortedIndex(prev, inserted, order_by, order_dir)
+        : order_dir === "desc"
+          ? 0
+          : prev.length;
+      if (idx === prev.length && hasMore()) return prev;
+      return [...prev.slice(0, idx), inserted, ...prev.slice(idx)];
+    });
     return;
   }
   if (evt.action === "update") {
     const updated = evt.row as unknown as TableRow;
-    setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    setRows((prev) => {
+      const at = prev.findIndex((r) => r.id === updated.id);
+      return at === -1 ? prev : replaceAt(prev, at, updated, order_by, order_dir);
+    });
     return;
   }
   if (evt.action === "delete") {
@@ -552,8 +587,8 @@ function replaceAt(
 /**
  * Apply a `TableChangeEvent` to the current page's rows, keeping the visible
  * window at `pageSize` rows and updating `total` so pagination UI stays in
- * sync. Used by `useTable` (paged); the unbounded variant `applyEvent` is for
- * `useInfiniteTable`.
+ * sync. Used by `useTable` (paged); the accumulating variant `applyEvent` is
+ * for `useInfiniteTable`.
  *
  * Window semantics:
  *   - `insert` matching the subscribe filter: increment `total` regardless.
