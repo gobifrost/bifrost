@@ -18,7 +18,7 @@ with zipfile.ZipFile(wheel_path) as archive:
     if 'Root-Is-Purelib: true' not in metadata or 'Tag: py3-none-any' not in metadata:
         raise RuntimeError('Expected pure Python wheel')
     for name in archive.namelist():
-        if name.startswith('certifi/') and (name.endswith('.py') or name == 'certifi/cacert.pem'):
+        if not name.endswith('/') and name.startswith(('certifi/', 'certifi-2026.4.22.dist-info/')):
             content = archive.read(name)
             overlay['files'][name] = ({'py': content.decode()} if name.endswith('.py') else
                 {'base64': base64.b64encode(content).decode()})

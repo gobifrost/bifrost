@@ -1,0 +1,30 @@
+﻿{
+  "base_sha256": "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+  "bundle_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+  "bundle_bytes": 15287043,
+  "sdk_commit": "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
+  "dependency": {
+    "name": "certifi",
+    "version": "2026.4.22",
+    "wheel_sha256": "3cb2210c8f88ba2318d29b0388d1023c8492ff72ecdde4ebdaddbb13a31b1c4a",
+    "abi": "py3-none-any",
+    "patches": []
+  },
+  "overlay_sha256": {
+    "bifrost/client.py": "e96088f85da9a7e99011a701f36db16c001b4f37ee7789433f7058e395b5bc41",
+    "bifrost/_tls.py": "fcf413849fa39788227bc12f5eadc488ab34e27333e90911bff7b6c3c4fbb91b",
+    "bifrost/_workspace_lock.py": "9320d997c33c59cc558a7679d1f3e845390777d6d20c72ab4624e43f0beb5667",
+    "certifi/__init__.py": "8812585adc5118731a3b54bbde9598a459fdeb6590e257687f61a47cc4911093",
+    "certifi/__main__.py": "c410688fdd394d45812d118034e71fee88ba7beddd30fe1c1281bd3b232cd758",
+    "certifi/cacert.pem": "16be3f6feb15408195dcfe3aa1a75ef9db72f646b96ebbefdc68f56255f799f8",
+    "certifi/core.py": "5c55f2727746e697f7edac9e17c377d8752e0da7ecca191531b3b80403d61dad",
+    "certifi/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "certifi-2026.4.22.dist-info/licenses/LICENSE": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+    "certifi-2026.4.22.dist-info/METADATA": "4ed6ffe9ccbed05046ab7bff2024cd3ca717295b368bed1fe20a73e365bc415a",
+    "certifi-2026.4.22.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+    "certifi-2026.4.22.dist-info/top_level.txt": "28cbb8bd409fb232eb90f6d235d81d7a44bea552730402453bffe723c345ebe5",
+    "certifi-2026.4.22.dist-info/RECORD": "2216964f1a69ba97c7f0c1f2ef66a7dcd3881b5ae02257d2b0334d4442d5fc46"
+  },
+  "preserved_module_count": 453,
+  "module_count": 466
+}

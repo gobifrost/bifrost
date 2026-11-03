@@ -1213,3 +1213,17 @@ Artifacts: backend/SDK1217-QUALIFICATION.md, reproducible probe/staging scripts,
 source-bound verifier, results/sdk1217 failures/success/source/license/provenance.
 Next: real engine/SDK execution with this overlay, preserve dependency metadata,
 then explicit transport-option admission. No cloud authority or admission inferred.
+
+### 2026-11-03 — real execution with upstream SDK1217
+Merged exact3module SDK overlay plus full pure certifi wheel/license/metadata into
+separate candidate61d818ae...75731;453baseline modules preserved,466total.
+Initial generator EACCES overwriting root-owned baseline; preserved it, wrote
+new candidate under existing writable task directory, changed only local import.
+No permissions/settings/identity change. Original baseline remains pinned.
+CT128 ct128-canonical-failure.py --sdk-update --revision1 exit0: real config/table
+SDK effects, peerSuccess78, lost-ACK/current-owner replay/stale rejection/duplicate,
+401revocation/accounting2,2,1,0/cleanup pass. Supervisor73.121s includes lifecycle.
+Ruff/Pyright and source-bound verifier pass. No upstream engine rewrite/nativebuild.
+Artifact: backend/SDK1217-EXECUTION.md, merge script, results/sdk-execution.
+Next: updated SDK client lifetime/refresh and explicit TLS-option refusal; custom
+TLS/deployed cancellation/memory/isolation/startup gates remain. No cloud call.

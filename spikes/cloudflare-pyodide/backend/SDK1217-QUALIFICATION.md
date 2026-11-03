@@ -63,9 +63,10 @@ stage the verified wheel with `add-certifi-overlay.py`; run the assigned guest
 `ct128-sdk-probe.py --revision N` only against a new owned packet/run path.
 Verify published evidence using `node backend/verify-sdk1217.mjs`.
 
-Next: stage this exact SDK into the full engine/SDK execution fixture, retain
-publisher license/metadata with the dependency, and test ordinary API operations
-plus client lifetime/cleanup. Then qualify or explicitly reject unsupported TLS
+Follow-on SDK1217-EXECUTION.md now stages this SDK with full publisher license/
+metadata and passes real engine/API config/table operations. Client lifetime,
+refresh and error-path qualification under the update remain next. Qualify or
+explicitly reject unsupported TLS
 options before effects. This probe does not establish those semantics. Actual
 deployed execution remains separately approval-gated; no Cloudflare account call,
 credential grant, runtime/security-setting change or admission occurred here.
