@@ -1242,3 +1242,16 @@ Artifacts: backend/SDK-CLOSE.md, verifier, results/sdk-close three raw receipts.
 Next: updated refresh and interrupted cleanup, TLS admission and deployed
 memory/cancellation/isolation gates. Normal resource completion != CPU-stop proof.
 No cloud call, privilege/settings change or shared platform code edit.
+
+### 2026-11-03 — updated SDK refresh and interrupted-close negative control
+--sdk-refresh --revision1: exact updated SDK, genuine refresh200, changed access/
+stable run refresh, stdout/log/error redaction, awaited close, peerSuccess78,
+replay/fencing/401/accounting2,2,1,0 and cleanup pass. Supervisor72.759s.
+Actual SDK close primitive --revision6 injects an Event wait around real HTTPX
+aclose, cancels SDK-close waiter: async cleanup survives and closes after release,
+sync client remains open until explicit follow-up close. Preserve partial failure;
+this is cooperative wait cancellation, not actual network/isolate interruption.
+Ruff/Pyright/Node syntax checks pass. No upstream rewrite or synthetic ACK.
+Artifacts: backend/SDK-REFRESH-CLOSE.md, verifier, results/sdk-refresh receipts.
+Next: explicit unsupported transport-option refusal before effects; interrupted
+cleanup ownership and deployed proof remain. No cloud call or new authority.

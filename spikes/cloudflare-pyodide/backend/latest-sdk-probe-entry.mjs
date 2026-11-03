@@ -32,6 +32,35 @@ class Default(WorkerEntrypoint):
                     "loop_registry_empty": not client._loop_clients}
                 await client.close()
                 result["client_close"]["second_close_returned"] = True
+                interrupted = BifrostClient("https://unused.invalid", "synthetic-unusable-probe-value")
+                delayed = interrupted._get_async_client()
+                owner = interrupted._loop_clients[loop]
+                entered, release = asyncio.Event(), asyncio.Event()
+                actual_close = delayed.aclose
+                async def held_close():
+                    entered.set()
+                    await release.wait()
+                    await actual_close()
+                delayed.aclose = held_close
+                waiter = asyncio.create_task(interrupted.close())
+                await entered.wait()
+                waiter.cancel()
+                try:
+                    await waiter
+                except asyncio.CancelledError:
+                    cancelled = True
+                else:
+                    cancelled = False
+                sync_closed_at_cancel = interrupted._sync_http.is_closed
+                release.set()
+                await owner.cleanup
+                result["interrupted_close"] = {"waiter_cancelled": cancelled,
+                    "async_closed_after_release": delayed.is_closed,
+                    "owner_cleanup_done": owner.cleanup.done(),
+                    "sync_closed_at_cancel": sync_closed_at_cancel,
+                    "sync_closed_without_followup": interrupted._sync_http.is_closed}
+                await interrupted.close()
+                result["interrupted_close"]["sync_closed_after_followup"] = interrupted._sync_http.is_closed
             except Exception as error:
                 result["constructor"] = {"created": False, "error_type": type(error).__name__}
         if result["probes"]["certifi"]["imported"]:

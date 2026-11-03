@@ -13,6 +13,10 @@ termination assertion. A close exception propagates and prevents that response;
 this change does not silently suppress cleanup failures or invent an engine result.
 Interruption/exception recovery during close remains separately unqualified.
 
+Follow-on SDK-REFRESH-CLOSE.md preserves a real cooperative cancellation control:
+async cleanup completes after waiter cancellation, but sync close needs an
+explicit follow-up. Do not infer complete abnormal cleanup from the async task.
+
 ## Actual local proof
 
 The credential-free updated-SDK probe (`ct128-sdk-probe.py --revision 5`) creates a

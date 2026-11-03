@@ -21,8 +21,10 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, shared_pool=False, private_pool=False, api_prepare=False, source_change=False, auto_delivery=False, late_adapter=False, retained_http=False, deadline_recovery=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, sdk_update=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, shared_pool=False, private_pool=False, api_prepare=False, source_change=False, auto_delivery=False, late_adapter=False, retained_http=False, deadline_recovery=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, sdk_update=False, sdk_refresh=False, revision=1):
     global PACKET, RUN, NAME
+    sdk_update = sdk_update or sdk_refresh
+    refresh_redaction = refresh_redaction or sdk_refresh
     api_prepare = api_prepare or source_change or auto_delivery or late_adapter or retained_http or deadline_recovery or startup_inventory or oversized_result or numeric_result or oversized_body or memory_pressure or refresh_redaction or sdk_update
     private_pool = private_pool or api_prepare
     shared_pool = shared_pool or private_pool
@@ -31,7 +33,7 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
     stream_interruption = stream_interruption or automatic_loss or attempt_deadline
     physical_pool = physical_pool or stream_pool or stream_loss or stream_interruption or late_settlement or shared_pool
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('sdk-execution' if sdk_update else 'refresh-redaction' if refresh_redaction else 'memory-pressure' if memory_pressure else 'body-budget' if oversized_body else 'numeric-fidelity' if numeric_result else 'output-integration' if oversized_result else 'startup-inventory' if startup_inventory else 'deadline-recovery' if deadline_recovery else 'retained-http' if retained_http else 'late-adapter' if late_adapter else 'auto-delivery' if auto_delivery else 'source-change' if source_change else 'api-prepare' if api_prepare else 'private-pool' if private_pool else 'shared-pool' if shared_pool else 'request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('sdk-refresh' if sdk_refresh else 'sdk-execution' if sdk_update else 'refresh-redaction' if refresh_redaction else 'memory-pressure' if memory_pressure else 'body-budget' if oversized_body else 'numeric-fidelity' if numeric_result else 'output-integration' if oversized_result else 'startup-inventory' if startup_inventory else 'deadline-recovery' if deadline_recovery else 'retained-http' if retained_http else 'late-adapter' if late_adapter else 'auto-delivery' if auto_delivery else 'source-change' if source_change else 'api-prepare' if api_prepare else 'private-pool' if private_pool else 'shared-pool' if shared_pool else 'request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -340,6 +342,7 @@ if __name__ == '__main__':
     mode.add_argument('--late-adapter', action='store_true')
     mode.add_argument('--retained-http', action='store_true')
     mode.add_argument('--deadline-recovery', action='store_true')
+    mode.add_argument('--sdk-refresh', action='store_true')
     mode.add_argument('--sdk-update', action='store_true')
     mode.add_argument('--refresh-redaction', action='store_true')
     mode.add_argument('--memory-pressure', action='store_true')
@@ -355,4 +358,4 @@ if __name__ == '__main__':
          automatic_loss=args.automatic_loss, attempt_deadline=args.attempt_deadline,
          late_settlement=args.late_settlement, http_component=args.http_component, request_mux=args.request_mux,
          shared_pool=args.shared_pool, private_pool=args.private_pool, api_prepare=args.api_prepare,
-         source_change=args.source_change, auto_delivery=args.auto_delivery, late_adapter=args.late_adapter, retained_http=args.retained_http, deadline_recovery=args.deadline_recovery, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction, sdk_update=args.sdk_update, revision=args.revision)
+         source_change=args.source_change, auto_delivery=args.auto_delivery, late_adapter=args.late_adapter, retained_http=args.retained_http, deadline_recovery=args.deadline_recovery, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction, sdk_update=args.sdk_update, sdk_refresh=args.sdk_refresh, revision=args.revision)
