@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const receipt = JSON.parse(readFileSync(new URL('results/body-budget/receipt-v1.json', root), 'utf8').replace(/^\uFEFF/, ''));
 for (const [local, packet] of [
@@ -9,7 +10,10 @@ for (const [local, packet] of [
   ['authorized-local-entry.mjs', 'project/backend/authorized-local-entry.mjs'],
   ['terminal-response.mjs', 'project/backend/terminal-response.mjs'],
 ]) {
-  assert.equal(createHash('sha256').update(readFileSync(new URL('backend/' + local, root))).digest('hex'),
+  const source = local.endsWith('.py')
+    ? execFileSync('git', ['show', '0876489190900cf99e23b6dde3757c05566c513c:spikes/cloudflare-pyodide/backend/' + local])
+    : readFileSync(new URL('backend/' + local, root));
+  assert.equal(createHash('sha256').update(source).digest('hex'),
     receipt.packet_sha256[packet], local);
 }
 assert.equal(receipt.qualification_passed, true);

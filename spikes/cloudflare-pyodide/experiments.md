@@ -1109,3 +1109,18 @@ peerSuccess78,401revocation,lost-ACK/replay/fencing,busy2,2,1,0 and cleanup pass
 Artifact: backend/BODY-BUDGET.md, source verifier, results/body-budget receipt.
 Next: memory exhaustion and larger-than-drain uncertainty; native startup and
 deployed abnormal-cancellation gates remain. No cloud invocation/CPU-stop claim.
+
+### 2026-11-03 — bounded local memory pressure
+Hypothesis: a real workflow allocation above128MiB can characterize the local
+memory boundary without exhausting the whole host or changing runtime settings.
+Change: one160MiB bytearray after real SDK write, free, controlled failure; peer
+and canonical lost-ACK/duplicate/fencing/revocation/accounting checks unchanged.
+Command: CT128 ct128-canonical-failure.py --memory-pressure --revision 1/2.
+V1 failed an overly strict one-log assertion. Actual warning plus traceback are
+two legitimate entries; V2 identifies the canonical error marker and records count.
+V2 exit0: allocated167772160bytes,provider noOOM,peerSuccess78,401,busy2,2,1,0,
+replay unchanged,cleanup empty. Ruff/Pyright pass. Failed receipt preserved.
+Artifact: backend/MEMORY-PRESSURE.md, verifier, results/memory-pressure receipts.
+Conclusion: local allocation success does NOT validate deployed128MiB enforcement;
+no peak/CPU/physical-stop claim, no cloud call. Next: shared startup/capacity
+contract and separately authorized deployed memory/abnormal cancellation proof.

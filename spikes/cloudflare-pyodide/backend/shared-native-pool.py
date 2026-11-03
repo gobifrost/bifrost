@@ -23,8 +23,8 @@ from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False):
-    if sum((source_change, late_result, retained_http, oversized_result, numeric_result, oversized_body)) > 1:
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False):
+    if sum((source_change, late_result, retained_http, oversized_result, numeric_result, oversized_body, memory_pressure)) > 1:
         raise ValueError('One fixture mode required')
     if deadline_ack_loss and not late_result:
         raise ValueError('Deadline ACK loss requires finite late-result mode')
@@ -143,6 +143,19 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     sources[slot['path']] = source.replace(
                         "        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])",
                         f"        return {{'payload': 'x' * {1200000 if oversized_body else 300000}}}")
+                if memory_pressure and slot['label'] == 'fails-first':
+                    sources[slot['path']] = source.replace(
+                        "        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])",
+                        "        try:\n"
+                        "            allocation = bytearray(160 * 1024 * 1024)\n"
+                        "            allocation[0] = 1\n"
+                        "            allocation[-1] = 1\n"
+                        "            memory_outcome = 'allocated_160mib'\n"
+                        "            del allocation\n"
+                        "        except MemoryError:\n"
+                        "            memory_outcome = 'python_memory_error'\n"
+                        "        logging.getLogger(__name__).warning('bounded_memory_probe=%s', memory_outcome)\n"
+                        "        raise ValueError('bounded_memory_probe=' + memory_outcome)")
                 if late_result and slot['label'] == 'fails-first':
                     sources[slot['path']] = source.replace(
                         f"    while await config.get({slot['gate']!r}) is not True:\n        await asyncio.sleep(0.25)\n",
@@ -635,6 +648,15 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         revoked = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + slot['token']}, json={'key': slot['key']})
                         if revoked.status_code != 401:
                             raise RuntimeError('Completed shared credential remained usable')
+                        if memory_pressure and slot is failed:
+                            observed = [message for message in logs if 'bounded_memory_probe=' in message]
+                            outcomes = [value for value in ('allocated_160mib', 'python_memory_error')
+                                if error and error.endswith('bounded_memory_probe=' + value)]
+                            if len(outcomes) != 1:
+                                raise RuntimeError('Bounded memory observation missing')
+                            report['bounded_memory_matching_log_count'] = len(observed)
+                            report['bounded_memory_outcome'] = outcomes[0]
+                            report['bounded_memory_probe_bytes'] = 160 * 1024 * 1024
                         report['attempts'][run] = {'label': slot['label'], 'canonical_status': status.value,
                             'canonical_result': persisted_result, 'canonical_error': error, 'persisted_logs': logs,
                             'runtime_handle': slot['evidence']['runtime_handle'], 'route': slot['route'],
@@ -702,6 +724,7 @@ if __name__ == '__main__':
     parser.add_argument('--late-result', action='store_true')
     parser.add_argument('--retained-http', action='store_true')
     parser.add_argument('--deadline-ack-loss', action='store_true')
+    parser.add_argument('--memory-pressure', action='store_true')
     parser.add_argument('--oversized-body', action='store_true')
     parser.add_argument('--numeric-result', action='store_true')
     parser.add_argument('--oversized-result', action='store_true')
@@ -709,4 +732,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
-                     deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body))
+                     deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure))
