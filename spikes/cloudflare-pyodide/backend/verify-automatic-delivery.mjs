@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const base = new URL('../results/auto-delivery/', import.meta.url);
 const read = name => readFile(new URL(name, base), 'utf8');
 const raw = await read('auto-delivery-v1/receipt.json');
@@ -15,7 +16,7 @@ assert.equal(receipt.provider_state_before_cleanup.Running, true);
 assert.equal(receipt.provider_state_before_cleanup.OOMKilled, false);
 for (const name of ['private_http_pool.py', 'test_private_http_pool.py', 'attempt_journal.py',
   'test_attempt_delivery.py', 'shared-native-pool.py', 'ct128-canonical-failure.py']) {
-  const source = await readFile(new URL('./' + name, import.meta.url));
+  const source = execFileSync('git', ['show', 'ebc2be4a095446fa73d3983a50f799d5b350b68a:spikes/cloudflare-pyodide/backend/' + name]);
   assert.equal(createHash('sha256').update(source).digest('hex'), receipt.packet_sha256[name], name);
 }
 const probe = receipt.shared_pool_result;

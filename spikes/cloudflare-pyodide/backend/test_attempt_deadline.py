@@ -72,6 +72,18 @@ class DeadlineTests(IsolatedAsyncioTestCase):
         report.assert_awaited_once_with(self.lease, self.consumer, self.execution)
         self.assertIsInstance(collection.exception(), ConnectionError)
 
+    async def test_cutoff_uses_current_owner_without_changing_original_deadline(self):
+        current = SimpleNamespace(worker_id=self.lease.worker_id, session_generation=2)
+        collection = asyncio.get_running_loop().create_future()
+        original = self.execution.started_at
+        with patch('attempt_deadline.report_expired_workflow', AsyncMock()) as report:
+            self.assertTrue(await supervise_attempt_deadline(self.lease, self.consumer, self.execution,
+                collection, lease_at_cutoff=lambda: current))
+        report.assert_awaited_once_with(current, self.consumer, self.execution)
+        self.assertEqual(self.execution.started_at, original)
+        self.assertFalse(collection.done())
+        collection.set_result(None)
+
     async def test_supervisor_cancellation_does_not_cancel_live_collection(self):
         self.execution.started_at = datetime.now(timezone.utc)
         collection = asyncio.get_running_loop().create_future()

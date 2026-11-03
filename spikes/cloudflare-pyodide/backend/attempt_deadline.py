@@ -38,7 +38,7 @@ async def report_expired_workflow(lease, consumer, execution):
         raise CredentialRouteChanged('Owner replaced before deadline consumption receipt')
 
 
-async def supervise_attempt_deadline(lease, consumer, execution, collection):
+async def supervise_attempt_deadline(lease, consumer, execution, collection, *, lease_at_cutoff=None):
     """Own one original-deadline timer; never cancel the retained collection.
 
     A successful collection before cutoff needs normal result reconciliation.
@@ -58,7 +58,7 @@ async def supervise_attempt_deadline(lease, consumer, execution, collection):
             and not collection.cancelled() and collection.exception() is None):
             return False
         await timer
-        await report_expired_workflow(lease, consumer, execution)
+        await report_expired_workflow(lease if lease_at_cutoff is None else lease_at_cutoff(), consumer, execution)
         return True
     finally:
         timer.cancel()

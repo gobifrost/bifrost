@@ -908,3 +908,22 @@ results/auto-delivery raw receipt and quality evidence. No cloud calls, CPU-stop
 proof, admission or runtime-setting change. Next: original-deadline supervision
 inside the private adapter without releasing uncertain physical capacity; then
 supported startup/registration boundary and independent deployed acceptance.
+
+### Original-deadline task owned by the private adapter
+Hypothesis: an uncertain launch ACK must not delay logical timeout, and reconnect
+must not reset the native cutoff. Change: start supervision from the actual native
+ExecutionInfo before mux ACK wait; use current owner at cutoff; settle timer on
+canonical ACK, retain capacity otherwise; fence late physical result through the
+logical timeout path. V1 new pre-ACK retirement case exposed registry-lock/ACK
+wait deadlock; raw partial unit output and exact source retained. Soft Docker
+harness timeout did not reliably finish; stopped only its exact owned container,
+command exit1; no physical-executor-stop claim. V2 moves ACK await outside the
+registry lock and uses timeout -k5 grace in the harness. Command: checked-in
+results/owned-deadline/pyodide-owned-deadline-v2.sh. Observed39tests pass1.232s,
+Ruff/Pyright zero diagnostics. Actual normal engine/SDK run: cf CLI local provider,
+ct128-canonical-failure.py --auto-delivery --revision 2; qualified74.026s total,
+replay/log/token/accounting/retirement/cleanup intact. No cloud/admission/settings
+change. Artifact: backend/OWNED-DEADLINE.md, source-bound verifier and raw results.
+Next: actual finite late result through this integrated adapter, proving Timeout
+and revocation while the physical obligation stays held, then stale late-result
+consumption without overwrite. Deployed CPU-stop remains a separate unproven gate.

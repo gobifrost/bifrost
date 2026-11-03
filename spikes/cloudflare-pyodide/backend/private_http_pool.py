@@ -1,5 +1,6 @@
 """Private HTTP physical adapter; upstream retains all durable execution authority."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import PurePosixPath
 import re
@@ -8,6 +9,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 from attempt_journal import AttemptJournal, AttemptResult
+from attempt_deadline import report_expired_workflow, supervise_attempt_deadline
 from http_invocation import HttpInvocation
 from workflow_request_mux import WorkflowRequestMux
 
@@ -53,6 +55,7 @@ class PrivateHttpWorkflowPool:
         self.mux = WorkflowRequestMux(lambda: lease_ref.lease.session_generation)
         self.journal = AttemptJournal(capacity=capacity)
         mux = self.mux
+        pool = self
 
         class Transport:
             connected = True
@@ -70,11 +73,31 @@ class PrivateHttpWorkflowPool:
                 return memory_request_bytes(key)
 
             async def request(self, action, payload, *, expected_generation=None):
+                if action == 'workflow':
+                    pool._start_deadline(payload)
                 return await mux.request(action, payload, expected_generation=expected_generation)
 
         self.native = ThinRemoteProcessPool(Transport(), worker_id=str(self.worker_id),
             runtime_profile=CLOUDFLARE_PYTHON_RUNTIME_PROFILE, on_result=on_result)
         self._consumer = SimpleNamespace(owner_worker_id=self.worker_id, _handle_result=self._deliver)
+        self._deadline_consumer = SimpleNamespace(owner_worker_id=self.worker_id, _handle_result=on_result)
+
+    def _start_deadline(self, payload):
+        # Native ExecutionInfo exists before transport awaits the launch ACK.
+        slot = self._attempts[payload['execution_id']]
+        if slot.info is not None:
+            raise ConnectionError('Native attempt already bound')
+        slot.route = payload['route_id']
+        slot.info = self.native.processes[slot.route].current_execution
+
+        async def supervise():
+            expired = await supervise_attempt_deadline(self._ref.lease, self._deadline_consumer,
+                slot.info, slot.settled, lease_at_cutoff=lambda: self._ref.lease)
+            return {'expired': expired}
+
+        slot._deadline_task = asyncio.create_task(supervise())
+        slot._deadline_task.add_done_callback(_observe_delivery)
+        slot.deadline = AttemptResult(slot._deadline_task)
 
     def credential_route(self):
         return CredentialRoute(2, self._ref.lease.session_generation)
@@ -100,6 +123,11 @@ class PrivateHttpWorkflowPool:
         return self._attempts[execution_id]
 
     async def route_execution(self, *, execution_id, context, credential_route, active_execution):
+        routed = await self._reserve_execution(execution_id=execution_id, context=context,
+            credential_route=credential_route, active_execution=active_execution)
+        await asyncio.shield(routed)
+
+    async def _reserve_execution(self, *, execution_id, context, credential_route, active_execution):
         async with self._lock:
             if self._retired:
                 raise RuntimeError('Private HTTP adapter retired')
@@ -124,11 +152,11 @@ class PrivateHttpWorkflowPool:
             if previous is not None:
                 if previous.fingerprint != fingerprint:
                     raise ConnectionError('Existing workflow dispatch changed; reconcile original attempt')
-                await asyncio.shield(previous.routed)
-                return
+                return previous.routed
             slot = _Attempt(fingerprint=fingerprint, invocation=None, evidence=None, info=None,
                 route=None, receipt=None, accepted_monotonic=None, terminal_monotonic=None, launches=0,
-                routed=asyncio.get_running_loop().create_future())
+                routed=asyncio.get_running_loop().create_future(),
+                settled=asyncio.get_running_loop().create_future(), _deadline_task=None)
             self._attempts[execution_id] = slot
 
             async def collect(payload, accepted):
@@ -182,16 +210,28 @@ class PrivateHttpWorkflowPool:
             slot._delivery_task = asyncio.create_task(deliver_terminal())
             slot._delivery_task.add_done_callback(_observe_delivery)
             slot.delivery = AttemptResult(slot._delivery_task)
-            await asyncio.shield(slot.routed)
+            return slot.routed
 
     async def _deliver(self, result):
         slot = self._attempts[result['execution_id']]
+        if datetime.now(timezone.utc) >= slot.info.started_at + timedelta(seconds=slot.info.timeout_seconds):
+            await self.reconcile_deadline(result['execution_id'])
         await self.native.handle_event({'event': 'result', 'route_id': slot.route, 'result': result})
+
+    async def reconcile_deadline(self, execution_id):
+        """Replay only logical timeout through the current canonical owner."""
+        slot = self._attempts[execution_id]
+        await report_expired_workflow(self._ref.lease, self._deadline_consumer, slot.info)
 
     async def reconcile(self, execution_id, *, lease=None):
         slot = self._attempts[execution_id]
-        return await self.journal.reconcile_workflow(self._ref.lease if lease is None else lease,
+        acknowledged = await self.journal.reconcile_workflow(self._ref.lease if lease is None else lease,
             execution_id, self._consumer, slot.info)
+        if acknowledged:
+            if not slot.settled.done():
+                slot.settled.set_result({'acknowledged': True})
+            await slot.deadline
+        return acknowledged
 
     async def route_service(self, **request):
         # Reuse the native profile's refusal before any service side effect.
@@ -203,6 +243,9 @@ class PrivateHttpWorkflowPool:
         async with self._lock:
             if any(not slot._delivery_task.done() for slot in self._attempts.values()):
                 raise RuntimeError('Owned terminal delivery remains pending')
+            if any(slot._deadline_task is not None and not slot._deadline_task.done()
+                   for slot in self._attempts.values()):
+                raise RuntimeError('Owned deadline supervision remains pending')
             await self.journal.retire()
             self.mux.retire()
             self._attempts.clear()

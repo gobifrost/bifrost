@@ -212,6 +212,30 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         self.redis_write.assert_not_awaited()
         self.assertEqual(self.pool.native.service_processes, {})
 
+    async def test_original_deadline_reports_before_launch_ack_without_releasing_capacity(self):
+        self.context['timeout_seconds'] = 1
+        ack, finish = self.provider()
+        routing = asyncio.create_task(self.route())
+        await self.started.wait()
+        attempt = self.pool.attempt(self.run)
+        original = attempt.info.started_at
+        with patch('attempt_deadline.owns_remote_session', new_callable=AsyncMock, return_value=True):
+            self.assertEqual(await attempt.deadline, {'expired': True})
+            self.assertFalse(routing.done())
+            self.assertFalse(attempt.settled.done())
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+            self.assertEqual(self.callback.await_args.args[0]['error_type'], 'TimeoutError')
+            self.assertEqual(attempt.info.started_at, original)
+            with self.assertRaises(RuntimeError):
+                await self.pool.retire()
+            ack.set()
+            await routing
+            finish.set()
+            await attempt.delivery
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        await self.pool.retire()
+
 
 if __name__ == '__main__':
     main()
