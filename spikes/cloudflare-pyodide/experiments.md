@@ -1153,3 +1153,16 @@ Artifact: backend/REFRESH-REDACTION.md, verifier, results/refresh-redaction rece
 Next: native startup/control capability contract and deployed abnormal cancellation/
 memory/isolation gates. No cloud call; no persistent credentials/grants or new
 runtime settings. This is not arbitrary-code secret containment acceptance.
+
+### 2026-11-03 — physical handoff fencing before deadline setup
+Hypothesis: stale physical requests cannot mutate deadline bookkeeping. Fail-first
+stale-generation/lost-owner cases disproved this: _start_deadline ran first.
+Change: companion checks expected generation and actual upstream session ownership,
+then post-await owner identity, before deadline binding. Existing mux guards stay.
+CT128 unit command: unittest test_private_http_pool test_attempt_deadline
+ test_workflow_request_mux:39pass; separate lookup-rotation regression1pass.
+Ruff/Pyright pass. Actual control --api-prepare --revision90 exit0, real engine/SDK,
+peerSuccess78,replay/fencing/duplicate/401/accounting2,2,1,0/cleanup pass.
+Artifact: backend/PREDEADLINE-FENCE.md, verifier, results/predeadline-fence.
+No shared/Linux source or cloud change. Full startup/control capability contract,
+deployed memory/isolation and abnormal cancellation remain unqualified.

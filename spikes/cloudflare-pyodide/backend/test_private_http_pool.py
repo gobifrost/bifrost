@@ -110,6 +110,30 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             self.pool.bind_runtime_inventory(inventory_probe())
 
+    async def test_stale_physical_request_is_fenced_before_deadline_bookkeeping(self):
+        with patch.object(self.pool, '_start_deadline') as start:
+            with self.assertRaises(CredentialRouteChanged):
+                await self.pool.native.transport.request('workflow', {'execution_id': self.run}, expected_generation=0)
+            start.assert_not_called()
+
+    async def test_lost_owner_physical_request_is_fenced_before_deadline_bookkeeping(self):
+        self.owner.return_value = False
+        with patch.object(self.pool, '_start_deadline') as start:
+            with self.assertRaises(CredentialRouteChanged):
+                await self.pool.native.transport.request('workflow', {'execution_id': self.run}, expected_generation=1)
+            start.assert_not_called()
+
+    async def test_owner_rotation_during_physical_authority_check_precedes_deadline_bookkeeping(self):
+        async def rotate(_owner):
+            self.ref.lease = SimpleNamespace(**{**vars(self.ref.lease), 'session_generation': 2})
+            return True
+
+        self.owner.side_effect = rotate
+        with patch.object(self.pool, '_start_deadline') as start:
+            with self.assertRaises(CredentialRouteChanged):
+                await self.pool.native.transport.request('workflow', {'execution_id': self.run}, expected_generation=1)
+            start.assert_not_called()
+
     async def test_retirement_closes_only_the_owned_native_redis_client(self):
         client = SimpleNamespace(aclose=AsyncMock())
         self.enterContext(patch.object(self.pool.native, '_redis', client))

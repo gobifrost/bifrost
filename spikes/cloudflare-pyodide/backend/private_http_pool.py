@@ -82,6 +82,10 @@ class PrivateHttpWorkflowPool:
                         raise RuntimeError('Only bound immutable runtime inventory is supported')
                     return {'packages': json.loads(json.dumps(pool._runtime_inventory['packages']))}
                 if action == 'workflow':
+                    owner = lease_ref.lease
+                    if (expected_generation != owner.session_generation
+                        or not await owns_remote_session(owner) or owner != lease_ref.lease):
+                        raise CredentialRouteChanged('Physical workflow owner changed before deadline binding')
                     pool._start_deadline(payload)
                 try:
                     return await mux.request(action, payload, expected_generation=expected_generation)

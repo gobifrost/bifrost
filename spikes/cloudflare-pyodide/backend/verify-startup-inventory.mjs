@@ -18,7 +18,7 @@ assert.equal(report.physical_termination_verified, false);
 assert.deepEqual(report.running_after_cleanup, []);
 for (const name of ['runtime_inventory.py', 'runtime_guard.py', 'test_runtime_inventory.py',
   'private_http_pool.py', 'test_private_http_pool.py', 'shared-native-pool.py', 'ct128-canonical-failure.py', 'runtime-code.mjs']) {
-  const source = ['shared-native-pool.py', 'ct128-canonical-failure.py'].includes(name)
+  const source = ['shared-native-pool.py', 'ct128-canonical-failure.py', 'private_http_pool.py', 'test_private_http_pool.py'].includes(name)
     ? execFileSync('git', ['show', '62fcac679c139148d9529afc1445541e40a9a0f3:spikes/cloudflare-pyodide/backend/' + name])
     : await readFile(new URL('./' + name, import.meta.url));
   assert.equal(hash(source), report.packet_sha256[name], name);
