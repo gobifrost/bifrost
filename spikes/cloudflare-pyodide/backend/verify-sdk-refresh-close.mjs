@@ -6,7 +6,7 @@ const root = new URL('../', import.meta.url);
 const read = name => JSON.parse(readFileSync(new URL('results/sdk-refresh/' + name, root), 'utf8').replace(/^\uFEFF/, ''));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = read('receipt.json'), interrupted = read('interrupted-close.json');
-assert.equal(hash(readFileSync(new URL('backend/ct128-canonical-failure.py', root))), receipt.packet_sha256['ct128-canonical-failure.py']);
+assert.equal(hash(execFileSync('git', ['show', '4224807533407d6b0de21bbd29f7652dad6d9005:spikes/cloudflare-pyodide/backend/ct128-canonical-failure.py'])), receipt.packet_sha256['ct128-canonical-failure.py']);
 assert.equal(hash(execFileSync('git', ['show', 'ddb00323eab176783af02e5bb4fdc2acd651d07c:spikes/cloudflare-pyodide/backend/latest-sdk-probe-entry.mjs'])), interrupted.packet_sha256['project/backend/latest-sdk-probe-entry.mjs']);
 assert.equal(receipt.qualification_passed, true);
 assert.equal(receipt.cloud_invocations, 0);

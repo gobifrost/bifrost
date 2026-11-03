@@ -19,6 +19,8 @@ executor. Public/untrusted admission stays disabled. Start with
   no deployed Python/SDK compatibility claim is added by that packaging test.
   [Explicit current artifact staging](dev/QUALIFIED-RUNTIME-STAGING.md) preserves
   the exact SDK bundle bytes and imports the full loader offline on CT128.
+  The [fresh staged runtime](backend/STAGED-RUNTIME-EXECUTION.md) also passes two
+  real local engine/SDK attempts with canonical replay, revocation and cleanup.
 
 * [Upstream SDK #1217 real execution](backend/SDK1217-EXECUTION.md): config/table
   operations pass with the exact SDK update and pure wheel. [Awaited SDK close](backend/SDK-CLOSE.md)

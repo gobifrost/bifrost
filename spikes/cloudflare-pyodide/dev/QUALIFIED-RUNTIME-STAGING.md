@@ -1,5 +1,9 @@
 # Explicit staging of the locally qualified SDK artifact
 
+Follow-up: [actual staged runtime engine/SDK execution](../backend/STAGED-RUNTIME-EXECUTION.md)
+now passes separately on local cf CLI/Pyodide. The assembly receipt below retains
+python_executed=false; the new execution receipt supplies the stronger local proof.
+
 The current SDK artifact can now be assembled into a fresh runtime directory
 without rebuilding, rewriting or selecting a different Python closure. The new
 explicit command accepts only SHA256
