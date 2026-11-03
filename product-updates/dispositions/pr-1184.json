@@ -1,0 +1,18 @@
+{
+  "key": "pr:1184",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1184",
+      "https://github.com/gobifrost/bifrost/blob/20c9db7be9fdbdd617ecd338adba11eb4657c292/docs/product-updates-authoring.md",
+      "https://nodejs.org/en/blog/release/v26.13.0",
+      "https://github.com/gobifrost/bifrost/actions/runs/41716177267/job/126196638931"
+    ]
+  },
+  "reason": "Internal Node runtime maintenance only. Upstream 26.13.0 changes LTS metadata only from 26.12.1; no security advisory, customer action, or customer-facing announcement is required. The dependency-only automation correctly refuses the maintainer test repair as outside its allowlist; this PR uses the maintainer-owned protected merge path with the reviewed disposition preserved. This advisory refusal does not replace or waive required CI.",
+  "security_review": {
+    "status": "not_required"
+  }
+}
