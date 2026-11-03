@@ -1096,3 +1096,16 @@ Eight focused Node tests, Ruff and Pyright pass. Raw receipts preserve pins/hash
 backend/NUMERIC-FIDELITY.md and verify-numeric-fidelity.mjs describe exact scope.
 Next: larger child-response/memory boundary and shared startup; deployed support,
 parser overhead and abnormal CPU cancellation remain unqualified. No cloud calls.
+
+### 2026-11-03 — bounded oversized child EOF consumption
+Hypothesis: retain <=1MiB while discarding oversized output through EOF within a
+4MiB drain ceiling, avoiding uncertain reporting for completed oversized bodies.
+Change: terminal-response.mjs; explicit ExecutorBodyTooLargeError only on EOF.
+Controls preserve uncertainty on drain overflow/read error; prior early-cancel
+reader remains tested. Thirteen focused Node cases, Ruff and Pyright pass.
+Command: CT128 ct128-canonical-failure.py --oversized-body --revision 1.
+Observed: exit0,1202232bytes EOF,canonical Failed/null/log after real SDK effects;
+peerSuccess78,401revocation,lost-ACK/replay/fencing,busy2,2,1,0 and cleanup pass.
+Artifact: backend/BODY-BUDGET.md, source verifier, results/body-budget receipt.
+Next: memory exhaustion and larger-than-drain uncertainty; native startup and
+deployed abnormal-cancellation gates remain. No cloud invocation/CPU-stop claim.

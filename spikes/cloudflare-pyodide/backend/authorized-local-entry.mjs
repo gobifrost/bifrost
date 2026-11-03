@@ -3,6 +3,7 @@ import {WorkerEntrypoint} from 'cloudflare:workers';
 import {runtimeCode} from './runtime-code.mjs';
 import {boundedJson} from '../probe-io.mjs';
 import {boundedLosslessJson} from './lossless-json.mjs';
+import {terminalResponse} from './terminal-response.mjs';
 import {verifyModuleResponse} from './module-response.mjs';
 import {verifyResolutionResponse} from './resolution-response.mjs';
 import {admitFixture} from './fixture-admission.mjs';
@@ -87,7 +88,15 @@ export default {
             worker_id:body.worker_id,execution_id:body.execution_id,
             context:body.context,api_url:'https://test-api.invalid'}),
         }));
-      return {runtime_handle:id,result:await boundedLosslessJson(response),api_calls:calls,
+      const terminal=await terminalResponse(response);
+      if(terminal.oversized) return {runtime_handle:id,
+        result:{type:'result',execution_id:body.execution_id,success:false,
+          error_type:'ExecutorBodyTooLargeError',
+          error:'Executor response exceeds retention budget; workflow effects may already exist'},
+        provider_outcome:{kind:'terminal_body_too_large',response_eof:true,
+          engine_outcome_delivered:false,response_bytes:terminal.response_bytes,
+          retention_limit_bytes:1048576,drain_limit_bytes:4194304}};
+      return {runtime_handle:id,result:terminal.value,api_calls:calls,
         ...(gate ? {refresh_gate_events:gate.events} : {})};
       };
       if(request.headers.get('Accept')==='application/x-ndjson') {

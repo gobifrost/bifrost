@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {parseLosslessJson} from './lossless-json.mjs';
 
 const root = new URL('../', import.meta.url);
@@ -17,7 +18,9 @@ for (const [local, packet] of [
   ['authorized-local-entry.mjs', 'project/backend/authorized-local-entry.mjs'],
   ['lossless-json.mjs', 'project/backend/lossless-json.mjs'],
 ]) {
-  const digest = createHash('sha256').update(readFileSync(new URL('backend/' + local, root))).digest('hex');
+  const source = local === 'lossless-json.mjs' ? readFileSync(new URL('backend/' + local, root))
+    : execFileSync('git', ['show', 'a63033f6575cb22c901e141351c3f6eb915881d8:spikes/cloudflare-pyodide/backend/' + local]);
+  const digest = createHash('sha256').update(source).digest('hex');
   assert.equal(digest, receipt.packet_sha256[packet], local);
 }
 assert.equal(receipt.qualification_passed, true);
