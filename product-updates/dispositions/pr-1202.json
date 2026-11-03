@@ -3,7 +3,7 @@
   "classification": "omit",
   "entry_ids": [],
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1202",
       "Port of MTG fork PR #1247; local Solution preview diagnostics only."

@@ -1,0 +1,27 @@
+{
+  "key": "pr:1212",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal workspace, policy-scope, and packaging hardening; excluded from the in-app update modal.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1201"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1212",
+      "https://github.com/gobifrost/bifrost/pull/1201",
+      "Original contributor: Thomas (@MTG-Thomas). The eight original PR commits through f602bada2b18cd413023b0b25d3e496362697aae are retained unchanged; Jack Musick authored the follow-up verification.",
+      "Ported sources: https://github.com/Midtown-Technology-Group/bifrost/pull/1252 https://github.com/Midtown-Technology-Group/bifrost/pull/1272 https://github.com/Midtown-Technology-Group/bifrost/pull/1276 https://github.com/Midtown-Technology-Group/bifrost/pull/1331 https://github.com/Midtown-Technology-Group/bifrost/pull/1334",
+      "Security review covered lock ownership and no-follow opens, legacy-file deletion boundaries, Solution-scoped policy resolution and caching, migration-error escaping, and deploy-archive symlink rejection. No blocking runtime defect was identified; native Windows behavior was not exercised.",
+      "Verification at 7e434c13ffd9289ea441e5fe9abf14f9c3035962: 72 focused tests passed with no skips, including both cross-Solution cache orders and four real API/S3/index cleanup cases; ./test.sh quality api passed with zero pyright errors and clean ruff checks. Complete E2E and browser verification remains the protected merge queue's gate.",
+      "CI failure disposition: undefined solution_id caused Ruff F821 and 17 unit failures at 3de03cc43659f290455345d6c6d9dabeea13f3b3 (https://github.com/gobifrost/bifrost/actions/runs/41546193616). Fixed by threading scope through _resolved_policies in 21d35e2be83bd8257fc2b675f9166e1f943ce51d; the focused policy tests and current-head CI pass.",
+      "CI failure disposition: the per-organization cache test still expected a two-element key after the Solution-scoped key change (https://github.com/gobifrost/bifrost/actions/runs/41548095765 and https://github.com/gobifrost/bifrost/actions/runs/41548396965). The obsolete assertion was updated in f602bada2b18cd413023b0b25d3e496362697aae, and 7e434c13ffd9289ea441e5fe9abf14f9c3035962 adds behavioral isolation coverage.",
+      "CI failure disposition: the initial Product Updates run lacked a canonical disposition (https://github.com/gobifrost/bifrost/actions/runs/41546193526). This file was introduced in 21d35e2be83bd8257fc2b675f9166e1f943ce51d. Jack approved omitting the modal entry; review.status is approved and security_review remains required.",
+      "Replacement for the organization-fork PR #1201; @MTG-Thomas retains original implementation credit and original commits. Jack approved the replacement and protected merge lifecycle.",
+      "CI failure disposition: the replacement PR number was assigned after its initial head was pushed, so Product Updates initially reported missing canonical disposition for pr:1212 (https://github.com/gobifrost/bifrost/actions/runs/41577771997/job/125725180606). This file was added in 1784df9259ba6b724f6823163db3ab7e9a2e5e0a; the subsequent Product Updates check and local merge-group eligibility validation pass."
+    ]
+  },
+  "category": "hardening"
+}

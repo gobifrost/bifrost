@@ -159,6 +159,7 @@ services:
       BIFROST_S3_ACCESS_KEY: ${BIFROST_S3_ACCESS_KEY:-${SEAWEEDFS_ACCESS_KEY:-bifrost}}
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
       BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
+      BIFROST_S3_MULTIPART_COPY_MODE: ${BIFROST_S3_MULTIPART_COPY_MODE:-server}
       # CORS (only needed if API is accessed directly, not through proxy)
       BIFROST_CORS_ORIGINS: ${BIFROST_CORS_ORIGINS:-http://localhost:3000}
       # JWT (optional, has defaults)
@@ -245,6 +246,7 @@ services:
       BIFROST_S3_ACCESS_KEY: ${BIFROST_S3_ACCESS_KEY:-${SEAWEEDFS_ACCESS_KEY:-bifrost}}
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
       BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
+      BIFROST_S3_MULTIPART_COPY_MODE: ${BIFROST_S3_MULTIPART_COPY_MODE:-server}
       # Worker needs minimal DB connections — Redis-first pattern for agent runs
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
