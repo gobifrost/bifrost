@@ -26,6 +26,21 @@ class PrepareTests(IsolatedAsyncioTestCase):
         return patch('workspace_prepare.httpx.AsyncClient',
             side_effect=lambda **kw: CLIENT(transport=httpx.MockTransport(handler), **kw))
 
+    async def test_upstream_excluded_import_roots_refused_before_api_lookup(self):
+        for name in ('json', 'json.decoder', 'bifrost', 'bifrost.tables', 'src', 'os', 'httpx'):
+            requests = []
+
+            def handler(request):
+                requests.append(request)
+                path = 'workflows/test.py' if request.url.path.startswith('/api/sdk/modules/') else name.replace('.', '/') + '.py'
+                return httpx.Response(200, json={
+                    'kind': 'module', **module(path, ENTRY)})
+
+            with self.subTest(name=name), self.provider(handler):
+                with self.assertRaises(WorkspacePreparationError):
+                    await prepare_workspace('https://api.invalid/', self.context(), [name])
+                self.assertEqual(requests, [])
+
     async def test_api_hashes_and_upstream_resolution_prepare_snapshot_without_executing_source(self):
         context, names, sent = self.context(), ['helper'], []
 

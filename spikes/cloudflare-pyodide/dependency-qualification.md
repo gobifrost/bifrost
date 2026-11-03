@@ -4,8 +4,10 @@ CT128 follow-up: matching pydantic-core 2.50.2 and PyYAML 6.0.3 wheels executed
 under official Pyodide 314.0.6 with the expected cp314/PyEmscripten ABI. Selected
 unchanged upstream tests passed (32 serializer cases and 261 native YAML cases).
 See backend/NATIVE-PACKAGE-QUALIFICATION.md and results/native-package-resume.
-This is independent package evidence; Cloudflare workerd startup and deployed
-package acceptance remain unqualified because its distinct bundle is unavailable.
+This is independent package evidence. The later official-source-built matching
+runtime bundle enabled real local workerd engine/SDK qualification; see
+backend/STARTUP-INVENTORY.md. Deployed package-suite acceptance remains a separate
+gate. The historical bundle-acquisition denial remains preserved in its receipts.
 
 This is the required procedure for subsequent experiments in this spike.
 An unavailable wheel or a failed import does not establish runtime incompatibility.
@@ -37,7 +39,7 @@ Distinguish these cases:
 
 Use the runtime selected by the pinned Cloudflare compatibility date and the
 actual resolver output, not whichever Pyodide release happens to be newest.
-The current tested package lock selects CPython `cp314`, ABI `cp314`, platform
+The initial tested package lock selected CPython `cp314`, ABI `cp314`, platform
 `pyemscripten_2026_0_wasm32`, and Pyodide 314.0.7. A future runtime update requires
 requalification. Never retag an incompatible wheel to bypass the resolver.
 

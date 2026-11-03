@@ -1124,3 +1124,18 @@ Artifact: backend/MEMORY-PRESSURE.md, verifier, results/memory-pressure receipts
 Conclusion: local allocation success does NOT validate deployed128MiB enforcement;
 no peak/CPU/physical-stop claim, no cloud call. Next: shared startup/capacity
 contract and separately authorized deployed memory/abnormal cancellation proof.
+
+### 2026-11-03 — workspace import provenance exclusions
+Hypothesis: a declared workspace pin always identifies the code imported by the
+upstream virtual loader. Source inspection disproved this for its excluded roots.
+Change: preparer reuses actual upstream STDLIB_PREFIXES, rejects before HTTP.
+Fail-first seven reserved-root subcases fail; after fix26 targeted preparation/
+private-adapter tests pass. Ruff/Pyright pass. No replacement loader/AST sandbox.
+Actual control: CT128 ct128-canonical-failure.py --api-prepare --revision 89 exit0,
+real engine/SDK writes,peerSuccess78,lost-ACK/stale-owner/replay,401,busy2,2,1,0,
+cleanup. Pinned native/packaged engine exclusion sets match112names.
+Artifact: backend/IMPORT-PROVENANCE.md, verifier, results/import-provenance.
+Also corrected stale dependency document bundle-unavailable wording; denial remains
+historical evidence. No new package/native-build or cloud invocation.
+Next: general declared-dependency qualification and dynamic-import ambiguity remain
+open; startup/deployed memory/isolation/abnormal cancellation still gate admission.

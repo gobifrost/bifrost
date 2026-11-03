@@ -9,6 +9,7 @@ from uuid import UUID
 import httpx
 
 from shared.sdk_modules import logical_name_to_base_path, validate_module_path, ModuleSourceError
+from src.services.execution.virtual_import import STDLIB_PREFIXES
 
 
 class PreparedWorkspace(SimpleNamespace):
@@ -55,6 +56,10 @@ async def prepare_workspace(api_url, context, workspace_imports):
             raise ValueError('import name')
         if any(name not in (base, base.replace('/', '.')) for name, base in bases.items()):
             raise ValueError('noncanonical import declaration')
+        # The upstream finder declines these roots before consulting workspace
+        # storage. A workspace digest cannot establish their imported provenance.
+        if any(base.split('/')[0] in STDLIB_PREFIXES for base in bases.values()):
+            raise ValueError('upstream excludes workspace import root')
     except (ValueError, TypeError, ModuleSourceError):
         raise WorkspacePreparationError('Canonical loose-workspace plan required') from None
     manifest, observations, namespaces = {}, [], []
