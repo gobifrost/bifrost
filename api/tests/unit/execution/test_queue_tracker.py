@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 from src.models.orm.work_dispatches import WorkDispatch
-from src.services.execution.queue_tracker import get_queued_executions, publish_queue_positions
+from src.core.pubsub import ConnectionManager
+from src.services.execution.queue_tracker import get_queued_executions, refresh_queue_positions
 from src.services.execution.workflow_dispatch import FAMILY
 
 
@@ -108,7 +109,7 @@ async def test_canonical_queue_includes_only_async_pending_dispatches_in_dispatc
 
 
 @pytest.mark.asyncio
-async def test_queue_snapshot_publishes_positions_from_the_canonical_database_rows(
+async def test_queue_refresh_ranks_all_entries_but_only_delivers_to_local_viewers(
     async_session_factory,
 ) -> None:
     first_id, second_id = uuid4(), uuid4()
@@ -125,13 +126,20 @@ async def test_queue_snapshot_publishes_positions_from_the_canonical_database_ro
         await session.commit()
 
     try:
-        with patch("src.core.pubsub.publish_execution_update", new=AsyncMock()) as publish:
-            await publish_queue_positions()
+        manager = ConnectionManager()
+        viewer = AsyncMock()
+        viewer._delivery_dispatcher = AsyncMock()
+        manager.connections[f"execution:{second_id}"] = {viewer}
+        manager.broadcast = AsyncMock()
 
-        assert publish.await_args_list == [
-            ((str(first_id), "Pending", {"queuePosition": 1, "waitReason": "queued"}), {}),
-            ((str(second_id), "Pending", {"queuePosition": 2, "waitReason": "queued"}), {}),
-        ]
+        await refresh_queue_positions(manager)
+
+        viewer._delivery_dispatcher.assert_awaited_once_with(
+            f"execution:{second_id}",
+            {"type": "execution_queue_update", "executionId": str(second_id),
+             "queuePosition": 2, "waitReason": "queued"},
+        )
+        manager.broadcast.assert_not_awaited()
     finally:
         async with async_session_factory() as session:
             await session.execute(

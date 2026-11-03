@@ -61,3 +61,30 @@ This mechanism is optional. Ordinary workers with no network configuration
 continue to use their existing network directly. Deployment infrastructure owns
 the gateway, private network connector, target allowlist, token distribution,
 and connection strings; no environment identifiers belong in upstream defaults.
+
+## Service authentication for worker control
+
+The physical launcher's separate `/api/worker-control` WebSocket can supply
+optional handshake headers through `BIFROST_WORKER_CONTROL_HEADERS`, a JSON
+object of string names and values. For example, a deployment behind Cloudflare
+Access supplies `CF-Access-Client-Id` and `CF-Access-Client-Secret` in that object.
+Store its value in the deployment's secret manager, never in source or command
+arguments. This setting applies only to worker control, not SDK HTTP calls,
+private TCP gateways, or arbitrary outbound requests.
+
+With nonempty headers, the destination must use `wss://` without URL credentials,
+query or fragment. Redirects are refused, including same-origin redirects, so
+credentials never follow an unexpected login or destination. Configuration is
+bounded to 8 KiB and 16 headers; duplicate names, transport handshake overrides,
+and invalid names/values fail before connection. Connection wire logging is
+disabled for authenticated sockets because DEBUG output includes request headers;
+the launcher retains lifecycle messages and exception types without credential
+values or transport tracebacks. Neither execution-template profile receives this
+environment variable, so forked workflow and agent children do not inherit it.
+
+Leaving the variable unset preserves the existing connection. The API still
+requires its ordinary signed launcher hello; edge authentication does not replace
+the platform signing secret or change worker admission, ownership or drain.
+Infrastructure owns the exact edge application/policy, credential scope,
+expiration, rotation and revocation. Header support alone does not authorize or
+establish a deployment or a working Cloudflare Access policy.

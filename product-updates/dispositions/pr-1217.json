@@ -1,0 +1,20 @@
+{
+  "key": "pr:1217",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Reduce repeated HTTP client setup in workflows and generated integration SDKs.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1217",
+      "Jack approved merging the reviewed SDK client repair and deploying production on 2026-11-03. This is a compatible connection-lifecycle repair with no customer settings or upgrade action.",
+      "The read-only four-arm comparison independently demonstrated platform CPU savings with unchanged Workspace source; combined diagnostics reduced workflow-body CPU by about 70% and Halo TLS handshakes from 89 to 9. No elapsed-time improvement is claimed.",
+      "Focused real-HTTP, threaded-loop, streaming, refresh, fork-isolation and generated-client tests passed. After incorporating current main, 99 focused SDK/worker/control-connection tests passed with zero JUnit failures, errors or skips; Pyright and Ruff passed. The merge queue supplies full-suite verification.",
+      "General Writing and Humanizer copy review: the summary describes the measured setup reduction and does not promise that the remaining Halo latency is fixed.",
+      "The canonical file uses the PR number assigned at creation; this follow-up supplies it before queue admission. An initial-head Product Updates check may lack this file; the corrected candidate is validated locally and by the protected queue.",
+      "CI failure disposition: https://github.com/gobifrost/bifrost/actions/runs/41623948035 passed 11,386 backend tests and exposed one obsolete private-pool test in test_service_runtime_sdk.py. Reproduced locally: it constructed an async engine pool with no running event loop. The test now runs in one async loop, asserts the existing pool receives rotated credentials, and explicitly closes the client; the production service rotation path is unchanged.",
+      "Verification of the corrected service-rotation consumer: 57 focused lifecycle, TLS, injection, refresh, generated-client, real-fork worker and service-runtime tests passed with zero JUnit failures, errors or skips. The pre-change failing service test was reproduced before editing."
+    ]
+  }
+}

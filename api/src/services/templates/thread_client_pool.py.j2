@@ -1,0 +1,46 @@
+"""Per-thread lifecycle management for generated integration SDK clients."""
+
+import copy
+import threading
+import weakref
+
+
+class _ThreadClientLease:
+    """One cached client, released explicitly or when its thread exits."""
+
+    def __init__(self, key, client, close_callback):
+        self.key = key
+        self.client = client
+        self._finalizer = weakref.finalize(self, close_callback, client)
+
+    def close(self):
+        self._finalizer()
+
+
+class _ThreadClientPool:
+    """Keep one credential-specific client per live Python thread."""
+
+    def __init__(self, close_callback):
+        self._close_callback = close_callback
+        self._local = threading.local()
+
+    def get(self, key, factory):
+        """Return this thread's matching client, replacing it only after construction."""
+        key_snapshot = copy.deepcopy(key)
+        current = getattr(self._local, "lease", None)
+        if current is not None and current.key == key_snapshot:
+            return current.client
+
+        client = factory()
+        replacement = _ThreadClientLease(key_snapshot, client, self._close_callback)
+        self._local.lease = replacement
+        if current is not None:
+            current.close()
+        return client
+
+    def close(self):
+        """Close the cached client owned by the current thread, if any."""
+        current = getattr(self._local, "lease", None)
+        if current is not None:
+            del self._local.lease
+            current.close()
