@@ -9,6 +9,14 @@ def _api_dir() -> Path:
     return mounted if mounted.is_dir() else Path(__file__).resolve().parents[3] / "api"
 
 
+def _entrypoint_path() -> Path:
+    """The image copies api/entrypoint.sh to /entrypoint.sh at build time."""
+    installed = Path("/entrypoint.sh")
+    if installed.is_file():
+        return installed
+    return Path(__file__).resolve().parents[3] / "api" / "entrypoint.sh"
+
+
 def _runtime_stage_lines(path: Path) -> list[str]:
     lines = path.read_text().splitlines()
     runtime_start = max(
@@ -31,6 +39,6 @@ def test_production_image_drops_privileges_before_serving():
     """Production either starts unprivileged or drops via the entrypoint."""
     runtime_lines = _runtime_stage_lines(_api_dir() / "Dockerfile")
     starts_unprivileged = any(line.strip() == "USER bifrost" for line in runtime_lines)
-    entrypoint = (_api_dir() / "entrypoint.sh").read_text()
+    entrypoint = _entrypoint_path().read_text()
 
     assert starts_unprivileged or "gosu bifrost" in entrypoint
