@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
-import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const read = path => readFileSync(new URL(path, import.meta.url));
@@ -10,7 +9,9 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(read('../results/https-binding/v4.json'));
 for (const name of ['https_policy_binding.py', 'test_https_policy_binding.py',
   'private_http_pool.py', 'test_private_http_pool.py', 'shared-native-pool.py', 'ct128-canonical-failure.py']) {
-  assert.equal(hash(read(name)), receipt.packet_sha256[name], name);
+  const bytes = ['shared-native-pool.py', 'ct128-canonical-failure.py'].includes(name)
+    ? execFileSync('git', ['show', '75b872cf19e56a808c3fa93108172bbc35614c9a:spikes/cloudflare-pyodide/backend/' + name]) : read(name);
+  assert.equal(hash(bytes), receipt.packet_sha256[name], name);
 }
 assert.equal(hash(read('fixture-https-policy.mjs')), receipt.packet_sha256['project/backend/fixture-https-policy.mjs']);
 const entry = read('../results/https-binding/entry.mjs');
@@ -18,7 +19,10 @@ assert.equal(hash(entry), receipt.packet_sha256['project/backend/authorized-loca
 const temporary = mkdtempSync(join(tmpdir(), 'https-binding-proof-'));
 try {
   const output = join(temporary, 'entry.mjs');
-  execFileSync(process.execPath, [fileURLToPath(new URL('prepare-canonical-https.mjs', import.meta.url)), output]);
+  const generator = join(temporary, 'prepare.mjs');
+  writeFileSync(generator, execFileSync('git', ['show', '75b872cf19e56a808c3fa93108172bbc35614c9a:spikes/cloudflare-pyodide/backend/prepare-canonical-https.mjs']));
+  writeFileSync(join(temporary, 'authorized-local-entry.mjs'), read('authorized-local-entry.mjs'));
+  execFileSync(process.execPath, [generator, output]);
   assert.deepEqual(readFileSync(output), entry);
 } finally {rmSync(temporary, {recursive: true, force: true});}
 assert.equal(receipt.qualification_passed, true);

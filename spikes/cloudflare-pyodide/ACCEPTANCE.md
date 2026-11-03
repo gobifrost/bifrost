@@ -36,6 +36,10 @@ The named-policy follow-up in backend/HTTPS-POLICY-BINDING.md passes the same
 canonical flow with an explicit HTTPS declaration and immutable trusted tenant
 policy. Default configuration still rejects HTTPS; pre-dispatch binding is not
 upstream preclaim eligibility or public authentication.
+backend/HTTPS-DEADLINE.md adds a causal local in-flight vendor write test:
+Timeout/revocation and reserved capacity precede destination commit; new writes
+are refused and late success cannot overwrite Timeout. The pre-deadline effect
+still commits after release, explicitly preserving the uncertainty boundary.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

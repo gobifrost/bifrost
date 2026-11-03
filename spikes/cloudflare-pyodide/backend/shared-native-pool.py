@@ -24,7 +24,9 @@ from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, https_fixture=False):
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, https_fixture=False, https_deadline=False):
+    https_fixture = https_fixture or https_deadline
+    late_result = late_result or https_deadline
     if sum((source_change, late_result, retained_http, oversized_result, numeric_result, oversized_body, memory_pressure, refresh_redaction)) > 1:
         raise ValueError('One fixture mode required')
     if deadline_ack_loss and not late_result:
@@ -194,6 +196,14 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         "    else:\n"
                         "        raise RuntimeError('Post-deadline write unexpectedly accepted')\n"
                     ).replace("    if True:\n        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])\n", "")
+                    if https_deadline:
+                        sources[slot['path']] = sources[slot['path']].replace('    await asyncio.sleep(40)\n',
+                            "    async with httpx.AsyncClient(timeout=60) as vendor:\n"
+                            "        held = await vendor.post('https://vendor.example/hold', content='fails-first', headers={'Authorization': 'Bearer synthetic-vendor'})\n"
+                            "        late_https = await vendor.post('https://vendor.example/write', content='late-forbidden')\n"
+                            "    if held.status_code != 200 or late_https.status_code != 410:\n"
+                            "        raise RuntimeError('In-flight HTTPS deadline outcome mismatch')\n"
+                            "    logging.getLogger(__name__).warning('post_deadline_https_status=410')\n")
                 pending = pending_execution_record(execution_id=execution_id, workflow_id=str(slot['workflow'].id),
                     parameters={'n': slot['n'], 'peer_scope': str(peer['org'].id), 'peer_key': peer['key'],
                         **({'numeric_value': {'integer': 9007199254740993, 'negative': -9007199254740993,
@@ -487,6 +497,14 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             report['stale_deadline_owner_rejected'] = True
                         else:
                             raise RuntimeError('Stale deadline owner consumed timeout')
+                        if https_deadline:
+                            vendor_state = (await api.get('http://bifrost-pyodide-ddf316c1:8820/snapshot')).json()
+                            if not vendor_state['received'] or vendor_state['committed'] or vendor_state['released']:
+                                raise RuntimeError('Vendor commit did not remain held through canonical Timeout')
+                            report['vendor_before_release'] = vendor_state
+                            released = await api.post('http://bifrost-pyodide-ddf316c1:8820/release')
+                            if released.status_code != 200:
+                                raise RuntimeError('Synthetic in-flight write release failed')
                         late = await first.receipt
                         await first.delivery
                         if deadline_ack_loss:
@@ -766,6 +784,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--https-deadline', action='store_true')
     parser.add_argument('--https-fixture', action='store_true')
     parser.add_argument('--source-change', action='store_true')
     parser.add_argument('--late-result', action='store_true')
@@ -779,5 +798,5 @@ if __name__ == '__main__':
     parser.add_argument('--startup-inventory', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main(https_fixture=args.https_fixture, source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
+    asyncio.run(main(https_deadline=args.https_deadline, https_fixture=args.https_fixture, source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
                      deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction))

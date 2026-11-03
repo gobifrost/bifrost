@@ -9,8 +9,7 @@ const read = path => readFileSync(new URL(path, import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(read('../results/canonical-https/v2.json'));
 for (const name of ['ct128-canonical-failure.py', 'shared-native-pool.py']) {
-  const bytes = name === 'shared-native-pool.py'
-    ? execFileSync('git', ['show', '338eac91a8ca72bd38ab479c9d8fb200f5f8ae27:spikes/cloudflare-pyodide/backend/' + name]) : read(name);
+  const bytes = execFileSync('git', ['show', '338eac91a8ca72bd38ab479c9d8fb200f5f8ae27:spikes/cloudflare-pyodide/backend/' + name]);
   assert.equal(hash(bytes), receipt.packet_sha256[name], name);
 }
 for (const name of ['canonical-https-observer.mjs', 'approved-https-candidate.mjs', 'attempt-egress.mjs']) {

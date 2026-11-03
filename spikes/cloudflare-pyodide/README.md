@@ -14,6 +14,9 @@ executor. Public/untrusted admission stays disabled. Start with
   [Named tenant policy binding](backend/HTTPS-POLICY-BINDING.md) additionally
   qualifies explicit HTTPS declarations, immutable host configuration and scope
   checks before dispatch. Upstream preclaim selection remains unfinished.
+  [In-flight HTTPS deadline](backend/HTTPS-DEADLINE.md) preserves Timeout and
+  unsettled accounting while a pre-deadline vendor write commits after cutoff;
+  new vendor/SDK writes are refused. This is not physical cancellation.
 * [Startup repair candidate](backend/STARTUP-CANDIDATE.md): 12 source/mock cases,
   [six real Redis cases](backend/STARTUP-REDIS.md), and one
   [signed Linux workflow/retirement](backend/STARTUP-LINUX.md) pass with an isolated

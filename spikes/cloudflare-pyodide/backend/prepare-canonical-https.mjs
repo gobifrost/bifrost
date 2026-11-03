@@ -20,7 +20,7 @@ replace('egressGates.set(id,egress);', `egressGates.set(id,egress);
       forbiddenCredentials:[body.context.engine_token,body.context.engine_refresh_token].filter(value=>typeof value==='string'&&value.length),
       maxRequests:boundPolicy.max_requests,deadline,forward:async outgoing=>{
         const path=new URL(outgoing.url).pathname;
-        if(!['/write','/redirect'].includes(path))return new Response('Fixed path only',{status:403});
+        if(!['/write','/redirect','/hold'].includes(path))return new Response('Fixed path only',{status:403});
         return fetch('http://127.0.0.1:8820'+path,{method:outgoing.method,headers:outgoing.headers,
           body:outgoing.method==='GET'?undefined:await outgoing.text(),redirect:'manual'});
       }});
