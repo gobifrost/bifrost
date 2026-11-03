@@ -20,6 +20,9 @@ executor. Public/untrusted admission stays disabled. Start with
   [HTTP body cancellation](backend/HTTPS-DISCONNECT.md) fails locally: the gate
   remains open until execution returns and a follow-up effect occurs. This
   incoming-delivery gap remains an admission blocker.
+  [Explicit capability revocation](backend/CAPABILITY-REVOCATION.md) passes real
+  PostgreSQL owner fencing and Pyodide follow-up denial without claiming physical
+  stop or automatically acknowledging/releasing the unsettled execution.
 * [Startup repair candidate](backend/STARTUP-CANDIDATE.md): 12 source/mock cases,
   [six real Redis cases](backend/STARTUP-REDIS.md), and one
   [signed Linux workflow/retirement](backend/STARTUP-LINUX.md) pass with an isolated

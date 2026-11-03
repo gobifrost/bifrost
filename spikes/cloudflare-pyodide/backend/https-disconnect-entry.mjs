@@ -3,6 +3,13 @@ import {WorkerEntrypoint} from 'cloudflare:workers';
 import {createApprovedHttpsCandidate} from './approved-https-candidate.mjs';
 import {invocationStream} from './invocation-stream.mjs';
 const attempts = new Map();
+export function revokeDiagnosticCapability(id) {
+  const state = attempts.get(id);
+  if (!state) throw new Error('Unknown diagnostic attempt');
+  state.policy.close(); state.closed = true;
+  return {execution_id: id, runtime_handle: `disconnect:${id}`,
+    capabilities_revoked: true, physical_stopped: false};
+}
 export class DisconnectGateway extends WorkerEntrypoint {
   fetch(request) {
     return attempts.get(this.ctx.props.id)?.policy.fetch(request) ?? new Response('Closed', {status: 410});
@@ -47,7 +54,7 @@ export default {
       async execute() {
         const response = await child.getEntrypoint().fetch('https://synthetic.invalid/');
         const value = await response.json(); state.returned = true;
-        return {result: {execution_id: id, success: true, result: value}};
+        return {runtime_handle: `disconnect:${id}`, result: {execution_id: id, success: true, result: value}};
       }});
   },
 };

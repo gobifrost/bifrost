@@ -45,6 +45,11 @@ fails locally: cleanup is not delivered before release and a follow-up vendor
 effect occurs. Direct stream-cancel unit coverage does not qualify incoming HTTP
 delivery. No child-abort, physical-stop or deployed conclusion follows; this
 remains a material cancellation/admission gap.
+backend/CAPABILITY-REVOCATION.md independently proves an explicit companion close
+under the actual PostgreSQL owner lock, including observed rotation blocking,
+stale-owner refusal, no duplicate close and actual Python follow-up410. Its ACK
+explicitly proves neither physical stop nor execution settlement. It is not wired
+to public/native cancellation and does not repair incoming disconnect delivery.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

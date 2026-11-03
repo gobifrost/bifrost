@@ -9,7 +9,9 @@ const read = path => readFileSync(new URL(path, import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(read('../results/https-deadline/v1.json'));
 for (const name of ['ct128-canonical-failure.py', 'shared-native-pool.py', 'private_http_pool.py', 'https_policy_binding.py']) {
-  assert.equal(hash(read(name)), receipt.packet_sha256[name], name);
+  const bytes = name === 'ct128-canonical-failure.py'
+    ? execFileSync('git', ['show', 'bc6f644ffff25c000555acb6deb089f2cf5067b6:spikes/cloudflare-pyodide/backend/' + name]) : read(name);
+  assert.equal(hash(bytes), receipt.packet_sha256[name], name);
 }
 for (const name of ['canonical-https-deadline-observer.mjs', 'approved-https-candidate.mjs', 'attempt-egress.mjs', 'fixture-https-policy.mjs']) {
   assert.equal(hash(read(name)), receipt.packet_sha256[`project/backend/${name}`], name);

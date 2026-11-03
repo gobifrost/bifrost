@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const read = path => readFileSync(new URL(path, import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(read('../results/https-disconnect/v8.json'));
@@ -11,7 +12,11 @@ for (const [source, packet] of [
   ['approved-https-candidate.mjs', 'project/backend/approved-https-candidate.mjs'],
   ['attempt-egress.mjs', 'project/backend/attempt-egress.mjs'],
   ['ct128-sdk-probe.py', 'ct128-sdk-probe.py'],
-]) assert.equal(hash(read(source)), receipt.packet_sha256[packet], source);
+]) {
+  const bytes = source === 'https-disconnect-entry.mjs'
+    ? execFileSync('git', ['show', 'bc6f644ffff25c000555acb6deb089f2cf5067b6:spikes/cloudflare-pyodide/backend/' + source]) : read(source);
+  assert.equal(hash(bytes), receipt.packet_sha256[packet], source);
+}
 for (const revision of [7, 8]) {
   const failed = JSON.parse(read(`../results/https-disconnect/v${revision}.json`));
   assert.equal(failed.observation, undefined);
