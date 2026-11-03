@@ -284,9 +284,13 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     if (prepared.manifest != expected_manifest
                         or json.dumps(context, default=str, sort_keys=True) != json.dumps(original_context, sort_keys=True)):
                         raise RuntimeError('API-prepared provenance differs from independently published source')
-                    adapter.bind_manifest(execution_id, prepared.manifest)
+                    # Fixture source is authored/reviewed here, not classified
+                    # from arbitrary user declarations. This remains private.
+                    requirements = ['json', 'async-workflow', 'pinned-workspace', 'bifrost-http-sdk']
+                    adapter.bind_manifest(execution_id, prepared.manifest, requirements=requirements)
                     slot['preparation'] = {'observations': prepared.observations,
                         'response_bytes': prepared.response_bytes, 'manifest': prepared.manifest,
+                        'requirements': requirements,
                         'original_content_hash': original_context.get('content_hash')}
                     slot['original_context'] = prepared.context
                     slot['original_active'] = json.loads(json.dumps(active_execution, default=str))

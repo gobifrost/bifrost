@@ -21,6 +21,11 @@ from src.worker.remote.ownership import owns_remote_session
 from src.worker.remote.protocol import CLOUDFLARE_PYTHON_RUNTIME_PROFILE, CredentialRouteChanged
 from src.worker.remote.remote_pool import ThinRemoteProcessPool
 
+# Companion profile vocabulary, not an upstream scheduler/admission API.
+# These declarations are trusted-host input; arbitrary Python can lie about them.
+SUPPORTED_REQUIREMENTS = frozenset(('json', 'async-workflow', 'pinned-workspace',
+                                   'bifrost-http-sdk', 'platform-fetch-https'))
+
 
 class _Attempt(SimpleNamespace):
     def __repr__(self):
@@ -126,21 +131,29 @@ class PrivateHttpWorkflowPool:
     def credential_route(self):
         return CredentialRoute(2, self._ref.lease.session_generation)
 
-    def bind_manifest(self, execution_id, manifest):
-        """Trusted host provenance input, not a scheduling or authorization API."""
+    def bind_manifest(self, execution_id, manifest, *, requirements):
+        """Bind trusted-host provenance/requirements, not user authorization.
+
+        Requirements describe reviewed code under these pins. They neither
+        discover dynamic behavior nor enforce a sandbox inside Python.
+        """
         if self._retired or execution_id in self._plans or len(self._plans) >= self._capacity:
             raise RuntimeError('Manifest binding unavailable; preserve existing attempts')
         if not isinstance(execution_id, str) or str(UUID(execution_id)) != execution_id:
             raise ValueError('Canonical execution identity required')
         if not isinstance(manifest, dict) or not 1 <= len(manifest) <= 128:
             raise ValueError('Bounded Python module manifest required')
+        if (not isinstance(requirements, (list, tuple)) or len(requirements) > 32
+            or any(not isinstance(item, str) or item not in SUPPORTED_REQUIREMENTS for item in requirements)
+            or len(set(requirements)) != len(requirements)):
+            raise ValueError('Explicit supported workload requirements required before binding')
         for path, digest in manifest.items():
             if (not isinstance(path, str) or len(path) > 512 or '\\' in path
                 or str(PurePosixPath(path)) != path or PurePosixPath(path).is_absolute()
                 or '..' in PurePosixPath(path).parts or not path.endswith('.py')
                 or not isinstance(digest, str) or re.fullmatch('[a-f0-9]{64}', digest) is None):
                 raise ValueError('Canonical relative Python paths and SHA256 digests required')
-        self._plans[execution_id] = dict(manifest)
+        self._plans[execution_id] = {'manifest': dict(manifest), 'requirements': tuple(sorted(requirements))}
 
     def attempt(self, execution_id):
         """Trusted-parent receipt access; never expose as a public result API."""
@@ -159,7 +172,8 @@ class PrivateHttpWorkflowPool:
             if (credential_route != self.credential_route() or lease.worker_id != self.worker_id
                 or not await owns_remote_session(lease) or lease != self._ref.lease):
                 raise CredentialRouteChanged('Private HTTP dispatch owner changed')
-            manifest = self._plans.get(execution_id)
+            plan = self._plans.get(execution_id)
+            manifest = None if plan is None else plan['manifest']
             frozen = json.loads(json.dumps(context, default=str, allow_nan=False))
             if (manifest is None or frozen.get('execution_id') != execution_id
                 or frozen.get('file_path') not in manifest
@@ -170,7 +184,7 @@ class PrivateHttpWorkflowPool:
                 or any(frozen.get(key) for key in ('is_platform_admin', 'solution_global_repo_access'))):
                 raise ValueError('Bound, pinned, supported workflow context required before dispatch')
             frozen_active = json.loads(json.dumps(active_execution, default=str, allow_nan=False))
-            fingerprint = json.dumps([frozen, frozen_active], sort_keys=True, separators=(',', ':'),
+            fingerprint = json.dumps([frozen, frozen_active, plan], sort_keys=True, separators=(',', ':'),
                                      allow_nan=False, default=str)
             previous = self._attempts.get(execution_id)
             if previous is not None:

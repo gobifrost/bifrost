@@ -7,9 +7,7 @@ const raw = readFileSync(new URL('results/refresh-redaction/receipt.json', root)
 assert.doesNotMatch(raw, /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
 const receipt = JSON.parse(raw);
 for (const name of ['shared-native-pool.py', 'ct128-canonical-failure.py']) {
-  const source = name === 'ct128-canonical-failure.py'
-    ? execFileSync('git', ['show', '9c0593b75908c15876760afe2de7083049d07820:spikes/cloudflare-pyodide/backend/' + name])
-    : readFileSync(new URL('backend/' + name, root));
+  const source = execFileSync('git', ['show', '9c0593b75908c15876760afe2de7083049d07820:spikes/cloudflare-pyodide/backend/' + name]);
   assert.equal(createHash('sha256').update(source).digest('hex'),
     receipt.packet_sha256[name], name);
 }

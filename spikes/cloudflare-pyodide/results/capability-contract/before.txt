@@ -1,0 +1,96 @@
+test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) ...
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['custom-ca']) ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['mtls']) ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['http-proxy']) ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['unix-sockets']) ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['subprocess']) ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['platform-fetch-https', 'custom-ca']) ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements='platform-fetch-https') ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=[None]) ... ERROR
+  test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https']) ... ERROR
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['custom-ca'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['mtls'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['http-proxy'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['unix-sockets'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['subprocess'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['platform-fetch-https', 'custom-ca'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements='platform-fetch-https')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=[None])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+======================================================================
+ERROR: test_unsupported_declared_capabilities_refused_before_binding_or_dispatch (test_private_http_pool.PrivatePoolTests.test_unsupported_declared_capabilities_refused_before_binding_or_dispatch) (requirements=['platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https', 'platform-fetch-https'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 102, in test_unsupported_declared_capabilities_refused_before_binding_or_dispatch
+    self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: PrivateHttpWorkflowPool.bind_manifest() got an unexpected keyword argument 'requirements'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+FAILED (errors=9)

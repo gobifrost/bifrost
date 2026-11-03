@@ -1298,3 +1298,18 @@ No patch/compile needed: missing fetch contract cannot be supplied by a wheel.
 Next: explicit capability/admission seam; blanket SSLContext refusal would reject
 upstream SDK default too. Runtime pre-effect enforcement NOT implemented, untrusted
 admission disabled. No new cloud use, credentials, or setting changes.
+
+## 2026-11-03 — Private explicit capability declaration
+Hypothesis: reviewed pinned workflows can reject unsupported declared requirements
+before physical dispatch without changing canonical scheduler/auth/result schemas.
+Change: mandatory requirements keyword on companion bind_manifest; bounded known
+vocabulary, snapshot and no rebind, complete plan in duplicate fingerprint.
+New API fail-first: nine TypeErrors (missing interface), not prior silent acceptance.
+CT128 `python -m unittest -v test_private_http_pool`:25pass; final Ruff/Pyrightpass.
+Actual `ct128-canonical-failure.py --sdk-refresh --revision3` exit0,77.189s:
+recorded declarations/pins, actualSDK effects+refresh/redaction, fencing/duplicate/
+lostACK/revoke/accounting2,2,1,0/owned cleanup pass. Volumes preserved, no cloud.
+Artifact: backend/CAPABILITY-CONTRACT.md; results/capability-contract.
+Limits: trusted-host declaration check, not discovery/sandbox or upstream API.
+Next: canonical no-send refusal acknowledgement/retirement remains open; inspect
+existing upstream failure/recovery semantics locally without shared-writer collision.

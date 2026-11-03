@@ -12,6 +12,9 @@ executor. Public/untrusted admission stays disabled. Start with
   Earlier receipts retain their pins.
 * [Owned SDK close completion](backend/OWNED-SDK-CLOSE.md): cooperative waiter
   cancellation no longer skips sync close; actual platform interruption remains unproved.
+* [Private declared-capability check](backend/CAPABILITY-CONTRACT.md): pinned,
+  reviewed workflows require an explicit supported declaration before dispatch;
+  arbitrary-code discovery and admission remain unsupported.
 * [HTTP transport option boundary](backend/TRANSPORT-OPTIONS.md): 26 actual local
   constructor cases silently accept unsupported settings; pre-effect enforcement
   remains incomplete and untrusted admission stays disabled.

@@ -6,7 +6,7 @@ const root = new URL('../', import.meta.url);
 const read = name => readFileSync(new URL('results/predeadline-fence/' + name, root), 'utf8').replace(/^\uFEFF/, '');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(read('receipt.json'));
-assert.equal(hash(readFileSync(new URL('backend/private_http_pool.py', root))), receipt.packet_sha256['private_http_pool.py']);
+assert.equal(hash(execFileSync('git', ['show', '69c92680f5ef57470910f5578b0d153943e423d0:spikes/cloudflare-pyodide/backend/private_http_pool.py'])), receipt.packet_sha256['private_http_pool.py']);
 const tested = execFileSync('git', ['show', '69c92680f5ef57470910f5578b0d153943e423d0:spikes/cloudflare-pyodide/backend/test_private_http_pool.py']);
 assert.ok(read('source-readback.sha256').includes(hash(tested)));
 assert.equal(receipt.qualification_passed, true);

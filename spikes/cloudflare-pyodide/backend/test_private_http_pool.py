@@ -53,7 +53,7 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         self.active = {'execution_id': self.run, 'workflow_id': str(uuid4()), 'workflow_name': 'test',
                        'org_id': None, 'user_id': str(uuid4()), 'user_name': 'test', 'user_email': 'test@example.test',
                        'sync': False, 'event': None}
-        self.pool.bind_manifest(self.run, self.manifest)
+        self.pool.bind_manifest(self.run, self.manifest, requirements=['json'])
 
     async def route(self, context=None, active=None):
         await self.pool.route_execution(execution_id=self.run,
@@ -87,11 +87,37 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.pool.mux.retained_count, 0)
         for manifest in [{'../escape.py': 'a' * 64}, {'/absolute.py': 'a' * 64}, {'ok.py': 'invalid'}]:
             with self.assertRaises(ValueError):
-                self.pool.bind_manifest(str(uuid4()), manifest)
+                self.pool.bind_manifest(str(uuid4()), manifest, requirements=[])
         with self.assertRaises(ValueError):
             PrivateHttpWorkflowPool(endpoint='http://other.invalid', worker_id=self.worker, lease_ref=self.ref,
                 memory_sample=lambda: (100, 1000), memory_request_bytes=lambda _key: 1,
                 on_result=self.callback, capacity=1)
+
+    async def test_unsupported_declared_capabilities_refused_before_binding_or_dispatch(self):
+        execution_id = str(uuid4())
+        for requirements in [['custom-ca'], ['mtls'], ['http-proxy'], ['unix-sockets'],
+                             ['subprocess'], ['platform-fetch-https', 'custom-ca'],
+                             'platform-fetch-https', [None], ['platform-fetch-https'] * 33,
+                             ['json', 'json']]:
+            with self.subTest(requirements=requirements), self.assertRaises(ValueError):
+                self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+            self.assertNotIn(execution_id, self.pool._plans)
+        self.redis_write.assert_not_awaited()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+
+    async def test_requirement_declaration_is_explicit_snapshotted_and_cannot_rebind(self):
+        execution_id = str(uuid4())
+        with self.assertRaises(TypeError):
+            self.pool.bind_manifest(execution_id, self.manifest)
+        requirements = ['pinned-workspace', 'json']
+        self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements)
+        requirements.append('custom-ca')
+        self.assertEqual(self.pool._plans[execution_id]['requirements'], ('json', 'pinned-workspace'))
+        with self.assertRaises(RuntimeError):
+            self.pool.bind_manifest(execution_id, self.manifest, requirements=[])
+        self.redis_write.assert_not_awaited()
 
     async def test_bound_runtime_inventory_is_read_only_and_does_not_enable_native_startup(self):
         observed = inventory_probe()
@@ -202,7 +228,7 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
     async def test_combined_manifest_and_context_budget_precedes_bookkeeping(self):
         self.run = str(uuid4())
         manifest = {f'm{i}_' + 'x' * 490 + '.py': 'a' * 64 for i in range(128)}
-        self.pool.bind_manifest(self.run, manifest)
+        self.pool.bind_manifest(self.run, manifest, requirements=['json'])
         self.context.update(execution_id=self.run, file_path=next(iter(manifest)), parameters={'blob': 'x' * 200000})
         self.active['execution_id'] = self.run
         with self.assertRaises(ValueError):
