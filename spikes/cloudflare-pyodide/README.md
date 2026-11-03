@@ -1,5 +1,26 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Current frontier (2026-11-03): real upstream engine/SDK execution is qualified
+locally through canonical claim/result/replay paths, with historical deployed
+SDK proofs kept separately. This is experimental YELLOW, not a production
+executor. Public/untrusted admission stays disabled. Start with
+[the acceptance ledger](ACCEPTANCE.md), then these recent increments:
+
+* [Lossless JSON and measured parent overhead](backend/JSON-TRANSPORT-PERFORMANCE.md)
+* [Output-frame and child-body budgets](backend/BODY-BUDGET.md)
+* [Local memory boundary](backend/MEMORY-PRESSURE.md)
+* [Actual run refresh/redaction](backend/REFRESH-REDACTION.md)
+* [Pre-launch fencing and canonical retirement gap](backend/PRELAUNCH-RETENTION.md)
+* [Workspace import provenance](backend/IMPORT-PROVENANCE.md)
+
+Full native startup, canonical pre-launch refusal retirement, deployed memory/
+isolation and abnormal cancellation remain incomplete. Existing cloud test
+allowances are retired; this continuation makes no new cloud invocation or
+deployment. Shared-interface coordination was denied by the existing caller
+(`source_run_not_active`, `safe_to_resend:false`); the exact denial and required
+receipt reconciliation are preserved in PRELAUNCH-RETENTION.md. Do not retry it
+under another caller. The entries below retain earlier stages and their evidence.
+
 Latest integrity control: [source change after preparation](backend/SOURCE-CHANGE-CONTROL.md).
 Two exact-candidate local runs reject a changed eager dependency before workflow
 effects while preserving the held peer. Failed predecessors, upstream empty-log

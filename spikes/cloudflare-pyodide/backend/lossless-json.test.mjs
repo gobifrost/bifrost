@@ -19,3 +19,19 @@ test('native JSON grammar rejects executable text and raw object injection', () 
 test('lossless response parsing retains the existing byte bound', async () => {
   await assert.rejects(boundedLosslessJson(new Response('12345678901234567890'), 10), /byte limit/);
 });
+
+test('numeric screening preserves root, array and object tokens across boundaries', () => {
+  for (const token of ['0', '1', '-1', '999999999999999', '-999999999999999',
+    '1000000000000000', '9007199254740993', '-9007199254740993', '123456789012345678901234567890',
+    '-0', '-0.0', '0.0', '1.0', '0.1', '1e20', '-1E-20', '1e300']) {
+    for (const wire of [token, `[${token}]`, `{"value":${token}}`, `{"before":[0,${token}],"after":true}`]) {
+      assert.equal(JSON.stringify(parseLosslessJson(wire)), wire, wire);
+      assert.equal(JSON.stringify(parseLosslessJson(' \n' + wire + '\t')), wire, wire);
+    }
+  }
+});
+
+test('numeric-looking string text cannot select a lossy parse for real numbers', () => {
+  const wire = '{"text":"escaped \\\" :9007199254740993,1e20","value":9007199254740993}';
+  assert.equal(JSON.stringify(parseLosslessJson(wire)), wire);
+});

@@ -18,8 +18,7 @@ for (const [local, packet] of [
   ['authorized-local-entry.mjs', 'project/backend/authorized-local-entry.mjs'],
   ['lossless-json.mjs', 'project/backend/lossless-json.mjs'],
 ]) {
-  const source = local === 'lossless-json.mjs' ? readFileSync(new URL('backend/' + local, root))
-    : execFileSync('git', ['show', 'a63033f6575cb22c901e141351c3f6eb915881d8:spikes/cloudflare-pyodide/backend/' + local]);
+  const source = execFileSync('git', ['show', 'a63033f6575cb22c901e141351c3f6eb915881d8:spikes/cloudflare-pyodide/backend/' + local]);
   const digest = createHash('sha256').update(source).digest('hex');
   assert.equal(digest, receipt.packet_sha256[packet], local);
 }

@@ -10,6 +10,13 @@ export function parseLosslessJson(text) {
   if (!sourceAvailable || typeof JSON.rawJSON !== 'function') {
     throw new TypeError('Lossless JSON runtime support required');
   }
+  // A conservative lexical screen, not a JSON parser: any possible 16-digit
+  // integer, signed zero, fraction or exponent keeps the source-aware path.
+  // Matches inside strings are harmless false positives. Native JSON.parse
+  // validates grammar on both paths. <=15 decimal digits are exactly representable.
+  if (!/(?:^|[,:\[])\s*(?:-?\d{16}|-0(?=[\s,\]}]|$)|-?\d+[.eE])/.test(text)) {
+    return JSON.parse(text);
+  }
   return JSON.parse(text, (_key, value, context) => {
     if (typeof value !== 'number') return value;
     const source = context.source;

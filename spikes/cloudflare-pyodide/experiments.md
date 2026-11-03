@@ -1179,3 +1179,17 @@ source_run_not_active,safe_to_resend:false. Preserved; no retry/alternate caller
 Next: existing caller/native-run receipt reconciliation and shared ownership evidence
 before agreeing canonical refusal ACK/startup controls. Independent local work remains
 possible; no cloud authority, untrusted admission or synthetic ACK inferred.
+
+### 2026-11-03 — parent JSON overhead hill climb
+Measured native Node parent roundtrips before optimizing the lossless adapter.
+Raw50samples/parser/case, alternating order; .5CPU/512MiB, no network. Structured
+98.9KB median3.718ms before. Added conservative <=15digit-integer screen: complex
+numeric possibilities retain native source-context handling and runtime guard.
+Ten numeric/reader tests pass; real --numeric-result --revision4 passes with current
+companion fence and exact9007199254740993 input/output, peer/replay/cleanup.
+After median0.633ms structured;900KBstring regresses0.568->1.266ms. Preserved all
+outliers, unchanged precision negative control and distinct Node/Worker evidence.
+Artifacts: backend/JSON-TRANSPORT-PERFORMANCE.md, repeatable benchmark/verifier,
+results/json-transport raw/after/runtime receipts. No cloud CPU/cost/startup claim.
+README now leads with current frontier instead of only older latest-stage entries.
+Shared coordination denial and startup/prelaunch-retirement/deployed gates persist.
