@@ -2278,6 +2278,37 @@ def summarize_bundle(python_files: dict, apps: list, vendored_count: int) -> Bun
     return BundleSummary(count, mb, warn, msg)
 
 
+def _workspace_deploy_entries(
+    workspace: pathlib.Path,
+    workspace_root: pathlib.Path,
+    ignore_spec,
+) -> dict[str, bytes]:
+    entries: dict[str, bytes] = {}
+    for path in workspace.rglob("*"):
+        rel = path.relative_to(workspace).as_posix()
+        # Check both spellings so ignored directory symlinks (for example an
+        # entire node_modules tree) remain ignored without dereferencing them.
+        if ignore_spec.match_file(rel) or ignore_spec.match_file(f"{rel}/"):
+            continue
+        if path.is_symlink():
+            raise click.ClickException(
+                f"refusing symlink in solution deploy workspace: {rel}"
+            )
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise click.ClickException(
+                f"solution deploy path is unavailable: {rel}"
+            ) from exc
+        if not resolved.is_relative_to(workspace_root):
+            raise click.ClickException(
+                f"refusing path outside solution deploy workspace: {rel}"
+            )
+        if resolved.is_file():
+            entries[rel] = resolved.read_bytes()
+    return entries
+
+
 def _build_deploy_zip(
     workspace: pathlib.Path,
     *,
@@ -2295,14 +2326,11 @@ def _build_deploy_zip(
     patterns = [p for p in DEFAULT_IGNORE_PATTERNS if p != ".bifrost/"]
     patterns.append(".bifrost/secrets.enc")
     ignore_spec = pathspec.GitIgnoreSpec.from_lines(patterns)
-    entries: dict[str, bytes] = {}
-    for path in workspace.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(workspace).as_posix()
-        if ignore_spec.match_file(rel):
-            continue
-        entries[rel] = path.read_bytes()
+    try:
+        workspace_root = workspace.resolve(strict=True)
+    except OSError as exc:
+        raise click.ClickException("solution workspace is unavailable") from exc
+    entries = _workspace_deploy_entries(workspace, workspace_root, ignore_spec)
 
     for rel, content in extra_text_files.items():
         rel_path = pathlib.PurePosixPath(rel)

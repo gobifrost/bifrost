@@ -3,7 +3,7 @@
   "classification": "omit",
   "entry_ids": [],
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1200",
       "CI-only CodeQL matrix change; no user-visible product surface changes."
