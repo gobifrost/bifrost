@@ -1,0 +1,14 @@
+{
+  "key": "pr:1216",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Deleting files across organization or global scopes now removes their metadata consistently.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1216",
+      "Codex reviewed this routine correction summary under the authorized Cloudflare qualification effort. No upgrade action or historical metadata migration is included."
+    ]
+  }
+}
