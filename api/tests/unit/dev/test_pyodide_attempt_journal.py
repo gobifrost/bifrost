@@ -492,7 +492,14 @@ async def test_setup_refusal_notifies_only_a_claim_fenced_durable_failure(owner,
     consumer.owner_worker_id = lease.worker_id
     consumer._pool = AsyncMock()
     consumer._pool.credential_route = Mock(return_value=CredentialRoute(2, lease.session_generation))
-    consumer._pool.route_execution.side_effect = ValueError('Synthetic known no-send refusal')
+    journal = AttemptJournal()
+    launch = AsyncMock(side_effect=CredentialRouteChanged('Synthetic known no-send refusal'))
+    receipt = await journal.dispatch(lease, 'setup-refusal', str(execution_id), launch)
+
+    async def refuse(**_request):
+        await receipt
+
+    consumer._pool.route_execution.side_effect = refuse
     consumer._redis_client = AsyncMock()
     issued = RunCredentials('synthetic-access', 'synthetic-refresh', datetime.now(timezone.utc), 2)
     target = 'src.jobs.consumers.workflow_execution'
@@ -517,6 +524,29 @@ async def test_setup_refusal_notifies_only_a_claim_fenced_durable_failure(owner,
         assert publish.await_count == int(not already_terminal)
         assert history.await_count == int(not already_terminal)
         assert consumer._redis_client.push_result.await_count == int(not already_terminal)
+        # Canonical consumption happened once above. ACK transport loss must
+        # not call process_message or execute the failed launch again.
+        accept = AsyncMock(side_effect=ConnectionError('Synthetic refusal ACK loss'))
+        with pytest.raises(ConnectionError):
+            await journal.acknowledge_refusal(lease, 'setup-refusal', accept)
+        assert not journal.inventory()[0]['acknowledged']
+        with pytest.raises(RuntimeError):
+            await journal.retire()
+        current = await owner(2)
+        with pytest.raises(CredentialRouteChanged):
+            await journal.acknowledge_refusal(lease, 'setup-refusal', accept)
+        assert accept.await_count == 1
+        accept.side_effect = None
+        accept.return_value = True
+        acknowledged = await journal.acknowledge_refusal(current, 'setup-refusal', accept)
+        assert acknowledged
+        duplicate = await journal.acknowledge_refusal(current, 'setup-refusal', accept)
+        assert duplicate and accept.await_count == 2
+        with pytest.raises(CredentialRouteChanged):
+            await receipt
+        launch.assert_awaited_once()
+        consumer._pool.route_execution.assert_awaited_once()
+        await journal.retire()
     finally:
         async with async_session_factory() as session:
             await session.execute(delete(ExecutionWorkerClaim).where(ExecutionWorkerClaim.subject_id == execution_id))

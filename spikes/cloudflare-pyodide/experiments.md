@@ -1364,3 +1364,23 @@ No cloud/deploy/security/runtime/access/resource change; disposition staysdraft.
 Next: explicit trusted-host no-send receipt ACK after canonical consumption,
 including lostACK/staleowner controls; no fabricated workflow result or rerun.
 Startup portable capabilities and deployed isolation/cancellation remain gates.
+
+## 2026-11-03 — Explicit private no-send ACK and retirement
+Hypothesis: known pre-collection refusal can be consumed without fabricating an
+engine result or interpreting connection loss as no-start evidence.
+Change: specifichandofffence proof, explicitTruecanonicalACK callback, perroute
+pre/postownerfence, no-startmux tombstone, originalfailedreceipts preserved.
+CT128 native unit45pass/Ruff/Pyrightpass; started/completed/uncertain requests
+refused, None/False/lostACK/staleowner retain, duplicateACK/no rerun/cleanup pass.
+RealPG ./test.sh modifiedsetuprefusalselector2casespass: actualconsumer writes or
+intentionalstalediscard, syntheticno-send/ACKloss, realsessionrotation rejectsold
+owner, consumesnew once, originalreceiptfailed and no launch/consumer repeat.
+Actual ct128-canonical-failure.py --sdk-refresh --revision5 exit0,76.987s, real
+engine/SDK effects/refresh/redaction/fence/replay/revoke/accounting2,2,1,0/cleanup.
+Scopes: canonicalfixPGoverlayb992; separateSDKnativeAPI1d33150, packagedf49,SDK1395.
+Artifact: backend/REFUSAL-ACK.md; results/refusal-ack; historicalpins retained.
+No cloud/production/access/security/runtime/resource change; ownedprojectsstop,
+volumes/locks preserved. Privatehostcallbackproposal, not an upstream public API.
+Next: provider startup integration needs honest supported configure/control
+capabilities; deployed deadline/CPU/isolation/memory proof remains independently
+unaccepted. Do not ACK Linux settings or enable admission to force readiness.

@@ -1,6 +1,7 @@
 """Native request interleavings; these are not deployed isolation proof."""
 import asyncio
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import AsyncMock
 
 from workflow_request_mux import WorkflowRequestMux
 
@@ -10,6 +11,20 @@ def payload(run):
 
 
 class MuxTests(IsolatedAsyncioTestCase):
+    async def test_acknowledged_no_start_tombstone_refuses_later_dispatch_and_retires(self):
+        mux = WorkflowRequestMux(lambda: 1)
+        collector = AsyncMock()
+        mux.bind('refused', collector)
+        with self.assertRaises(RuntimeError):
+            mux.retire()
+        mux.acknowledge_not_started('refused')
+        with self.assertRaises(ConnectionError):
+            await mux.request('workflow', payload('refused'), expected_generation=1)
+        collector.assert_not_awaited()
+        self.assertIsNone(mux.result('refused'))
+        mux.retire()
+        self.assertEqual(mux.retained_count, 0)
+
     async def test_two_routes_out_of_order_and_duplicate_request_do_not_mix_results(self):
         mux = WorkflowRequestMux(lambda: 7)
         release = {run: asyncio.Event() for run in ('a', 'b')}

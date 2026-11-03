@@ -61,3 +61,7 @@ route. It does not require a new credential, grant or production change.
 Follow-on: [setup failure acknowledgement probe](SETUP-REFUSAL-CONTRACT.md)
 reproduces accepted/refused persistence both returning normally and publishing
 failure. Generic setup completion cannot yet serve as the companion refusal ACK.
+
+Follow-on REFUSAL-ACK.md implements a private explicit no-send acknowledgement
+and retirement path, with canonical consumption/owner checks. It does not change
+this earlier retained-failure observation or create a public upstream ACK API.

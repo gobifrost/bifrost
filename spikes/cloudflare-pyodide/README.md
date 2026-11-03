@@ -12,6 +12,9 @@ executor. Public/untrusted admission stays disabled. Start with
   Earlier receipts retain their pins.
 * [Owned SDK close completion](backend/OWNED-SDK-CLOSE.md): cooperative waiter
   cancellation no longer skips sync close; actual platform interruption remains unproved.
+* [Private no-send refusal acknowledgement](backend/REFUSAL-ACK.md): explicit
+  canonical consumption permits cleanup without a synthetic workflow result;
+  automatic public-host integration remains open.
 * [Canonical generic setup-failure fence](backend/SETUP-FAILURE-FIX.md): owned
   writes and post-write notification guards pass real PostgreSQL controls;
   companion refusal acknowledgement remains separate.
@@ -32,7 +35,7 @@ executor. Public/untrusted admission stays disabled. Start with
 * [Workspace import provenance](backend/IMPORT-PROVENANCE.md), including
   [runtime bootstrap namespace refusal](backend/BOOTSTRAP-PROVENANCE.md)
 
-Full native startup, canonical pre-launch refusal retirement, deployed memory/
+Full native startup, public-host refusal-ACK integration, deployed memory/
 isolation and abnormal cancellation remain incomplete. Existing cloud test
 allowances are retired; this continuation makes no new cloud invocation or
 deployment. Shared-interface coordination was denied by the existing caller

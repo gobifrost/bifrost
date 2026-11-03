@@ -145,6 +145,32 @@ class AttemptJournal:
             self.routes.clear()
             self._retired = True
 
+    async def acknowledge_refusal(self, lease, route_id, accept):
+        """Trusted host ACK of a proven no-send refusal, never a workflow result.
+
+        The physical adapter must prove no launch. `accept(execution_id)` must
+        acknowledge canonical failure/recovery consumption, not execute code.
+        A local exception or a callback returning normally is insufficient.
+        """
+        async with self._lock:
+            route = self.routes[route_id]
+        async with route.delivery_lock:
+            if not await owns_remote_session(lease):
+                raise CredentialRouteChanged('Stale refusal acknowledgement owner')
+            route.require_owner(lease)
+            if route.acknowledged:
+                return True
+            if (not route.task.done() or route.task.cancelled()
+                or route.task.exception() is None):
+                raise ValueError('Completed failed refusal receipt required')
+            with remote_owner_context(LeaseRef(lease)):
+                if await accept(route.execution_id) is not True:
+                    return False
+            if not await owns_remote_session(lease):
+                raise CredentialRouteChanged('Owner replaced before refusal ACK')
+            route.acknowledged = True
+            return True
+
     async def reconcile_workflow(
         self, lease: RemoteOwnerLease, route_id: str,
         consumer: WorkflowExecutionConsumer, execution: ExecutionInfo,

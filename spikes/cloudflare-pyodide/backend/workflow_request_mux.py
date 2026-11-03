@@ -24,6 +24,7 @@ class WorkflowRequestMux:
             'collector': collector, 'payload': None, 'accepted': None,
             'collection': None, 'result': None, 'generation': None,
             'retained_acknowledged': False,
+            'not_started_acknowledged': False,
         }
 
     def collection(self, execution_id):
@@ -48,6 +49,13 @@ class WorkflowRequestMux:
     def retained_count(self):
         return len(self._slots)
 
+    def acknowledge_not_started(self, execution_id):
+        """Trusted adapter only, after explicit canonical no-send consumption."""
+        slot = self._slots[execution_id]
+        if slot['collection'] is not None or slot['payload'] is not None:
+            raise ValueError('Collection already exists; no-send ACK refused')
+        slot['not_started_acknowledged'] = True
+
     def retire(self):
         """Call after acknowledged transport-journal retirement; keep uncertainty.
 
@@ -57,6 +65,8 @@ class WorkflowRequestMux:
         """
         for slot in self._slots.values():
             task = slot['collection']
+            if task is None and slot['not_started_acknowledged']:
+                continue
             if (task is None or not task.done()
                 or ((task.cancelled() or task.exception() is not None) and not slot['retained_acknowledged'])):
                 raise RuntimeError('Unsettled workflow collection remains')
@@ -76,6 +86,8 @@ class WorkflowRequestMux:
         slot = self._slots.get(execution_id)
         if slot is None or not isinstance(frozen.get('route_id'), str) or not frozen['route_id']:
             raise ConnectionError('Unbound workflow request')
+        if slot['not_started_acknowledged']:
+            raise ConnectionError('Acknowledged no-start refusal cannot dispatch')
         if slot['payload'] is not None and slot['generation'] != admitted_generation:
             raise ConnectionError('Retained workflow belongs to a different session')
         if slot['payload'] is not None and slot['payload'] != snapshot:

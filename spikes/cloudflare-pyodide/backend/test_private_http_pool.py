@@ -214,6 +214,86 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         client.aclose.assert_awaited_once()
         self.assertIsNone(self.pool.native._redis)
 
+    async def make_no_send_refusal(self):
+        self.provider()
+        self.owner.side_effect = [True, False]
+        redis = SimpleNamespace(delete=AsyncMock())
+        with patch.object(self.pool.native, '_get_redis', AsyncMock(return_value=redis)):
+            with self.assertRaises(CredentialRouteChanged):
+                await self.route()
+        attempt = self.pool.attempt(self.run)
+        with self.assertRaises(CredentialRouteChanged):
+            await attempt.delivery
+        self.owner.side_effect = None
+        self.owner.return_value = True
+        return attempt
+
+    async def test_no_send_ack_is_explicit_and_preserves_failed_receipts_without_relaunch(self):
+        attempt = await self.make_no_send_refusal()
+        accept = AsyncMock(return_value=None)
+        self.assertFalse(await self.pool.acknowledge_refusal(self.run, accept))
+        accept.return_value = False
+        self.assertFalse(await self.pool.acknowledge_refusal(self.run, accept))
+        accept.side_effect = ConnectionError('Synthetic canonical ACK loss')
+        with self.assertRaises(ConnectionError):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        with self.assertRaises(RuntimeError):
+            await self.pool.retire()
+        accept.side_effect = None
+        accept.return_value = True
+        self.assertTrue(await self.pool.acknowledge_refusal(self.run, accept))
+        repeated = AsyncMock(return_value=True)
+        self.assertTrue(await self.pool.acknowledge_refusal(self.run, repeated))
+        repeated.assert_not_awaited()
+        for receipt in (attempt.receipt, attempt.delivery):
+            with self.assertRaises(CredentialRouteChanged):
+                await receipt
+        with self.assertRaises(CredentialRouteChanged):
+            await self.route()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        self.callback.assert_not_awaited()
+        await self.pool.retire()
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        self.assertEqual(self.pool.journal.inventory(), [])
+
+    async def test_no_send_ack_fences_before_and_after_canonical_callback(self):
+        await self.make_no_send_refusal()
+        accept = AsyncMock(return_value=True)
+        self.journal_owner.return_value = False
+        with self.assertRaises(CredentialRouteChanged):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        accept.assert_not_awaited()
+        self.journal_owner.return_value = True
+
+        async def replaced(_execution_id):
+            self.journal_owner.return_value = False
+            return True
+
+        accept.side_effect = replaced
+        with self.assertRaises(CredentialRouteChanged):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        self.journal_owner.return_value = True
+        self.ref.lease = SimpleNamespace(**{**vars(self.ref.lease), 'session_generation': 2})
+        accept.side_effect = None
+        self.assertTrue(await self.pool.acknowledge_refusal(self.run, accept))
+        await self.pool.retire()
+
+    async def test_no_send_ack_cannot_consume_a_started_or_completed_invocation(self):
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        accept = AsyncMock(return_value=True)
+        with self.assertRaises(ValueError):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        finish.set()
+        await self.pool.attempt(self.run).delivery
+        with self.assertRaises(ValueError):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        accept.assert_not_awaited()
+        await self.pool.retire()
+
     async def test_owner_loss_at_receipt_reservation_never_starts_native_dispatch(self):
         self.journal_owner.return_value = False
         with self.assertRaises(CredentialRouteChanged):
@@ -333,6 +413,10 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
             await attempt.receipt
         with self.assertRaises(httpx.ReadError):
             await attempt.delivery
+        accept_refusal = AsyncMock(return_value=True)
+        with self.assertRaises(ValueError):
+            await self.pool.acknowledge_refusal(self.run, accept_refusal)
+        accept_refusal.assert_not_awaited()
         await self.route()
         self.assertEqual(len(self.sent), 1)
         self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)

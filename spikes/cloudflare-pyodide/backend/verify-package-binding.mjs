@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const read = name => readFileSync(new URL('results/package-binding/' + name, root), 'utf8');
 const receipt = JSON.parse(read('receipt.json'));
 for (const name of ['private_http_pool.py', 'shared-native-pool.py', 'test_private_http_pool.py',
   'runtime_inventory.py', 'test_runtime_inventory.py']) {
-  const digest = createHash('sha256').update(readFileSync(new URL('backend/' + name, root))).digest('hex');
+  const digest = createHash('sha256').update(execFileSync('git', ['show',
+    '50599c770f82bdafc98af6236a2b7817672d1ce0:spikes/cloudflare-pyodide/backend/' + name])).digest('hex');
   assert.equal(digest, receipt.packet_sha256[name], name);
 }
 assert.match(read('focused.txt'), /Ran 33 tests[\s\S]*\bOK\b/);

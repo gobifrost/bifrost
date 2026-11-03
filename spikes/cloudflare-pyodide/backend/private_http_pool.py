@@ -90,6 +90,10 @@ class PrivateHttpWorkflowPool:
                     owner = lease_ref.lease
                     if (expected_generation != owner.session_generation
                         or not await owns_remote_session(owner) or owner != lease_ref.lease):
+                        slot = pool._attempts.get(payload['execution_id'])
+                        if (slot is not None and slot.invocation is None and slot.launches == 0
+                            and slot.info is None and mux.collection(payload['execution_id']) is None):
+                            slot.no_send_refusal = True
                         raise CredentialRouteChanged('Physical workflow owner changed before deadline binding')
                     pool._start_deadline(payload)
                 try:
@@ -202,7 +206,7 @@ class PrivateHttpWorkflowPool:
                 **frozen, 'workflow_deadline': '9999-12-31T23:59:59.999999+00:00'}})
             slot = _Attempt(fingerprint=fingerprint, invocation=None, evidence=None, info=None,
                 route=None, receipt=None, accepted_monotonic=None, terminal_monotonic=None, launches=0,
-                routed=asyncio.get_running_loop().create_future(),
+                no_send_refusal=False, routed=asyncio.get_running_loop().create_future(),
                 settled=asyncio.get_running_loop().create_future(), _deadline_task=None)
             slot.retained_fingerprint = None
             slot.deadline_reconciled_owner = None
@@ -335,6 +339,28 @@ class PrivateHttpWorkflowPool:
             execution_id, self._consumer, slot.info)
         if acknowledged:
             await self._finish_acknowledged(slot)
+        return acknowledged
+
+    async def acknowledge_refusal(self, execution_id, accept, *, lease=None):
+        """Private host only: acknowledge canonical consumption, never rerun it.
+
+        Only the explicit pre-collection handoff fence supplies no-send proof.
+        Transport loss, cancellation and missing ACKs cannot supply this proof.
+        Original failed route/collection/delivery receipts remain unchanged.
+        """
+        slot = self._attempts[execution_id]
+        if (not slot.no_send_refusal or slot.invocation is not None or slot.launches != 0
+            or slot._deadline_task is not None or self.mux.collection(execution_id) is not None
+            or any(handle.current_execution is not None
+                   and handle.current_execution.execution_id == execution_id
+                   for handle in self.native.processes.values())):
+            raise ValueError('Proven pre-collection no-send refusal required')
+        acknowledged = await self.journal.acknowledge_refusal(
+            self._ref.lease if lease is None else lease, execution_id, accept)
+        if acknowledged:
+            self.mux.acknowledge_not_started(execution_id)
+            if not slot.settled.done():
+                slot.settled.set_result({'acknowledged': True, 'not_started': True})
         return acknowledged
 
     async def route_service(self, **request):
