@@ -49,6 +49,7 @@ from src.worker.remote.protocol import (
     CredentialRouteChanged,
     FragmentAssembler,
     LEGACY_EXECUTION_HANDLERS,
+    LINUX_RUNTIME_PROFILE,
     ProtocolError,
     SignedHello,
     hello_credential_protocol,
@@ -921,6 +922,10 @@ class RemoteControlHost:
                 raise AuthenticationError("expected signed hello")
             signed = SignedHello.from_dict(initial.get("hello", {}))
             hello = verify_hello(get_settings().secret_key, signed)
+            if "runtime_profile" in initial:
+                raise ProtocolError("physical runtime profile must be inside signed hello")
+            if hello.runtime_profile not in (None, LINUX_RUNTIME_PROFILE):
+                raise ProtocolError("unsupported physical runtime profile")
             sample = initial.get("sample")
             if not isinstance(sample, dict):
                 raise ProtocolError("hello sample is required")

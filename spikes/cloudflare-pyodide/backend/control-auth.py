@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import replace
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -23,7 +24,7 @@ async def main():
     from src.services.execution.memory_monitor import effective_memory_sample
     from src.worker.remote.identity import LauncherIdentity
     from src.worker.remote.launcher import Launcher
-    from src.worker.remote.protocol import ControlEnvelope
+    from src.worker.remote.protocol import ControlEnvelope, SignedHello, sign_hello, verify_hello
     from shared.version import get_version
 
     await init_db()
@@ -38,8 +39,14 @@ async def main():
     async def snapshot():
         async with get_db_context() as db:
             row = await db.get(ExecutionWorker, worker_id)
-            assert row is not None and row.supported_handlers == []
-            assert row.state == "starting" and row.ready_at is None
+            if row is None:
+                raise RuntimeError('Fixture worker disappeared')
+            if row.supported_handlers != []:
+                report['unexpected_supported_handlers'] = row.supported_handlers
+                raise RuntimeError('Auth-only fixture advertised execution handlers')
+            if row.state != 'starting' or row.ready_at is not None:
+                report['unexpected_worker_state'] = row.state
+                raise RuntimeError('Auth-only fixture became ready')
             claims = await db.scalar(select(func.count()).select_from(ExecutionWorkerClaim).where(
                 ExecutionWorkerClaim.worker_id == worker_id))
             assert claims == 0
@@ -54,12 +61,24 @@ async def main():
     class RecordingSocket:
         hello = None
 
-        def __init__(self, socket, *, corrupt=False):
+        def __init__(self, socket, *, corrupt=False, profile=None, unsigned_profile=False):
             self.socket, self.corrupt = socket, corrupt
+            self.profile, self.unsigned_profile = profile, unsigned_profile
 
         async def send(self, raw):
             frame = json.loads(raw)
             assert frame["event"] == "hello"  # No inventory or runtime commands.
+            # This test authenticates control only. Never let asynchronous API
+            # initialization advertise the real launcher's execution handlers.
+            frame['handlers'] = []
+            if self.profile:
+                if self.unsigned_profile:
+                    frame['runtime_profile'] = self.profile
+                else:
+                    secret = os.environ['BIFROST_SECRET_KEY']
+                    identity = verify_hello(secret, SignedHello.from_dict(frame['hello']))
+                    frame['hello'] = sign_hello(secret, replace(identity, runtime_profile=self.profile)).to_dict()
+                raw = json.dumps(frame)
             if self.corrupt:
                 proof = frame["hello"]["proof"]
                 frame["hello"]["proof"] = ("0" if proof[0] != "0" else "1") + proof[1:]
@@ -81,22 +100,34 @@ async def main():
     try:
         before = await snapshot()
         identity = LauncherIdentity(uuid4(), worker_id, None, None, "pyodide-control-auth-fixture", "static")
+        launcher = Launcher(RecordingSocket(await connect()), identity=identity, secret=os.environ['BIFROST_SECRET_KEY'])
+        for unsigned in (False, True):
+            candidate = RecordingSocket(await connect(), profile='pyodide-v1', unsigned_profile=unsigned)
+            launcher.socket = candidate
+            code = await refused(launcher._hello({}))
+            report['unsigned_profile_close' if unsigned else 'unsupported_signed_profile_close'] = code
+            if await snapshot() != before:
+                raise RuntimeError('Unsupported runtime profile acquired canonical ownership')
+        report['unsupported_profiles_preserved_owner_and_claims'] = True
         invalid = RecordingSocket(await connect(), corrupt=True)
         launcher = Launcher(invalid, identity=identity, secret=os.environ["BIFROST_SECRET_KEY"])
         report["invalid_signature_close"] = await refused(launcher._hello({}))
         assert await snapshot() == before
         report["invalid_signature_did_not_acquire_owner"] = True
 
-        first = RecordingSocket(await connect())
+        first = RecordingSocket(await connect(), profile='linux-process-v1')
         await launcher.reconnect(first, {})
         generation, owner = await snapshot()
+        report['explicit_signed_linux_profile_accepted'] = True
         assert generation == launcher.session_generation and generation >= 1 and owner is not None
         report["signed_hello_generation"] = generation
 
         replay = await connect()
         await replay.send(first.hello)
         report["nonce_replay_close"] = await refused(replay.recv())
-        assert await snapshot() == (generation, owner)
+        if await snapshot() != (generation, owner):
+            report['nonce_replay_owner_unchanged'] = False
+            raise RuntimeError('Nonce replay changed canonical owner')
         report["nonce_replay_did_not_advance_owner"] = True
 
         second = RecordingSocket(await connect())

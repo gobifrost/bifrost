@@ -1,5 +1,9 @@
 # Authenticated dispatch: remaining physical-handle boundary
 
+[Signed runtime identity](SIGNED-RUNTIME-PROFILE.md) now preserves legacy Linux
+hellos and rejects unsupported/unsigned profiles before admission. This new
+contribution does not yet accept an isolate profile or opaque execution handle.
+
 Lifecycle clarification: [normal completion](LIFECYCLE.md) requires settled work
 and released resources, not isolate destruction. [Retained-result qualification](DEADLINE-RETAINED.md)
 now crosses the original deadline locally without relaunch or a renewed cutoff.
