@@ -57,9 +57,13 @@ The [local deadline gate](EGRESS-DEADLINE.md) now refuses three late requests
 while actual Python catches failures and continues. Real engine canonical
 failure/replay also passes with it installed. A unit counterexample preserves a
 write already dispatched before close, committing afterward with a lost response.
-Next bind the cutoff to the canonical deadline and qualify actual uncertain SDK
-effects at that boundary. Retain the provider obligation until settlement is
-established. Revoking a token alone cannot establish physical CPU stop.
+The [canonical-cutoff qualification](CANONICAL-DEADLINE.md) now consumes the
+existing absolute dispatch deadline and preserves a lost provider response as
+uncertain across expiry. A trusted observer's direct API write still succeeds
+while the canonical run is live; this is not a child egress escape. Next reconcile
+that uncertainty through canonical ownership without redispatch or a new cutoff.
+Retain the provider obligation until settlement is established. Revoking a token
+alone cannot establish physical CPU stop.
 If network credentials or unrestricted egress escape the gate, post-deadline
 effects remain an incompatibility; rejecting a terminal result cannot undo them.
 

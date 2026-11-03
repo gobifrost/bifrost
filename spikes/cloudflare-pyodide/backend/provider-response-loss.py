@@ -10,7 +10,7 @@ from unittest.mock import patch
 import httpx
 
 
-async def main(*, recover_retained=False):
+async def main(*, recover_retained=False, deadline_probe=False):
     from sqlalchemy import select
     from src.core.database import close_db, get_db_context, init_db
     from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
@@ -72,6 +72,31 @@ async def main(*, recover_retained=False):
                 assert document.status_code == 200 and document.json()["data"]["value"] == 70
             report.update(provider_success_before_drop=True, independent_document_value=70,
                           successful_upserts=1, response_bytes_discarded=len(response.content))
+            if deadline_probe:
+                from datetime import datetime, timezone
+                deadline = datetime.fromisoformat(context['workflow_deadline'])
+                remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+                if not 0 < remaining < 30:
+                    raise RuntimeError('SDK completion missed deadline positive control')
+                await asyncio.sleep(remaining + 0.05)
+                async with httpx.AsyncClient(timeout=15, follow_redirects=False) as reader:
+                    # Deliberately trusted native observer bypasses the child
+                    # capability to test the actual credential's API lifetime.
+                    late = await original_post(reader, 'http://api:8000' + writes[0]['path'],
+                        headers={'Authorization': 'Bearer ' + context['engine_token']},
+                        params={'scope': context['organization']['id']},
+                        json={'id': 'late-proof', 'data': {'value': 71}})
+                    if late.status_code != 200:
+                        raise RuntimeError('Post-deadline credential behavior changed')
+                    late_read = await reader.get('http://api:8000' + writes[0]['path'].removesuffix('/upsert') + '/late-proof',
+                        headers={'Authorization': 'Bearer ' + context['engine_token']},
+                        params={'scope': context['organization']['id']})
+                    if late_read.status_code != 200 or late_read.json()['data']['value'] != 71:
+                        raise RuntimeError('Independent late-effect read failed')
+                report.update(canonical_deadline=context['workflow_deadline'],
+                    deadline_response_loss_probe=True, post_deadline_native_api_write_status=late.status_code,
+                    independent_post_deadline_value=71, credential_wall_deadline_revocation=False,
+                    child_gate_bypassed_by_trusted_observer=True)
             if recover_retained:
                 assert launcher is not None
                 encoded = json.dumps(evidence)
@@ -298,9 +323,10 @@ async def main(*, recover_retained=False):
 
 
 if __name__ == "__main__":
-    assert sys.argv[1:] in (["--response-loss"], ["--retained-response"])
+    assert sys.argv[1:] in (["--response-loss"], ["--retained-response"], ["--deadline-response-loss"])
     try:
-        asyncio.run(main(recover_retained=sys.argv[1] == "--retained-response"))
+        asyncio.run(main(recover_retained=sys.argv[1] == "--retained-response",
+                         deadline_probe=sys.argv[1] == "--deadline-response-loss"))
     except Exception as exc:
         print(json.dumps({"runtime": "local-workerd-canonical-response-loss", "error_type": type(exc).__name__}))
         raise SystemExit(1)

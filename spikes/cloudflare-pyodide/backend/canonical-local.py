@@ -13,7 +13,7 @@ import re
 import runpy
 import time
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 from urllib.parse import urlsplit
@@ -400,6 +400,11 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     self.refresh_token = context.get("engine_refresh_token")
                     secrets.extend([self.token, context.get("engine_refresh_token")])
                     self.info = ExecutionInfo(execution_id, datetime.now(timezone.utc), context["timeout_seconds"], active_execution)
+                    # Match upstream RemoteProcessPool's existing dispatch
+                    # metadata. This fixed LocalPool is still not signed control.
+                    context["workflow_deadline"] = (
+                        self.info.started_at + timedelta(seconds=self.info.timeout_seconds)
+                    ).isoformat()
 
                     async def launch():
                         self.launches += 1

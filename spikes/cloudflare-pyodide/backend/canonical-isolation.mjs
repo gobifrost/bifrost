@@ -122,6 +122,7 @@ asyncio.run(clean())`;
   const paths=['spikes/cloudflare-pyodide/backend/canonical-isolation.mjs',
     'spikes/cloudflare-pyodide/backend/exclusive-receipt.mjs',
     'spikes/cloudflare-pyodide/backend/fixture-admission.mjs',
+    'spikes/cloudflare-pyodide/backend/attempt-egress.mjs',
     'spikes/cloudflare-pyodide/backend/test-api-route.mjs',
     'spikes/cloudflare-pyodide/backend/refresh-gate.mjs',
     'spikes/cloudflare-pyodide/backend/pyodide_refresh.py',

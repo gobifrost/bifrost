@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {createAttemptEgress} from './attempt-egress.mjs';
+import {canonicalDeadline, createAttemptEgress} from './attempt-egress.mjs';
+
+test('canonical cutoff preserves upstream UTC microseconds conservatively without resetting the window', async () => {
+  const now = Date.parse('2026-11-03T00:00:00Z');
+  assert.equal(canonicalDeadline({timeout_seconds: 30, workflow_deadline: '2026-11-03T00:00:05.123456+00:00'}, now), now + 5123);
+  assert.equal(canonicalDeadline({timeout_seconds: 30, workflow_deadline: '2026-11-03T00:00:05Z'}, now), now + 5000);
+  const gate = createAttemptEgress(canonicalDeadline({timeout_seconds: 30,
+    workflow_deadline: '2026-11-03T00:00:05Z'}, now), () => assert.fail('Must not extend to a fresh 30-second window'), () => now + 6000);
+  assert.equal((await gate.fetch(new Request('https://api.invalid/'))).status, 410);
+  for (const value of [null, '2026-11-03', '2026-11-03T00:00:05', '2026-02-30T00:00:05Z',
+    '2026-11-03T00:00:31Z', '2026-11-03T00:00:00Z']) {
+    assert.throws(() => canonicalDeadline({timeout_seconds: 30, workflow_deadline: value}, now));
+  }
+});
 
 test('expired capability rejects each new request without relying on a timer', async () => {
   let time = 9, forwarded = 0;

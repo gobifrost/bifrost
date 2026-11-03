@@ -1,5 +1,9 @@
 # Deadline capability gate: new requests versus uncertain effects
 
+Follow-on: [canonical deadline binding and actual response uncertainty](CANONICAL-DEADLINE.md).
+The original relative-cap experiment below is retained as its own tested stage;
+current canonical mode requires the dispatcher's absolute cutoff.
+
 The local companion now refuses new API requests once its effect window expires
 or its invocation completes. Actual guest Pyodide continued computation and
 caught three expiry failures; all three requests were refused before reaching

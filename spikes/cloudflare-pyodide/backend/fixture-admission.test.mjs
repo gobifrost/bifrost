@@ -6,7 +6,7 @@ const suffix='a'.repeat(32),hash='b'.repeat(64);
 const path=`workflows/pyodide_qualification_${suffix}.py`;
 function request(){return {mode:'canonical',worker_id:id,execution_id:id,
   context:{execution_id:id,file_path:path,function_name:'qualified',engine_token:'synthetic-test-only',
-    timeout_seconds:30,content_hash:hash,code:null,solution_id:null,artifact_workspace_id:null},
+    timeout_seconds:30,workflow_deadline:new Date(Date.now()+29000).toISOString(),content_hash:hash,code:null,solution_id:null,artifact_workspace_id:null},
   manifest:{[path]:hash,[`pyodide_helper_${suffix}.py`]:hash}};}
 test('supported fixture is passed unchanged to the runtime callback exactly once',async()=>{
   const body=request();let calls=0;
@@ -23,6 +23,9 @@ const cases=[
   ['unknown mode',b=>{b.mode='linux';}],
   ['unbounded duration',b=>{b.context.timeout_seconds=1800;}],
   ['fractional duration',b=>{b.context.timeout_seconds=0.5;}],
+  ['missing canonical deadline',b=>{delete b.context.workflow_deadline;}],
+  ['expired canonical deadline',b=>{b.context.workflow_deadline='2000-01-01T00:00:00+00:00';}],
+  ['extended canonical deadline',b=>{b.context.workflow_deadline=new Date(Date.now()+60000).toISOString();}],
   ['inline script',b=>{b.context.code='';}],
   ['service',b=>{b.context.service={};}],
   ['admin',b=>{b.context.is_platform_admin=true;}],

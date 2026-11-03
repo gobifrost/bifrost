@@ -1,4 +1,5 @@
 // Local fixed-fixture compatibility check, never authorization or a Python sandbox.
+import {canonicalDeadline} from './attempt-egress.mjs';
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const digest=/^[a-f0-9]{64}$/;
 const record=value=>value!==null && typeof value==='object' && !Array.isArray(value);
@@ -16,6 +17,9 @@ export function fixtureRejection(body,active) {
   if(c.engine_refresh_token!=null && (typeof c.engine_refresh_token!=='string' || !c.engine_refresh_token ||
     c.engine_refresh_token.length>16384)) return 'credential_shape';
   if(!Number.isInteger(c.timeout_seconds) || c.timeout_seconds<1 || c.timeout_seconds>30) return 'duration';
+  if(body.mode==='canonical') {
+    try { canonicalDeadline(c); } catch { return 'deadline'; }
+  }
   if(c.code!=null || c.service!=null || c.is_platform_admin || c.solution_id!=null ||
     c.solution_global_repo_access || c.artifact_workspace_id!=null) return 'unsupported_context';
   const paths=Object.keys(body.manifest);

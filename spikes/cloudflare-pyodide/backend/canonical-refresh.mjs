@@ -45,7 +45,8 @@ if(mode==='--run') {
     'spikes/cloudflare-pyodide/backend/runtime_guard.py','spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs',
     'spikes/cloudflare-pyodide/backend/test-api-route.mjs','spikes/cloudflare-pyodide/backend/pyodide_refresh.py',
     'spikes/cloudflare-pyodide/backend/pack-engine.py','spikes/cloudflare-pyodide/backend/refresh-gate.mjs',
-    'spikes/cloudflare-pyodide/backend/fixture-admission.mjs']) {
+    'spikes/cloudflare-pyodide/backend/fixture-admission.mjs',
+    'spikes/cloudflare-pyodide/backend/attempt-egress.mjs']) {
     report.source_sha256[path]=hash(await readFile(new URL(path,repo)));
   }
   report.source_sha256['spikes/cloudflare-pyodide/backend/attempt_journal.py']=hash(

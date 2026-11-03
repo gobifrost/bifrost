@@ -21,12 +21,13 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, revision=1):
     global PACKET, RUN, NAME
-    if egress_gate:
-        PACKET = ROOT / f'inbox/egress-canonical-v{revision}'
-        RUN = ROOT / f'runs/egress-canonical-v{revision}'
-        NAME = f'pyodide-ddf316c1-egress-canonical-v{revision}'
+    if egress_gate or deadline_response_loss:
+        prefix = 'deadline-response-loss' if deadline_response_loss else 'egress-canonical'
+        PACKET = ROOT / f'inbox/{prefix}-v{revision}'
+        RUN = ROOT / f'runs/{prefix}-v{revision}'
+        NAME = f'pyodide-ddf316c1-{prefix}-v{revision}'
     if (out(['hostname']) != 'bifrost-pyodide-test-01'
         or out(['git', 'rev-parse', 'HEAD'], cwd=CHECKOUT) != SOURCE
         or shutil.disk_usage(ROOT).free < 8 * 1024**3):
@@ -42,6 +43,8 @@ def main(*, egress_gate=False, revision=1):
             raise RuntimeError('Incomplete qualification packet: ' + relative)
     if egress_gate and not (PACKET / 'project/backend/attempt-egress.mjs').is_file():
         raise RuntimeError('Missing egress gate in qualification packet')
+    if deadline_response_loss and not (PACKET / 'provider-response-loss.py').is_file():
+        raise RuntimeError('Missing response-loss probe in qualification packet')
     if hashlib.sha256((PACKET / 'project/backend/generated-runtime.mjs').read_bytes()).hexdigest() != 'bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0':
         raise RuntimeError('Qualified runtime closure changed')
     RUN.mkdir()
@@ -74,7 +77,8 @@ def main(*, egress_gate=False, revision=1):
         [*compose, '--profile', 'test', 'run', '--rm', '--no-deps',
          '--volume', f'{CHECKOUT}/spikes/cloudflare-pyodide:/spike:ro',
          '--volume', f'{PACKET}:/qualification:ro', 'test-runner',
-         'python', '/qualification/canonical-local.py', '--failure-probe']]
+         'python', '/qualification/provider-response-loss.py' if deadline_response_loss else '/qualification/canonical-local.py',
+         '--deadline-response-loss' if deadline_response_loss else '--failure-probe']]
     report = {'api_source': SOURCE, 'runtime_engine_source': 'f49d4ba99cebd24aa497f1244833b940e640885f',
         'project': project, 'cloud_invocations': 0, 'physical_termination_verified': False,
         'qualification_passed': False, 'commands': [], 'compose_sha256': compose_hash,
@@ -103,11 +107,18 @@ def main(*, egress_gate=False, revision=1):
             if result.returncode:
                 raise RuntimeError('Canonical failure qualification failed; inspect private log')
         records = [json.loads(line) for line in (RUN / 'phase-3.private.log').read_text().splitlines() if line.startswith('{')]
-        canonical = next(row for row in reversed(records) if row.get('canonical_claim_verified'))
-        if (not canonical.get('stdout_capture_verified') or not canonical.get('canonical_terminal_consumption_verified')
-            or not canonical.get('persisted_failure_stdout_redaction_verified')):
-            raise RuntimeError('Required real failure/stdout consumption not observed')
-        report['canonical_result'] = canonical
+        if deadline_response_loss:
+            probe = next(row for row in reversed(records) if row.get('deadline_response_loss_probe'))
+            if (probe.get('launches') != 1 or not probe.get('canonical_success_result_missing')
+                or not probe.get('fixture_execution_cleanup_verified') or probe.get('independent_post_deadline_value') != 71):
+                raise RuntimeError('Required deadline/uncertain-effect observations missing')
+            report['deadline_probe_result'] = probe
+        else:
+            canonical = next(row for row in reversed(records) if row.get('canonical_claim_verified'))
+            if (not canonical.get('stdout_capture_verified') or not canonical.get('canonical_terminal_consumption_verified')
+                or not canonical.get('persisted_failure_stdout_redaction_verified')):
+                raise RuntimeError('Required real failure/stdout consumption not observed')
+            report['canonical_result'] = canonical
         report['qualification_passed'] = True
     finally:
         state = subprocess.run(['docker', 'inspect', NAME, '--format', '{{json .State}}'], capture_output=True, text=True)
@@ -125,7 +136,9 @@ def main(*, egress_gate=False, revision=1):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--egress-gate', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--egress-gate', action='store_true')
+    mode.add_argument('--deadline-response-loss', action='store_true')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
-    main(egress_gate=args.egress_gate, revision=args.revision)
+    main(egress_gate=args.egress_gate, deadline_response_loss=args.deadline_response_loss, revision=args.revision)

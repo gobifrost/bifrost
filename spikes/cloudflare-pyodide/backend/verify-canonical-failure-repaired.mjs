@@ -45,9 +45,7 @@ for (const [packet, digest] of Object.entries(report.packet_sha256)) {
   assert.ok(path, packet);
   // The packet is historical evidence. Current companion lifetime guards and
   // runner options may change without rewriting the source that was tested.
-  const bytes = ['ct128-canonical-failure.py', 'project/backend/authorized-local-entry.mjs'].includes(packet)
-    ? execFileSync('git', ['show', `80cb0d622:spikes/cloudflare-pyodide/${path.startsWith('../') ? path.slice(3) : 'backend/' + path.slice(2)}`])
-    : await readFile(new URL(path, import.meta.url));
+  const bytes = execFileSync('git', ['show', `80cb0d622:spikes/cloudflare-pyodide/${path.startsWith('../') ? path.slice(3) : 'backend/' + path.slice(2)}`]);
   assert.equal(hash(bytes), digest, packet);
 }
 for (const name of ['v1.json', 'v2.json']) {

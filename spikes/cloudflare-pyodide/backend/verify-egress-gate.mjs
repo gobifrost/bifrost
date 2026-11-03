@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 const base = new URL('../results/egress-gate/', import.meta.url);
 const read = async name => JSON.parse(await readFile(new URL(name, base), 'utf8'));
+const tested = path => execFileSync('git', ['show', `b6366ae24:spikes/cloudflare-pyodide/backend/${path}`]);
 const report = await read('pyodide-v1.json');
 assert.equal(report.source_base, 'd65d055a1f49f8633b4e808ebff6a461297249d9');
 assert.equal(report.driver_exit_code, 0);
@@ -13,7 +14,7 @@ assert.equal(report.state_before_cleanup.OOMKilled, false);
 assert.deepEqual(report.running_after_cleanup, []);
 for (const [name, digest] of Object.entries(report.packet_sha256)) {
   const path = ['package.json', 'cloudflare.config.ts', 'wrangler.config.ts'].includes(name) ? './egress-fixture/' + name : './' + name;
-  assert.equal(createHash('sha256').update(await readFile(new URL(path, import.meta.url))).digest('hex'), digest, name);
+  assert.equal(createHash('sha256').update(tested(path.slice(2))).digest('hex'), digest, name);
 }
 const [normal, late] = report.observation.records;
 assert.equal(normal.mode, 'completion');
@@ -42,7 +43,7 @@ assert.deepEqual(canonical.running_after_cleanup, []);
 assert.equal(canonical.provider_state_before_cleanup.OOMKilled, false);
 assert.ok(canonical.commands.every(command => command.exit_code === 0));
 for (const name of ['attempt-egress.mjs', 'authorized-local-entry.mjs', 'ct128-canonical-failure.py']) {
-  assert.equal(createHash('sha256').update(await readFile(new URL('./' + name, import.meta.url))).digest('hex'), canonical.packet_sha256[name], name);
+  assert.equal(createHash('sha256').update(tested(name)).digest('hex'), canonical.packet_sha256[name], name);
 }
 assert.equal(canonical.packet_sha256['project/backend/attempt-egress.mjs'], canonical.packet_sha256['attempt-egress.mjs']);
 assert.equal(canonical.packet_sha256['project/backend/authorized-local-entry.mjs'], canonical.packet_sha256['authorized-local-entry.mjs']);

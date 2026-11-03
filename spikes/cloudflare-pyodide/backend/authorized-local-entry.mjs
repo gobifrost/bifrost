@@ -56,10 +56,12 @@ export default {
     const id=crypto.randomUUID();
     const calls=[];
     observations.set(id,calls);
-    // Fixed local fixture duration cap, not canonical deadline negotiation.
-    // Deadline ownership must be bound by an authenticated dispatcher before
-    // this companion can become a production execution adapter.
-    const egress=createAttemptEgress(Date.now()+body.context.timeout_seconds*1000,
+    // Canonical mode consumes the dispatcher's cutoff, never a new window on
+    // receipt. Direct API fixtures retain their separate local duration cap.
+    // The fixed local caller is not signed-control/provider admission proof.
+    const deadline=body.mode==='canonical' ? Date.parse(body.context.workflow_deadline)
+      : Date.now()+body.context.timeout_seconds*1000;
+    const egress=createAttemptEgress(deadline,
       outgoing=>fetch(outgoing,{redirect:'manual'}));
     egressGates.set(id,egress);
     const gate=body.fixture_mode==='refresh_interruption' ? createRefreshGate() : undefined;
