@@ -1,0 +1,14 @@
+{
+  "key": "pr:1229",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "README clarification of the Cloudflare attribution scope; no runtime behavior, license grant or customer upgrade change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1229",
+      "Jack reviewed the clarification and explicitly authorized merging it.",
+      "The existing MIT notice and project license are unchanged. The README links to the adapted implementation and its notice."
+    ]
+  }
+}
