@@ -1,0 +1,13 @@
+{
+  "key": "pr:1224",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Apply MCP access configuration consistently so disabling external access takes effect on every gateway request.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1224"
+    ]
+  }
+}
