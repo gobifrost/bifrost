@@ -1,0 +1,117 @@
+{
+  "scope": "isolated candidate overlay, actual signed Linux workflow and retirement",
+  "source": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "project": "bifrost-test-9b326eab",
+  "cloud_invocations": 0,
+  "qualification_passed": true,
+  "source_overlays": {
+    "docker-compose.test.yml": "33e78480090f97ea3f04be404c5a3d312ea8486ec6d55a60c67361a8ef0bdce9",
+    "api/src/worker/remote/protocol.py": "91db42936f3235599243af681d24886fbb79180a7020633dfafe35887b3956d5",
+    "api/src/worker/remote/host.py": "6ce5e6be94f195d2690f4fbb929fc78d9d068be1f4f6e391a14a0c371b2e3078"
+  },
+  "compose_sha256": "cef226236d5968289eabd5d8f4413a4d60871d465fdc20d3252ea9feeabbcb2b",
+  "packet_sha256": {
+    "remote_pool.py.txt": "90bf84fb5213856473d04a770bae6ac1d3dfd71eadd0a897b0ac291a6c3cddde",
+    "pyright-guest-fixtures.json": "77d2dde981aa6c3acbf32392ebe229846c4a76166e919ea09c92bac5d934faef",
+    "ct128-linux-startup-candidate.py": "2bb32f7119078b1ac2f5c641f5920a22880dbcf8972ac623d3026691b6e4e2db",
+    "task_cleanup.py": "ba97cbfdf25823e6324849d4571c3bb13ae2dd9c10eb16ca3fdad2e8856a906c",
+    "linux-startup-candidate.py": "685ade98f26f3a805473e6ec5efc3c807e2a508db95a590176f43f7c60b49523",
+    "spike/backend/authorized-local.py": "8fc2157db3f61d6c37ab44aa04fbe4995a601f0e51a7a29987d02c810f7e838f"
+  },
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-9b326eab",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-9b326eab",
+        "-f",
+        "docker-compose.test.yml",
+        "exec",
+        "-T",
+        "api",
+        "python",
+        "-c",
+        "import hashlib; print(hashlib.sha256(open(\"/app/src/worker/remote/remote_pool.py\",\"rb\").read()).hexdigest())"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-9b326eab",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--name",
+        "bifrost-test-9b326eab-signed-startup",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-linux-candidate-v1:/qualification:ro",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-linux-candidate-v1/spike:/spike:ro",
+        "test-runner",
+        "python",
+        "/qualification/linux-startup-candidate.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "volumes_deleted": false,
+  "observed": {
+    "runtime": "actual-linux-signed-control-reference",
+    "cloud_invocations": 0,
+    "pyodide_physical_termination_verified": false,
+    "qualification_passed": true,
+    "workspace_sha256": {
+      "workflows/linux_reference_dc67b42bc9ca425d9e14133d0e517fdd.py": "cea8bf9ac58b3b8683f4c98fbab99bf43f027ad2d8dab471e3e6aad6d191c443",
+      "linux_helper_dc67b42bc9ca425d9e14133d0e517fdd.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"
+    },
+    "terminal_status": "Success",
+    "independent_document_value": 70,
+    "signed_retirement_and_pool_cache_cleanup_verified": true,
+    "wire_events": {
+      "workflow_commands": 1,
+      "pid_acks": [
+        21
+      ],
+      "result_events": 1,
+      "configure_commands": 1
+    },
+    "signed_session_generation": 1,
+    "runtime_access_after_terminal_status": 401,
+    "retained_terminal_acknowledged": true,
+    "real_linux_fork_verified": true,
+    "native_templates_stopped": true,
+    "fixture_worker_cleanup_verified": true
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 75.17318796319887
+}

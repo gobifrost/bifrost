@@ -2,7 +2,12 @@
 
 Follow-up: [six real Redis cases](STARTUP-REDIS.md) now qualify the cache operations
 and independent readback. The mocked results and their historical receipt below
-remain unchanged; signed startup and coordinated shared-source adoption are pending.
+remain unchanged. The subsequent signed Linux result is described below;
+coordinated shared-source adoption is pending.
+
+Further follow-up: [signed Linux startup/workflow/retirement](STARTUP-LINUX.md)
+passes with the candidate API mount. Shared-source adoption remains coordinated
+and unapplied; this is not signed Pyodide startup qualification.
 
 This patch is tested as a read-only guest file overlay, **not applied** to either
 writer's shared remote_pool.py. It is not an accepted upstream fix or Pyodide
