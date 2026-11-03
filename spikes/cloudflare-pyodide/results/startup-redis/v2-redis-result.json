@@ -1,0 +1,83 @@
+{
+  "scope": "actual candidate registration/unregistration and independent real Redis reads; synthetic transport/session and idle loops",
+  "candidate_sha256": "90bf84fb5213856473d04a770bae6ac1d3dfd71eadd0a897b0ac291a6c3cddde",
+  "records": [
+    {
+      "mode": "healthy",
+      "partial_registration_observed": false,
+      "row_after_first_outcome": {
+        "started_at": "2026-11-03T16:40:37.573411+00:00",
+        "status": "online",
+        "hostname": "synthetic-redis-probe",
+        "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]",
+        "runtime": "thin_remote",
+        "execution_owner": "remote_launcher",
+        "api_owner": "05d3e23831db"
+      },
+      "row_after_cleanup_retry": {},
+      "final_fixture_key_exists": 0,
+      "error_type": null
+    },
+    {
+      "mode": "tagging",
+      "partial_registration_observed": true,
+      "row_after_first_outcome": {},
+      "row_after_cleanup_retry": {},
+      "final_fixture_key_exists": 0,
+      "error_type": "RuntimeError"
+    },
+    {
+      "mode": "delete_failure",
+      "partial_registration_observed": true,
+      "row_after_first_outcome": {
+        "started_at": "2026-11-03T16:40:37.580141+00:00",
+        "status": "online",
+        "hostname": "synthetic-redis-probe",
+        "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]"
+      },
+      "row_after_cleanup_retry": {},
+      "final_fixture_key_exists": 0,
+      "error_type": "ExceptionGroup"
+    },
+    {
+      "mode": "readback_failure",
+      "partial_registration_observed": true,
+      "row_after_first_outcome": {},
+      "row_after_cleanup_retry": {},
+      "final_fixture_key_exists": 0,
+      "error_type": "ExceptionGroup"
+    },
+    {
+      "mode": "cancel",
+      "partial_registration_observed": true,
+      "row_after_first_outcome": {},
+      "row_after_cleanup_retry": {},
+      "final_fixture_key_exists": 0,
+      "error_type": "CancelledError"
+    },
+    {
+      "mode": "superseded",
+      "partial_registration_observed": true,
+      "row_after_first_outcome": {
+        "started_at": "2026-11-03T16:40:37.590081+00:00",
+        "status": "online",
+        "hostname": "synthetic-redis-probe",
+        "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]",
+        "owner_marker": "replacement"
+      },
+      "row_after_cleanup_retry": {
+        "started_at": "2026-11-03T16:40:37.590081+00:00",
+        "status": "online",
+        "hostname": "synthetic-redis-probe",
+        "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]",
+        "owner_marker": "replacement"
+      },
+      "final_fixture_key_exists": 0,
+      "error_type": "RuntimeError"
+    }
+  ],
+  "keys_remaining": [],
+  "cloud_invocations": 0,
+  "signed_startup_verified": false,
+  "execution_admission_qualified": false
+}

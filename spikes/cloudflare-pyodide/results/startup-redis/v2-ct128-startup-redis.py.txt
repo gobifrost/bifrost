@@ -1,0 +1,87 @@
+"""Exclusive cached Redis qualification; no account access or shared source write."""
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import time
+
+ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
+PACKET = ROOT / 'inbox/startup-redis-v2'
+RUN = ROOT / 'runs/startup-redis-v2'
+REDIS = 'pyodide-ddf316c1-startup-redis-v2'
+TEST = REDIS + '-test'
+API_IMAGE = 'sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b'
+REDIS_IMAGE = 'sha256:98c6ca8f397f86e469be752c3e7ed5eb8b17f2479840cb69a2e413037038e9f4'
+LABEL = 'ddf316c1-startup-redis'
+
+
+def out(args):
+    return subprocess.check_output(args, text=True, timeout=20).strip()
+
+
+def main():
+    if out(['hostname']) != 'bifrost-pyodide-test-01' or shutil.disk_usage(ROOT).free < 8 * 1024**3:
+        raise RuntimeError('Guest/disk guard failed')
+    for image in (API_IMAGE, REDIS_IMAGE):
+        if out(['docker', 'image', 'inspect', image, '--format', '{{.Id}}']) != image:
+            raise RuntimeError('Cached dependency image changed')
+    candidate = PACKET / 'remote_pool.py.txt'
+    if hashlib.sha256(candidate.read_bytes()).hexdigest() != '90bf84fb5213856473d04a770bae6ac1d3dfd71eadd0a897b0ac291a6c3cddde':
+        raise RuntimeError('Candidate changed')
+    for name in (REDIS, TEST):
+        if subprocess.run(['docker', 'inspect', name], capture_output=True).returncode == 0:
+            raise RuntimeError('Reconcile existing owned container before execution')
+    RUN.mkdir()
+    report = {'cloud_invocations': 0, 'images': [API_IMAGE, REDIS_IMAGE],
+              'packet_sha256': {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in PACKET.iterdir() if path.is_file()}}
+    started = time.monotonic()
+    try:
+        out(['docker', 'run', '-d', '--name', REDIS, '--label', f'pyodide.owner={LABEL}', '--network', 'none',
+             '--cpus=0.25', '--memory=128m', '--memory-swap=128m', '--pids-limit=64', '--tmpfs', '/data:rw,size=16m',
+             '--health-cmd', 'redis-cli ping', '--health-interval=1s', '--health-timeout=1s', '--health-retries=3',
+             REDIS_IMAGE, 'redis-server', '--bind', '127.0.0.1', '--save', '', '--appendonly', 'no'])
+        for _ in range(40):
+            health = out(['docker', 'inspect', REDIS, '--format', '{{.State.Health.Status}}'])
+            if health == 'healthy':
+                break
+            if health == 'unhealthy':
+                raise RuntimeError('Redis readiness failed')
+            time.sleep(0.25)
+        else:
+            raise RuntimeError('Redis readiness deadline exceeded before qualification')
+        command = ['docker', 'run', '--rm', '--name', TEST, '--label', f'pyodide.owner={LABEL}',
+                   '--network', f'container:{REDIS}', '--cpus=0.5', '--memory=1g', '--memory-swap=1g', '--pids-limit=64',
+                   '-v', f'{PACKET}:/qualification:ro', '-v', f'{ROOT}/upstream-025f6c0/api:/app:ro',
+                   '-v', f'{candidate}:/app/src/worker/remote/remote_pool.py:ro', '-v', f'{RUN}:/evidence',
+                   '-e', 'PYTHONPATH=/app:/qualification', '-e', 'BIFROST_ENVIRONMENT=testing',
+                   '-e', 'BIFROST_SECRET_KEY=synthetic-unit-fixture-not-an-authenticator', '-w', '/qualification',
+                   '--entrypoint', 'python', API_IMAGE, 'startup-redis-probe.py']
+        report['command'] = command
+        result = subprocess.run(command, capture_output=True, text=True, timeout=45)
+        (RUN / 'output.txt').write_text(result.stdout + result.stderr)
+        report['exit_code'] = result.returncode
+        if result.returncode:
+            raise RuntimeError('Qualification failed; preserve output before retry')
+        report['result'] = json.loads((RUN / 'redis-result.json').read_text())
+    finally:
+        report['cleanup'] = {}
+        for name in (TEST, REDIS):
+            state = subprocess.run(['docker', 'inspect', name, '--format', '{{json .}}'], capture_output=True, text=True)
+            if state.returncode == 0:
+                value = json.loads(state.stdout)
+                if value['Config']['Labels'].get('pyodide.owner') != LABEL:
+                    raise RuntimeError('Uncertain cleanup ownership')
+                report['cleanup'][name] = {'before': value['State']}
+                out(['docker', 'stop', '-t', '5', name])
+                state = subprocess.run(['docker', 'inspect', name, '--format', '{{.State.Running}}'], capture_output=True, text=True)
+                report['cleanup'][name]['running_after'] = state.stdout.strip() if state.returncode == 0 else 'absent'
+            else:
+                report['cleanup'][name] = {'running_after': 'absent'}
+        report['elapsed_seconds'] = time.monotonic() - started
+        (RUN / 'receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps({'exit_code': report['exit_code'], 'cases': len(report['result']['records']), 'cleanup': report['cleanup']}))
+
+
+if __name__ == '__main__':
+    main()

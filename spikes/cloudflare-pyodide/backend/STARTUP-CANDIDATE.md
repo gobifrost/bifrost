@@ -1,5 +1,9 @@
 # Isolated transactional-startup repair candidate
 
+Follow-up: [six real Redis cases](STARTUP-REDIS.md) now qualify the cache operations
+and independent readback. The mocked results and their historical receipt below
+remain unchanged; signed startup and coordinated shared-source adoption are pending.
+
 This patch is tested as a read-only guest file overlay, **not applied** to either
 writer's shared remote_pool.py. It is not an accepted upstream fix or Pyodide
 startup/admission implementation. The signed/public profile guard stays intact.
