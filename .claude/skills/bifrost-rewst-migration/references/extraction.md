@@ -33,6 +33,18 @@ the application's permissions.
 
 ## Reuse a server-side credential when available
 
+For a new installation, prefer the packaged
+[Rewst Migration Solution](https://github.com/gobifrost/bifrost/tree/codex/rewst-migration-skill/examples/rewst-migration).
+It includes the app, server-side export workflows, config declarations, private
+runtime storage, and a network-free sample. Install from the documented subpath;
+then enter values in **Solutions → Rewst Migration → Configuration**:
+`rewst_migration_api_url`, `rewst_migration_org_id`, and secret
+`rewst_migration_app_session`. These are declarations, not shared credentials.
+Do not put the session in a workflow parameter or browser storage. Validate the
+connection in Setup, select authorized source organizations, and export through
+the app. Keep sample and live results distinct. Current private API compatibility
+must be established by the customer's pilot; inspect every coverage gap.
+
 Inspect the selected Bifrost instance's config **metadata**, and the registered
 extractor's source/schema, before asking for another credential. Existing
 implementations may use `rewst_app_session` and `rewst_org_id`; these are key
@@ -51,8 +63,8 @@ identifiers separately as non-secret config. Record only the chosen keys and
 owner in the plan. If the existing key is expired, have the user replace that
 key; do not create a second ambiguous credential. Do not retrieve a decrypted
 session into a workflow result or use a CLI `--value <token>` argument. Follow
-`bifrost:build` before implementing or installing an extractor. This package
-does not install a registered Bifrost extraction workflow.
+`bifrost:build` before implementing or installing an extractor. Installing the
+skill alone does not install the Solution or its registered workflows.
 
 ## Use the bundled local helper
 
