@@ -1193,3 +1193,23 @@ Artifacts: backend/JSON-TRANSPORT-PERFORMANCE.md, repeatable benchmark/verifier,
 results/json-transport raw/after/runtime receipts. No cloud CPU/cost/startup claim.
 README now leads with current frontier instead of only older latest-stage entries.
 Shared coordination denial and startup/prelaunch-retirement/deployed gates persist.
+
+### 2026-11-03 — upstream SDK1217 drift and pure-wheel qualification
+Read-only Git head139596497, common ancestor025f6c019: distinguish unmerged engine
+seams from actual SDK HTTP-pool/TLS changes. Exact3module SDK overlay, no shared edits.
+V1 local harness EPIPE: missing existing /spike wrapper mount, fixed boundedly.
+V2 actual Worker ssl imports,certifi absent,SDK import fails. Classify missing pure
+Python/data wheel, no native build. Exact publisher py3-none-any certifi2026.4.22
+wheel135707bytes matches requirements.lock sha3cb2210c...31b1c4a, unchanged.
+V3/V4 imports/constructor pass; certifi API reads238641bytes sha16be3f6f...f799f8.
+Material boundary: Worker SSL reports0CA vs native120 for identical data; bundled
+HTTPX jsfetch constructors ignore verify/cert/proxy/uds. Do not infer absence of
+platform HTTPS validation; custom TLS semantics not qualified. Compilation of a
+certificate library cannot make fetch consume a Python SSLContext.
+Actual local cfdev only,networknone,1CPU/2GiB/128PIDs, original pinned ABI; owned
+providers stopped. Ruff/Pyright/Node syntax checks pass. Runtime operations not yet
+requalified with updated SDK; historical engine/SDK receipts keep their own pins.
+Artifacts: backend/SDK1217-QUALIFICATION.md, reproducible probe/staging scripts,
+source-bound verifier, results/sdk1217 failures/success/source/license/provenance.
+Next: real engine/SDK execution with this overlay, preserve dependency metadata,
+then explicit transport-option admission. No cloud authority or admission inferred.

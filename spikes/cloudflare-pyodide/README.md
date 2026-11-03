@@ -6,6 +6,9 @@ SDK proofs kept separately. This is experimental YELLOW, not a production
 executor. Public/untrusted admission stays disabled. Start with
 [the acceptance ledger](ACCEPTANCE.md), then these recent increments:
 
+* [Upstream SDK #1217 drift and TLS boundary](backend/SDK1217-QUALIFICATION.md):
+  exact pure-wheel import/constructor probe passes; real operations with that
+  updated SDK remain pending. Earlier execution receipts retain their own pins.
 * [Lossless JSON and measured parent overhead](backend/JSON-TRANSPORT-PERFORMANCE.md)
 * [Output-frame and child-body budgets](backend/BODY-BUDGET.md)
 * [Local memory boundary](backend/MEMORY-PRESSURE.md)

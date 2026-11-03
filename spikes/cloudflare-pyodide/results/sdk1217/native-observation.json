@@ -1,0 +1,14 @@
+{
+    "evidence_kind":  "transcribed_tool_results",
+    "native_python":  "cached dependency image",
+    "certifi_version":  "2026.04.22",
+    "ca_bundle_sha256":  "16be3f6feb15408195dcfe3aa1a75ef9db72f646b96ebbefdc68f56255f799f8",
+    "certificate_store":  {
+                              "x509":  120,
+                              "crl":  0,
+                              "x509_ca":  120
+                          },
+    "wheel_sha256":  "3cb2210c8f88ba2318d29b0388d1023c8492ff72ecdde4ebdaddbb13a31b1c4a",
+    "wheel_bytes":  135707,
+    "publisher_metadata":  "https://pypi.org/pypi/certifi/2026.4.22/json"
+}

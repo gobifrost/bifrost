@@ -1,0 +1,21 @@
+{
+    "commit":  "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
+    "sha256":  {
+                   "bifrost/client.py":  "e96088f85da9a7e99011a701f36db16c001b4f37ee7789433f7058e395b5bc41",
+                   "bifrost/_tls.py":  "fcf413849fa39788227bc12f5eadc488ab34e27333e90911bff7b6c3c4fbb91b",
+                   "bifrost/_workspace_lock.py":  "9320d997c33c59cc558a7679d1f3e845390777d6d20c72ab4624e43f0beb5667",
+                   "certifi/__init__.py":  "8812585adc5118731a3b54bbde9598a459fdeb6590e257687f61a47cc4911093",
+                   "certifi/__main__.py":  "c410688fdd394d45812d118034e71fee88ba7beddd30fe1c1281bd3b232cd758",
+                   "certifi/cacert.pem":  "16be3f6feb15408195dcfe3aa1a75ef9db72f646b96ebbefdc68f56255f799f8",
+                   "certifi/core.py":  "5c55f2727746e697f7edac9e17c377d8752e0da7ecca191531b3b80403d61dad"
+               },
+    "dependency":  {
+                       "name":  "certifi",
+                       "version":  "2026.4.22",
+                       "wheel_sha256":  "3cb2210c8f88ba2318d29b0388d1023c8492ff72ecdde4ebdaddbb13a31b1c4a",
+                       "abi":  "py3-none-any",
+                       "patches":  [
+
+                                   ]
+                   }
+}
