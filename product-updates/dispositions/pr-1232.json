@@ -1,0 +1,14 @@
+{
+  "key": "pr:1232",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Release metadata refresh for already reviewed landed sources; no new product behavior or announcement prose.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1232",
+      "https://github.com/gobifrost/bifrost/pull/1222",
+      "Retained all prior sources and reviewed contributor credits, verified the four added PRs from GitHub metadata, validated the frozen range, and generated an image bundle containing the approved pr:1222 Other fix."
+    ]
+  }
+}
