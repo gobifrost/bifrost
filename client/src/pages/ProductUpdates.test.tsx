@@ -53,10 +53,10 @@ describe("ProductUpdates", () => {
 		await waitFor(() =>
 			expect(source.acknowledge).toHaveBeenCalledWith(["entry-1"]),
 		);
-		expect(screen.getByRole("link", { name: "Done" })).toHaveAttribute(
-			"href",
-			"/",
-		);
+		expect(
+			screen.queryByRole("link", { name: "Done" }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
 	it("keeps the feed visible and reports a receipt persistence failure", async () => {

@@ -6,6 +6,10 @@ const authorizationState = vi.hoisted(() => ({
 	settingsReadWrite: false,
 	repositoryReadWrite: false,
 }));
+const profileState = vi.hoisted(() => ({
+	has_avatar: false,
+	dataUpdatedAt: 0,
+}));
 const mockCanAt = vi.hoisted(() => vi.fn());
 const mockNavigate = vi.fn();
 const mockLogout = vi.fn();
@@ -50,9 +54,9 @@ vi.mock("@/hooks/useProfile", () => ({
 		data: {
 			email: "admin@example.com",
 			name: "Admin User",
-			has_avatar: false,
+			has_avatar: profileState.has_avatar,
 		},
-		dataUpdatedAt: 0,
+		dataUpdatedAt: profileState.dataUpdatedAt,
 	}),
 }));
 
@@ -88,6 +92,9 @@ import { Header } from "./Header";
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.unstubAllGlobals();
+	profileState.has_avatar = false;
+	profileState.dataUpdatedAt = 0;
 	authorizationState.settingsRead = true;
 	authorizationState.settingsReadWrite = false;
 	authorizationState.repositoryReadWrite = false;
@@ -150,6 +157,26 @@ describe("Header", () => {
 		authorizationState.repositoryReadWrite = true;
 		view.rerender(<Header />);
 		expect(screen.getByRole("button", { name: /shell/i })).toBeVisible();
+	});
+
+	it("shows the stored profile photo on the account button", () => {
+		class LoadedImage {
+			complete = true;
+			naturalWidth = 4;
+			addEventListener() {}
+			removeEventListener() {}
+			set src(_value: string) {}
+		}
+		vi.stubGlobal("Image", LoadedImage);
+		profileState.has_avatar = true;
+		profileState.dataUpdatedAt = 1_700_000_000_000;
+
+		const { container } = renderWithProviders(<Header />);
+
+		expect(container.querySelector("img")).toHaveAttribute(
+			"src",
+			"/api/profile/avatar?t=1700000000000",
+		);
 	});
 
 	it("retains secondary header content outside the mobile breakpoint", () => {

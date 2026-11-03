@@ -64,22 +64,25 @@ def force_no_refresh():
 
 
 class _FixedLoopClient(BifrostClient):
-    """Test subclass: always return our pre-built transport-backed _http client.
+    """Test subclass that owns its prepared mock async client."""
 
-    The default ``_get_async_client`` rebuilds the client when it detects an
-    event-loop change, which would discard our mock transport.
-    """
+    _test_http: httpx.AsyncClient | None = None
 
     def _get_async_client(self) -> httpx.AsyncClient:  # type: ignore[override]
-        assert self._http is not None
-        return self._http
+        assert self._test_http is not None
+        return self._test_http
+
+    async def close(self) -> None:
+        if self._test_http is not None:
+            await self._test_http.aclose()
+        await super().close()
 
 
 def _make_fixed_client(
     handler: Callable[[httpx.Request], httpx.Response],
 ) -> BifrostClient:
     client = _FixedLoopClient("http://test.local", "test-token")
-    client._http = httpx.AsyncClient(
+    client._test_http = httpx.AsyncClient(
         base_url=client.api_url,
         headers={"Authorization": f"Bearer {client._access_token}"},
         transport=httpx.MockTransport(handler),

@@ -107,7 +107,8 @@ class TestClientInjection:
         with pytest.raises(RuntimeError, match="Not logged in"):
             self.get_client()
 
-    def test_bifrost_client_initialization(self):
+    @pytest.mark.asyncio
+    async def test_bifrost_client_initialization(self):
         """Test BifrostClient constructor properly sets up HTTP clients."""
         client = self.BifrostClient(
             api_url="http://example.com:8000/",
@@ -131,8 +132,7 @@ class TestClientInjection:
             assert http is not None
             assert http.headers["Authorization"] == "Bearer token_abc123"
         finally:
-            # Clean up async client (don't use asyncio.run to avoid nested event loop)
-            pass
+            await client.close()
 
     @pytest.mark.asyncio
     async def test_http_methods_exist(self):

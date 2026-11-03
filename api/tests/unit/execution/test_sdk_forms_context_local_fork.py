@@ -191,7 +191,7 @@ class TestForkedFormsContextTransport:
             # Async fetch rides the local socket too.
             "_async_client = BifrostClient(_client.api_url, _client._access_token)",
             "_ctx_async = await _async_client._fetch_context()",
-            "_used_async_socket = _async_client._engine_http is not None",
+            "_used_async_socket = _async_client._clients_for_loop().engine_http is not None",
             "import os, sys",
             "result = {",
             "    'used_socket': _used_socket,",

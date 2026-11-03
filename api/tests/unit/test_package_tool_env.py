@@ -63,6 +63,7 @@ def _credential_names() -> list[str]:
     names += [
         "BIFROST_ACCESS_TOKEN",
         "BIFROST_REFRESH_TOKEN",
+        "BIFROST_WORKER_CONTROL_HEADERS",
         "BIFROST_VERSION",
         "DATABASE_URL",
         "POSTGRES_PASSWORD",

@@ -396,4 +396,158 @@ describe("useInfiniteTable", () => {
     // Snapshot did fire (loadMore was called) — but the subsequent subscribe
     // step never ran because compileFilterToExpr threw before subscribe.
   });
+
+  describe("live events keep the loaded rows in server order", () => {
+    function page(docs: Array<{ id: string; name?: string }>, total: number) {
+      return new Response(
+        JSON.stringify({
+          documents: docs.map(({ id, ...data }) => ({ id, data })),
+          table_id: "tbl-uuid",
+          total,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function emit(evt: Record<string, unknown>) {
+      act(() => {
+        lastOnEvent?.({ type: "document_change", table_id: "tbl-uuid", ...evt });
+      });
+    }
+
+    function insert(row: Record<string, unknown>) {
+      emit({ action: "insert", row: { table_id: "tbl-uuid", ...row } });
+    }
+
+    async function mount(
+      fetchMock: ReturnType<typeof vi.fn>,
+      query: Parameters<typeof useInfiniteTable>[1],
+    ) {
+      vi.stubGlobal("fetch", fetchMock);
+      const hook = renderHook(() => useInfiniteTable("t1", query));
+      await waitFor(() => expect(hook.result.current.loading).toBe(false));
+      await waitFor(() => expect(lastOnEvent).not.toBeNull());
+      return hook;
+    }
+
+    const ids = (rows: Array<{ id: string }>) => rows.map((r) => r.id);
+    const offsetOf = (fetchMock: ReturnType<typeof vi.fn>, call: number) =>
+      JSON.parse(fetchMock.mock.calls[call][1].body).offset;
+
+    it("places an insert at its sorted position and shifts the next page's offset", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(page([{ id: "a", name: "Alpha" }, { id: "c", name: "Charlie" }], 4))
+        .mockResolvedValueOnce(page([{ id: "d", name: "Delta" }], 5));
+      const { result } = await mount(fetchMock, { order_by: "name", pageSize: 2 });
+
+      insert({ id: "b", name: "Bravo" });
+      expect(ids(result.current.rows)).toEqual(["a", "b", "c"]);
+
+      await act(async () => {
+        await result.current.loadMore();
+      });
+      expect(offsetOf(fetchMock, 1)).toBe(3);
+      expect(ids(result.current.rows)).toEqual(["a", "b", "c", "d"]);
+    });
+
+    it("leaves an insert sorting past the loaded rows for loadMore when more pages remain", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(page([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }], 4))
+        .mockResolvedValueOnce(page([{ id: "c", name: "Charlie" }, { id: "z", name: "Zulu" }], 5));
+      const { result } = await mount(fetchMock, { order_by: "name", pageSize: 2 });
+
+      insert({ id: "z", name: "Zulu" });
+      expect(ids(result.current.rows)).toEqual(["a", "b"]);
+
+      await act(async () => {
+        await result.current.loadMore();
+      });
+      expect(offsetOf(fetchMock, 1)).toBe(2);
+      expect(ids(result.current.rows)).toEqual(["a", "b", "c", "z"]);
+    });
+
+    it("appends an insert sorting past the loaded rows once everything is loaded", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(page([{ id: "a", name: "Alpha" }], 1));
+      const { result } = await mount(fetchMock, { order_by: "name", pageSize: 2 });
+      expect(result.current.hasMore).toBe(false);
+
+      insert({ id: "z", name: "Zulu" });
+      expect(ids(result.current.rows)).toEqual(["a", "z"]);
+    });
+
+    it("without order_by, does not append a new row while more pages remain", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], 3))
+        .mockResolvedValueOnce(page([{ id: "c" }, { id: "new" }], 4));
+      const { result } = await mount(fetchMock, { pageSize: 2 });
+
+      insert({ id: "new" });
+      expect(ids(result.current.rows)).toEqual(["a", "b"]);
+
+      await act(async () => {
+        await result.current.loadMore();
+      });
+      expect(ids(result.current.rows)).toEqual(["a", "b", "c", "new"]);
+    });
+
+    it("without order_by, desc puts a new row first", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(page([{ id: "b" }, { id: "a" }], 4));
+      const { result } = await mount(fetchMock, { order_dir: "desc", pageSize: 2 });
+
+      insert({ id: "c" });
+      expect(ids(result.current.rows)).toEqual(["c", "b", "a"]);
+    });
+
+    it("a delete of a loaded row shifts the next page's offset back", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(page([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }], 4))
+        .mockResolvedValueOnce(page([{ id: "c", name: "Charlie" }, { id: "d", name: "Delta" }], 3));
+      const { result } = await mount(fetchMock, { order_by: "name", pageSize: 2 });
+
+      emit({ action: "delete", row_id: "a" });
+      expect(ids(result.current.rows)).toEqual(["b"]);
+
+      await act(async () => {
+        await result.current.loadMore();
+      });
+      expect(offsetOf(fetchMock, 1)).toBe(1);
+      expect(ids(result.current.rows)).toEqual(["b", "c", "d"]);
+    });
+
+    it("loadMore never shows a row twice", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(page([{ id: "a" }, { id: "b" }], 4))
+        .mockResolvedValueOnce(page([{ id: "b" }, { id: "c" }], 4));
+      const { result } = await mount(fetchMock, { pageSize: 2 });
+
+      await act(async () => {
+        await result.current.loadMore();
+      });
+      expect(ids(result.current.rows)).toEqual(["a", "b", "c"]);
+    });
+
+    it("moves an updated row when its sort key changes, and applies a duplicate insert the same way", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          page([{ id: "a", name: "Alpha" }, { id: "b", name: "Bravo" }, { id: "c", name: "Charlie" }], 3),
+        );
+      const { result } = await mount(fetchMock, { order_by: "name", pageSize: 5 });
+
+      emit({ action: "update", row: { table_id: "tbl-uuid", id: "a", name: "Delta" } });
+      expect(ids(result.current.rows)).toEqual(["b", "c", "a"]);
+
+      insert({ id: "b", name: "Echo" });
+      expect(ids(result.current.rows)).toEqual(["c", "a", "b"]);
+    });
+  });
 });

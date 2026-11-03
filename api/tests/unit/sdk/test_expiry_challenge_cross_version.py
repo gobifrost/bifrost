@@ -109,17 +109,19 @@ async def test_a_pr1b_client_refreshes_and_replays_on_the_recorded_pr1a_response
 
     monkeypatch.setattr(client_mod, "refresh_connection_access_token", redeem)
     client = client_mod.BifrostClient("http://test", "expired-access")
-    client._http = RefreshingAsyncClient(
+    async_http = RefreshingAsyncClient(
         refresh=client.refresh_access_token,
         base_url="http://test",
         headers={"Authorization": "Bearer expired-access"},
         transport=httpx.MockTransport(pr1a_api),
     )
-    monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
+    clients = client._clients_for_loop()
+    clients.http = async_http
+    clients.clients.append(async_http)
 
     response = await client.post("/api/sdk/config/set", json={"key": "k"})
 
     assert response.status_code == 200
     assert redeemed == ["expired-access"]
     assert seen == ["Bearer expired-access", "Bearer refreshed-access"]
-    client._sync_http.close()
+    await client.close()

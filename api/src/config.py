@@ -310,6 +310,11 @@ class Settings(BaseSettings):
     # ==========================================================================
     # S3 Storage (for horizontal scaling)
     # ==========================================================================
+    s3_multipart_copy_mode: Literal["server", "stream"] = Field(
+        default="server",
+        description="Large-copy strategy: server-side part copy, or conditional ranged reads and uploads for providers without conditional UploadPartCopy"
+    )
+
     s3_bucket: str | None = Field(
         default=None,
         description="S3 bucket name for workspace storage (required when S3 is configured)"

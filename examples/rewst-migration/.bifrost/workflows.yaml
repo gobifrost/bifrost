@@ -1,0 +1,65 @@
+workflows:
+  5119a7fb-48a4-4c2f-9ece-5fc17161f86b:
+    id: 5119a7fb-48a4-4c2f-9ece-5fc17161f86b
+    name: Rewst Migration Overview
+    path: functions/migration.py
+    function_name: migration_get_overview
+    description: Read the private Rewst migration pilot overview
+    access_level: role_based
+    role_names: []
+  cf620b1f-adb5-4fb0-8b2f-1af806c91af1:
+    id: cf620b1f-adb5-4fb0-8b2f-1af806c91af1
+    name: Create Rewst Migration
+    path: functions/migration.py
+    function_name: migration_create
+    description: Create a private read-only Rewst migration record
+    access_level: role_based
+    role_names: []
+  f5b6c500-7a16-409b-92c3-fbaf356da98b:
+    id: f5b6c500-7a16-409b-92c3-fbaf356da98b
+    name: Validate Rewst Migration Connection
+    path: functions/migration.py
+    function_name: migration_validate_connection
+    description: Validate an observed Rewst read-only connection
+    access_level: role_based
+    role_names: []
+  7a9370fe-b34e-4484-88e3-cd1b74d4b5e0:
+    id: 7a9370fe-b34e-4484-88e3-cd1b74d4b5e0
+    name: Export Rewst Migration Environment
+    path: functions/migration.py
+    function_name: migration_export_environment
+    description: Capture bounded read-only Rewst migration evidence
+    access_level: role_based
+    role_names: []
+  20852242-5b09-4e59-9ce4-7d42ef6a5919:
+    id: 20852242-5b09-4e59-9ce4-7d42ef6a5919
+    name: Get Rewst Migration Context
+    path: functions/migration.py
+    function_name: migration_get_context
+    description: Read migration planning context
+    access_level: role_based
+    role_names: []
+  19705e23-4b15-4cc6-9bb7-66458ce2a952:
+    id: 19705e23-4b15-4cc6-9bb7-66458ce2a952
+    name: Save Rewst Migration Plan
+    path: functions/migration.py
+    function_name: migration_save_plan
+    description: Save an optimistic-concurrency migration plan revision
+    access_level: role_based
+    role_names: []
+  3a7e7f0b-631d-4855-b15f-42d58809f97e:
+    id: 3a7e7f0b-631d-4855-b15f-42d58809f97e
+    name: Update Rewst Migration Item
+    path: functions/migration.py
+    function_name: migration_update_item
+    description: Update migration item status and evidence
+    access_level: role_based
+    role_names: []
+  abcf55f8-f6eb-49fc-98f0-c74512e2168a:
+    id: abcf55f8-f6eb-49fc-98f0-c74512e2168a
+    name: Read Rewst Migration Artifact
+    path: functions/migration.py
+    function_name: migration_read_artifact
+    description: Read a private migration artifact
+    access_level: role_based
+    role_names: []
