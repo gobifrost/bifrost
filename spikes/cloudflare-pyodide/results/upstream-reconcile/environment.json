@@ -1,0 +1,8 @@
+{
+    "bundle_sha256":  "eede0e154a188f97b006d4c634a5d7d7f5ad796860d8466c1d80ebb5415fd524",
+    "source":  "1d33150eb376b71f8a81b427920eda1b0447f829",
+    "guest":  "pve-t340 CT128",
+    "supervisor_sha256":  "9271186a553589abf34a6d9786230ff4f1ab34247eedbb7ed0170b2472784764",
+    "image_tag":  "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "image_id":  "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b"
+}

@@ -51,6 +51,7 @@ green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 | Five-workload local Linux/workerd reference | WORKERD-BENCHMARK.md; both raw benchmark receipts | Byte-identical helper passes 15 samples per backend; Linux uses real signed control/fork. Operation wall times only, three samples each; no general speed claim, production cold/warm/CPU/cost or matching memory comparison. |
 | Python↔JS marshaling overhead | backend/INTEROP.md and raw interop-local.json | Bounded local FFI/JSON microbenchmark now measured; null conversion mismatch explicit. Full SDK/cloud contribution remains unmeasured. |
 | Linux compatibility | Focused engine/consumer tests and ordinary CI | Default Linux seams retained; every new candidate still requires its normal CI/review. |
+| Current upstream reconciliation | backend/UPSTREAM-RECONCILIATION.md; results/upstream-reconcile | Main025f6c019 merged;129 native protocol/claim/capacity/result/log contracts pass. Packaged tracked Python:73 identical modules, six existing namespace adapters, no unexpected drift. External capacity is not an isolate execution API; live dev API remains2037ac0. |
 | Reviewable upstream contribution | Public personal fork; draft PR #1161 | Published experimental source. Maintainer research review at f8cc75e does not accept later heads or the backend. |
 
 ## Current provider API review

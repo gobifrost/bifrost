@@ -1,5 +1,12 @@
 # Authenticated dispatch: remaining physical-handle boundary
 
+Current-source reconciliation: upstream main025f6c019 is now merged and129
+focused native contracts pass; see [UPSTREAM-RECONCILIATION.md](UPSTREAM-RECONCILIATION.md).
+Upstream now has an external worker-capacity API and signed capacity resource
+identity, while per-execution ACKs still require Linux PIDs. That capacity
+identity does not implement the proposed opaque isolate execution contract.
+The earlier characterization below retains its original tested source pin.
+
 This is an upstream extension proposal and tested characterization of the
 current Linux contract, **not an implemented provider API**. Actual workerd
 engine/SDK success is documented separately in WORKERD-SDK-QUALIFICATION.md.

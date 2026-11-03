@@ -512,3 +512,21 @@ deployment/invocation. Canonical Product Updates draft fix disposition validates
 in the cached guest image. Next: pin modified engine into a separately qualified
 runtime closure and prove actual credentialed log persistence; old failed
 canonical stdout fixture and deployed runtime receipts retain original pins.
+
+## Upstream capacity and execution reconciliation, 2026-11-03
+
+Hypothesis: accepted upstream external-capacity changes may alter the physical
+execution boundary. Fetched main025f6c019 and merged it conflict-free into1d33150eb.
+Inspection: ExternalCapacityClient provisions worker resources under canonical
+ownership; signed external resource UID does not replace Linux per-run PID ACKs.
+No isolate profile or workflow handler enabled. Exact merged-source guest
+./test.sh selection covers journal, remote pool/protocol/credential negotiation,
+external capacity/policy, parent result identity and print/redaction:129 pass,
+no failures/errors/skips; supervisor60.465s. Initial harness preflight duplicated
+an existing mem_limit and was rejected before new containers; bounded correction
+replaces keys and validates Compose first. Receipt/JUnit/raw failed preflight
+are retained under results/upstream-reconcile; task-owned project stopped.
+Closure source audit:79 tracked modules compared,73 identical, six explicit
+server-namespace adapters, no unexpected drift. Live dev API stays2037ac0;
+source/native checks are not a redeployment. Next is the still-missing negotiated
+physical runtime/admission contract and actual provider physical-stop proof.
