@@ -18,6 +18,6 @@ for (const name of ['attempt_journal.py', 'private_http_pool.py', 'workflow_requ
 }
 const test = await readFile(new URL('../../../api/tests/unit/dev/test_pyodide_attempt_journal.py', import.meta.url));
 assert.equal(createHash('sha256').update(test).digest('hex'), report.postgres_test_sha256);
-assert.match(await read('phase-0.log'), /Ran 48 tests[\s\S]*\bOK\b/);
-assert.match(await read('phase-1.log'), /0 errors, 0 warnings/);
+assert.match(await read('unit.txt'), /Ran 48 tests[\s\S]*\bOK\b/);
+assert.match(await read('quality.txt'), /0 errors, 0 warnings/);
 console.log('Retained companion terminal contract: 48 native unit cases, 38 PostgreSQL cases and restored/clean guest verified. Actual HTTP/engine retention and cloud acceptance remain unqualified.');
