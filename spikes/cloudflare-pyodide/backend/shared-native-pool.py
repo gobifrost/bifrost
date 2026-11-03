@@ -8,6 +8,8 @@ import runpy
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import uuid4
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 from sqlalchemy import delete, select
@@ -15,9 +17,13 @@ from sqlalchemy import delete, select
 from private_http_pool import PrivateHttpWorkflowPool
 from task_cleanup import cancel_and_join
 from workspace_prepare import prepare_workspace, WorkspacePreparationError
+from retained_http_fault import RetainedHttpFault
+import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False):
+async def main(*, source_change=False, late_result=False, retained_http=False):
+    if sum((source_change, late_result, retained_http)) > 1:
+        raise ValueError('One fixture mode required')
     database = urlsplit(os.environ.get('BIFROST_DATABASE_URL', ''))
     if (os.environ.get('BIFROST_ENVIRONMENT') != 'testing'
         or os.environ.get('TEST_API_URL') != 'http://api:8000'
@@ -48,6 +54,12 @@ async def main(*, source_change=False, late_result=False):
     await init_db()
     storage, sources, slots, secrets = RepoStorage(), {}, {}, []
     heartbeat, ref = None, None
+    fault, patcher = None, None
+
+    def retained_fault():
+        if fault is None:
+            raise RuntimeError('Retained HTTP fixture not initialized')
+        return fault
     report = {'shared_native_pool_probe': True, 'cloud_invocations': 0,
               'physical_termination_verified': False, 'launches': {}, 'attempts': {}}
     suffix = uuid4().hex
@@ -256,6 +268,11 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
 
             consumer = WorkflowExecutionConsumer(pool=Parent())
             consumer.owner_worker_id = worker_id
+            if retained_http:
+                subject = next(run for run, slot in slots.items() if slot['label'] == 'fails-first')
+                fault = RetainedHttpFault(subject, lambda: httpx.AsyncHTTPTransport(retries=0, trust_env=False))
+                patcher = patch.object(invocation_module, 'httpx', SimpleNamespace(URL=httpx.URL, AsyncClient=fault.client))
+                patcher.start()
 
             try:
                 # Existing credential-free initialization avoids the separately
@@ -279,7 +296,8 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                 if len(native.processes) != 2 or native._build_heartbeat()['busy_count'] != 2:
                     raise RuntimeError('One native pool did not retain both invocations')
                 report['native_busy_counts'] = [native._build_heartbeat()['busy_count']]
-                if not source_change and any(mux.collection(run).done() for run in slots):
+                if not source_change and any(mux.collection(run).done() for run in slots
+                                            if not retained_http or slots[run]['label'] != 'fails-first'):
                     raise RuntimeError('Fixture completed before both dispatch ACKs')
                 failed = next(value for value in slots.values() if value['label'] == 'fails-first')
                 peer = next(value for value in slots.values() if value['label'] == 'succeeds-second')
@@ -294,10 +312,26 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                                 if read.status_code != 404:
                                     raise RuntimeError('Independent shared SDK effect read failed')
                                 await asyncio.sleep(0.25)
-                    if not source_change and any(mux.collection(run).done() for run in slots):
+                    if not source_change and any(mux.collection(run).done() for run in slots
+                                                if not retained_http or slots[run]['label'] != 'fails-first'):
                         raise RuntimeError('Both SDK writes must be held before release')
                     report['both_real_sdk_effects_held_concurrently'] = not source_change
-                    if len({slot['invocation'].runtime_handle for slot in slots.values()}) != 2:
+                    handles = {slot['invocation'].runtime_handle for slot in slots.values()}
+                    if retained_http:
+                        if fault is None or fault.reader is None or fault.task is None or fault.task.done():
+                            raise RuntimeError('Actual retained invocation must still be running')
+                        first = adapter.attempt(str(failed['execution'].id))
+                        for receipt in (first.receipt, first.delivery):
+                            try:
+                                await receipt
+                            except httpx.ReadError:
+                                pass
+                            else:
+                                raise RuntimeError('Original pre-ACK receipt did not fail')
+                        if first.invocation.runtime_handle is not None or first.accepted_monotonic is not None:
+                            raise RuntimeError('Original collector received a fabricated ACK')
+                        handles = {fault.reader.runtime_handle, peer['invocation'].runtime_handle}
+                    if None in handles or len(handles) != 2:
                         raise RuntimeError('Independent attempts shared a runtime handle')
 
                     async def release(slot):
@@ -380,7 +414,8 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     else:
                         if not source_change:
                             await release(failed)
-                        result = await failed['receipt']
+                        retained_evidence = await retained_fault().wait() if retained_http else None
+                        result = retained_evidence['result'] if retained_http else await failed['receipt']
                         if source_change:
                             failed_evidence = adapter.attempt(str(failed['execution'].id)).evidence
                             absent = await api.get(f"/api/tables/{failed['table']}/documents/proof",
@@ -398,7 +433,10 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             raise RuntimeError('Expected first workflow error missing')
                         failure_consume_gate.set()
                         try:
-                            await adapter.attempt(str(failed['execution'].id)).delivery
+                            if retained_http:
+                                await adapter.reconcile_retained(str(failed['execution'].id), retained_evidence)
+                            else:
+                                await adapter.attempt(str(failed['execution'].id)).delivery
                         except ConnectionError as exc:
                             if str(exc) != 'Injected shared failure ACK loss':
                                 raise
@@ -437,12 +475,24 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         ref.lease = await connect(2)
                         await beat()
                         try:
-                            await adapter.reconcile(str(failed['execution'].id), lease=old)
+                            if retained_http:
+                                await adapter.reconcile_retained(str(failed['execution'].id), retained_evidence, lease=old)
+                            else:
+                                await adapter.reconcile(str(failed['execution'].id), lease=old)
                         except CredentialRouteChanged:
                             report['stale_terminal_owner_rejected'] = True
                         else:
                             raise RuntimeError('Stale terminal owner accepted')
-                        acknowledged = await adapter.reconcile(str(failed['execution'].id))
+                        acknowledged = (await adapter.reconcile_retained(str(failed['execution'].id), retained_evidence)
+                            if retained_http else await adapter.reconcile(str(failed['execution'].id)))
+                        if retained_http:
+                            retained = retained_fault()
+                            task = retained.task
+                            if task is None:
+                                raise RuntimeError('Retained collection missing')
+                            report.update(retained_http_preack_loss_verified=True, parent_accepted_observed=False,
+                                original_collection_error_type='ReadError', retained_posts=retained.posts,
+                                retained_collector_eof_complete=task.done() and task.exception() is None)
                         if not acknowledged or native._build_heartbeat()['busy_count'] != 1 or peer['route'] not in native.processes:
                             raise RuntimeError('Failure reconciliation did not preserve peer obligation')
                         report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
@@ -511,7 +561,7 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             raise RuntimeError('Completed shared credential remained usable')
                         report['attempts'][run] = {'label': slot['label'], 'canonical_status': status.value,
                             'canonical_result': persisted_result, 'canonical_error': error, 'persisted_logs': logs,
-                            'runtime_handle': slot['invocation'].runtime_handle, 'route': slot['route'],
+                            'runtime_handle': slot['evidence']['runtime_handle'], 'route': slot['route'],
                             'accepted_monotonic': slot['accepted_monotonic'], 'terminal_monotonic': slot['terminal_monotonic'],
                             'evidence': slot['evidence'], 'access_after_terminal_status': revoked.status_code,
                             'preparation': slot['preparation']}
@@ -541,6 +591,10 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
             raise RuntimeError('Credential exposure: shared evidence withheld')
         print(encoded)
     finally:
+        if patcher is not None:
+            patcher.stop()
+        if fault is not None:
+            await fault.close()
         if heartbeat is not None:
             await cancel_and_join(heartbeat)
         if ref is not None:
@@ -557,6 +611,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--source-change', action='store_true')
     parser.add_argument('--late-result', action='store_true')
+    parser.add_argument('--retained-http', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main(source_change=args.source_change, late_result=args.late_result))
+    asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http))

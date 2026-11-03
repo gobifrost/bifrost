@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const base = new URL('../results/late-adapter/', import.meta.url);
 const read = name => readFile(new URL(name, base), 'utf8');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -20,7 +21,8 @@ assert.equal(report.provider_state_before_cleanup.Running, true);
 assert.equal(report.provider_state_before_cleanup.OOMKilled, false);
 assert.deepEqual(report.running_after_cleanup, []);
 for (const name of ['shared-native-pool.py', 'ct128-canonical-failure.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  const tested = execFileSync('git', ['show', '50093038cbc4f9ddde61264c453393464a717485:spikes/cloudflare-pyodide/backend/' + name]);
+  assert.equal(hash(tested), report.packet_sha256[name], name);
 }
 const prior = JSON.parse(await readFile(new URL('../results/owned-deadline/auto-delivery-v2/receipt.json', import.meta.url)));
 for (const name of ['private_http_pool.py', 'test_private_http_pool.py', 'attempt_deadline.py',

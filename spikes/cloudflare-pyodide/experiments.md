@@ -985,3 +985,24 @@ This is a companion proposal, not an upstream/public API or authenticated HTTP
 retention implementation. Next: actual provider-stream retention with pre-ACK
 loss and real engine/SDK effects. Deadline callback recovery, oversized context
 preflight, startup and deployed abnormal enforcement remain acceptance gaps.
+
+### Actual engine/SDK stream retained across original collector ACK loss
+Hypothesis: real provider terminal evidence can resolve pre-ACK collector failure
+without another execution POST, even when canonical commit also loses its ACK.
+Change: local RetainedHttpFault owns the real HTTPX response through validated
+InvocationStream EOF, injecting ReadError only to the original collector; new
+--retained-http fixture mode adopts that evidence through the companion contract.
+Command: results/retained-http/pyodide-retained-http-v1.sh; timeout -k 5 430 python3
+inbox/retained-http-v1/ct128-canonical-failure.py --retained-http --revision 1.
+Observed: 49 unit cases (2.393s), Ruff/Pyright pass. Actual two-tenant upstream
+engine/SDK run passes: both writes independently observed; original ACK/acceptance
+timestamp absent and ReadError retained; real EOF evidence adopted with postcommit
+ACK loss/reconnect/stale-owner rejection; unchanged canonical state/log IDs; one
+POST for target, one launch each, busy2,2,1,0, terminal credentials401 and cleanup.
+Supervisor73.608s includes setup/prewarm/barriers/cleanup, not pure startup/CPU.
+Artifact: backend/RETAINED-HTTP.md, source-bound verifier, results/retained-http.
+Fault is at collector read boundary while provider connection survives in trusted
+retainer, not actual TCP disconnection or retainer process loss. No SDK responses
+mocked in real run, new cloud calls, package/credential/grant or runtime changes.
+Next: uncertain deadline callback recovery and oversized input preflight before
+bookkeeping; startup, deployed retention and abnormal CPU enforcement remain gaps.
