@@ -58,8 +58,9 @@ cross-tenant403, credential401 after terminal consumption, parent secret absent,
 credential redaction, pinned workspace code hash and null isolate metrics.
 Lost-ACK replay preserves log IDs. No native fork/PID is used for the workflow.
 
-The direct HTTP transport returns its ACK **after workflow completion**. It does
-not yet provide prompt dispatch acceptance, active inventory from a restarted
+The original JSON transport returns its ACK **after workflow completion**. The
+[streamed follow-on](STREAMED-INVOCATION.md) now qualifies prompt acceptance and
+awaited terminal collection locally. Neither provides active inventory from a restarted
 provider, or production cancellation/accounting guarantees. The existing handler
 gate is not bypassed for public work: this is the explicitly scoped fixed local
 fixture under its real canonical claim; no business workflow is admitted to the

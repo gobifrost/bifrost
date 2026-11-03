@@ -46,6 +46,15 @@ made for this assessment.
 
 ## Evidence and next bounded qualification
 
+The [streamed invocation qualification](STREAMED-INVOCATION.md) now receives an
+opaque accepted frame before workflow collection completes, keeps the response
+open through required work, consumes its terminal frame and EOF, and reconciles
+the result through the real upstream consumer. It uses no waitUntil. Stream
+cancellation closes future fixture capability use; a unit negative control
+explicitly observes already-started work continuing. This is normal completion
+and transport evidence, not physical-stop acceptance. No returned RpcTarget
+object is introduced by this HTTP path.
+
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle
 retention change does not isolate its two causes. The aborted I/O case reported

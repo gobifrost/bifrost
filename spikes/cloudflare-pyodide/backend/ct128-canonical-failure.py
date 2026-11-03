@@ -21,10 +21,11 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, revision=1):
     global PACKET, RUN, NAME
+    physical_pool = physical_pool or stream_pool
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -79,7 +80,7 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
          '--volume', f'{CHECKOUT}/spikes/cloudflare-pyodide:/spike:ro',
          '--volume', f'{PACKET}:/qualification:ro', 'test-runner',
          'python', '/qualification/provider-response-loss.py' if deadline_response_loss or deadline_retained else '/qualification/canonical-local.py',
-         '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
+         '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
          else '--deadline-response-loss' if deadline_response_loss else '--failure-probe']]
     report = {'api_source': SOURCE, 'runtime_engine_source': 'f49d4ba99cebd24aa497f1244833b940e640885f',
         'project': project, 'cloud_invocations': 0, 'physical_termination_verified': False,
@@ -124,6 +125,10 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
                 or not probe.get('native_opaque_route_released_after_terminal_ack') or not probe.get('no_pid_fabricated')):
                 raise RuntimeError('Native opaque pool did not preserve canonical terminal semantics')
             report['physical_pool_result'] = probe
+            if stream_pool and (not probe.get('dispatch_ack_before_workflow_completion')
+                or probe.get('dispatch_ack_after_workflow_completion')
+                or probe['dispatch_accepted_monotonic'] >= probe['terminal_collected_monotonic']):
+                raise RuntimeError('Stream did not qualify early ACK and terminal collection')
         else:
             canonical = next(row for row in reversed(records) if row.get('canonical_claim_verified'))
             if (not canonical.get('stdout_capture_verified') or not canonical.get('canonical_terminal_consumption_verified')
@@ -152,7 +157,8 @@ if __name__ == '__main__':
     mode.add_argument('--deadline-response-loss', action='store_true')
     mode.add_argument('--deadline-retained', action='store_true')
     mode.add_argument('--physical-pool', action='store_true')
+    mode.add_argument('--stream-pool', action='store_true')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
     main(egress_gate=args.egress_gate, deadline_response_loss=args.deadline_response_loss,
-         deadline_retained=args.deadline_retained, physical_pool=args.physical_pool, revision=args.revision)
+         deadline_retained=args.deadline_retained, physical_pool=args.physical_pool, stream_pool=args.stream_pool, revision=args.revision)

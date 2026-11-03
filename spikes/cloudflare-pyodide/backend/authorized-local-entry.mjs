@@ -8,6 +8,7 @@ import {admitFixture} from './fixture-admission.mjs';
 import {testApiRouteAllowed} from './test-api-route.mjs';
 import {createRefreshGate} from './refresh-gate.mjs';
 import {createAttemptEgress} from './attempt-egress.mjs';
+import {invocationStream} from './invocation-stream.mjs';
 const observations=new Map();
 const refreshGates=new Map();
 const egressGates=new Map();
@@ -66,16 +67,32 @@ export default {
     egressGates.set(id,egress);
     const gate=body.fixture_mode==='refresh_interruption' ? createRefreshGate() : undefined;
     if(gate) refreshGates.set(id,gate);
+    let cleaned=false;
+    const cleanup=()=>{
+      if(cleaned) return;
+      cleaned=true;
+      egress.close();egressGates.delete(id);gate?.close();refreshGates.delete(id);observations.delete(id);
+    };
     try {
-      const response=await env.LOADER.load(runtimeCode(ctx.exports.TestApi({props:{id,manifest:body.manifest,refresh_gate:!!gate}})))
-        .getEntrypoint().fetch(new Request('https://attempt.invalid/',{
+      const entrypoint=env.LOADER.load(runtimeCode(ctx.exports.TestApi({props:{id,manifest:body.manifest,refresh_gate:!!gate}})))
+        .getEntrypoint();
+      const execute=async()=>{
+      const response=await entrypoint.fetch(new Request('https://attempt.invalid/',{
           method:'POST',body:JSON.stringify({action:body.mode==='canonical' ? 'execute_envelope' : 'execute',
             worker_id:body.worker_id,execution_id:body.execution_id,
             context:body.context,api_url:'https://test-api.invalid'}),
         }));
-      return Response.json({runtime_handle:id,result:await boundedJson(response),api_calls:calls,
-        ...(gate ? {refresh_gate_events:gate.events} : {})});
-    } finally { egress.close();egressGates.delete(id);gate?.close();refreshGates.delete(id);observations.delete(id); }
+      return {runtime_handle:id,result:await boundedJson(response),api_calls:calls,
+        ...(gate ? {refresh_gate_events:gate.events} : {})};
+      };
+      if(request.headers.get('Accept')==='application/x-ndjson') {
+        // The response owns awaited work. Stream cancellation closes future
+        // capability use; it does not certify physical Python termination.
+        return invocationStream({runtimeHandle:id,executionId:body.execution_id,execute,cleanup});
+      }
+      try { return Response.json(await execute()); }
+      finally { cleanup(); }
+    } catch(error) { cleanup();throw error; }
     });
   },
 };

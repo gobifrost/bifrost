@@ -1,5 +1,21 @@
 # Compact experiment log
 
+## Prompt opaque acceptance with awaited response lifetime, 2026-11-03
+
+Hypothesis: the real pool can bind an invocation before completion without an
+immortal waitUntil or a replacement execution authority. Added bounded two-frame
+NDJSON transport, strict native identity/order/EOF collection, and an opt-in
+fixed stream-pool probe. Command: `timeout 430 python3
+/opt/bifrost-tests/pyodide-ddf316c1/inbox/stream-pool-v1/ct128-canonical-failure.py
+--stream-pool`. Exit 0, local cf CLI/workerd engine/SDK, early ACK while collection
+pending, canonical Success/70, one launch/write, lost terminal ACK replay,
+credential 401 and cleanup pass. Supervisor 64.966 s, not startup/CPU latency.
+Three Node framing tests and four guest Python tests, Ruff/Pyright pass. A unit
+negative control explicitly observes work continuing after stream cancellation.
+Artifact: backend/STREAMED-INVOCATION.md, results/stream-pool/v1.json and focused
+checks. Next: lost-stream uncertainty after acceptance against retained ownership.
+No cloud invocation, public admission, physical-stop claim or resource change.
+
 ## Actual owned provider interruption after SDK write, 2026-11-01
 
 Hypothesis: a real provider-process loss must not fabricate a result or relaunch

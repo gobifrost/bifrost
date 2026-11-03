@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const read = async path => JSON.parse(await readFile(new URL(path, import.meta.url), 'utf8'));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const unit = await read('../results/physical-handle/v1.json');
@@ -24,7 +25,8 @@ assert.ok(live.commands.every(command => command.exit_code === 0));
 assert.deepEqual(live.running_after_cleanup, []);
 assert.equal(live.provider_state_before_cleanup.OOMKilled, false);
 for (const name of ['canonical-local.py', 'authorized-local-entry.mjs', 'ct128-canonical-failure.py', 'task_cleanup.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), live.packet_sha256[name], name);
+  // Historical evidence remains bound to its tested source, not later adapters.
+  assert.equal(hash(execFileSync('git', ['show', `8767695bd:spikes/cloudflare-pyodide/backend/${name}`])), live.packet_sha256[name], name);
 }
 assert.equal(live.packet_sha256['project/backend/authorized-local-entry.mjs'], live.packet_sha256['authorized-local-entry.mjs']);
 assert.equal(live.packet_sha256['project/backend/generated-runtime.mjs'], 'bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0');

@@ -26,7 +26,8 @@ from task_cleanup import cancel_and_join
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
                node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False,
-               worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False):
+               worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False, stream_pool_probe=False):
+    physical_pool_probe = physical_pool_probe or stream_pool_probe
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
         or os.environ.get("TEST_API_URL") != "http://api:8000"
@@ -413,6 +414,11 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     # A retained route must not serialize later mutations into
                     # a renewed execution window or different credential set.
                     dispatch_context = json.loads(json.dumps(context, default=str))
+                    accepted = asyncio.get_running_loop().create_future() if stream_pool_probe else None
+
+                    def on_accepted(handle):
+                        report['dispatch_accepted_monotonic'] = time.monotonic()
+                        accepted.set_result(handle)
 
                     async def launch():
                         self.launches += 1
@@ -466,11 +472,21 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 observer = asyncio.create_task(observe_write_for_interruption()) if provider_interruption_probe else None
                                 try:
                                     async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
-                                        response = await provider.post("http://bifrost-pyodide-ddf316c1:8799",
+                                        request_body = json.loads(json.dumps({"mode": "canonical", "worker_id": str(worker.id),
+                                            "execution_id": execution_id, "context": child_context, "manifest": manifest,
+                                            **({"fixture_mode": "refresh_interruption"} if interrupt_refresh else {})}, default=str))
+                                        if stream_pool_probe:
+                                            from invocation_stream import InvocationStream
+
+                                            reader = InvocationStream(execution_id, on_accepted)
+                                            async with provider.stream('POST', 'http://bifrost-pyodide-ddf316c1:8799',
+                                                headers={'Accept': 'application/x-ndjson'}, json=request_body) as response:
+                                                self.evidence = await reader.collect(response)
+                                            report['terminal_collected_monotonic'] = time.monotonic()
+                                        else:
+                                            response = await provider.post("http://bifrost-pyodide-ddf316c1:8799",
                                             extensions={"trace": trace_provider} if transport_waiter else {},
-                                            json=json.loads(json.dumps({"mode": "canonical", "worker_id": str(worker.id),
-                                                "execution_id": execution_id, "context": child_context, "manifest": manifest,
-                                                **({"fixture_mode": "refresh_interruption"} if interrupt_refresh else {})}, default=str)))
+                                            json=request_body)
                                         if provider_interruption_probe:
                                             response.raise_for_status()
                                 finally:
@@ -479,7 +495,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 assert response.status_code == 200, f"Provider status {response.status_code}"
                                 if isolation_label is not None:
                                     report["provider_end_ms"] = int(time.time() * 1000)
-                                self.evidence = response.json()
+                                if not stream_pool_probe:
+                                    self.evidence = response.json()
                                 encoded = json.dumps(self.evidence)
                                 if any(secret and secret in encoded for secret in secrets):
                                     raise RuntimeError("Credential exposure: provider evidence withheld")
@@ -552,6 +569,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                             connected = True
                             hostname = 'local-workerd-qualification'
                             result = None
+                            collection = None
 
                             @property
                             def lease(self):
@@ -570,6 +588,17 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     raise ConnectionError('Fixed workflow transport/session only')
                                 dispatch_context = json.loads(json.dumps(payload['context'], default=str))
                                 try:
+                                    if stream_pool_probe:
+                                        async def collect():
+                                            self.result = await launch()
+                                            return self.result
+
+                                        self.collection = asyncio.create_task(collect())
+                                        await asyncio.wait((accepted, self.collection), return_when=asyncio.FIRST_COMPLETED)
+                                        if not accepted.done():
+                                            await self.collection
+                                            raise ConnectionError('Stream completed without accepted frame')
+                                        return {'runtime_handle': accepted.result()}
                                     self.result = await launch()
                                 except Exception as exc:
                                     # The remote request may already have made
@@ -588,8 +617,14 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                                                  credential_route=credential_route)
                         self.physical_route, handle = next(iter(self.physical_pool.processes.items()))
                         self.info = handle.current_execution
+                        if stream_pool_probe:
+                            if transport.collection.done():
+                                raise RuntimeError('Early ACK did not precede workflow collection')
+                            report['dispatch_ack_before_workflow_completion'] = True
 
                         async def retained_result():
+                            if stream_pool_probe:
+                                await asyncio.shield(transport.collection)
                             if transport.result is None:
                                 raise ConnectionError('No collected physical result; reconciliation required')
                             if (handle.process.remote_pid is not None or not handle.process.runtime_handle
@@ -600,7 +635,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 raise RuntimeError('Opaque invocation vanished from load accounting')
                             report.update(physical_pool_probe=True, actual_opaque_handle=handle.process.runtime_handle,
                                 opaque_invocation_count=heartbeat['busy_count'], no_pid_fabricated=True,
-                                controller_memory_not_isolate_memory=True, dispatch_ack_after_workflow_completion=True)
+                                controller_memory_not_isolate_memory=True,
+                                dispatch_ack_after_workflow_completion=not stream_pool_probe, stream_pool_probe=stream_pool_probe)
                             return transport.result
 
                         task = await journal.dispatch(ref.lease, 'route', execution_id, retained_result)
@@ -885,8 +921,9 @@ if __name__ == "__main__":
         parser.add_argument("--worker-loss-probe", action="store_true")
         parser.add_argument("--provider-interruption-probe", action="store_true")
         parser.add_argument("--physical-pool-probe", action="store_true")
+        parser.add_argument("--stream-pool-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
+        asyncio.run(main(stream_pool_probe=args.stream_pool_probe, physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
                          worker_loss_probe=args.worker_loss_probe, benchmark_probe=args.benchmark_probe,
                          isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,
