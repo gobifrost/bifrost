@@ -999,7 +999,7 @@ class ManifestCustomClaim(EntityCodec, BaseModel):
             id=str(claim.id),
             name=claim.name,
             description=claim.description,
-            organization_id=str(claim.organization_id),
+            organization_id=str(claim.organization_id) if claim.organization_id else None,
             type=claim.type,  # type: ignore[arg-type]
             query=ClaimQuery.model_validate(claim.query),
         )
