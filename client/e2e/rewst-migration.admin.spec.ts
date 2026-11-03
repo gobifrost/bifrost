@@ -157,7 +157,9 @@ test.describe("Rewst Migration Solution (admin)", () => {
 		test.setTimeout(120_000);
 		const pageErrors: string[] = [];
 		page.on("pageerror", (error) => pageErrors.push(error.message));
+		await page.addInitScript(() => localStorage.setItem("theme", "dark"));
 		let solutionId: string | null = null;
+		let primaryError: unknown;
 		try {
 			const created = await api.post("/api/solutions", {
 				data: {
@@ -327,23 +329,59 @@ test.describe("Rewst Migration Solution (admin)", () => {
 			await expect(
 				page.getByRole("heading", { name: "Agent handoff" }),
 			).toBeVisible();
+			const commands = page.getByLabel("Suggested CLI commands");
+			await commands.scrollIntoViewIfNeeded();
+			await expect(commands).toContainText("solution_id");
+			expect(
+				await commands.evaluate(
+					(element) => element.scrollWidth <= element.clientWidth + 1,
+				),
+				"CLI payloads wrap within the phone viewport",
+			).toBe(true);
 			await page.screenshot({
 				path: test.info().outputPath("rewst-handoff-mobile.png"),
 			});
+			await page.getByRole("button", { name: "Open menu", exact: true }).click();
+			const menu = page.getByRole("dialog", { name: "Menu", exact: true });
+			await expect(menu).toBeVisible();
+			await menu.getByRole("link", { name: "Plan", exact: true }).click();
+			await expect(menu).toBeHidden();
+			await expect(page.getByLabel("Migration plan")).toHaveValue(unsavedDraft);
+			await page.getByRole("button", { name: "Open menu", exact: true }).click();
+			await menu.getByRole("button", { name: "Light mode", exact: true }).click();
+			await expect(page.locator("html")).not.toHaveClass(/dark/);
+			await page.getByRole("button", { name: "Close menu", exact: true }).click();
+			await page.screenshot({
+				path: test.info().outputPath("rewst-plan-mobile-light.png"),
+			});
 			expect(pageErrors).toEqual([]);
+		} catch (error) {
+			primaryError = error;
 		} finally {
 			if (solutionId) {
-				const removed = await api.delete(
-					`/api/solutions/${solutionId}`,
-					{
-						params: { confirm: SOLUTION_SLUG },
-					},
-				);
-				expect(
-					[200, 204, 404],
-					`remove Rewst Migration: ${await removed.text()}`,
-				).toContain(removed.status());
+				try {
+					const removed = await api.delete(
+						`/api/solutions/${solutionId}`,
+						{ params: { confirm: SOLUTION_SLUG } },
+					);
+					expect(
+						[200, 204, 404],
+						`remove Rewst Migration: ${await removed.text()}`,
+					).toContain(removed.status());
+				} catch (cleanupError) {
+					// Keep a failed deployment's original error visible when its
+					// still-active write lock also prevents teardown.
+					if (primaryError) {
+						await test.info().attach("cleanup-failure", {
+							body: String(cleanupError),
+							contentType: "text/plain",
+						});
+					} else {
+						primaryError = cleanupError;
+					}
+				}
 			}
 		}
+		if (primaryError) throw primaryError;
 	});
 });

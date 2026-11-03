@@ -1166,7 +1166,10 @@ function AgentHandoffPage() {
                 </SecondaryButton>
               </div>
               {context.handoff.commands.length ? (
-                <pre className="overflow-auto rounded-lg bg-muted/55 p-4 text-sm leading-6">
+                <pre
+                  aria-label="Suggested CLI commands"
+                  className="overflow-auto whitespace-pre-wrap rounded-lg bg-muted/55 p-4 text-sm leading-6 [overflow-wrap:anywhere]"
+                >
                   {context.handoff.commands.join("\n")}
                 </pre>
               ) : (
