@@ -73,8 +73,9 @@ runtime receipt. This checker memory requirement is not Python Worker memory.
 
 Recovery here is explicit trusted-fixture use of the real canonical functions,
 not automatic provider-loss detection or proof of deployed failure accounting.
-The missing-terminal case is now characterized locally; the next control-plane
-gap is automatic observation/reconciliation of an uncertain invocation while
-retaining its physical obligation. Deployed limit enforcement/accounting,
+The missing-terminal case is now characterized locally. The
+[automatic recovery follow-on](AUTOMATIC-RECOVERY.md) now proves existing API
+recovery after real relay silence and exposes the remaining live-relay,
+per-invocation failure/deadline gap. Deployed limit enforcement/accounting,
 noncooperative cancellation, credential/egress isolation and authorized runtime
 admission remain unaccepted. Public Pyodide admission stays disabled.

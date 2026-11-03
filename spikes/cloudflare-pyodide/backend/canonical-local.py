@@ -27,7 +27,8 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
                node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False,
                worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False, stream_pool_probe=False,
-               stream_interruption_probe=False):
+               stream_interruption_probe=False, automatic_loss_probe=False):
+    stream_interruption_probe = stream_interruption_probe or automatic_loss_probe
     if stream_interruption_probe:
         if any((isolation_label is not None, refresh_probe, expired_access, concurrent_refresh, interrupt_refresh,
                 failure_probe, transport_waiter, node_pyodide, benchmark_probe, worker_loss_probe)):
@@ -729,11 +730,55 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         if running.status != ExecutionStatus.RUNNING:
                             raise RuntimeError('Transport failure fabricated a canonical terminal result')
                         report['canonical_before_recovery_status'] = running.status.value
-                        lost = await end_runs_of_lost_worker(db, worker.id)
-                        await db.commit()
-                    if lost.workflow_runs != [execution.id]:
-                        raise RuntimeError('Recovery did not end the exact interrupted run')
-                    await announce_lost_runs(lost)
+                        if not automatic_loss_probe:
+                            lost = await end_runs_of_lost_worker(db, worker.id)
+                            await db.commit()
+                    if automatic_loss_probe:
+                        from sqlalchemy import func
+                        from src.scheduler.control import DISPATCH_SWEEP_SECONDS
+                        from src.services.worker_pool.liveness import HEARTBEAT_LOST_AFTER
+
+                        # Observe the real, already-running API control replica.
+                        # No clock patch, backdated heartbeat or new reconciler.
+                        negative_started = time.monotonic()
+                        negative_window = HEARTBEAT_LOST_AFTER.total_seconds() + DISPATCH_SWEEP_SECONDS + 1
+                        while time.monotonic() - negative_started < negative_window:
+                            if heartbeat.done():
+                                heartbeat.result()
+                                raise RuntimeError('Heartbeat stopped during provider-only negative control')
+                            async with get_db_context() as db:
+                                row = await db.get(Execution, execution.id)
+                                relay = await db.get(ExecutionWorker, worker.id)
+                                if row.status != ExecutionStatus.RUNNING or relay.state != 'ready':
+                                    raise RuntimeError('Provider-only loss no longer matches the expected live-relay boundary')
+                            await asyncio.sleep(0.5)
+                        report.update(provider_only_loss_with_live_relay_status='Running',
+                            live_relay_negative_control_seconds=time.monotonic() - negative_started)
+                        await cancel_and_join(heartbeat)
+                        heartbeat = None
+                        silence_started = time.monotonic()
+                        async with asyncio.timeout(75):
+                            while True:
+                                async with get_db_context() as db:
+                                    row = await db.get(Execution, execution.id)
+                                    relay = await db.get(ExecutionWorker, worker.id)
+                                    if row.status == ExecutionStatus.FAILED:
+                                        now = await db.scalar(select(func.now()))
+                                        age = (now - relay.heartbeat_at).total_seconds()
+                                        if (relay.state != 'lost' or relay.end_reason != 'heartbeat_lost'
+                                            or age < HEARTBEAT_LOST_AFTER.total_seconds() or row.error_message != EXECUTOR_LOST):
+                                            raise RuntimeError('Automatic terminal state lacks upstream heartbeat-loss provenance')
+                                        report.update(automatic_loss_probe=True, existing_api_control_recovery_verified=True,
+                                            no_direct_recovery_call=True, no_clock_or_heartbeat_backdating=True,
+                                            recovered_worker_state=relay.state, recovered_worker_end_reason=relay.end_reason,
+                                            recovered_heartbeat_age_seconds=age,
+                                            silence_to_observed_failure_seconds=time.monotonic() - silence_started)
+                                        break
+                                await asyncio.sleep(0.5)
+                    else:
+                        if lost.workflow_runs != [execution.id]:
+                            raise RuntimeError('Recovery did not end the exact interrupted run')
+                        await announce_lost_runs(lost)
                     from bifrost._logging import recover_terminal_execution_logs
                     drained = await recover_terminal_execution_logs([execution.id], limit=1)
                     async with get_db_context() as db:
@@ -762,9 +807,19 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         async def forbidden_relaunch():
                             raise AssertionError('Interrupted accepted invocation must not be redispatched')
 
-                        duplicate = await journal.dispatch(ref.lease, 'route', str(execution.id), forbidden_relaunch)
-                        if duplicate is not pool.receipt:
-                            raise RuntimeError('Interrupted route lost its original failed receipt')
+                        if automatic_loss_probe:
+                            from src.worker.remote.protocol import CredentialRouteChanged
+
+                            try:
+                                await journal.dispatch(ref.lease, 'route', str(execution.id), forbidden_relaunch)
+                            except CredentialRouteChanged:
+                                report['expired_owner_duplicate_dispatch_rejected'] = True
+                            else:
+                                raise RuntimeError('Expired owner could dispatch after automatic recovery')
+                        else:
+                            duplicate = await journal.dispatch(ref.lease, 'route', str(execution.id), forbidden_relaunch)
+                            if duplicate is not pool.receipt:
+                                raise RuntimeError('Interrupted route lost its original failed receipt')
                         current = pool.physical_pool.processes[pool.physical_route]
                         if (current is not interrupted_handle or current.current_execution is not interrupted_info
                             or (interrupted_info.started_at, interrupted_info.timeout_seconds,
@@ -773,7 +828,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                             or current.killed_at is not None):
                             raise RuntimeError('Canonical failure fabricated physical settlement or renewed timing')
                         report.update(stream_interruption_probe=True, original_identity_and_deadline_preserved=True,
-                            opaque_obligation_retained_after_canonical_failure=True, duplicate_reused_failed_receipt=True,
+                            opaque_obligation_retained_after_canonical_failure=True,
+                            duplicate_reused_failed_receipt=not automatic_loss_probe,
                             physical_stop_inferred_from_canonical_failure=False)
                     report.update(canonical_claim_verified=True, canonical_terminal_consumption_verified=False,
                         provider_interruption_recovery_verified=True, canonical_recovery_status='Failed',
@@ -957,8 +1013,9 @@ if __name__ == "__main__":
         parser.add_argument("--physical-pool-probe", action="store_true")
         parser.add_argument("--stream-pool-probe", action="store_true")
         parser.add_argument("--stream-interruption-probe", action="store_true")
+        parser.add_argument("--automatic-loss-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(stream_interruption_probe=args.stream_interruption_probe,
+        asyncio.run(main(automatic_loss_probe=args.automatic_loss_probe, stream_interruption_probe=args.stream_interruption_probe,
                          stream_pool_probe=args.stream_pool_probe, physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
                          worker_loss_probe=args.worker_loss_probe, benchmark_probe=args.benchmark_probe,
                          isolation_label=args.isolation_label, batch=args.batch,

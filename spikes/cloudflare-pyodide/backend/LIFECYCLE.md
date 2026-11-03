@@ -71,7 +71,11 @@ now loses the provider before the launcher receives any terminal event. Real
 canonical lost-worker recovery records Failed, revokes run credentials and
 drains redacted logs without redispatch. The native invocation remains held.
 An independently stopped local Linux provider is not deployed isolate-stop proof;
-automatic provider-loss observation and settlement remain open.
+automatic per-invocation provider-loss observation and settlement remain open.
+The [existing API control qualification](AUTOMATIC-RECOVERY.md) now recovers real
+relay silence without direct fixture recovery calls or clock manipulation. Its
+negative control preserves Running while a relay stays healthy after provider
+loss, so executor heartbeat must not be treated as invocation liveness.
 
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle

@@ -21,11 +21,12 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, revision=1):
     global PACKET, RUN, NAME
+    stream_interruption = stream_interruption or automatic_loss
     physical_pool = physical_pool or stream_pool or stream_loss or stream_interruption
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -93,7 +94,7 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
          *(['--volume', f'{RUN}/control:/interruption', '--env', 'PROVIDER_INTERRUPTION_CONTROL=/interruption/ready.json'] if stream_interruption else []),
          'test-runner',
          'python', '/qualification/provider-response-loss.py' if deadline_response_loss or deadline_retained or stream_loss else '/qualification/canonical-local.py',
-         '--stream-interruption-probe' if stream_interruption else '--stream-retained-response' if stream_loss else '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
+         '--automatic-loss-probe' if automatic_loss else '--stream-interruption-probe' if stream_interruption else '--stream-retained-response' if stream_loss else '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
          else '--deadline-response-loss' if deadline_response_loss else '--failure-probe']]
     report = {'api_source': SOURCE, 'runtime_engine_source': 'f49d4ba99cebd24aa497f1244833b940e640885f',
         'project': project, 'cloud_invocations': 0, 'physical_termination_verified': False,
@@ -166,6 +167,10 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
                 or not probe.get('fixture_worker_cascade_cleanup_verified')):
                 raise RuntimeError('Native streamed provider loss did not preserve recovery/resource distinction')
             report['stream_interruption_result'] = probe
+            if automatic_loss and (not probe.get('existing_api_control_recovery_verified')
+                or not probe.get('expired_owner_duplicate_dispatch_rejected')
+                or probe.get('recovered_worker_end_reason') != 'heartbeat_lost'):
+                raise RuntimeError('Existing API control did not automatically recover the silent fixture relay')
         elif stream_loss:
             probe = next(row for row in reversed(records) if row.get('stream_loss_probe'))
             if (not probe.get('local_recovery_verified') or probe.get('launches') != 1
@@ -223,8 +228,10 @@ if __name__ == '__main__':
     mode.add_argument('--stream-pool', action='store_true')
     mode.add_argument('--stream-loss', action='store_true')
     mode.add_argument('--stream-interruption', action='store_true')
+    mode.add_argument('--automatic-loss', action='store_true')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
     main(egress_gate=args.egress_gate, deadline_response_loss=args.deadline_response_loss,
          deadline_retained=args.deadline_retained, physical_pool=args.physical_pool, stream_pool=args.stream_pool,
-         stream_loss=args.stream_loss, stream_interruption=args.stream_interruption, revision=args.revision)
+         stream_loss=args.stream_loss, stream_interruption=args.stream_interruption,
+         automatic_loss=args.automatic_loss, revision=args.revision)

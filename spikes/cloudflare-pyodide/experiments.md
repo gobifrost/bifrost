@@ -1,5 +1,25 @@
 # Compact experiment log
 
+## Existing API automatic recovery with real heartbeat silence, 2026-11-03
+
+Hypothesis: canonical relay-loss recovery needs no new queue, but healthy relay
+heartbeats cannot detect a lost child invocation. Fixed automatic-loss mode
+reuses the real API-hosted dispatch reconciler; no new control loop, direct
+recovery call, clock patch, heartbeat backdating or altered30-second threshold.
+After real SDK write70 and owned provider stop, the negative control keeps the
+relay heartbeating and observes Running for46.269s. Stop only its heartbeat/
+owner renewal: real API control marks worker lost/heartbeat_lost and run Failed
+after30.182s, PostgreSQL heartbeat age33.586s. Stale-owner duplicate rejected,
+access+refresh401, one launch, no result envelope, redacted log drained once;
+native physical obligation remains held. Command: `ct128-canonical-failure.py
+--automatic-loss`, exact CT128 packet path in backend/AUTOMATIC-RECOVERY.md.
+All four phases exit0, supervisor139.114s; Ruff/Pyright pass. Post-run source and
+API mount readbacks match upstream1d33150's control/liveness/recovery files.
+Artifact: results/automatic-loss and verifier. Updated CONTRACT.md separates host
+health, canonical outcome and physical settlement. This does not qualify full
+pool startup or per-invocation failure/deadline handling; no cloud/admission or
+native shared-source changes. Next is that live-relay per-invocation gap.
+
 ## Streamed opaque provider interruption without a terminal event, 2026-11-03
 
 Hypothesis: the real native opaque pool can preserve canonical semantics when

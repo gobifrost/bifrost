@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const read = async path => JSON.parse(await readFile(new URL(path, import.meta.url)));
 const report = await read('../results/stream-interruption/v2.json');
@@ -18,10 +19,10 @@ for (const state of [report.provider_state_after_interruption, report.provider_s
 }
 for (const name of ['canonical-local.py', 'ct128-canonical-failure.py', 'task_cleanup.py',
   'invocation_stream.py', 'pyright-guest-fixtures.json']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  assert.equal(hash(execFileSync('git', ['show', `29ff694c1:spikes/cloudflare-pyodide/backend/${name}`])), report.packet_sha256[name], name);
 }
 for (const [path, digest] of Object.entries(report.api_overlay_sha256)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(execFileSync('git', ['show', `29ff694c1:${path}`])), digest, path);
 }
 assert.equal(report.dependency_image_id, 'sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b');
 assert.equal(report.packet_sha256['project/backend/generated-runtime.mjs'],

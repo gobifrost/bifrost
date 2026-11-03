@@ -4,10 +4,13 @@ Latest native contract repair: [opaque inventory uncertainty](backend/INVENTORY-
 44 focused native cases pass, including Linux controls, terminal replay and owner
 fencing. Missing invocation inventory no longer fabricates a Linux crash result.
 
-Latest abnormal-path qualification: [streamed provider interruption](backend/STREAM-PROVIDER-INTERRUPTION.md).
-The real opaque pool now survives loss before any terminal result: canonical
-recovery records Failed and revokes credentials while retaining the unresolved
-physical obligation. This is local provider-process failure injection, not
+Latest control-plane qualification: [automatic relay-loss recovery](backend/AUTOMATIC-RECOVERY.md).
+The existing API loop automatically ends the run after real relay silence,
+revokes credentials and fences stale dispatch. The negative control leaves the
+run Running while a relay heartbeats despite provider loss: per-invocation
+failure/deadline handling is still missing. The prior
+[streamed provider interruption](backend/STREAM-PROVIDER-INTERRUPTION.md) and this
+follow-on both retain unresolved physical obligations; neither establishes
 Cloudflare per-isolate cancellation acceptance.
 
 Latest integration: [accepted stream loss and canonical reconciliation](backend/STREAM-LOSS-RECONCILIATION.md).

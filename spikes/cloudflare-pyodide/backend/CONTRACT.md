@@ -20,8 +20,9 @@ capabilities, a trusted deadline, and scoped runtime credentials. Provider ident
 and runtime identity are separate from the authorization principal. The provider
 must reject unavailable capabilities before running workflow code.
 
-The proposed physical handle is opaque; current upstream still requires a
-positive Linux PID ACK. Its lifecycle must distinguish accepted, started,
+The default Linux contract retains a positive PID ACK. This contribution adds
+an experimental explicit opaque-invocation profile to the same pool, with
+public admission still disabled. Its lifecycle must distinguish accepted, started,
 invocation settled, stop requested, terminal submitted, and terminal acknowledged.
 Normal completion requires awaited workflow work, completed response streams,
 released returned RPC stubs and canonical terminal reconciliation; it does not
@@ -49,10 +50,36 @@ reviewable receipt.
 
 ## Current frontier
 
-The contribution currently introduces only trusted public URL metadata and
-pluggable resource observation in the real engine/worker. Linux defaults remain
-the existing process implementation. It does not implement the lifecycle above.
-The companion packages actual upstream source rather than another engine.
+The contribution now includes shared engine stream capture/redaction, uncertain
+ACK retention, signed runtime-profile metadata, an experimental opaque workflow
+handle in the real pool, and inventory uncertainty guards. Linux defaults remain
+the existing process implementation. Actual local pool/engine/SDK execution,
+canonical lost-ACK replay and interrupted-provider recovery pass separately from
+the deployed engine/SDK samples. The combined deployed contract remains
+unaccepted; the public host still rejects the experimental profile. The companion
+packages actual upstream source rather than another engine.
+
+### Health, workflow outcome and provider settlement are separate facts
+
+The [automatic recovery experiment](AUTOMATIC-RECOVERY.md) establishes why a
+first-class physical boundary must preserve these distinctions:
+
+| Fact | Authority and required behavior | Observed boundary |
+| --- | --- | --- |
+| Executor/session health | Existing owner lease, heartbeat and API reconciler | Real relay silence automatically ends the run and fences stale commands. A healthy relay does not prove its child invocation is alive. |
+| Canonical workflow outcome | Existing authorization, claim, consumer and terminal ACK/recovery | Failed/Success persistence and credential revocation do not certify physical settlement or undo external effects. No replay after uncertain effects. |
+| Physical invocation obligation | Supported provider lifecycle evidence tied to the accepted handle | Normal awaited response completion can settle an invocation without isolate destruction. Lost responses and logical failure keep resource uncertainty visible. |
+
+Provider-only loss remained Running while the fixture relay heartbeated. Genuine
+relay silence was then recovered by the existing API control replica, without
+clock patches, direct recovery calls or a new queue. A per-invocation failure/
+deadline policy is still required for a relay that manages multiple invocations;
+stopping the whole relay on one uncertain child can harm unrelated work. Any
+new physical settlement signal remains a proposal, not an existing upstream API.
+Its authorization/accounting requirements cannot be replaced by a guest log,
+caught exception, revoked token or disconnected HTTP caller.
+
+### Historical isolation and cancellation probes
 
 Fresh `WorkerLoader.load()` calls pass local sequential and parallel interpreter,
 environment, module and temporary-file contamination probes. The parent-binding
