@@ -124,6 +124,26 @@ async def test_solution_write_then_read_isolated(e2e_client, platform_admin, db_
     assert read_a.status_code == 200, f"solution A read failed: {read_a.text}"
     assert read_a.json()["content"] == "hello from A"
 
+    # Updating runtime bytes dirties FileMetadata; it must not be mistaken for
+    # editing deploy-owned FilePolicy or source definitions by the ORM guard.
+    stat_a = e2e_client.post(
+        f"/api/files/stat?solution={sid_a}", headers=headers,
+        json={"location": "solutions", "path": test_path, "mode": "cloud"},
+    )
+    assert stat_a.status_code == 200, stat_a.text
+    replace_a = e2e_client.post(
+        f"/api/files/write?solution={sid_a}", headers=headers,
+        json={"location": "solutions", "path": test_path, "mode": "cloud",
+              "content": "updated by A", "expected_version": stat_a.json()["version"]},
+    )
+    assert replace_a.status_code == 204, replace_a.text
+    updated_a = e2e_client.post(
+        f"/api/files/read?solution={sid_a}", headers=headers,
+        json={"location": "solutions", "path": test_path, "mode": "cloud"},
+    )
+    assert updated_a.status_code == 200, updated_a.text
+    assert updated_a.json()["content"] == "updated by A"
+
     # Solution B CANNOT read solution A's file at the same logical path —
     # their scopes are different install UUIDs, so they target different S3 keys.
     # Expect 403 (policy denied) or 404 (different scope → different S3 key).

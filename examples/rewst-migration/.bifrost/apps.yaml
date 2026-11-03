@@ -1,0 +1,10 @@
+apps:
+  3eaf3350-abff-4fc5-9b49-4bbe84a30ff8:
+    id: 3eaf3350-abff-4fc5-9b49-4bbe84a30ff8
+    slug: rewst-migration
+    name: Rewst Migration
+    description: Guided Rewst migration inventory, planning, and agent handoff.
+    path: apps/rewst-migration
+    access_level: role_based
+    role_names: []
+    app_model: standalone_v2
