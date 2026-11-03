@@ -16,10 +16,10 @@ def command(args, timeout=20):
     return subprocess.check_output(args, text=True, timeout=timeout).strip()
 
 
-def main(revision, *, rpc_results=False, rpc_context=False, rpc_http_context=False, cpu_egress=False):
-    if sum((rpc_results, rpc_context, rpc_http_context, cpu_egress)) > 1:
+def main(revision, *, rpc_results=False, rpc_context=False, rpc_http_context=False, cpu_egress=False, approved_https=False):
+    if sum((rpc_results, rpc_context, rpc_http_context, cpu_egress, approved_https)) > 1:
         raise ValueError('One lifecycle probe mode required')
-    prefix = 'cpu-egress' if cpu_egress else 'rpc-http-context' if rpc_http_context else 'rpc-context' if rpc_context else 'rpc-results' if rpc_results else 'sdk1217'
+    prefix = 'approved-https' if approved_https else 'cpu-egress' if cpu_egress else 'rpc-http-context' if rpc_http_context else 'rpc-context' if rpc_context else 'rpc-results' if rpc_results else 'sdk1217'
     packet = ROOT / f'inbox/{prefix}-v{revision}'
     run = ROOT / f'runs/{prefix}-v{revision}'
     name = f'pyodide-ddf316c1-{prefix}-v{revision}'
@@ -44,9 +44,9 @@ def main(revision, *, rpc_results=False, rpc_context=False, rpc_http_context=Fal
     source = config.read_text()
     if source.count('./backend/authorized-local-entry.mjs') != 1:
         raise RuntimeError('Unexpected local CLI configuration')
-    entrypoint = './backend/cpu-egress-entry.mjs' if cpu_egress else './backend/rpc-http-context-entry.mjs' if rpc_http_context else './backend/rpc-context-entry.mjs' if rpc_context else './backend/rpc-result-entry.mjs' if rpc_results else './backend/latest-sdk-probe-entry.mjs'
+    entrypoint = './backend/approved-https-entry.mjs' if approved_https else './backend/cpu-egress-entry.mjs' if cpu_egress else './backend/rpc-http-context-entry.mjs' if rpc_http_context else './backend/rpc-context-entry.mjs' if rpc_context else './backend/rpc-result-entry.mjs' if rpc_results else './backend/latest-sdk-probe-entry.mjs'
     config.write_text(source.replace('./backend/authorized-local-entry.mjs', entrypoint))
-    scope = 'credential-free CPU egress deadline only' if cpu_egress else 'credential-free HTTP context lifetime only' if rpc_http_context else 'credential-free RPC context lifetime only' if rpc_context else 'credential-free RPC result lifecycle only' if rpc_results else 'credential-free SDK import/constructor only'
+    scope = 'credential-free approved HTTPS policy only' if approved_https else 'credential-free CPU egress deadline only' if cpu_egress else 'credential-free HTTP context lifetime only' if rpc_http_context else 'credential-free RPC context lifetime only' if rpc_context else 'credential-free RPC result lifecycle only' if rpc_results else 'credential-free SDK import/constructor only'
     report = {'scope': scope, 'cloud_invocations': 0,
         'engine_sdk_execution_verified': False, 'sdk_import_constructor_passed': False,
         'packet_sha256': {str(path.relative_to(packet)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -69,12 +69,12 @@ def main(revision, *, rpc_results=False, rpc_context=False, rpc_http_context=Fal
             time.sleep(1)
         else:
             raise RuntimeError('Local CLI readiness failed')
-        probe = ['/qualification/project/backend/http-context-probe.mjs'] if (rpc_http_context or cpu_egress) else ['-e',
+        probe = ['/qualification/project/backend/approved-https-probe.mjs'] if approved_https else ['/qualification/project/backend/http-context-probe.mjs'] if (rpc_http_context or cpu_egress) else ['-e',
             "fetch('http://127.0.0.1:8799',{method:'POST',signal:AbortSignal.timeout(45000)}).then(async r=>{const t=await r.text();if(t.length>1048576)throw Error('Bound');console.log(JSON.stringify({status:r.status,body:JSON.parse(t)}));}).catch(()=>{process.exitCode=1;})"]
         result = command(['docker', 'exec', name, 'node', *probe], timeout=55)
         report['observation'] = json.loads(result)
         body = report['observation']['body']
-        report['sdk_import_constructor_passed'] = (not (rpc_results or rpc_context or rpc_http_context or cpu_egress) and report['observation']['status'] == 200
+        report['sdk_import_constructor_passed'] = (not (rpc_results or rpc_context or rpc_http_context or cpu_egress or approved_https) and report['observation']['status'] == 200
             and all(value.get('imported') for value in body.get('probes', {}).values())
             and body.get('constructor', {}).get('created') is True)
     finally:
@@ -99,5 +99,6 @@ if __name__ == '__main__':
     mode.add_argument('--rpc-context', action='store_true')
     mode.add_argument('--rpc-http-context', action='store_true')
     mode.add_argument('--cpu-egress', action='store_true')
+    mode.add_argument('--approved-https', action='store_true')
     args = parser.parse_args()
-    main(args.revision, rpc_results=args.rpc_results, rpc_context=args.rpc_context, rpc_http_context=args.rpc_http_context, cpu_egress=args.cpu_egress)
+    main(args.revision, rpc_results=args.rpc_results, rpc_context=args.rpc_context, rpc_http_context=args.rpc_http_context, cpu_egress=args.cpu_egress, approved_https=args.approved_https)
