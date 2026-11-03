@@ -165,11 +165,11 @@ class TestExecutionLogs:
 
 
 @pytest.mark.asyncio
-async def test_pending_cancellation_commits_before_publishing_queue_snapshot(
+async def test_pending_cancellation_commits_before_requesting_a_queue_refresh(
     db_session, async_session_factory, monkeypatch
 ) -> None:
-    """A pending cancellation is durable before its canonical queue snapshot."""
-    from unittest.mock import AsyncMock
+    """A pending cancellation is durable before its advisory queue refresh."""
+    from unittest.mock import AsyncMock, Mock
 
     from src.models.orm.executions import Execution as ExecutionModel
     from src.models.orm.work_dispatches import WorkDispatch
@@ -225,9 +225,10 @@ async def test_pending_cancellation_commits_before_publishing_queue_snapshot(
             "execution_read_access",
             lambda *_: ExecutionReadAccess(visible=True, diagnostics=False),
         )
+        queue_refresh = Mock()
         monkeypatch.setattr(
-            "src.services.execution.queue_tracker.publish_queue_positions",
-            snapshot,
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            queue_refresh,
         )
         monkeypatch.setattr(executions_router, "publish_execution_update", AsyncMock())
         monkeypatch.setattr(executions_router, "publish_history_update", AsyncMock())
@@ -237,6 +238,8 @@ async def test_pending_cancellation_commits_before_publishing_queue_snapshot(
         assert error is None
         assert cancelled is not None
         assert cancelled.status == ExecutionStatus.CANCELLED.value
+        queue_refresh.assert_called_once_with()
+        await snapshot()
     finally:
         # Cancellation commits by design; a session rollback cannot remove its
         # fixtures. Release locks before cleaning the committed rows explicitly.

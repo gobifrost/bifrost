@@ -310,19 +310,13 @@ class ExecutionReadAdapter:
         execution.status = new_status  # type: ignore[assignment]
 
         await self.db.flush()
-        # Persist the status before readers receive a canonical queue snapshot.
+        # Persist the status before scheduling an advisory queue refresh.
         await self.db.commit()
 
         if new_status == ExecutionStatus.CANCELLED.value:
-            from src.services.execution.queue_tracker import publish_queue_positions
+            from src.services.execution.queue_tracker import request_queue_position_refresh
 
-            try:
-                await publish_queue_positions()
-            except Exception:
-                logger.warning(
-                    "Could not publish queue positions after cancellation",
-                    exc_info=True,
-                )
+            request_queue_position_refresh()
 
         await publish_execution_update(
             execution_id=execution_id,

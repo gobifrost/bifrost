@@ -934,6 +934,10 @@ async def update_form(
     # Sync form roles to referenced workflows (additive)
     await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=ctx.user.email)
 
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("form", str(form_id))
+
     logger.info(f"Updated form {log_safe(form_id)}")
 
     # Invalidate cache after successful update
@@ -1185,6 +1189,10 @@ async def delete_form(
         form.updated_at = datetime.now(timezone.utc)
         await db.flush()
         logger.info(f"Soft deleted form {log_safe(form_id)}")
+
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("form", str(form_id))
 
     # Invalidate cache
     if CACHE_INVALIDATION_AVAILABLE and invalidate_form:
