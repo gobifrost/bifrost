@@ -1,0 +1,37 @@
+{
+    "scope":  "source-only canonical generic setup failure fix",
+    "guest":  "CT128 bifrost-pyodide-test-01",
+    "worktree":  "/opt/bifrost-tests/pyodide-ddf316c1/setup-failure-contribution-v1",
+    "base_source":  "1d33150eb376b71f8a81b427920eda1b0447f829",
+    "candidate":  "base plus three source overlays pinned by final-source.sha256",
+    "project":  "bifrost-test-ebcf6211",
+    "image_id":  "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+    "junit":  {
+                  "before":  {
+                                 "cases":  4,
+                                 "failures":  3,
+                                 "errors":  0,
+                                 "skipped":  0
+                             },
+                  "after":  {
+                                "cases":  11,
+                                "failures":  0,
+                                "errors":  0,
+                                "skipped":  0
+                            },
+                  "pg":  {
+                             "cases":  3,
+                             "failures":  0,
+                             "errors":  0,
+                             "skipped":  0
+                         }
+              },
+    "quality_mount_failure":  "preserved; container did not start; unnecessary nested mount removed; only quality repeated",
+    "cloud_invocations":  0,
+    "physical_termination_verified":  false,
+    "production_deployments":  0,
+    "volumes_preserved":  true,
+    "running_after_cleanup":  [
+
+                              ]
+}

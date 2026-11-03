@@ -467,6 +467,64 @@ async def test_real_canonical_result_write_is_claim_fenced_and_cannot_be_overwri
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('already_terminal', [False, True])
+async def test_setup_refusal_notifies_only_a_claim_fenced_durable_failure(owner, async_session_factory, already_terminal):
+    from typing import cast
+    from unittest.mock import Mock
+
+    from src.core.redis_client import PendingExecution
+    from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+    from src.services.authorization.tokens import RunCredentials
+    from src.services.execution.process_pool import CredentialRoute
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    lease = await owner(1)
+    execution_id = uuid4()
+    async with async_session_factory() as session:
+        session.add(Execution(id=execution_id, workflow_name='pyodide-setup-refusal',
+            executed_by_name='test', status=ExecutionStatus.SUCCESS if already_terminal else ExecutionStatus.RUNNING,
+            result={'original': True} if already_terminal else None))
+        await session.flush()
+        session.add(ExecutionWorkerClaim(worker_id=lease.worker_id,
+            family='workflow_execution', subject_id=execution_id))
+        await session.commit()
+    consumer = WorkflowExecutionConsumer.__new__(WorkflowExecutionConsumer)
+    consumer.owner_worker_id = lease.worker_id
+    consumer._pool = AsyncMock()
+    consumer._pool.credential_route = Mock(return_value=CredentialRoute(2, lease.session_generation))
+    consumer._pool.route_execution.side_effect = ValueError('Synthetic known no-send refusal')
+    consumer._redis_client = AsyncMock()
+    issued = RunCredentials('synthetic-access', 'synthetic-refresh', datetime.now(timezone.utc), 2)
+    target = 'src.jobs.consumers.workflow_execution'
+    try:
+        with (
+            patch(f'{target}.create_execution', new=AsyncMock()),
+            patch(f'{target}.publish_execution_update', new=AsyncMock()) as publish,
+            patch(f'{target}.publish_history_update', new=AsyncMock()) as history,
+            patch('src.core.database.get_session_factory', return_value=async_session_factory),
+            patch('src.services.authorization.tokens.issue_run_credentials', new=AsyncMock(return_value=issued)),
+            remote_owner_context(LeaseRef(lease)),
+        ):
+            await consumer.process_message({'execution_id': str(execution_id), 'code': 'eA==', 'sync': True},
+                cast(PendingExecution, {'parameters': {}, 'org_id': None, 'user_id': None,
+                                       'user_name': 'test', 'user_email': 'test@example.invalid'}))
+        async with async_session_factory() as session:
+            row = await session.get(Execution, execution_id)
+            assert row is not None
+            assert row.status == (ExecutionStatus.SUCCESS if already_terminal else ExecutionStatus.FAILED)
+            assert row.result == ({'original': True} if already_terminal else None)
+            assert row.error_message == (None if already_terminal else 'Synthetic known no-send refusal')
+        assert publish.await_count == int(not already_terminal)
+        assert history.await_count == int(not already_terminal)
+        assert consumer._redis_client.push_result.await_count == int(not already_terminal)
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorkerClaim).where(ExecutionWorkerClaim.subject_id == execution_id))
+            await session.execute(delete(Execution).where(Execution.id == execution_id))
+            await session.commit()
+
+
+@pytest.mark.asyncio
 async def test_running_route_cannot_be_acknowledged_or_cleaned_up(owner):
     lease = await owner(1)
     journal = AttemptJournal()

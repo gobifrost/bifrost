@@ -57,3 +57,8 @@ Verify source binding with `node backend/verify-setup-refusal.mjs`.
 No shared platform source changed, no cloud action, no access change, no new
 dependency or runtime setting. Public/untrusted admission remains disabled;
 physical cancellation/isolation and full startup remain independently open.
+
+Follow-on: SETUP-FAILURE-FIX.md now fixes the generic handler on the isolated
+contribution branch, with owner-fenced writes and no notifications after refused
+persistence. The original probe above remains pinned to its historical source.
+Explicit companion receipt acknowledgement/retirement is still separate work.

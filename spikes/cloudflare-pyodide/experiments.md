@@ -1345,3 +1345,22 @@ pins and behavioral qualification remain necessary, untrusted admission disabled
 Next: preserve dependency admission evidence in a canonical provider profile;
 full host startup/no-send consumption require shared boundary reconciliation,
 and deployed cancellation/isolation/memory remain cloud acceptance gates.
+
+## 2026-11-03 — Fix canonical generic setup-failure fencing
+Source ownership: consumer unchanged/clean in Containers checkout, same last700e6334
+commit; own isolated branch only, no remote_pool/host/placement edit. Narrow fix:
+existing repository owner argument plus written check/drop before notifications.
+CT128 exclusive new source worktree base1d33150+hashed3files, projectebcf6211,
+boundedCompose33e78480/cachedimage33cd92be, same2CPU8GiB allocation.
+Fail-first ./test.sh consumer -k setup_failure:3fail1pass. Fixed entire consumer
+file11pass. ./test.sh targetedPG setup refusal2cases+adjacentclaimfence1case3pass:
+currentclaimFailed; priorSuccess/resultunchanged; stale notificationsabsent.
+RealPGfencing; route/credentialmintmocked, no new Worker/SDK invocation claimed.
+Ruff/Pyrightall3filespass. InitialqualityDocker nestedread-onlymountfailedbefore
+start; failurekept, removedunneededmount and repeatedqualityonly, not tests.
+Artifact: backend/SETUP-FAILURE-FIX.md, results/setup-failure-fix JUnit/sourcepins.
+Ownedtestcontainersstopped, volumes/locks retained, dev/qualifiedcheckoutpreserved.
+No cloud/deploy/security/runtime/access/resource change; disposition staysdraft.
+Next: explicit trusted-host no-send receipt ACK after canonical consumption,
+including lostACK/staleowner controls; no fabricated workflow result or rerun.
+Startup portable capabilities and deployed isolation/cancellation remain gates.

@@ -3,12 +3,13 @@
   "classification": "other",
   "entry_ids": [],
   "category": "fix",
-  "summary": "Workflow prints are retained with credential redaction, and uncertain remote launches retain their results for reconciliation.",
+  "summary": "Workflow prints retain credential redaction and uncertain launches retain results for reconciliation. Unexpected setup errors respect executor ownership and avoid stale failure notifications.",
   "review": {
     "status": "draft",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1161",
-      "Author proposal only; shared engine stream capture, uncertain launch ACK handling, signed runtime-profile boundaries, opaque workflow-handle representation and inventory uncertainty guards require maintainer review. Experimental Cloudflare executor acceptance remains incomplete and no production rollout is added."
+      "Author proposal only; shared engine stream capture, uncertain launch ACK handling, signed runtime-profile boundaries, opaque workflow-handle representation and inventory uncertainty guards require maintainer review. Experimental Cloudflare executor acceptance remains incomplete and no production rollout is added.",
+      "Author proposal: generic setup-error persistence now uses existing owner fencing and honors refused writes; 11 focused consumer cases and 3 PostgreSQL cases pass in isolated CT128. This does not implement refusal retirement or authorize deployment."
     ]
   }
 }

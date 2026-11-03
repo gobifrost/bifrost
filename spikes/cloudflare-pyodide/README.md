@@ -12,6 +12,9 @@ executor. Public/untrusted admission stays disabled. Start with
   Earlier receipts retain their pins.
 * [Owned SDK close completion](backend/OWNED-SDK-CLOSE.md): cooperative waiter
   cancellation no longer skips sync close; actual platform interruption remains unproved.
+* [Canonical generic setup-failure fence](backend/SETUP-FAILURE-FIX.md): owned
+  writes and post-write notification guards pass real PostgreSQL controls;
+  companion refusal acknowledgement remains separate.
 * [Exact package binding](backend/PACKAGE-BINDING.md): declared versions must
   match the observed pinned runtime before dispatch; compatibility still needs
   execution evidence.

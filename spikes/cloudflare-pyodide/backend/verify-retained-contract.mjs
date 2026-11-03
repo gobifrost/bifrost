@@ -17,7 +17,7 @@ for (const name of ['attempt_journal.py', 'private_http_pool.py', 'workflow_requ
   const source = execFileSync('git', ['show', '6d3ba782214129c8a4132ae6af5620797479cb5e:spikes/cloudflare-pyodide/backend/' + name]);
   assert.equal(createHash('sha256').update(source).digest('hex'), report.packet_sha256[name], name);
 }
-const test = await readFile(new URL('../../../api/tests/unit/dev/test_pyodide_attempt_journal.py', import.meta.url));
+const test = execFileSync('git', ['show', 'cceccf3abe81af72820991a07fd00f7263fd455a:api/tests/unit/dev/test_pyodide_attempt_journal.py']);
 assert.equal(createHash('sha256').update(test).digest('hex'), report.postgres_test_sha256);
 assert.match(await read('unit.txt'), /Ran 48 tests[\s\S]*\bOK\b/);
 assert.match(await read('quality.txt'), /0 errors, 0 warnings/);
