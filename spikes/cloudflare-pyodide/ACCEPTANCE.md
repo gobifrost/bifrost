@@ -55,6 +55,11 @@ authorized cancellation API: peer403, ended-token401, duplicate200/Cancelling,
 live credential200, capability-only revocation and reserved capacity through
 settlement. Finite natural completion becomes Success through upstream's existing
 result writer. Cancelled reporting and physical termination remain unqualified.
+backend/COOPERATIVE-CANCELLATION.md adds actual local Pyodide RPC controls:
+normal/event cancellation/suppression pass, but suppression after canceling a
+held pyfetch hangs. The successful HTTP cancel subcase settles only its tracked
+coroutine; the accepted vendor write still commits after release. This failed
+qualification does not enable admission or canonical Cancelled reporting.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

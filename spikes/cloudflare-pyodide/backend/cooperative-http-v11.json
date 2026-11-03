@@ -1,0 +1,32 @@
+{
+  "scope": "credential-free approved HTTPS policy only",
+  "cloud_invocations": 0,
+  "engine_sdk_execution_verified": false,
+  "sdk_import_constructor_passed": false,
+  "packet_sha256": {
+    "ct128-sdk-probe.py": "543ec3254729e5b7b1419d236764f5c65f96c9c0911ae9f464c59e57b1aab53d",
+    "project/wrangler.config.ts": "f5b5a98a872023b96d441ecd24313bd0621a06fb128cefb35caf03db034b9845",
+    "project/package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "project/cloudflare.config.ts": "15c7a8c578210dfb556dc56a0febc27324160a57af50c8090c8aa737e7d32d1d",
+    "project/backend/approved-https-entry.mjs": "b8823f13b7f7f674d9c48d1942b9617a89bd0c58bfef09059419dc83d8186f27",
+    "project/backend/cooperative-code.mjs": "d03f758a7d9f20e4752caf553ca5a1c88696ae41e13c797097536cd6024356fb",
+    "project/backend/approved-https-probe.mjs": "c5c5d929dd0b4e495b2ff3f28471270e2fc2ed25a9e6ecc16ec0f5c03e18a9af",
+    "project/backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "project/backend/approved-https-candidate.mjs": "4f543dc75ce55fe53f05f17245024060381f7c4bd172d49d0c2a3e74aabdd6d9"
+  },
+  "provider_state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 3147934,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T20:00:31.404085252Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": "false",
+  "elapsed_seconds": 16.569701405707747
+}

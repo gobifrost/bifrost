@@ -74,3 +74,42 @@ Next: qualify actual I/O ownership and engine cleanup using the RPC-string route
 before considering integration. Event cancellation does not prove vendor I/O
 settlement, spawned-task cessation, CPU stop or canonical terminal reporting.
 No Cloudflare deployment/invocation was performed. Public admission remains off.
+
+## Held HTTP qualification: incomplete
+
+The follow-up adds an independent loopback destination, actual pyfetch and a
+parent-owned fixed-origin capability gate. V11 fails HTTP500. V12 changes only
+diagnostic capture, retaining the same assertions and time bounds; it also fails.
+Their source hashes and stopped-provider evidence are in cooperative-http-v11.json
+and cooperative-http-v12.json. Full v11 HTML error and source remain on CT128
+under runs/approved-https-v11. The structured v12 observation is preserved in
+cooperative-http-v12-observation.json. V12 lifecycle is 14.382 seconds, not startup
+latency. Resources and ABI match the preceding local RPC experiment.
+
+* Normal: destination receives held POST, parent releases it, Python consumes
+  its HTTP200 response and returns Success.
+* Cancel: after independently observed receipt and before destination commit,
+  owner closes the gate and requests cancellation. Python returns the coroutine
+  receipt after finally, with zero tracked slots. The destination subsequently
+  observes connection closure and still commits the accepted write on release.
+* Suppression: Python catches CancelledError and awaits a new pyfetch to the
+  closed gate. The runtime detects a hung invocation while the parent awaits
+  its execution result. There is no successful suppression result or /after
+  destination effect. Absence of that effect is not physical-stop evidence.
+
+This is a failed overall qualification, despite the successful cancel subcase.
+Do not integrate it as a complete engine cancellation mechanism. The driver
+retains strict expectations and fails on HTTP500; no retry, timeout increase or
+skip masks suppression failure. Parent finally releases held accepted writes,
+closes gates and removes map entries. Driver failure cleanup also releases them;
+provider cleanup is independently recorded as stopped.
+
+Reproduce with a new exclusive packet/revision, overlaying cooperative-probe-entry.mjs
+and cooperative-http-probe.mjs under the launcher filenames described above.
+Both runs used unchanged ct128-sdk-probe.py --approved-https --revision 11/12.
+No production or shared-source edits occurred.
+
+Next bounded hypothesis: direct Task.cancel from a separate RPC may resume Python
+work with an unsuitable I/O context. Test original-invocation-owned cancellation
+scheduling against the same suppression and accepted-write controls. This is a
+hypothesis, not an established cause; preserve current failures.
