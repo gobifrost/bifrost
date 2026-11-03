@@ -63,6 +63,12 @@ arbitrary untrusted admission remain separate gaps. Unknown dependencies must
 not be silently added to a running plan. Solutions/artifact workspaces remain
 unsupported rather than flattened into loose-workspace semantics.
 
+The [source-change control](SOURCE-CHANGE-CONTROL.md) now exercises an actual
+helper mutation after preparation. Two local runs reject that eager dependency
+before workflow effects and preserve the held peer, using a recorded HTTP 409
+for the expected digest denial. The original uncaught-error failures remain
+preserved; this does not imply atomic revisions or safe late dynamic imports.
+
 The normal private adapter still owns transport retention and delegates claims,
 credential issuance and terminal acceptance to upstream. Automatic provider
 startup, public profile selection, signed combined control transport, cold

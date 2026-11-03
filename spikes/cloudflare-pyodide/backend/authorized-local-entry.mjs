@@ -9,6 +9,7 @@ import {testApiRouteAllowed} from './test-api-route.mjs';
 import {createRefreshGate} from './refresh-gate.mjs';
 import {createAttemptEgress} from './attempt-egress.mjs';
 import {invocationStream} from './invocation-stream.mjs';
+import {sourceIntegrityResponse} from './source-integrity-response.mjs';
 const observations=new Map();
 const refreshGates=new Map();
 const egressGates=new Map();
@@ -31,13 +32,16 @@ export class TestApi extends WorkerEntrypoint {
     const egress=egressGates.get(this.ctx.props.id);
     if(!egress) return new Response('Attempt capability closed',{status:410});
     const response=await egress.fetch(new Request('http://api:8000'+url.pathname+url.search,request));
-    observations.get(this.ctx.props.id)?.push({method:request.method,path:url.pathname,status:response.status});
+    const observation={method:request.method,path:url.pathname,status:response.status};
+    observations.get(this.ctx.props.id)?.push(observation);
     if(gate && url.pathname==='/auth/refresh' && response.status===200) await gate.holdResponse();
     if(url.pathname.startsWith('/api/sdk/modules/')) {
       const path=decodeURIComponent(url.pathname.slice('/api/sdk/modules/'.length));
-      return verifyModuleResponse(response,path,this.ctx.props.manifest[path]);
+      return sourceIntegrityResponse(()=>verifyModuleResponse(response,path,this.ctx.props.manifest[path]),observation);
     }
-    if(url.pathname==='/api/sdk/modules-resolve') return verifyResolutionResponse(response,this.ctx.props.manifest);
+    if(url.pathname==='/api/sdk/modules-resolve') {
+      return sourceIntegrityResponse(()=>verifyResolutionResponse(response,this.ctx.props.manifest),observation);
+    }
     return response;
   }
 }

@@ -843,3 +843,36 @@ unitHTTPproof only; actualWorker stillfixedflat2-moduleadmission. No atomicwhole
 workspacecommit or dynamicimportsafety claimed. Next: guest-only source-change
 negativecontrol before workfloweffects, then supported startup/capabilitypolicy
 preparation; publicadmission and deployedCPUsettlement remain unaccepted.
+
+## Changed helper after preparation, 2026-11-03
+
+Hypothesis: a changed declared eager dependency is rejected before workflow SDK
+effects, without disturbing a held peer. Fixed source-change mode prepares real
+API pins, overwrites only ownedhelper with fold999, independently confirms new
+APIhash200, retains oldmanifest, then invokesactualengine/SDK via privatepool.
+V1failsblanketlogassert: upstreamWorkflowLoadErrorbeforefunctiontracinghaslogs[];
+acceptonlythatexactenvelope withFailed/nonemptyerror, neverfabricatelogs. V2fails
+heldpeercheck; V3diagnosticrecords BifrostAPIError/410 andoriginaldeadlinealready
+10783.879mspast, nativebusy2stillheld. All3failedreceipts/sourcespreserved. V2
+immediatestopreadbacksawSeaweedFSid;readonlyfollowupthatcontainerexited/project
+empty, originalreceiptunchanged. No volume/uncertainlockdeletion. Boundedfix:
+knownWorkspace module digest mismatch becomesHTTP409+structuredtraceinstead of
+throwing acrossPython/JSbridge. Sameverifier/policy, cutoff30s, heldbarrier and
+resourcebounds; authresponses/unrelated/providerlimiterrorsunchanged.3Nodecases
+pass, targetedRuff/Pyrightpass; unchanged23helpertests retainedbysourcehash.
+V4command timeout430python3 inbox/source-change-v4/ct128-canonical-failure.py
+--source-change --revision4 passes102.704s. Oneboundedexact-candidatestability
+runV5 --revision5 passes94.861s, allpacketdigestsequal. Changedhelperisavailable
+butchildgets409digestdenial, no config/tablecalls, independentdocument404 before
+terminal; WorkflowLoadError/Failed/zeroengine+persistedlogs. Peerremainspending
+with23.845/24.447soriginalbudgetleft, survivesfailureACKloss/reconnect/staleowner
+fencing, succeeds78afterrelease; bothcreds401andaccounting2,2,1,0/retire/cleanup.
+Provideralive/noOOMbeforeownedcleanup; noownedrunningcontainersafterV4/V5.
+Artifact: backend/SOURCE-CHANGE-CONTROL.md, results/source-change rawfailures,
+diagnostics, Node/qualityevidence andsourceboundverifier. No cloudcall/settings/
+admission/auth/resourcechange. ActualWorker sourcechangeisHTTPerrormappingonly,
+notanenginefork. Eagerimports only: lateimports mayfollowearlierauthorizedeffects;
+noatomicworkspace, rollback, arbitrary-isolation orCPUstopclaim. Totalsinclude
+setup/prewarm/barriers/cleanup, notpurestartup/CPU/bill. Next: automaticnative
+terminaldelivery/deadlines andsupportedstartupboundary, keeping publicadmission
+closed and without creating another durablejobqueue.

@@ -1,5 +1,10 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest integrity control: [source change after preparation](backend/SOURCE-CHANGE-CONTROL.md).
+Two exact-candidate local runs reject a changed eager dependency before workflow
+effects while preserving the held peer. Failed predecessors, upstream empty-log
+semantics and the bounded HTTP-denial fix are preserved; deployed acceptance remains open.
+
 Latest source preparation: [authenticated API workspace pins](backend/API-WORKSPACE-PREPARE.md).
 Real two-tenant execution now uses API-derived entry/dependency hashes instead
 of fixture-supplied pins. Twenty-three focused tests and the real local lifecycle

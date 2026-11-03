@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const source = path => execFileSync('git', ['show', 'f8c51984463e24f17a63a5e6d2cb6ec23f4d44fd:' + path]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const base = new URL('../results/api-prepare/', import.meta.url);
 const bytes = name => readFile(new URL(name, base));
@@ -23,10 +25,10 @@ assert.deepEqual(Object.keys(nativeSource.sha256).sort(), ['api/shared/sdk_modul
 for (const name of ['workspace_prepare.py', 'test_workspace_prepare.py', 'shared-native-pool.py',
   'private_http_pool.py', 'ct128-canonical-failure.py', 'http_invocation.py', 'attempt_journal.py',
   'workflow_request_mux.py', 'invocation_stream.py', 'task_cleanup.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  assert.equal(hash(source('spikes/cloudflare-pyodide/backend/' + name)), report.packet_sha256[name], name);
 }
 for (const [path, digest] of Object.entries(report.api_overlay_sha256)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(source(path)), digest, path);
 }
 assert.equal(report.qualification_passed, true);
 assert.ok(report.commands.every(command => command.exit_code === 0));

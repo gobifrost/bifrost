@@ -1,0 +1,6 @@
+{
+  "phase": "real source-change fixture",
+  "error": "Canonical independent terminal/log state mismatch",
+  "disposition": "The fixture required nonempty logs for every failure. Upstream run_execution returns WorkflowLoadError with logs=[] before workflow function tracing. Keep canonical status/error assertions, and accept zero logs only for this exact early load-error envelope; do not synthesize logs or change engine semantics.",
+  "cloud_invocations": 0
+}

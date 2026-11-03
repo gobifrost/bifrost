@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import runpy
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -16,7 +17,7 @@ from task_cleanup import cancel_and_join
 from workspace_prepare import prepare_workspace, WorkspacePreparationError
 
 
-async def main():
+async def main(*, source_change=False):
     database = urlsplit(os.environ.get('BIFROST_DATABASE_URL', ''))
     if (os.environ.get('BIFROST_ENVIRONMENT') != 'testing'
         or os.environ.get('TEST_API_URL') != 'http://api:8000'
@@ -207,6 +208,24 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         'original_content_hash': original_context.get('content_hash')}
                     slot['original_context'] = prepared.context
                     slot['original_active'] = json.loads(json.dumps(active_execution, default=str))
+                    if source_change and slot['label'] == 'fails-first':
+                        dependency = slot['helper'] + '.py'
+                        changed = 'def fold(n):\n    return 999\n'
+                        changed_hash = hashlib.sha256(changed.encode()).hexdigest()
+                        written = await storage.write(dependency, changed.encode())
+                        if written != changed_hash:
+                            raise RuntimeError('Synthetic changed source write did not match its digest')
+                        await set_module(dependency, changed, changed_hash)
+                        async with httpx.AsyncClient(base_url='http://api:8000', timeout=10) as reader:
+                            readback = await reader.get('/api/sdk/modules/' + dependency,
+                                                       headers={'Authorization': 'Bearer ' + slot['token']})
+                        if (readback.status_code != 200 or readback.json()['hash'] != changed_hash
+                            or readback.json()['content'] != changed):
+                            raise RuntimeError('Changed helper source not independently available through the API')
+                        if prepared.manifest[dependency] == changed_hash:
+                            raise RuntimeError('Mutation did not change the prepared dependency')
+                        report['source_mutation'] = {'path': dependency, 'prepared_sha256': prepared.manifest[dependency],
+                            'changed_sha256': changed_hash, 'api_readback_status': readback.status_code}
                     await adapter.route_execution(execution_id=execution_id, context=prepared.context,
                         active_execution=active_execution, credential_route=credential_route)
                     attempt = adapter.attempt(execution_id)
@@ -238,13 +257,13 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                 if len(native.processes) != 2 or native._build_heartbeat()['busy_count'] != 2:
                     raise RuntimeError('One native pool did not retain both invocations')
                 report['native_busy_counts'] = [native._build_heartbeat()['busy_count']]
-                if any(mux.collection(run).done() for run in slots):
+                if not source_change and any(mux.collection(run).done() for run in slots):
                     raise RuntimeError('Fixture completed before both dispatch ACKs')
                 failed = next(value for value in slots.values() if value['label'] == 'fails-first')
                 peer = next(value for value in slots.values() if value['label'] == 'succeeds-second')
                 async with httpx.AsyncClient(base_url='http://api:8000', timeout=10) as api:
                     async with asyncio.timeout(45):
-                        for slot in slots.values():
+                        for slot in ([peer] if source_change else slots.values()):
                             while True:
                                 read = await api.get(f"/api/tables/{slot['table']}/documents/proof",
                                     headers={'Authorization': 'Bearer ' + slot['token']}, params={'scope': str(slot['org'].id)})
@@ -253,9 +272,9 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                                 if read.status_code != 404:
                                     raise RuntimeError('Independent shared SDK effect read failed')
                                 await asyncio.sleep(0.25)
-                    if any(mux.collection(run).done() for run in slots):
+                    if not source_change and any(mux.collection(run).done() for run in slots):
                         raise RuntimeError('Both SDK writes must be held before release')
-                    report['both_real_sdk_effects_held_concurrently'] = True
+                    report['both_real_sdk_effects_held_concurrently'] = not source_change
                     if len({slot['invocation'].runtime_handle for slot in slots.values()}) != 2:
                         raise RuntimeError('Independent attempts shared a runtime handle')
 
@@ -265,9 +284,23 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         if response.status_code != 204:
                             raise RuntimeError('Authorized synthetic fixture release failed')
 
-                    await release(failed)
+                    if not source_change:
+                        await release(failed)
                     result = await failed['receipt']
-                    if result['success'] or result['error_type'] != 'ValueError':
+                    if source_change:
+                        failed_evidence = adapter.attempt(str(failed['execution'].id)).evidence
+                        absent = await api.get(f"/api/tables/{failed['table']}/documents/proof",
+                            headers={'Authorization': 'Bearer ' + failed['token']}, params={'scope': str(failed['org'].id)})
+                        if (result['success'] or result['error_type'] == 'ValueError' or absent.status_code != 404
+                            or any(not call['path'].startswith('/api/sdk/modules/')
+                                   and call['path'] not in ('/api/sdk/modules-resolve', '/api/sdk/runtime/logs')
+                                   for call in failed_evidence['api_calls'])):
+                            raise RuntimeError('Changed dependency did not fail before workflow SDK effects')
+                        report.update(source_change_probe=True, failed_document_status_before_terminal=absent.status_code,
+                            changed_dependency_rejected_before_workflow_effects=True,
+                            source_rejection_error_type=result['error_type'],
+                            source_integrity_diagnostic_seen='Workspace module digest mismatch' in json.dumps(failed_evidence))
+                    elif result['success'] or result['error_type'] != 'ValueError':
                         raise RuntimeError('Expected first workflow error missing')
                     original = consumer._handle_result
 
@@ -294,6 +327,23 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             return row.status, row.result, row.error_message, row.completed_at, log_ids
 
                     first_commit = await failed_snapshot()
+                    if source_change:
+                        peer_attempt = adapter.attempt(str(peer['execution'].id))
+                        peer_evidence = peer_attempt.evidence
+                        peer_result = None if peer_evidence is None else peer_evidence['result']
+                        cutoff = peer['info'].started_at + timedelta(seconds=peer['info'].timeout_seconds)
+                        diagnostic = {'source_change_peer_diagnostic': True,
+                            'native_busy_count': native._build_heartbeat()['busy_count'],
+                            'peer_collection_done': mux.collection(str(peer['execution'].id)).done(),
+                            'peer_success': None if peer_result is None else peer_result['success'],
+                            'peer_error_type': None if peer_result is None else peer_result.get('error_type'),
+                            'peer_last_calls': [] if peer_evidence is None else peer_evidence['api_calls'][-5:],
+                            'peer_remaining_deadline_ms': (cutoff - datetime.now(timezone.utc)).total_seconds() * 1000,
+                            'source_error_type': result['error_type']}
+                        encoded_diagnostic = json.dumps(diagnostic)
+                        if any(secret and secret in encoded_diagnostic for secret in secrets):
+                            raise RuntimeError('Credential exposure: source-change diagnostic withheld')
+                        print(encoded_diagnostic, flush=True)
                     if native._build_heartbeat()['busy_count'] != 2 or mux.collection(str(peer['execution'].id)).done():
                         raise RuntimeError('Failure ACK loss disturbed live peer')
                     report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
@@ -358,8 +408,15 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         async with get_db_context() as db:
                             row = await db.get(Execution, slot['execution'].id)
                             logs = list(await db.scalars(select(ExecutionLog.message).where(ExecutionLog.execution_id == slot['execution'].id)))
-                            if row.status != status or not logs:
-                                raise RuntimeError('Canonical independent terminal/log state mismatch')
+                            if row.status != status:
+                                raise RuntimeError('Canonical independent terminal status mismatch')
+                            if not logs:
+                                if (not source_change or slot is not failed or not row.error_message
+                                    or attempt.evidence['result']['error_type'] != 'WorkflowLoadError'
+                                    or attempt.evidence['result']['logs'] != []):
+                                    raise RuntimeError('Canonical independent terminal logs missing')
+                                report.update(upstream_load_error_empty_logs_verified=True,
+                                              failed_engine_log_count=0, failed_persisted_log_count=0)
                             persisted_result = row.result
                             error = row.error_message
                         revoked = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + slot['token']}, json={'key': slot['key']})
@@ -408,5 +465,10 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
 
 
 if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--source-change', action='store_true')
+    args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main())
+    asyncio.run(main(source_change=args.source_change))

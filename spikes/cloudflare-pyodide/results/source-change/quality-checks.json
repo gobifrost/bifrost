@@ -1,0 +1,7 @@
+{
+  "ruff": {"command": "ruff check --no-cache shared-native-pool.py ct128-canonical-failure.py", "exit_code": 0},
+  "pyright": {"command": "pyright --project /qualification/pyright-guest-fixtures.json shared-native-pool.py ct128-canonical-failure.py", "exit_code": 0, "errors": 0, "warnings": 0},
+  "node_tests": {"command": "node --test source-integrity-response.test.mjs", "count": 3, "exit_code": 0},
+  "retained_unit_baseline": {"artifact": "../api-prepare/v2.json", "cases": 23, "rerun": false, "reason": "Unchanged helper/test hashes are verified against the previous tested packet."},
+  "bounds": "CT128; quality 0.5 CPU/1 GiB/64 PIDs, NODE_OPTIONS=--max-old-space-size=768; Node tests 0.5 CPU/512 MiB/64 PIDs; network disabled"
+}

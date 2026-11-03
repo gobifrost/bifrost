@@ -1,0 +1,10 @@
+{
+    "action":  "read-only reconciliation; no deletion or volume operation",
+    "name":  "/bifrost-test-5dc8d94e-seaweedfs-1",
+    "container_id_prefix":  "6c53619a557d",
+    "project_running_readback":  [
+
+                                 ],
+    "state":  "exited",
+    "observation_stage":  "after V2 and before V3"
+}

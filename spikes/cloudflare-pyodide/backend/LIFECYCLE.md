@@ -102,6 +102,12 @@ Actual two-tenant terminal reconciliation and ACK-gated retirement pass locally.
 declared workspace imports. Dynamic closure and provider startup remain
 unimplemented; neither preparation nor retirement establishes CPU cancellation.
 
+The [source-mutation follow-on](SOURCE-CHANGE-CONTROL.md) preserves a real peer
+deadline failure during the original exception path, then qualifies the bounded
+HTTP 409 integrity-denial path twice with the same cutoff/barrier. Expected
+denials are not provider-limit or cancellation signals; unrelated exceptions
+still propagate, and deployed abnormal settlement remains unqualified.
+
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle
 retention change does not isolate its two causes. The aborted I/O case reported
