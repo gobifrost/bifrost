@@ -155,4 +155,7 @@ async def test_resolution_memo_is_per_organization(db_session) -> None:
         )
         assert decision.allowed
 
-    assert set(cache.resolved) == {(org_a.id, row.id), (org_b.id, row.id)}
+    assert set(cache.resolved) == {
+        (org_a.id, None, row.id),
+        (org_b.id, None, row.id),
+    }
