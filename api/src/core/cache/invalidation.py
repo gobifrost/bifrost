@@ -22,10 +22,12 @@ from typing import TYPE_CHECKING, Any
 
 from .keys import (
     CONFIG_GLOBAL_VERSION_KEY,
+    TTL_EXECUTION_LOGS,
     TTL_ORGS,
     active_execution_key,
     config_key,
     config_scope_version_key,
+    execution_logs_stream_key,
     form_key,
     forms_hash_key,
     org_key,
@@ -326,13 +328,20 @@ async def cleanup_execution_cache(execution_id: str) -> None:
 
     The log stream remains until its explicitly staged entries have committed
     and retention removes the execution record. Deleting it here can race a
-    final persistence pass and discard logs.
+    final persistence pass and discard logs. The retained stream carries a
+    hard 7-day expiry so it can never become permanent metadata.
 
     Args:
         execution_id: Execution ID to clean up
     """
     try:
         r = await get_shared_redis()
+        # A completed stream is preserved briefly for recovery or a concurrent
+        # append, but it must never become permanent metadata.
+        try:
+            await r.expire(execution_logs_stream_key(execution_id), TTL_EXECUTION_LOGS)
+        except Exception as e:
+            logger.warning(f"Failed to bound execution log retention: {e}")
         await r.delete(active_execution_key(execution_id))
         logger.debug(f"Cleaned up execution cache: execution_id={execution_id}")
     except Exception as e:
