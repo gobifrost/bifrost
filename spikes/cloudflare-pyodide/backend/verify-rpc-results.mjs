@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const read = name => readFileSync(new URL('results/rpc-results/' + name, root), 'utf8');
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -16,7 +17,7 @@ for (const [index, receipt] of reports.entries()) {
 }
 assert.equal('value' in reports[0].observation.body, false, 'invalid v1 field access stays visible');
 const latest = reports[3], body = latest.observation.body;
-assert.equal(hash(readFileSync(new URL('backend/ct128-sdk-probe.py', root))), latest.packet_sha256['ct128-sdk-probe.py']);
+assert.equal(hash(execFileSync('git', ['show', 'e9f28554848cfa915a62388d4e9141f8780cadf8:spikes/cloudflare-pyodide/backend/ct128-sdk-probe.py'])), latest.packet_sha256['ct128-sdk-probe.py']);
 assert.deepEqual(body.abi, {pyodide: '314.0.6', python: [3, 14, 2], cache_tag: 'cpython-314',
   soabi: 'cpython-314-wasm32-emscripten', platform: 'emscripten-5.0.3-wasm32'});
 assert.deepEqual(body.result_shape, {tag: '[object Map]', is_map: true, own_keys: []});

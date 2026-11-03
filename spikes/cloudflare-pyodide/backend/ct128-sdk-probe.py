@@ -16,8 +16,10 @@ def command(args, timeout=20):
     return subprocess.check_output(args, text=True, timeout=timeout).strip()
 
 
-def main(revision, *, rpc_results=False):
-    prefix = 'rpc-results' if rpc_results else 'sdk1217'
+def main(revision, *, rpc_results=False, rpc_context=False):
+    if rpc_results and rpc_context:
+        raise ValueError('One lifecycle probe mode required')
+    prefix = 'rpc-context' if rpc_context else 'rpc-results' if rpc_results else 'sdk1217'
     packet = ROOT / f'inbox/{prefix}-v{revision}'
     run = ROOT / f'runs/{prefix}-v{revision}'
     name = f'pyodide-ddf316c1-{prefix}-v{revision}'
@@ -42,9 +44,10 @@ def main(revision, *, rpc_results=False):
     source = config.read_text()
     if source.count('./backend/authorized-local-entry.mjs') != 1:
         raise RuntimeError('Unexpected local CLI configuration')
-    entrypoint = './backend/rpc-result-entry.mjs' if rpc_results else './backend/latest-sdk-probe-entry.mjs'
+    entrypoint = './backend/rpc-context-entry.mjs' if rpc_context else './backend/rpc-result-entry.mjs' if rpc_results else './backend/latest-sdk-probe-entry.mjs'
     config.write_text(source.replace('./backend/authorized-local-entry.mjs', entrypoint))
-    report = {'scope': 'credential-free RPC result lifecycle only' if rpc_results else 'credential-free SDK import/constructor only', 'cloud_invocations': 0,
+    scope = 'credential-free RPC context lifetime only' if rpc_context else 'credential-free RPC result lifecycle only' if rpc_results else 'credential-free SDK import/constructor only'
+    report = {'scope': scope, 'cloud_invocations': 0,
         'engine_sdk_execution_verified': False, 'sdk_import_constructor_passed': False,
         'packet_sha256': {str(path.relative_to(packet)): hashlib.sha256(path.read_bytes()).hexdigest()
                           for path in packet.rglob('*') if path.is_file() and path.suffix != '.gz'}}
@@ -70,7 +73,7 @@ def main(revision, *, rpc_results=False):
             "fetch('http://127.0.0.1:8799',{method:'POST',signal:AbortSignal.timeout(45000)}).then(async r=>{const t=await r.text();if(t.length>1048576)throw Error('Bound');console.log(JSON.stringify({status:r.status,body:JSON.parse(t)}));}).catch(()=>{process.exitCode=1;})"], timeout=55)
         report['observation'] = json.loads(result)
         body = report['observation']['body']
-        report['sdk_import_constructor_passed'] = (not rpc_results and report['observation']['status'] == 200
+        report['sdk_import_constructor_passed'] = (not (rpc_results or rpc_context) and report['observation']['status'] == 200
             and all(value.get('imported') for value in body.get('probes', {}).values())
             and body.get('constructor', {}).get('created') is True)
     finally:
@@ -90,6 +93,8 @@ def main(revision, *, rpc_results=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
-    parser.add_argument('--rpc-results', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--rpc-results', action='store_true')
+    mode.add_argument('--rpc-context', action='store_true')
     args = parser.parse_args()
-    main(args.revision, rpc_results=args.rpc_results)
+    main(args.revision, rpc_results=args.rpc_results, rpc_context=args.rpc_context)
