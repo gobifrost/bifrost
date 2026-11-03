@@ -70,7 +70,9 @@ The [private HTTP adapter](PRIVATE-HTTP-POOL.md) now composes that native pool
 without rewriting scheduling, token issuance or terminal semantics. Transport
 retention precedes physical dispatch, and duplicate calls preserve the original
 attempt. It requires explicit provenance matching the caller's native context;
-normal manifest preparation/startup remain real integration gaps.
+the [API preparation follow-on](API-WORKSPACE-PREPARE.md) now obtains hashes for
+declared imports through the signed run's existing source endpoints. Dynamic
+closure, atomic workspace revisions and automatic startup remain real gaps.
 
 ### Health, workflow outcome and provider settlement are separate facts
 

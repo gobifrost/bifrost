@@ -98,8 +98,9 @@ The [private adapter extraction](PRIVATE-HTTP-POOL.md) now owns routing/collecti
 outside the fixture. Its companion receipt is reserved before dispatch; losing
 the routing waiter or stream does not erase the obligation or relaunch code.
 Actual two-tenant terminal reconciliation and ACK-gated retirement pass locally.
-Automatic authoritative manifest preparation and startup remain unimplemented;
-neither this extraction nor successful retirement establishes CPU cancellation.
+[Authenticated API preparation](API-WORKSPACE-PREPARE.md) now supplies pins for
+declared workspace imports. Dynamic closure and provider startup remain
+unimplemented; neither preparation nor retirement establishes CPU cancellation.
 
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle

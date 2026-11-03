@@ -1,0 +1,8 @@
+{
+    "api_source":  "1d33150eb376b71f8a81b427920eda1b0447f829",
+    "sha256":  {
+                   "api/src/routers/sdk_modules.py":  "b6b44a10b0863f4e0efa4a2362d3d49135f03611ecf0b892437ee63bf966158f",
+                   "api/shared/sdk_modules.py":  "46a17920f087df9c3445fb944315120ea353222228268796cdb743e333b1b172"
+               },
+    "clean_against_base":  true
+}

@@ -70,9 +70,11 @@ invocation/deployment, access grant or production change occurred.
 
 This is a reusable **private routing component**, not an admitted production
 backend. The base workflow consumer initializes `content_hash` to None. This
-fixed fixture explicitly supplies the known published hash before calling the
-adapter; the adapter never invents or fills a missing pin. A normal host still
-needs authoritative API/workspace manifest preparation tied to the attempt.
+historical V2 fixture explicitly supplies the known published hash before calling
+the adapter; the adapter never invents or fills a missing pin. The later
+[authenticated API preparation](API-WORKSPACE-PREPARE.md) now derives those pins
+for declared workspace imports using the run's existing source scope. Arbitrary
+dynamic closure and atomic workspace-revision preparation remain unsupported.
 The Worker endpoint still has the original fixed-fixture admission policy.
 Binding a plan here does not make other workflow shapes admitted there.
 

@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 
 from private_http_pool import PrivateHttpWorkflowPool
 from task_cleanup import cancel_and_join
+from workspace_prepare import prepare_workspace, WorkspacePreparationError
 
 
 async def main():
@@ -174,9 +175,6 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                 lease_ref=ref, memory_sample=effective_memory_sample, memory_request_bytes=requests.get,
                 on_result=canonical_result, capacity=2)
             native, mux = adapter.native, adapter.mux
-            for run, slot in slots.items():
-                adapter.bind_manifest(run, {path: manifest[path] for path in (slot['path'], slot['helper'] + '.py')})
-
             class Parent:
                 def credential_route(self):
                     return adapter.credential_route()
@@ -185,15 +183,31 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     slot = slots[execution_id]
                     if context['file_path'] != slot['path'] or context['function_name'] != 'qualified':
                         raise RuntimeError('Fixture workflow identity mismatch')
-                    context['content_hash'] = manifest[slot['path']]
                     slot['token'], slot['refresh'] = context['engine_token'], context.get('engine_refresh_token')
                     secrets.extend([slot['token'], slot['refresh']])
-                    # This fixed fixture supplies explicit provenance. The
-                    # reusable adapter refuses an absent/mismatched native hash;
-                    # it never silently fills one in on behalf of dispatch.
-                    slot['original_context'] = json.loads(json.dumps(context, default=str))
+                    if slot['label'] == 'fails-first':
+                        try:
+                            await prepare_workspace('http://api:8000',
+                                {**context, 'engine_token': 'invalid-preparation-qualification-token'}, [slot['helper']])
+                        except WorkspacePreparationError as exc:
+                            if exc.status_code != 401:
+                                raise
+                            report['invalid_preparation_credential_status'] = exc.status_code
+                        else:
+                            raise RuntimeError('Invalid preparation credential was accepted')
+                    original_context = json.loads(json.dumps(context, default=str))
+                    prepared = await prepare_workspace('http://api:8000', context, [slot['helper']])
+                    expected_manifest = {path: manifest[path] for path in (slot['path'], slot['helper'] + '.py')}
+                    if (prepared.manifest != expected_manifest
+                        or json.dumps(context, default=str, sort_keys=True) != json.dumps(original_context, sort_keys=True)):
+                        raise RuntimeError('API-prepared provenance differs from independently published source')
+                    adapter.bind_manifest(execution_id, prepared.manifest)
+                    slot['preparation'] = {'observations': prepared.observations,
+                        'response_bytes': prepared.response_bytes, 'manifest': prepared.manifest,
+                        'original_content_hash': original_context.get('content_hash')}
+                    slot['original_context'] = prepared.context
                     slot['original_active'] = json.loads(json.dumps(active_execution, default=str))
-                    await adapter.route_execution(execution_id=execution_id, context=context,
+                    await adapter.route_execution(execution_id=execution_id, context=prepared.context,
                         active_execution=active_execution, credential_route=credential_route)
                     attempt = adapter.attempt(execution_id)
                     slot.update(route=attempt.route, info=attempt.info, receipt=attempt.receipt,
@@ -355,13 +369,14 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             'canonical_result': persisted_result, 'canonical_error': error, 'persisted_logs': logs,
                             'runtime_handle': slot['invocation'].runtime_handle, 'route': slot['route'],
                             'accepted_monotonic': slot['accepted_monotonic'], 'terminal_monotonic': slot['terminal_monotonic'],
-                            'evidence': slot['evidence'], 'access_after_terminal_status': revoked.status_code}
+                            'evidence': slot['evidence'], 'access_after_terminal_status': revoked.status_code,
+                            'preparation': slot['preparation']}
                     await adapter.retire()
                     if mux.retained_count != 0:
                         raise RuntimeError('Retired request collector retained credentials')
                     report.update(single_native_pool_verified=True, terminal_obligations_released=True,
                                   canonical_terminal_reconciliation_verified=True, mux_retired_after_canonical_ack=True,
-                                  reusable_private_adapter_verified=True)
+                                  reusable_private_adapter_verified=True, api_preparation_verified=True)
                 if heartbeat.done():
                     heartbeat.result()
             finally:

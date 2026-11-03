@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const source = path => execFileSync('git', ['show', '57dd06d44d7db307a3d273214f6b99b19b2b90bf:' + path]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const base = new URL('../results/private-pool/', import.meta.url);
 const json = async name => JSON.parse(await readFile(new URL(name, base)));
@@ -15,10 +17,10 @@ const report = await json('v2.json');
 for (const name of ['private_http_pool.py', 'test_private_http_pool.py', 'attempt_journal.py',
   'shared-native-pool.py', 'http_invocation.py', 'invocation_stream.py', 'workflow_request_mux.py',
   'test_workflow_request_mux.py', 'ct128-canonical-failure.py', 'task_cleanup.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  assert.equal(hash(source('spikes/cloudflare-pyodide/backend/' + name)), report.packet_sha256[name], name);
 }
 for (const [path, digest] of Object.entries(report.api_overlay_sha256)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(source(path)), digest, path);
 }
 assert.equal(report.qualification_passed, true);
 assert.ok(report.commands.every(command => command.exit_code === 0));
@@ -72,4 +74,4 @@ for (const [id, attempt] of attempts) {
 }
 assert.ok(Math.max(...attempts.map(([, attempt]) => attempt.accepted_monotonic)) <
   Math.min(...attempts.map(([, attempt]) => attempt.terminal_monotonic)));
-console.log('Reusable private HTTP adapter passed two real tenant engine/SDK runs with canonical fencing, peer-preserving ACK replay and retirement. Public startup/provenance resolution and deployed cancellation remain unaccepted.');
+console.log('Historical private HTTP adapter receipt verified: actual two-tenant execution, fencing, replay and retirement. This artifact alone does not qualify API preparation, public startup or deployed cancellation.');

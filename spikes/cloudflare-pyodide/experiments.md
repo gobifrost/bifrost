@@ -812,3 +812,34 @@ claimedruns, then supported startup without Linuxconfigure/package commands.
 FixedWorkeradmission, signedcontrolsocket, deployedcombinedlifecycle and abnormal
 CPUsettlement remain unaccepted. Coldconcurrentstartupfailure retained; prewarm
 iscredentialfreebeforeclaims, not coldlatency or arbitrarycodeadmission proof.
+
+## Authoritative API preparation, 2026-11-03
+
+Hypothesis: existing run-authenticated module endpoints can supply the private
+adapter's entry/dependency pins without fixture hash injection or another source
+resolver. Change: bounded prepare_workspace helper reuses upstream path/name
+functions, GET modules and modules-resolve under the genuine runtime principal,
+checks identities/sourceSHA256/storagepaths, preserves existingpins and returns
+an unmutated-context copy with derivedpin. Declaredworkspaceimports only; no
+code execution, dynamicclosure inference, credentialrefresh, redirect or scopes.
+Native tests cover snapshots, hashes, corrupt/oldpins,401/403/307refusal, package/
+namespacepaths, missing/scopedimports and size/inputbounds. V1 exposes oneof23
+failures: ../escape is normalized upstream and entryGET occurred before this
+layer rejected noncanonicaldeclarations. Before-source/test/failure kept; add
+canonical dotted/slash equality check BEFOREnetwork. V2 all23cases/Ruff/Pyright
+pass with unchanged tests, no retry/timeoutmask. Realcommand timeout430python3
+inbox/api-prepare-v2/ct128-canonical-failure.py --api-prepare --revision2 passes
+fourphases98.657s. Actualinvalidcredential401 beforebinding; eachgenuine run has
+2successfulparentGETs andAPIderivedmanifest matchingindependentpublishedsource,
+originalcontextpinNone. Actualengine/SDK70/78, ValueError/Failed/lostACK/replay,
+staleownerreject, peer200/failed401thenall401, accounting2,2,1,0andretirementpass.
+Provideralive/noOOMbeforeownedcleanup; noownedrunningcontainersafter. API source/
+resolverfilesreadbackcleanagainst1d33150. No cloudcalls or API-sourcepatches.
+Artifact: backend/API-WORKSPACE-PREPARE.md, results/api-prepare/v2.json, native
+sourcehashreadback and source-boundverifier. Historicalprivateverifier now binds
+57dd06d44 exactsource. Counts show2extra parentGETs/run, notCPU/startup/bill; total
+supervisorincludesprewarm/setup/barriers/cleanup. Package/namespacepreparation is
+unitHTTPproof only; actualWorker stillfixedflat2-moduleadmission. No atomicwhole-
+workspacecommit or dynamicimportsafety claimed. Next: guest-only source-change
+negativecontrol before workfloweffects, then supported startup/capabilitypolicy
+preparation; publicadmission and deployedCPUsettlement remain unaccepted.
