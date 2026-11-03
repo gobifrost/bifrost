@@ -1,0 +1,7 @@
+{
+    "local_build_entry_sha256":  "e3dd771c480fa3470b04192221d5caf414fafddab37816582bd2ac73612a83d1",
+    "cf_cli_version":  "1.0.0-beta.22",
+    "wrangler_version":  "4.156.0",
+    "cloud_cpu_ms":  null,
+    "cloud_peak_memory_bytes":  null
+}

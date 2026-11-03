@@ -2,5 +2,6 @@ frontend/assets/
 frontend/.cloudflare/
 executor/.cloudflare/
 cpu-placement/.cloudflare/
+request-signal/.cloudflare/
 runtime/
 *.private*

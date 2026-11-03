@@ -1,0 +1,21 @@
+{
+    "open_version":  "2224a36e-d6fb-4147-b742-52aaa798b701",
+    "closed_deploy_version":  "5ee07889-997f-4c56-840e-29b56531ac6a",
+    "final_version":  "1ff3251d-6947-4f5e-a8bf-fd7c6fd7db19",
+    "final_deployment":  "f5c7b0e7-8084-46c5-a6cf-0a59fa305a70",
+    "secret_names":  [
+
+                     ],
+    "expiry_ms":  0,
+    "temporary_signal_flag_restored":  true,
+    "retired_guard_get_status":  404,
+    "execution_rows_remaining":  0,
+    "reserved_posts":  6,
+    "fresh_python_children":  2,
+    "cleanup_get_requests":  1,
+    "cost_cap_usd":  0.1,
+    "actual_billed_cost_usd":  null,
+    "profile_expiry_ms":  1793673568937,
+    "controller_running":  false,
+    "dev_volumes_preserved":  true
+}

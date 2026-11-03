@@ -1,0 +1,18 @@
+{
+    "id":  "2224a36e-d6fb-4147-b742-52aaa798b701",
+    "compatibility_flags":  [
+                                "enable_request_signal"
+                            ],
+    "limits":  {
+                   "cpu_ms":  1000
+               },
+    "expiry":  "1793673568937",
+    "created_on":  "2026-11-03T02:09:34.820504Z",
+    "module_hashes":  [
+                          {
+                              "sha256":  "e3dd771c480fa3470b04192221d5caf414fafddab37816582bd2ac73612a83d1",
+                              "name":  "entry.js",
+                              "bytes":  6717
+                          }
+                      ]
+}

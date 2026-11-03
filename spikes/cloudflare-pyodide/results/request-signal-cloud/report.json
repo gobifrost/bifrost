@@ -1,0 +1,96 @@
+{
+  "runtime": "deployed-cloudflare",
+  "canonical_dispatch_verified": false,
+  "physical_termination_verified": false,
+  "cases": [
+    {
+      "case_id": "completion",
+      "outcome": {
+        "http_status": 200,
+        "body": {
+          "parent_only": true
+        }
+      },
+      "client_abort_requested": false,
+      "native_abort_elapsed_ms": null,
+      "native_roundtrip_ms": 329.59775906056166,
+      "independent_messages": [
+        "signal:controller-control",
+        "signal:completion:preflight",
+        "signal:completion:before",
+        "signal:completion:after"
+      ],
+      "execution_id": "eb63b4ca-1b86-4c71-8651-19a516c987dc"
+    },
+    {
+      "case_id": "parent_abort",
+      "outcome": {
+        "client_operation_cancelled": true
+      },
+      "client_abort_requested": true,
+      "native_abort_elapsed_ms": 188.67657566443086,
+      "native_roundtrip_ms": 188.92128393054008,
+      "independent_messages": [
+        "signal:controller-control",
+        "signal:parent_abort:preflight",
+        "signal:parent_abort:before",
+        "signal:parent_abort:parent_abort_received"
+      ],
+      "execution_id": "3b3061d6-7cff-4ea9-8ff4-9d0c97f443b2"
+    },
+    {
+      "case_id": "io_abort",
+      "outcome": {
+        "client_operation_cancelled": true
+      },
+      "client_abort_requested": true,
+      "native_abort_elapsed_ms": 2037.4214379116893,
+      "native_roundtrip_ms": 2037.6076130196452,
+      "independent_messages": [
+        "signal:controller-control",
+        "signal:io_abort:preflight",
+        "signal:io_abort:before",
+        "signal:io_abort:parent_abort_received"
+      ],
+      "execution_id": "1b510f35-1ac9-4ff5-b182-136cba035452"
+    },
+    {
+      "case_id": "cpu_abort",
+      "outcome": {
+        "client_operation_cancelled": true
+      },
+      "client_abort_requested": true,
+      "native_abort_elapsed_ms": 1450.1863881014287,
+      "native_roundtrip_ms": 1450.35854075104,
+      "independent_messages": [
+        "signal:controller-control",
+        "signal:cpu_abort:preflight",
+        "signal:cpu_abort:before"
+      ],
+      "execution_id": "98561888-dd70-4625-af39-615e87570e4b"
+    }
+  ],
+  "cleanup": {
+    "owned_log_streams_deleted": 4,
+    "ended_access_statuses": [
+      401,
+      401,
+      401,
+      401
+    ],
+    "ended_refresh_statuses": [
+      401,
+      401,
+      401,
+      401
+    ]
+  },
+  "unsupported_dispatch_status": 422,
+  "invalid_identity": {
+    "phase": "observer-auth",
+    "observer_status": 401
+  },
+  "incoming_disconnect_gate_passed": true,
+  "cross_tenant_log_read_status": 403,
+  "completed": true
+}

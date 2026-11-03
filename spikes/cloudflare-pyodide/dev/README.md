@@ -1,5 +1,9 @@
 # Isolated development deployment
 
+Latest cancellation qualification: [deployed incoming disconnect](REQUEST-SIGNAL-CLOUD.md).
+The parent and I/O delivery controls pass; CPU physical termination remains
+unproved. The temporary flag, endpoint and guard were retired after the test.
+
 Latest termination result: [deployed CPU limit placement](CPU-LIMIT-CLOUD.md).
 Both supported placements raised catchable CpuLimitExceeded and permitted
 subsequent authenticated API effects. Untrusted backend admission stays disabled;
