@@ -1,0 +1,18 @@
+{
+  "key": "pr:1208",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "Physical workers can authenticate their control connection through service-token gateways without passing edge credentials to execution children.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1208",
+      "Pending maintainer review of worker authentication, execution-template credential isolation and the release-note disposition."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1208"
+  }
+}
