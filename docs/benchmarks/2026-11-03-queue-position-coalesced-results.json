@@ -1,0 +1,4444 @@
+{
+  "api_sql_window_proof_8s": {
+    "control_redis_100m": [
+      {
+        "duration_s": 60.38494664616883,
+        "finished_epoch_s": 1793653689.9090896,
+        "owner_fence_select_count": 162,
+        "pod": "bifrost-api-76cc9b86cb-7s6rh",
+        "process_cpu_cores": 0.2774608964743203,
+        "sql_count": 5667,
+        "started_epoch_s": 1793653629.5241432
+      },
+      {
+        "duration_s": 60.39576834719628,
+        "finished_epoch_s": 1793653690.1084726,
+        "owner_fence_select_count": 2650,
+        "pod": "bifrost-api-76cc9b86cb-jr8w9",
+        "process_cpu_cores": 0.7439185417381278,
+        "sql_count": 23652,
+        "started_epoch_s": 1793653629.7127042
+      }
+    ],
+    "queue_position_coalesced": [
+      {
+        "duration_s": 60.30438035540283,
+        "finished_epoch_s": 1793665402.959364,
+        "owner_fence_select_count": 3297,
+        "pod": "bifrost-api-846467b897-4qphp",
+        "process_cpu_cores": 0.677860304874812,
+        "sql_count": 23716,
+        "started_epoch_s": 1793665342.6549854
+      },
+      {
+        "duration_s": 60.52464488148689,
+        "finished_epoch_s": 1793665403.3135543,
+        "owner_fence_select_count": 167,
+        "pod": "bifrost-api-846467b897-kxbzn",
+        "process_cpu_cores": 0.37405852244702675,
+        "sql_count": 8835,
+        "started_epoch_s": 1793665342.7889123
+      }
+    ],
+    "queue_position_noop": [
+      {
+        "duration_s": 60.35277039650828,
+        "finished_epoch_s": 1793662061.250317,
+        "owner_fence_select_count": 165,
+        "pod": "bifrost-api-857d99cd54-8b6c5",
+        "process_cpu_cores": 0.37853758021225387,
+        "sql_count": 8949,
+        "started_epoch_s": 1793662000.8975465
+      },
+      {
+        "duration_s": 60.44516523834318,
+        "finished_epoch_s": 1793662061.490168,
+        "owner_fence_select_count": 3317,
+        "pod": "bifrost-api-857d99cd54-ldgdt",
+        "process_cpu_cores": 0.6773647753224715,
+        "sql_count": 23895,
+        "started_epoch_s": 1793662001.0450048
+      }
+    ],
+    "redis_500m_contrast": [
+      {
+        "duration_s": 60.34197372198105,
+        "finished_epoch_s": 1793657452.1985245,
+        "owner_fence_select_count": 163,
+        "pod": "bifrost-api-67c84c5cd9-qkdqb",
+        "process_cpu_cores": 0.33512461331097654,
+        "sql_count": 7309,
+        "started_epoch_s": 1793657391.856552
+      },
+      {
+        "duration_s": 60.32744557317346,
+        "finished_epoch_s": 1793657452.3927052,
+        "owner_fence_select_count": 3028,
+        "pod": "bifrost-api-67c84c5cd9-rslkq",
+        "process_cpu_cores": 0.7429291794335514,
+        "sql_count": 25503,
+        "started_epoch_s": 1793657392.065263
+      }
+    ]
+  },
+  "arms": [
+    {
+      "finished_at": "2026-11-02T21:46:41+00:00",
+      "launch": {
+        "base_image": null,
+        "base_image_id": null,
+        "fixture_sha256": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3",
+        "harness_revision": "1820ce1ff8712a41e6ccf7d6066cea8173e0e4f4",
+        "image": "bifrost-api:kind-a74e45295998-hosting-sizing-r1",
+        "image_id": null,
+        "launch_sha256": "5833254669de8128d38d25efe62635a2c93a6a9aed091c3ce885520752d72183",
+        "runtime_branch": null,
+        "runtime_revision": "3603b2d3bd172eadf30a8516cc8fa6afc14f1ad5",
+        "verification": {
+          "after_300s_headroom_adjustment": 11,
+          "diff_check": "passed",
+          "ruff": "passed",
+          "targeted_tests": 57
+        }
+      },
+      "n2": {
+        "cleanup_verified": true,
+        "count_status": "stopped",
+        "declared_request_allocation": {
+          "components": {
+            "api": {
+              "cpu_m": 750,
+              "memory_bytes": 536870912,
+              "replicas": 2
+            },
+            "client": {
+              "cpu_m": 50,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "pooler": {
+              "cpu_m": 100,
+              "memory_bytes": 134217728,
+              "replicas": 1
+            },
+            "postgres": {
+              "cpu_m": 750,
+              "memory_bytes": 1610612736,
+              "replicas": 1
+            },
+            "redis": {
+              "cpu_m": 100,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "worker": {
+              "cpu_m": 650,
+              "memory_bytes": 1073741824,
+              "replicas": 2
+            }
+          },
+          "fixed_components_cpu_m": 2500,
+          "fixed_components_memory_bytes": 2952790016,
+          "total_cpu_m": 3800,
+          "total_memory_bytes": 5100273664,
+          "worker_count": 2,
+          "worker_cpu_m": 650,
+          "worker_memory_bytes": 1073741824
+        },
+        "first_valid_fail_per_s": 8.0,
+        "generic_count_scalars": {
+          "bracket": [
+            4.0,
+            8.0
+          ],
+          "classification": "completed_diagnostic",
+          "cleanup_verified": true,
+          "declared_request_allocation": {
+            "components": {
+              "api": {
+                "cpu_m": 750,
+                "memory_bytes": 536870912,
+                "replicas": 2
+              },
+              "client": {
+                "cpu_m": 50,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "pooler": {
+                "cpu_m": 100,
+                "memory_bytes": 134217728,
+                "replicas": 1
+              },
+              "postgres": {
+                "cpu_m": 750,
+                "memory_bytes": 1610612736,
+                "replicas": 1
+              },
+              "redis": {
+                "cpu_m": 100,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "worker": {
+                "cpu_m": 650,
+                "memory_bytes": 1073741824,
+                "replicas": 2
+              }
+            },
+            "fixed_components_cpu_m": 2500,
+            "fixed_components_memory_bytes": 2952790016,
+            "total_cpu_m": 3800,
+            "total_memory_bytes": 5100273664,
+            "worker_count": 2,
+            "worker_cpu_m": 650,
+            "worker_memory_bytes": 1073741824
+          },
+          "first_valid_fail": {
+            "arrival_cohort": {
+              "accepted_union": 2444,
+              "correct_by_deadline": 802,
+              "correct_completed": 1127,
+              "correct_late": 325,
+              "failed_terminal": 0,
+              "scheduled": 2444,
+              "unfinished_durable": 1317
+            },
+            "backlog_max": 1517.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 2.77,
+              "correct_completed": 3.1866666666666665,
+              "durably_terminal": 3.1866666666666665,
+              "scheduled": 8.146666666666667
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 29.12991738319397,
+              "end_to_end": 238.49921679496765,
+              "queue": 239.08504986763,
+              "verdict_end_to_end": null
+            },
+            "offered_rate_per_s": 8.0,
+            "outcome": "fail",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 792494080,
+                  "cpu_seconds": 305.7567630000001,
+                  "max_interval_cpu_cores": 1.1757398333378493,
+                  "max_pod_throttled_ratio": 1.0,
+                  "mean_cpu_cores_observed": 1.0318942908572963,
+                  "observed_seconds": 296.30628418922424,
+                  "observed_window_fraction": 0.9876876139640808,
+                  "working_set_peak_bytes": 750149632
+                },
+                "client": {
+                  "charged_peak_bytes": 8986624,
+                  "cpu_seconds": 0.016359000000000005,
+                  "max_interval_cpu_cores": 0.00013003978472833766,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.5209763926413995e-05,
+                  "observed_seconds": 296.30628418922424,
+                  "observed_window_fraction": 0.9876876139640808,
+                  "working_set_peak_bytes": 8704000
+                },
+                "pooler": {
+                  "charged_peak_bytes": 60284928,
+                  "cpu_seconds": 14.620585000000002,
+                  "max_interval_cpu_cores": 0.07928982464515091,
+                  "max_pod_throttled_ratio": 0.1568627450980392,
+                  "mean_cpu_cores_observed": 0.04934281107134112,
+                  "observed_seconds": 296.30628418922424,
+                  "observed_window_fraction": 0.9876876139640808,
+                  "working_set_peak_bytes": 60215296
+                },
+                "postgres": {
+                  "charged_peak_bytes": 579567616,
+                  "cpu_seconds": 30.504722000000008,
+                  "max_interval_cpu_cores": 0.2330929020558005,
+                  "max_pod_throttled_ratio": 0.11538461538461539,
+                  "mean_cpu_cores_observed": 0.10294996639531066,
+                  "observed_seconds": 296.30628418922424,
+                  "observed_window_fraction": 0.9876876139640808,
+                  "working_set_peak_bytes": 315797504
+                },
+                "redis": {
+                  "charged_peak_bytes": 16445440,
+                  "cpu_seconds": 24.969587,
+                  "max_interval_cpu_cores": 0.10070477038931641,
+                  "max_pod_throttled_ratio": 1.0,
+                  "mean_cpu_cores_observed": 0.08426951547222052,
+                  "observed_seconds": 296.30628418922424,
+                  "observed_window_fraction": 0.9876876139640808,
+                  "working_set_peak_bytes": 16408576
+                },
+                "worker": {
+                  "charged_peak_bytes": 650117120,
+                  "cpu_seconds": 66.03965200000003,
+                  "max_interval_cpu_cores": 0.5081538898250784,
+                  "max_pod_throttled_ratio": 0.04081632653061224,
+                  "mean_cpu_cores_observed": 0.22287631253148324,
+                  "observed_seconds": 296.30628418922424,
+                  "observed_window_fraction": 0.9876876139640808,
+                  "working_set_peak_bytes": 640126976
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 2048978944,
+                "cpu_seconds": 441.90766799999994,
+                "max_interval_cpu_cores": 1.926776602883512,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 1.4913881060915777,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 296.30628418922424,
+                "observed_window_fraction": 0.9876876139640808,
+                "working_set_peak_bytes": 1721724928
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 10120550,
+                "execution_log_rows": 0,
+                "execution_rows": 2687,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 45301760,
+                "postgres_database_bytes": 11616256,
+                "postgres_wal_retained_bytes": 33554432,
+                "redis_commands_processed": 2120574,
+                "redis_connections_received": 307,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 436.6476490497589
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            },
+            "verdict": "fail",
+            "window_s": 300
+          },
+          "highest_valid_tested_pass": {
+            "arrival_cohort": {
+              "accepted_union": 1179,
+              "correct_by_deadline": 1179,
+              "correct_completed": 1179,
+              "correct_late": 0,
+              "failed_terminal": 0,
+              "scheduled": 1179,
+              "unfinished_durable": 0
+            },
+            "backlog_max": 6.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 3.9266666666666667,
+              "correct_completed": 3.9266666666666667,
+              "durably_terminal": 3.9266666666666667,
+              "scheduled": 3.93
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.08788871765136719,
+              "end_to_end": 0.5735480785369873,
+              "queue": 0.11592483520507812,
+              "verdict_end_to_end": 0.5735480785369873
+            },
+            "offered_rate_per_s": 4.0,
+            "outcome": "pass",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 699539456,
+                  "cpu_seconds": 157.84736000000004,
+                  "max_interval_cpu_cores": 0.7830600591756849,
+                  "max_pod_throttled_ratio": 0.52,
+                  "mean_cpu_cores_observed": 0.5337401354304666,
+                  "observed_seconds": 295.7382245063782,
+                  "observed_window_fraction": 0.9857940816879273,
+                  "working_set_peak_bytes": 664772608
+                },
+                "client": {
+                  "charged_peak_bytes": 8986624,
+                  "cpu_seconds": 0.015200999999999996,
+                  "max_interval_cpu_cores": 8.750660672725454e-05,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.14001868556973e-05,
+                  "observed_seconds": 295.7382245063782,
+                  "observed_window_fraction": 0.9857940816879273,
+                  "working_set_peak_bytes": 8704000
+                },
+                "pooler": {
+                  "charged_peak_bytes": 60796928,
+                  "cpu_seconds": 13.057238,
+                  "max_interval_cpu_cores": 0.06301140814776209,
+                  "max_pod_throttled_ratio": 0.18181818181818182,
+                  "mean_cpu_cores_observed": 0.04415133695278675,
+                  "observed_seconds": 295.7382245063782,
+                  "observed_window_fraction": 0.9857940816879273,
+                  "working_set_peak_bytes": 60727296
+                },
+                "postgres": {
+                  "charged_peak_bytes": 497295360,
+                  "cpu_seconds": 23.481456000000012,
+                  "max_interval_cpu_cores": 0.16810253697567423,
+                  "max_pod_throttled_ratio": 0.0625,
+                  "mean_cpu_cores_observed": 0.07939946227510265,
+                  "observed_seconds": 295.7382245063782,
+                  "observed_window_fraction": 0.9857940816879273,
+                  "working_set_peak_bytes": 266715136
+                },
+                "redis": {
+                  "charged_peak_bytes": 11055104,
+                  "cpu_seconds": 6.106629,
+                  "max_interval_cpu_cores": 0.029650862936726412,
+                  "max_pod_throttled_ratio": 0.08,
+                  "mean_cpu_cores_observed": 0.02064876466406289,
+                  "observed_seconds": 295.7382245063782,
+                  "observed_window_fraction": 0.9857940816879273,
+                  "working_set_peak_bytes": 11005952
+                },
+                "worker": {
+                  "charged_peak_bytes": 649572352,
+                  "cpu_seconds": 76.243197,
+                  "max_interval_cpu_cores": 0.38718755223508755,
+                  "max_pod_throttled_ratio": 0.09090909090909091,
+                  "mean_cpu_cores_observed": 0.2578063661782607,
+                  "observed_seconds": 295.7382245063782,
+                  "observed_window_fraction": 0.9857940816879273,
+                  "working_set_peak_bytes": 639582208
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 1917648896,
+                "cpu_seconds": 276.75108100000006,
+                "max_interval_cpu_cores": 1.418145391795495,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 0.9357974656875353,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 295.7382245063782,
+                "observed_window_fraction": 0.9857940816879273,
+                "working_set_peak_bytes": 1643982848
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 8099159,
+                "execution_log_rows": 0,
+                "execution_rows": 1289,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 41324544,
+                "postgres_database_bytes": 7643136,
+                "postgres_wal_retained_bytes": 33554432,
+                "redis_commands_processed": 132745,
+                "redis_connections_received": 97,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 398.8979585170746
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            },
+            "verdict": "pass",
+            "window_s": 300
+          },
+          "inconclusive_step_count": 0,
+          "invalid_step_count": 0,
+          "preflight_present": true,
+          "source_count_status": "stopped",
+          "sql_sidecar_reference_hashes": [],
+          "steps": [
+            {
+              "arrival_cohort": {
+                "accepted_union": 598,
+                "correct_by_deadline": 598,
+                "correct_completed": 598,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 598,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 3.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 1.9966666666666666,
+                "correct_completed": 1.9966666666666666,
+                "durably_terminal": 1.9966666666666666,
+                "scheduled": 1.9933333333333334
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.03848767280578613,
+                "end_to_end": 0.32793450355529785,
+                "queue": 0.04737401008605957,
+                "verdict_end_to_end": 0.32793450355529785
+              },
+              "offered_rate_per_s": 2.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 697806848,
+                    "cpu_seconds": 84.05381599999998,
+                    "max_interval_cpu_cores": 0.42778022481342787,
+                    "max_pod_throttled_ratio": 0.17073170731707318,
+                    "mean_cpu_cores_observed": 0.2843460638943344,
+                    "observed_seconds": 295.60393714904785,
+                    "observed_window_fraction": 0.9853464571634928,
+                    "working_set_peak_bytes": 663203840
+                  },
+                  "client": {
+                    "charged_peak_bytes": 8986624,
+                    "cpu_seconds": 0.014414000000000001,
+                    "max_interval_cpu_cores": 8.787867007582386e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 4.8761190865777443e-05,
+                    "observed_seconds": 295.60393714904785,
+                    "observed_window_fraction": 0.9853464571634928,
+                    "working_set_peak_bytes": 8704000
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 59785216,
+                    "cpu_seconds": 7.079122,
+                    "max_interval_cpu_cores": 0.036739074979245515,
+                    "max_pod_throttled_ratio": 0.09523809523809523,
+                    "mean_cpu_cores_observed": 0.023947996323305406,
+                    "observed_seconds": 295.60393714904785,
+                    "observed_window_fraction": 0.9853464571634928,
+                    "working_set_peak_bytes": 59715584
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 479420416,
+                    "cpu_seconds": 13.120789999999998,
+                    "max_interval_cpu_cores": 0.06735300710280025,
+                    "max_pod_throttled_ratio": 0.023809523809523808,
+                    "mean_cpu_cores_observed": 0.044386384452600514,
+                    "observed_seconds": 295.60393714904785,
+                    "observed_window_fraction": 0.9853464571634928,
+                    "working_set_peak_bytes": 290783232
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 7610368,
+                    "cpu_seconds": 3.6676150000000005,
+                    "max_interval_cpu_cores": 0.01653668596902805,
+                    "max_pod_throttled_ratio": 0.022727272727272728,
+                    "mean_cpu_cores_observed": 0.012407192662493988,
+                    "observed_seconds": 295.60393714904785,
+                    "observed_window_fraction": 0.9853464571634928,
+                    "working_set_peak_bytes": 7569408
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 625844224,
+                    "cpu_seconds": 38.26253900000001,
+                    "max_interval_cpu_cores": 0.21116456429782648,
+                    "max_pod_throttled_ratio": 0.1111111111111111,
+                    "mean_cpu_cores_observed": 0.12943852970641415,
+                    "observed_seconds": 295.60393714904785,
+                    "observed_window_fraction": 0.9853464571634928,
+                    "working_set_peak_bytes": 615854080
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1863389184,
+                  "cpu_seconds": 146.19829599999994,
+                  "max_interval_cpu_cores": 0.7446476865265588,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.4945749282300141,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.60393714904785,
+                  "observed_window_fraction": 0.9853464571634928,
+                  "working_set_peak_bytes": 1630117888
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 4130191,
+                  "execution_log_rows": 0,
+                  "execution_rows": 644,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 21057536,
+                  "postgres_database_bytes": 4210688,
+                  "postgres_wal_retained_bytes": 16777216,
+                  "redis_commands_processed": 67229,
+                  "redis_connections_received": 85,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 397.7603950500488
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 1179,
+                "correct_by_deadline": 1179,
+                "correct_completed": 1179,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 1179,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 6.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 3.9266666666666667,
+                "correct_completed": 3.9266666666666667,
+                "durably_terminal": 3.9266666666666667,
+                "scheduled": 3.93
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.08788871765136719,
+                "end_to_end": 0.5735480785369873,
+                "queue": 0.11592483520507812,
+                "verdict_end_to_end": 0.5735480785369873
+              },
+              "offered_rate_per_s": 4.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 699539456,
+                    "cpu_seconds": 157.84736000000004,
+                    "max_interval_cpu_cores": 0.7830600591756849,
+                    "max_pod_throttled_ratio": 0.52,
+                    "mean_cpu_cores_observed": 0.5337401354304666,
+                    "observed_seconds": 295.7382245063782,
+                    "observed_window_fraction": 0.9857940816879273,
+                    "working_set_peak_bytes": 664772608
+                  },
+                  "client": {
+                    "charged_peak_bytes": 8986624,
+                    "cpu_seconds": 0.015200999999999996,
+                    "max_interval_cpu_cores": 8.750660672725454e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.14001868556973e-05,
+                    "observed_seconds": 295.7382245063782,
+                    "observed_window_fraction": 0.9857940816879273,
+                    "working_set_peak_bytes": 8704000
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 60796928,
+                    "cpu_seconds": 13.057238,
+                    "max_interval_cpu_cores": 0.06301140814776209,
+                    "max_pod_throttled_ratio": 0.18181818181818182,
+                    "mean_cpu_cores_observed": 0.04415133695278675,
+                    "observed_seconds": 295.7382245063782,
+                    "observed_window_fraction": 0.9857940816879273,
+                    "working_set_peak_bytes": 60727296
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 497295360,
+                    "cpu_seconds": 23.481456000000012,
+                    "max_interval_cpu_cores": 0.16810253697567423,
+                    "max_pod_throttled_ratio": 0.0625,
+                    "mean_cpu_cores_observed": 0.07939946227510265,
+                    "observed_seconds": 295.7382245063782,
+                    "observed_window_fraction": 0.9857940816879273,
+                    "working_set_peak_bytes": 266715136
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 11055104,
+                    "cpu_seconds": 6.106629,
+                    "max_interval_cpu_cores": 0.029650862936726412,
+                    "max_pod_throttled_ratio": 0.08,
+                    "mean_cpu_cores_observed": 0.02064876466406289,
+                    "observed_seconds": 295.7382245063782,
+                    "observed_window_fraction": 0.9857940816879273,
+                    "working_set_peak_bytes": 11005952
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 649572352,
+                    "cpu_seconds": 76.243197,
+                    "max_interval_cpu_cores": 0.38718755223508755,
+                    "max_pod_throttled_ratio": 0.09090909090909091,
+                    "mean_cpu_cores_observed": 0.2578063661782607,
+                    "observed_seconds": 295.7382245063782,
+                    "observed_window_fraction": 0.9857940816879273,
+                    "working_set_peak_bytes": 639582208
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1917648896,
+                  "cpu_seconds": 276.75108100000006,
+                  "max_interval_cpu_cores": 1.418145391795495,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.9357974656875353,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.7382245063782,
+                  "observed_window_fraction": 0.9857940816879273,
+                  "working_set_peak_bytes": 1643982848
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 8099159,
+                  "execution_log_rows": 0,
+                  "execution_rows": 1289,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 41324544,
+                  "postgres_database_bytes": 7643136,
+                  "postgres_wal_retained_bytes": 33554432,
+                  "redis_commands_processed": 132745,
+                  "redis_connections_received": 97,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 398.8979585170746
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 2444,
+                "correct_by_deadline": 802,
+                "correct_completed": 1127,
+                "correct_late": 325,
+                "failed_terminal": 0,
+                "scheduled": 2444,
+                "unfinished_durable": 1317
+              },
+              "backlog_max": 1517.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 2.77,
+                "correct_completed": 3.1866666666666665,
+                "durably_terminal": 3.1866666666666665,
+                "scheduled": 8.146666666666667
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 29.12991738319397,
+                "end_to_end": 238.49921679496765,
+                "queue": 239.08504986763,
+                "verdict_end_to_end": null
+              },
+              "offered_rate_per_s": 8.0,
+              "outcome": "fail",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 792494080,
+                    "cpu_seconds": 305.7567630000001,
+                    "max_interval_cpu_cores": 1.1757398333378493,
+                    "max_pod_throttled_ratio": 1.0,
+                    "mean_cpu_cores_observed": 1.0318942908572963,
+                    "observed_seconds": 296.30628418922424,
+                    "observed_window_fraction": 0.9876876139640808,
+                    "working_set_peak_bytes": 750149632
+                  },
+                  "client": {
+                    "charged_peak_bytes": 8986624,
+                    "cpu_seconds": 0.016359000000000005,
+                    "max_interval_cpu_cores": 0.00013003978472833766,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.5209763926413995e-05,
+                    "observed_seconds": 296.30628418922424,
+                    "observed_window_fraction": 0.9876876139640808,
+                    "working_set_peak_bytes": 8704000
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 60284928,
+                    "cpu_seconds": 14.620585000000002,
+                    "max_interval_cpu_cores": 0.07928982464515091,
+                    "max_pod_throttled_ratio": 0.1568627450980392,
+                    "mean_cpu_cores_observed": 0.04934281107134112,
+                    "observed_seconds": 296.30628418922424,
+                    "observed_window_fraction": 0.9876876139640808,
+                    "working_set_peak_bytes": 60215296
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 579567616,
+                    "cpu_seconds": 30.504722000000008,
+                    "max_interval_cpu_cores": 0.2330929020558005,
+                    "max_pod_throttled_ratio": 0.11538461538461539,
+                    "mean_cpu_cores_observed": 0.10294996639531066,
+                    "observed_seconds": 296.30628418922424,
+                    "observed_window_fraction": 0.9876876139640808,
+                    "working_set_peak_bytes": 315797504
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 16445440,
+                    "cpu_seconds": 24.969587,
+                    "max_interval_cpu_cores": 0.10070477038931641,
+                    "max_pod_throttled_ratio": 1.0,
+                    "mean_cpu_cores_observed": 0.08426951547222052,
+                    "observed_seconds": 296.30628418922424,
+                    "observed_window_fraction": 0.9876876139640808,
+                    "working_set_peak_bytes": 16408576
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 650117120,
+                    "cpu_seconds": 66.03965200000003,
+                    "max_interval_cpu_cores": 0.5081538898250784,
+                    "max_pod_throttled_ratio": 0.04081632653061224,
+                    "mean_cpu_cores_observed": 0.22287631253148324,
+                    "observed_seconds": 296.30628418922424,
+                    "observed_window_fraction": 0.9876876139640808,
+                    "working_set_peak_bytes": 640126976
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 2048978944,
+                  "cpu_seconds": 441.90766799999994,
+                  "max_interval_cpu_cores": 1.926776602883512,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 1.4913881060915777,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 296.30628418922424,
+                  "observed_window_fraction": 0.9876876139640808,
+                  "working_set_peak_bytes": 1721724928
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 10120550,
+                  "execution_log_rows": 0,
+                  "execution_rows": 2687,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 45301760,
+                  "postgres_database_bytes": 11616256,
+                  "postgres_wal_retained_bytes": 33554432,
+                  "redis_commands_processed": 2120574,
+                  "redis_connections_received": 307,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 436.6476490497589
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "fail",
+              "window_s": 300
+            }
+          ],
+          "workers": 2
+        },
+        "highest_valid_tested_pass_per_s": 4.0,
+        "inconclusive_step_count": 0,
+        "invalid_step_count": 0,
+        "steps": [
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.013333333333333334,
+                "status": "pass",
+                "value": 0.0005161606215228083
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.32793450355529785
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.04737401008605957
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.004997058694246506
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 1.0016722408026757
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 598,
+              "numerator": 598
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.03848767280578613,
+              "end_to_end": 0.32793450355529785,
+              "queue": 0.04737401008605957,
+              "verdict_end_to_end": 0.32793450355529785
+            },
+            "offered_rate_per_s": 2.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 67229,
+              "redis_commands_per_s": 169.01883856873383,
+              "snapshot_interval_s": 397.7603950500488
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.2843460638943344,
+                "client": 4.8761190865777443e-05,
+                "pooler": 0.023947996323305406,
+                "postgres": 0.044386384452600514,
+                "redis": 0.012407192662493988,
+                "worker": 0.12943852970641415
+              },
+              "role_peak_ram_bytes": {
+                "api": 663203840,
+                "client": 8704000,
+                "pooler": 59715584,
+                "postgres": 290783232,
+                "redis": 7569408,
+                "worker": 615854080
+              },
+              "tenant_charged_peak_bytes": 1863389184,
+              "tenant_mean_cpu_cores": 0.4945749282300141,
+              "tenant_peak_ram_bytes": 1630117888
+            },
+            "table_event_correct_completed_per_s": 1.9966666666666666,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.02666666666666667,
+                "status": "pass",
+                "value": 0.0011024852795780355
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.5735480785369873
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.11592483520507812
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.0025376840990357814
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 0.9991518235793045
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 1179,
+              "numerator": 1179
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.08788871765136719,
+              "end_to_end": 0.5735480785369873,
+              "queue": 0.11592483520507812,
+              "verdict_end_to_end": 0.5735480785369873
+            },
+            "offered_rate_per_s": 4.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 132745,
+              "redis_commands_per_s": 332.77934159775333,
+              "snapshot_interval_s": 398.8979585170746
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.5337401354304666,
+                "client": 5.14001868556973e-05,
+                "pooler": 0.04415133695278675,
+                "postgres": 0.07939946227510265,
+                "redis": 0.02064876466406289,
+                "worker": 0.2578063661782607
+              },
+              "role_peak_ram_bytes": {
+                "api": 664772608,
+                "client": 8704000,
+                "pooler": 60727296,
+                "postgres": 266715136,
+                "redis": 11005952,
+                "worker": 639582208
+              },
+              "tenant_charged_peak_bytes": 1917648896,
+              "tenant_mean_cpu_cores": 0.9357974656875353,
+              "tenant_peak_ram_bytes": 1643982848
+            },
+            "table_event_correct_completed_per_s": 3.9266666666666667,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": false,
+                "limit": 0.05333333333333334,
+                "status": "inconclusive",
+                "value": 5.7817689160210435
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "fail",
+                "value": null
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "fail",
+                "value": null
+              },
+              "overall": "fail",
+              "reliability": {
+                "limit": 0.01,
+                "status": "fail",
+                "value": 0.6875181335592768
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "fail",
+                "value": 0.3400163666121113
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 2444,
+              "numerator": 802
+            },
+            "arrival_unfinished_durable": 1317,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 29.12991738319397,
+              "end_to_end": 238.49921679496765,
+              "queue": 239.08504986763,
+              "verdict_end_to_end": null
+            },
+            "offered_rate_per_s": 8.0,
+            "overall": "fail",
+            "redis_command_snapshot": {
+              "redis_commands": 2120574,
+              "redis_commands_per_s": 4856.487844638198,
+              "snapshot_interval_s": 436.6476490497589
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 1.0318942908572963,
+                "client": 5.5209763926413995e-05,
+                "pooler": 0.04934281107134112,
+                "postgres": 0.10294996639531066,
+                "redis": 0.08426951547222052,
+                "worker": 0.22287631253148324
+              },
+              "role_peak_ram_bytes": {
+                "api": 750149632,
+                "client": 8704000,
+                "pooler": 60215296,
+                "postgres": 315797504,
+                "redis": 16408576,
+                "worker": 640126976
+              },
+              "tenant_charged_peak_bytes": 2048978944,
+              "tenant_mean_cpu_cores": 1.4913881060915777,
+              "tenant_peak_ram_bytes": 1721724928
+            },
+            "table_event_correct_completed_per_s": 3.1866666666666665,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          }
+        ]
+      },
+      "name": "control_redis_100m",
+      "runtime_proof": {
+        "allowlisted_runtime_identity_sha256": "c88db823f70b30452c770312155546cb94ba9f5096a5eed794d7951f30599f4b"
+      },
+      "source_path": "/home/jack/bifrost-bench-evidence/runs/resource-curve-20261102-r2/result.json",
+      "source_sha256": "e870f5e9c90b6dc51dcbe6dd5528987dd2e82b0760c79cfd1de46ede525302d7"
+    },
+    {
+      "finished_at": "2026-11-02T22:21:40+00:00",
+      "launch": {
+        "base_image": null,
+        "base_image_id": null,
+        "fixture_sha256": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3",
+        "harness_revision": "ed219bf4a302ac090924ff9970461b33a24e4a44",
+        "image": "bifrost-api:kind-a74e45295998-hosting-sizing-r1",
+        "image_id": "sha256:babc52f1c0ac8c5482488c60511d945b220ae154ea56789d7dbe068ee5fc9e09",
+        "launch_sha256": "ce73e269d5831b6e6ec523159f91b9e322cc2fa2351c8a3d1921716b537b0a8a",
+        "runtime_branch": null,
+        "runtime_revision": "3603b2d3bd172eadf30a8516cc8fa6afc14f1ad5",
+        "verification": [
+          "python3 -m unittest discover -s scripts/bench/tests -p test_resource_curve.py: 11 passed",
+          "real profile inheritance comparison: only Redis CPU and description differ; admission check passed",
+          "git diff --check: passed"
+        ]
+      },
+      "n2": {
+        "cleanup_verified": true,
+        "count_status": "stopped",
+        "declared_request_allocation": {
+          "components": {
+            "api": {
+              "cpu_m": 750,
+              "memory_bytes": 536870912,
+              "replicas": 2
+            },
+            "client": {
+              "cpu_m": 50,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "pooler": {
+              "cpu_m": 100,
+              "memory_bytes": 134217728,
+              "replicas": 1
+            },
+            "postgres": {
+              "cpu_m": 750,
+              "memory_bytes": 1610612736,
+              "replicas": 1
+            },
+            "redis": {
+              "cpu_m": 500,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "worker": {
+              "cpu_m": 650,
+              "memory_bytes": 1073741824,
+              "replicas": 2
+            }
+          },
+          "fixed_components_cpu_m": 2900,
+          "fixed_components_memory_bytes": 2952790016,
+          "total_cpu_m": 4200,
+          "total_memory_bytes": 5100273664,
+          "worker_count": 2,
+          "worker_cpu_m": 650,
+          "worker_memory_bytes": 1073741824
+        },
+        "first_valid_fail_per_s": 8.0,
+        "generic_count_scalars": {
+          "bracket": [
+            4.0,
+            8.0
+          ],
+          "classification": "completed_diagnostic",
+          "cleanup_verified": true,
+          "declared_request_allocation": {
+            "components": {
+              "api": {
+                "cpu_m": 750,
+                "memory_bytes": 536870912,
+                "replicas": 2
+              },
+              "client": {
+                "cpu_m": 50,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "pooler": {
+                "cpu_m": 100,
+                "memory_bytes": 134217728,
+                "replicas": 1
+              },
+              "postgres": {
+                "cpu_m": 750,
+                "memory_bytes": 1610612736,
+                "replicas": 1
+              },
+              "redis": {
+                "cpu_m": 500,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "worker": {
+                "cpu_m": 650,
+                "memory_bytes": 1073741824,
+                "replicas": 2
+              }
+            },
+            "fixed_components_cpu_m": 2900,
+            "fixed_components_memory_bytes": 2952790016,
+            "total_cpu_m": 4200,
+            "total_memory_bytes": 5100273664,
+            "worker_count": 2,
+            "worker_cpu_m": 650,
+            "worker_memory_bytes": 1073741824
+          },
+          "first_valid_fail": {
+            "arrival_cohort": {
+              "accepted_union": 2444,
+              "correct_by_deadline": 1812,
+              "correct_completed": 2277,
+              "correct_late": 465,
+              "failed_terminal": 0,
+              "scheduled": 2444,
+              "unfinished_durable": 167
+            },
+            "backlog_max": 548.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 6.07,
+              "correct_completed": 6.346666666666667,
+              "durably_terminal": 6.346666666666667,
+              "scheduled": 8.146666666666667
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.5248739719390869,
+              "end_to_end": 79.60582447052002,
+              "queue": 79.31411981582642,
+              "verdict_end_to_end": null
+            },
+            "offered_rate_per_s": 8.0,
+            "outcome": "fail",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 701943808,
+                  "cpu_seconds": 346.42620900000003,
+                  "max_interval_cpu_cores": 1.46683328078568,
+                  "max_pod_throttled_ratio": 1.0,
+                  "mean_cpu_cores_observed": 1.168640278124941,
+                  "observed_seconds": 296.4352807998657,
+                  "observed_window_fraction": 0.9881176026662191,
+                  "working_set_peak_bytes": 665501696
+                },
+                "client": {
+                  "charged_peak_bytes": 9023488,
+                  "cpu_seconds": 0.015555,
+                  "max_interval_cpu_cores": 9.060754463386308e-05,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.247351110848964e-05,
+                  "observed_seconds": 296.4352807998657,
+                  "observed_window_fraction": 0.9881176026662191,
+                  "working_set_peak_bytes": 8740864
+                },
+                "pooler": {
+                  "charged_peak_bytes": 60100608,
+                  "cpu_seconds": 21.753109000000002,
+                  "max_interval_cpu_cores": 0.0883796361855328,
+                  "max_pod_throttled_ratio": 0.3269230769230769,
+                  "mean_cpu_cores_observed": 0.07338232123148095,
+                  "observed_seconds": 296.4352807998657,
+                  "observed_window_fraction": 0.9881176026662191,
+                  "working_set_peak_bytes": 60030976
+                },
+                "postgres": {
+                  "charged_peak_bytes": 593993728,
+                  "cpu_seconds": 41.971316,
+                  "max_interval_cpu_cores": 0.23528889334997996,
+                  "max_pod_throttled_ratio": 0.1568627450980392,
+                  "mean_cpu_cores_observed": 0.1415867770082886,
+                  "observed_seconds": 296.4352807998657,
+                  "observed_window_fraction": 0.9881176026662191,
+                  "working_set_peak_bytes": 317800448
+                },
+                "redis": {
+                  "charged_peak_bytes": 16887808,
+                  "cpu_seconds": 23.334388,
+                  "max_interval_cpu_cores": 0.13757424630043893,
+                  "max_pod_throttled_ratio": 0.0392156862745098,
+                  "mean_cpu_cores_observed": 0.0787166356752046,
+                  "observed_seconds": 296.4352807998657,
+                  "observed_window_fraction": 0.9881176026662191,
+                  "working_set_peak_bytes": 16830464
+                },
+                "worker": {
+                  "charged_peak_bytes": 664944640,
+                  "cpu_seconds": 131.699588,
+                  "max_interval_cpu_cores": 0.5889728283969877,
+                  "max_pod_throttled_ratio": 0.06666666666666667,
+                  "mean_cpu_cores_observed": 0.444277710954774,
+                  "observed_seconds": 296.4352807998657,
+                  "observed_window_fraction": 0.9881176026662191,
+                  "working_set_peak_bytes": 654938112
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 2011607040,
+                "cpu_seconds": 565.200165,
+                "max_interval_cpu_cores": 2.1275391964867576,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 1.9066561965057973,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 296.4352807998657,
+                "observed_window_fraction": 0.9881176026662191,
+                "working_set_peak_bytes": 1704394752
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 15939355,
+                "execution_log_rows": 0,
+                "execution_rows": 2687,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 67088384,
+                "postgres_database_bytes": 16629760,
+                "postgres_wal_retained_bytes": 50331648,
+                "redis_commands_processed": 1150185,
+                "redis_connections_received": 95,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 400.66822028160095
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            },
+            "verdict": "fail",
+            "window_s": 300
+          },
+          "highest_valid_tested_pass": {
+            "arrival_cohort": {
+              "accepted_union": 1179,
+              "correct_by_deadline": 1179,
+              "correct_completed": 1179,
+              "correct_late": 0,
+              "failed_terminal": 0,
+              "scheduled": 1179,
+              "unfinished_durable": 0
+            },
+            "backlog_max": 7.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 3.9266666666666667,
+              "correct_completed": 3.9266666666666667,
+              "durably_terminal": 3.9266666666666667,
+              "scheduled": 3.93
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.052385807037353516,
+              "end_to_end": 0.5340278148651123,
+              "queue": 0.10985803604125977,
+              "verdict_end_to_end": 0.5340278148651123
+            },
+            "offered_rate_per_s": 4.0,
+            "outcome": "pass",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 697307136,
+                  "cpu_seconds": 158.87838600000006,
+                  "max_interval_cpu_cores": 0.8827650528638571,
+                  "max_pod_throttled_ratio": 0.5306122448979592,
+                  "mean_cpu_cores_observed": 0.5373711407240698,
+                  "observed_seconds": 295.65857553482056,
+                  "observed_window_fraction": 0.9855285851160686,
+                  "working_set_peak_bytes": 662528000
+                },
+                "client": {
+                  "charged_peak_bytes": 9023488,
+                  "cpu_seconds": 0.015687,
+                  "max_interval_cpu_cores": 8.440045849593465e-05,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.3057821751402226e-05,
+                  "observed_seconds": 295.65857553482056,
+                  "observed_window_fraction": 0.9855285851160686,
+                  "working_set_peak_bytes": 8740864
+                },
+                "pooler": {
+                  "charged_peak_bytes": 60903424,
+                  "cpu_seconds": 12.857588999999999,
+                  "max_interval_cpu_cores": 0.07009664652636138,
+                  "max_pod_throttled_ratio": 0.391304347826087,
+                  "mean_cpu_cores_observed": 0.04348796234555938,
+                  "observed_seconds": 295.65857553482056,
+                  "observed_window_fraction": 0.9855285851160686,
+                  "working_set_peak_bytes": 60833792
+                },
+                "postgres": {
+                  "charged_peak_bytes": 500555776,
+                  "cpu_seconds": 23.183372000000006,
+                  "max_interval_cpu_cores": 0.13132349497574636,
+                  "max_pod_throttled_ratio": 0.022727272727272728,
+                  "mean_cpu_cores_observed": 0.07841264863724419,
+                  "observed_seconds": 295.65857553482056,
+                  "observed_window_fraction": 0.9855285851160686,
+                  "working_set_peak_bytes": 287850496
+                },
+                "redis": {
+                  "charged_peak_bytes": 11042816,
+                  "cpu_seconds": 6.011179000000001,
+                  "max_interval_cpu_cores": 0.03153879660087251,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 0.020331488742128662,
+                  "observed_seconds": 295.65857553482056,
+                  "observed_window_fraction": 0.9855285851160686,
+                  "working_set_peak_bytes": 10989568
+                },
+                "worker": {
+                  "charged_peak_bytes": 652050432,
+                  "cpu_seconds": 76.69272800000002,
+                  "max_interval_cpu_cores": 0.41447786372527806,
+                  "max_pod_throttled_ratio": 0.08333333333333333,
+                  "mean_cpu_cores_observed": 0.2593962575287037,
+                  "observed_seconds": 295.65857553482056,
+                  "observed_window_fraction": 0.9855285851160686,
+                  "working_set_peak_bytes": 642043904
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 1890217984,
+                "cpu_seconds": 277.638941,
+                "max_interval_cpu_cores": 1.5265227625921391,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 0.9390525557994568,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 295.65857553482056,
+                "observed_window_fraction": 0.9855285851160686,
+                "working_set_peak_bytes": 1656311808
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 8074316,
+                "execution_log_rows": 0,
+                "execution_rows": 1289,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 41320448,
+                "postgres_database_bytes": 7651328,
+                "postgres_wal_retained_bytes": 33554432,
+                "redis_commands_processed": 132754,
+                "redis_connections_received": 94,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 398.7047026157379
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            },
+            "verdict": "pass",
+            "window_s": 300
+          },
+          "inconclusive_step_count": 0,
+          "invalid_step_count": 0,
+          "preflight_present": true,
+          "source_count_status": "stopped",
+          "sql_sidecar_reference_hashes": [],
+          "steps": [
+            {
+              "arrival_cohort": {
+                "accepted_union": 598,
+                "correct_by_deadline": 598,
+                "correct_completed": 598,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 598,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 3.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 1.9966666666666666,
+                "correct_completed": 1.9966666666666666,
+                "durably_terminal": 1.9966666666666666,
+                "scheduled": 1.9933333333333334
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.05715465545654297,
+                "end_to_end": 0.342897891998291,
+                "queue": 0.06104111671447754,
+                "verdict_end_to_end": 0.342897891998291
+              },
+              "offered_rate_per_s": 2.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 694185984,
+                    "cpu_seconds": 83.559007,
+                    "max_interval_cpu_cores": 0.42832821227427353,
+                    "max_pod_throttled_ratio": 0.28888888888888886,
+                    "mean_cpu_cores_observed": 0.2828036410154659,
+                    "observed_seconds": 295.4665176868439,
+                    "observed_window_fraction": 0.9848883922894796,
+                    "working_set_peak_bytes": 659755008
+                  },
+                  "client": {
+                    "charged_peak_bytes": 9023488,
+                    "cpu_seconds": 0.014575,
+                    "max_interval_cpu_cores": 9.14439914893296e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 4.932877035985379e-05,
+                    "observed_seconds": 295.4665176868439,
+                    "observed_window_fraction": 0.9848883922894796,
+                    "working_set_peak_bytes": 8740864
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 67411968,
+                    "cpu_seconds": 7.002957999999999,
+                    "max_interval_cpu_cores": 0.03744671139642642,
+                    "max_pod_throttled_ratio": 0.075,
+                    "mean_cpu_cores_observed": 0.023701358972329393,
+                    "observed_seconds": 295.4665176868439,
+                    "observed_window_fraction": 0.9848883922894796,
+                    "working_set_peak_bytes": 58667008
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 464252928,
+                    "cpu_seconds": 13.11748,
+                    "max_interval_cpu_cores": 0.07585076060846994,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 0.044395825634303596,
+                    "observed_seconds": 295.4665176868439,
+                    "observed_window_fraction": 0.9848883922894796,
+                    "working_set_peak_bytes": 292818944
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 7614464,
+                    "cpu_seconds": 3.6917039999999997,
+                    "max_interval_cpu_cores": 0.0173003540687889,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 0.012494491859523407,
+                    "observed_seconds": 295.4665176868439,
+                    "observed_window_fraction": 0.9848883922894796,
+                    "working_set_peak_bytes": 7573504
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 614207488,
+                    "cpu_seconds": 38.460043,
+                    "max_interval_cpu_cores": 0.2054682527451648,
+                    "max_pod_throttled_ratio": 0.12121212121212122,
+                    "mean_cpu_cores_observed": 0.1301671786742437,
+                    "observed_seconds": 295.4665176868439,
+                    "observed_window_fraction": 0.9848883922894796,
+                    "working_set_peak_bytes": 604200960
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1841459200,
+                  "cpu_seconds": 145.84576700000002,
+                  "max_interval_cpu_cores": 0.7472548026967545,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.49361182492622596,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.4665176868439,
+                  "observed_window_fraction": 0.9848883922894796,
+                  "working_set_peak_bytes": 1626066944
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 4106913,
+                  "execution_log_rows": 0,
+                  "execution_rows": 644,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 20926464,
+                  "postgres_database_bytes": 4087808,
+                  "postgres_wal_retained_bytes": 16777216,
+                  "redis_commands_processed": 67228,
+                  "redis_connections_received": 85,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 397.8234279155731
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 1179,
+                "correct_by_deadline": 1179,
+                "correct_completed": 1179,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 1179,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 7.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 3.9266666666666667,
+                "correct_completed": 3.9266666666666667,
+                "durably_terminal": 3.9266666666666667,
+                "scheduled": 3.93
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.052385807037353516,
+                "end_to_end": 0.5340278148651123,
+                "queue": 0.10985803604125977,
+                "verdict_end_to_end": 0.5340278148651123
+              },
+              "offered_rate_per_s": 4.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 697307136,
+                    "cpu_seconds": 158.87838600000006,
+                    "max_interval_cpu_cores": 0.8827650528638571,
+                    "max_pod_throttled_ratio": 0.5306122448979592,
+                    "mean_cpu_cores_observed": 0.5373711407240698,
+                    "observed_seconds": 295.65857553482056,
+                    "observed_window_fraction": 0.9855285851160686,
+                    "working_set_peak_bytes": 662528000
+                  },
+                  "client": {
+                    "charged_peak_bytes": 9023488,
+                    "cpu_seconds": 0.015687,
+                    "max_interval_cpu_cores": 8.440045849593465e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.3057821751402226e-05,
+                    "observed_seconds": 295.65857553482056,
+                    "observed_window_fraction": 0.9855285851160686,
+                    "working_set_peak_bytes": 8740864
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 60903424,
+                    "cpu_seconds": 12.857588999999999,
+                    "max_interval_cpu_cores": 0.07009664652636138,
+                    "max_pod_throttled_ratio": 0.391304347826087,
+                    "mean_cpu_cores_observed": 0.04348796234555938,
+                    "observed_seconds": 295.65857553482056,
+                    "observed_window_fraction": 0.9855285851160686,
+                    "working_set_peak_bytes": 60833792
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 500555776,
+                    "cpu_seconds": 23.183372000000006,
+                    "max_interval_cpu_cores": 0.13132349497574636,
+                    "max_pod_throttled_ratio": 0.022727272727272728,
+                    "mean_cpu_cores_observed": 0.07841264863724419,
+                    "observed_seconds": 295.65857553482056,
+                    "observed_window_fraction": 0.9855285851160686,
+                    "working_set_peak_bytes": 287850496
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 11042816,
+                    "cpu_seconds": 6.011179000000001,
+                    "max_interval_cpu_cores": 0.03153879660087251,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 0.020331488742128662,
+                    "observed_seconds": 295.65857553482056,
+                    "observed_window_fraction": 0.9855285851160686,
+                    "working_set_peak_bytes": 10989568
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 652050432,
+                    "cpu_seconds": 76.69272800000002,
+                    "max_interval_cpu_cores": 0.41447786372527806,
+                    "max_pod_throttled_ratio": 0.08333333333333333,
+                    "mean_cpu_cores_observed": 0.2593962575287037,
+                    "observed_seconds": 295.65857553482056,
+                    "observed_window_fraction": 0.9855285851160686,
+                    "working_set_peak_bytes": 642043904
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1890217984,
+                  "cpu_seconds": 277.638941,
+                  "max_interval_cpu_cores": 1.5265227625921391,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.9390525557994568,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.65857553482056,
+                  "observed_window_fraction": 0.9855285851160686,
+                  "working_set_peak_bytes": 1656311808
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 8074316,
+                  "execution_log_rows": 0,
+                  "execution_rows": 1289,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 41320448,
+                  "postgres_database_bytes": 7651328,
+                  "postgres_wal_retained_bytes": 33554432,
+                  "redis_commands_processed": 132754,
+                  "redis_connections_received": 94,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 398.7047026157379
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 2444,
+                "correct_by_deadline": 1812,
+                "correct_completed": 2277,
+                "correct_late": 465,
+                "failed_terminal": 0,
+                "scheduled": 2444,
+                "unfinished_durable": 167
+              },
+              "backlog_max": 548.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 6.07,
+                "correct_completed": 6.346666666666667,
+                "durably_terminal": 6.346666666666667,
+                "scheduled": 8.146666666666667
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.5248739719390869,
+                "end_to_end": 79.60582447052002,
+                "queue": 79.31411981582642,
+                "verdict_end_to_end": null
+              },
+              "offered_rate_per_s": 8.0,
+              "outcome": "fail",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 701943808,
+                    "cpu_seconds": 346.42620900000003,
+                    "max_interval_cpu_cores": 1.46683328078568,
+                    "max_pod_throttled_ratio": 1.0,
+                    "mean_cpu_cores_observed": 1.168640278124941,
+                    "observed_seconds": 296.4352807998657,
+                    "observed_window_fraction": 0.9881176026662191,
+                    "working_set_peak_bytes": 665501696
+                  },
+                  "client": {
+                    "charged_peak_bytes": 9023488,
+                    "cpu_seconds": 0.015555,
+                    "max_interval_cpu_cores": 9.060754463386308e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.247351110848964e-05,
+                    "observed_seconds": 296.4352807998657,
+                    "observed_window_fraction": 0.9881176026662191,
+                    "working_set_peak_bytes": 8740864
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 60100608,
+                    "cpu_seconds": 21.753109000000002,
+                    "max_interval_cpu_cores": 0.0883796361855328,
+                    "max_pod_throttled_ratio": 0.3269230769230769,
+                    "mean_cpu_cores_observed": 0.07338232123148095,
+                    "observed_seconds": 296.4352807998657,
+                    "observed_window_fraction": 0.9881176026662191,
+                    "working_set_peak_bytes": 60030976
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 593993728,
+                    "cpu_seconds": 41.971316,
+                    "max_interval_cpu_cores": 0.23528889334997996,
+                    "max_pod_throttled_ratio": 0.1568627450980392,
+                    "mean_cpu_cores_observed": 0.1415867770082886,
+                    "observed_seconds": 296.4352807998657,
+                    "observed_window_fraction": 0.9881176026662191,
+                    "working_set_peak_bytes": 317800448
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 16887808,
+                    "cpu_seconds": 23.334388,
+                    "max_interval_cpu_cores": 0.13757424630043893,
+                    "max_pod_throttled_ratio": 0.0392156862745098,
+                    "mean_cpu_cores_observed": 0.0787166356752046,
+                    "observed_seconds": 296.4352807998657,
+                    "observed_window_fraction": 0.9881176026662191,
+                    "working_set_peak_bytes": 16830464
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 664944640,
+                    "cpu_seconds": 131.699588,
+                    "max_interval_cpu_cores": 0.5889728283969877,
+                    "max_pod_throttled_ratio": 0.06666666666666667,
+                    "mean_cpu_cores_observed": 0.444277710954774,
+                    "observed_seconds": 296.4352807998657,
+                    "observed_window_fraction": 0.9881176026662191,
+                    "working_set_peak_bytes": 654938112
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 2011607040,
+                  "cpu_seconds": 565.200165,
+                  "max_interval_cpu_cores": 2.1275391964867576,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 1.9066561965057973,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 296.4352807998657,
+                  "observed_window_fraction": 0.9881176026662191,
+                  "working_set_peak_bytes": 1704394752
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 15939355,
+                  "execution_log_rows": 0,
+                  "execution_rows": 2687,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 67088384,
+                  "postgres_database_bytes": 16629760,
+                  "postgres_wal_retained_bytes": 50331648,
+                  "redis_commands_processed": 1150185,
+                  "redis_connections_received": 95,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 400.66822028160095
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "fail",
+              "window_s": 300
+            }
+          ],
+          "workers": 2
+        },
+        "highest_valid_tested_pass_per_s": 4.0,
+        "inconclusive_step_count": 0,
+        "invalid_step_count": 0,
+        "steps": [
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.013333333333333334,
+                "status": "pass",
+                "value": 0.0004044590553671622
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.342897891998291
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.06104111671447754
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.004997058694246506
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 1.0016722408026757
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 598,
+              "numerator": 598
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.05715465545654297,
+              "end_to_end": 0.342897891998291,
+              "queue": 0.06104111671447754,
+              "verdict_end_to_end": 0.342897891998291
+            },
+            "offered_rate_per_s": 2.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 67228,
+              "redis_commands_per_s": 168.98954481450815,
+              "snapshot_interval_s": 397.8234279155731
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.2828036410154659,
+                "client": 4.932877035985379e-05,
+                "pooler": 0.023701358972329393,
+                "postgres": 0.044395825634303596,
+                "redis": 0.012494491859523407,
+                "worker": 0.1301671786742437
+              },
+              "role_peak_ram_bytes": {
+                "api": 659755008,
+                "client": 8740864,
+                "pooler": 58667008,
+                "postgres": 292818944,
+                "redis": 7573504,
+                "worker": 604200960
+              },
+              "tenant_charged_peak_bytes": 1841459200,
+              "tenant_mean_cpu_cores": 0.49361182492622596,
+              "tenant_peak_ram_bytes": 1626066944
+            },
+            "table_event_correct_completed_per_s": 1.9966666666666666,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.02666666666666667,
+                "status": "pass",
+                "value": 0.0007435727339869978
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.5340278148651123
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.10985803604125977
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.0025376840990357814
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 0.9991518235793045
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 1179,
+              "numerator": 1179
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.052385807037353516,
+              "end_to_end": 0.5340278148651123,
+              "queue": 0.10985803604125977,
+              "verdict_end_to_end": 0.5340278148651123
+            },
+            "offered_rate_per_s": 4.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 132754,
+              "redis_commands_per_s": 332.96321595671054,
+              "snapshot_interval_s": 398.7047026157379
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.5373711407240698,
+                "client": 5.3057821751402226e-05,
+                "pooler": 0.04348796234555938,
+                "postgres": 0.07841264863724419,
+                "redis": 0.020331488742128662,
+                "worker": 0.2593962575287037
+              },
+              "role_peak_ram_bytes": {
+                "api": 662528000,
+                "client": 8740864,
+                "pooler": 60833792,
+                "postgres": 287850496,
+                "redis": 10989568,
+                "worker": 642043904
+              },
+              "tenant_charged_peak_bytes": 1890217984,
+              "tenant_mean_cpu_cores": 0.9390525557994568,
+              "tenant_peak_ram_bytes": 1656311808
+            },
+            "table_event_correct_completed_per_s": 3.9266666666666667,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": false,
+                "limit": 0.05333333333333334,
+                "status": "inconclusive",
+                "value": 2.0331528005307256
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "fail",
+                "value": null
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "fail",
+                "value": null
+              },
+              "overall": "fail",
+              "reliability": {
+                "limit": 0.01,
+                "status": "fail",
+                "value": 0.2735754669625633
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "fail",
+                "value": 0.7450900163666121
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 2444,
+              "numerator": 1812
+            },
+            "arrival_unfinished_durable": 167,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.5248739719390869,
+              "end_to_end": 79.60582447052002,
+              "queue": 79.31411981582642,
+              "verdict_end_to_end": null
+            },
+            "offered_rate_per_s": 8.0,
+            "overall": "fail",
+            "redis_command_snapshot": {
+              "redis_commands": 1150185,
+              "redis_commands_per_s": 2870.6669053802607,
+              "snapshot_interval_s": 400.66822028160095
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 1.168640278124941,
+                "client": 5.247351110848964e-05,
+                "pooler": 0.07338232123148095,
+                "postgres": 0.1415867770082886,
+                "redis": 0.0787166356752046,
+                "worker": 0.444277710954774
+              },
+              "role_peak_ram_bytes": {
+                "api": 665501696,
+                "client": 8740864,
+                "pooler": 60030976,
+                "postgres": 317800448,
+                "redis": 16830464,
+                "worker": 654938112
+              },
+              "tenant_charged_peak_bytes": 2011607040,
+              "tenant_mean_cpu_cores": 1.9066561965057973,
+              "tenant_peak_ram_bytes": 1704394752
+            },
+            "table_event_correct_completed_per_s": 6.346666666666667,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          }
+        ]
+      },
+      "name": "redis_500m_contrast",
+      "runtime_proof": {
+        "allowlisted_runtime_identity_sha256": "0511ae5f87e8488ff234bebf2960774ba2fffd4c12601b1c141fbd2bf3f609d9"
+      },
+      "source_path": "/home/jack/bifrost-bench-evidence/runs/resource-curve-redis-cpu-20261102-r1/result.json",
+      "source_sha256": "99ff0b48dc47b9208b16eff6d15518e1e8ecfe3ae8c072369c40428b43254221"
+    },
+    {
+      "finished_at": "2026-11-02T23:35:48+00:00",
+      "launch": {
+        "base_image": "bifrost-api:kind-a74e45295998-hosting-sizing-r1",
+        "base_image_id": "sha256:babc52f1c0ac8c5482488c60511d945b220ae154ea56789d7dbe068ee5fc9e09",
+        "fixture_sha256": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3",
+        "harness_revision": "66de262da82bf8d9a1bae452c79dd55328b64d36",
+        "image": "bifrost-api:kind-a74e45295998-queue-position-off-r1",
+        "image_id": "sha256:3e7e8fd00a171512b36d127f5013d8208623d26da935414acfbbcb633a5e22ff",
+        "launch_sha256": "9bc554dbd44242eff9be37f6adfbb88bc8ee7544b0f290ddf84ba3071f485835",
+        "runtime_branch": null,
+        "runtime_revision": "604138a5bb8132f1cad92bd386088d8555a5c134",
+        "verification": {
+          "git_diff_check": "pass",
+          "ruff": "pass",
+          "stdlib_unit_tests": 14
+        }
+      },
+      "n2": {
+        "cleanup_verified": true,
+        "count_status": "stopped",
+        "declared_request_allocation": {
+          "components": {
+            "api": {
+              "cpu_m": 750,
+              "memory_bytes": 536870912,
+              "replicas": 2
+            },
+            "client": {
+              "cpu_m": 50,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "pooler": {
+              "cpu_m": 100,
+              "memory_bytes": 134217728,
+              "replicas": 1
+            },
+            "postgres": {
+              "cpu_m": 750,
+              "memory_bytes": 1610612736,
+              "replicas": 1
+            },
+            "redis": {
+              "cpu_m": 100,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "worker": {
+              "cpu_m": 650,
+              "memory_bytes": 1073741824,
+              "replicas": 2
+            }
+          },
+          "fixed_components_cpu_m": 2500,
+          "fixed_components_memory_bytes": 2952790016,
+          "total_cpu_m": 3800,
+          "total_memory_bytes": 5100273664,
+          "worker_count": 2,
+          "worker_cpu_m": 650,
+          "worker_memory_bytes": 1073741824
+        },
+        "first_valid_fail_per_s": 8.0,
+        "generic_count_scalars": {
+          "bracket": [
+            4.0,
+            8.0
+          ],
+          "classification": "completed_diagnostic",
+          "cleanup_verified": true,
+          "declared_request_allocation": {
+            "components": {
+              "api": {
+                "cpu_m": 750,
+                "memory_bytes": 536870912,
+                "replicas": 2
+              },
+              "client": {
+                "cpu_m": 50,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "pooler": {
+                "cpu_m": 100,
+                "memory_bytes": 134217728,
+                "replicas": 1
+              },
+              "postgres": {
+                "cpu_m": 750,
+                "memory_bytes": 1610612736,
+                "replicas": 1
+              },
+              "redis": {
+                "cpu_m": 100,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "worker": {
+                "cpu_m": 650,
+                "memory_bytes": 1073741824,
+                "replicas": 2
+              }
+            },
+            "fixed_components_cpu_m": 2500,
+            "fixed_components_memory_bytes": 2952790016,
+            "total_cpu_m": 3800,
+            "total_memory_bytes": 5100273664,
+            "worker_count": 2,
+            "worker_cpu_m": 650,
+            "worker_memory_bytes": 1073741824
+          },
+          "first_valid_fail": {
+            "arrival_cohort": {
+              "accepted_union": 2444,
+              "correct_by_deadline": 2444,
+              "correct_completed": 2444,
+              "correct_late": 0,
+              "failed_terminal": 0,
+              "scheduled": 2444,
+              "unfinished_durable": 0
+            },
+            "backlog_max": 44.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 8.126666666666667,
+              "correct_completed": 8.126666666666667,
+              "durably_terminal": 8.126666666666667,
+              "scheduled": 8.146666666666667
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.10524964332580566,
+              "end_to_end": 4.4632298946380615,
+              "queue": 4.037461042404175,
+              "verdict_end_to_end": 4.4632298946380615
+            },
+            "offered_rate_per_s": 8.0,
+            "outcome": "fail",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 713261056,
+                  "cpu_seconds": 321.4533910000001,
+                  "max_interval_cpu_cores": 1.2294500066578267,
+                  "max_pod_throttled_ratio": 0.9807692307692307,
+                  "mean_cpu_cores_observed": 1.0844225336578197,
+                  "observed_seconds": 296.4281735420227,
+                  "observed_window_fraction": 0.9880939118067423,
+                  "working_set_peak_bytes": 675639296
+                },
+                "client": {
+                  "charged_peak_bytes": 14434304,
+                  "cpu_seconds": 0.016324999999999996,
+                  "max_interval_cpu_cores": 0.00010985282094426446,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.5072363078490264e-05,
+                  "observed_seconds": 296.4281735420227,
+                  "observed_window_fraction": 0.9880939118067423,
+                  "working_set_peak_bytes": 14041088
+                },
+                "pooler": {
+                  "charged_peak_bytes": 91271168,
+                  "cpu_seconds": 24.440974999999995,
+                  "max_interval_cpu_cores": 0.0912716630158642,
+                  "max_pod_throttled_ratio": 0.37735849056603776,
+                  "mean_cpu_cores_observed": 0.08245159259983484,
+                  "observed_seconds": 296.4281735420227,
+                  "observed_window_fraction": 0.9880939118067423,
+                  "working_set_peak_bytes": 25849856
+                },
+                "postgres": {
+                  "charged_peak_bytes": 596574208,
+                  "cpu_seconds": 46.196315999999996,
+                  "max_interval_cpu_cores": 0.2733625865809092,
+                  "max_pod_throttled_ratio": 0.1568627450980392,
+                  "mean_cpu_cores_observed": 0.1558432029182646,
+                  "observed_seconds": 296.4281735420227,
+                  "observed_window_fraction": 0.9880939118067423,
+                  "working_set_peak_bytes": 300167168
+                },
+                "redis": {
+                  "charged_peak_bytes": 31272960,
+                  "cpu_seconds": 11.761183000000003,
+                  "max_interval_cpu_cores": 0.05753049515161439,
+                  "max_pod_throttled_ratio": 0.23529411764705882,
+                  "mean_cpu_cores_observed": 0.03967633325626754,
+                  "observed_seconds": 296.4281735420227,
+                  "observed_window_fraction": 0.9880939118067423,
+                  "working_set_peak_bytes": 25255936
+                },
+                "worker": {
+                  "charged_peak_bytes": 727867392,
+                  "cpu_seconds": 167.409964,
+                  "max_interval_cpu_cores": 0.6403230462138997,
+                  "max_pod_throttled_ratio": 0.0784313725490196,
+                  "mean_cpu_cores_observed": 0.5647572631157726,
+                  "observed_seconds": 296.4281735420227,
+                  "observed_window_fraction": 0.9880939118067423,
+                  "working_set_peak_bytes": 714768384
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 2162278400,
+                "cpu_seconds": 571.278154,
+                "max_interval_cpu_cores": 2.1543311478289393,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 1.9272059979110372,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 296.4281735420227,
+                "observed_window_fraction": 0.9880939118067423,
+                "working_set_peak_bytes": 1751289856
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 16543745,
+                "execution_log_rows": 0,
+                "execution_rows": 2687,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 83161088,
+                "postgres_database_bytes": 15884288,
+                "postgres_wal_retained_bytes": 67108864,
+                "redis_commands_processed": 271042,
+                "redis_connections_received": 99,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 398.0271472930908
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            },
+            "verdict": "fail",
+            "window_s": 300
+          },
+          "highest_valid_tested_pass": {
+            "arrival_cohort": {
+              "accepted_union": 1179,
+              "correct_by_deadline": 1179,
+              "correct_completed": 1179,
+              "correct_late": 0,
+              "failed_terminal": 0,
+              "scheduled": 1179,
+              "unfinished_durable": 0
+            },
+            "backlog_max": 6.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 3.9266666666666667,
+              "correct_completed": 3.9266666666666667,
+              "durably_terminal": 3.9266666666666667,
+              "scheduled": 3.93
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.043966054916381836,
+              "end_to_end": 0.4816889762878418,
+              "queue": 0.06644988059997559,
+              "verdict_end_to_end": 0.4816889762878418
+            },
+            "offered_rate_per_s": 4.0,
+            "outcome": "pass",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 707682304,
+                  "cpu_seconds": 155.94510900000006,
+                  "max_interval_cpu_cores": 0.8250437441217608,
+                  "max_pod_throttled_ratio": 0.36,
+                  "mean_cpu_cores_observed": 0.5269079418573585,
+                  "observed_seconds": 295.96272253990173,
+                  "observed_window_fraction": 0.9865424084663391,
+                  "working_set_peak_bytes": 672677888
+                },
+                "client": {
+                  "charged_peak_bytes": 14434304,
+                  "cpu_seconds": 0.015415999999999997,
+                  "max_interval_cpu_cores": 8.27462222886807e-05,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.2087640861330466e-05,
+                  "observed_seconds": 295.96272253990173,
+                  "observed_window_fraction": 0.9865424084663391,
+                  "working_set_peak_bytes": 14041088
+                },
+                "pooler": {
+                  "charged_peak_bytes": 91664384,
+                  "cpu_seconds": 12.371510000000002,
+                  "max_interval_cpu_cores": 0.06371434541216105,
+                  "max_pod_throttled_ratio": 0.22448979591836735,
+                  "mean_cpu_cores_observed": 0.041800906187880044,
+                  "observed_seconds": 295.96272253990173,
+                  "observed_window_fraction": 0.9865424084663391,
+                  "working_set_peak_bytes": 91590656
+                },
+                "postgres": {
+                  "charged_peak_bytes": 486547456,
+                  "cpu_seconds": 22.536782000000002,
+                  "max_interval_cpu_cores": 0.13612354291247772,
+                  "max_pod_throttled_ratio": 0.044444444444444446,
+                  "mean_cpu_cores_observed": 0.07614736682577175,
+                  "observed_seconds": 295.96272253990173,
+                  "observed_window_fraction": 0.9865424084663391,
+                  "working_set_peak_bytes": 254222336
+                },
+                "redis": {
+                  "charged_peak_bytes": 19714048,
+                  "cpu_seconds": 5.950902,
+                  "max_interval_cpu_cores": 0.03025667435614952,
+                  "max_pod_throttled_ratio": 0.061224489795918366,
+                  "mean_cpu_cores_observed": 0.020106930862543674,
+                  "observed_seconds": 295.96272253990173,
+                  "observed_window_fraction": 0.9865424084663391,
+                  "working_set_peak_bytes": 17915904
+                },
+                "worker": {
+                  "charged_peak_bytes": 657334272,
+                  "cpu_seconds": 76.21511400000001,
+                  "max_interval_cpu_cores": 0.41269396430795147,
+                  "max_pod_throttled_ratio": 0.08695652173913043,
+                  "mean_cpu_cores_observed": 0.2575159241202232,
+                  "observed_seconds": 295.96272253990173,
+                  "observed_window_fraction": 0.9865424084663391,
+                  "working_set_peak_bytes": 644272128
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 1948831744,
+                "cpu_seconds": 273.03483300000005,
+                "max_interval_cpu_cores": 1.4468646801762644,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 0.9225311574946384,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 295.96272253990173,
+                "observed_window_fraction": 0.9865424084663391,
+                "working_set_peak_bytes": 1677426688
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 8065993,
+                "execution_log_rows": 0,
+                "execution_rows": 1289,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 41492480,
+                "postgres_database_bytes": 7823360,
+                "postgres_wal_retained_bytes": 33554432,
+                "redis_commands_processed": 131177,
+                "redis_connections_received": 94,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 398.7000148296356
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 1
+            },
+            "verdict": "pass",
+            "window_s": 300
+          },
+          "inconclusive_step_count": 0,
+          "invalid_step_count": 0,
+          "preflight_present": true,
+          "source_count_status": "stopped",
+          "sql_sidecar_reference_hashes": [],
+          "steps": [
+            {
+              "arrival_cohort": {
+                "accepted_union": 598,
+                "correct_by_deadline": 598,
+                "correct_completed": 598,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 598,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 3.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 1.9966666666666666,
+                "correct_completed": 1.9966666666666666,
+                "durably_terminal": 1.9966666666666666,
+                "scheduled": 1.9933333333333334
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.028786897659301758,
+                "end_to_end": 0.3080000877380371,
+                "queue": 0.036277055740356445,
+                "verdict_end_to_end": 0.3080000877380371
+              },
+              "offered_rate_per_s": 2.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 706248704,
+                    "cpu_seconds": 82.41395,
+                    "max_interval_cpu_cores": 0.4273811966254957,
+                    "max_pod_throttled_ratio": 0.23255813953488372,
+                    "mean_cpu_cores_observed": 0.27880074722653253,
+                    "observed_seconds": 295.60161089897156,
+                    "observed_window_fraction": 0.9853387029965719,
+                    "working_set_peak_bytes": 670220288
+                  },
+                  "client": {
+                    "charged_peak_bytes": 14434304,
+                    "cpu_seconds": 0.015378999999999999,
+                    "max_interval_cpu_cores": 8.346803898850372e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.2026103488509455e-05,
+                    "observed_seconds": 295.60161089897156,
+                    "observed_window_fraction": 0.9853387029965719,
+                    "working_set_peak_bytes": 14041088
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 90918912,
+                    "cpu_seconds": 6.68486,
+                    "max_interval_cpu_cores": 0.034460685105981576,
+                    "max_pod_throttled_ratio": 0.09375,
+                    "mean_cpu_cores_observed": 0.022614423445360382,
+                    "observed_seconds": 295.60161089897156,
+                    "observed_window_fraction": 0.9853387029965719,
+                    "working_set_peak_bytes": 90845184
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 485404672,
+                    "cpu_seconds": 12.861127000000002,
+                    "max_interval_cpu_cores": 0.07918826999096358,
+                    "max_pod_throttled_ratio": 0.020833333333333332,
+                    "mean_cpu_cores_observed": 0.04350831161199449,
+                    "observed_seconds": 295.60161089897156,
+                    "observed_window_fraction": 0.9853387029965719,
+                    "working_set_peak_bytes": 289787904
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 13496320,
+                    "cpu_seconds": 3.60558,
+                    "max_interval_cpu_cores": 0.01654007072799585,
+                    "max_pod_throttled_ratio": 0.023255813953488372,
+                    "mean_cpu_cores_observed": 0.012197430146049803,
+                    "observed_seconds": 295.60161089897156,
+                    "observed_window_fraction": 0.9853387029965719,
+                    "working_set_peak_bytes": 13365248
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 630403072,
+                    "cpu_seconds": 38.05611900000002,
+                    "max_interval_cpu_cores": 0.1999169052031953,
+                    "max_pod_throttled_ratio": 0.07142857142857142,
+                    "mean_cpu_cores_observed": 0.1287412436091444,
+                    "observed_seconds": 295.60161089897156,
+                    "observed_window_fraction": 0.9853387029965719,
+                    "working_set_peak_bytes": 617340928
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1937469440,
+                  "cpu_seconds": 143.63701500000002,
+                  "max_interval_cpu_cores": 0.7401316483372807,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.48591418214257015,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.60161089897156,
+                  "observed_window_fraction": 0.9853387029965719,
+                  "working_set_peak_bytes": 1692127232
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 4130654,
+                  "execution_log_rows": 0,
+                  "execution_rows": 644,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 20881408,
+                  "postgres_database_bytes": 4030464,
+                  "postgres_wal_retained_bytes": 16777216,
+                  "redis_commands_processed": 66549,
+                  "redis_connections_received": 87,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 397.63305139541626
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 1179,
+                "correct_by_deadline": 1179,
+                "correct_completed": 1179,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 1179,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 6.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 3.9266666666666667,
+                "correct_completed": 3.9266666666666667,
+                "durably_terminal": 3.9266666666666667,
+                "scheduled": 3.93
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.043966054916381836,
+                "end_to_end": 0.4816889762878418,
+                "queue": 0.06644988059997559,
+                "verdict_end_to_end": 0.4816889762878418
+              },
+              "offered_rate_per_s": 4.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 707682304,
+                    "cpu_seconds": 155.94510900000006,
+                    "max_interval_cpu_cores": 0.8250437441217608,
+                    "max_pod_throttled_ratio": 0.36,
+                    "mean_cpu_cores_observed": 0.5269079418573585,
+                    "observed_seconds": 295.96272253990173,
+                    "observed_window_fraction": 0.9865424084663391,
+                    "working_set_peak_bytes": 672677888
+                  },
+                  "client": {
+                    "charged_peak_bytes": 14434304,
+                    "cpu_seconds": 0.015415999999999997,
+                    "max_interval_cpu_cores": 8.27462222886807e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.2087640861330466e-05,
+                    "observed_seconds": 295.96272253990173,
+                    "observed_window_fraction": 0.9865424084663391,
+                    "working_set_peak_bytes": 14041088
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 91664384,
+                    "cpu_seconds": 12.371510000000002,
+                    "max_interval_cpu_cores": 0.06371434541216105,
+                    "max_pod_throttled_ratio": 0.22448979591836735,
+                    "mean_cpu_cores_observed": 0.041800906187880044,
+                    "observed_seconds": 295.96272253990173,
+                    "observed_window_fraction": 0.9865424084663391,
+                    "working_set_peak_bytes": 91590656
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 486547456,
+                    "cpu_seconds": 22.536782000000002,
+                    "max_interval_cpu_cores": 0.13612354291247772,
+                    "max_pod_throttled_ratio": 0.044444444444444446,
+                    "mean_cpu_cores_observed": 0.07614736682577175,
+                    "observed_seconds": 295.96272253990173,
+                    "observed_window_fraction": 0.9865424084663391,
+                    "working_set_peak_bytes": 254222336
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 19714048,
+                    "cpu_seconds": 5.950902,
+                    "max_interval_cpu_cores": 0.03025667435614952,
+                    "max_pod_throttled_ratio": 0.061224489795918366,
+                    "mean_cpu_cores_observed": 0.020106930862543674,
+                    "observed_seconds": 295.96272253990173,
+                    "observed_window_fraction": 0.9865424084663391,
+                    "working_set_peak_bytes": 17915904
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 657334272,
+                    "cpu_seconds": 76.21511400000001,
+                    "max_interval_cpu_cores": 0.41269396430795147,
+                    "max_pod_throttled_ratio": 0.08695652173913043,
+                    "mean_cpu_cores_observed": 0.2575159241202232,
+                    "observed_seconds": 295.96272253990173,
+                    "observed_window_fraction": 0.9865424084663391,
+                    "working_set_peak_bytes": 644272128
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1948831744,
+                  "cpu_seconds": 273.03483300000005,
+                  "max_interval_cpu_cores": 1.4468646801762644,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.9225311574946384,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.96272253990173,
+                  "observed_window_fraction": 0.9865424084663391,
+                  "working_set_peak_bytes": 1677426688
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 8065993,
+                  "execution_log_rows": 0,
+                  "execution_rows": 1289,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 41492480,
+                  "postgres_database_bytes": 7823360,
+                  "postgres_wal_retained_bytes": 33554432,
+                  "redis_commands_processed": 131177,
+                  "redis_connections_received": 94,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 398.7000148296356
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 1
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 2444,
+                "correct_by_deadline": 2444,
+                "correct_completed": 2444,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 2444,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 44.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 8.126666666666667,
+                "correct_completed": 8.126666666666667,
+                "durably_terminal": 8.126666666666667,
+                "scheduled": 8.146666666666667
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.10524964332580566,
+                "end_to_end": 4.4632298946380615,
+                "queue": 4.037461042404175,
+                "verdict_end_to_end": 4.4632298946380615
+              },
+              "offered_rate_per_s": 8.0,
+              "outcome": "fail",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 713261056,
+                    "cpu_seconds": 321.4533910000001,
+                    "max_interval_cpu_cores": 1.2294500066578267,
+                    "max_pod_throttled_ratio": 0.9807692307692307,
+                    "mean_cpu_cores_observed": 1.0844225336578197,
+                    "observed_seconds": 296.4281735420227,
+                    "observed_window_fraction": 0.9880939118067423,
+                    "working_set_peak_bytes": 675639296
+                  },
+                  "client": {
+                    "charged_peak_bytes": 14434304,
+                    "cpu_seconds": 0.016324999999999996,
+                    "max_interval_cpu_cores": 0.00010985282094426446,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.5072363078490264e-05,
+                    "observed_seconds": 296.4281735420227,
+                    "observed_window_fraction": 0.9880939118067423,
+                    "working_set_peak_bytes": 14041088
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 91271168,
+                    "cpu_seconds": 24.440974999999995,
+                    "max_interval_cpu_cores": 0.0912716630158642,
+                    "max_pod_throttled_ratio": 0.37735849056603776,
+                    "mean_cpu_cores_observed": 0.08245159259983484,
+                    "observed_seconds": 296.4281735420227,
+                    "observed_window_fraction": 0.9880939118067423,
+                    "working_set_peak_bytes": 25849856
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 596574208,
+                    "cpu_seconds": 46.196315999999996,
+                    "max_interval_cpu_cores": 0.2733625865809092,
+                    "max_pod_throttled_ratio": 0.1568627450980392,
+                    "mean_cpu_cores_observed": 0.1558432029182646,
+                    "observed_seconds": 296.4281735420227,
+                    "observed_window_fraction": 0.9880939118067423,
+                    "working_set_peak_bytes": 300167168
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 31272960,
+                    "cpu_seconds": 11.761183000000003,
+                    "max_interval_cpu_cores": 0.05753049515161439,
+                    "max_pod_throttled_ratio": 0.23529411764705882,
+                    "mean_cpu_cores_observed": 0.03967633325626754,
+                    "observed_seconds": 296.4281735420227,
+                    "observed_window_fraction": 0.9880939118067423,
+                    "working_set_peak_bytes": 25255936
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 727867392,
+                    "cpu_seconds": 167.409964,
+                    "max_interval_cpu_cores": 0.6403230462138997,
+                    "max_pod_throttled_ratio": 0.0784313725490196,
+                    "mean_cpu_cores_observed": 0.5647572631157726,
+                    "observed_seconds": 296.4281735420227,
+                    "observed_window_fraction": 0.9880939118067423,
+                    "working_set_peak_bytes": 714768384
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 2162278400,
+                  "cpu_seconds": 571.278154,
+                  "max_interval_cpu_cores": 2.1543311478289393,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 1.9272059979110372,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 296.4281735420227,
+                  "observed_window_fraction": 0.9880939118067423,
+                  "working_set_peak_bytes": 1751289856
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 16543745,
+                  "execution_log_rows": 0,
+                  "execution_rows": 2687,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 83161088,
+                  "postgres_database_bytes": 15884288,
+                  "postgres_wal_retained_bytes": 67108864,
+                  "redis_commands_processed": 271042,
+                  "redis_connections_received": 99,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 398.0271472930908
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "fail",
+              "window_s": 300
+            }
+          ],
+          "workers": 2
+        },
+        "highest_valid_tested_pass_per_s": 4.0,
+        "inconclusive_step_count": 0,
+        "invalid_step_count": 0,
+        "steps": [
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.013333333333333334,
+                "status": "pass",
+                "value": 0.0006906401362893556
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.3080000877380371
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.036277055740356445
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.004997058694246506
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 1.0016722408026757
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 598,
+              "numerator": 598
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.028786897659301758,
+              "end_to_end": 0.3080000877380371,
+              "queue": 0.036277055740356445,
+              "verdict_end_to_end": 0.3080000877380371
+            },
+            "offered_rate_per_s": 2.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 66549,
+              "redis_commands_per_s": 167.36284814971785,
+              "snapshot_interval_s": 397.63305139541626
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.27880074722653253,
+                "client": 5.2026103488509455e-05,
+                "pooler": 0.022614423445360382,
+                "postgres": 0.04350831161199449,
+                "redis": 0.012197430146049803,
+                "worker": 0.1287412436091444
+              },
+              "role_peak_ram_bytes": {
+                "api": 670220288,
+                "client": 14041088,
+                "pooler": 90845184,
+                "postgres": 289787904,
+                "redis": 13365248,
+                "worker": 617340928
+              },
+              "tenant_charged_peak_bytes": 1937469440,
+              "tenant_mean_cpu_cores": 0.48591418214257015,
+              "tenant_peak_ram_bytes": 1692127232
+            },
+            "table_event_correct_completed_per_s": 1.9966666666666666,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.02666666666666667,
+                "status": "pass",
+                "value": 0.0017595309376547753
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.4816889762878418
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.06644988059997559
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.0025376840990357814
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 0.9991518235793045
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 1179,
+              "numerator": 1179
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.043966054916381836,
+              "end_to_end": 0.4816889762878418,
+              "queue": 0.06644988059997559,
+              "verdict_end_to_end": 0.4816889762878418
+            },
+            "offered_rate_per_s": 4.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 131177,
+              "redis_commands_per_s": 329.01177607443003,
+              "snapshot_interval_s": 398.7000148296356
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.5269079418573585,
+                "client": 5.2087640861330466e-05,
+                "pooler": 0.041800906187880044,
+                "postgres": 0.07614736682577175,
+                "redis": 0.020106930862543674,
+                "worker": 0.2575159241202232
+              },
+              "role_peak_ram_bytes": {
+                "api": 672677888,
+                "client": 14041088,
+                "pooler": 91590656,
+                "postgres": 254222336,
+                "redis": 17915904,
+                "worker": 644272128
+              },
+              "tenant_charged_peak_bytes": 1948831744,
+              "tenant_mean_cpu_cores": 0.9225311574946384,
+              "tenant_peak_ram_bytes": 1677426688
+            },
+            "table_event_correct_completed_per_s": 3.9266666666666667,
+            "validity": {
+              "invalid": 0,
+              "warnings": 1
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": false,
+                "limit": 0.05333333333333334,
+                "status": "inconclusive",
+                "value": 0.05938173357065348
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "fail",
+                "value": 4.4632298946380615
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "fail",
+                "value": 4.037461042404175
+              },
+              "overall": "fail",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.0012249987784430112
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 0.997545008183306
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 2444,
+              "numerator": 2444
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.10524964332580566,
+              "end_to_end": 4.4632298946380615,
+              "queue": 4.037461042404175,
+              "verdict_end_to_end": 4.4632298946380615
+            },
+            "offered_rate_per_s": 8.0,
+            "overall": "fail",
+            "redis_command_snapshot": {
+              "redis_commands": 271042,
+              "redis_commands_per_s": 680.9636022148404,
+              "snapshot_interval_s": 398.0271472930908
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 1.0844225336578197,
+                "client": 5.5072363078490264e-05,
+                "pooler": 0.08245159259983484,
+                "postgres": 0.1558432029182646,
+                "redis": 0.03967633325626754,
+                "worker": 0.5647572631157726
+              },
+              "role_peak_ram_bytes": {
+                "api": 675639296,
+                "client": 14041088,
+                "pooler": 25849856,
+                "postgres": 300167168,
+                "redis": 25255936,
+                "worker": 714768384
+              },
+              "tenant_charged_peak_bytes": 2162278400,
+              "tenant_mean_cpu_cores": 1.9272059979110372,
+              "tenant_peak_ram_bytes": 1751289856
+            },
+            "table_event_correct_completed_per_s": 8.126666666666667,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          }
+        ]
+      },
+      "name": "queue_position_noop",
+      "runtime_proof": {
+        "allowlisted_runtime_identity_sha256": "61fa72e96fe244c404d816f2cf4f84531c9d9a1fff3b75b5caa08ee5643053ba"
+      },
+      "source_path": "/home/jack/bifrost-bench-evidence/runs/queue-position-causal-20261102-r1/result.json",
+      "source_sha256": "89734d0c4e9bdb0c96eaf17371b20d747169afb54d4f2709876f56960ef87808"
+    },
+    {
+      "finished_at": "2026-11-03T00:31:25+00:00",
+      "launch": {
+        "base_image": "bifrost-api:kind-a74e45295998-hosting-sizing-r1",
+        "base_image_id": "sha256:babc52f1c0ac8c5482488c60511d945b220ae154ea56789d7dbe068ee5fc9e09",
+        "fixture_sha256": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3",
+        "harness_revision": "dfb41adb4b945fd45f6b30b7a8be984978850be0",
+        "image": "bifrost-api:kind-a74e45295998-queue-position-coalesced-r1",
+        "image_id": "sha256:8ffa15a9310a49af0ce7f50f589c0ca1e35f147ba3e9353ced68a7db79370919",
+        "launch_sha256": "21854e2578cc3a672a985fee1cf9372301e52ff7edde1e22eef7c47fd9cdd900",
+        "runtime_branch": "fix/coalesced-queue-positions",
+        "runtime_revision": "b882167c264d93d69d839a6d7417b22c8ff0fe33",
+        "verification": {
+          "api_pyright_ruff": "pass",
+          "astra_architecture_review": "approved, no blockers",
+          "backend_e2e": 2,
+          "backend_unit": 161,
+          "broader_suites": "not run",
+          "client_tsc_lint": "pass",
+          "client_unit": 52,
+          "known_test_failure_disposition": "New live test referenced a fixture local to another module; switched to shared human_minter fixture. Corrected live queue and completion tests passed."
+        }
+      },
+      "n2": {
+        "cleanup_verified": true,
+        "count_status": "stopped",
+        "declared_request_allocation": {
+          "components": {
+            "api": {
+              "cpu_m": 750,
+              "memory_bytes": 536870912,
+              "replicas": 2
+            },
+            "client": {
+              "cpu_m": 50,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "pooler": {
+              "cpu_m": 100,
+              "memory_bytes": 134217728,
+              "replicas": 1
+            },
+            "postgres": {
+              "cpu_m": 750,
+              "memory_bytes": 1610612736,
+              "replicas": 1
+            },
+            "redis": {
+              "cpu_m": 100,
+              "memory_bytes": 67108864,
+              "replicas": 1
+            },
+            "worker": {
+              "cpu_m": 650,
+              "memory_bytes": 1073741824,
+              "replicas": 2
+            }
+          },
+          "fixed_components_cpu_m": 2500,
+          "fixed_components_memory_bytes": 2952790016,
+          "total_cpu_m": 3800,
+          "total_memory_bytes": 5100273664,
+          "worker_count": 2,
+          "worker_cpu_m": 650,
+          "worker_memory_bytes": 1073741824
+        },
+        "first_valid_fail_per_s": 8.0,
+        "generic_count_scalars": {
+          "bracket": [
+            4.0,
+            8.0
+          ],
+          "classification": "completed_diagnostic",
+          "cleanup_verified": true,
+          "declared_request_allocation": {
+            "components": {
+              "api": {
+                "cpu_m": 750,
+                "memory_bytes": 536870912,
+                "replicas": 2
+              },
+              "client": {
+                "cpu_m": 50,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "pooler": {
+                "cpu_m": 100,
+                "memory_bytes": 134217728,
+                "replicas": 1
+              },
+              "postgres": {
+                "cpu_m": 750,
+                "memory_bytes": 1610612736,
+                "replicas": 1
+              },
+              "redis": {
+                "cpu_m": 100,
+                "memory_bytes": 67108864,
+                "replicas": 1
+              },
+              "worker": {
+                "cpu_m": 650,
+                "memory_bytes": 1073741824,
+                "replicas": 2
+              }
+            },
+            "fixed_components_cpu_m": 2500,
+            "fixed_components_memory_bytes": 2952790016,
+            "total_cpu_m": 3800,
+            "total_memory_bytes": 5100273664,
+            "worker_count": 2,
+            "worker_cpu_m": 650,
+            "worker_memory_bytes": 1073741824
+          },
+          "first_valid_fail": {
+            "arrival_cohort": {
+              "accepted_union": 2444,
+              "correct_by_deadline": 2444,
+              "correct_completed": 2444,
+              "correct_late": 0,
+              "failed_terminal": 0,
+              "scheduled": 2444,
+              "unfinished_durable": 0
+            },
+            "backlog_max": 37.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 8.12,
+              "correct_completed": 8.12,
+              "durably_terminal": 8.12,
+              "scheduled": 8.146666666666667
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.10072445869445801,
+              "end_to_end": 3.380748987197876,
+              "queue": 2.9419798851013184,
+              "verdict_end_to_end": 3.380748987197876
+            },
+            "offered_rate_per_s": 8.0,
+            "outcome": "fail",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 706048000,
+                  "cpu_seconds": 321.7185450000001,
+                  "max_interval_cpu_cores": 1.2554771688381428,
+                  "max_pod_throttled_ratio": 0.98,
+                  "mean_cpu_cores_observed": 1.0849310359481446,
+                  "observed_seconds": 296.53363609313965,
+                  "observed_window_fraction": 0.9884454536437989,
+                  "working_set_peak_bytes": 665608192
+                },
+                "client": {
+                  "charged_peak_bytes": 9322496,
+                  "cpu_seconds": 0.016334000000000005,
+                  "max_interval_cpu_cores": 8.696525871915944e-05,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.508312721349959e-05,
+                  "observed_seconds": 296.53363609313965,
+                  "observed_window_fraction": 0.9884454536437989,
+                  "working_set_peak_bytes": 8970240
+                },
+                "pooler": {
+                  "charged_peak_bytes": 88805376,
+                  "cpu_seconds": 24.63027599999999,
+                  "max_interval_cpu_cores": 0.09510956981066387,
+                  "max_pod_throttled_ratio": 0.45098039215686275,
+                  "mean_cpu_cores_observed": 0.08306064810895096,
+                  "observed_seconds": 296.53363609313965,
+                  "observed_window_fraction": 0.9884454536437989,
+                  "working_set_peak_bytes": 51294208
+                },
+                "postgres": {
+                  "charged_peak_bytes": 649150464,
+                  "cpu_seconds": 46.271632,
+                  "max_interval_cpu_cores": 0.27484754404313516,
+                  "max_pod_throttled_ratio": 0.19607843137254902,
+                  "mean_cpu_cores_observed": 0.156041765142172,
+                  "observed_seconds": 296.53363609313965,
+                  "observed_window_fraction": 0.9884454536437989,
+                  "working_set_peak_bytes": 326115328
+                },
+                "redis": {
+                  "charged_peak_bytes": 22405120,
+                  "cpu_seconds": 11.790043999999998,
+                  "max_interval_cpu_cores": 0.051711819987327094,
+                  "max_pod_throttled_ratio": 0.19607843137254902,
+                  "mean_cpu_cores_observed": 0.039759550232934815,
+                  "observed_seconds": 296.53363609313965,
+                  "observed_window_fraction": 0.9884454536437989,
+                  "working_set_peak_bytes": 20500480
+                },
+                "worker": {
+                  "charged_peak_bytes": 676360192,
+                  "cpu_seconds": 167.51588400000003,
+                  "max_interval_cpu_cores": 0.6755004403549819,
+                  "max_pod_throttled_ratio": 0.08163265306122448,
+                  "mean_cpu_cores_observed": 0.5649136003828725,
+                  "observed_seconds": 296.53363609313965,
+                  "observed_window_fraction": 0.9884454536437989,
+                  "working_set_peak_bytes": 662310912
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 2124099584,
+                "cpu_seconds": 571.9427150000002,
+                "max_interval_cpu_cores": 2.2402352777715295,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 1.9287616829422887,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 296.53363609313965,
+                "observed_window_fraction": 0.9884454536437989,
+                "working_set_peak_bytes": 1727225856
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 16545749,
+                "execution_log_rows": 0,
+                "execution_rows": 2687,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 83202048,
+                "postgres_database_bytes": 15949824,
+                "postgres_wal_retained_bytes": 67108864,
+                "redis_commands_processed": 271671,
+                "redis_connections_received": 100,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 398.22720742225647
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            },
+            "verdict": "fail",
+            "window_s": 300
+          },
+          "highest_valid_tested_pass": {
+            "arrival_cohort": {
+              "accepted_union": 1179,
+              "correct_by_deadline": 1179,
+              "correct_completed": 1179,
+              "correct_late": 0,
+              "failed_terminal": 0,
+              "scheduled": 1179,
+              "unfinished_durable": 0
+            },
+            "backlog_max": 5.0,
+            "event_rates_per_s": {
+              "correct_by_deadline_completed": 3.9266666666666667,
+              "correct_completed": 3.9266666666666667,
+              "durably_terminal": 3.9266666666666667,
+              "scheduled": 3.93
+            },
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.04462766647338867,
+              "end_to_end": 0.4859912395477295,
+              "queue": 0.07109904289245605,
+              "verdict_end_to_end": 0.4859912395477295
+            },
+            "offered_rate_per_s": 4.0,
+            "outcome": "pass",
+            "resources": {
+              "roles": {
+                "api": {
+                  "charged_peak_bytes": 698871808,
+                  "cpu_seconds": 156.68868299999997,
+                  "max_interval_cpu_cores": 0.8181662484140948,
+                  "max_pod_throttled_ratio": 0.46808510638297873,
+                  "mean_cpu_cores_observed": 0.5297899058794346,
+                  "observed_seconds": 295.7562634944916,
+                  "observed_window_fraction": 0.9858542116483052,
+                  "working_set_peak_bytes": 661540864
+                },
+                "client": {
+                  "charged_peak_bytes": 9322496,
+                  "cpu_seconds": 0.015305000000000003,
+                  "max_interval_cpu_cores": 0.00011393270752535241,
+                  "max_pod_throttled_ratio": 0.0,
+                  "mean_cpu_cores_observed": 5.17486927213802e-05,
+                  "observed_seconds": 295.7562634944916,
+                  "observed_window_fraction": 0.9858542116483052,
+                  "working_set_peak_bytes": 8970240
+                },
+                "pooler": {
+                  "charged_peak_bytes": 89333760,
+                  "cpu_seconds": 12.515417,
+                  "max_interval_cpu_cores": 0.06337670479045084,
+                  "max_pod_throttled_ratio": 0.16666666666666666,
+                  "mean_cpu_cores_observed": 0.04231665917105116,
+                  "observed_seconds": 295.7562634944916,
+                  "observed_window_fraction": 0.9858542116483052,
+                  "working_set_peak_bytes": 51822592
+                },
+                "postgres": {
+                  "charged_peak_bytes": 515858432,
+                  "cpu_seconds": 22.730718000000003,
+                  "max_interval_cpu_cores": 0.1543137948772162,
+                  "max_pod_throttled_ratio": 0.06976744186046512,
+                  "mean_cpu_cores_observed": 0.07685625227823234,
+                  "observed_seconds": 295.7562634944916,
+                  "observed_window_fraction": 0.9858542116483052,
+                  "working_set_peak_bytes": 276226048
+                },
+                "redis": {
+                  "charged_peak_bytes": 11808768,
+                  "cpu_seconds": 6.0275089999999985,
+                  "max_interval_cpu_cores": 0.0297948054046839,
+                  "max_pod_throttled_ratio": 0.08333333333333333,
+                  "mean_cpu_cores_observed": 0.020379987658696735,
+                  "observed_seconds": 295.7562634944916,
+                  "observed_window_fraction": 0.9858542116483052,
+                  "working_set_peak_bytes": 11649024
+                },
+                "worker": {
+                  "charged_peak_bytes": 655888384,
+                  "cpu_seconds": 76.65590100000001,
+                  "max_interval_cpu_cores": 0.42895255486724976,
+                  "max_pod_throttled_ratio": 0.1724137931034483,
+                  "mean_cpu_cores_observed": 0.2591860611649488,
+                  "observed_seconds": 295.7562634944916,
+                  "observed_window_fraction": 0.9858542116483052,
+                  "working_set_peak_bytes": 641839104
+                }
+              },
+              "tenant": {
+                "charged_peak_bytes": 1968250880,
+                "cpu_seconds": 274.63353299999983,
+                "max_interval_cpu_cores": 1.4477524306338052,
+                "max_pod_throttled_ratio": null,
+                "mean_cpu_cores_observed": 0.9285806148450846,
+                "memory_coverage_complete_samples": 58,
+                "memory_coverage_missing_or_partial_samples": 0,
+                "observed_seconds": 295.7562634944916,
+                "observed_window_fraction": 0.9858542116483052,
+                "working_set_peak_bytes": 1641259008
+              }
+            },
+            "storage": {
+              "deltas": {
+                "container_log_retained_bytes": 8078506,
+                "execution_log_rows": 0,
+                "execution_rows": 1289,
+                "object_count": 0,
+                "object_payload_bytes": 0,
+                "postgres_allocated_volume_bytes": 41418752,
+                "postgres_database_bytes": 7741440,
+                "postgres_wal_retained_bytes": 33554432,
+                "redis_commands_processed": 131700,
+                "redis_connections_received": 94,
+                "redis_evicted_keys": 0
+              },
+              "interval_s": 398.74684262275696
+            },
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            },
+            "verdict": "pass",
+            "window_s": 300
+          },
+          "inconclusive_step_count": 0,
+          "invalid_step_count": 0,
+          "preflight_present": true,
+          "source_count_status": "stopped",
+          "sql_sidecar_reference_hashes": [],
+          "steps": [
+            {
+              "arrival_cohort": {
+                "accepted_union": 598,
+                "correct_by_deadline": 598,
+                "correct_completed": 598,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 598,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 3.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 1.9966666666666666,
+                "correct_completed": 1.9966666666666666,
+                "durably_terminal": 1.9966666666666666,
+                "scheduled": 1.9933333333333334
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.04633331298828125,
+                "end_to_end": 0.3246438503265381,
+                "queue": 0.041496992111206055,
+                "verdict_end_to_end": 0.3246438503265381
+              },
+              "offered_rate_per_s": 2.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 696344576,
+                    "cpu_seconds": 81.426753,
+                    "max_interval_cpu_cores": 0.4199960623560824,
+                    "max_pod_throttled_ratio": 0.20833333333333334,
+                    "mean_cpu_cores_observed": 0.275718024394631,
+                    "observed_seconds": 295.3261876106262,
+                    "observed_window_fraction": 0.9844206253687541,
+                    "working_set_peak_bytes": 660467712
+                  },
+                  "client": {
+                    "charged_peak_bytes": 9322496,
+                    "cpu_seconds": 0.015169999999999996,
+                    "max_interval_cpu_cores": 7.731701089471032e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.1366931333569824e-05,
+                    "observed_seconds": 295.3261876106262,
+                    "observed_window_fraction": 0.9844206253687541,
+                    "working_set_peak_bytes": 8970240
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 88334336,
+                    "cpu_seconds": 6.661098999999996,
+                    "max_interval_cpu_cores": 0.032842193429091095,
+                    "max_pod_throttled_ratio": 0.05714285714285714,
+                    "mean_cpu_cores_observed": 0.022555057016421257,
+                    "observed_seconds": 295.3261876106262,
+                    "observed_window_fraction": 0.9844206253687541,
+                    "working_set_peak_bytes": 50823168
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 476221440,
+                    "cpu_seconds": 12.810631000000003,
+                    "max_interval_cpu_cores": 0.07007138749152933,
+                    "max_pod_throttled_ratio": 0.023809523809523808,
+                    "mean_cpu_cores_observed": 0.04337790394968367,
+                    "observed_seconds": 295.3261876106262,
+                    "observed_window_fraction": 0.9844206253687541,
+                    "working_set_peak_bytes": 279556096
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 8364032,
+                    "cpu_seconds": 3.6512160000000002,
+                    "max_interval_cpu_cores": 0.01820368073556022,
+                    "max_pod_throttled_ratio": 0.022222222222222223,
+                    "mean_cpu_cores_observed": 0.012363332996442421,
+                    "observed_seconds": 295.3261876106262,
+                    "observed_window_fraction": 0.9844206253687541,
+                    "working_set_peak_bytes": 8200192
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 636669952,
+                    "cpu_seconds": 37.86445399999999,
+                    "max_interval_cpu_cores": 0.20095248421362888,
+                    "max_pod_throttled_ratio": 0.07407407407407407,
+                    "mean_cpu_cores_observed": 0.12821231434417357,
+                    "observed_seconds": 295.3261876106262,
+                    "observed_window_fraction": 0.9844206253687541,
+                    "working_set_peak_bytes": 622620672
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1900535808,
+                  "cpu_seconds": 142.42932299999995,
+                  "max_interval_cpu_cores": 0.7323134585632365,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.48227799963268536,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.3261876106262,
+                  "observed_window_fraction": 0.9844206253687541,
+                  "working_set_peak_bytes": 1615253504
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 4109116,
+                  "execution_log_rows": 0,
+                  "execution_rows": 644,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 20918272,
+                  "postgres_database_bytes": 4079616,
+                  "postgres_wal_retained_bytes": 16777216,
+                  "redis_commands_processed": 66795,
+                  "redis_connections_received": 85,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 397.77753019332886
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 1179,
+                "correct_by_deadline": 1179,
+                "correct_completed": 1179,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 1179,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 5.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 3.9266666666666667,
+                "correct_completed": 3.9266666666666667,
+                "durably_terminal": 3.9266666666666667,
+                "scheduled": 3.93
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.04462766647338867,
+                "end_to_end": 0.4859912395477295,
+                "queue": 0.07109904289245605,
+                "verdict_end_to_end": 0.4859912395477295
+              },
+              "offered_rate_per_s": 4.0,
+              "outcome": "pass",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 698871808,
+                    "cpu_seconds": 156.68868299999997,
+                    "max_interval_cpu_cores": 0.8181662484140948,
+                    "max_pod_throttled_ratio": 0.46808510638297873,
+                    "mean_cpu_cores_observed": 0.5297899058794346,
+                    "observed_seconds": 295.7562634944916,
+                    "observed_window_fraction": 0.9858542116483052,
+                    "working_set_peak_bytes": 661540864
+                  },
+                  "client": {
+                    "charged_peak_bytes": 9322496,
+                    "cpu_seconds": 0.015305000000000003,
+                    "max_interval_cpu_cores": 0.00011393270752535241,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.17486927213802e-05,
+                    "observed_seconds": 295.7562634944916,
+                    "observed_window_fraction": 0.9858542116483052,
+                    "working_set_peak_bytes": 8970240
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 89333760,
+                    "cpu_seconds": 12.515417,
+                    "max_interval_cpu_cores": 0.06337670479045084,
+                    "max_pod_throttled_ratio": 0.16666666666666666,
+                    "mean_cpu_cores_observed": 0.04231665917105116,
+                    "observed_seconds": 295.7562634944916,
+                    "observed_window_fraction": 0.9858542116483052,
+                    "working_set_peak_bytes": 51822592
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 515858432,
+                    "cpu_seconds": 22.730718000000003,
+                    "max_interval_cpu_cores": 0.1543137948772162,
+                    "max_pod_throttled_ratio": 0.06976744186046512,
+                    "mean_cpu_cores_observed": 0.07685625227823234,
+                    "observed_seconds": 295.7562634944916,
+                    "observed_window_fraction": 0.9858542116483052,
+                    "working_set_peak_bytes": 276226048
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 11808768,
+                    "cpu_seconds": 6.0275089999999985,
+                    "max_interval_cpu_cores": 0.0297948054046839,
+                    "max_pod_throttled_ratio": 0.08333333333333333,
+                    "mean_cpu_cores_observed": 0.020379987658696735,
+                    "observed_seconds": 295.7562634944916,
+                    "observed_window_fraction": 0.9858542116483052,
+                    "working_set_peak_bytes": 11649024
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 655888384,
+                    "cpu_seconds": 76.65590100000001,
+                    "max_interval_cpu_cores": 0.42895255486724976,
+                    "max_pod_throttled_ratio": 0.1724137931034483,
+                    "mean_cpu_cores_observed": 0.2591860611649488,
+                    "observed_seconds": 295.7562634944916,
+                    "observed_window_fraction": 0.9858542116483052,
+                    "working_set_peak_bytes": 641839104
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 1968250880,
+                  "cpu_seconds": 274.63353299999983,
+                  "max_interval_cpu_cores": 1.4477524306338052,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 0.9285806148450846,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 295.7562634944916,
+                  "observed_window_fraction": 0.9858542116483052,
+                  "working_set_peak_bytes": 1641259008
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 8078506,
+                  "execution_log_rows": 0,
+                  "execution_rows": 1289,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 41418752,
+                  "postgres_database_bytes": 7741440,
+                  "postgres_wal_retained_bytes": 33554432,
+                  "redis_commands_processed": 131700,
+                  "redis_connections_received": 94,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 398.74684262275696
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "pass",
+              "window_s": 300
+            },
+            {
+              "arrival_cohort": {
+                "accepted_union": 2444,
+                "correct_by_deadline": 2444,
+                "correct_completed": 2444,
+                "correct_late": 0,
+                "failed_terminal": 0,
+                "scheduled": 2444,
+                "unfinished_durable": 0
+              },
+              "backlog_max": 37.0,
+              "event_rates_per_s": {
+                "correct_by_deadline_completed": 8.12,
+                "correct_completed": 8.12,
+                "durably_terminal": 8.12,
+                "scheduled": 8.146666666666667
+              },
+              "faults": {
+                "duplicate_executions": 0,
+                "evicted": 0,
+                "oom_killed": 0,
+                "quota_denials": 0,
+                "restarts": 0
+              },
+              "latency_p95_s": {
+                "admission": 0.10072445869445801,
+                "end_to_end": 3.380748987197876,
+                "queue": 2.9419798851013184,
+                "verdict_end_to_end": 3.380748987197876
+              },
+              "offered_rate_per_s": 8.0,
+              "outcome": "fail",
+              "resources": {
+                "roles": {
+                  "api": {
+                    "charged_peak_bytes": 706048000,
+                    "cpu_seconds": 321.7185450000001,
+                    "max_interval_cpu_cores": 1.2554771688381428,
+                    "max_pod_throttled_ratio": 0.98,
+                    "mean_cpu_cores_observed": 1.0849310359481446,
+                    "observed_seconds": 296.53363609313965,
+                    "observed_window_fraction": 0.9884454536437989,
+                    "working_set_peak_bytes": 665608192
+                  },
+                  "client": {
+                    "charged_peak_bytes": 9322496,
+                    "cpu_seconds": 0.016334000000000005,
+                    "max_interval_cpu_cores": 8.696525871915944e-05,
+                    "max_pod_throttled_ratio": 0.0,
+                    "mean_cpu_cores_observed": 5.508312721349959e-05,
+                    "observed_seconds": 296.53363609313965,
+                    "observed_window_fraction": 0.9884454536437989,
+                    "working_set_peak_bytes": 8970240
+                  },
+                  "pooler": {
+                    "charged_peak_bytes": 88805376,
+                    "cpu_seconds": 24.63027599999999,
+                    "max_interval_cpu_cores": 0.09510956981066387,
+                    "max_pod_throttled_ratio": 0.45098039215686275,
+                    "mean_cpu_cores_observed": 0.08306064810895096,
+                    "observed_seconds": 296.53363609313965,
+                    "observed_window_fraction": 0.9884454536437989,
+                    "working_set_peak_bytes": 51294208
+                  },
+                  "postgres": {
+                    "charged_peak_bytes": 649150464,
+                    "cpu_seconds": 46.271632,
+                    "max_interval_cpu_cores": 0.27484754404313516,
+                    "max_pod_throttled_ratio": 0.19607843137254902,
+                    "mean_cpu_cores_observed": 0.156041765142172,
+                    "observed_seconds": 296.53363609313965,
+                    "observed_window_fraction": 0.9884454536437989,
+                    "working_set_peak_bytes": 326115328
+                  },
+                  "redis": {
+                    "charged_peak_bytes": 22405120,
+                    "cpu_seconds": 11.790043999999998,
+                    "max_interval_cpu_cores": 0.051711819987327094,
+                    "max_pod_throttled_ratio": 0.19607843137254902,
+                    "mean_cpu_cores_observed": 0.039759550232934815,
+                    "observed_seconds": 296.53363609313965,
+                    "observed_window_fraction": 0.9884454536437989,
+                    "working_set_peak_bytes": 20500480
+                  },
+                  "worker": {
+                    "charged_peak_bytes": 676360192,
+                    "cpu_seconds": 167.51588400000003,
+                    "max_interval_cpu_cores": 0.6755004403549819,
+                    "max_pod_throttled_ratio": 0.08163265306122448,
+                    "mean_cpu_cores_observed": 0.5649136003828725,
+                    "observed_seconds": 296.53363609313965,
+                    "observed_window_fraction": 0.9884454536437989,
+                    "working_set_peak_bytes": 662310912
+                  }
+                },
+                "tenant": {
+                  "charged_peak_bytes": 2124099584,
+                  "cpu_seconds": 571.9427150000002,
+                  "max_interval_cpu_cores": 2.2402352777715295,
+                  "max_pod_throttled_ratio": null,
+                  "mean_cpu_cores_observed": 1.9287616829422887,
+                  "memory_coverage_complete_samples": 58,
+                  "memory_coverage_missing_or_partial_samples": 0,
+                  "observed_seconds": 296.53363609313965,
+                  "observed_window_fraction": 0.9884454536437989,
+                  "working_set_peak_bytes": 1727225856
+                }
+              },
+              "storage": {
+                "deltas": {
+                  "container_log_retained_bytes": 16545749,
+                  "execution_log_rows": 0,
+                  "execution_rows": 2687,
+                  "object_count": 0,
+                  "object_payload_bytes": 0,
+                  "postgres_allocated_volume_bytes": 83202048,
+                  "postgres_database_bytes": 15949824,
+                  "postgres_wal_retained_bytes": 67108864,
+                  "redis_commands_processed": 271671,
+                  "redis_connections_received": 100,
+                  "redis_evicted_keys": 0
+                },
+                "interval_s": 398.22720742225647
+              },
+              "validity": {
+                "invalid": 0,
+                "warnings": 0
+              },
+              "verdict": "fail",
+              "window_s": 300
+            }
+          ],
+          "workers": 2
+        },
+        "highest_valid_tested_pass_per_s": 4.0,
+        "inconclusive_step_count": 0,
+        "invalid_step_count": 0,
+        "steps": [
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.013333333333333334,
+                "status": "pass",
+                "value": 0.0005030184981126748
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.3246438503265381
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.041496992111206055
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.004997058694246506
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 1.0016722408026757
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 598,
+              "numerator": 598
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.04633331298828125,
+              "end_to_end": 0.3246438503265381,
+              "queue": 0.041496992111206055,
+              "verdict_end_to_end": 0.3246438503265381
+            },
+            "offered_rate_per_s": 2.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 66795,
+              "redis_commands_per_s": 167.9204955783604,
+              "snapshot_interval_s": 397.77753019332886
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.275718024394631,
+                "client": 5.1366931333569824e-05,
+                "pooler": 0.022555057016421257,
+                "postgres": 0.04337790394968367,
+                "redis": 0.012363332996442421,
+                "worker": 0.12821231434417357
+              },
+              "role_peak_ram_bytes": {
+                "api": 660467712,
+                "client": 8970240,
+                "pooler": 50823168,
+                "postgres": 279556096,
+                "redis": 8200192,
+                "worker": 622620672
+              },
+              "tenant_charged_peak_bytes": 1900535808,
+              "tenant_mean_cpu_cores": 0.48227799963268536,
+              "tenant_peak_ram_bytes": 1615253504
+            },
+            "table_event_correct_completed_per_s": 1.9966666666666666,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": true,
+                "limit": 0.02666666666666667,
+                "status": "pass",
+                "value": 0.0012980681276610138
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "pass",
+                "value": 0.4859912395477295
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "pass",
+                "value": 0.07109904289245605
+              },
+              "overall": "pass",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.0025376840990357814
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 0.9991518235793045
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 1179,
+              "numerator": 1179
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.04462766647338867,
+              "end_to_end": 0.4859912395477295,
+              "queue": 0.07109904289245605,
+              "verdict_end_to_end": 0.4859912395477295
+            },
+            "offered_rate_per_s": 4.0,
+            "overall": "pass",
+            "redis_command_snapshot": {
+              "redis_commands": 131700,
+              "redis_commands_per_s": 330.28474691797777,
+              "snapshot_interval_s": 398.74684262275696
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 0.5297899058794346,
+                "client": 5.17486927213802e-05,
+                "pooler": 0.04231665917105116,
+                "postgres": 0.07685625227823234,
+                "redis": 0.020379987658696735,
+                "worker": 0.2591860611649488
+              },
+              "role_peak_ram_bytes": {
+                "api": 661540864,
+                "client": 8970240,
+                "pooler": 51822592,
+                "postgres": 276226048,
+                "redis": 11649024,
+                "worker": 641839104
+              },
+              "tenant_charged_peak_bytes": 1968250880,
+              "tenant_mean_cpu_cores": 0.9285806148450846,
+              "tenant_peak_ram_bytes": 1641259008
+            },
+            "table_event_correct_completed_per_s": 3.9266666666666667,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          },
+          {
+            "actual_gates": {
+              "drift": {
+                "bootstrap_conclusive": false,
+                "limit": 0.05333333333333334,
+                "status": "inconclusive",
+                "value": 0.027287195940572224
+              },
+              "latency_end_to_end_p95": {
+                "limit": 1.5,
+                "status": "fail",
+                "value": 3.380748987197876
+              },
+              "latency_queue_p95": {
+                "limit": 2.0,
+                "status": "fail",
+                "value": 2.9419798851013184
+              },
+              "overall": "fail",
+              "reliability": {
+                "limit": 0.01,
+                "status": "pass",
+                "value": 0.0012249987784430112
+              },
+              "tenant_faults": {
+                "limit": 0,
+                "status": "pass",
+                "value": {
+                  "duplicate_executions": 0,
+                  "evicted": 0,
+                  "oom_killed": 0,
+                  "quota_denials": 0,
+                  "restarts": 0
+                }
+              },
+              "throughput": {
+                "limit": 0.995,
+                "status": "pass",
+                "value": 0.9967266775777414
+              }
+            },
+            "arrival_correct_by_deadline": {
+              "denominator": 2444,
+              "numerator": 2444
+            },
+            "arrival_unfinished_durable": 0,
+            "faults": {
+              "duplicate_executions": 0,
+              "evicted": 0,
+              "oom_killed": 0,
+              "quota_denials": 0,
+              "restarts": 0
+            },
+            "latency_p95_s": {
+              "admission": 0.10072445869445801,
+              "end_to_end": 3.380748987197876,
+              "queue": 2.9419798851013184,
+              "verdict_end_to_end": 3.380748987197876
+            },
+            "offered_rate_per_s": 8.0,
+            "overall": "fail",
+            "redis_command_snapshot": {
+              "redis_commands": 271671,
+              "redis_commands_per_s": 682.2010021829981,
+              "snapshot_interval_s": 398.22720742225647
+            },
+            "resources": {
+              "role_mean_cpu_cores": {
+                "api": 1.0849310359481446,
+                "client": 5.508312721349959e-05,
+                "pooler": 0.08306064810895096,
+                "postgres": 0.156041765142172,
+                "redis": 0.039759550232934815,
+                "worker": 0.5649136003828725
+              },
+              "role_peak_ram_bytes": {
+                "api": 665608192,
+                "client": 8970240,
+                "pooler": 51294208,
+                "postgres": 326115328,
+                "redis": 20500480,
+                "worker": 662310912
+              },
+              "tenant_charged_peak_bytes": 2124099584,
+              "tenant_mean_cpu_cores": 1.9287616829422887,
+              "tenant_peak_ram_bytes": 1727225856
+            },
+            "table_event_correct_completed_per_s": 8.12,
+            "validity": {
+              "invalid": 0,
+              "warnings": 0
+            }
+          }
+        ]
+      },
+      "name": "queue_position_coalesced",
+      "runtime_proof": {
+        "allowlisted_runtime_identity_sha256": "9ad868fa65c8b194c22c835e6bccefaea5a4e472e7feed73800406e39a6f099e"
+      },
+      "source_path": "/home/jack/bifrost-bench-evidence/runs/queue-position-coalesced-20261102-r1/result.json",
+      "source_sha256": "08974b974b1a814d5f9e5fd738ff37cecdcc0accd8bc0a003d72db5e1ea1808a"
+    }
+  ],
+  "astra_final_review": "UI-preserving implementation retains causal gain. No-op vs real latency difference is not a proven additional gain. Owner/API concentration remains the observed constraint, not a blocker to releasing the queue fix; 8/s latency-aware capacity cannot be promised.",
+  "candidate_owner_snapshot": {
+    "groups": [
+      {
+        "all_ready": true,
+        "workers": 2
+      }
+    ],
+    "owner_group_count": 1
+  },
+  "candidate_owner_snapshot_8s": {
+    "groups": [
+      {
+        "all_ready": true,
+        "workers": 2
+      }
+    ],
+    "owner_group_count": 1
+  },
+  "causal_noop_owner_proof": {
+    "groups": [
+      {
+        "all_ready": true,
+        "workers": 2
+      }
+    ],
+    "owner_group_count": 1
+  },
+  "completion_receipt": {
+    "at": "2026-11-03T00:32:06.887363+00:00",
+    "guard_verified": true,
+    "host_lock_available": true,
+    "process_exit_code": 0,
+    "remaining_owned_namespaces": []
+  },
+  "profile_and_arrival_seeds_equal_to_control": true,
+  "same_candidate_owner_at_2s_and_8s": true,
+  "schema": "queue_position_coalesced_comparison_v1",
+  "scope": {
+    "capacity_certificate": false,
+    "cloud_capacity_claim": false,
+    "exact_maximum_claim": false,
+    "linear_worker_claim": false,
+    "local_kind_sdk_workload": true,
+    "ui_load_test": false
+  },
+  "source_fixture_verification_code_summary": {
+    "candidate_code_summary": "UI-preserving coalesced local viewer-only queue ranking; normal status/auth/durable paths retained.",
+    "fixture_sha256_by_arm": {
+      "control_redis_100m": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3",
+      "queue_position_coalesced": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3",
+      "queue_position_noop": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3",
+      "redis_500m_contrast": "69977681ac204b69aa6540324785d16b0194a4dea37985cf804d8a2843fdf6b3"
+    },
+    "no_op_code_summary": "Whole publish_queue_positions operation skipped; not shippable.",
+    "verification_by_arm": {
+      "control_redis_100m": {
+        "after_300s_headroom_adjustment": 11,
+        "diff_check": "passed",
+        "ruff": "passed",
+        "targeted_tests": 57
+      },
+      "queue_position_coalesced": {
+        "api_pyright_ruff": "pass",
+        "astra_architecture_review": "approved, no blockers",
+        "backend_e2e": 2,
+        "backend_unit": 161,
+        "broader_suites": "not run",
+        "client_tsc_lint": "pass",
+        "client_unit": 52,
+        "known_test_failure_disposition": "New live test referenced a fixture local to another module; switched to shared human_minter fixture. Corrected live queue and completion tests passed."
+      },
+      "queue_position_noop": {
+        "git_diff_check": "pass",
+        "ruff": "pass",
+        "stdlib_unit_tests": 14
+      },
+      "redis_500m_contrast": [
+        "python3 -m unittest discover -s scripts/bench/tests -p test_resource_curve.py: 11 passed",
+        "real profile inheritance comparison: only Redis CPU and description differ; admission check passed",
+        "git diff --check: passed"
+      ]
+    }
+  }
+}
