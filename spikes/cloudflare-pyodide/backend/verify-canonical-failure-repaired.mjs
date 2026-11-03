@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root = new URL('../results/canonical-failure-repaired/', import.meta.url);
 const read = async name => JSON.parse(await readFile(new URL(name, root), 'utf8'));
 const report = await read('v4.json');
@@ -42,7 +43,12 @@ for (const [packet, digest] of Object.entries(report.packet_sha256)) {
   }
   const path = mappings[packet] ?? (packet.startsWith('project/backend/') ? './' + packet.slice('project/backend/'.length) : null);
   assert.ok(path, packet);
-  assert.equal(hash(await readFile(new URL(path, import.meta.url))), digest, packet);
+  // The packet is historical evidence. Current companion lifetime guards and
+  // runner options may change without rewriting the source that was tested.
+  const bytes = ['ct128-canonical-failure.py', 'project/backend/authorized-local-entry.mjs'].includes(packet)
+    ? execFileSync('git', ['show', `80cb0d622:spikes/cloudflare-pyodide/${path.startsWith('../') ? path.slice(3) : 'backend/' + path.slice(2)}`])
+    : await readFile(new URL(path, import.meta.url));
+  assert.equal(hash(bytes), digest, packet);
 }
 for (const name of ['v1.json', 'v2.json']) {
   const prior = await read(name);

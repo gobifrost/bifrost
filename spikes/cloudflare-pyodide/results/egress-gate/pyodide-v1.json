@@ -1,0 +1,167 @@
+{
+  "mode": "local",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "source_base": "d65d055a1f49f8633b4e808ebff6a461297249d9",
+  "packet_sha256": {
+    "egress-driver.mjs": "957cec2ff95c256b0fbe1eb8dfe91c3a7c376f393241d76646d695444ef8702e",
+    "wrangler.config.ts": "212b561fa960ca9cc71e6dbbe6f6f5b94f92ea2e88fd32f5b1d1086ce61d2c18",
+    "egress-entry.mjs": "a7583c6d77141e5e58df8dbf0db37567f7fdae8f2569a67411e58e88c5c631aa",
+    "package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "attempt-egress.mjs": "733ff527b3c8e59f61b7e28e7fdb437506c8e357ed3e11b1e2e82d8a2aa6043f",
+    "cloudflare.config.ts": "3de03971d3fb4c1b0a76bf8da40e9854c064d9fbf6d8751e005d514eccf6a860"
+  },
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-egress-v1-local",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/node_modules,dst=/qualification/packet/node_modules,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/egress-v1-local,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+    "--env",
+    "HOME=/qualification/home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--env",
+    "REQUEST_SIGNAL_MODE=local",
+    "--workdir",
+    "/qualification/packet",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "/spike/node_modules/cf/bin/cf",
+    "dev"
+  ],
+  "driver_exit_code": 0,
+  "observation": {
+    "runtime": "local-workerd",
+    "cloud_invocations": 0,
+    "physical_termination_verified": false,
+    "records": [
+      {
+        "mode": "completion",
+        "events": [
+          {
+            "event": "effect",
+            "status": 200,
+            "elapsed_ms": 3712.3885569999998
+          },
+          {
+            "event": "before",
+            "status": 204,
+            "elapsed_ms": 3714.603146
+          },
+          {
+            "event": "effect",
+            "status": 200,
+            "elapsed_ms": 3717.3007509999998
+          },
+          {
+            "event": "after",
+            "status": 204,
+            "elapsed_ms": 3718.167953
+          }
+        ],
+        "body": {
+          "before": 204,
+          "statuses": [
+            204
+          ],
+          "total": 0,
+          "continued_after_rejections": false,
+          "abi": {
+            "python": [
+              3,
+              14,
+              2
+            ],
+            "pyodide": "314.0.6",
+            "soabi": "cpython-314-wasm32-emscripten"
+          }
+        }
+      },
+      {
+        "mode": "late",
+        "events": [
+          {
+            "event": "effect",
+            "status": 200,
+            "elapsed_ms": 2220.188729
+          },
+          {
+            "event": "before",
+            "status": 204,
+            "elapsed_ms": 2221.0107000000003
+          },
+          {
+            "event": "after",
+            "status": 410,
+            "elapsed_ms": 3946.057727
+          },
+          {
+            "event": "after",
+            "status": 410,
+            "elapsed_ms": 3948.423085
+          },
+          {
+            "event": "after",
+            "status": 410,
+            "elapsed_ms": 3950.526083
+          }
+        ],
+        "body": {
+          "before": 204,
+          "statuses": [
+            410,
+            410,
+            410
+          ],
+          "total": 199999990000000,
+          "continued_after_rejections": true,
+          "abi": {
+            "python": [
+              3,
+              14,
+              2
+            ],
+            "pyodide": "314.0.6",
+            "soabi": "cpython-314-wasm32-emscripten"
+          }
+        }
+      }
+    ]
+  },
+  "state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 1124277,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T02:46:10.453373304Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 13.014666767790914
+}

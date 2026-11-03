@@ -29,8 +29,9 @@ def qualify(mode, fixture='request-signal', revision=1):
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise RuntimeError('Pinned runtime/cache wrapper changed')
     packet = ROOT / ('inbox/' + fixture + '-v' + str(revision) + '/packet')
-    port = '8816' if fixture == 'request-signal' else '8818'
-    driver = 'request-signal-driver.mjs' if fixture == 'request-signal' else 'tail-observer-driver.mjs'
+    port, driver = {'request-signal': ('8816', 'request-signal-driver.mjs'),
+                    'tail-observer': ('8818', 'tail-observer-driver.mjs'),
+                    'egress': ('8824', 'egress-driver.mjs')}[fixture]
     run = ROOT / ('runs/' + fixture + '-v' + str(revision) + '-' + mode)
     run.mkdir()
     (run / 'home').mkdir()
@@ -38,7 +39,8 @@ def qualify(mode, fixture='request-signal', revision=1):
     name = 'pyodide-ddf316c1-' + fixture + '-v' + str(revision) + '-' + mode
     report = {'mode': mode, 'cloud_invocations': 0, 'physical_termination_verified': False,
               'source_base': ('cceccf3abe81af72820991a07fd00f7263fd455a' if fixture == 'request-signal'
-                              else 'c871d4abfab3e36c8da8055eb0948b63b222a88b'),
+                              else 'c871d4abfab3e36c8da8055eb0948b63b222a88b' if fixture == 'tail-observer'
+                              else 'd65d055a1f49f8633b4e808ebff6a461297249d9'),
               'packet_sha256': {str(path.relative_to(packet)): hashlib.sha256(path.read_bytes()).hexdigest()
                                 for path in packet.rglob('*') if path.is_file()}}
     command = ['docker', 'run', '-d', '--name', name, '--network=none', '--cpus=1', '--memory=1g',
@@ -88,7 +90,7 @@ def qualify(mode, fixture='request-signal', revision=1):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--fixture', choices=['request-signal', 'tail-observer'], default='request-signal')
+    parser.add_argument('--fixture', choices=['request-signal', 'tail-observer', 'egress'], default='request-signal')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
     for value in (('disabled', 'enabled') if args.fixture == 'request-signal' else ('local',)):

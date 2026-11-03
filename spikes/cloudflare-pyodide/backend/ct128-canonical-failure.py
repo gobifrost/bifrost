@@ -1,5 +1,6 @@
 """Current canonical failure/result proof; local workerd is not deployed Cloudflare."""
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,12 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main():
+def main(*, egress_gate=False, revision=1):
+    global PACKET, RUN, NAME
+    if egress_gate:
+        PACKET = ROOT / f'inbox/egress-canonical-v{revision}'
+        RUN = ROOT / f'runs/egress-canonical-v{revision}'
+        NAME = f'pyodide-ddf316c1-egress-canonical-v{revision}'
     if (out(['hostname']) != 'bifrost-pyodide-test-01'
         or out(['git', 'rev-parse', 'HEAD'], cwd=CHECKOUT) != SOURCE
         or shutil.disk_usage(ROOT).free < 8 * 1024**3):
@@ -31,6 +37,11 @@ def main():
     compose_hash = hashlib.sha256((CHECKOUT / 'docker-compose.test.yml').read_bytes()).hexdigest()
     if compose_hash != '33e78480090f97ea3f04be404c5a3d312ea8486ec6d55a60c67361a8ef0bdce9':
         raise RuntimeError('Resource-bounded test Compose changed')
+    for relative in ('canonical-local.py', 'task_cleanup.py', 'project/backend/authorized-local-entry.mjs'):
+        if not (PACKET / relative).is_file():
+            raise RuntimeError('Incomplete qualification packet: ' + relative)
+    if egress_gate and not (PACKET / 'project/backend/attempt-egress.mjs').is_file():
+        raise RuntimeError('Missing egress gate in qualification packet')
     if hashlib.sha256((PACKET / 'project/backend/generated-runtime.mjs').read_bytes()).hexdigest() != 'bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0':
         raise RuntimeError('Qualified runtime closure changed')
     RUN.mkdir()
@@ -113,4 +124,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--egress-gate', action='store_true')
+    parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
+    args = parser.parse_args()
+    main(egress_gate=args.egress_gate, revision=args.revision)

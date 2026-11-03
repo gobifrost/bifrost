@@ -7,8 +7,10 @@ import {verifyResolutionResponse} from './resolution-response.mjs';
 import {admitFixture} from './fixture-admission.mjs';
 import {testApiRouteAllowed} from './test-api-route.mjs';
 import {createRefreshGate} from './refresh-gate.mjs';
+import {createAttemptEgress} from './attempt-egress.mjs';
 const observations=new Map();
 const refreshGates=new Map();
+const egressGates=new Map();
 export class TestApi extends WorkerEntrypoint {
   async fetch(request) {
     const url=new URL(request.url);
@@ -25,7 +27,9 @@ export class TestApi extends WorkerEntrypoint {
     if(!testApiRouteAllowed(url)) {
       return new Response('Test API capability only',{status:403});
     }
-    const response=await fetch(new Request('http://api:8000'+url.pathname+url.search,request),{redirect:'manual'});
+    const egress=egressGates.get(this.ctx.props.id);
+    if(!egress) return new Response('Attempt capability closed',{status:410});
+    const response=await egress.fetch(new Request('http://api:8000'+url.pathname+url.search,request));
     observations.get(this.ctx.props.id)?.push({method:request.method,path:url.pathname,status:response.status});
     if(gate && url.pathname==='/auth/refresh' && response.status===200) await gate.holdResponse();
     if(url.pathname.startsWith('/api/sdk/modules/')) {
@@ -52,6 +56,12 @@ export default {
     const id=crypto.randomUUID();
     const calls=[];
     observations.set(id,calls);
+    // Fixed local fixture duration cap, not canonical deadline negotiation.
+    // Deadline ownership must be bound by an authenticated dispatcher before
+    // this companion can become a production execution adapter.
+    const egress=createAttemptEgress(Date.now()+body.context.timeout_seconds*1000,
+      outgoing=>fetch(outgoing,{redirect:'manual'}));
+    egressGates.set(id,egress);
     const gate=body.fixture_mode==='refresh_interruption' ? createRefreshGate() : undefined;
     if(gate) refreshGates.set(id,gate);
     try {
@@ -63,7 +73,7 @@ export default {
         }));
       return Response.json({result:await boundedJson(response),api_calls:calls,
         ...(gate ? {refresh_gate_events:gate.events} : {})});
-    } finally { gate?.close();refreshGates.delete(id);observations.delete(id); }
+    } finally { egress.close();egressGates.delete(id);gate?.close();refreshGates.delete(id);observations.delete(id); }
     });
   },
 };
