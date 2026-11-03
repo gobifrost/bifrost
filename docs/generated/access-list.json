@@ -7051,6 +7051,20 @@
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
+    "path": "/api/sdk/integrations/find_mapping",
+    "permission": "secrets.read",
+    "reason": "Named secret permission at the SDK resolved organization permits decrypted mapping config."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
     "path": "/api/sdk/integrations/get",
     "permission": "secrets.read",
     "reason": "Named secret permission at the SDK resolved organization permits decrypted integration config."
