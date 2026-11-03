@@ -41,6 +41,40 @@ class PrepareTests(IsolatedAsyncioTestCase):
                     await prepare_workspace('https://api.invalid/', self.context(), [name])
                 self.assertEqual(requests, [])
 
+    async def test_provider_bootstrap_roots_refused_before_api_lookup(self):
+        for root in ('main', 'runtime_runner', 'runtime_guard', 'pyodide_refresh', 'sdk_cleanup'):
+            for name in (root, root + '.nested'):
+                requests = []
+
+                def handler(request):
+                    requests.append(request)
+                    path = 'workflows/test.py' if request.url.path.startswith('/api/sdk/modules/') else name.replace('.', '/') + '.py'
+                    return httpx.Response(200, json={'kind': 'module', **module(path, ENTRY)})
+
+                with self.subTest(name=name), self.provider(handler):
+                    with self.assertRaises(WorkspacePreparationError):
+                        await prepare_workspace('https://api.invalid/', self.context(), [name])
+                    self.assertEqual(requests, [])
+
+    async def test_bootstrap_or_upstream_root_cannot_be_an_entry_module(self):
+        for root in ('main', 'runtime_runner', 'runtime_guard', 'pyodide_refresh', 'sdk_cleanup', 'json', 'bifrost'):
+            requests = []
+
+            def handler(request):
+                requests.append(request)
+                return httpx.Response(200, json=module(root + '.py', ENTRY))
+
+            with self.subTest(root=root), self.provider(handler):
+                with self.assertRaises(WorkspacePreparationError):
+                    await prepare_workspace('https://api.invalid/', {**self.context(), 'file_path': root + '.py'}, [])
+                self.assertEqual(requests, [])
+
+    async def test_nested_workflow_leaf_can_share_a_bootstrap_basename(self):
+        path = 'workflows/sdk_cleanup.py'
+        with self.provider(lambda request: httpx.Response(200, json=module(path, ENTRY))):
+            prepared = await prepare_workspace('https://api.invalid/', {**self.context(), 'file_path': path}, [])
+        self.assertEqual(prepared.manifest, {path: module(path, ENTRY)['hash']})
+
     async def test_api_hashes_and_upstream_resolution_prepare_snapshot_without_executing_source(self):
         context, names, sent = self.context(), ['helper'], []
 

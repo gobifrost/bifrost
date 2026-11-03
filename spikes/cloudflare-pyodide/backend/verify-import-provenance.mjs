@@ -7,7 +7,7 @@ const read = name => readFileSync(new URL('results/import-provenance/' + name, r
 const receipt = JSON.parse(read('receipt.json'));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 for (const name of ['workspace_prepare.py', 'test_workspace_prepare.py']) {
-  assert.equal(hash(readFileSync(new URL('backend/' + name, root))), receipt.packet_sha256[name], name);
+  assert.equal(hash(execFileSync('git', ['show', 'c45ad55ec47c26cfe0ab4a7beb6b6f7511e98cdf:spikes/cloudflare-pyodide/backend/' + name])), receipt.packet_sha256[name], name);
 }
 const source = commit => execFileSync('git', ['show', commit + ':api/src/services/execution/virtual_import.py']);
 const native = source(receipt.api_source);

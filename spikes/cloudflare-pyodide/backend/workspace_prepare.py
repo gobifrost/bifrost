@@ -11,6 +11,10 @@ import httpx
 from shared.sdk_modules import logical_name_to_base_path, validate_module_path, ModuleSourceError
 from src.services.execution.virtual_import import STDLIB_PREFIXES
 
+# This profile's trusted root modules are loaded before workspace imports.
+# A same-named workspace digest cannot establish their imported provenance.
+PROVIDER_BOOTSTRAP_ROOTS = frozenset(('main', 'runtime_runner', 'runtime_guard', 'pyodide_refresh', 'sdk_cleanup'))
+
 
 class PreparedWorkspace(SimpleNamespace):
     def __repr__(self):
@@ -58,8 +62,10 @@ async def prepare_workspace(api_url, context, workspace_imports):
             raise ValueError('noncanonical import declaration')
         # The upstream finder declines these roots before consulting workspace
         # storage. A workspace digest cannot establish their imported provenance.
-        if any(base.split('/')[0] in STDLIB_PREFIXES for base in bases.values()):
-            raise ValueError('upstream excludes workspace import root')
+        roots = {base.split('/')[0] for base in bases.values()}
+        roots.add(path.split('/')[0].removesuffix('.py'))
+        if roots.intersection(STDLIB_PREFIXES | PROVIDER_BOOTSTRAP_ROOTS):
+            raise ValueError('workspace root is owned by the runtime')
     except (ValueError, TypeError, ModuleSourceError):
         raise WorkspacePreparationError('Canonical loose-workspace plan required') from None
     manifest, observations, namespaces = {}, [], []

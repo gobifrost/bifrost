@@ -1,0 +1,18 @@
+test_api_hashes_and_upstream_resolution_prepare_snapshot_without_executing_source (test_workspace_prepare.PrepareTests.test_api_hashes_and_upstream_resolution_prepare_snapshot_without_executing_source) ... ok
+test_auth_denial_and_redirect_never_retry_or_follow (test_workspace_prepare.PrepareTests.test_auth_denial_and_redirect_never_retry_or_follow) ... ok
+test_bootstrap_or_upstream_root_cannot_be_an_entry_module (test_workspace_prepare.PrepareTests.test_bootstrap_or_upstream_root_cannot_be_an_entry_module) ... ok
+test_existing_pin_and_corrupt_response_rejected (test_workspace_prepare.PrepareTests.test_existing_pin_and_corrupt_response_rejected) ... ok
+test_input_and_response_bounds_refused (test_workspace_prepare.PrepareTests.test_input_and_response_bounds_refused) ... ok
+test_missing_scoped_or_unpinned_namespace_dependency_refused (test_workspace_prepare.PrepareTests.test_missing_scoped_or_unpinned_namespace_dependency_refused) ... ok
+test_nested_workflow_leaf_can_share_a_bootstrap_basename (test_workspace_prepare.PrepareTests.test_nested_workflow_leaf_can_share_a_bootstrap_basename) ... ok
+test_package_and_declared_namespace_descendant_keep_api_paths (test_workspace_prepare.PrepareTests.test_package_and_declared_namespace_descendant_keep_api_paths) ... ok
+test_provider_bootstrap_roots_refused_before_api_lookup (test_workspace_prepare.PrepareTests.test_provider_bootstrap_roots_refused_before_api_lookup) ... ok
+test_upstream_excluded_import_roots_refused_before_api_lookup (test_workspace_prepare.PrepareTests.test_upstream_excluded_import_roots_refused_before_api_lookup) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.091s
+
+OK
+All checks passed!
+venv .venv subdirectory not found in venv path /.
+0 errors, 0 warnings, 0 informations

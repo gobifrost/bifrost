@@ -1270,3 +1270,17 @@ Artifact: backend/OWNED-SDK-CLOSE.md, verifier, results/owned-sdk-close.
 Next: transport-option pre-effect refusal/provider module-name collisions; deployed
 interruption/isolation/memory and canonical startup/refusal retirement still gate
 admission. No cloud action or permission/runtime-setting changes.
+
+## 2026-11-03 — Provider bootstrap provenance
+Hypothesis: workspace pins must not claim already-loaded runtime module roots.
+Change: reject upstream/provider-owned entry and declared import roots before API
+lookup, retaining nested leaf names. Predecessor accepted 17 forbidden subcases;
+corrected CT128 `python -m unittest -v test_workspace_prepare` passes 10 methods,
+Ruff/Pyright pass. Native preparation HTTP mocks are separate from real execution.
+Actual `ct128-canonical-failure.py --api-prepare --revision 93` exits 0 in72.332s:
+real engine/SDK effects, pins, peer78, replay/fencing/revoke/accounting2,2,1,0 and
+owned cleanup pass. CT128 2CPU/8GiB; provider1CPU/2GiB; volumes retained.
+Artifacts: backend/BOOTSTRAP-PROVENANCE.md and results/bootstrap-provenance.
+No cloud use; no readiness upgrade. Next: unsupported fetch transport options
+must fail before effects; deployed cancellation/isolation and canonical startup/
+prelaunch retirement remain open.

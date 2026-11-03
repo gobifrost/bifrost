@@ -17,7 +17,8 @@ executor. Public/untrusted admission stays disabled. Start with
 * [Local memory boundary](backend/MEMORY-PRESSURE.md)
 * [Actual run refresh/redaction](backend/REFRESH-REDACTION.md)
 * [Pre-launch fencing and canonical retirement gap](backend/PRELAUNCH-RETENTION.md)
-* [Workspace import provenance](backend/IMPORT-PROVENANCE.md)
+* [Workspace import provenance](backend/IMPORT-PROVENANCE.md), including
+  [runtime bootstrap namespace refusal](backend/BOOTSTRAP-PROVENANCE.md)
 
 Full native startup, canonical pre-launch refusal retirement, deployed memory/
 isolation and abnormal cancellation remain incomplete. Existing cloud test
