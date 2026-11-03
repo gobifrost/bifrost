@@ -15,7 +15,7 @@ test('candidate retains actual engine invocation, envelope mapping and owned SDK
   const snapshot = structuredClone(code);
   const candidate = withCooperativeRpc(code, cancellation, serialization);
   const source = candidate.modules['main.py'].py;
-  assert.match(source, /result = await run_authorized_attempt\(body\["execution_id"\],body\["context"\],body\["api_url"\]\)/);
+  assert.match(source, /result = await run_authorized_attempt\(body\["execution_id"\],body\["context"\],body\["api_url"\], public_url=body\.get\("public_url"\)\)/);
   assert.match(source, /result = execution_result_envelope\(body\["execution_id"\], body\["worker_id"\], result,/);
   assert.match(source, /finally:\n            from bifrost.client import get_client\n            await close_sdk\(get_client\(\)\)\n            cleanup_evidence/);
   assert.match(source, /owner_scheduled=True/);

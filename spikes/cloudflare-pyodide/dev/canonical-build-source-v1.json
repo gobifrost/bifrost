@@ -1,0 +1,30 @@
+{
+  "scope": "offline guarded canonical SDK-only candidate; no deployment/runtime acceptance",
+  "defaults": {
+    "workers_dev": false,
+    "expiry": "0",
+    "credentials": "none"
+  },
+  "files_sha256": {
+    "probe-io.mjs": "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e",
+    "backend/cooperative-runtime.mjs": "711bb655fa320891faee297a6fe1326f8dbff545c75fa8ad68b11e202c82b5a6",
+    "backend/cooperative-rpc-result.mjs": "01297509fd999cc646b3e565afff6d5dd322dac0ab51d0aa32947b5d917223fd",
+    "backend/lossless-json.mjs": "043d0ab4aca0629558d6c7b03a6432f3b555de3bb9e4161f7182acaca6f58430",
+    "backend/fixture-admission.mjs": "b18189c8f77f1c8764b03fa228ef038d2ce7736e27b956294984905813da6133",
+    "backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "backend/invocation-stream.mjs": "7f1b0297249aaa59e0db97b19ad2f9d144af8460890457caecc67ee066bf83ed",
+    "backend/terminal-response.mjs": "2cfcea15dd3091f44abdef532b66476e5abe5db6b7c488a3b43d7d2d61d3a8d0",
+    "backend/module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "backend/resolution-response.mjs": "9d470cb5701c6678ae2f344e787f7a930c959da1702a797ae1c987ea56cc2e90",
+    "backend/source-integrity-response.mjs": "6def44e662df9b3268171d5a3fae7835f064a28413186665291d2b8d517b4f73",
+    "backend/log-delivery-evidence.mjs": "5ec87758f64315f3b52f547fb082570f8a65e0dd102715daa0116f16dd2b762e",
+    "dev/executor/canonical-entry.mjs": "4ff3cdf3f179418d2cd0db0f1070880748d3074d30f3617b84ae9932189dacc1",
+    "dev/executor/canonical-guard.mjs": "17b9e39bc55aa21b81b726b0a46ddd79864cd6d924900b5bc1af9b8744146a72",
+    "dev/executor/policy.mjs": "8c4227b92e2011857851a6299542ff8aec748477acf9d99e5ae2c9a5482e025c",
+    "dev/executor/package.json": "540bb053586853a22d39972dee9f2060e5b3391dc4e5146ff7be63ba959d0c4f",
+    "dev/executor/package-lock.json": "59d7d40f06197215c903a66de6246f009604defff0b80a5779db7d30c88b5be7",
+    "dev/executor/cooperative-code.mjs": "39e709f31efb4a5f978c187fd9762f079ef48210b668d0a88916e4ba10701d85",
+    "dev/executor/rpc-serialization-code.mjs": "bab004fae9e82a7f031186cda76d7fe4fbc6204db865251c2a025a474bda9b6c",
+    "dev/executor/cloudflare.config.ts": "e801eec196597b57a0c4e1f90f5a8b6e3967da3b2317b7d6a3cff31c7c236c5e"
+  }
+}

@@ -15,6 +15,8 @@ export function withCooperativeRpc(code, cooperativeSource, serializationSource)
     '    async def _execute_body(self, body):');
   replace('            await close_sdk(get_client())',
     '            await close_sdk(get_client())\n            cleanup_evidence["sdk_close_returned"] = True');
+  replace('result = await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"])',
+    'result = await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"], public_url=body.get("public_url"))');
   replace('        return Response.json(result, headers={"X-Spike-SDK-Close-Returned": "true"})',
     '        return result');
   python += `

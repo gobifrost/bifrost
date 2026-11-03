@@ -92,6 +92,9 @@ Total isolate peak, physical settlement and deployed enforcement remain gates.
 backend/POST-REVOCATION-LOGS.md proves captured post-revocation token redaction, while
 four captured logs yield only two persisted rows after two 410 responses. The
 companion reports delivery uncertainty; persistence repair is not implemented.
+dev/CANONICAL-CANDIDATE.md adds a separate guarded SDK-only canonical candidate.
+Actual network-disabled cf CLI dry run builds it with closed emitted defaults;
+no deployment or runtime acceptance is claimed for this new entry.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

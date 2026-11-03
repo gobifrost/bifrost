@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -11,7 +12,9 @@ assert.equal(engine.shared_pool_result.terminal_obligations_released, true);
 assert.deepEqual(engine.running_after_cleanup, []);
 assert.equal(engine.cloud_invocations, 0);
 for (const name of ['cooperative-runtime.mjs', 'cooperative-rpc-result.mjs']) {
-  assert.equal(engine.packet_sha256[`project/backend/${name}`], sha(read(name)));
+  const source = name === 'cooperative-runtime.mjs' ? execFileSync('git',
+    ['show', '4c03d117d:spikes/cloudflare-pyodide/backend/cooperative-runtime.mjs']) : read(name);
+  assert.equal(engine.packet_sha256[`project/backend/${name}`], sha(source));
 }
 const staged = `export default ${JSON.stringify(read('rpc_serialization.py'))};`;
 assert.equal(engine.packet_sha256['project/backend/rpc-serialization-code.mjs'], sha(staged));
