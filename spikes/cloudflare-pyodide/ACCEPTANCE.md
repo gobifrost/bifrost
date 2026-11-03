@@ -64,6 +64,10 @@ Its v13 follow-up schedules cancellation from the original invocation and passes
 the same held-HTTP suppression assertions locally. This repairs that diagnostic
 mechanism, while accepted-write uncertainty, actual engine integration, CPU stop
 and deployed qualification remain separate gates.
+The same ledger now records canonical-cooperative-v5: actual upstream engine/SDK
+normal/error workflows pass through the candidate RPC, with PostgreSQL terminal
+consumption, duplicate/lost-ACK reconciliation and owned SDK close. Engine-backed
+cancellation and RPC oversized-result/memory qualification remain outstanding.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

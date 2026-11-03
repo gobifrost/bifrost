@@ -175,3 +175,39 @@ Next: wire this explicit candidate into a separate canonical fixture, keeping
 ordinary runtime/dispatcher behavior unchanged, and run genuine run-credential
 engine/SDK cases plus cancellation cleanup. Source composition and syntax do not
 qualify engine integration, canonical terminal cancellation or deployed behavior.
+
+## Actual engine/SDK through candidate RPC: normal/error pass
+
+The separate prepare-canonical-cooperative.mjs composition now wraps the existing
+HTTPS fixture. It adds an isolated fixture-only, execution/handle-bound control
+path, closes future capabilities before requesting cancellation, and removes
+its entrypoint map during cleanup. This is not public control authentication.
+Non-engine coroutine receipts cause an uncertain transport failure; no canonical
+Cancelled result is manufactured. The ordinary fixture/runtime is unchanged.
+
+The normal/error candidate executed on CT128 with real PostgreSQL/Redis/API,
+genuine run-scoped identity and the pinned upstream engine/SDK. Command:
+
+```sh
+python3 /opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-https-v5/ct128-canonical-failure.py --https-fixture --revision 5
+```
+
+Exit0, 73.061-second complete lifecycle. canonical-cooperative-v5.json preserves
+exact commands, packet hashes, source/ABI artifact provenance and cleanup.
+verify-canonical-cooperative.mjs checks those observations against current
+candidate/adapter source. API1d33150, enginef49d4ba, SDK1395964, bundle61d818a;
+this is not a current-main parity or deployed-Cloudflare claim.
+
+Two actual workflows load pinned workspace helpers, read configuration, write
+tables, make four independently observed synthetic HTTPS forwards and produce
+canonical Failed/Success. Both owned SDK closes return. One launch each,
+stale-owner refusal, duplicate dispatch reuse, lost-ACK reconciliation, terminal
+obligation retirement and worker cascade cleanup pass. Ended credentials get401.
+Both the local provider and owned disposable stack are stopped; volumes remain.
+The existing cf CLI and resource-bounded Compose/provider are used unchanged.
+
+This establishes engine-backed normal/error RPC execution. It does not exercise
+the new fixture cancel path. Next: actual engine cancellation, owned SDK-close
+behavior and canonical uncertain-outcome recovery, without inventing a terminal
+result or releasing capacity on a coroutine receipt. RPC string marshaling also
+needs separate oversized-result/memory qualification before admission.
