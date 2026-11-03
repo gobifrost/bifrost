@@ -552,3 +552,23 @@ The old Linux verifier now reads its helper from the same immutable tested
 ca40ad458 source as its driver; no old receipt/hash was rewritten. Next remains
 canonical dispatch/physical stop, with trusted longer-I/O latency as a separate
 candidate experiment; no economic routing advantage is established.
+
+## Canonical failure/stdout repair, 2026-11-03
+
+Hypothesis: the shared engine repair closes the historical canonical stdout
+failure without substituting simpler terminal/error semantics. Reused the fixed
+--failure-probe scenario, actual current-upstream API/claims/consumer and real
+local workerd SDK with artifactbc4eae48...6daf0, enginef49d4ba99. V1 manifest
+lacked Wrangler declaration; v2 lacked the pinned wrapper's /spike mount. Both
+stopped before credentialed fixture launch; receipts retained. Bounded fixes
+reuse existing cached dependencies/mounts, no installation or alternate access.
+V3 passes actual ValueError/Failed/11-row persistence, lost ACK/reconnect, one
+launch, absent document, ended access/refresh401 and fixture cleanup. V4 adds
+direct PostgreSQL stdout/structured-message equality and raw-credential checks;
+all pass, supervisor62.447s. No original stdout assertion was removed. Guest
+Ruff passes; all owned test containers stopped, dev/volumes preserved. No cloud
+invocation or physical-stop claim. Artifacts: backend/CANONICAL-FAILURE-REPAIRED.md,
+results/canonical-failure-repaired/v4.json and the source-bound verifier. The
+old failed receipt still verifies against d352dc663; no old hashes/flags changed.
+Next remains negotiated physical handles/admission and deployed canonical
+control, with provider physical termination a material untrusted-workload gate.

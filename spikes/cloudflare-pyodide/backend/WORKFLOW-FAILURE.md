@@ -1,5 +1,12 @@
 # Real canonical failure and the stdout boundary
 
+Current follow-up2026-11-03: [CANONICAL-FAILURE-REPAIRED.md](CANONICAL-FAILURE-REPAIRED.md)
+records a new passing current-upstream local workerd run with the repaired engine.
+It verifies Failed/ValueError, redacted stdout directly in PostgreSQL, unchanged
+log IDs after lost-ACK replay, one launch and access/refresh401. The historical
+failed receipts below retain their original source/flags; deployed canonical
+Cloudflare dispatch and physical termination remain unqualified.
+
 Update2026-11-02: the shared-engine repair in [STREAM-CAPTURE.md](STREAM-CAPTURE.md)
 now passes37 native tests plus actual guest Pyodide success/failure/redaction
 controls. The historical canonical/cloud fixture below still uses its original
@@ -17,7 +24,7 @@ Logs persist; lost-ACK replay does not relaunch or rewrite the outcome. Access
 use and refresh redemption both return 401 afterward; the workflow document is
 absent (404), and the fixture worker/claims are cleaned.
 
-**The full fixture still exits 1:** stdout is absent from the engine result.
+**The historical full fixture exits 1:** stdout is absent from its pinned engine result.
 The stdout assertion remains in place after canonical consumption/cleanup, so
 that gap cannot be hidden by the successful error-path checks. Offline evidence
 verification exits successfully only to confirm those observations, including
@@ -25,7 +32,7 @@ the failed qualification flag. It does not turn the backend green.
 
 ## Smallest demonstrated blocker
 
-Current upstream `engine.execute()` creates stdout/stderr StringIO buffers and
+At the historical source pin, `engine.execute()` creates stdout/stderr StringIO buffers and
 redirects into them, but neither buffer is read afterward. The structured logging
 handler follows a separate capture/streaming path. Source inspection therefore
 locates this boundary in shared pure Python engine logic, not a missing wheel,
@@ -52,7 +59,7 @@ With the existing healthy isolated API and authorized-local Wrangler supervisor:
 
 ```sh
 node backend/canonical-refresh.mjs --run canonical-refresh-workflow-failure-terminal failure concurrent-runtime-manifest.json
-node backend/verify-workflow-failure.mjs
+node backend/verify-workflow-failure.mjs --commit d352dc663a0dfe40d38892a25b9b78725f0041ee
 ```
 
 The first command deliberately remains a failed runtime qualification. It

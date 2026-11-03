@@ -1,0 +1,116 @@
+"""Current canonical failure/result proof; local workerd is not deployed Cloudflare."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import time
+
+ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
+CHECKOUT = ROOT / 'upstream-025f6c0'
+SOURCE = '1d33150eb376b71f8a81b427920eda1b0447f829'
+PACKET = ROOT / 'inbox/canonical-failure-v1'
+RUN = ROOT / 'runs/canonical-failure-v4'
+OLD_SPIKE = ROOT / '785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide'
+NAME = 'pyodide-ddf316c1-canonical-failure-v4'
+
+
+def out(args, **kwargs):
+    return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
+
+
+def main():
+    if (out(['hostname']) != 'bifrost-pyodide-test-01'
+        or out(['git', 'rev-parse', 'HEAD'], cwd=CHECKOUT) != SOURCE
+        or shutil.disk_usage(ROOT).free < 8 * 1024**3):
+        raise RuntimeError('Assigned guest/source/disk guard failed')
+    project = out(['bash', '-c', 'source scripts/lib/test_helpers.sh; compute_project_name .'], cwd=CHECKOUT)
+    if out(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + project]):
+        raise RuntimeError('Reconcile owned running test project before launch')
+    compose_hash = hashlib.sha256((CHECKOUT / 'docker-compose.test.yml').read_bytes()).hexdigest()
+    if compose_hash != '33e78480090f97ea3f04be404c5a3d312ea8486ec6d55a60c67361a8ef0bdce9':
+        raise RuntimeError('Resource-bounded test Compose changed')
+    if hashlib.sha256((PACKET / 'project/backend/generated-runtime.mjs').read_bytes()).hexdigest() != 'bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0':
+        raise RuntimeError('Qualified runtime closure changed')
+    RUN.mkdir()
+    (RUN / 'home').mkdir()
+    shutil.copytree(PACKET / 'project', RUN / 'project')
+    cache = ROOT / 'runs/runtime-source-bundle-v1/bundle-cache'
+    wrapper = ROOT / 'runs/runtime-source-bundle-v1/workerd-with-cache.sh'
+    if hashlib.sha256(wrapper.read_bytes()).hexdigest() != '9f9ad4a47455ff2f29a5600471855260f88f0bc42a690917fa47a46ce34bffe7':
+        raise RuntimeError('Pinned workerd wrapper changed')
+    if (hashlib.sha256((cache / 'pyodide_314.0.6_2026-08-17_6.capnp.bin').read_bytes()).hexdigest()
+        != '3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260'):
+        raise RuntimeError('Runtime bundle cache changed')
+    env = {'PATH': os.environ['PATH'], 'HOME': str(RUN / 'home'), 'BIFROST_SKIP_BUILD': '1',
+           'BIFROST_TEST_IMAGE_TAG': 'bifrost-test-7ddfac36', 'BIFROST_TEST_UNIT_ONLY': '1',
+           'COMPOSE_PARALLEL_LIMIT': '1'}
+    compose = ['docker', 'compose', '-p', project, '-f', 'docker-compose.test.yml']
+    provider = ['docker', 'run', '-d', '--name', NAME, '--network', project + '_default',
+        '--network-alias', 'bifrost-pyodide-ddf316c1', '--cpus=1', '--memory=2g', '--memory-swap=2g',
+        '--pids-limit=128', '--label', 'com.docker.compose.project=' + project,
+        '--mount', f'type=bind,src={OLD_SPIKE},dst=/spike,readonly',
+        '--mount', f'type=bind,src={RUN},dst=/qualification',
+        '--mount', f'type=bind,src={OLD_SPIKE}/node_modules,dst=/qualification/project/node_modules,readonly',
+        '--mount', f'type=bind,src={cache},dst=/bundle-cache,readonly',
+        '--mount', f'type=bind,src={wrapper},dst=/cache-wrapper.sh,readonly',
+        '--env', 'MINIFLARE_WORKERD_PATH=/cache-wrapper.sh', '--env', 'HOME=/qualification/home',
+        '--env', 'CI=true', '--env', 'WRANGLER_SEND_METRICS=false', '--workdir', '/qualification/project',
+        '--entrypoint', 'node', 'bifrost-test-api-dev:bifrost-test-7ddfac36',
+        '/qualification/project/node_modules/cf/bin/cf', 'dev']
+    commands = [['./test.sh', 'stack', 'up'], [*compose, 'stop', 'worker', 'scheduler'], provider,
+        [*compose, '--profile', 'test', 'run', '--rm', '--no-deps',
+         '--volume', f'{CHECKOUT}/spikes/cloudflare-pyodide:/spike:ro',
+         '--volume', f'{PACKET}:/qualification:ro', 'test-runner',
+         'python', '/qualification/canonical-local.py', '--failure-probe']]
+    report = {'api_source': SOURCE, 'runtime_engine_source': 'f49d4ba99cebd24aa497f1244833b940e640885f',
+        'project': project, 'cloud_invocations': 0, 'physical_termination_verified': False,
+        'qualification_passed': False, 'commands': [], 'compose_sha256': compose_hash,
+        'packet_sha256': {str(path.relative_to(PACKET)): hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in PACKET.rglob('*') if path.is_file() and path.suffix != '.gz'}}
+    started = time.monotonic()
+    try:
+        for index, command in enumerate(commands):
+            if index == 3:
+                for _ in range(45):
+                    state = json.loads(out(['docker', 'inspect', NAME, '--format', '{{json .State}}']))
+                    if not state['Running']:
+                        raise RuntimeError('Local provider stopped before readiness')
+                    ready = subprocess.run(['docker', 'exec', NAME, 'node', '-e',
+                        "fetch('http://127.0.0.1:8799/health').then(r=>process.exit(r.status===405?0:1)).catch(()=>process.exit(1))"],
+                        capture_output=True, timeout=5)
+                    if ready.returncode == 0:
+                        break
+                    time.sleep(1)
+                else:
+                    raise RuntimeError('Local provider readiness deadline')
+            with (RUN / f'phase-{index}.private.log').open('x') as log:
+                result = subprocess.run(command, cwd=CHECKOUT, env=env, stdout=log,
+                                        stderr=subprocess.STDOUT, timeout=max(1, 360 - (time.monotonic() - started)))
+            report['commands'].append({'argv': command, 'exit_code': result.returncode})
+            if result.returncode:
+                raise RuntimeError('Canonical failure qualification failed; inspect private log')
+        records = [json.loads(line) for line in (RUN / 'phase-3.private.log').read_text().splitlines() if line.startswith('{')]
+        canonical = next(row for row in reversed(records) if row.get('canonical_claim_verified'))
+        if (not canonical.get('stdout_capture_verified') or not canonical.get('canonical_terminal_consumption_verified')
+            or not canonical.get('persisted_failure_stdout_redaction_verified')):
+            raise RuntimeError('Required real failure/stdout consumption not observed')
+        report['canonical_result'] = canonical
+        report['qualification_passed'] = True
+    finally:
+        state = subprocess.run(['docker', 'inspect', NAME, '--format', '{{json .State}}'], capture_output=True, text=True)
+        if state.returncode == 0:
+            report['provider_state_before_cleanup'] = json.loads(state.stdout)
+            subprocess.run(['docker', 'stop', '-t', '5', NAME], capture_output=True, timeout=15, check=True)
+        subprocess.run([*compose, '--profile', 'e2e', '--profile', 'test', 'stop'],
+                       cwd=CHECKOUT, env=env, timeout=60, check=True)
+        report['running_after_cleanup'] = out(['docker', 'ps', '-q', '--filter',
+                                               'label=com.docker.compose.project=' + project]).splitlines()
+        report['elapsed_seconds'] = time.monotonic() - started
+        (RUN / 'receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps({key: value for key, value in report.items() if key != 'canonical_result'}))
+
+
+if __name__ == '__main__':
+    main()

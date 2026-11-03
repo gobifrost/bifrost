@@ -682,6 +682,15 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                             report["canonical_failure_error"] = row.error_message
                             report["canonical_failure_status"] = row.status.value
                         logs_before = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
+                        if failure_probe:
+                            messages = list(await db.scalars(select(ExecutionLog.message).where(
+                                ExecutionLog.execution_id == execution.id)))
+                            assert messages.count('stdout credential=[REDACTED]') == 1
+                            assert messages.count('structured credential=[REDACTED]') == 1
+                            if any(secret and secret in json.dumps(messages) for secret in secrets):
+                                raise RuntimeError('Persisted failure logs exposed a runtime credential')
+                            report['persisted_failure_log_messages'] = messages
+                            report['persisted_failure_stdout_redaction_verified'] = True
                         if not worker_loss_probe:
                             assert logs_before
                     ref.lease = await connect(2)

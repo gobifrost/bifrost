@@ -2,6 +2,12 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const options=process.argv.slice(2);
+if(options.length && (options.length!==2 || options[0]!=='--commit' || !/^[a-f0-9]{40}$/.test(options[1]))) {
+  throw new Error('Historical source verification requires --commit <full tested SHA>');
+}
 const root=new URL('../../../',import.meta.url);
 const read=async name=>JSON.parse(await readFile(new URL('../results/'+name,import.meta.url),'utf8'));
 const first=await read('canonical-refresh-workflow-failure.json');
@@ -32,6 +38,8 @@ assert.ok(envelope.logs.some(log=>log.message.includes('structured credential=[R
 assert.ok(!envelope.logs.some(log=>log.message.includes('stdout credential=')));
 assert.ok(!r.result.api_calls.some(call=>call.path.includes('/documents/upsert')));
 for(const [path,digest] of Object.entries(receipt.source_sha256)) {
-  assert.equal(createHash('sha256').update(await readFile(new URL(path,root))).digest('hex'),digest,path);
+  const bytes=options.length ? (await promisify(execFile)('git',['show',`${options[1]}:${path}`],
+    {cwd:root,encoding:'buffer',maxBuffer:2*1024*1024})).stdout : await readFile(new URL(path,root));
+  assert.equal(createHash('sha256').update(bytes).digest('hex'),digest,path);
 }
 console.log('Actual ValueError persistence, redaction and reconciliation verified; stdout qualification remains FAILED');
