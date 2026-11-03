@@ -1,0 +1,16 @@
+✔ accepted frame precedes required work completion; terminal frame closes stream and cleans once (79.34904ms)
+✔ cancellation closes capability without pretending required work stopped (0.592135ms)
+✔ provider errors yield bounded non-secret collection errors (0.758504ms)
+✔ opaque numeric lexemes survive a parent roundtrip without changing safe control integers (0.880385ms)
+✔ native JSON grammar rejects executable text and raw object injection (0.389537ms)
+✔ lossless response parsing retains the existing byte bound (80.882444ms)
+✔ a consumed oversized terminal yields an explicit bounded executor failure after work returns (24.02492ms)
+✔ an execution error is not relabeled as a settled output-size failure (0.425899ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 532.506877

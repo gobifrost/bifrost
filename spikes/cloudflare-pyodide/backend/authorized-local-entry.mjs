@@ -2,6 +2,7 @@
 import {WorkerEntrypoint} from 'cloudflare:workers';
 import {runtimeCode} from './runtime-code.mjs';
 import {boundedJson} from '../probe-io.mjs';
+import {boundedLosslessJson} from './lossless-json.mjs';
 import {verifyModuleResponse} from './module-response.mjs';
 import {verifyResolutionResponse} from './resolution-response.mjs';
 import {admitFixture} from './fixture-admission.mjs';
@@ -56,7 +57,7 @@ export default {
         new Request('https://warmup.invalid/',{method:'POST',body:JSON.stringify({action:'inspect'})}));
       return Response.json(await boundedJson(response));
     }
-    const body=await boundedJson(request,262144);
+    const body=await boundedLosslessJson(request,262144);
     return admitFixture(body,observations.size,async()=>{
     const id=crypto.randomUUID();
     const calls=[];
@@ -86,7 +87,7 @@ export default {
             worker_id:body.worker_id,execution_id:body.execution_id,
             context:body.context,api_url:'https://test-api.invalid'}),
         }));
-      return {runtime_handle:id,result:await boundedJson(response),api_calls:calls,
+      return {runtime_handle:id,result:await boundedLosslessJson(response),api_calls:calls,
         ...(gate ? {refresh_gate_events:gate.events} : {})};
       };
       if(request.headers.get('Accept')==='application/x-ndjson') {

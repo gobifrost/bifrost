@@ -1082,3 +1082,17 @@ Source-bound raw receipt and verifier: results/output-budget, backend/OUTPUT-BUD
 Ruff/Pyright and receipt verifier pass. No cloud calls or CPU-stop claim.
 Next: larger child-response uncertainty, memory and JSON marshaling fidelity;
 shared startup and deployed abnormal-cancellation gates remain open.
+
+### 2026-11-03 — lossless canonical JSON numbers
+Hypothesis: Python integers survive JS parent forwarding unchanged. V1 actual
+upstream engine/SDK run disproved this (integer fidelity assertion failed).
+Change: native JSON.parse source context/JSON.rawJSON at canonical request/result
+boundaries, no custom parser or alternate runtime fallback. V2 output passed;
+V3 adds large signed integer/fraction parameters checked in Python before effects.
+Command: CT128 ct128-canonical-failure.py --numeric-result --revision 1/2/3.
+Observed: v1 exit1, v2/v3 exit0. V3 canonical exact9007199254740993, peer78,
+lost-ACK/stale-owner/replay checks,401revocation,busy2,2,1,0 and cleanup pass.
+Eight focused Node tests, Ruff and Pyright pass. Raw receipts preserve pins/hashes;
+backend/NUMERIC-FIDELITY.md and verify-numeric-fidelity.mjs describe exact scope.
+Next: larger child-response/memory boundary and shared startup; deployed support,
+parser overhead and abnormal CPU cancellation remain unqualified. No cloud calls.

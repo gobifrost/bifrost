@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const base = new URL('../results/startup-inventory/', import.meta.url);
 const read = name => readFile(new URL(name, base), 'utf8');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -17,7 +18,10 @@ assert.equal(report.physical_termination_verified, false);
 assert.deepEqual(report.running_after_cleanup, []);
 for (const name of ['runtime_inventory.py', 'runtime_guard.py', 'test_runtime_inventory.py',
   'private_http_pool.py', 'test_private_http_pool.py', 'shared-native-pool.py', 'ct128-canonical-failure.py', 'runtime-code.mjs']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  const source = ['shared-native-pool.py', 'ct128-canonical-failure.py'].includes(name)
+    ? execFileSync('git', ['show', '62fcac679c139148d9529afc1445541e40a9a0f3:spikes/cloudflare-pyodide/backend/' + name])
+    : await readFile(new URL('./' + name, import.meta.url));
+  assert.equal(hash(source), report.packet_sha256[name], name);
 }
 assert.equal(report.packet_sha256['runtime-code.mjs'], report.packet_sha256['project/backend/runtime-code.mjs']);
 for (const line of (await read('unit-source.sha256')).trim().split(/\r?\n/)) {

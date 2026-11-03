@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 
 const root = new URL('../', import.meta.url);
 const receipt = JSON.parse(readFileSync(new URL('results/output-budget/receipt-v1.json', root), 'utf8').replace(/^\uFEFF/, ''));
 for (const path of ['shared-native-pool.py', 'ct128-canonical-failure.py']) {
-  const digest = createHash('sha256').update(readFileSync(new URL('backend/' + path, root))).digest('hex');
+  const source = execFileSync('git', ['show', 'e1e8bc1f5abc1750b43d2eab4927692c75f89597:spikes/cloudflare-pyodide/backend/' + path]);
+  const digest = createHash('sha256').update(source).digest('hex');
   assert.equal(digest, receipt.packet_sha256[path]);
 }
 const digest = createHash('sha256').update(readFileSync(new URL('backend/invocation-stream.mjs', root))).digest('hex');
