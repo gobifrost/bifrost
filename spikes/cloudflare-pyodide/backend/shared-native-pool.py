@@ -21,9 +21,11 @@ from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False):
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False):
     if sum((source_change, late_result, retained_http)) > 1:
         raise ValueError('One fixture mode required')
+    if deadline_ack_loss and not late_result:
+        raise ValueError('Deadline ACK loss requires finite late-result mode')
     database = urlsplit(os.environ.get('BIFROST_DATABASE_URL', ''))
     if (os.environ.get('BIFROST_ENVIRONMENT') != 'testing'
         or os.environ.get('TEST_API_URL') != 'http://api:8000'
@@ -194,7 +196,7 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
             await beat()
             heartbeat = asyncio.create_task(renew())
             failure_consume_gate = asyncio.Event()
-            lose_failure_ack = not late_result
+            lose_failure_ack = not late_result or deadline_ack_loss
 
             async def canonical_result(result):
                 nonlocal lose_failure_ack
@@ -355,7 +357,17 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         old = ref.lease
                         ref.lease = await connect(2)
                         await beat()
-                        if not (await first.deadline)['expired']:
+                        if deadline_ack_loss:
+                            try:
+                                await first.deadline
+                            except ConnectionError as exc:
+                                if str(exc) != 'Injected shared failure ACK loss':
+                                    raise
+                            else:
+                                raise RuntimeError('Deadline ACK loss was not observed')
+                            await adapter.reconcile_deadline(str(failed['execution'].id))
+                            report['explicit_deadline_receipt_recovery_verified'] = True
+                        elif not (await first.deadline)['expired']:
                             raise RuntimeError('Finite workflow completed before original deadline')
                         if (first.info.started_at + timedelta(seconds=first.info.timeout_seconds) != cutoff
                             or mux.collection(str(failed['execution'].id)).done()
@@ -391,6 +403,15 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             raise RuntimeError('Stale deadline owner consumed timeout')
                         late = await first.receipt
                         await first.delivery
+                        if deadline_ack_loss:
+                            try:
+                                await first.deadline
+                            except ConnectionError as exc:
+                                if str(exc) != 'Injected shared failure ACK loss':
+                                    raise
+                                report['original_deadline_receipt_failure_preserved'] = True
+                            else:
+                                raise RuntimeError('Original deadline failure was rewritten')
                         if not late['success'] or late['result']['value'] != failed['value']:
                             raise RuntimeError('Actual finite invocation did not return late success')
                         if await timeout_snapshot() != before or native.processes:
@@ -612,6 +633,8 @@ if __name__ == '__main__':
     parser.add_argument('--source-change', action='store_true')
     parser.add_argument('--late-result', action='store_true')
     parser.add_argument('--retained-http', action='store_true')
+    parser.add_argument('--deadline-ack-loss', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http))
+    asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
+                     deadline_ack_loss=args.deadline_ack_loss))

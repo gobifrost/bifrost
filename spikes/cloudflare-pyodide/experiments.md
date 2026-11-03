@@ -1006,3 +1006,22 @@ retainer, not actual TCP disconnection or retainer process loss. No SDK response
 mocked in real run, new cloud calls, package/credential/grant or runtime changes.
 Next: uncertain deadline callback recovery and oversized input preflight before
 bookkeeping; startup, deployed retention and abnormal CPU enforcement remain gaps.
+
+### Recover lost deadline receipt without rewriting its failure
+Hypothesis: a successful current-owner timeout reconciliation must allow actual
+terminal settlement even while the original deadline receipt remains failed.
+V1 new regression reproduced old ConnectionError still blocking retained ACK,
+exit1. Initial shell path typo started no test; corrected assigned script path
+produced that preserved regression. Change: record separate fenced timeout owner
+only after upstream consumption returns; join original timer but accept its old
+exception only with current-owner recovery proof. Do not retry or rewrite receipt.
+Commands: results/deadline-recovery v1/v2 scripts; timeout -k 5 430 python3
+inbox/deadline-recovery-v2/ct128-canonical-failure.py --deadline-recovery --revision 2.
+Observed: 50 native tests (3.352s), Ruff/Pyright pass. Actual engine/SDK finite late
+run commits Timeout then loses callback ACK; explicit recovery succeeds, original
+receipt still raises, late Success leaves Timeout/result/completion/logIDs intact.
+Current/stale owner checks, API401, SDK410/no document, busy2,1,1,0, one launch each,
+retirement and cleanup pass. Total112.124s includes setup/prewarm/waits/cleanup.
+Artifact: backend/DEADLINE-RECOVERY.md, source-bound verifier and raw results.
+No cloud, new credentials/grants, shared upstream source or runtime setting change;
+no CPU-stop claim. Next: oversized input preflight, startup and deployed gates.

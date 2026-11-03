@@ -323,6 +323,42 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await self.pool.retire()
 
+    async def test_explicit_deadline_recovery_allows_retained_ack_without_rewriting_failed_receipts(self):
+        self.context['timeout_seconds'] = 1
+        ack, finish = self.provider(lose=True)
+        ack.set()
+        self.callback.side_effect = ConnectionError('Synthetic deadline receipt lost')
+        with patch('attempt_deadline.owns_remote_session', new_callable=AsyncMock, return_value=True):
+            await self.route()
+            attempt = self.pool.attempt(self.run)
+            finish.set()
+            with self.assertRaises(httpx.ReadError):
+                await attempt.delivery
+            with self.assertRaisesRegex(ConnectionError, 'deadline receipt lost'):
+                await attempt.deadline
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+            with self.assertRaises(ConnectionError):
+                await self.pool.reconcile_deadline(self.run)
+            self.callback.side_effect = None
+            await self.pool.reconcile_deadline(self.run)
+            evidence = {'runtime_handle': attempt.invocation.runtime_handle,
+                        'result': {'execution_id': self.run, 'success': True}}
+            error = None
+            try:
+                consumed = await self.pool.reconcile_retained(self.run, evidence)
+            except ConnectionError as exc:
+                error = type(exc).__name__
+                consumed = False
+            self.assertIsNone(error, 'recovered canonical deadline still blocks retained settlement')
+            self.assertTrue(consumed)
+            with self.assertRaisesRegex(ConnectionError, 'deadline receipt lost'):
+                await attempt.deadline
+            with self.assertRaises(httpx.ReadError):
+                await attempt.receipt
+            self.assertEqual(len(self.sent), 1)
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+            await self.pool.retire()
+
 
 if __name__ == '__main__':
     main()

@@ -166,6 +166,7 @@ class PrivateHttpWorkflowPool:
                 routed=asyncio.get_running_loop().create_future(),
                 settled=asyncio.get_running_loop().create_future(), _deadline_task=None)
             slot.retained_fingerprint = None
+            slot.deadline_reconciled_owner = None
             self._attempts[execution_id] = slot
 
             async def collect(payload, accepted):
@@ -230,7 +231,21 @@ class PrivateHttpWorkflowPool:
     async def reconcile_deadline(self, execution_id):
         """Replay only logical timeout through the current canonical owner."""
         slot = self._attempts[execution_id]
-        await report_expired_workflow(self._ref.lease, self._deadline_consumer, slot.info)
+        owner = self._ref.lease
+        await report_expired_workflow(owner, self._deadline_consumer, slot.info)
+        slot.deadline_reconciled_owner = owner
+
+    async def _finish_acknowledged(self, slot):
+        if not slot.settled.done():
+            slot.settled.set_result({'acknowledged': True})
+        try:
+            await slot.deadline
+        except Exception:
+            # Keep the original task/receipt failed. Only a separate successful
+            # current-owner timeout consumption can resolve that uncertainty;
+            # this does not retry a callback or infer physical termination.
+            if slot.deadline_reconciled_owner != self._ref.lease:
+                raise
 
     async def reconcile_retained(self, execution_id, evidence, *, lease=None):
         """Trusted parent only: validated retained HTTP terminal, never rerun code.
@@ -272,9 +287,7 @@ class PrivateHttpWorkflowPool:
             self.mux.acknowledge_retained(execution_id, result)
             slot.evidence = frozen
             slot.terminal_monotonic = time.monotonic()
-            if not slot.settled.done():
-                slot.settled.set_result({'acknowledged': True})
-            await slot.deadline
+            await self._finish_acknowledged(slot)
         return acknowledged
 
     async def reconcile(self, execution_id, *, lease=None):
@@ -282,9 +295,7 @@ class PrivateHttpWorkflowPool:
         acknowledged = await self.journal.reconcile_workflow(self._ref.lease if lease is None else lease,
             execution_id, self._consumer, slot.info)
         if acknowledged:
-            if not slot.settled.done():
-                slot.settled.set_result({'acknowledged': True})
-            await slot.deadline
+            await self._finish_acknowledged(slot)
         return acknowledged
 
     async def route_service(self, **request):

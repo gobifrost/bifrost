@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const base = new URL('../results/retained-contract/', import.meta.url);
 const read = name => readFile(new URL(name, base), 'utf8');
 const report = JSON.parse(await read('receipt.json'));
@@ -13,7 +14,7 @@ assert.equal(report.cloud_invocations, 0);
 assert.equal(report.physical_termination_verified, false);
 for (const name of ['attempt_journal.py', 'private_http_pool.py', 'workflow_request_mux.py',
   'test_private_http_pool.py', 'ct128-retained-contract.py']) {
-  const source = await readFile(new URL('./' + name, import.meta.url));
+  const source = execFileSync('git', ['show', '6d3ba782214129c8a4132ae6af5620797479cb5e:spikes/cloudflare-pyodide/backend/' + name]);
   assert.equal(createHash('sha256').update(source).digest('hex'), report.packet_sha256[name], name);
 }
 const test = await readFile(new URL('../../../api/tests/unit/dev/test_pyodide_attempt_journal.py', import.meta.url));

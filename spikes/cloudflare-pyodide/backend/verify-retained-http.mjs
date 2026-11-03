@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const base = new URL('../results/retained-http/', import.meta.url);
 const read = name => readFile(new URL(name, base), 'utf8');
 const raw = await read('retained-http-v1/receipt.json');
@@ -15,7 +16,7 @@ assert.equal(report.provider_state_before_cleanup.Running, true);
 assert.equal(report.provider_state_before_cleanup.OOMKilled, false);
 for (const name of ['retained_http_fault.py', 'test_retained_http_fault.py',
   'shared-native-pool.py', 'ct128-canonical-failure.py', 'private_http_pool.py', 'attempt_journal.py', 'workflow_request_mux.py']) {
-  const source = await readFile(new URL('./' + name, import.meta.url));
+  const source = execFileSync('git', ['show', 'e82e81c84bb8c4e010a2c86aa2e2735d04b6af03:spikes/cloudflare-pyodide/backend/' + name]);
   assert.equal(createHash('sha256').update(source).digest('hex'), report.packet_sha256[name], name);
 }
 const probe = report.shared_pool_result;
