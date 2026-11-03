@@ -148,20 +148,13 @@ async def stage_workflow_run(
 
 
 async def hand_off_workflow_run(accepted: AcceptedRun) -> None:
-    """After commit: queue position, then wake the executors."""
-    from src.services.execution.queue_tracker import publish_queue_positions
+    """After commit: request advisory UI refresh and wake the executors."""
+    from src.services.execution.queue_tracker import request_queue_position_refresh
 
     # Sync callers wait on their private result list and cannot consume queue
     # position events.
     if not accepted.pending["sync"]:
-        try:
-            await publish_queue_positions()
-        except Exception:
-            logger.warning(
-                "Could not record queue position",
-                extra={"execution_id": accepted.pending["execution_id"]},
-                exc_info=True,
-            )
+        request_queue_position_refresh()
     await hand_off(FAMILY)
 
 
@@ -227,10 +220,12 @@ async def release_workflow_run(
         await db.commit()
     logger.info("Handed a run back for another executor", extra={"execution_id": str(execution_id)})
     if not payload.get("sync"):
-        from src.services.execution.queue_tracker import publish_queue_positions
+        from src.core.pubsub import publish_execution_update
+        from src.services.execution.queue_tracker import request_queue_position_refresh
 
+        request_queue_position_refresh()
         try:
-            await publish_queue_positions()
+            await publish_execution_update(execution_id, ExecutionStatus.PENDING.value)
         except Exception:
             logger.warning(
                 "Could not show a handed-back run as waiting",
@@ -278,9 +273,9 @@ async def _notify_ended_before_start(
 
     steps = [publish_execution_update(execution_id, status, {"error": error})]
     if not sync:
-        from src.services.execution.queue_tracker import publish_queue_positions
+        from src.services.execution.queue_tracker import request_queue_position_refresh
 
-        steps.insert(0, publish_queue_positions())
+        request_queue_position_refresh()
     if sync:
         steps.append(
             get_redis_client().push_result(

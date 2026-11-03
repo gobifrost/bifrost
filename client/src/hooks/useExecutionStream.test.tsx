@@ -8,6 +8,7 @@ const mock = vi.hoisted(() => ({
 	unsubscribe: vi.fn(),
 	onHistoryUpdate: vi.fn(),
 	onExecutionUpdate: vi.fn(),
+	onExecutionQueueUpdate: vi.fn(),
 	onExecutionLog: vi.fn(),
 	onNewExecution: vi.fn(),
 }));
@@ -19,6 +20,7 @@ vi.mock("@/services/websocket", () => ({
 		isConnected: () => true,
 		onHistoryUpdate: mock.onHistoryUpdate,
 		onExecutionUpdate: mock.onExecutionUpdate,
+		onExecutionQueueUpdate: mock.onExecutionQueueUpdate,
 		onExecutionLog: mock.onExecutionLog,
 		onNewExecution: mock.onNewExecution,
 	},
@@ -50,6 +52,7 @@ beforeEach(() => {
 	mock.connect.mockResolvedValue(undefined);
 	mock.onHistoryUpdate.mockReturnValue(() => undefined);
 	mock.onExecutionUpdate.mockReturnValue(() => undefined);
+	mock.onExecutionQueueUpdate.mockReturnValue(() => undefined);
 	mock.onExecutionLog.mockReturnValue(() => undefined);
 	mock.onNewExecution.mockReturnValue(() => undefined);
 	useExecutionStreamStore.setState({ streams: {} });
@@ -154,6 +157,125 @@ describe("useExecutionHistory", () => {
 });
 
 describe("useExecutionStream", () => {
+	it("subscribes queue advisories and removes every execution listener on unmount", async () => {
+		const unsubscribeUpdate = vi.fn();
+		const unsubscribeQueue = vi.fn();
+		const unsubscribeLog = vi.fn();
+		mock.onExecutionUpdate.mockReturnValue(unsubscribeUpdate);
+		mock.onExecutionQueueUpdate.mockReturnValue(unsubscribeQueue);
+		mock.onExecutionLog.mockReturnValue(unsubscribeLog);
+
+		const { unmount } = renderHook(
+			() => useExecutionStream({ executionId: "run-1" }),
+			{ wrapper: Wrapper },
+		);
+
+		await waitFor(() => {
+			expect(mock.onExecutionUpdate).toHaveBeenCalledOnce();
+			expect(mock.onExecutionQueueUpdate).toHaveBeenCalledOnce();
+			expect(mock.onExecutionLog).toHaveBeenCalledOnce();
+		});
+
+		unmount();
+
+		expect(unsubscribeUpdate).toHaveBeenCalledOnce();
+		expect(unsubscribeQueue).toHaveBeenCalledOnce();
+		expect(unsubscribeLog).toHaveBeenCalledOnce();
+	});
+
+	it("does not register queue listeners when unmounted before connecting", async () => {
+		let resolveConnection!: () => void;
+		const connection = new Promise<void>((resolve) => {
+			resolveConnection = resolve;
+		});
+		mock.connect.mockReturnValue(connection);
+		const { unmount } = renderHook(
+			() => useExecutionStream({ executionId: "run-1" }),
+			{ wrapper: Wrapper },
+		);
+		unmount();
+
+		await act(async () => {
+			resolveConnection();
+			await connection;
+		});
+
+		expect(mock.onExecutionUpdate).not.toHaveBeenCalled();
+		expect(mock.onExecutionQueueUpdate).not.toHaveBeenCalled();
+		expect(mock.onExecutionLog).not.toHaveBeenCalled();
+	});
+
+	it("applies queue metadata from status updates and queue advisories", async () => {
+		const onComplete = vi.fn();
+		let executionCallback:
+			| ((update: {
+					status: string;
+					isComplete: boolean;
+					queuePosition?: number;
+					waitReason?: "queued";
+					availableMemoryMb?: number;
+					requiredMemoryMb?: number;
+				}) => void)
+			| undefined;
+		let queueCallback:
+			| ((update: {
+					executionId: string;
+					queuePosition: number;
+					waitReason: "queued";
+				}) => void)
+			| undefined;
+		mock.onExecutionUpdate.mockImplementation((_id, callback) => {
+			executionCallback = callback;
+			return () => undefined;
+		});
+		mock.onExecutionQueueUpdate.mockImplementation((_id, callback) => {
+			queueCallback = callback;
+			return () => undefined;
+		});
+
+		renderHook(
+			() => useExecutionStream({ executionId: "run-1", onComplete }),
+			{
+				wrapper: Wrapper,
+			},
+		);
+		await waitFor(() => expect(queueCallback).toBeDefined());
+
+		act(() => {
+			executionCallback?.({
+				status: "Pending",
+				isComplete: false,
+				queuePosition: 4,
+				waitReason: "queued",
+				availableMemoryMb: 120,
+				requiredMemoryMb: 64,
+			});
+		});
+		expect(useExecutionStreamStore.getState().streams["run-1"]).toMatchObject({
+			status: "Pending",
+			queuePosition: 4,
+			waitReason: "queued",
+			availableMemoryMb: 120,
+			requiredMemoryMb: 64,
+		});
+
+		act(() => {
+			queueCallback?.({
+				executionId: "run-1",
+				queuePosition: 2,
+				waitReason: "queued",
+			});
+		});
+		expect(useExecutionStreamStore.getState().streams["run-1"]).toMatchObject({
+			status: "Pending",
+			queuePosition: 2,
+			waitReason: "queued",
+			availableMemoryMb: 120,
+			requiredMemoryMb: 64,
+		});
+		expect(onComplete).not.toHaveBeenCalled();
+	});
+
 	it("does not overwrite a retained stream with a connection failure after unmount", async () => {
 		let rejectConnection!: (error: Error) => void;
 		const connection = new Promise<void>((_resolve, reject) => {
