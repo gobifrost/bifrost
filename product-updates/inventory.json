@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
-  "collected_at": "2026-11-03T11:43:14Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...139596497d57b219ddcc3616aa66ec58e1b3cf3c",
+  "target_ref": "47130eeb15308a5d6b5fd4c0819432c13e4e4499",
+  "collected_at": "2026-11-03T18:34:39Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...47130eeb15308a5d6b5fd4c0819432c13e4e4499",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2363,6 +2363,34 @@
       "subject": "Reuse SDK HTTP pools with safe loop and process ownership (#1217)",
       "prs": [
         1217
+      ]
+    },
+    {
+      "sha": "3f79ac4fde18defc472b4e5ce83d43f881827125",
+      "subject": "Record the SDK client reuse fix in Product Updates (#1218)",
+      "prs": [
+        1218
+      ]
+    },
+    {
+      "sha": "12850a452100f9acd7544ea8e6a58fbcf178ad85",
+      "subject": "Fix Bifrost plugin packaging for catalog distribution (#1219)",
+      "prs": [
+        1219
+      ]
+    },
+    {
+      "sha": "72a1fa9f0380dc7985cabd9ed1467bd337622cd8",
+      "subject": "docs: clarify scope of Cloudflare copyright notice (#1229)",
+      "prs": [
+        1229
+      ]
+    },
+    {
+      "sha": "47130eeb15308a5d6b5fd4c0819432c13e4e4499",
+      "subject": "Add Rewst migration pilot Solution and coding-agent handoff (#1222)",
+      "prs": [
+        1222
       ]
     }
   ],
@@ -6774,6 +6802,58 @@
       "merge_commit": "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
       "body": "## Summary\n\nSDK calls from another event loop replaced the cached HTTP client without closing the previous pool. Each active loop now owns its async pools, and ordinary Python runner shutdown closes them on that loop. A verified TLS context is shared within each process instead of repeatedly parsing the CA bundle. Forked children discard inherited transport state and implicit client identity before using their own credentials.\n\nGenerated integration SDKs reuse one synchronous HTTP client per thread when the effective integration, tenant, configuration and credential match. Integration lookup still runs before every call; credential/configuration changes replace and close the previous client. Sessions also close at thread exit. Existing workflow APIs and authorization checks are preserved, with no new configuration settings.\n\n## Validation\n\n- Real HTTP tests verify connection reuse across two concurrent live loops, repeated asyncio.run, streaming and deterministic cleanup. Fork tests cover inherited locks, copied local-development contexts, transport ownership and the actual worker Unix-socket routes.\n- Rendered SDK tests cover credential/configuration/tenant changes, method results, replacement cleanup and thread exit.\n- After incorporating current main: 99 focused tests passed; Python type checking and lint passed. CI then passed 11,386 backend tests and exposed one obsolete test that constructed a private async pool without a running loop. Reproduced locally and corrected to verify token rotation on the same live pool and close it. All 57 focused SDK/worker/service consumer tests and type/lint checks passed after correction. Full backend/browser coverage remains gated by the protected merge queue.\n- Read-only comparisons against unchanged Halo source demonstrated an independent platform CPU reduction. Combined with ordinary Workspace session pooling, measured workflow-body CPU fell about 70% and Halo TLS handshakes fell from 89 to 9. Elapsed time remained around eight seconds; this PR does not claim that the remaining latency is fixed. Diagnostic platform code ran only in isolated execution children, not as a production image.\n\nThe loose Workspace module changes and Solution source patches are separate from this platform diff.\n\n## Product Updates\n\n- [x] Other \u2014 Reduce repeated HTTP client setup in workflows and generated integration SDKs.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1217"
+    },
+    {
+      "number": 1218,
+      "title": "Record the SDK client reuse fix in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1218",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T12:10:33Z",
+      "merge_commit": "3f79ac4fde18defc472b4e5ce83d43f881827125",
+      "body": "The approved SDK client reuse fix from #1217 is absent from the frozen Product Updates inventory. Refresh verified coverage through its landed commit so the build includes its reviewed Other change.\n\nRetains all 337 landed commit/PR records, contributor credits, and the exact 40 existing approved entries. No runtime source or announcement prose changes.\n\nValidation: cumulative coverage and deterministic image preparation pass; the prepared bundle includes pr:1217; all 44 Product Updates tooling tests pass in Docker.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1218"
+    },
+    {
+      "number": 1219,
+      "title": "Fix Bifrost plugin packaging for catalog distribution",
+      "url": "https://github.com/gobifrost/bifrost/pull/1219",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T16:42:48Z",
+      "merge_commit": "12850a452100f9acd7544ea8e6a58fbcf178ad85",
+      "body": "The catalog generator selects Bifrost\u2019s root Codex manifest, whose `./skills/` path contains directory symlinks. The catalog copies those symlinks as files and loses every `SKILL.md`. Point the root manifest at the existing plain-file mirror under `plugins/bifrost/skills/`; the packaged plugin\u2019s manifest already uses that mirror.\n\nAlso include a plugin README, an exact copy of the repository AGPL-3.0 license, and disclosure guidance pointing to the canonical security policy. These files were missing from the installable bundle.\n\nRefs #381. Catalog submission: https://github.com/hashgraph-online/awesome-codex-plugins/pull/643\n\nThe catalog-owned centralized scan scored the source repository 73/100 against its required 75/100. The final candidate scores **77/100** with the reviewed scanner release, without adding scanner exclusions or suppression policies.\n\n## Validation\n\n- `plugin-scanner scan . --profile default --min-score 75 --fail-on-severity none --format json --output /tmp/bifrost-381-scanner/final.json` using `plugin-scanner==3.58.0` \u2014 passed, 77/100. Verified the scanner wheel against the SHA256 published in the catalog contribution guide.\n- Exercised the upstream `generate_plugins_json.py` root selection and file collection against the candidate tree: the original manifest retains zero `SKILL.md` files; the corrected manifest retains all four skills, their references, documentation, license, and icons as regular files.\n- `python3 scripts/check_skill_mirrors.py` \u2014 passed.\n- `python3 scripts/product_updates.py validate --target <full-head-sha>` \u2014 passed.\n- `git diff --check` and packaged-document checks, including byte-for-byte license equality \u2014 passed.\n\nThe scanner still reports heuristic findings across the full platform repository; this packaging change does not claim to remediate or validate them. The catalog-owned scan remains authoritative after merge. Backend and frontend suites were not run locally for this manifest/documentation change.\n\n## Product Updates\n\n- [x] Omit \u2014 plugin distribution metadata and documentation; no platform runtime behavior change.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1219"
+    },
+    {
+      "number": 1222,
+      "title": "Add Rewst migration pilot Solution and coding-agent handoff",
+      "url": "https://github.com/gobifrost/bifrost/pull/1222",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T18:26:25Z",
+      "merge_commit": "47130eeb15308a5d6b5fd4c0819432c13e4e4499",
+      "body": "Build a reusable Rewst migration pilot that an existing Rewst customer can install without inheriting another customer's migration state. The Solution collects source evidence and persists the plan and test evidence; the customer's external Codex or Claude session builds replacements through scoped workflow calls.\n\n- Installable Solution at `examples/rewst-migration`: Setup, Inventory, Plan, and Agent Handoff; native install-scoped secret configuration; bounded read-only exporter; immutable captures; revisioned managed-file state and derived table index.\n- Network-free sample, workflow dependency evidence, explicit resource coverage gaps, revision-checked plan/evidence updates, and copyable CLI handoff with structured write examples. No internal Coding Agent or AI provider is required.\n- Generalized migration skill, standalone diagnostic extractor, installation guide, and customer pilot checklist. No customer exports, credentials, IDs, or previous progress are packaged.\n\nThe real sample exposed two shared platform defects, repaired here: standalone CLI manifests imported a server-only location validator, and the definition guard blocked runtime FileMetadata updates. FilePolicy and workflow definitions remain deploy-owned; Files authorization and CAS are preserved. **The pilot requires a Bifrost build containing these fixes. Installing the Solution alone does not update the platform.**\n\nLive Rewst compatibility remains unverified: the author no longer has Rewst access. Historical private GraphQL queries can require adaptation by the customer. Form definitions, custom integration actions/configuration, dynamic references, Crates/apps/access, history, and in-flight operational state remain explicit coverage gaps. This is an experimental capture/planning pilot, not a universal backup or automatic production cutover.\n\nValidation: 15 extraction-helper tests; 16 Solution contract tests; 3 app helper tests; app TypeScript and Vite build; zero npm audit findings; API Pyright/Ruff; 54 focused platform tests. Real CLI sample create/export/artifact/plan/evidence/resume/conflict/handoff passed without a Rewst credential. The final deployed-app browser journey passed (40.8s, plus authentication setup; 2 tests passed in 57.8s), including source JSON reads and cross-migration unsaved-draft isolation. All 18 file isolation/policy/standalone-archive checks passed. The documented repository-install command succeeded against the published branch on a fresh install.\n\nThe browser spec installs the actual example source with **one deploy/app-build job**, then exercises sample export, saved plans, evidence, reload, migration draft isolation, artifact reads, and desktop/mobile rendering. Lower-level tests cover conflicts, scope rejection, auth denial, and transport failures. Full backend and browser suites are left to CI/merge queue.\n\n[Install and pilot guide](https://github.com/gobifrost/bifrost/blob/main/examples/rewst-migration/README.md)\n\nFailure dispositions: the first browser export exposed the repaired FileMetadata guard bug. A later browser failure was a test locator scoped to the label container instead of its list item; semantic list-item scoping fixes it without retries or timeout increases. A focused backend run hit an idle keepalive socket close between tests; the session fixture now expires idle sockets after two seconds, before Uvicorn closes them at five seconds. No network retry was added; the same 18 checks then passed.\n\n\nExact focused validation commands (from the repository root unless noted):\n\n```bash\npython3 -B -m unittest scripts.test_rewst_extraction\nPYTHONPATH=examples/rewst-migration python3 -B -m unittest discover -s examples/rewst-migration/tests\npython3 scripts/sync_rewst_migration_client.py --check\npython3 scripts/check_skill_mirrors.py\n./test.sh quality api\n./test.sh tests/unit/test_solution_runtime_file_guard.py tests/unit/test_solution_guard.py tests/unit/test_cli_packaging.py tests/unit/test_file_paths.py -v\n./test.sh tests/unit/test_cli_packaging.py tests/e2e/platform/test_solution_file_scope.py tests/e2e/platform/test_file_policy_solution_crud.py -v\n./test.sh client e2e e2e/rewst-migration.admin.spec.ts\n# In examples/rewst-migration/apps/rewst-migration after instance SDK setup:\nnpx tsc --noEmit\nnpm test\nnpm run build\nnpm audit\n```\n\nThe file-boundary run took 15.8s for 18 tests; the standalone artifact/guard/path run took 5.64s for 54 tests. The browser journey deliberately owns one expensive Solution deployment/app-build boundary; edge cases remain in the lower-level contract tests. The documented `bifrost solution install-repo` command was also exercised on a fresh install of this public branch, followed by actual scoped CLI workflow calls.\n\nAdditional local browser run encountered host exhaustion (58/62 GiB RAM used and all 8 GiB swap used), worker admission refusing new work, and PgBouncer Docker DNS failures during deployment. Its teardown 409 obscured the primary deployment failure; the spec now preserves the primary exception and attaches any teardown failure separately. Validation is serialized after releasing this task's other development resources; no timeout increase, network retry, memory-threshold override, or production behavior change is used.\n\nThe final browser verification uses this worktree's API and worker containers bounded to 2 GiB each (`docker update --memory 2g --memory-swap 2g` after test reset). Without a cgroup limit, the executor uses the shared host's memory occupancy and correctly refuses new work above 85%; other active worktrees saturated the host. The per-executor threshold is unchanged, and the optional debug stack was shut down before this serial run. No resource limits or admission behavior are changed in the shipped source.\n\nA separate public Netbird debug-URL probe was inconclusive: the shell rendered but a five-second setup-heading assertion ended while the overview hook was loading. Server execution had completed; a later sanitized probe could not reach login under host pressure and obtained no HTTP/WS evidence. This does not establish a WebSocket defect or certify that proxy path. The supported serial local-browser journey and actual CLI calls are the package verification evidence.\n\nFinal UI assertions cover phone-width command wrapping without horizontal clipping, mobile menu dismissal after navigation, draft preservation, and light theme. The copied CLI payload remains unchanged. Client TypeScript and ESLint also passed in the Docker Playwright image; ESLint reports one existing console warning in `e2e/support/seed-review-pack.ts` and zero errors. The changed browser spec separately passed ESLint.\n\nEarly-build publication: plugin manifests advance together to `1.4.2-dev.1` so installed clients can receive the migration skill. The skill now explicitly checks CLI setup/authentication, installs the Solution, verifies the sample, and guides native secret Configuration before live capture. Install links target `main` after landing; users can pin a tested source commit. Publication uses the ordinary gated dev channel; stable tags are unchanged.\n\nReview-thread dispositions before queue entry: the nine CodeQL comments are style diagnostics, with all CodeQL checks green. Five flag the intentional ellipsis bodies of structural `Protocol` signatures (`ReadClient` and `MigrationStorage`); these declare interfaces rather than executable workflow steps. The unittest import comment concerns using the test-framework module and its separate mock helper, both explicitly used by the offline tests. Three lambda comments suggest a shorter spelling for fresh fake-client factories; the current zero-argument factories are behaviorally correct and covered by the offline contracts. These comments are resolved as reviewed non-blocking style preferences/intentional interface declarations; no test or security failure is waived.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1222"
+    },
+    {
+      "number": 1229,
+      "title": "docs: clarify scope of Cloudflare copyright notice",
+      "url": "https://github.com/gobifrost/bifrost/pull/1229",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T17:03:30Z",
+      "merge_commit": "72a1fa9f0380dc7985cabd9ed1467bd337622cd8",
+      "body": "## Summary\n\nClarify that the Cloudflare MIT notice covers the adapted capability-search ranking code used by Automatic agents and MCP discovery. Link the notice and implementation from the README License section so the attribution has an explicit scope.\n\nThe existing attribution and project license remain intact.\n\n## Validation\n\n- `git diff --check` passed.\n- Product Updates canonical-ledger validation passed.\n- Verified the README links resolve to tracked files and the implementation records the pinned upstream source.\n- Confirmed the notice matches the pinned upstream MIT license.\n- Application unit, E2E, lint and type suites were not run: this is a prose-only clarification.\n\n## Product Updates\n\n- [x] Omit \u2014 README attribution clarification only; no runtime behavior, license grant or customer upgrade change. Canonical disposition: `product-updates/dispositions/pr-1229.json`.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1229"
     }
   ]
 }
