@@ -1,0 +1,12 @@
+{
+  "key": "pr:1226",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "SDK-internal additive lookup contract; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1226"
+    ]
+  }
+}
