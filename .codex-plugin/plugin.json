@@ -9,7 +9,7 @@
   "homepage": "https://github.com/gobifrost/bifrost",
   "repository": "https://github.com/gobifrost/bifrost",
   "license": "AGPL-3.0",
-  "skills": "./skills/",
+  "skills": "./plugins/bifrost/skills/",
   "interface": {
     "displayName": "Bifrost",
     "shortDescription": "Build, set up, and package Bifrost automation artifacts",
