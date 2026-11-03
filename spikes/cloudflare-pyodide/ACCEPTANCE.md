@@ -60,6 +60,10 @@ normal/event cancellation/suppression pass, but suppression after canceling a
 held pyfetch hangs. The successful HTTP cancel subcase settles only its tracked
 coroutine; the accepted vendor write still commits after release. This failed
 qualification does not enable admission or canonical Cancelled reporting.
+Its v13 follow-up schedules cancellation from the original invocation and passes
+the same held-HTTP suppression assertions locally. This repairs that diagnostic
+mechanism, while accepted-write uncertainty, actual engine integration, CPU stop
+and deployed qualification remain separate gates.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

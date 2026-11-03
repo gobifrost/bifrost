@@ -40,7 +40,7 @@ await new Promise((resolve, reject) => {server.once('error', reject); server.lis
 let report, failure;
 try {
   const response = await fetch('http://127.0.0.1:8799/', {method: 'POST',
-    headers: {'x-cooperative-io': 'true'}, signal: AbortSignal.timeout(45000)});
+    headers: {'x-cooperative-io': 'true', 'x-owner-scheduled': 'true'}, signal: AbortSignal.timeout(45000)});
   const text = await response.text();
   report = {status: response.status, text, cloud_invocations: 0};
   assert.equal(response.status, 200);

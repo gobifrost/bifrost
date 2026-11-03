@@ -54,7 +54,8 @@ class Default(WorkerEntrypoint):
                 raise
             finally:
                 cleaned.append(True)
-        outcome = await execute_cooperatively(data["execution_id"], execute)
+        outcome = await execute_cooperatively(data["execution_id"], execute,
+            owner_scheduled=data["owner_scheduled"])
         return json.dumps({"outcome": outcome, "cleaned": cleaned,
             "active_slots": active_execution_count(), "python": sys.version,
             "abi": sysconfig.get_config_var("SOABI")})
@@ -67,6 +68,7 @@ export default {
     }
     const cases = [];
     const io = request.headers.get('x-cooperative-io') === 'true';
+    const ownerScheduled = request.headers.get('x-owner-scheduled') === 'true';
     const observe = async (path, id) => {
       const response = await fetch(`http://127.0.0.1:8820/${path}?id=${id}`, {method: 'POST'});
       if (response.status !== 200) throw new Error('Independent observer refused control');
@@ -83,7 +85,8 @@ export default {
         env: {}, globalOutbound: io ? ctx.exports.CooperativeGateway({props: {id: executionId}}) : null,
         limits: {cpuMs: 1000, subRequests: 8}});
       const entry = child.getEntrypoint();
-      const pending = entry.run_execution(JSON.stringify({execution_id: executionId, suppress: mode === 'suppress', io}));
+      const pending = entry.run_execution(JSON.stringify({execution_id: executionId,
+        suppress: mode === 'suppress', io, owner_scheduled: ownerScheduled}));
       let phase = 'wait_entered';
       try {
         const entered = await entry.wait_entered();

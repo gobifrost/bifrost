@@ -113,3 +113,40 @@ Next bounded hypothesis: direct Task.cancel from a separate RPC may resume Pytho
 work with an unsuitable I/O context. Test original-invocation-owned cancellation
 scheduling against the same suppression and accepted-write controls. This is a
 hypothesis, not an established cause; preserve current failures.
+
+## Original-invocation scheduler: held HTTP passes locally
+
+V13 tests that hypothesis with an explicit owner_scheduled mode. The control RPC
+records a request only. A monitor created by execute_cooperatively in the original
+execution invocation checks every 10 ms and calls Task.cancel there. The monitor
+is canceled and awaited in finally; this is a cooperative timer, not CPU enforcement.
+The direct mode remains the recorded negative-control mechanism, not a production
+fallback. Both modes remain companion experimental code, outside upstream engine.
+
+The unchanged held-HTTP assertions now pass all three cases in actual Pyodide:
+normal HTTP200; main-task cancellation with cleanup before destination release;
+and suppressed cancellation returning Success after the subsequent request gets410
+from the closed gate. Independent destination snapshots show no /after effects,
+and confirm accepted held writes still commit after release. Wrong-run and late
+cancel requests remain false. This qualifies this local mechanism, not physical
+stop, canonical cancellation, background-task cleanup or deployed enforcement.
+
+cooperative-http-v13.json records exact packet hashes, Python3.14.2/
+cpython-314-wasm32-emscripten, 14.375-second whole-launcher lifecycle and stopped
+provider (no OOM). Command is unchanged except --revision 13. Packet:
+/opt/bifrost-tests/pyodide-ddf316c1/inbox/approved-https-v13. Same network-disabled
+1 CPU/2 GiB/128-PID provider and cached publisher runtime. No cloud activity.
+
+The revised Python source also passes ten native unittest cases in a network-none
+0.5 CPU/256 MiB/64-PID container, and Ruff. Native packet is inbox/cooperative-owner-v13;
+command matches the earlier native invocation with that packet and container name
+pyodide-ddf316c1-cooperative-native-v13. Packaging test and JavaScript syntax pass.
+The new native cases exercise owner-scheduled cleanup and suppression followed
+by another await. Earlier raw RPC evidence refers to source at c2066797e; earlier
+held-HTTP failures refer to source at 95852fd3d. They are not relabeled as successes.
+
+Next integration boundary: expose a separate candidate RPC entry that invokes
+actual run_authorized_attempt under this scheduler and retains owned SDK close.
+It must preserve original success/error envelopes and report coroutine-only
+cancellation separately; no synthetic canonical Cancelled result or capacity
+release is authorized by this mechanism alone.

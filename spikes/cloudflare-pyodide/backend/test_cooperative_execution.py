@@ -8,6 +8,40 @@ class CooperativeTests(IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         self.assertEqual(active_execution_count(), 0)
 
+    async def test_owner_scheduled_cancel_awaits_cleanup(self):
+        entered, cleaned = asyncio.Event(), asyncio.Event()
+
+        async def execute():
+            try:
+                entered.set()
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+
+        pending = asyncio.create_task(execute_cooperatively('run', execute, owner_scheduled=True))
+        await entered.wait()
+        self.assertTrue(request_cancel('run'))
+        self.assertTrue(request_cancel('run'))
+        result = await pending
+        self.assertTrue(result['cooperative_task_cancelled'])
+        self.assertTrue(cleaned.is_set())
+
+    async def test_owner_scheduled_suppression_can_await_again(self):
+        entered = asyncio.Event()
+
+        async def execute():
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await asyncio.sleep(0)
+                return {'status': 'Success', 'result': 'suppressed'}
+
+        pending = asyncio.create_task(execute_cooperatively('run', execute, owner_scheduled=True))
+        await entered.wait()
+        self.assertTrue(request_cancel('run'))
+        self.assertEqual(await pending, {'status': 'Success', 'result': 'suppressed'})
+
     async def test_normal_result_is_unchanged_and_late_cancel_refused(self):
         result = {'status': 'Success', 'result': 7}
 
