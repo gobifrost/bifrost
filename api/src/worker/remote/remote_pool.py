@@ -480,7 +480,17 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         from src.worker.remote.ownership import owns_remote_session
 
         ref = current_remote_lease_ref()
-        return ref is None or await owns_remote_session(ref.lease)
+        if ref is None:
+            return True
+        try:
+            return await owns_remote_session(ref.lease)
+        except Exception:
+            # Fail closed: result commits and shutdown side effects stay
+            # fenced until a read succeeds.
+            logger.warning(
+                "Remote owner fence read failed; treating session as lost", exc_info=True
+            )
+            return False
 
     def _request_bytes(self, key: str) -> int:
         return self.transport.memory_request_bytes(key) or 0

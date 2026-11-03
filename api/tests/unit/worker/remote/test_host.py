@@ -602,3 +602,82 @@ async def test_telemetry_skips_the_database_fence_only_while_the_lease_is_known_
         session.owned_until = time.monotonic() - 1
         assert await session.may_accept("event", sample) is False
         assert fence.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_fence_read_failure_falls_back_to_owned_until(caplog) -> None:
+    """A transient DB blip must not manufacture a new session generation."""
+    import logging
+
+    from src.worker.remote import host as host_mod
+
+    session = object.__new__(RemoteSession)
+    session.lease = LEASE
+    session.owned_until = time.monotonic() + 10
+    with (
+        patch.object(
+            host_mod, "owns_remote_session",
+            new=AsyncMock(side_effect=RuntimeError("database restarted")),
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        assert await session.may_accept("event", {"event": "inventory"}) is True
+        session.owned_until = time.monotonic() - 1
+        assert await session.may_accept("event", {"event": "inventory"}) is False
+    assert "fence read failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_drain_skips_terminate_when_fence_read_fails() -> None:
+    executor = object.__new__(ApiExecutor)
+    executor._lost = False
+    agents = Mock(routes={"r": Mock()}, terminate_active_runs=AsyncMock())
+    executor.bridge = Mock(handoff=False, lease=LEASE, agents=agents)
+
+    with (
+        patch(
+            "src.worker.remote.host.owns_remote_session",
+            new=AsyncMock(side_effect=RuntimeError("database restarted")),
+        ),
+        patch.object(PoolWorker, "_drain", new_callable=AsyncMock) as drain,
+    ):
+        await executor._drain()
+
+    drain.assert_awaited_once_with()
+    agents.terminate_active_runs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retire_skips_when_fence_read_fails() -> None:
+    executor = object.__new__(ApiExecutor)
+    executor._lost = False
+    executor.bridge = Mock(handoff=False, connected=True, lease=LEASE, request=AsyncMock())
+
+    with (
+        patch(
+            "src.worker.remote.host.owns_remote_session",
+            new=AsyncMock(side_effect=RuntimeError("database restarted")),
+        ),
+        patch.object(PoolWorker, "_retire", new_callable=AsyncMock) as retire,
+    ):
+        await executor._retire()
+
+    retire.assert_not_awaited()
+    executor.bridge.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pool_owns_session_fails_closed_on_db_error() -> None:
+    from src.worker.remote import ownership as ownership_mod
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+    from src.worker.remote.remote_pool import ThinRemoteProcessPool
+
+    pool = ThinRemoteProcessPool(Mock(), worker_id="test-worker")
+    with (
+        patch.object(
+            ownership_mod, "owns_remote_session",
+            new=AsyncMock(side_effect=RuntimeError("database restarted")),
+        ),
+        remote_owner_context(LeaseRef(LEASE)),
+    ):
+        assert await pool._owns_session() is False

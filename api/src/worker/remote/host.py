@@ -702,13 +702,16 @@ class ApiExecutor(PoolWorker):
 
         await super()._drain()
         agents = self.bridge.agents
-        if (
-            agents is None
-            or not agents.routes
-            or self._lost
-            or self.bridge.handoff
-            or not await owns_remote_session(self.bridge.lease)
-        ):
+        if agents is None or not agents.routes or self._lost or self.bridge.handoff:
+            return
+        try:
+            owns = await owns_remote_session(self.bridge.lease)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Remote owner fence read failed; skipping drain terminate", exc_info=True
+            )
+            return
+        if not owns:
             return
         await agents.terminate_active_runs(
             error_type=DRAIN_DEADLINE_ERROR_TYPE, error=DRAIN_DEADLINE_ERROR
@@ -721,10 +724,28 @@ class ApiExecutor(PoolWorker):
         results available for a fenced successor to adopt. Retiring its row
         here would strand those still-running durable claims.
         """
-        if self._lost or self.bridge.handoff or not await owns_remote_session(self.bridge.lease):
+        if self._lost or self.bridge.handoff:
+            return
+        try:
+            owns = await owns_remote_session(self.bridge.lease)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Remote owner fence read failed; skipping launcher retire", exc_info=True
+            )
+            return
+        if not owns:
             return
         await super()._retire()
-        if self.bridge.connected and await owns_remote_session(self.bridge.lease):
+        if not self.bridge.connected:
+            return
+        try:
+            still_owns = await owns_remote_session(self.bridge.lease)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Remote owner fence read failed; skipping retired notice", exc_info=True
+            )
+            return
+        if still_owns:
             with contextlib.suppress(ConnectionError):
                 await self.bridge.request("retired", {})
 
@@ -860,7 +881,17 @@ class RemoteSession:
         else is fenced in the database."""
         if kind == "event" and payload.get("event") == "sample" and time.monotonic() < self.owned_until:
             return True
-        return await owns_remote_session(self.lease)
+        try:
+            return await owns_remote_session(self.lease)
+        except Exception:
+            # A transient read failure must not manufacture a new session: a
+            # replacement is still caught on the next successful read, and the
+            # fallback expires with the last known lease.
+            logging.getLogger(__name__).warning(
+                "Remote owner fence read failed; falling back to owned_until",
+                exc_info=True,
+            )
+            return time.monotonic() < self.owned_until
 
     async def lose_ownership(self, reason: str) -> None:
         self.owned_until = 0.0
