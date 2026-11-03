@@ -11,6 +11,9 @@ executor. Public/untrusted admission stays disabled. Start with
   controlled HTTPX vendor calls. The separate local candidate includes the
   [pinned redirect repair](backend/HTTPX-REDIRECT-QUALIFICATION.md); general
   HTTPS admission and deployed canonical execution remain unqualified.
+  [Named tenant policy binding](backend/HTTPS-POLICY-BINDING.md) additionally
+  qualifies explicit HTTPS declarations, immutable host configuration and scope
+  checks before dispatch. Upstream preclaim selection remains unfinished.
 * [Startup repair candidate](backend/STARTUP-CANDIDATE.md): 12 source/mock cases,
   [six real Redis cases](backend/STARTUP-REDIS.md), and one
   [signed Linux workflow/retirement](backend/STARTUP-LINUX.md) pass with an isolated

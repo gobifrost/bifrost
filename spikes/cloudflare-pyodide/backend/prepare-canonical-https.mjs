@@ -7,14 +7,18 @@ function replace(before, after) {
 }
 replace("const observations=new Map();", `import {createApprovedHttpsCandidate} from './approved-https-candidate.mjs';
 import redirectPatch from './httpx-redirect-code.mjs';
+import {boundHttpsFixturePolicy} from './fixture-https-policy.mjs';
 const httpsPolicies=new Map();
 const observations=new Map();`);
+replace('return admitFixture(body,observations.size,async()=>{', `const boundPolicy=boundHttpsFixturePolicy(body);
+    if(!boundPolicy)return new Response('Bound HTTPS fixture policy required',{status:422});
+    return admitFixture(body,observations.size,async()=>{`);
 replace("return new Response('Test API capability only',{status:403});",
   "return httpsPolicies.get(this.ctx.props.id)?.fetch(request) ?? new Response('Closed HTTPS fixture',{status:410});");
 replace('egressGates.set(id,egress);', `egressGates.set(id,egress);
-    const https=createApprovedHttpsCandidate({origins:['https://vendor.example'],
+    const https=createApprovedHttpsCandidate({origins:boundPolicy.origins,
       forbiddenCredentials:[body.context.engine_token,body.context.engine_refresh_token].filter(value=>typeof value==='string'&&value.length),
-      maxRequests:6,deadline,forward:async outgoing=>{
+      maxRequests:boundPolicy.max_requests,deadline,forward:async outgoing=>{
         const path=new URL(outgoing.url).pathname;
         if(!['/write','/redirect'].includes(path))return new Response('Fixed path only',{status:403});
         return fetch('http://127.0.0.1:8820'+path,{method:outgoing.method,headers:outgoing.headers,

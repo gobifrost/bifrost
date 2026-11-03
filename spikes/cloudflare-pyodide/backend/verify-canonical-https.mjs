@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -9,7 +9,9 @@ const read = path => readFileSync(new URL(path, import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(read('../results/canonical-https/v2.json'));
 for (const name of ['ct128-canonical-failure.py', 'shared-native-pool.py']) {
-  assert.equal(hash(read(name)), receipt.packet_sha256[name], name);
+  const bytes = name === 'shared-native-pool.py'
+    ? execFileSync('git', ['show', '338eac91a8ca72bd38ab479c9d8fb200f5f8ae27:spikes/cloudflare-pyodide/backend/' + name]) : read(name);
+  assert.equal(hash(bytes), receipt.packet_sha256[name], name);
 }
 for (const name of ['canonical-https-observer.mjs', 'approved-https-candidate.mjs', 'attempt-egress.mjs']) {
   assert.equal(hash(read(name)), receipt.packet_sha256[`project/backend/${name}`], name);
@@ -19,7 +21,10 @@ assert.equal(hash(entry), receipt.packet_sha256['project/backend/authorized-loca
 const temporary = mkdtempSync(join(tmpdir(), 'canonical-https-evidence-'));
 try {
   const output = join(temporary, 'entry.mjs');
-  execFileSync(process.execPath, [fileURLToPath(new URL('prepare-canonical-https.mjs', import.meta.url)), output]);
+  const generator = join(temporary, 'prepare.mjs');
+  writeFileSync(generator, execFileSync('git', ['show', '338eac91a8ca72bd38ab479c9d8fb200f5f8ae27:spikes/cloudflare-pyodide/backend/prepare-canonical-https.mjs']));
+  writeFileSync(join(temporary, 'authorized-local-entry.mjs'), read('authorized-local-entry.mjs'));
+  execFileSync(process.execPath, [generator, output]);
   assert.deepEqual(readFileSync(output), entry);
   const patch = join(temporary, 'patch.mjs');
   execFileSync(process.execPath, [fileURLToPath(new URL('stage-httpx-redirect.mjs', import.meta.url)), patch]);

@@ -136,6 +136,60 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         requirements = ['json', 'async-workflow', 'pinned-workspace', 'bifrost-http-sdk']
         self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements, packages={})
         self.assertEqual(self.pool._plans[execution_id]['requirements'], tuple(sorted(requirements)))
+
+    def configure_https(self):
+        org = str(uuid4())
+        policies = {'synthetic-vendor': {'org_id': org, 'origins': ['https://vendor.example'], 'max_requests': 6}}
+        self.pool = PrivateHttpWorkflowPool(endpoint='https://worker.invalid/', worker_id=self.worker,
+            lease_ref=self.ref, memory_sample=lambda: (100, 2**30), memory_request_bytes=lambda _key: 1024,
+            on_result=self.callback, capacity=2, https_policies=policies)
+        self.redis_write = self.enterContext(patch.object(self.pool.native, '_write_context_to_redis', new_callable=AsyncMock))
+        self.enterContext(patch.object(self.pool.native, '_write_active_execution_lease', new_callable=AsyncMock))
+        self.context['organization'] = {'id': org}
+        self.active['org_id'] = org
+        return policies
+
+    async def test_trusted_https_policy_is_snapshotted_and_sent_once_with_attempt(self):
+        policies = self.configure_https()
+        self.pool.bind_manifest(self.run, self.manifest, requirements=['json', 'platform-fetch-https'],
+                                packages={}, https_policy_id='synthetic-vendor')
+        policies['synthetic-vendor']['origins'].append('https://attacker.example')
+        policies['synthetic-vendor']['org_id'] = str(uuid4())
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        await self.route()
+        finish.set()
+        await self.pool.attempt(self.run).delivery
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.sent[0]['https_policy'], {'policy_id': 'synthetic-vendor',
+            'execution_id': self.run, 'org_id': self.context['organization']['id'],
+            'origins': ['https://vendor.example'], 'max_requests': 6})
+        await self.pool.retire()
+
+    async def test_https_policy_requires_matching_declaration_and_known_host_policy(self):
+        self.configure_https()
+        for requirements, policy in [(['json'], 'synthetic-vendor'), (['platform-fetch-https'], None),
+                                     (['platform-fetch-https'], 'unknown')]:
+            with self.subTest(requirements=requirements, policy=policy), self.assertRaises(ValueError):
+                self.pool.bind_manifest(self.run, self.manifest, requirements=requirements,
+                                        packages={}, https_policy_id=policy)
+            self.assertNotIn(self.run, self.pool._plans)
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+
+    async def test_https_tenant_mismatch_refused_before_native_or_transport_effects(self):
+        self.configure_https()
+        self.pool.bind_manifest(self.run, self.manifest, requirements=['platform-fetch-https'],
+                                packages={}, https_policy_id='synthetic-vendor')
+        for context, active in [({**self.context, 'organization': {'id': str(uuid4())}}, self.active),
+                                (self.context, {**self.active, 'org_id': str(uuid4())})]:
+            with self.assertRaises(ValueError):
+                await self.route(context, active)
+        self.redis_write.assert_not_awaited()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
         self.redis_write.assert_not_awaited()
         self.assertEqual(self.pool.journal.inventory(), [])
 

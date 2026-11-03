@@ -32,6 +32,10 @@ evidence contains exactly four approved forwards. This fixed local candidate is
 not general external HTTPS admission or deployed canonical acceptance; the ordinary
 private adapter still rejects that requirement. The transport redirect repair
 is confined to the candidate. CPU, memory and cancellation gaps remain unchanged.
+The named-policy follow-up in backend/HTTPS-POLICY-BINDING.md passes the same
+canonical flow with an explicit HTTPS declaration and immutable trusted tenant
+policy. Default configuration still rejects HTTPS; pre-dispatch binding is not
+upstream preclaim eligibility or public authentication.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

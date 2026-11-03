@@ -267,7 +267,9 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
 
             adapter = PrivateHttpWorkflowPool(endpoint='http://bifrost-pyodide-ddf316c1:8799', worker_id=worker_id,
                 lease_ref=ref, memory_sample=effective_memory_sample, memory_request_bytes=requests.get,
-                on_result=canonical_result, capacity=2)
+                on_result=canonical_result, capacity=2,
+                https_policies={f"synthetic-{slot['label']}": {'org_id': str(slot['org'].id),
+                    'origins': ['https://vendor.example'], 'max_requests': 6} for slot in slots.values()} if https_fixture else None)
             native, mux = adapter.native, adapter.mux
             class Parent:
                 def credential_route(self):
@@ -299,7 +301,10 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     # from arbitrary user declarations. This remains private.
                     requirements = ['json', 'async-workflow', 'pinned-workspace', 'bifrost-http-sdk']
                     packages = {'httpx': '0.28.1', 'pydantic': '2.14.2', 'pydantic-core': '2.50.2'}
-                    adapter.bind_manifest(execution_id, prepared.manifest, requirements=requirements, packages=packages)
+                    if https_fixture:
+                        requirements.append('platform-fetch-https')
+                    adapter.bind_manifest(execution_id, prepared.manifest, requirements=requirements, packages=packages,
+                        https_policy_id=f"synthetic-{slot['label']}" if https_fixture else None)
                     slot['preparation'] = {'observations': prepared.observations,
                         'response_bytes': prepared.response_bytes, 'manifest': prepared.manifest,
                         'requirements': requirements,

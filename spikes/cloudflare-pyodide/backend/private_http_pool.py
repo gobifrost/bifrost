@@ -14,6 +14,7 @@ from attempt_journal import AttemptJournal, AttemptResult
 from attempt_deadline import report_expired_workflow, supervise_attempt_deadline
 from http_invocation import HttpInvocation
 from runtime_inventory import validate_inventory, bind_package_requirements
+from https_policy_binding import snapshot_policies
 from workflow_request_mux import WorkflowRequestMux
 
 from src.services.execution.process_pool import CredentialRoute
@@ -48,7 +49,7 @@ class PrivateHttpWorkflowPool:
     Public startup/admission and abnormal physical cancellation are unqualified.
     """
     def __init__(self, *, endpoint, worker_id, lease_ref, memory_sample,
-                 memory_request_bytes, on_result, capacity, headers=None):
+                 memory_request_bytes, on_result, capacity, headers=None, https_policies=None):
         self.worker_id = UUID(str(worker_id))
         if lease_ref.lease.worker_id != self.worker_id:
             raise ValueError('Canonical worker and owner identity differ')
@@ -60,6 +61,7 @@ class PrivateHttpWorkflowPool:
         self._attempts = {}
         self._retired = False
         self._runtime_inventory = None
+        self._https_policies = snapshot_policies(https_policies)
         self._lock = asyncio.Lock()
         self.mux = WorkflowRequestMux(lambda: lease_ref.lease.session_generation)
         self.journal = AttemptJournal(capacity=capacity)
@@ -135,7 +137,7 @@ class PrivateHttpWorkflowPool:
     def credential_route(self):
         return CredentialRoute(2, self._ref.lease.session_generation)
 
-    def bind_manifest(self, execution_id, manifest, *, requirements, packages):
+    def bind_manifest(self, execution_id, manifest, *, requirements, packages, https_policy_id=None):
         """Bind trusted-host provenance/requirements, not user authorization.
 
         Requirements describe reviewed code under these pins. They neither
@@ -147,10 +149,15 @@ class PrivateHttpWorkflowPool:
             raise ValueError('Canonical execution identity required')
         if not isinstance(manifest, dict) or not 1 <= len(manifest) <= 128:
             raise ValueError('Bounded Python module manifest required')
+        policy = self._https_policies.get(https_policy_id) if isinstance(https_policy_id, str) else None
+        supported = SUPPORTED_REQUIREMENTS | ({'platform-fetch-https'} if policy is not None else set())
         if (not isinstance(requirements, (list, tuple)) or len(requirements) > 32
-            or any(not isinstance(item, str) or item not in SUPPORTED_REQUIREMENTS for item in requirements)
+            or any(not isinstance(item, str) or item not in supported for item in requirements)
             or len(set(requirements)) != len(requirements)):
             raise ValueError('Explicit supported workload requirements required before binding')
+        if ((https_policy_id is not None and policy is None)
+            or (policy is not None and 'platform-fetch-https' not in requirements)):
+            raise ValueError('HTTPS policy and declared requirement must match')
         bound_packages = bind_package_requirements(self._runtime_inventory, packages)
         for path, digest in manifest.items():
             if (not isinstance(path, str) or len(path) > 512 or '\\' in path
@@ -160,6 +167,8 @@ class PrivateHttpWorkflowPool:
                 raise ValueError('Canonical relative Python paths and SHA256 digests required')
         self._plans[execution_id] = {'manifest': dict(manifest), 'requirements': tuple(sorted(requirements)),
                                     'packages': bound_packages}
+        if policy is not None:
+            self._plans[execution_id]['https_policy'] = policy.envelope(execution_id)
 
     def attempt(self, execution_id):
         """Trusted-parent receipt access; never expose as a public result API."""
@@ -190,6 +199,12 @@ class PrivateHttpWorkflowPool:
                 or any(frozen.get(key) for key in ('is_platform_admin', 'solution_global_repo_access'))):
                 raise ValueError('Bound, pinned, supported workflow context required before dispatch')
             frozen_active = json.loads(json.dumps(active_execution, default=str, allow_nan=False))
+            https_policy = plan.get('https_policy')
+            organization = frozen.get('organization')
+            if https_policy is not None and (not isinstance(organization, dict)
+                or organization.get('id') != https_policy['org_id']
+                or frozen_active.get('org_id') != https_policy['org_id']):
+                raise ValueError('HTTPS policy tenant differs from canonical attempt')
             fingerprint = json.dumps([frozen, frozen_active, plan], sort_keys=True, separators=(',', ':'),
                                      allow_nan=False, default=str)
             previous = self._attempts.get(execution_id)
@@ -198,7 +213,8 @@ class PrivateHttpWorkflowPool:
                     raise ConnectionError('Existing workflow dispatch changed; reconcile original attempt')
                 return previous.routed
             envelope = {'mode': 'canonical', 'worker_id': str(self.worker_id), 'execution_id': execution_id,
-                        'context': frozen, 'manifest': manifest}
+                        'context': frozen, 'manifest': manifest,
+                        **({'https_policy': https_policy} if https_policy is not None else {})}
             HttpInvocation.validated_request(envelope)
             # Budget the longest UTC isoformat string the native pool can add.
             # This copy is for sizing only; the actual cutoff remains native.
@@ -219,7 +235,8 @@ class PrivateHttpWorkflowPool:
 
                 slot.invocation = HttpInvocation(self._endpoint,
                     {'mode': 'canonical', 'worker_id': str(self.worker_id), 'execution_id': execution_id,
-                     'context': payload['context'], 'manifest': manifest}, on_accepted, headers=self._headers)
+                     'context': payload['context'], 'manifest': manifest,
+                     **({'https_policy': https_policy} if https_policy is not None else {})}, on_accepted, headers=self._headers)
                 slot.launches += 1
                 slot.evidence = await slot.invocation.collect()
                 slot.terminal_monotonic = time.monotonic()
