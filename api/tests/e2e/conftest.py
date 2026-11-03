@@ -234,6 +234,10 @@ def e2e_client():
     with RefreshingClient(
         base_url=E2E_API_URL,
         timeout=60.0,
+        # Uvicorn closes idle connections after five seconds. Expire this
+        # session-wide fixture's pool earlier, so setup between tests cannot
+        # race the server closing an otherwise reusable socket. No retries.
+        limits=httpx.Limits(keepalive_expiry=2.0),
         refresh=refresh,
     ) as client:
         e2e = _E2EClient(client)
