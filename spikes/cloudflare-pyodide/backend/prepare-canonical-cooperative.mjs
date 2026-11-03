@@ -17,22 +17,35 @@ replace("if(new URL(request.url).pathname==='/__fixture_revoke') {", `if(new URL
       if(httpsExecutions.get(handle)!==control.execution_id || !cooperativeEntries.has(handle))
         return new Response('Unknown bound attempt',{status:404});
       httpsPolicies.get(handle).close();egressGates.get(handle).close();
-      const requested=await cooperativeEntries.get(handle).cancel_execution(control.execution_id);
+      cooperativeEntries.get(handle).requested=true;
       return Response.json({execution_id:control.execution_id,runtime_handle:handle,
-        cancellation_requested:requested,physical_stopped:false,execution_settled:false});
+        cancellation_requested:true,physical_stopped:false,execution_settled:false});
     }
     if(new URL(request.url).pathname==='/__fixture_revoke') {`);
 replace('cleaned=true;https.close();', 'cleaned=true;cooperativeEntries.delete(id);https.close();');
 replace('const entrypoint=env.LOADER.load(code).getEntrypoint();',
-  'const entrypoint=env.LOADER.load(withCooperativeRpc(code,cooperativeSource)).getEntrypoint();\n      cooperativeEntries.set(id,entrypoint);');
+  'const entrypoint=env.LOADER.load(withCooperativeRpc(code,cooperativeSource)).getEntrypoint();\n      const cooperativeControl={requested:false};cooperativeEntries.set(id,cooperativeControl);');
 replace(`const response=await entrypoint.fetch(new Request('https://attempt.invalid/',{
           method:'POST',body:JSON.stringify({action:body.mode==='canonical' ? 'execute_envelope' : 'execute',
             worker_id:body.worker_id,execution_id:body.execution_id,
             context:body.context,api_url:'https://test-api.invalid'}),
-        }));`, `const rpc=JSON.parse(await entrypoint.run_execution(JSON.stringify({
+        }));`, `const pending=entrypoint.run_execution(JSON.stringify({
           action:body.mode==='canonical' ? 'execute_envelope' : 'execute',
           worker_id:body.worker_id,execution_id:body.execution_id,
-          context:body.context,api_url:'https://test-api.invalid'})));
+          context:body.context,api_url:'https://test-api.invalid'}));
+      let monitorRunning=true;
+      const monitor=(async()=>{
+        while(monitorRunning){
+          await new Promise(resolve=>setTimeout(resolve,10));
+          if(cooperativeControl.requested){
+            await entrypoint.cancel_execution(body.execution_id);
+            return;
+          }
+        }
+      })();
+      let rpc;
+      try{rpc=JSON.parse(await Promise.race([pending,monitor.then(()=>pending)]));}
+      finally{monitorRunning=false;await monitor;}
       // A coroutine receipt is not a canonical terminal result. Keep the
       // transport uncertain rather than fabricating Cancelled or releasing capacity.
       if(rpc.outcome?.kind!=='engine_result')throw new Error('Cooperative coroutine settled; canonical execution remains uncertain');

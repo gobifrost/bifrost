@@ -211,3 +211,52 @@ the new fixture cancel path. Next: actual engine cancellation, owned SDK-close
 behavior and canonical uncertain-outcome recovery, without inventing a terminal
 result or releasing capacity on a coroutine receipt. RPC string marshaling also
 needs separate oversized-result/memory qualification before admission.
+
+## Actual engine cancellation with suppression: local pass
+
+prepare-engine-cancel-fixture.mjs creates a separate synthetic workflow/test
+variant. It leaves shared-native-pool.py unchanged, invokes the genuine cancel
+API and existing owner-fenced capability revoker, then requests cooperative
+cancellation through the separate local control path. The workflow catches
+CancelledError at its held HTTPX request, requires later vendor410 and denied
+SDK write, and returns its actual success. Success is preserved by upstream;
+this is deliberately not a Cancelled terminal-result qualification.
+
+V3 fails at __fixture_cancel with SubrequestChannel cross-request I/O ownership:
+the stored entrypoint stub cannot be called from another incoming request.
+engine-cooperative-cancel-v3.json preserves failed qualification/source/cleanup;
+full private failure and provider logs remain on CT128. No alternate identity,
+runtime flag or permission was used to work around the restriction.
+
+V4 changes the parent control mechanism: the incoming control request sets a
+bound flag only. A 10 ms monitor inside the original invocation makes the RPC
+call, and is awaited during cleanup. Its acknowledgment means requested, not
+delivered/stopped/settled. The Python owner monitor then delivers Task.cancel.
+Actual workflow success requires observing CancelledError, independently proving
+delivery beyond that acknowledgment. The runtime/engine/SDK code is unchanged.
+
+```sh
+python3 /opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-cancel-v4/ct128-canonical-failure.py --https-cancel --revision 4
+```
+
+Exit0, 73.639-second complete lifecycle. engine-cooperative-cancel-v4.json records
+API1d33150, enginef49d4ba, SDK1395964, bundle61d818a, all packet hashes/commands,
+actual run identity, independent destination snapshots and stopped owned stack.
+verify-engine-cooperative-cancel.mjs checks the generated fixture against those
+hashes and the preserved results. Both SDK closes returned; both canonical runs
+ended Success, with ended credentials401. Wrong-tenant cancellation403, ended
+peer401 and duplicate own cancellation200/Cancelling retain upstream semantics.
+The native physical-cancellation guard still refuses the unqualified target.
+
+The fixture deliberately holds canonical consumer ACK while observing accounting:
+busy counts2,1,1,0 and the PostgreSQL reservation stay held until that gate is
+released. The real engine result arrives before destination release; the accepted
+vendor write still commits afterward. This is not automatic detection/settlement
+of downstream effects. Two redacted pre-cancellation logs persist per attempt;
+post-revocation log delivery is not proved, because the SDK capability is closed.
+No physical stop, background-task cessation or deployed acceptance follows.
+
+Next: unsuppressed engine cancellation must retain uncertain transport/capacity
+and reconcile through existing upstream recovery. Separately qualify bounded
+RPC result marshaling, log obligations after revocation and real deployed limits.
+No new cloud invocation, public admission or ordinary backend behavior changed.

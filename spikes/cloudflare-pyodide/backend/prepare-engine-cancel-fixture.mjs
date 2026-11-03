@@ -1,0 +1,47 @@
+// Separate synthetic suppression case; never changes shared fixture/upstream code.
+import {readFileSync, writeFileSync} from 'node:fs';
+if (process.argv.length !== 4) throw new Error('Usage: node prepare-engine-cancel-fixture.mjs <shared-fixture> <new-output>');
+let source = readFileSync(process.argv[2], 'utf8').replace(/\r\n/g, '\n');
+function replace(before, after) {
+  if (source.split(before).length !== 2) throw new Error('Shared cancellation fixture shape changed');
+  source = source.replace(before, after);
+}
+replace(`                            "        held = await vendor.post('https://vendor.example/hold', content='fails-first', headers={'Authorization': 'Bearer synthetic-vendor'})\\n"`,
+`                            "        try:\\n"
+                            "            await vendor.post('https://vendor.example/hold', content='fails-first', headers={'Authorization': 'Bearer synthetic-vendor'})\\n"
+                            "        except asyncio.CancelledError:\\n"
+                            "            logging.getLogger(__name__).warning('engine_cooperative_cancel_suppressed')\\n"
+                            "        else:\\n"
+                            "            raise RuntimeError('Actual engine cancellation was not observed')\\n"`);
+replace('if held.status_code != 200 or late_https.status_code != 410:', 'if late_https.status_code != 410:');
+replace(`                    if https_cancel:
+                        failure_consume_gate.set()`, `                    if https_cancel:
+                        # Deliberate fixture consumer hold, not automatic provider settlement.`);
+replace(`                            response.raise_for_status()
+                            return response.json()`, `                            response.raise_for_status()
+                            cancel_response = await api.post('http://bifrost-pyodide-ddf316c1:8799/__fixture_cancel',
+                                json={'execution_id': run, 'runtime_handle': first.invocation.runtime_handle})
+                            cancel_response.raise_for_status()
+                            cancellation = cancel_response.json()
+                            if (not cancellation['cancellation_requested'] or cancellation['physical_stopped']
+                                or cancellation['execution_settled']):
+                                raise RuntimeError('Invalid cooperative control acknowledgement')
+                            report['engine_cooperative_control'] = cancellation
+                            return response.json()`);
+replace("if mux.collection(run).done() or native._build_heartbeat()['busy_count'] != 1:",
+  "if native._build_heartbeat()['busy_count'] != 1:");
+replace(`                        report['native_busy_counts'].append(1)
+                        released = await api.post('http://bifrost-pyodide-ddf316c1:8820/release')`,
+`                        report['native_busy_counts'].append(1)
+                        async with asyncio.timeout(10):
+                            early_result = await asyncio.shield(first.receipt)
+                        if not early_result['success']:
+                            raise RuntimeError('Suppressed engine cancellation did not preserve success')
+                        report['engine_result_before_vendor_release'] = True
+                        report['consumer_ack_deliberately_held'] = True
+                        released = await api.post('http://bifrost-pyodide-ddf316c1:8820/release')`);
+replace(`                        released.raise_for_status()
+                        result = await first.receipt`, `                        released.raise_for_status()
+                        failure_consume_gate.set()
+                        result = await first.receipt`);
+writeFileSync(process.argv[3], source, {flag: 'wx'});

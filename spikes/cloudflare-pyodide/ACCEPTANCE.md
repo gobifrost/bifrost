@@ -68,6 +68,12 @@ The same ledger now records canonical-cooperative-v5: actual upstream engine/SDK
 normal/error workflows pass through the candidate RPC, with PostgreSQL terminal
 consumption, duplicate/lost-ACK reconciliation and owned SDK close. Engine-backed
 cancellation and RPC oversized-result/memory qualification remain outstanding.
+The engine-cooperative-cancel-v4 follow-up now proves actual engine cancellation
+delivery with suppression, later vendor410/SDK-write refusal, owned SDK close and
+canonical Success. A parent-invocation monitor fixes the preserved cross-request
+stub failure. Consumer ACK is deliberately held by the fixture; unsuppressed
+cancellation recovery, post-revocation log obligations and physical stop remain
+unqualified. Accepted external writes can still commit after cancellation.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains
