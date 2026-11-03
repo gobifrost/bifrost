@@ -9,8 +9,16 @@ every on-disk module is discoverable, so a revert or a misconfigured new
 subpackage fails CI instead of shipping a broken CLI.
 """
 
+import tarfile
+import subprocess
+import sys
+import tempfile
 import tomllib
 from pathlib import Path
+
+import pydantic
+
+from shared.cli_artifact import build_cli_artifact
 
 API_DIR = Path(__file__).resolve().parents[2]
 PYPROJECT = API_DIR / "pyproject.toml"
@@ -54,3 +62,49 @@ def test_every_module_dir_is_a_discoverable_package():
         f"modules outside an __init__.py package chain (would be omitted "
         f"from the wheel): {sorted(set(undiscoverable))[:10]}"
     )
+
+
+def test_isolated_cli_archive_parses_solution_file_locations():
+    """The distributed CLI must not depend on the server-only ``shared`` package."""
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        sdk_root = root / "sdk"
+        artifact = build_cli_artifact(API_DIR / "bifrost", root / "dist", "1.4.2")
+        sdk_root.mkdir()
+        with tarfile.open(artifact) as archive:
+            archive.extractall(sdk_root, filter="data")
+        manifest_dir = root / ".bifrost"
+        manifest_dir.mkdir()
+        (manifest_dir / "files.yaml").write_text("locations:\n  - migration-data\n")
+        code = """
+import pathlib
+import sys
+sys.path[:0] = [sys.argv[1], sys.argv[3]]
+from bifrost.manifest import read_manifest_from_dir
+root = pathlib.Path(sys.argv[2])
+assert read_manifest_from_dir(root).files.locations == ["migration-data"]
+for invalid in ("_repo", "workspace"):
+    (root / "files.yaml").write_text(f"locations:\\n  - {invalid}\\n")
+    try:
+        read_manifest_from_dir(root)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"accepted invalid location: {invalid}")
+"""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                code,
+                str(sdk_root),
+                str(manifest_dir),
+                str(Path(pydantic.__file__).resolve().parents[1]),
+            ],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr

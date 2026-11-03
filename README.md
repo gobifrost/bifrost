@@ -85,6 +85,20 @@ AI tools like Claude Code, GitHub Copilot, and GPT Codex can help you:
 
 The platform handles the hard parts - OAuth flows, credential encryption, multi-tenant isolation, and API authentication - so you can focus on solving business problems. With the right guidance and AI assistance, you can build automations that would have required a full development team just a few years ago, **enabling limitless possibilities for your Integration Services business**.
 
+### Migrating From Rewst
+
+The Bifrost plugin includes [`bifrost:rewst-migration`](.claude/skills/bifrost-rewst-migration/SKILL.md)
+for extracting Rewst definitions, preparing a migration plan, and verifying
+integrations, workflows, forms, apps, and cutovers. Start with:
+
+> Use bifrost:rewst-migration to inspect my Rewst setup, collect the remaining
+> decisions up front, and prepare an execution-ready migration plan.
+
+The skill includes a private GraphQL extraction helper and a fresh plan template.
+Users provide their own authorized session and current read queries; credentials,
+exports, and migration progress stay outside the distributed package. Private API
+schemas can change, so extraction reports its actual coverage and missing data.
+
 ---
 
 ## Key Features
