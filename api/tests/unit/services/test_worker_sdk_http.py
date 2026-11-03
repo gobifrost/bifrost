@@ -642,7 +642,7 @@ class TestRouteReuse:
         )
 
     def test_integration_route_selection_is_exact(self):
-        """The six integrations routes are mounted as their real objects."""
+        """The seven integrations routes are mounted as their real objects."""
         assert (
             SDK_ROUTE_PATHS
             == CONFIG_ROUTE_PATHS
@@ -653,7 +653,7 @@ class TestRouteReuse:
             | AI_ROUTE_PATHS
             | frozenset(SDK_CONTEXT_ROUTE_METHODS)
         )
-        assert len(INTEGRATION_ROUTE_PATHS) == 6
+        assert len(INTEGRATION_ROUTE_PATHS) == 7
         assert all(
             path.startswith("/api/sdk/integrations/")
             for path in INTEGRATION_ROUTE_PATHS

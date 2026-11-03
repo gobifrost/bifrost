@@ -9,7 +9,7 @@ All methods are async and must be awaited.
 from __future__ import annotations
 
 from .client import get_client, raise_for_status_with_detail
-from .models import IntegrationData, IntegrationMappingResponse
+from .models import IntegrationData, IntegrationMappingFindResult, IntegrationMappingResponse
 from ._context import resolve_scope, _execution_context
 
 
@@ -247,6 +247,56 @@ class integrations:
             if result is None:
                 return None
             return IntegrationMappingResponse.model_validate(result)
+        raise_for_status_with_detail(response)
+        raise AssertionError("unreachable")
+
+    @staticmethod
+    async def find_mapping(
+        name: str,
+        entity_id: str,
+    ) -> IntegrationMappingFindResult | None:
+        """
+        Find one mapping by exact entity ID within authorized reach.
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
+
+        Searches the same permitted set ``list_mappings`` returns, with no
+        caller-supplied organization. Returns a discriminated
+        unique/ambiguous/not_found_in_authorized_scope result whose receipt
+        never claims global absence. Unresolved outcomes perform zero tenant
+        actions.
+
+        Args:
+            name: Integration name
+            entity_id: External entity ID (exact match)
+
+        Returns:
+            IntegrationMappingFindResult | None: Discriminated result with
+                status, mapping (unique only), and receipt. None when the
+                integration is not found.
+
+        Example:
+            >>> from bifrost import integrations
+            >>> result = await integrations.find_mapping("HaloPSA", entity_id="tenant-456")
+            >>> if result and result.status == "unique":
+            ...     mapping = result.mapping
+        """
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
+            "/api/sdk/integrations/find_mapping",
+            json={"name": name, "entity_id": entity_id},
+            retry_transient=True,
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            if result is None:
+                return None
+            return IntegrationMappingFindResult.model_validate(result)
         raise_for_status_with_detail(response)
         raise AssertionError("unreachable")
 

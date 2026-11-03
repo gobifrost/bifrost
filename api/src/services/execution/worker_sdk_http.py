@@ -54,8 +54,8 @@ CONFIG_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# The six existing integrations facade routes
-# (get/list_mappings/get_mapping/upsert_mapping/delete_mapping plus the
+# The seven existing integrations facade routes
+# (get/list_mappings/get_mapping/find_mapping/upsert_mapping/delete_mapping plus the
 # OAuth refresh used by ``OAuthCredentials.refresh``). Mounted by identity
 # from the same router, exactly like the config routes.
 INTEGRATION_ROUTE_PATHS: frozenset[str] = frozenset(
@@ -63,6 +63,7 @@ INTEGRATION_ROUTE_PATHS: frozenset[str] = frozenset(
         "/api/sdk/integrations/get",
         "/api/sdk/integrations/list_mappings",
         "/api/sdk/integrations/get_mapping",
+        "/api/sdk/integrations/find_mapping",
         "/api/sdk/integrations/upsert_mapping",
         "/api/sdk/integrations/delete_mapping",
         "/api/sdk/integrations/refresh_token",

@@ -403,7 +403,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # clients can ignore the additive field; the CLI minimum remains unchanged.
     # External capacity models and daily UsageReport are both additive.
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
-    "88fba09d40e34dbfbb15f4ad882d12b81ab32255d81dc13524928089254c0bc9"
+    #
+    # SDK exact integration-mapping lookup (2026-11-03, #1016). ADDITIVE: new
+    # find_mapping request/response DTOs plus the worker-socket route; existing
+    # get/list/get_mapping shapes are unchanged, so the CLI minimum is unchanged.
+    "1f76e6a916208669edb0334949c8c3b38d141586fcb3e0cd6f48f7a747875fbf"
 )
 
 

@@ -273,6 +273,23 @@ class IntegrationMappingResponse(BaseModel):
     updated_at: datetime
 
 
+class IntegrationMappingFindReceipt(BaseModel):
+    """Authorized-reach search receipt (never claims global absence)."""
+
+    operation: str
+    searched: str
+    candidates_considered: int
+    entity_id: str
+
+
+class IntegrationMappingFindResult(BaseModel):
+    """Discriminated exact-lookup result within authorized reach."""
+
+    status: Literal["unique", "ambiguous", "not_found_in_authorized_scope"]
+    mapping: IntegrationMappingResponse | None = None
+    receipt: IntegrationMappingFindReceipt
+
+
 class ConfigData(BaseModel):
     """Configuration data with dict-like access.
 
