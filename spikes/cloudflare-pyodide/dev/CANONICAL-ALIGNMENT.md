@@ -1,5 +1,9 @@
 # Closed guard and API alignment
 
+The subsequent [schema-only rehearsal](SCHEMA-REHEARSAL.md) passes the four
+migrations on an empty disposable clone. Original dev source/schema remain
+unchanged; existing-data and matched API qualification are still required.
+
 The new guarded candidate runs locally under the cf CLI. An unauthenticated
 POST with malformed JSON, a POST with a wrong synthetic key, and GET all return
 403 before request parsing/execution. canonical-guard-v2.json records no OOM,

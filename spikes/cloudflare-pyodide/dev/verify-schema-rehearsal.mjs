@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const result = JSON.parse(readFileSync(new URL('./schema-rehearsal-v1.json', import.meta.url), 'utf8'));
+assert.equal(result.source, '1d33150eb376b71f8a81b427920eda1b0447f829');
+assert.equal(result.passed, true);
+assert.equal(result.revision, '20261101_table_name_unique');
+assert.deepEqual(result.columns, ['active_handler_counts', 'capacity_resource_deleted_at', 'capacity_resource_uid', 'capacity_scope']);
+assert.deepEqual(result.indexes, ['ix_execution_workers_external_cleanup', 'ix_tables_global_name_unique', 'ix_tables_org_name_unique']);
+assert.equal(result.disposable_database_absent, true);
+assert.equal(result.dev_revision_after, '20261031_app_sdk_binding');
+assert.equal(result.dev_database_migrated, false);
+assert.equal(result.cloud_invocations, 0);
+console.log('Schema-only migration and cleanup receipt verified; populated-data/API/cloud acceptance remains separate.');

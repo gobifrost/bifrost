@@ -1,0 +1,24 @@
+{
+  "source": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "database": "bifrost_pyodide_schema_v1",
+  "cloud_invocations": 0,
+  "dev_database_migrated": false,
+  "passed": true,
+  "schema_sha256": "488272e14c08012cbcc68bb4d964f3716e0be3006c124fabea69c9b9dff91c5b",
+  "schema_bytes": 239357,
+  "revision": "20261101_table_name_unique",
+  "columns": [
+    "active_handler_counts",
+    "capacity_resource_deleted_at",
+    "capacity_resource_uid",
+    "capacity_scope"
+  ],
+  "indexes": [
+    "ix_execution_workers_external_cleanup",
+    "ix_tables_global_name_unique",
+    "ix_tables_org_name_unique"
+  ],
+  "disposable_database_absent": true,
+  "dev_revision_after": "20261031_app_sdk_binding",
+  "elapsed_seconds": 4.174938301090151
+}
