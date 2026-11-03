@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+{% include "thread_client_pool.py.j2" %}
 
 # =============================================================================
 # Helper Classes
@@ -207,12 +208,15 @@ class _LazyClient:
     Module-level proxy that auto-initializes from Bifrost integration.
     Provides zero-config authentication experience.
 
-    Note: Client is NOT cached - always fetches fresh credentials to ensure
-    token refreshes are picked up immediately.
+    Integration data is read for every call so credential refreshes and config
+    updates select a new current-thread client immediately.
     """
 
     _integration_name: str = "{{ integration_name }}"
     _auth_type: str = "{{ auth_type }}"
+
+    def __init__(self):
+        self._client_pool = _ThreadClientPool(lambda client: client.session.close())
 
     async def _ensure_client(self):
         from bifrost import integrations
@@ -222,34 +226,6 @@ class _LazyClient:
             raise RuntimeError(f"Integration '{self._integration_name}' not found")
 
         config = integration.config or {}
-        session = requests.Session()
-
-{% if auth_type == 'api_key' %}
-        # API Key authentication
-        header_name = config.get("header_name", "Authorization")
-        api_key = config.get("api_key")
-        if api_key:
-            session.headers[header_name] = api_key
-{% elif auth_type == 'bearer' %}
-        # Bearer token authentication
-        token = config.get("token")
-        if token:
-            session.headers["Authorization"] = f"Bearer {token}"
-{% elif auth_type == 'basic' %}
-        # Basic authentication
-        import base64
-        username = config.get("username", "")
-        password = config.get("password", "")
-        if username or password:
-            credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
-            session.headers["Authorization"] = f"Basic {credentials}"
-{% elif auth_type == 'oauth' %}
-        # OAuth authentication
-        if integration.oauth and integration.oauth.access_token:
-            session.headers["Authorization"] = f"Bearer {integration.oauth.access_token}"
-        else:
-            raise RuntimeError("OAuth not configured or access token missing")
-{% endif %}
 
         base_url = config.get("base_url", "")
         if not base_url:
@@ -261,14 +237,72 @@ class _LazyClient:
         base_backoff = float(config.get("base_backoff", 1.0))
         max_backoff = float(config.get("max_backoff", 60.0))
 
-        return _{{ class_name }}Client(
-            base_url,
-            session,
-            timeout=timeout,
-            max_retries=max_retries,
-            base_backoff=base_backoff,
-            max_backoff=max_backoff,
+{% if auth_type == 'api_key' %}
+        # API Key authentication
+        header_name = config.get("header_name", "Authorization")
+        api_key = config.get("api_key")
+{% elif auth_type == 'bearer' %}
+        # Bearer token authentication
+        token = config.get("token")
+{% elif auth_type == 'basic' %}
+        # Basic authentication
+        import base64
+        username = config.get("username", "")
+        password = config.get("password", "")
+        if username or password:
+            credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+{% elif auth_type == 'oauth' %}
+        # OAuth authentication
+        if integration.oauth and integration.oauth.access_token:
+            access_token = integration.oauth.access_token
+        else:
+            raise RuntimeError("OAuth not configured or access token missing")
+{% endif %}
+
+        cache_key = (
+            self._integration_name,
+            integration.integration_id,
+            integration.entity_id,
+            config,
+{% if auth_type == 'oauth' %}
+            access_token,
+{% else %}
+            None,
+{% endif %}
         )
+
+        def build_client():
+            session = requests.Session()
+            try:
+{% if auth_type == 'api_key' %}
+                if api_key:
+                    session.headers[header_name] = api_key
+{% elif auth_type == 'bearer' %}
+                if token:
+                    session.headers["Authorization"] = f"Bearer {token}"
+{% elif auth_type == 'basic' %}
+                if username or password:
+                    session.headers["Authorization"] = f"Basic {credentials}"
+{% elif auth_type == 'oauth' %}
+                session.headers["Authorization"] = f"Bearer {access_token}"
+{% endif %}
+                return _{{ class_name }}Client(
+                    base_url,
+                    session,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                    base_backoff=base_backoff,
+                    max_backoff=max_backoff,
+                )
+            except BaseException:
+                session.close()
+                raise
+
+        return self._client_pool.get(cache_key, build_client)
+
+    def _close(self):
+        """Close the cached generated client owned by the current thread."""
+        self._client_pool.close()
 
     def __getattr__(self, name: str):
         """Proxy attribute access to the real client."""

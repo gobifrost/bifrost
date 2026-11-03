@@ -1,0 +1,13 @@
+{
+  "key": "pr:1210",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal activation of the approved workflow performance notice from PR #1209; no new customer-facing behavior or prose.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1210",
+      "Canonical validation, deterministic bundle comparison, image preparation and all 44 tooling tests passed. All 320 prior commit and PR records and all 39 prior eligible notices remain unchanged; only the approved Faster Workflow Starts notice was added."
+    ]
+  }
+}

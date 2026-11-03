@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { AlertCircle, LoaderCircle, Megaphone, X } from "lucide-react";
+import { AlertCircle, LoaderCircle, Megaphone } from "lucide-react";
 import {
 	CommunityFooter,
 	UpdateGroups,
 } from "@/components/layout/ProductUpdateContent";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -66,22 +64,10 @@ export function ProductUpdates({
 	}, [adapter, entries]);
 
 	return (
-		<div className="flex h-full min-h-0 flex-col">
-			<div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-6">
+		<div className="space-y-6">
+			<div className="mx-auto w-full max-w-3xl space-y-6">
 				<ListPageHeader
 					title="What's New"
-					titleAccessory={
-						<Button
-							asChild
-							variant="ghost"
-							className="ml-auto h-10 px-3"
-						>
-							<Link to="/">
-								<X aria-hidden="true" className="size-4" />
-								Done
-							</Link>
-						</Button>
-					}
 					description="New features, improvements, and fixes in Bifrost."
 				/>
 
@@ -95,7 +81,7 @@ export function ProductUpdates({
 						</AlertDescription>
 					</Alert>
 				)}
-				<div className="min-h-0 overflow-auto pr-1 pb-3">
+				<div>
 					{failed ? (
 						<FeedFailure />
 					) : entries === null ? (

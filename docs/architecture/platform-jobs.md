@@ -150,6 +150,14 @@ executor for that API process and creates launcher-specific `PoolWorker`
 control only after a launcher has authenticated; it does not double-start a
 separate agent worker for each launcher.
 
+Each API dispatch-reconciliation pass also recovers expired local PlatformJob
+leases through the shared recovery function. Recovery cannot depend on a live
+physical worker: after the last worker is lost, expired running jobs must become
+queued demand under their recorded retry policy so scale-to-zero capacity can
+start replacements. Cancellation and exhausted/non-retryable attempts retain
+their normal terminal outcomes. Concurrent API and worker recovery passes use
+the existing row locks and lease checks.
+
 The API's normal shutdown budget allows active agent work to drain for 300
 seconds; supported API deployments give the pod/process 310 seconds. Uvicorn
 may close WebSockets before lifespan shutdown begins. In that case the remote

@@ -1306,6 +1306,7 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": channel
                         })
+                        manager.request_queue_position_refresh()
                     elif channel.startswith("service:"):
                         # Service log streaming - platform admins only
                         service_id = channel.split(":", 1)[1]

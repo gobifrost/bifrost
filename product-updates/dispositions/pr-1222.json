@@ -1,0 +1,21 @@
+{
+  "key": "pr:1222",
+  "classification": "other",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1222",
+      "User requested a reusable public package for an existing Rewst customer to pilot, with no prior customer migration state carried forward.",
+      "Final scope includes an optional Solution app, config declarations, migration workflows, managed state, an offline sample, and an external Codex/Claude handoff. No Bifrost internal Coding Agent or AI provider is required.",
+      "The cookie is entered in native install-scoped secret Configuration. Source captures and runtime plans are excluded from the distributable definition. Current Rewst schema and cookie compatibility require the customer pilot.",
+      "Copy review: the README and pilot checklist distinguish synthetic package verification, live capture coverage, submitted test evidence, and production cutover authority.",
+      "The real pilot install exposed two shared platform defects: the standalone CLI imported server-only shared.file_paths during manifest validation, and the deploy-only ORM guard rejected runtime FileMetadata updates after initial creation.",
+      "Location validation remains one canonical implementation shared by the standalone CLI and server. Runtime FileMetadata is operational data; FilePolicy and portable workflow definitions remain guarded. Existing Files authorization and revision checks are unchanged.",
+      "First browser result: Solution deployment, app loading, and sample creation passed; export failed at the guarded state-file update. The failure was diagnosed from SDK/ORM stack evidence before repair. It is not waived or retried without a code change.",
+      "Final sample verification passed through a fresh public repository install and scoped CLI calls. The actual deployed app browser journey passed in 40.8 seconds, covering persistent plan/evidence, migration isolation, source artifacts, phone command wrapping and navigation, and light theme. Live Rewst remains unverified."
+    ]
+  },
+  "category": "fix",
+  "summary": "Allow Solution apps to update runtime files and validate file locations with the standalone CLI."
+}

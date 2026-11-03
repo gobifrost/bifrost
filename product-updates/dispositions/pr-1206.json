@@ -1,0 +1,19 @@
+{
+  "key": "pr:1206",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal storage compatibility strategy and deployment configuration. Default copy behavior is unchanged, and no customer upgrade action is required; this implementation detail does not warrant an in-app announcement or a separate release-only note.",
+  "security_review": {
+    "status": "not_required"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1206",
+      "Jack approved retaining the explicit opt-in flag and completing the protected merge lifecycle in the private PR review thread. His release visibility policy excludes internal implementation details and routine fixes from the in-app modal. Reviewed omission follows that policy while retaining source, contributor and storage safety evidence; no reproduced R2 data-loss vulnerability or mandatory upgrade action is claimed.",
+      "Contributor credit: GitHub identifies Thomas Bray (@MTG-Thomas, https://github.com/MTG-Thomas) as the PR author. His original implementation f4b1cfa40 and disposition b85801e77 remain in this branch's ancestry; the maintainer repair only wires Compose configuration and adds regression coverage.",
+      "Storage safety review traced conditional signed ranged GETs, original ETag/status/range/length validation, body cleanup and multipart abort on failure or cancellation, and IfNoneMatch=* on completion. Default server copying and single-request copies remain unchanged. This is an optional compatibility strategy, not a security disclosure; no separate security release notice is required. Real R2 execution, atomic completion qualification and physical multi-gigabyte performance remain outside this contribution's acceptance claims.",
+      "Focused Docker verification: BIFROST_TEST_UNIT_ONLY=1 ./test.sh tests/unit/core/test_s3_transport.py tests/unit/test_s3_move_primitives.py tests/unit/test_s3_copy_configuration.py tests/unit/test_s3_stream_upload.py tests/unit/services/file_move/test_engine_multipart.py tests/unit/test_compose_release_pin.py tests/unit/test_compose_test_harness.py -q passed 104 tests. ./test.sh tests/e2e/platform/test_s3_stream_copy.py tests/e2e/platform/test_s3_transport.py -q --durations=0 passed 2 tests. Both JUnit reports have zero failures, errors or skips. BIFROST_SKIP_BUILD=1 ./test.sh quality api passed Pyright with zero errors/warnings and Ruff. Sanitized docker compose config checks passed unset/server/stream across production, development and debug stacks. Canonical content and normalized merge-group event validation passed. Full suites and production provider qualification are deferred to their separate gates."
+    ]
+  }
+}
