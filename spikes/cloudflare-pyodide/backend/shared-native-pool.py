@@ -5,17 +5,14 @@ import json
 import logging
 import os
 import runpy
-import time
-from types import SimpleNamespace
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 from sqlalchemy import delete, select
 
-from http_invocation import HttpInvocation
+from private_http_pool import PrivateHttpWorkflowPool
 from task_cleanup import cancel_and_join
-from workflow_request_mux import WorkflowRequestMux
 
 
 async def main():
@@ -36,18 +33,15 @@ async def main():
     from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
     from src.models.orm.work_dispatches import WorkDispatch
     from src.services.execution.memory_monitor import effective_memory_sample
-    from src.services.execution.process_pool import CredentialRoute
     from src.services.execution.workflow_dispatch import stage_workflow_run
     from src.services.repo_storage import RepoStorage
     from src.services.worker_pool.claims import claim_next, register_static_worker, mark_static_ready, heartbeat_worker
     from src.worker.remote.fencing import LeaseRef, remote_owner_context
     from src.worker.remote.ownership import acquire_remote_owner, renew_remote_owner, release_remote_owner
-    from src.worker.remote.protocol import CLOUDFLARE_PYTHON_RUNTIME_PROFILE, CredentialRouteChanged
-    from src.worker.remote.remote_pool import ThinRemoteProcessPool
+    from src.worker.remote.protocol import CredentialRouteChanged
     from tests.unit.authorization.committed_runs import committed_world
 
     helpers = runpy.run_path('/spike/backend/authorized-local.py')
-    journal = runpy.run_path('/spike/backend/attempt_journal.py')['AttemptJournal'](capacity=2)
     await init_db()
     storage, sources, slots, secrets = RepoStorage(), {}, {}, []
     heartbeat, ref = None, None
@@ -173,34 +167,19 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     raise RuntimeError('Shared worker ready transition failed')
             await beat()
             heartbeat = asyncio.create_task(renew())
-            mux = WorkflowRequestMux(lambda: ref.lease.session_generation)
-
-            class Transport:
-                connected = True
-                hostname = 'local-workerd-shared-qualification'
-
-                @property
-                def lease(self):
-                    return ref.lease
-
-                def memory(self):
-                    return effective_memory_sample()
-
-                def memory_request_bytes(self, key):
-                    return requests.get(key)
-
-                async def request(self, action, payload, *, expected_generation=None):
-                    return await mux.request(action, payload, expected_generation=expected_generation)
-
             async def canonical_result(result):
                 await consumer._handle_result(result)
 
-            native = ThinRemoteProcessPool(Transport(), worker_id=str(worker_id),
-                runtime_profile=CLOUDFLARE_PYTHON_RUNTIME_PROFILE, on_result=canonical_result)
+            adapter = PrivateHttpWorkflowPool(endpoint='http://bifrost-pyodide-ddf316c1:8799', worker_id=worker_id,
+                lease_ref=ref, memory_sample=effective_memory_sample, memory_request_bytes=requests.get,
+                on_result=canonical_result, capacity=2)
+            native, mux = adapter.native, adapter.mux
+            for run, slot in slots.items():
+                adapter.bind_manifest(run, {path: manifest[path] for path in (slot['path'], slot['helper'] + '.py')})
 
             class Parent:
                 def credential_route(self):
-                    return CredentialRoute(2, ref.lease.session_generation)
+                    return adapter.credential_route()
 
                 async def route_execution(self, *, execution_id, context, credential_route, active_execution):
                     slot = slots[execution_id]
@@ -209,40 +188,20 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     context['content_hash'] = manifest[slot['path']]
                     slot['token'], slot['refresh'] = context['engine_token'], context.get('engine_refresh_token')
                     secrets.extend([slot['token'], slot['refresh']])
-
-                    async def collect(payload, accepted):
-                        def on_accepted(handle):
-                            slot['accepted_monotonic'] = time.monotonic()
-                            accepted(handle)
-
-                        invocation = HttpInvocation('http://bifrost-pyodide-ddf316c1:8799',
-                            {'mode': 'canonical', 'worker_id': str(worker_id), 'execution_id': execution_id,
-                             'context': payload['context'],
-                             'manifest': {path: manifest[path] for path in (slot['path'], slot['helper'] + '.py')}}, on_accepted)
-                        slot['invocation'] = invocation
-                        report['launches'][execution_id] = report['launches'].get(execution_id, 0) + 1
-                        slot['evidence'] = await invocation.collect()
-                        slot['terminal_monotonic'] = time.monotonic()
-                        return slot['evidence']['result']
-
-                    mux.bind(execution_id, collect)
-                    await native.route_execution(execution_id, context, active_execution, credential_route=credential_route)
-                    route, handle = next((route, handle) for route, handle in native.processes.items()
-                        if handle.current_execution.execution_id == execution_id)
-                    slot['route'], slot['info'] = route, handle.current_execution
-
-                    async def terminal():
-                        return await asyncio.shield(mux.collection(execution_id))
-
-                    slot['receipt'] = await journal.dispatch(ref.lease, route, execution_id, terminal)
+                    # This fixed fixture supplies explicit provenance. The
+                    # reusable adapter refuses an absent/mismatched native hash;
+                    # it never silently fills one in on behalf of dispatch.
+                    slot['original_context'] = json.loads(json.dumps(context, default=str))
+                    slot['original_active'] = json.loads(json.dumps(active_execution, default=str))
+                    await adapter.route_execution(execution_id=execution_id, context=context,
+                        active_execution=active_execution, credential_route=credential_route)
+                    attempt = adapter.attempt(execution_id)
+                    slot.update(route=attempt.route, info=attempt.info, receipt=attempt.receipt,
+                                invocation=attempt.invocation, accepted_monotonic=attempt.accepted_monotonic)
 
             consumer = WorkflowExecutionConsumer(pool=Parent())
             consumer.owner_worker_id = worker_id
 
-            async def through_native(result):
-                await native.handle_event({'event': 'result', 'route_id': slots[result['execution_id']]['route'], 'result': result})
-
-            terminal_consumer = SimpleNamespace(owner_worker_id=worker_id, _handle_result=through_native)
             try:
                 # Existing credential-free initialization avoids the separately
                 # retained cold concurrent Pyodide initialization race. Each
@@ -304,7 +263,7 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
 
                     consumer._handle_result = lose_ack
                     try:
-                        await journal.reconcile_workflow(ref.lease, failed['route'], terminal_consumer, failed['info'])
+                        await adapter.reconcile(str(failed['execution'].id))
                     except ConnectionError as exc:
                         if str(exc) != 'Injected shared failure ACK loss':
                             raise
@@ -328,12 +287,12 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     ref.lease = await connect(2)
                     await beat()
                     try:
-                        await journal.reconcile_workflow(old, failed['route'], terminal_consumer, failed['info'])
+                        await adapter.reconcile(str(failed['execution'].id), lease=old)
                     except CredentialRouteChanged:
                         report['stale_terminal_owner_rejected'] = True
                     else:
                         raise RuntimeError('Stale terminal owner accepted')
-                    acknowledged = await journal.reconcile_workflow(ref.lease, failed['route'], terminal_consumer, failed['info'])
+                    acknowledged = await adapter.reconcile(str(failed['execution'].id))
                     if not acknowledged or native._build_heartbeat()['busy_count'] != 1 or peer['route'] not in native.processes:
                         raise RuntimeError('Failure reconciliation did not preserve peer obligation')
                     report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
@@ -350,11 +309,9 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         raise RuntimeError('Failure ACK replay duplicated canonical state/logs')
                     report['failed_replay_unchanged_verified'] = True
 
-                    async def forbidden_relaunch():
-                        raise RuntimeError('Duplicate dispatch attempted another launch')
-
-                    duplicate = await journal.dispatch(ref.lease, peer['route'], str(peer['execution'].id), forbidden_relaunch)
-                    if duplicate is not peer['receipt']:
+                    await adapter.route_execution(execution_id=str(peer['execution'].id), context=peer['original_context'],
+                        active_execution=peer['original_active'], credential_route=adapter.credential_route())
+                    if adapter.attempt(str(peer['execution'].id)).receipt is not peer['receipt']:
                         raise RuntimeError('Peer duplicate did not reuse original receipt')
                     peer_access = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + peer['token']},
                                                  json={'key': peer['key']})
@@ -368,7 +325,7 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     success = await peer['receipt']
                     if not success['success'] or success['result']['value'] != peer['value']:
                         raise RuntimeError('Independent successful peer result mismatch')
-                    acknowledged = await journal.reconcile_workflow(ref.lease, peer['route'], terminal_consumer, peer['info'])
+                    acknowledged = await adapter.reconcile(str(peer['execution'].id))
                     if not acknowledged or native.processes or native._build_heartbeat()['busy_count'] != 0:
                         raise RuntimeError('Final settled peer obligation remained')
                     report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
@@ -380,6 +337,9 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             raise RuntimeError('Canonical settled worker accounting was not released')
                     report['canonical_settled_accounting_verified'] = True
                     for run, slot in slots.items():
+                        attempt = adapter.attempt(run)
+                        slot['evidence'], slot['terminal_monotonic'] = attempt.evidence, attempt.terminal_monotonic
+                        report['launches'][run] = attempt.launches
                         status = ExecutionStatus.FAILED if slot is failed else ExecutionStatus.SUCCESS
                         async with get_db_context() as db:
                             row = await db.get(Execution, slot['execution'].id)
@@ -396,12 +356,12 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             'runtime_handle': slot['invocation'].runtime_handle, 'route': slot['route'],
                             'accepted_monotonic': slot['accepted_monotonic'], 'terminal_monotonic': slot['terminal_monotonic'],
                             'evidence': slot['evidence'], 'access_after_terminal_status': revoked.status_code}
-                    await journal.retire()
-                    mux.retire()
+                    await adapter.retire()
                     if mux.retained_count != 0:
                         raise RuntimeError('Retired request collector retained credentials')
                     report.update(single_native_pool_verified=True, terminal_obligations_released=True,
-                                  canonical_terminal_reconciliation_verified=True, mux_retired_after_canonical_ack=True)
+                                  canonical_terminal_reconciliation_verified=True, mux_retired_after_canonical_ack=True,
+                                  reusable_private_adapter_verified=True)
                 if heartbeat.done():
                     heartbeat.result()
             finally:

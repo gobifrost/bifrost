@@ -779,3 +779,36 @@ inventing Linux commands. Public admission and abnormalCPUstop remain unaccepted
 Final shared-pool V4 passes four phases, supervisor72.338s; nativebusy2,2,1,0,
 canonicalpeer/settledaccountingverified,11focusedcasesandRuff/Pyrightpass.
 Provideralive/noOOMbeforecleanup;ownedrunningcontainersaftercleanupempty.
+
+## Reusable private HTTP backend, 2026-11-03
+
+Hypothesis: the successful shared-pool transport can become reusable backend
+code without cloning engine, authorization, claims or terminal semantics.
+Change: PrivateHttpWorkflowPool composes actual ThinRemoteProcessPool plus the
+existing companion journal/mux/HTTP framing. Explicit bounded pinned manifests,
+immutable context/active metadata, current canonical-owner/credential-route
+checks, receipt reservation BEFORE physical dispatch, duplicate/cancel/streamloss
+retention, actual native result callback and ACK-gated retirement. No registration,
+token issuer, business-job queue, automatic retry or public admission added.
+Shared fixture delegates physical routing/reconciliation to the new module.
+Six new adapter cases use real native pool plus mocked ownership/Redis and HTTP
+byte fixtures: pre-bookkeeping refusals, owner loss at reservation, immutable
+single dispatch/ACK retirement, routing waiter cancellation, lost stream retained
+without relaunch, native persistent-service refusal. These are transport tests,
+not mocked SDK compatibility. Total17guestcases pass. V1Ruff finds unused time
+import after extraction; stops before live invocation, source/diagnostic kept.
+Removeunusedimport; V2 tests/Ruff/Pyrightpass. Real command timeout430python3
+inbox/private-pool-v2/ct128-canonical-failure.py --private-pool --revision2 passes
+four phases72.523s: two actual tenantengine/SDK runs, held70/78, ValueError/Failed,
+lostACK/current/staleownerreplay, livepeer200/failed401, adapterduplicate reuses
+originalreceipt, Success78/all401, native/canonicalaccounting2,2,1,0andretire.
+Allownedtestcontainersstopped, provideralive/noOOMbeforecleanup; no cloudcalls.
+Artifacts: backend/PRIVATE-HTTP-POOL.md, results/private-pool/v2.json and verifier.
+Historicalshared-pool verifier now reads exact6913d999d source, not newcode.
+Remaining realgap: baselineconsumer initializes content_hashNone; fixed fixture
+explicitly supplies knownpublishedhash. Adapterrefusesmissing/mismatchhash and
+doesnotinventpins. Next: authoritativeAPI/workspaceplan preparation for normal
+claimedruns, then supported startup without Linuxconfigure/package commands.
+FixedWorkeradmission, signedcontrolsocket, deployedcombinedlifecycle and abnormal
+CPUsettlement remain unaccepted. Coldconcurrentstartupfailure retained; prewarm
+iscredentialfreebeforeclaims, not coldlatency or arbitrarycodeadmission proof.

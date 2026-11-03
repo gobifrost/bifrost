@@ -1,0 +1,11 @@
+{
+  "phase": "pre-runtime quality",
+  "unit_cases": 17,
+  "unit_exit_code": 0,
+  "ruff_exit_code": 1,
+  "ruff_diagnostic": "shared-native-pool.py:8 F401 unused time import after extraction",
+  "pyright": "not run because Ruff failed",
+  "fix": "Remove unused import; no behavior or timeout change.",
+  "actual_workflow_invocations": 0,
+  "cloud_invocations": 0
+}

@@ -74,3 +74,8 @@ public runtime admission/startup, a reusable deployment adapter and combined
 deployed canonical lifecycle acceptance are still outstanding. Deployed abnormal
 CPU cancellation/resource settlement remains unproven. No per-success isolate
 destruction is required or inferred.
+
+The later [private adapter extraction](PRIVATE-HTTP-POOL.md) now supplies reusable
+routing/receipt/reconciliation code to this fixture. Public startup and normal
+authoritative manifest preparation remain outstanding; the historical receipts
+above stay bound to their original fixture source.

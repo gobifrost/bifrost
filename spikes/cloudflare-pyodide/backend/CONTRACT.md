@@ -66,6 +66,12 @@ and obligation/accounting release pass without relaunching either workflow.
 The control connection is fixture-supplied; this is not public profile startup,
 combined deployed control authentication or arbitrary untrusted admission.
 
+The [private HTTP adapter](PRIVATE-HTTP-POOL.md) now composes that native pool
+without rewriting scheduling, token issuance or terminal semantics. Transport
+retention precedes physical dispatch, and duplicate calls preserve the original
+attempt. It requires explicit provenance matching the caller's native context;
+normal manifest preparation/startup remain real integration gaps.
+
 ### Health, workflow outcome and provider settlement are separate facts
 
 The [automatic recovery experiment](AUTOMATIC-RECOVERY.md) establishes why a

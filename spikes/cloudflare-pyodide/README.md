@@ -1,5 +1,10 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest implementation: [reusable private HTTP workflow adapter](backend/PRIVATE-HTTP-POOL.md).
+The shared fixture now delegates to backend code around the actual native pool.
+Seventeen focused tests and real two-tenant engine/SDK execution pass. Normal
+authoritative manifest preparation, public startup and deployed cancellation remain open.
+
 Latest real concurrency qualification: [one native pool, two tenant workflows](backend/SHARED-NATIVE-POOL.md).
 Both actual engine/SDK runs reach independent effects concurrently; failure,
 lost ACK and owner reconnect preserve the successful peer. This is warm local

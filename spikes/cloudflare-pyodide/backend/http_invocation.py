@@ -15,12 +15,27 @@ class HttpInvocation:
     at most one POST, retains parsed terminal evidence on lost EOF, and never
     changes business-job state. It is not a public provider admission API.
     """
-    def __init__(self, endpoint, envelope, on_accepted, *, headers=None):
+    @staticmethod
+    def validated_endpoint(endpoint):
         url = httpx.URL(endpoint)
         local = url.scheme == 'http' and url.host == 'bifrost-pyodide-ddf316c1' and url.port == 8799
         if ((url.scheme != 'https' and not local) or not url.host or url.username or url.password
             or url.query or url.fragment):
             raise ValueError('Trusted HTTPS or fixed isolated-test endpoint required')
+        return str(url)
+
+    @staticmethod
+    def validated_headers(headers):
+        copied = dict(headers or {})
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in copied.items()):
+            raise ValueError('Native invocation headers must be strings')
+        reserved = {'cookie', 'accept', 'content-type', 'content-length', 'transfer-encoding', 'host', 'connection'}
+        if any(key.lower() in reserved for key in copied):
+            raise ValueError('Invocation framing and session headers are reserved')
+        return copied
+
+    def __init__(self, endpoint, envelope, on_accepted, *, headers=None):
+        self._endpoint = self.validated_endpoint(endpoint)
         if not isinstance(envelope, dict):
             raise ValueError('Canonical invocation identity required')
         execution_id = envelope.get('execution_id')
@@ -36,14 +51,8 @@ class HttpInvocation:
         if len(body) > 262144:
             raise ValueError('Invocation request exceeds bound')
         self._execution_id = execution_id
-        self._endpoint = str(url)
         self._body = body
-        self._headers = dict(headers or {})
-        if not all(isinstance(key, str) and isinstance(value, str) for key, value in self._headers.items()):
-            raise ValueError('Native invocation headers must be strings')
-        reserved = {'cookie', 'accept', 'content-type', 'content-length', 'transfer-encoding', 'host', 'connection'}
-        if any(key.lower() in reserved for key in self._headers):
-            raise ValueError('Invocation framing and session headers are reserved')
+        self._headers = self.validated_headers(headers)
         self._headers.update({'Accept': 'application/x-ndjson', 'Content-Type': 'application/json'})
         self._reader = InvocationStream(execution_id, on_accepted)
         self._started = False
