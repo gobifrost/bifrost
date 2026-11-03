@@ -27,6 +27,16 @@ CHALLENGE = {"WWW-Authenticate": 'Bearer error="invalid_token", error_descriptio
 API = "http://test.local"
 
 
+def _register_async_client(
+    client: client_mod.BifrostClient, http: httpx.AsyncClient
+) -> httpx.AsyncClient:
+    clients = client._clients_for_loop()
+    clients.http = http
+    if http not in clients.clients:
+        clients.clients.append(http)
+    return http
+
+
 @pytest.fixture(autouse=True)
 def _no_real_sleep():
     async def _async_noop(_delay: float) -> None:
@@ -92,7 +102,7 @@ def _client(
     monkeypatch.setattr(client_mod, "_refresh_connection_access_token_sync", refresher.sync)
     client = client_mod.BifrostClient(API, "stale")
     transport = httpx.MockTransport(server)
-    client._http = RefreshingAsyncClient(
+    async_http = RefreshingAsyncClient(
         refresh=client.refresh_access_token,
         base_url=API,
         headers={"Authorization": "Bearer stale"},
@@ -105,8 +115,9 @@ def _client(
         headers={"Authorization": "Bearer stale"},
         transport=transport,
     )
-    # Keep the prepared async client whatever the running loop.
-    monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
+    monkeypatch.setattr(
+        client, "_get_async_client", lambda: _register_async_client(client, async_http)
+    )
     return client
 
 
@@ -232,13 +243,13 @@ async def test_a_stream_refreshes_on_the_status_line_before_any_bytes(monkeypatc
     refresher = _Refresher()
     monkeypatch.setattr(client_mod, "refresh_connection_access_token", refresher)
     client = client_mod.BifrostClient(API, "stale")
-    client._http = RefreshingAsyncClient(
+    async_http = RefreshingAsyncClient(
         refresh=client.refresh_access_token,
         base_url=API,
         headers={"Authorization": "Bearer stale"},
         transport=httpx.MockTransport(server),
     )
-    monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
+    _register_async_client(client, async_http)
 
     async with client.stream("POST", "/api/sdk/ai/stream", json={}) as response:
         body = await response.aread()
@@ -259,13 +270,13 @@ async def test_a_returned_stream_is_never_replayed(monkeypatch: pytest.MonkeyPat
         return httpx.Response(200, content=b"partial", request=request)
 
     client = client_mod.BifrostClient(API, "stale")
-    client._http = RefreshingAsyncClient(
+    async_http = RefreshingAsyncClient(
         refresh=client.refresh_access_token,
         base_url=API,
         headers={"Authorization": "Bearer stale"},
         transport=httpx.MockTransport(server),
     )
-    monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
+    _register_async_client(client, async_http)
 
     async with client.stream("GET", "/api/stream") as response:
         assert await response.aread() == b"partial"
@@ -385,7 +396,7 @@ async def test_a_sync_call_on_the_loop_during_an_async_refresh_adopts_its_token(
     server = _Server([])
     client = client_mod.BifrostClient(API, "stale")
     transport = httpx.MockTransport(server)
-    client._http = RefreshingAsyncClient(
+    async_http = RefreshingAsyncClient(
         refresh=client.refresh_access_token, base_url=API, headers={"Authorization": "Bearer stale"}, transport=transport
     )
     client._sync_http.close()
@@ -395,7 +406,7 @@ async def test_a_sync_call_on_the_loop_during_an_async_refresh_adopts_its_token(
         headers={"Authorization": "Bearer stale"},
         transport=transport,
     )
-    monkeypatch.setattr(client, "_get_async_client", lambda: client._http)
+    _register_async_client(client, async_http)
     try:
         in_flight = asyncio.create_task(client.post("/api/things", json={"name": "async"}))
         assert await asyncio.to_thread(posted.wait, 10)
