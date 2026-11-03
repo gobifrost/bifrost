@@ -15,7 +15,9 @@ assert.equal(report.volumes_deleted, false);
 assert.equal(report.fixture_sha256, hash(execFileSync('git', ['show',
   'ca40ad458c29ef465820fa76dd6767811ac5caf6:spikes/cloudflare-pyodide/backend/linux-control-reference.py'],
 {cwd: fileURLToPath(new URL('../../../', import.meta.url))})));
-assert.equal(report.benchmark_source_sha256, hash(readFileSync(new URL('benchmark-workloads.py', import.meta.url))));
+assert.equal(report.benchmark_source_sha256, hash(execFileSync('git', ['show',
+  'ca40ad458c29ef465820fa76dd6767811ac5caf6:spikes/cloudflare-pyodide/backend/benchmark-workloads.py'],
+{cwd: fileURLToPath(new URL('../../../', import.meta.url))})));
 const run = report.observed;
 assert.equal(run.real_linux_fork_verified, true);
 assert.equal(run.retained_terminal_acknowledged, true);

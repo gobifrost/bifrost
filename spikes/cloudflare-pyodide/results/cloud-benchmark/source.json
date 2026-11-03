@@ -1,0 +1,19 @@
+{
+    "workloads":  5,
+    "samples_per_workload":  3,
+    "fresh_children":  5,
+    "files":  {
+                  "spikes/cloudflare-pyodide/dev/executor/python-entry.mjs":  "a0fc8853dc3a5cf224fae46af395a60188d4e35d8a1a0fc9397039d577d0ab43",
+                  "spikes/cloudflare-pyodide/dev/executor/cloudflare.config.ts":  "d58efd67ceeb0cc76db368611dff3070c61252b85b30a646e162297d5048198b",
+                  "spikes/cloudflare-pyodide/backend/benchmark-workloads.py":  "412e8664ea7a5e13cb24562cc15894e1760ea57beb2b3e09409f0fd28af5f848",
+                  "spikes/cloudflare-pyodide/backend/authorized-local.py":  "8fc2157db3f61d6c37ab44aa04fbe4995a601f0e51a7a29987d02c810f7e838f",
+                  "spikes/cloudflare-pyodide/dev/executor/policy.mjs":  "8c4227b92e2011857851a6299542ff8aec748477acf9d99e5ae2c9a5482e025c",
+                  "spikes/cloudflare-pyodide/dev/run_cloud_qualification.py":  "5a823747d5d4f45bd5f361bf769e7b1df70a09ecbce0a30dd123334abc9f1f7b",
+                  "spikes/cloudflare-pyodide/dev/run_cloud_benchmark.py":  "a69901ac950a7d89933eb17b22d7df8ae152e1496108b9a961f966ecc225aa40",
+                  "spikes/cloudflare-pyodide/dev/executor/entry.mjs":  "8c269981ded77d20bc8c742bc7cc2d6f03dbecf2dc5f159e9521da8f0f22df92"
+              },
+    "dev_api_source":  "2037ac0d9ec95e94a77ce440001ae016d4215407",
+    "runtime_sha256":  "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+    "automatic_retries":  0,
+    "base_commit":  "2131b7e0b701ef6e58f46dfabb79cad76de51e71"
+}

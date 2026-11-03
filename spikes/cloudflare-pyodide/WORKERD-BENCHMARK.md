@@ -1,5 +1,11 @@
 # Actual workerd five-workload measurements
 
+The later [deployed benchmark](CLOUD-BENCHMARK.md) now records five actual
+Cloudflare fresh-child runs and15 correctness samples. It preserves these
+historical local/Linux receipts separately. Deployed CPU-only timers can stay
+frozen between I/O, unlike local workerd; the new JSON0ms observations are not
+CPU/latency measurements or evidence of a speedup.
+
 Five fixed workloads passed three correctness-checked samples each inside one
 actual upstream engine workflow in CT128. Real SDK/API calls, run-scoped
 credentials and canonical terminal consumption were used, without SDK mocks.

@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+const options = process.argv.slice(2);
+if (options.length && (options.length !== 2 || options[0] !== '--commit' || !/^[a-f0-9]{40}$/.test(options[1]))) {
+  throw new Error('Historical source verification requires --commit <full tested SHA>');
+}
 const root = new URL('../results/stream-cloud/', import.meta.url);
 const read = async name => JSON.parse(await readFile(new URL(name, root), 'utf8'));
 const receipt = await read('stream-cloud-receipt.json');
@@ -43,6 +49,9 @@ const reservations = (await readFile(new URL('stream-cloud-invocations.jsonl', r
 assert.deepEqual(reservations.map(row => row.reservation), [1, 2, 3]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 for (const [path, digest] of Object.entries(source.files)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  const bytes = options.length ? (await promisify(execFile)('git', ['show', `${options[1]}:${path}`],
+    {cwd: new URL('../../../', import.meta.url), encoding: 'buffer', maxBuffer: 2 * 1024 * 1024})).stdout :
+    await readFile(new URL('../../../' + path, import.meta.url));
+  assert.equal(hash(bytes), digest, path);
 }
 console.log('Actual deployed upstream engine/SDK stdout and stderr persisted redacted in PostgreSQL; repeat drain zero; credentials revoked; endpoint closed. Canonical dispatch and physical stop remain unqualified.');

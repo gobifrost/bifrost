@@ -18,7 +18,7 @@ python3 ct128-runtime-closure.py
 cf deploy --secrets-file <private-guard-json>
 # CT128, real API fixture:
 python3 run_cloud_qualification.py --streams --private-directory cloud-private-stream-v1
-node dev/verify-stream-cloud.mjs
+node dev/verify-stream-cloud.mjs --commit 730a59fb214a10c1fac6536e941916ba0d764a1c
 ```
 
 The local cf CLI/actual-workerd closure check ran two fresh upstream-worker context controls with zero SDK calls. They pass the pinned Python3.14.2/Pyodide314.0.6/cpython-314-wasm32-emscripten guard. Network-disabled process cap1CPU/2GiB/no swap/256PIDs; elapsed16.313s includes CLI/build/startup, not workload latency. It stopped without OOM. The actual cloud control container used1CPU/768MiB/no swap/128PIDs/180s inside CT128's existing2CPU/8GiB allocation. Five Node routing/staging regressions and guest focused Ruff pass. Exact source-overlay hashes, runtime provenance and raw local/cloud receipts are in results/stream-cloud.

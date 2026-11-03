@@ -73,7 +73,12 @@ def reserve_development_invocation(execution_id):
         os.fsync(reservations.fileno())
 
 
-async def main(*, dev_qualification=False, integration_probe=False, fresh_probe=False, stream_probe=False) -> None:
+async def main(*, dev_qualification=False, integration_probe=False, fresh_probe=False, stream_probe=False,
+               benchmark=None) -> None:
+    if benchmark is not None and benchmark not in (
+        'json_transform', 'http_orchestration', 'integration_read', 'table_update', 'multi_step'
+    ):
+        raise ValueError('Unsupported fixed benchmark workload')
     database = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     provider_url = "http://bifrost-pyodide-ddf316c1:8799"
     provider_headers = {}
@@ -163,6 +168,21 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
              "credential_redaction_probe": os.environ["BIFROST_ACCESS_TOKEN"], **fresh}}
 '''
     sources = {path: source, helper_path: "def fold(n):\n    return sum(range(1, n + 1))\n"}
+    if benchmark is not None:
+        from pathlib import Path
+        benchmark_source = Path('/qualification/benchmark-workloads.py').read_text()
+        sources[helper_path] += '\n' + benchmark_source
+        source = f'''import logging, os
+from bifrost import workflow
+from {helper} import measure
+@workflow
+async def qualified(n: int = 7, forbidden_scope: str | None = None):
+    measured = await measure({config_key!r}, {integration_name!r}, {table!r}, selected={benchmark!r})
+    logging.getLogger(__name__).warning('fixed cloud benchmark complete')
+    return {{**measured, 'parent_secret_present': 'BIFROST_SECRET_KEY' in os.environ,
+             'transport_url': os.environ['BIFROST_API_URL']}}
+'''
+        sources[path] = source
     manifest = {name: hashlib.sha256(code.encode()).hexdigest() for name, code in sources.items()}
     report = {"runtime": "cloudflare-real-upstream-worker" if dev_qualification else "local-workerd-real-upstream-worker", "canonical_claim_verified": False,
               "canonical_terminal_acceptance_verified": False, "workspace_sha256": manifest}
@@ -243,12 +263,14 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                         report['unsupported_canonical_mode_status'] = rejected.status_code
                         report['invalid_runtime_credential_module_status'] = invalid_result['module_status']
                         reserve_development_invocation(execution.id)
+                    provider_started = time.perf_counter()
                     response = await provider.post(provider_url, headers=provider_headers,
                                                    json={"execution_id": str(execution.id), "context": context,
                                                          "manifest": manifest,
                                                          **({'api_url': 'https://attacker.invalid', 'public_url': 'https://attacker.invalid'}
                                                             if dev_qualification else {})})
                     evidence = response.json()
+                    provider_roundtrip_ms = (time.perf_counter() - provider_started) * 1000
                 encoded = json.dumps(evidence)
                 if any(secret and secret in encoded for secret in [access_token, credentials.refresh_token, integration_secret]):
                     raise RuntimeError("Runtime credential was exposed; evidence not emitted")
@@ -260,7 +282,15 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                     report["failure"] = evidence
                     print(json.dumps(report))
                     raise RuntimeError("Actual upstream worker did not complete successfully")
-                assert result["result"]["value"] == 70
+                if benchmark is None:
+                    assert result["result"]["value"] == 70
+                else:
+                    samples = result['result']['benchmark']
+                    assert len(samples) == 1 and samples[0]['workload'] == benchmark
+                    assert samples[0]['correctness'] is True and len(samples[0]['samples_wall_ms']) == 3
+                    report['benchmark'] = samples
+                    report['fresh_child_provider_roundtrip_ms'] = provider_roundtrip_ms
+                    report['benchmark_scope'] = 'three operation samples within one fresh child; not warm-isolate measurements'
                 assert result["result"]["parent_secret_present"] is False
                 if dev_qualification:
                     expected_public = 'https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev'
@@ -271,7 +301,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                 if fresh_probe:
                     assert all(result['result'][key] is None for key in ('builtins_before', 'module_before', 'environment_before', 'tmp_before'))
                     report['fresh_run_canaries_clear'] = True
-                if integration_probe:
+                if integration_probe and benchmark is None:
                     assert result['result']['integration_value'] == 42
                     assert result['result']['integration_secret_probe'] == '[REDACTED]'
                     report['integration_read_secret_redaction_peer_denial_verified'] = True
@@ -281,11 +311,17 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                     for message in ('stream stdout credential=[REDACTED]', 'stream stderr credential=[REDACTED]'):
                         assert messages.count(message) == 1
                     report['printed_streams_returned_redacted'] = True
-                readback = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
-                                         params={"scope": str(organization.id)})
-                assert readback.status_code == 200
-                assert readback.json()["data"]["value"] == 70
-                report.update({"result": evidence, "independent_document_value": 70,
+                if benchmark is None or benchmark == 'table_update':
+                    ids = ['proof'] if benchmark is None else ['benchmark-0', 'benchmark-1', 'benchmark-2']
+                    for document_id in ids:
+                        readback = await api.get(f"/api/tables/{table}/documents/{document_id}", headers=headers,
+                                                 params={"scope": str(organization.id)})
+                        assert readback.status_code == 200
+                        assert readback.json()["data"]["value"] == 70
+                    report['independent_document_values'] = [70] * len(ids)
+                    if benchmark is None:
+                        report['independent_document_value'] = 70
+                report.update({"result": evidence,
                                "cross_tenant_status": denied.status_code,
                                "credential_version": credentials.credential_version})
             # Vary only the fixture run's liveness while its person/roles remain.

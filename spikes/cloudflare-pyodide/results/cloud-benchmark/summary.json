@@ -1,0 +1,89 @@
+{
+  "scope": "Five serial fresh children; three operation samples each; no warm-isolate or matched current Linux comparison",
+  "timer_warning": "Deployed timers advance after I/O only. CPU-only zero deltas are not elapsed CPU time or a sub-millisecond bound.",
+  "rows": [
+    {
+      "workload": "json_transform",
+      "correctness": true,
+      "fresh_child_roundtrip_ms": 10492.341844830662,
+      "reported_engine_duration_ms": 84,
+      "raw_operation_clock_samples_ms": [
+        0,
+        0,
+        0
+      ],
+      "operation_io_clock_median_ms": null,
+      "cpu_ms": null,
+      "peak_isolate_memory_bytes": null
+    },
+    {
+      "workload": "http_orchestration",
+      "correctness": true,
+      "fresh_child_roundtrip_ms": 5946.048616897315,
+      "reported_engine_duration_ms": 291,
+      "raw_operation_clock_samples_ms": [
+        93.99986267089844,
+        68.9997673034668,
+        64.00012969970703
+      ],
+      "operation_io_clock_median_ms": 68.9997673034668,
+      "cpu_ms": null,
+      "peak_isolate_memory_bytes": null
+    },
+    {
+      "workload": "integration_read",
+      "correctness": true,
+      "fresh_child_roundtrip_ms": 5413.035397883505,
+      "reported_engine_duration_ms": 278,
+      "raw_operation_clock_samples_ms": [
+        71.0000991821289,
+        77.99983024597168,
+        68.00007820129395
+      ],
+      "operation_io_clock_median_ms": 71.0000991821289,
+      "cpu_ms": null,
+      "peak_isolate_memory_bytes": null
+    },
+    {
+      "workload": "table_update",
+      "correctness": true,
+      "fresh_child_roundtrip_ms": 5772.272420115769,
+      "reported_engine_duration_ms": 508,
+      "raw_operation_clock_samples_ms": [
+        218.99986267089844,
+        154.00004386901855,
+        70.9998607635498
+      ],
+      "operation_io_clock_median_ms": 154.00004386901855,
+      "cpu_ms": null,
+      "peak_isolate_memory_bytes": null
+    },
+    {
+      "workload": "multi_step",
+      "correctness": true,
+      "fresh_child_roundtrip_ms": 5201.270406600088,
+      "reported_engine_duration_ms": 452,
+      "raw_operation_clock_samples_ms": [
+        138.99970054626465,
+        125.0002384185791,
+        125
+      ],
+      "operation_io_clock_median_ms": 125.0002384185791,
+      "cpu_ms": null,
+      "peak_isolate_memory_bytes": null
+    }
+  ],
+  "cpu_analytics_rows": 0,
+  "measured_cost_per_1000_usd": null,
+  "estimates": {
+    "fresh_creations_per_execution": 1,
+    "fresh_creation_usd_after_allowance": 0.002,
+    "creation_only_usd_per_1000_after_allowance": 2,
+    "creation_only_usd_for_five_after_allowance": 0.01,
+    "remaining_included_allowance": null,
+    "cpu_and_request_charges": null,
+    "monthly_plan_allocation": null,
+    "pricing_source": "https://developers.cloudflare.com/dynamic-workers/pricing/"
+  },
+  "timer_source": "https://developers.cloudflare.com/workers/runtime-apis/performance/"
+}

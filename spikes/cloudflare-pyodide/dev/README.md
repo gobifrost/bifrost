@@ -21,6 +21,13 @@ The compiled UI executes on Workers. API requests are proxied to the temporary o
 
 ## Real upstream engine and SDK on Cloudflare
 
+[CLOUD-BENCHMARK.md](../CLOUD-BENCHMARK.md) records five later fresh-child
+workloads with15 correctness samples, measured request round trips and explicit
+frozen-timer/cost-estimate limitations. Its test window is retired. The updated
+run_cloud_qualification.py expects benchmark-workloads.py staged beside
+authorized-local.py in the owned guest controller directory; run_cloud_benchmark.py
+executes the five fixed selections serially under one exclusive ledger.
+
 The later [stream-log qualification](STREAM-LOGS.md) overlays the shared engine
 revision f49d4ba99 into a separately pinned runtime artifact. Actual deployed
 stdout/stderr are redacted and persist through existing upstream log recovery

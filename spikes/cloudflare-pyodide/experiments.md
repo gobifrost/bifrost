@@ -530,3 +530,25 @@ Closure source audit:79 tracked modules compared,73 identical, six explicit
 server-namespace adapters, no unexpected drift. Live dev API stays2037ac0;
 source/native checks are not a redeployment. Next is the still-missing negotiated
 physical runtime/admission contract and actual provider physical-stop proof.
+
+## Deployed five-workload benchmark, 2026-11-03
+
+Hypothesis: useful short engine/SDK workflows execute economically in fresh
+isolates. Added a fixed workload selector without changing operation bodies,
+runtime limits or default all-workload behavior. Three native guard cases and
+guest Ruff pass. Command: run_cloud_benchmark.py on CT128; five actual cloud
+children,15 correctness samples, config/HTTP/integration/table/async-error/logging
+workloads pass. Table documents independently read70; each run's peer403,
+invalid token401, unsupported canonical422 and ended access/refresh401 pass.
+Fresh provider round trips measured5.2–10.5s. JSONtimer0,0,0 is not CPU evidence:
+official deployed clocks advance at I/O, unlike local workerd. Scoped cf CLI
+analytics query returned0 rows with logging unchanged; CPU/peak/billed cost stay
+null. Official fresh creation price0.002USD implies a conditional2USD/1,000
+after allowance, before CPU/requests—not a measured bill or Linux comparison.
+Artifacts: CLOUD-BENCHMARK.md and results/cloud-benchmark, raw samples/ledger,
+source hashes, summary and standalone chart. Window15POSTs+1cleanupGET within
+20/$0.10/30min retired; cf CLI closed deployment, secret list empty, public404.
+The old Linux verifier now reads its helper from the same immutable tested
+ca40ad458 source as its driver; no old receipt/hash was rewritten. Next remains
+canonical dispatch/physical stop, with trusted longer-I/O latency as a separate
+candidate experiment; no economic routing advantage is established.

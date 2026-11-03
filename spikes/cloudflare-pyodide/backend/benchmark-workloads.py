@@ -7,7 +7,12 @@ import time
 from bifrost import config, integrations, tables
 
 
-async def measure(key, integration_name, table):
+WORKLOADS = ('json_transform', 'http_orchestration', 'integration_read', 'table_update', 'multi_step')
+
+
+async def measure(key, integration_name, table, *, selected=None):
+    if selected is not None and selected not in WORKLOADS:
+        raise ValueError('Unsupported fixed benchmark workload')
     async def json_transform(index):
         rows = json.loads(json.dumps([{'id': n, 'value': n * 2} for n in range(1000)]))
         return sum(row['value'] for row in rows) == 999000
@@ -40,6 +45,8 @@ async def measure(key, integration_name, table):
         ('integration_read', integration_read), ('table_update', table_update),
         ('multi_step', multi_step),
     ):
+        if selected is not None and name != selected:
+            continue
         samples = []
         for index in range(3):
             started = time.perf_counter()
