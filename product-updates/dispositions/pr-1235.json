@@ -1,0 +1,22 @@
+{
+  "key": "pr:1235",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Proposed omission under the routine dependency/container maintenance policy. This security-impacting trust update remains subject to explicit maintainer review; release visibility and any required canonical security notice are not approved by this proposal.",
+  "category": "hardening",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1235"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1235",
+      "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
+      "https://github.com/advisories/GHSA-82r6-8w77-94w6",
+      "https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576",
+      "Author proposal only. Docker base and security/disposition review remain pending; no human approval or production clearance is claimed.",
+      "Credential-free bounded controls: the prior pinned base fails all three actual trust checks; Python 3.14.10 with the selected certifi bundle passes all three. Full application-image CI, service handshakes and browser acceptance remain separate."
+    ]
+  }
+}
