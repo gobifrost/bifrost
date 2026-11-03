@@ -816,6 +816,10 @@ class TemplateProcess:
                 argv,
                 pass_fds=(child_conn.fileno(),),
                 close_fds=True,
+                # Edge credentials belong only to the physical launcher, never
+                # to either template profile or the user-code children it forks.
+                env={name: value for name, value in os.environ.items()
+                     if name != "BIFROST_WORKER_CONTROL_HEADERS"},
             )
             child_conn.close()
             parent_conn.send_bytes(authkey)

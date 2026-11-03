@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "ac696c7fbc1da5f9485eda684e1b66a459731661",
-  "collected_at": "2026-11-02T07:14:24Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...ac696c7fbc1da5f9485eda684e1b66a459731661",
+  "target_ref": "47130eeb15308a5d6b5fd4c0819432c13e4e4499",
+  "collected_at": "2026-11-03T18:34:39Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...47130eeb15308a5d6b5fd4c0819432c13e4e4499",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2244,6 +2244,153 @@
       "subject": "Reduce SDK query amplification and reuse bounded database connections (#1180)",
       "prs": [
         1180
+      ]
+    },
+    {
+      "sha": "3603b2d3bd172eadf30a8516cc8fa6afc14f1ad5",
+      "subject": "Activate the SDK performance upgrade notice (#1181)",
+      "prs": [
+        1181
+      ]
+    },
+    {
+      "sha": "00abffa4ae8a3fe2743f0af05590a27e7de5b7e2",
+      "subject": "fix: discard execution subscriptions after effect cleanup (#1178)",
+      "prs": [
+        1178
+      ]
+    },
+    {
+      "sha": "20c9db7be9fdbdd617ecd338adba11eb4657c292",
+      "subject": "fix: preserve accepted chat runs after observation failure (#1179)",
+      "prs": [
+        1179
+      ]
+    },
+    {
+      "sha": "df53a2e957cecae62259d1984cab4976475933e0",
+      "subject": "chore(deps): bump js-yaml from 5.4.2 to 5.5.0 in /scripts/docs in the npm-minor-and-patch group (#1190)",
+      "prs": [
+        1190
+      ]
+    },
+    {
+      "sha": "2bbc7f9676cc0dbf51a878f8daa7921d7c6a4c30",
+      "subject": "chore(deps): bump @babel/standalone from 8.0.6 to 8.0.10 in /api/src/services/app_compiler in the npm-minor-and-patch group (#1189)",
+      "prs": [
+        1189
+      ]
+    },
+    {
+      "sha": "025f6c019928d8be78bfe47f1cb62702b4ad2226",
+      "subject": "fix: use page scrolling for product updates (#1192)",
+      "prs": [
+        1192
+      ]
+    },
+    {
+      "sha": "837a1e318c245924edcf5f6e201a27b1ee2c1a7a",
+      "subject": "Keep queue-position updates off workflow execution paths (#1209)",
+      "prs": [
+        1209
+      ]
+    },
+    {
+      "sha": "14893707c2b1630a8d313c7ad919eb1b581be4a6",
+      "subject": "Activate the faster workflow starts notice (#1210)",
+      "prs": [
+        1210
+      ]
+    },
+    {
+      "sha": "6a692a4af356895bc5a8d12124980f06a462e037",
+      "subject": "fix(solution-dev): tolerate invalid local workflow manifest shapes (#1202)",
+      "prs": [
+        1202
+      ]
+    },
+    {
+      "sha": "745f86dd1753e4fb369164e4c40187222f56f6dc",
+      "subject": "fix(ci): restore CodeQL actions-language coverage (#1200)",
+      "prs": [
+        1200
+      ]
+    },
+    {
+      "sha": "5a41abbf9aaeeac581d854f06857615d47ca890c",
+      "subject": "fix(product-updates): persist approved omit decisions for #1200 and #1202 (#1211)",
+      "prs": [
+        1211
+      ]
+    },
+    {
+      "sha": "5d3daf0e99d593e20dd44a1e26f184aa8fc9df24",
+      "subject": "fix: harden workspace files, policy scope and deploy zips (#1212)",
+      "prs": [
+        1212
+      ]
+    },
+    {
+      "sha": "d33b44563988d2515764e1380eebf0d49e740dbb",
+      "subject": "feat(storage): support conditional streaming multipart copies (#1206)",
+      "prs": [
+        1206
+      ]
+    },
+    {
+      "sha": "ed09411f55d0811213093b501460e2094ec3e2b1",
+      "subject": "Default the API development image to the unprivileged user (#1213)",
+      "prs": [
+        1213
+      ]
+    },
+    {
+      "sha": "5bf8716789a49801f42faf22d69e3a414592a883",
+      "subject": "fix(webhooks): throttle Bot Framework JWKS refreshes (#1214)",
+      "prs": [
+        1214
+      ]
+    },
+    {
+      "sha": "63530d6cbf632377feb5a0c0300c9749b6c1ab42",
+      "subject": "feat(worker): support service-authenticated control sockets (#1215)",
+      "prs": [
+        1215
+      ]
+    },
+    {
+      "sha": "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
+      "subject": "Reuse SDK HTTP pools with safe loop and process ownership (#1217)",
+      "prs": [
+        1217
+      ]
+    },
+    {
+      "sha": "3f79ac4fde18defc472b4e5ce83d43f881827125",
+      "subject": "Record the SDK client reuse fix in Product Updates (#1218)",
+      "prs": [
+        1218
+      ]
+    },
+    {
+      "sha": "12850a452100f9acd7544ea8e6a58fbcf178ad85",
+      "subject": "Fix Bifrost plugin packaging for catalog distribution (#1219)",
+      "prs": [
+        1219
+      ]
+    },
+    {
+      "sha": "72a1fa9f0380dc7985cabd9ed1467bd337622cd8",
+      "subject": "docs: clarify scope of Cloudflare copyright notice (#1229)",
+      "prs": [
+        1229
+      ]
+    },
+    {
+      "sha": "47130eeb15308a5d6b5fd4c0819432c13e4e4499",
+      "subject": "Add Rewst migration pilot Solution and coding-agent handoff (#1222)",
+      "prs": [
+        1222
       ]
     }
   ],
@@ -6423,6 +6570,32 @@
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1175"
     },
     {
+      "number": 1178,
+      "title": "fix: discard execution subscriptions after effect cleanup",
+      "url": "https://github.com/gobifrost/bifrost/pull/1178",
+      "author": {
+        "login": "MTG-Thomas",
+        "type": "User"
+      },
+      "merged_at": "2026-11-02T13:31:41Z",
+      "merge_commit": "00abffa4ae8a3fe2743f0af05590a27e7de5b7e2",
+      "body": "## Product Updates\n\n- [x] Other ? Execution views stop retaining obsolete listeners after navigation. Canonical disposition: `product-updates/dispositions/pr-1178.json`; copy review is approved and the disposition uses normalized LF line endings.\n\n## Problem\n\nA WebSocket connection can resolve after its effect has unmounted or changed scope. Cleanup has already run, so the old continuation installs listeners that retain obsolete completion callbacks or organization filters.\n\n## Change\n\nGuard all three execution-hook initializers and rejection paths with an effect-local disposal flag. Existing active listener cleanup and shared transport/channel behavior are preserved; this does not add transport cancellation or refcounting.\n\nFixes #1177.\n\n## Evidence and Validation\n\nDeferred-promise regressions cover all three hooks, active cleanup, superseded history scope, and a stale connection rejection. Five regression cases failed on original source; the corrected hook suite passes nine tests.\n\nBased on upstream main 3603b2d3bd172eadf30a8516cc8fa6afc14f1ad5. Targeted consumer verification passed 84 tests across six files (`./test.sh client unit -- src/hooks/useExecutionStream.test.tsx src/hooks/executionHistoryCache.test.ts src/pages/ExecutionDetails.test.tsx src/pages/ExecutionHistory.test.tsx src/components/editor/RunPanel.test.tsx src/components/chat/ToolExecutionCard.test.tsx --pool=threads`). Full client `npm run tsc` and `npm run lint` passed (one pre-existing no-console warning). A serial focused React Doctor 0.9.21 rescan completed analysis of both changed files with zero diagnostics (`--scope files --no-parallel --no-cache --no-score --no-supply-chain`). This is not a full-repository scan or runtime proof. Full original audit baseline passed 4,048 frontend tests. Full post-change frontend, backend and browser suites were not run locally; normal upstream CI and owner review remain required.\n\nThis change follows investigation of React Doctor 0.9.21 `no-set-state-after-await-in-effect`; the failing tests establish the defect independently of the static warning. No diagnostic suppressions, dependency upgrades, or public API changes.\r\n\n\nMaintainer follow-up: merged current upstream main without rewriting Thomas Bray's original commits, normalized the disposition file, and recorded the approved copy review. The focused consumer selection passed again (50 tests for #1179; 84 tests for #1178). Jack authorized approval and auto-merge on 2026-11-02; GitHub's required checks and merge queue remain the delivery gate.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1178"
+    },
+    {
+      "number": 1179,
+      "title": "fix: preserve accepted chat runs after observation failure",
+      "url": "https://github.com/gobifrost/bifrost/pull/1179",
+      "author": {
+        "login": "MTG-Thomas",
+        "type": "User"
+      },
+      "merged_at": "2026-11-02T13:31:41Z",
+      "merge_commit": "20c9db7be9fdbdd617ecd338adba11eb4657c292",
+      "body": "## Product Updates\n\n- [x] Other ? Chat restoration errors no longer mark accepted runs failed. Canonical disposition: `product-updates/dispositions/pr-1179.json`; copy review is approved and the disposition uses normalized LF line endings.\n\n## Problem\n\nA successful durable chat submission shares a catch with the subsequent WebSocket connection and state replay. If observation fails after acceptance, the hook emits a local failed run event and rejects sendMessage, suggesting the accepted work needs resubmission.\n\n## Change\n\nSeparate submission rejection from observation failure. Merge the acknowledged server status into its target conversation, including after navigation, then guard observation with the existing restoration generation. Expose a retryable restoration error without rejecting accepted submissions. The projection merge preserves newer and terminal run states.\n\nFixes #1176.\n\n## Evidence and Validation\n\nBoth accepted connection/replay regression cases failed against original source. The hook's 19 cases cover retry without another POST, actual submission rejection, navigation during submission, superseded replay, and preservation of newer/terminal status.\n\nBased on upstream main 3603b2d3bd172eadf30a8516cc8fa6afc14f1ad5. Current-main consumer verification passed 50 tests across four files:\n\n```sh\n./test.sh client unit -- src/hooks/useChatStream.test.tsx src/stores/chatStore.test.ts src/lib/chat-runtime.test.ts src/components/chat/ChatWindow.test.tsx --pool=threads\n```\n\nFull client `npm run tsc` and `npm run lint` passed (one pre-existing no-console warning). React Doctor 0.9.21 changed-scope analysis completed for both changed files with no new diagnostics; this is not a full-repository scan or runtime proof. Full original audit baseline passed 4,048 frontend tests. Full post-change frontend, backend and browser suites were not run locally; normal upstream CI and owner review remain required.\n\nThis was a source-review finding during the React Doctor audit, not a Doctor diagnostic. No public API changes, dependency upgrades, diagnostic suppressions or changes to server-owned run semantics.\r\n\n\nMaintainer follow-up: merged current upstream main without rewriting Thomas Bray's original commits, normalized the disposition file, and recorded the approved copy review. The focused consumer selection passed again (50 tests for #1179; 84 tests for #1178). Jack authorized approval and auto-merge on 2026-11-02; GitHub's required checks and merge queue remain the delivery gate.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1179"
+    },
+    {
       "number": 1180,
       "title": "Reduce SDK query amplification and reuse bounded database connections",
       "url": "https://github.com/gobifrost/bifrost/pull/1180",
@@ -6434,6 +6607,253 @@
       "merge_commit": "ac696c7fbc1da5f9485eda684e1b66a459731661",
       "body": "## Summary\n\nSDK-heavy workflows repeatedly loaded authorization facts already captured for audit evidence, queried uncached empty config views, woke unrelated dispatch controllers, and discarded main-pool connections after bursts. Reuse captured audit evidence without weakening live authorization, cache complete config snapshots with generation invalidation, route wake hints by work family, and retain the existing bounded connection allowance in the shared engine.\n\n**No new configuration knobs.** The default API peak remains 26 connections across main, dispatch and liveness pools; idle retention can rise from 10 to 20 after demand uses those slots. Custom bounded peaks and SQLAlchemy unlimited settings are preserved. Workers retain their existing connection budget.\n\nConcurrent first-time table creation could also create duplicate ad-hoc records because prior migrations removed the unique indexes. Restore those indexes in one forward migration, keep Solution namespaces separate, and preserve the ordinary duplicate error inside a repository savepoint. **Installations with duplicate ad-hoc names in one org/global scope must resolve those records before upgrading.** The locked preflight reports affected IDs and changes no data. Read-only production preflight found zero duplicate groups. See `docs/runbooks/table-name-uniqueness.md`. This consolidates and supersedes draft #1164.\n\n## Hosting Results\n\nMatched warm SDK diagnostics, one API and two workers, unchanged canonical resource limits/PgBouncer:\n\n| Envelope / Offered Load | p95 Before \u2192 After | API CPU Before \u2192 After | Correct Within Deadline, Both Arms |\n|---|---:|---:|---:|\n| 4 decimal GB / 4 per second | 3.178s \u2192 0.567s | 0.718 \u2192 0.520 cores | 472/472 |\n| M (8 GiB) / 4 per second | 2.412s \u2192 0.548s | 0.696 \u2192 0.513 cores | 472/472 |\n\nBoth high-rate pairs have no validity flags. Main-pool openings fell from 218/195 to zero in the approximately 60-second counter windows. Worker charged memory stayed essentially unchanged; namespace peaks rose about 36/56 MiB. All 2,772 measured arrivals across eight windows completed correctly; the lower-rate 4 GB candidate observation retains its external-CPU flag. No timed window was replayed. These short windows establish efficiency improvements, not maximum/sustainable capacity, cold-start latency, or long-term storage costs.\n\n`docs/benchmarks/2026-11-02-sdk-hosting.md` and its machine-readable baseline preserve every window, allocation, SQL/pool counter, storage delta, validity flag, image/source proof and raw hash. The separately reviewed final delta only consolidates table metadata creation; all other runtime hashes match the measured image, and captured logs contain no metadata-create calls during those workloads.\n\n## Validation\n\n- Astra approved the final source, pool policy, locked migration, shared duplicate contract and exact upgrade notice.\n- Focused coverage includes pool budgets/sentinels, worker lifecycle/recovery, cache/audit/wake consumers, concurrency, migration upgrades and non-destructive duplicate refusal. Earlier SDK coverage passed 381 distinct unit cases; 52 live checks and 36 final scoped unit/live cases passed. API Pyright/Ruff passed with zero errors/warnings.\n- Exact commands and overlapping case counts are recorded in `docs/plans/2026-11-02-sdk-release-candidate.md`. Full suites were not run locally; the merge queue remains the complete-suite gate.\n- Typed wakes remain hints over durable database claims. Mixed-version producers can temporarily wait for the existing 15-second sweep; coordinate API/worker rollout.\n\n## Product Updates\n\n- [x] Highlight \u2014 `e1d92810-89a7-40b2-9df1-a0b8482d734c`; approved notice and conditional duplicate-table upgrade action in the canonical PR 1180 disposition.\n- [ ] Other\n- [ ] Omit\n\n\nCI disposition: the first broad backend run passed 11,251 cases and exposed missing Redis cache-read classifications in the access inventory. Added explicit registrations/reasons without weakening the scanner or changing runtime code. The complete inventory plus config tests passed 75 cases; API Pyright/Ruff passed with zero errors or warnings.\n\nQueue disposition: merge-group shard 3 exposed an existing shared-credential leak in the ephemeral CLI subprocess test. Forced epoch change reproduced child success followed by unusable parent refresh. The test now inherits the existing independent CLI session, forces child refresh, and proves the parent remains usable. All 27 focused fixture/CLI event/file cases and API quality passed; no runtime code, retry, timeout, or connection policy changed. The other two integration shards and browser smoke had passed.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1180"
+    },
+    {
+      "number": 1181,
+      "title": "Activate the SDK performance upgrade notice",
+      "url": "https://github.com/gobifrost/bifrost/pull/1181",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-02T07:44:15Z",
+      "merge_commit": "3603b2d3bd172eadf30a8516cc8fa6afc14f1ad5",
+      "body": "The SDK performance changes landed in #1180, but their approved upgrade notice is still withheld by the older cached Product Updates inventory. Refresh the cumulative inventory through the actual merged source commit so the existing \u201cFaster SDK Workflows\u201d notice is eligible in built images.\n\nAll 317 prior commit and PR records remain, including reviewed contribution evidence. The prepared feed retains all 38 earlier notices with unchanged titles, prose, revisions, classifications and contributors; its only added notice is the reviewed SDK UUID. The conditional duplicate-table upgrade guidance remains intact. No runtime code, resource limits, settings, announcement UUIDs or approved prose change.\n\nValidation: canonical content validation, deterministic bundling, image preparation, and all 44 Product Updates toolchain tests passed. Independent before/after bundle assertions verified prior history and the new Platform / Fixed notice. Source #1180 passed the complete merge queue, including all three backend integration shards and browser smoke. Backend/client/browser suites were not repeated locally for this metadata-only change; the native merge queue remains the complete gate.\n\nProduct Updates: omit this internal metadata activation; the customer-facing notice is already approved under #1180. No version tag, formal release, or production rollout is included.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1181"
+    },
+    {
+      "number": 1189,
+      "title": "chore(deps): bump @babel/standalone from 8.0.6 to 8.0.10 in /api/src/services/app_compiler in the npm-minor-and-patch group",
+      "url": "https://github.com/gobifrost/bifrost/pull/1189",
+      "author": {
+        "login": "dependabot[bot]",
+        "type": "Bot"
+      },
+      "merged_at": "2026-11-02T15:52:50Z",
+      "merge_commit": "2bbc7f9676cc0dbf51a878f8daa7921d7c6a4c30",
+      "body": "Bumps the npm-minor-and-patch group in /api/src/services/app_compiler with 1 update: [@babel/standalone](https://github.com/babel/babel/tree/HEAD/packages/babel-standalone).\n\nUpdates `@babel/standalone` from 8.0.6 to 8.0.10\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a href=\"https://github.com/babel/babel/releases\">@\u200bbabel/standalone's releases</a>.</em></p>\n<blockquote>\n<h2>v8.0.10 (2026-10-29)</h2>\n<p>Thanks <a href=\"https://github.com/dagemawinegash\"><code>@\u200bdagemawinegash</code></a>, <a href=\"https://github.com/nyan-left\"><code>@\u200bnyan-left</code></a>, <a href=\"https://github.com/saiyam-jain-dev\"><code>@\u200bsaiyam-jain-dev</code></a>, and <a href=\"https://github.com/yulman2207\"><code>@\u200byulman2207</code></a> for your first PRs!</p>\n<h4>:bug: Bug Fix</h4>\n<ul>\n<li><code>babel-parser</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18420\">#18420</a> fix(parser): improve radix literal rounding (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18372\">#18372</a> fix(parser): allow parenthesized assignment target in arrow initializer (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18410\">#18410</a> fix(parser): do not record strict mode errors during lookahead (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18433\">#18433</a> fix(parser): invalid expectOnePlugin usage (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18409\">#18409</a> fix(parser): handle ASI after let followed by a reserved word on the next line (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18406\">#18406</a> fix(parser): parser should not crash for <code>import defer {}</code> (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18407\">#18407</a> fix(parser): record start location in <code>startNodeAt</code> (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-plugin-transform-block-scoping</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18371\">#18371</a> fix: closures in for-loop test and update capture wrong binding (<a href=\"https://github.com/joellemd\"><code>@\u200bjoellemd</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-generator</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18418\">#18418</a> fix(generator): keep aliases of string-literal module specifiers (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18427\">#18427</a> Fix missing parentheses around TypeScript assertion targets (<a href=\"https://github.com/dagemawinegash\"><code>@\u200bdagemawinegash</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18324\">#18324</a> fix: invalid <code>minified: true</code> output for new expression (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18437\">#18437</a> fix(generator): preserve type modifier in TSImportEqualsDeclaration (<a href=\"https://github.com/saiyam-jain-dev\"><code>@\u200bsaiyam-jain-dev</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18424\">#18424</a> Keep parentheses around TSInstantiationExpression operand (<a href=\"https://github.com/yulman2207\"><code>@\u200byulman2207</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18417\">#18417</a> fix(generator): do not disallow line break after import source (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-plugin-transform-optional-chaining</code>, <code>babel-traverse</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18422\">#18422</a> fix: <code>Scope#push</code> should not push iife param after rest element (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-helper-create-class-features-plugin</code>, <code>babel-plugin-proposal-decorators</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18224\">#18224</a> fix: avoid removable fields as decorator evaluation hosts (<a href=\"https://github.com/nyan-left\"><code>@\u200bnyan-left</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-types</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18411\">#18411</a> Allow member expression values in <code>ObjectPattern</code> properties (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-plugin-transform-classes</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18384\">#18384</a> Leave loose class prototype mutable with accessors (<a href=\"https://github.com/nicolo-ribaudo\"><code>@\u200bnicolo-ribaudo</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h4>:house: Internal</h4>\n<ul>\n<li><code>babel-build-external-helpers</code>, <code>babel-core</code>, <code>babel-helpers</code>, <code>babel-plugin-transform-async-generator-functions</code>, <code>babel-plugin-transform-class-properties</code>, <code>babel-plugin-transform-modules-commonjs</code>, <code>babel-plugin-transform-modules-systemjs</code>, <code>babel-plugin-transform-regenerator</code>, <code>babel-runtime-corejs3</code>, <code>babel-runtime</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18397\">#18397</a> Mangle top level names in helpers (<a href=\"https://github.com/nicolo-ribaudo\"><code>@\u200bnicolo-ribaudo</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h4>:running_woman: Performance</h4>\n<ul>\n<li><code>babel-traverse</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18413\">#18413</a> perf(traverse): improve generateUid and push (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h4>:microscope: Output optimization</h4>\n<ul>\n<li><code>babel-helpers</code>, <code>babel-runtime-corejs3</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18325\">#18325</a> Shrink jsx helper size (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h4>Committers: 8</h4>\n<ul>\n<li>Deimantas Jakovlevas (<a href=\"https://github.com/nyan-left\"><code>@\u200bnyan-left</code></a>)</li>\n<li>Hu\u00e1ng J\u00f9nli\u00e0ng (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li>Joelle Mahfoud (<a href=\"https://github.com/joellemd\"><code>@\u200bjoellemd</code></a>)</li>\n<li>Nicol\u00f2 Ribaudo (<a href=\"https://github.com/nicolo-ribaudo\"><code>@\u200bnicolo-ribaudo</code></a>)</li>\n<li>Saiyam Jain (<a href=\"https://github.com/saiyam-jain-dev\"><code>@\u200bsaiyam-jain-dev</code></a>)</li>\n<li>Yuly Cohen (<a href=\"https://github.com/yulman2207\"><code>@\u200byulman2207</code></a>)</li>\n</ul>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>... (truncated)</p>\n</details>\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a href=\"https://github.com/babel/babel/blob/main/CHANGELOG.md\">@\u200bbabel/standalone's changelog</a>.</em></p>\n<blockquote>\n<h2>v8.0.10 (2026-10-29)</h2>\n<h4>:bug: Bug Fix</h4>\n<ul>\n<li><code>babel-parser</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18420\">#18420</a> fix(parser): improve radix literal rounding (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18372\">#18372</a> fix(parser): allow parenthesized assignment target in arrow initializer (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18410\">#18410</a> fix(parser): do not record strict mode errors during lookahead (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18433\">#18433</a> fix(parser): invalid expectOnePlugin usage (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18409\">#18409</a> fix(parser): handle ASI after let followed by a reserved word on the next line (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18406\">#18406</a> fix(parser): parser should not crash for <code>import defer {}</code> (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18407\">#18407</a> fix(parser): record start location in <code>startNodeAt</code> (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-plugin-transform-block-scoping</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18371\">#18371</a> fix: closures in for-loop test and update capture wrong binding (<a href=\"https://github.com/joellemd\"><code>@\u200bjoellemd</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-generator</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18418\">#18418</a> fix(generator): keep aliases of string-literal module specifiers (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18427\">#18427</a> Fix missing parentheses around TypeScript assertion targets (<a href=\"https://github.com/dagemawinegash\"><code>@\u200bdagemawinegash</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18324\">#18324</a> fix: invalid <code>minified: true</code> output for new expression (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18437\">#18437</a> fix(generator): preserve type modifier in TSImportEqualsDeclaration (<a href=\"https://github.com/saiyam-jain-dev\"><code>@\u200bsaiyam-jain-dev</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18424\">#18424</a> Keep parentheses around TSInstantiationExpression operand (<a href=\"https://github.com/yulman2207\"><code>@\u200byulman2207</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18417\">#18417</a> fix(generator): do not disallow line break after import source (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-plugin-transform-optional-chaining</code>, <code>babel-traverse</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18422\">#18422</a> fix: <code>Scope#push</code> should not push iife param after rest element (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-helper-create-class-features-plugin</code>, <code>babel-plugin-proposal-decorators</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18224\">#18224</a> fix: avoid removable fields as decorator evaluation hosts (<a href=\"https://github.com/nyan-left\"><code>@\u200bnyan-left</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-types</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18411\">#18411</a> Allow member expression values in <code>ObjectPattern</code> properties (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n<li><code>babel-plugin-transform-classes</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18384\">#18384</a> Leave loose class prototype mutable with accessors (<a href=\"https://github.com/nicolo-ribaudo\"><code>@\u200bnicolo-ribaudo</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h4>:house: Internal</h4>\n<ul>\n<li><code>babel-build-external-helpers</code>, <code>babel-core</code>, <code>babel-helpers</code>, <code>babel-plugin-transform-async-generator-functions</code>, <code>babel-plugin-transform-class-properties</code>, <code>babel-plugin-transform-modules-commonjs</code>, <code>babel-plugin-transform-modules-systemjs</code>, <code>babel-plugin-transform-regenerator</code>, <code>babel-runtime-corejs3</code>, <code>babel-runtime</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18397\">#18397</a> Mangle top level names in helpers (<a href=\"https://github.com/nicolo-ribaudo\"><code>@\u200bnicolo-ribaudo</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h4>:running_woman: Performance</h4>\n<ul>\n<li><code>babel-traverse</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18413\">#18413</a> perf(traverse): improve generateUid and push (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h4>:microscope: Output optimization</h4>\n<ul>\n<li><code>babel-helpers</code>, <code>babel-runtime-corejs3</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18325\">#18325</a> Shrink jsx helper size (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n</ul>\n<h2>v8.0.8 (2026-10-23)</h2>\n<h4>:eyeglasses: Spec Compliance</h4>\n<ul>\n<li><code>babel-parser</code>\n<ul>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18366\">#18366</a> fix(parser): disallow named specifiers after * as ns (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18336\">#18336</a> fix(parser): disallow const x followed by linebreak and of (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18343\">#18343</a> fix(parser): reject delete (x) when createParenthesizedExpressions: true (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18276\">#18276</a> fix: report expression errors in object literals used as member base (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18286\">#18286</a> Disallow arrow functions as <code>new</code> callee and <code>await</code> operand (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n<li><a href=\"https://redirect.github.com/babel/babel/pull/18309\">#18309</a> Disallow call expressions as arrow function parameters in sloppy mode (<a href=\"https://github.com/JLHwung\"><code>@\u200bJLHwung</code></a>)</li>\n</ul>\n</li>\n</ul>\n<!-- raw HTML omitted -->\n</blockquote>\n<p>... (truncated)</p>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a href=\"https://github.com/babel/babel/commit/a4f3b3ee45c0a3aea618d5a308620a493c7222d1\"><code>a4f3b3e</code></a> v8.0.10</li>\n<li><a href=\"https://github.com/babel/babel/commit/f9c94454d8e0a75b2c4a4353948f3ea61b85a57b\"><code>f9c9445</code></a> v8.0.9</li>\n<li><a href=\"https://github.com/babel/babel/commit/220840194f5660cbacc88ebe345fc230077e31e5\"><code>2208401</code></a> v8.0.8</li>\n<li><a href=\"https://github.com/babel/babel/commit/1fc00736614159e3b236b9958771f482899853f0\"><code>1fc0073</code></a> v8.0.7</li>\n<li>See full diff in <a href=\"https://github.com/babel/babel/commits/v8.0.10/packages/babel-standalone\">compare view</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility score](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=@babel/standalone&package-manager=npm_and_yarn&previous-version=8.0.6&new-version=8.0.10)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't alter it yourself. You can also trigger a rebase manually by commenting `@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits that have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all of the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this group update PR and stop Dependabot creating any more for the specific dependency's major version (unless you unignore this specific dependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this group update PR and stop Dependabot creating any more for the specific dependency's minor version (unless you unignore this specific dependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR and stop Dependabot creating any more for the specific dependency (unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore conditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will remove the ignore condition of the specified dependency and ignore conditions\n\n\n</details>",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1189"
+    },
+    {
+      "number": 1190,
+      "title": "chore(deps): bump js-yaml from 5.4.2 to 5.5.0 in /scripts/docs in the npm-minor-and-patch group",
+      "url": "https://github.com/gobifrost/bifrost/pull/1190",
+      "author": {
+        "login": "dependabot[bot]",
+        "type": "Bot"
+      },
+      "merged_at": "2026-11-02T15:52:50Z",
+      "merge_commit": "df53a2e957cecae62259d1984cab4976475933e0",
+      "body": "Bumps the npm-minor-and-patch group in /scripts/docs with 1 update: [js-yaml](https://github.com/nodeca/js-yaml).\n\nUpdates `js-yaml` from 5.4.2 to 5.5.0\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a href=\"https://github.com/nodeca/js-yaml/blob/master/CHANGELOG.md\">js-yaml's changelog</a>.</em></p>\n<blockquote>\n<h2>[5.5.0] - 2026-10-16</h2>\n<h3>Changed</h3>\n<ul>\n<li>Updated <code>argparse</code> to v3.</li>\n<li>Updated development dependencies.</li>\n</ul>\n<h3>Fixed</h3>\n<ul>\n<li>Correct percent-encoding of shorthand and verbatim tags.</li>\n<li>Reject <code>,</code>, <code>]</code>, and <code>}</code> at the start of block plain scalars, <a href=\"https://redirect.github.com/nodeca/js-yaml/issues/801\">#801</a>.</li>\n<li>Report the exact position of non-printable characters in errors, <a href=\"https://redirect.github.com/nodeca/js-yaml/issues/801\">#801</a>.</li>\n</ul>\n<h2>[5.4.3] - 2026-10-06</h2>\n<h3>Fixed</h3>\n<ul>\n<li>Fixed loading a whitespace-only block scalar followed by a less indented\nline, <a href=\"https://redirect.github.com/nodeca/js-yaml/issues/802\">#802</a>.</li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/cb62b2dbbaa0b3e7379d83a5d69d8d52d21b6efb\"><code>cb62b2d</code></a> 5.5.0 released</li>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/87aed909346687fbc183232c62b6d1030c365576\"><code>87aed90</code></a> Deps bump</li>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/3aec5117254d979ae2a8a31ede79255a64b774e9\"><code>3aec511</code></a> Fix error positions for non-printable characters, <a href=\"https://redirect.github.com/nodeca/js-yaml/issues/801\">#801</a></li>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/11aa483b2857e1006ec297dc1b5647fe95ec3f56\"><code>11aa483</code></a> Reject flow indicators at the start of block plain scalars, <a href=\"https://redirect.github.com/nodeca/js-yaml/issues/801\">#801</a></li>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/339d8e0444b1f7db66d3c89fdeb0644017126aaf\"><code>339d8e0</code></a> Refactor tag encoder and decoder to match the YAML specification</li>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/78326247fa2cec0d2c7ed553353d554e039ee7c8\"><code>7832624</code></a> 5.4.3 released</li>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/0cbb471d67b083778e7b2600af2418142bf5bf04\"><code>0cbb471</code></a> Fix whitespace-only block scalar followed by a less indented line, close <a href=\"https://redirect.github.com/nodeca/js-yaml/issues/802\">#802</a></li>\n<li><a href=\"https://github.com/nodeca/js-yaml/commit/30108cc828b5393d55dfbfc8087ab713f7145946\"><code>30108cc</code></a> Parse the first block mapping key once (<a href=\"https://redirect.github.com/nodeca/js-yaml/issues/800\">#800</a>)</li>\n<li>See full diff in <a href=\"https://github.com/nodeca/js-yaml/compare/5.4.2...5.5.0\">compare view</a></li>\n</ul>\n</details>\n<br />\n\n\n[![Dependabot compatibility score](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=js-yaml&package-manager=npm_and_yarn&previous-version=5.4.2&new-version=5.5.0)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\nDependabot will resolve any conflicts with this PR as long as you don't alter it yourself. You can also trigger a rebase manually by commenting `@dependabot rebase`.\n\n[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n- `@dependabot rebase` will rebase this PR\n- `@dependabot recreate` will recreate this PR, overwriting any edits that have been made to it\n- `@dependabot show <dependency name> ignore conditions` will show all of the ignore conditions of the specified dependency\n- `@dependabot ignore <dependency name> major version` will close this group update PR and stop Dependabot creating any more for the specific dependency's major version (unless you unignore this specific dependency's major version or upgrade to it yourself)\n- `@dependabot ignore <dependency name> minor version` will close this group update PR and stop Dependabot creating any more for the specific dependency's minor version (unless you unignore this specific dependency's minor version or upgrade to it yourself)\n- `@dependabot ignore <dependency name>` will close this group update PR and stop Dependabot creating any more for the specific dependency (unless you unignore this specific dependency or upgrade to it yourself)\n- `@dependabot unignore <dependency name>` will remove all of the ignore conditions of the specified dependency\n- `@dependabot unignore <dependency name> <ignore condition>` will remove the ignore condition of the specified dependency and ignore conditions\n\n\n</details>",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1190"
+    },
+    {
+      "number": 1192,
+      "title": "fix: use page scrolling for product updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1192",
+      "author": {
+        "login": "MTG-Thomas",
+        "type": "User"
+      },
+      "merged_at": "2026-11-02T22:40:41Z",
+      "merge_commit": "025f6c019928d8be78bfe47f1cb62702b4ad2226",
+      "body": "The dedicated `/whats-new` page only scrolled when the pointer was over its narrow feed column and retained a modal-style Done control.\n\nUse the existing main page scroller for the heading, feed, and footer, and remove Done from the dedicated route. The automatic announcement dialog keeps its existing layout.\n\nValidation: `git diff --check` passed. Updated the component regression and added a Playwright case that wheels over the gutter beside a long feed, verifies the page heading scrolls away, and reaches the footer. Local tests, lint, and type checks were not run: the user requested CI verification and no WSL use. CI must validate the focused component test, browser case, and quality checks.\n\nProduct Updates: Other / fix - What's New now scrolls across the full page content area and no longer shows a modal-style Done control.\r\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1192"
+    },
+    {
+      "number": 1200,
+      "title": "fix(ci): restore CodeQL actions-language coverage",
+      "url": "https://github.com/gobifrost/bifrost/pull/1200",
+      "author": {
+        "login": "MTG-Thomas",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T04:08:00Z",
+      "merge_commit": "745f86dd1753e4fb369164e4c40187222f56f6dc",
+      "body": "## Product Updates\n\n- [x] Omit \u2014 CI scanning coverage; no user-visible announcement value. Canonical disposition: `product-updates/dispositions/pr-1200.json`.\n\n## Summary\n\nDraft port of [#798](https://github.com/Midtown-Technology-Group/bifrost/pull/798) from the retired MTG fork.\n\nThe CodeQL matrix scans `python` and `javascript-typescript` only, so workflow files under `.github/workflows/` are not analyzed. Adding the `actions` language restores that coverage.\n\nThe patch applied cleanly to `main` at 025f6c0.\n\n## Verification\n\n- CI: `Analyze (actions)` passed on the previous head ([run](https://github.com/gobifrost/bifrost/actions/runs/41546036836/job/125621747448)).\n- Not run: local `./test.sh` suites. This is a workflow-configuration change only.\n\nRefs #1199\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1200"
+    },
+    {
+      "number": 1202,
+      "title": "fix(solution-dev): tolerate invalid local workflow manifest shapes",
+      "url": "https://github.com/gobifrost/bifrost/pull/1202",
+      "author": {
+        "login": "MTG-Thomas",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T03:45:33Z",
+      "merge_commit": "6a692a4af356895bc5a8d12124980f06a462e037",
+      "body": "## Product Updates\n\n- [x] Omit \u2014 local Solution preview diagnostics; canonical disposition at `product-updates/dispositions/pr-1202.json`.\n\n## Summary\n\nDraft port of [#1247](https://github.com/Midtown-Technology-Group/bifrost/pull/1247) from the retired MTG fork.\n\n`FunctionHost.reload()` raised `AttributeError` when `.bifrost/workflows.yaml` parsed to a non-mapping root, killing the watcher thread. A non-mapping `workflows` value was already ignored; it now reports an explicit `LocalWorkflowManifestError` instead. Both cases surface through the existing failure map.\n\nThe fork PR's parametrized test is included. The patch applied cleanly to `main` at 025f6c0.\n\n## Verification\n\nNot run: `./test.sh pre-pr`. Draft for review.\n\nRefs #1197\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1202"
+    },
+    {
+      "number": 1206,
+      "title": "feat(storage): support conditional streaming multipart copies",
+      "url": "https://github.com/gobifrost/bifrost/pull/1206",
+      "author": {
+        "login": "MTG-Thomas",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T05:03:01Z",
+      "merge_commit": "d33b44563988d2515764e1380eebf0d49e740dbb",
+      "body": "Closes #1205\n\n## Product Updates\n\n- [x] Other \u2014 Add an explicit streaming strategy for large copies on S3-compatible storage that does not guarantee conditional part copy. The [canonical disposition](https://github.com/MTG-Thomas/bifrost-upstream/blob/contrib/r2-conditional-copy/product-updates/dispositions/pr-1206.json) is present as a draft. Maintainer content review is required before queueing; no approval is asserted.\n\n## Summary\n\nBiFrost's copies/moves above 5 GiB use UploadPartCopy with a source ETag condition. [Cloudflare's compatibility table](https://developers.cloudflare.com/r2/api/s3/api/) marks those part-copy source conditions unsupported while documenting conditional ranged GetObject support. Earlier bounded R2 probes passed source-condition rejection; this change addresses the documented support gap without claiming a reproduced current R2 data-loss bug.\n\nAdd explicit `BIFROST_S3_MULTIPART_COPY_MODE=stream`: read each part with the original If-Match, validate ETag/status/range/length, then upload it. Metadata and content headers are retained, failed/cancelled copies abort, and final publication still requires `IfNoneMatch=\"*\"`. The default server strategy and single-request copies stay unchanged. No provider autodetection or weaker fallback is introduced.\n\n**Storage safety review:** this changes multipart copy and signed GET headers. The provider must still support atomic conditional completion; streaming does not compensate for its absence. Payloads transit the application, with memory proportional to part size and additional outbound traffic. This does not change public PUT IfMatch or claim full R2/Azure deployment acceptance.\n\n## Validation\n\n- 60 focused unit cases passed against the exact signed candidate; the same tests expose 9 failures against the original S3 modules.\n- Three real local S3 cases passed: exact streamed bytes/metadata, same-size source mutation between parts aborts without destination publication, and existing destination bytes are preserved.\n- The exact new integration case passed against the pinned fixed Seaweed service: distinct 5 MiB/1 MiB part bytes, metadata replacement, content headers, Cache-Control and Expires.\n- Ruff and targeted pyright using unchanged `api/pyrightconfig.json` passed.\n\nLocal preflight exception, disclosed under CONTRIBUTING.md: the shared host has only about 6.8 GiB free disk and no CodeQL CLI. The full `./test.sh pr-preflight`, official application stack and complete API quality suite were not run. The scoped Docker fixture loads actual source/tests but isolates unrelated ORM/package initialization; its results are not claimed as full-stack results. Upstream CI, security checks and maintainer review remain required before merge.\n\nReal R2 execution of this new streaming strategy, physical >5 GiB sizing/performance, browser/full-app Azure acceptance and production rollout remain separate qualification work. No cloud resources or credentials were created for this contribution.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1206"
+    },
+    {
+      "number": 1209,
+      "title": "Keep queue-position updates off workflow execution paths",
+      "url": "https://github.com/gobifrost/bifrost/pull/1209",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T01:15:55Z",
+      "merge_commit": "837a1e318c245924edcf5f6e201a27b1ee2c1a7a",
+      "body": "## Summary\n\nWorkflow admission and child start waited for a full pending-queue snapshot and one Redis publication per queued execution. A growing backlog therefore generated more notification work and delayed useful execution.\n\nCoalesce committed queue changes outside those critical paths, rank only for locally watched executions, and deliver positions through the existing authorization guard. Keep normal status/completion delivery and use separate queue advisories so a delayed position cannot regress a running or finished execution. The queue UI also now retains the metadata its hook previously discarded. No migrations, dependencies, new installation settings, or resource increases.\n\n## Measured result\n\nSame N2 allocation and seeded 2/4/8 SDK workload: two 650m/1GiB workers, two 750m/512MiB APIs, Redis 100m. At 8 offered workflows/sec:\n\n| Metric | Control | UI-preserving fix |\n|---|---:|---:|\n| Correct completion events/sec | 3.187 | 8.120 |\n| Arrival cohort correct by deadline | 802/2,444 | 2,444/2,444 |\n| Unfinished after drain | 1,317 | 0 |\n| Admission p95 | 29.130s | 0.101s |\n| Observed completion p95 | 238.499s | 3.381s |\n| Redis commands/sec over snapshot interval | 4,856 | 682 |\n\nThe candidate passes 2/sec and 4/sec. At 8/sec it passes throughput/reliability with zero faults, but misses the 1.5s completion and 2s queue targets; backlog-drift estimation is inconclusive. Both workers share one API owner at its CPU cap. This does not promise an 8/sec latency-compliant hosting tier or resolve API ownership balancing. Astra reviewed the implementation and result and found no blocking issue.\n\n[Full benchmark results and reproduction](https://github.com/gobifrost/bifrost/blob/64b9bc963/docs/benchmarks/2026-11-03-queue-position-coalesced-results.md).\n\n## Verification\n\n- 161 backend cases: canonical queue/ranking, coalescer, pubsub, dispatch, workflow consumer, legacy drain, worker pool, and cancellation/read consumers.\n- Two live cases: subscribed queue position advances through another process's Redis invalidation; app completion remains available while bookkeeping is blocked. Zero workflow jobs added for queue transport coverage.\n- 52 frontend cases: WebSocket routing, execution stream hook/store, and queue badge.\n- API Pyright/Ruff; client TypeScript/ESLint; 17 harness tests and harness Ruff passed.\n- Full local suites were not run; the merge queue remains the full-suite gate. Detailed commands and source/image hashes are retained in the benchmark report. The new live test's initial module-local fixture error was corrected using the shared human-credential fixture; the corrected tests passed.\n\n## Product Updates\n\n- [x] Highlight \u2014 Faster Workflow Starts; canonical entry `4b51ab48-ffe8-4397-80fa-97e30abcec01` with approved disposition in `product-updates/dispositions/pr-1209.json`.\n- [ ] Other\n- [ ] Omit\n\n\nCI review disposition: CodeQL `py/ineffectual-statement` warnings at lines 29, 63, 89 and 145 of `test_queue_position_refresher.py` are false positives on `await refresher._task`. `request()` creates an asyncio Task for `_run()`; awaiting it suspends the test until refresh/Redis side effects finish and propagates unexpected task failures. The following assertions require those effects (one coalesced broadcast, exactly two refreshes, cleared execution context, and recovery after a failed refresh). These awaits are intentional synchronization, not discarded coroutine objects or ineffective statements; the focused test suite exercised them successfully. Runtime code and tests remain unchanged.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1209"
+    },
+    {
+      "number": 1210,
+      "title": "Activate the faster workflow starts notice",
+      "url": "https://github.com/gobifrost/bifrost/pull/1210",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T01:42:44Z",
+      "merge_commit": "14893707c2b1630a8d313c7ad919eb1b581be4a6",
+      "body": "The queue-position correction landed in #1209, but the approved \u201cFaster Workflow Starts\u201d notice is withheld by the older cached Product Updates inventory. Refresh verified metadata through the actual landed commit so the existing notice is included in built images.\n\nAll 320 prior commit and PR records are retained unchanged. The prepared feed retains all 39 earlier notices with identical content; its only added notice is UUID `4b51ab48-ffe8-4397-80fa-97e30abcec01`. This changes release metadata only.\n\nValidation: canonical content validation, deterministic before/after bundle assertions, image preparation and all 44 Product Updates tooling tests passed. The first comparison mixed ordinary asset URLs with image preparation\u2019s content-hashed URLs; comparing both sides with the same bundler confirmed identical prior entries, and prepared-image membership was checked separately. Backend, client and browser suites were not repeated locally for this metadata change; the native merge queue remains the complete gate.\n\n## Product Updates\n\n- [ ] Highlight\n- [ ] Other\n- [x] Omit \u2014 Internal activation of the approved notice from #1209; approved canonical disposition: `product-updates/dispositions/pr-1210.json`.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1210"
+    },
+    {
+      "number": 1211,
+      "title": "fix(product-updates): persist approved omit decisions for #1200 and #1202",
+      "url": "https://github.com/gobifrost/bifrost/pull/1211",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T04:37:05Z",
+      "merge_commit": "5a41abbf9aaeeac581d854f06857615d47ca890c",
+      "body": "The merge-group Product Updates jobs for #1200 and #1202 failed because their reviewed omit dispositions remained draft. Persist the already approved omit decisions without changing their reasons or source evidence.\n\nRefs #1200, #1202. Original contributions by @MTG-Thomas, ported from Midtown-Technology-Group/bifrost#798 and #1247; this follow-up changes review metadata only.\n\nValidation: reproduced both draft eligibility errors with a normalized merge_group event; the same scripts/product_updates.py validate-event command passes after repair. Full deterministic content validation and git diff --check pass. No runtime code changed.\n\nProduct Updates: omit \u2014 internal disposition metadata repair; canonical approved disposition will be added using this PR\u2019s actual number.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1211"
+    },
+    {
+      "number": 1212,
+      "title": "fix: harden workspace files, policy scope and deploy zips",
+      "url": "https://github.com/gobifrost/bifrost/pull/1212",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T04:47:35Z",
+      "merge_commit": "5d3daf0e99d593e20dd44a1e26f184aa8fc9df24",
+      "body": "Preserves @MTG-Thomas\u2019s #1201 commits, adds regression coverage, and omits this hardening from the updates modal. Verified: 72 focused tests and API lint/type checks passed.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1212"
+    },
+    {
+      "number": 1213,
+      "title": "Default the API development image to the unprivileged user",
+      "url": "https://github.com/gobifrost/bifrost/pull/1213",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T05:30:35Z",
+      "merge_commit": "ed09411f55d0811213093b501460e2094ec3e2b1",
+      "body": "",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1213"
+    },
+    {
+      "number": 1214,
+      "title": "fix(webhooks): throttle Bot Framework JWKS refreshes",
+      "url": "https://github.com/gobifrost/bifrost/pull/1214",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T05:35:06Z",
+      "merge_commit": "5bf8716789a49801f42faf22d69e3a414592a883",
+      "body": "Carries forward @MTG-Thomas\u2019s fix from #1203 and Midtown-Technology-Group/bifrost#1224, preserving original authorship. Concurrent unknown-key requests share one refresh, and failed refresh attempts start a five-minute cooldown.\n\nIncludes the reviewed security disposition and contributor credit. Verification: 49 focused tests, API type/lint checks, and Product Updates validation passed. Full suites and live Microsoft authentication were not run locally.\n\nSupersedes #1203. Refs #1196.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1214"
+    },
+    {
+      "number": 1215,
+      "title": "feat(worker): support service-authenticated control sockets",
+      "url": "https://github.com/gobifrost/bifrost/pull/1215",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T06:15:48Z",
+      "merge_commit": "63530d6cbf632377feb5a0c0300c9749b6c1ab42",
+      "body": "",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1215"
+    },
+    {
+      "number": 1217,
+      "title": "Reuse SDK HTTP pools with safe loop and process ownership",
+      "url": "https://github.com/gobifrost/bifrost/pull/1217",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T11:42:35Z",
+      "merge_commit": "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
+      "body": "## Summary\n\nSDK calls from another event loop replaced the cached HTTP client without closing the previous pool. Each active loop now owns its async pools, and ordinary Python runner shutdown closes them on that loop. A verified TLS context is shared within each process instead of repeatedly parsing the CA bundle. Forked children discard inherited transport state and implicit client identity before using their own credentials.\n\nGenerated integration SDKs reuse one synchronous HTTP client per thread when the effective integration, tenant, configuration and credential match. Integration lookup still runs before every call; credential/configuration changes replace and close the previous client. Sessions also close at thread exit. Existing workflow APIs and authorization checks are preserved, with no new configuration settings.\n\n## Validation\n\n- Real HTTP tests verify connection reuse across two concurrent live loops, repeated asyncio.run, streaming and deterministic cleanup. Fork tests cover inherited locks, copied local-development contexts, transport ownership and the actual worker Unix-socket routes.\n- Rendered SDK tests cover credential/configuration/tenant changes, method results, replacement cleanup and thread exit.\n- After incorporating current main: 99 focused tests passed; Python type checking and lint passed. CI then passed 11,386 backend tests and exposed one obsolete test that constructed a private async pool without a running loop. Reproduced locally and corrected to verify token rotation on the same live pool and close it. All 57 focused SDK/worker/service consumer tests and type/lint checks passed after correction. Full backend/browser coverage remains gated by the protected merge queue.\n- Read-only comparisons against unchanged Halo source demonstrated an independent platform CPU reduction. Combined with ordinary Workspace session pooling, measured workflow-body CPU fell about 70% and Halo TLS handshakes fell from 89 to 9. Elapsed time remained around eight seconds; this PR does not claim that the remaining latency is fixed. Diagnostic platform code ran only in isolated execution children, not as a production image.\n\nThe loose Workspace module changes and Solution source patches are separate from this platform diff.\n\n## Product Updates\n\n- [x] Other \u2014 Reduce repeated HTTP client setup in workflows and generated integration SDKs.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1217"
+    },
+    {
+      "number": 1218,
+      "title": "Record the SDK client reuse fix in Product Updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1218",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T12:10:33Z",
+      "merge_commit": "3f79ac4fde18defc472b4e5ce83d43f881827125",
+      "body": "The approved SDK client reuse fix from #1217 is absent from the frozen Product Updates inventory. Refresh verified coverage through its landed commit so the build includes its reviewed Other change.\n\nRetains all 337 landed commit/PR records, contributor credits, and the exact 40 existing approved entries. No runtime source or announcement prose changes.\n\nValidation: cumulative coverage and deterministic image preparation pass; the prepared bundle includes pr:1217; all 44 Product Updates tooling tests pass in Docker.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1218"
+    },
+    {
+      "number": 1219,
+      "title": "Fix Bifrost plugin packaging for catalog distribution",
+      "url": "https://github.com/gobifrost/bifrost/pull/1219",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T16:42:48Z",
+      "merge_commit": "12850a452100f9acd7544ea8e6a58fbcf178ad85",
+      "body": "The catalog generator selects Bifrost\u2019s root Codex manifest, whose `./skills/` path contains directory symlinks. The catalog copies those symlinks as files and loses every `SKILL.md`. Point the root manifest at the existing plain-file mirror under `plugins/bifrost/skills/`; the packaged plugin\u2019s manifest already uses that mirror.\n\nAlso include a plugin README, an exact copy of the repository AGPL-3.0 license, and disclosure guidance pointing to the canonical security policy. These files were missing from the installable bundle.\n\nRefs #381. Catalog submission: https://github.com/hashgraph-online/awesome-codex-plugins/pull/643\n\nThe catalog-owned centralized scan scored the source repository 73/100 against its required 75/100. The final candidate scores **77/100** with the reviewed scanner release, without adding scanner exclusions or suppression policies.\n\n## Validation\n\n- `plugin-scanner scan . --profile default --min-score 75 --fail-on-severity none --format json --output /tmp/bifrost-381-scanner/final.json` using `plugin-scanner==3.58.0` \u2014 passed, 77/100. Verified the scanner wheel against the SHA256 published in the catalog contribution guide.\n- Exercised the upstream `generate_plugins_json.py` root selection and file collection against the candidate tree: the original manifest retains zero `SKILL.md` files; the corrected manifest retains all four skills, their references, documentation, license, and icons as regular files.\n- `python3 scripts/check_skill_mirrors.py` \u2014 passed.\n- `python3 scripts/product_updates.py validate --target <full-head-sha>` \u2014 passed.\n- `git diff --check` and packaged-document checks, including byte-for-byte license equality \u2014 passed.\n\nThe scanner still reports heuristic findings across the full platform repository; this packaging change does not claim to remediate or validate them. The catalog-owned scan remains authoritative after merge. Backend and frontend suites were not run locally for this manifest/documentation change.\n\n## Product Updates\n\n- [x] Omit \u2014 plugin distribution metadata and documentation; no platform runtime behavior change.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1219"
+    },
+    {
+      "number": 1222,
+      "title": "Add Rewst migration pilot Solution and coding-agent handoff",
+      "url": "https://github.com/gobifrost/bifrost/pull/1222",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T18:26:25Z",
+      "merge_commit": "47130eeb15308a5d6b5fd4c0819432c13e4e4499",
+      "body": "Build a reusable Rewst migration pilot that an existing Rewst customer can install without inheriting another customer's migration state. The Solution collects source evidence and persists the plan and test evidence; the customer's external Codex or Claude session builds replacements through scoped workflow calls.\n\n- Installable Solution at `examples/rewst-migration`: Setup, Inventory, Plan, and Agent Handoff; native install-scoped secret configuration; bounded read-only exporter; immutable captures; revisioned managed-file state and derived table index.\n- Network-free sample, workflow dependency evidence, explicit resource coverage gaps, revision-checked plan/evidence updates, and copyable CLI handoff with structured write examples. No internal Coding Agent or AI provider is required.\n- Generalized migration skill, standalone diagnostic extractor, installation guide, and customer pilot checklist. No customer exports, credentials, IDs, or previous progress are packaged.\n\nThe real sample exposed two shared platform defects, repaired here: standalone CLI manifests imported a server-only location validator, and the definition guard blocked runtime FileMetadata updates. FilePolicy and workflow definitions remain deploy-owned; Files authorization and CAS are preserved. **The pilot requires a Bifrost build containing these fixes. Installing the Solution alone does not update the platform.**\n\nLive Rewst compatibility remains unverified: the author no longer has Rewst access. Historical private GraphQL queries can require adaptation by the customer. Form definitions, custom integration actions/configuration, dynamic references, Crates/apps/access, history, and in-flight operational state remain explicit coverage gaps. This is an experimental capture/planning pilot, not a universal backup or automatic production cutover.\n\nValidation: 15 extraction-helper tests; 16 Solution contract tests; 3 app helper tests; app TypeScript and Vite build; zero npm audit findings; API Pyright/Ruff; 54 focused platform tests. Real CLI sample create/export/artifact/plan/evidence/resume/conflict/handoff passed without a Rewst credential. The final deployed-app browser journey passed (40.8s, plus authentication setup; 2 tests passed in 57.8s), including source JSON reads and cross-migration unsaved-draft isolation. All 18 file isolation/policy/standalone-archive checks passed. The documented repository-install command succeeded against the published branch on a fresh install.\n\nThe browser spec installs the actual example source with **one deploy/app-build job**, then exercises sample export, saved plans, evidence, reload, migration draft isolation, artifact reads, and desktop/mobile rendering. Lower-level tests cover conflicts, scope rejection, auth denial, and transport failures. Full backend and browser suites are left to CI/merge queue.\n\n[Install and pilot guide](https://github.com/gobifrost/bifrost/blob/main/examples/rewst-migration/README.md)\n\nFailure dispositions: the first browser export exposed the repaired FileMetadata guard bug. A later browser failure was a test locator scoped to the label container instead of its list item; semantic list-item scoping fixes it without retries or timeout increases. A focused backend run hit an idle keepalive socket close between tests; the session fixture now expires idle sockets after two seconds, before Uvicorn closes them at five seconds. No network retry was added; the same 18 checks then passed.\n\n\nExact focused validation commands (from the repository root unless noted):\n\n```bash\npython3 -B -m unittest scripts.test_rewst_extraction\nPYTHONPATH=examples/rewst-migration python3 -B -m unittest discover -s examples/rewst-migration/tests\npython3 scripts/sync_rewst_migration_client.py --check\npython3 scripts/check_skill_mirrors.py\n./test.sh quality api\n./test.sh tests/unit/test_solution_runtime_file_guard.py tests/unit/test_solution_guard.py tests/unit/test_cli_packaging.py tests/unit/test_file_paths.py -v\n./test.sh tests/unit/test_cli_packaging.py tests/e2e/platform/test_solution_file_scope.py tests/e2e/platform/test_file_policy_solution_crud.py -v\n./test.sh client e2e e2e/rewst-migration.admin.spec.ts\n# In examples/rewst-migration/apps/rewst-migration after instance SDK setup:\nnpx tsc --noEmit\nnpm test\nnpm run build\nnpm audit\n```\n\nThe file-boundary run took 15.8s for 18 tests; the standalone artifact/guard/path run took 5.64s for 54 tests. The browser journey deliberately owns one expensive Solution deployment/app-build boundary; edge cases remain in the lower-level contract tests. The documented `bifrost solution install-repo` command was also exercised on a fresh install of this public branch, followed by actual scoped CLI workflow calls.\n\nAdditional local browser run encountered host exhaustion (58/62 GiB RAM used and all 8 GiB swap used), worker admission refusing new work, and PgBouncer Docker DNS failures during deployment. Its teardown 409 obscured the primary deployment failure; the spec now preserves the primary exception and attaches any teardown failure separately. Validation is serialized after releasing this task's other development resources; no timeout increase, network retry, memory-threshold override, or production behavior change is used.\n\nThe final browser verification uses this worktree's API and worker containers bounded to 2 GiB each (`docker update --memory 2g --memory-swap 2g` after test reset). Without a cgroup limit, the executor uses the shared host's memory occupancy and correctly refuses new work above 85%; other active worktrees saturated the host. The per-executor threshold is unchanged, and the optional debug stack was shut down before this serial run. No resource limits or admission behavior are changed in the shipped source.\n\nA separate public Netbird debug-URL probe was inconclusive: the shell rendered but a five-second setup-heading assertion ended while the overview hook was loading. Server execution had completed; a later sanitized probe could not reach login under host pressure and obtained no HTTP/WS evidence. This does not establish a WebSocket defect or certify that proxy path. The supported serial local-browser journey and actual CLI calls are the package verification evidence.\n\nFinal UI assertions cover phone-width command wrapping without horizontal clipping, mobile menu dismissal after navigation, draft preservation, and light theme. The copied CLI payload remains unchanged. Client TypeScript and ESLint also passed in the Docker Playwright image; ESLint reports one existing console warning in `e2e/support/seed-review-pack.ts` and zero errors. The changed browser spec separately passed ESLint.\n\nEarly-build publication: plugin manifests advance together to `1.4.2-dev.1` so installed clients can receive the migration skill. The skill now explicitly checks CLI setup/authentication, installs the Solution, verifies the sample, and guides native secret Configuration before live capture. Install links target `main` after landing; users can pin a tested source commit. Publication uses the ordinary gated dev channel; stable tags are unchanged.\n\nReview-thread dispositions before queue entry: the nine CodeQL comments are style diagnostics, with all CodeQL checks green. Five flag the intentional ellipsis bodies of structural `Protocol` signatures (`ReadClient` and `MigrationStorage`); these declare interfaces rather than executable workflow steps. The unittest import comment concerns using the test-framework module and its separate mock helper, both explicitly used by the offline tests. Three lambda comments suggest a shorter spelling for fresh fake-client factories; the current zero-argument factories are behaviorally correct and covered by the offline contracts. These comments are resolved as reviewed non-blocking style preferences/intentional interface declarations; no test or security failure is waived.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1222"
+    },
+    {
+      "number": 1229,
+      "title": "docs: clarify scope of Cloudflare copyright notice",
+      "url": "https://github.com/gobifrost/bifrost/pull/1229",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-03T17:03:30Z",
+      "merge_commit": "72a1fa9f0380dc7985cabd9ed1467bd337622cd8",
+      "body": "## Summary\n\nClarify that the Cloudflare MIT notice covers the adapted capability-search ranking code used by Automatic agents and MCP discovery. Link the notice and implementation from the README License section so the attribution has an explicit scope.\n\nThe existing attribution and project license remain intact.\n\n## Validation\n\n- `git diff --check` passed.\n- Product Updates canonical-ledger validation passed.\n- Verified the README links resolve to tracked files and the implementation records the pinned upstream source.\n- Confirmed the notice matches the pinned upstream MIT license.\n- Application unit, E2E, lint and type suites were not run: this is a prose-only clarification.\n\n## Product Updates\n\n- [x] Omit \u2014 README attribution clarification only; no runtime behavior, license grant or customer upgrade change. Canonical disposition: `product-updates/dispositions/pr-1229.json`.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1229"
     }
   ]
 }

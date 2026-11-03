@@ -1,0 +1,13 @@
+{
+  "key": "pr:1200",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1200",
+      "CI-only CodeQL matrix change; no user-visible product surface changes."
+    ]
+  },
+  "reason": "Adds the actions language to the existing CodeQL matrix so workflow files are scanned. Internal CI coverage only; no customer-facing behavior."
+}

@@ -367,11 +367,11 @@ Query options:
 | `where` | `DocumentFilter` | none | Filter conditions, see DSL below |
 | `page` | `number` | `1` | 1-indexed page number |
 | `pageSize` | `number` | `100` | Rows per page (server cap 1000) |
-| `order_by` | `string` | `updated_at` | Field name to sort by |
+| `order_by` | `string` | `created_at` column | JSONB data field to sort by (compared as text, `id` tiebreaker) |
 | `order_dir` | `"asc" \| "desc"` | `"asc"` | Sort direction |
 | `scope` | `string` | app's org / caller's org | Org scope override |
 
-Live updates: `insert` events bump `total` and append to the visible window iff there's room (out-of-window inserts trim to `pageSize`); `update` replaces in place; `delete` removes from the window and decrements `total`.
+Live updates: `insert` events bump `total`. With `order_by`, the row is placed at its sorted position and the window trims to `pageSize`; inserts that sort after the last row of a full page (or, on `page > 1`, before the first row) belong to another page and are not shown. Without `order_by` the server orders by `created_at`, so a new row is the newest: ascending (the default) appends iff there's room; `order_dir: "desc"` places it first on page 1 and leaves later pages unchanged. An insert for a row already in the window is applied like an update rather than duplicated. `update` replaces in place (with `order_by`, a changed sort key moves the row within the window); `delete` removes from the window and decrements `total`.
 
 #### `useInfiniteTable(name, query?)`
 
@@ -387,7 +387,7 @@ const { rows, loadMore, hasMore, loading, error } = useInfiniteTable("contacts",
 
 Returns `{ rows, loadMore, hasMore, loading, error }`. `loadMore()` fetches the next page and appends to `rows`. `hasMore` flips false when a partial page comes back. After page 1 the hook automatically uses `skip_count: true` for speed.
 
-Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both wire live updates the same way.
+Pick `useTable` for "Page X of Y" numbered-page UI; pick `useInfiniteTable` for "Load more" / infinite-scroll. Both apply live updates in `order_by` order. In `useInfiniteTable` the loaded rows stay the server's ordered prefix: an insert that sorts past the loaded rows while `hasMore` is true is left for `loadMore()` to fetch, and the next page's offset follows inserts and deletes, so `loadMore()` neither skips nor repeats rows.
 
 #### `tables.*` direct calls
 

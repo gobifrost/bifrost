@@ -434,6 +434,7 @@ services:
                                       # the host LOG_DIR root over /tmp/bifrost.
       - ./docker-compose.yml:/app/docker-compose.yml:ro  # Production deployment contract.
       - ./docker-compose.dev.yml:/app/docker-compose.dev.yml:ro  # Development deployment contract.
+      - ./docker-compose.debug.yml:/app/docker-compose.debug.yml:ro  # Isolated debug deployment contract.
       - ./client/src:/client/src:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.
@@ -548,6 +549,8 @@ services:
       CI: "true"
     volumes:
       - ./client/e2e:/app/e2e
+      # The migration pilot's happy path installs its actual portable source.
+      - ./examples/rewst-migration:/app/examples/rewst-migration:ro
       # SDK browser fixtures compile the current source with production React.
       - ./client/src/lib/app-sdk:/app/src/lib/app-sdk:ro
       - ./client/playwright.config.ts:/app/playwright.config.ts:ro

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { components } from "@/lib/v1";
 import { tables } from "./tables";
 import {
@@ -35,7 +35,9 @@ export interface UseInfiniteTableResult {
  * appends the next page to `rows`. The first page fetches with a count;
  * subsequent pages set `skip_count: true` (the API supports this — see
  * `DocumentQuery.skip_count`). Pages stop when a partial page comes back.
- * Live updates apply to whatever's been loaded.
+ * Live updates apply to whatever's been loaded, in `order_by` order (see
+ * `applyEvent`): the loaded rows stay the server's ordered prefix, so the
+ * next page's offset is the number of rows loaded.
  *
  * Use this for "Load more" / infinite-scroll UI. For numbered-page UI ("Page
  * 3 of 14"), prefer `useTable`'s `page` / `pageSize` / `totalPages` surface.
@@ -53,36 +55,52 @@ export function useInfiniteTable(
   const whereKey = JSON.stringify(where ?? null);
 
   // Stable refs so loadMore doesn't capture stale values when the caller
-  // memoizes its `where` literal.
-  const offsetRef = useRef(0);
+  // memoizes its `where` literal. `rowsRef` mirrors the committed rows: their
+  // count is the next page's offset, since live events keep the loaded rows
+  // equal to the server's ordered prefix.
+  const rowsRef = useRef<TableRow[]>([]);
+  const hasMoreRef = useRef(true);
   const tableIdRef = useRef<string | null>(null);
   const cancelledRef = useRef(false);
 
+  // Layout effects, so a `loadMore()` fired right after a live-event render
+  // never reads the previous commit's rows.
+  useLayoutEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+  useLayoutEffect(() => {
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
+
   const loadMore = useCallback(async () => {
     if (cancelledRef.current) return;
-    if (!hasMore && offsetRef.current > 0) return;
+    const offset = rowsRef.current.length;
+    if (!hasMore && offset > 0) return;
     try {
       const snap = await tables.query(
         name,
         {
           where,
           limit: pageSize,
-          offset: offsetRef.current,
+          offset,
           order_by,
           order_dir,
           // After the first page, skip the count query for speed. The
           // hasMore signal comes from the page-size check below.
-          skip_count: offsetRef.current > 0 ? true : undefined,
+          skip_count: offset > 0 ? true : undefined,
         },
         scope,
       );
       if (cancelledRef.current) return;
       tableIdRef.current = snap.table_id;
       const newRows = snap.documents.map(flattenDocument);
-      setRows((prev) =>
-        offsetRef.current === 0 ? newRows : [...prev, ...newRows],
-      );
-      offsetRef.current += newRows.length;
+      setRows((prev) => {
+        if (offset === 0) return newRows;
+        // A live event can shift the server's ordering between pages; never
+        // show a row twice.
+        const loaded = new Set(prev.map((r) => r.id));
+        return [...prev, ...newRows.filter((r) => !loaded.has(r.id))];
+      });
       setHasMore(newRows.length === pageSize);
       setLoading(false);
     } catch (e) {
@@ -98,7 +116,7 @@ export function useInfiniteTable(
   useEffect(() => {
     let effectCancelled = false;
     cancelledRef.current = false;
-    offsetRef.current = 0;
+    rowsRef.current = [];
     tableIdRef.current = null;
 
     let unsubscribe: (() => void) | null = null;
@@ -113,7 +131,7 @@ export function useInfiniteTable(
           {
             where,
             limit: pageSize,
-            offset: offsetRef.current,
+            offset: 0,
             order_by,
             order_dir,
           },
@@ -123,7 +141,6 @@ export function useInfiniteTable(
         tableIdRef.current = snap.table_id;
         const newRows = snap.documents.map(flattenDocument);
         setRows(newRows);
-        offsetRef.current = newRows.length;
         setHasMore(newRows.length === pageSize);
         setLoading(false);
       } catch (e) {
@@ -134,7 +151,7 @@ export function useInfiniteTable(
     }
 
     async function refreshLoadedSnapshot() {
-      const targetCount = Math.max(offsetRef.current, pageSize);
+      const targetCount = Math.max(rowsRef.current.length, pageSize);
       const refreshedRows: TableRow[] = [];
       let refreshOffset = 0;
       let total = 0;
@@ -163,7 +180,6 @@ export function useInfiniteTable(
 
       if (effectCancelled) return;
       setRows(refreshedRows);
-      offsetRef.current = refreshedRows.length;
       setHasMore(refreshedRows.length < total);
       setError(null);
     }
@@ -203,8 +219,8 @@ export function useInfiniteTable(
 
         // Reset state from inside the async body so React doesn't see
         // synchronous setState-in-effect (the lint rule disallows that
-        // pattern; cascading renders during the same commit). The first
-        // `loadMore()` call will replace `rows` because offsetRef is 0.
+        // pattern; cascading renders during the same commit).
+        // `loadInitialPage()` then replaces `rows` with the first page.
         setHasMore(true);
         setError(null);
         setLoading(true);
@@ -225,7 +241,11 @@ export function useInfiniteTable(
                 refreshAuthoritativeSnapshot();
                 return;
               }
-              applyEvent(evt, setRows);
+              applyEvent(evt, setRows, {
+                order_by,
+                order_dir,
+                hasMore: () => hasMoreRef.current,
+              });
             },
             () => {
               refreshAuthoritativeSnapshot();
