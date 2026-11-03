@@ -328,6 +328,8 @@ This is intended to be a community-driven project built to ensure the Integratio
 
 This project is licensed under the AGPL License - see the [LICENSE](LICENSE) file for details.
 
+The [Cloudflare MIT notice](LICENSES/cloudflare-codemode-MIT.txt) covers the adapted [capability-search ranking code](api/src/services/capabilities/search.py) used by Automatic agents and MCP discovery. Its Cloudflare copyright attribution is retained from the upstream code and does not identify Cloudflare as the copyright owner of Bifrost as a whole.
+
 **Why AGPL?** To ensure this platform remains open and available to everyone. If you modify and deploy Bifrost, you must share those modifications with the community. This prevents proprietary forks and ensures improvements benefit everyone.
 
 ---
