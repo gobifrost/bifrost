@@ -64,6 +64,9 @@ class SolutionManagedWriteError(Exception):
 # Models whose instances are solution-managed when solution_id is set. Other
 # ORM classes never carry solution_id and are skipped cheaply.
 _OPERATIONAL_SOLUTION_ROW_NAMES = {
+    # Runtime file bytes and their metadata are written through the Files SDK.
+    # FilePolicy remains deploy-owned; this does not bypass its access checks.
+    "FileMetadata",
     # Job bookkeeping belongs to the platform scheduler/API, not the deploy-owned
     # portable entity surface protected by this guard.
     "SolutionExportJob",

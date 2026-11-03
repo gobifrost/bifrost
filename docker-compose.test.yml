@@ -549,6 +549,8 @@ services:
       CI: "true"
     volumes:
       - ./client/e2e:/app/e2e
+      # The migration pilot's happy path installs its actual portable source.
+      - ./examples/rewst-migration:/app/examples/rewst-migration:ro
       # SDK browser fixtures compile the current source with production React.
       - ./client/src/lib/app-sdk:/app/src/lib/app-sdk:ro
       - ./client/playwright.config.ts:/app/playwright.config.ts:ro
