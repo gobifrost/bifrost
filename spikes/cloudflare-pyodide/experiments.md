@@ -1139,3 +1139,17 @@ Also corrected stale dependency document bundle-unavailable wording; denial rema
 historical evidence. No new package/native-build or cloud invocation.
 Next: general declared-dependency qualification and dynamic-import ambiguity remain
 open; startup/deployed memory/isolation/abnormal cancellation still gate admission.
+
+### 2026-11-03 — refreshed generation redaction
+Hypothesis: real run refresh registers replacement secrets before they can reach
+stdout, logs, exception and canonical persistence. Change: fixture emits original/
+replacement access plus stable run refresh through all three output paths; report
+also rejects unknown JWT-shaped values. No upstream/SDK/bridge changes.
+Command: CT128 ct128-canonical-failure.py --refresh-redaction --revision 1.
+Observed exit0: actual authrefresh200, changed access/stable run refresh verified,
+canonical error and stdout/warning/traceback redacted; peerSuccess78, replay/fencing,
+401revocation,busy2,2,1,0,cleanup pass. Ruff/Pyright pass. Supervisor73.765s.
+Artifact: backend/REFRESH-REDACTION.md, verifier, results/refresh-redaction receipt.
+Next: native startup/control capability contract and deployed abnormal cancellation/
+memory/isolation gates. No cloud call; no persistent credentials/grants or new
+runtime settings. This is not arbitrary-code secret containment acceptance.

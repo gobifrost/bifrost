@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import runpy
 from collections.abc import Awaitable
 from datetime import datetime, timedelta, timezone
@@ -23,8 +24,8 @@ from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False):
-    if sum((source_change, late_result, retained_http, oversized_result, numeric_result, oversized_body, memory_pressure)) > 1:
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False):
+    if sum((source_change, late_result, retained_http, oversized_result, numeric_result, oversized_body, memory_pressure, refresh_redaction)) > 1:
         raise ValueError('One fixture mode required')
     if deadline_ack_loss and not late_result:
         raise ValueError('Deadline ACK loss requires finite late-result mode')
@@ -143,6 +144,21 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     sources[slot['path']] = source.replace(
                         "        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])",
                         f"        return {{'payload': 'x' * {1200000 if oversized_body else 300000}}}")
+                if refresh_redaction and slot['label'] == 'fails-first':
+                    sources[slot['path']] = source.replace(
+                        "        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])",
+                        "        from bifrost.client import get_client\n"
+                        "        original = os.environ['BIFROST_ACCESS_TOKEN']\n"
+                        "        run_refresh = os.environ['BIFROST_REFRESH_TOKEN']\n"
+                        "        replacement = await get_client().refresh_access_token(original)\n"
+                        "        if not replacement or replacement == original:\n"
+                        "            raise RuntimeError('Run access credential did not change')\n"
+                        "        if os.environ['BIFROST_REFRESH_TOKEN'] != run_refresh:\n"
+                        "            raise RuntimeError('Run refresh identity unexpectedly rotated')\n"
+                        "        message = 'refresh_probe original=' + original + ' replacement=' + replacement + ' refresh=' + run_refresh\n"
+                        "        print(message)\n"
+                        "        logging.getLogger(__name__).warning(message)\n"
+                        "        raise ValueError(message)")
                 if memory_pressure and slot['label'] == 'fails-first':
                     sources[slot['path']] = source.replace(
                         "        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])",
@@ -648,6 +664,11 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         revoked = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + slot['token']}, json={'key': slot['key']})
                         if revoked.status_code != 401:
                             raise RuntimeError('Completed shared credential remained usable')
+                        if refresh_redaction and slot is failed:
+                            marker = 'refresh_probe original=[REDACTED] replacement=[REDACTED] refresh=[REDACTED]'
+                            if not error or marker not in error or not any(marker in message for message in logs):
+                                raise RuntimeError('Refreshed credential redaction missing from canonical output')
+                            report['run_refresh_generation_redaction_verified'] = True
                         if memory_pressure and slot is failed:
                             observed = [message for message in logs if 'bounded_memory_probe=' in message]
                             outcomes = [value for value in ('allocated_160mib', 'python_memory_error')
@@ -693,7 +714,8 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                 raise RuntimeError('Fixture worker claims survived cleanup')
         report['fixture_worker_cascade_cleanup_verified'] = True
         encoded = json.dumps(report)
-        if any(secret and secret in encoded for secret in secrets):
+        if (any(secret and secret in encoded for secret in secrets)
+            or re.search(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', encoded)):
             raise RuntimeError('Credential exposure: shared evidence withheld')
         print(encoded)
     finally:
@@ -724,6 +746,7 @@ if __name__ == '__main__':
     parser.add_argument('--late-result', action='store_true')
     parser.add_argument('--retained-http', action='store_true')
     parser.add_argument('--deadline-ack-loss', action='store_true')
+    parser.add_argument('--refresh-redaction', action='store_true')
     parser.add_argument('--memory-pressure', action='store_true')
     parser.add_argument('--oversized-body', action='store_true')
     parser.add_argument('--numeric-result', action='store_true')
@@ -732,4 +755,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
-                     deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure))
+                     deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction))

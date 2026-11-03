@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const read = name => JSON.parse(readFileSync(new URL('results/memory-pressure/' + name, root), 'utf8').replace(/^\uFEFF/, ''));
 const failed = read('receipt-v1.json');
@@ -8,7 +9,8 @@ assert.equal(failed.qualification_passed, false);
 assert.equal(failed.commands.at(-1).exit_code, 1);
 const receipt = read('receipt-v2.json');
 for (const name of ['shared-native-pool.py', 'ct128-canonical-failure.py']) {
-  assert.equal(createHash('sha256').update(readFileSync(new URL('backend/' + name, root))).digest('hex'),
+  const tested = execFileSync('git', ['show', '12572a0664f19b06cc25845332fc002af2141ac4:spikes/cloudflare-pyodide/backend/' + name]);
+  assert.equal(createHash('sha256').update(tested).digest('hex'),
     receipt.packet_sha256[name], name);
 }
 assert.equal(receipt.qualification_passed, true);
