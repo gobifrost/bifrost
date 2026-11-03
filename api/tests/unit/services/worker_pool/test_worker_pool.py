@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -169,10 +169,21 @@ async def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatc
     wake = AsyncMock()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", AsyncMock)
-    monkeypatch.setattr("src.services.execution.queue_tracker.publish_queue_positions", AsyncMock())
+    queue_refresh = Mock()
+    monkeypatch.setattr(
+        "src.services.execution.queue_tracker.request_queue_position_refresh", queue_refresh
+    )
+    live_updates = AsyncMock()
+    monkeypatch.setattr("src.core.pubsub.publish_execution_update", live_updates)
     await _delete_policy(async_session_factory)
     await _store_policy(async_session_factory, POLICY)
-    yield SimpleNamespace(sessions=async_session_factory, wake=wake, context=context)
+    yield SimpleNamespace(
+        sessions=async_session_factory,
+        wake=wake,
+        context=context,
+        queue_refresh=queue_refresh,
+        live_updates=live_updates,
+    )
     await _delete_policy(async_session_factory)
 
 
@@ -554,6 +565,8 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert claim is not None and claim.claimed is not None
     assert claim.memory_request_bytes == 200 * MIB
     db.wake.reset_mock()
+    db.queue_refresh.reset_mock()
+    db.live_updates.reset_mock()
 
     await workflow_dispatch.release_workflow_run(
         worker_id=first, message=claim.message, payload=claim.claimed,
@@ -577,6 +590,8 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
         (UUID(execution_id), claim.queued_at)
     ]
     db.wake.assert_awaited_once_with(workflow_dispatch.FAMILY)
+    db.queue_refresh.assert_called_once_with()
+    db.live_updates.assert_awaited_once_with(UUID(execution_id), ExecutionStatus.PENDING.value)
     second = await _static_executor("second")
     again = await _claim(second)
     assert again is not None and again.claimed is not None

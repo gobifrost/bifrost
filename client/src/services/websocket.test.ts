@@ -108,6 +108,46 @@ describe("platform WebSocket authentication", () => {
 	});
 });
 
+describe("execution queue WebSocket contract", () => {
+	it("routes queue advisories only to execution queue subscribers", () => {
+		const queueCallback = vi.fn();
+		const executionCallback = vi.fn();
+		const historyCallback = vi.fn();
+		const unsubscribeQueue = webSocketService.onExecutionQueueUpdate(
+			"execution-1",
+			queueCallback,
+		);
+		const unsubscribeExecution = webSocketService.onExecutionUpdate(
+			"execution-1",
+			executionCallback,
+		);
+		const unsubscribeHistory = webSocketService.onHistoryUpdate(historyCallback);
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage({
+			type: "execution_queue_update",
+			executionId: "execution-1",
+			queuePosition: 3,
+			waitReason: "queued",
+		});
+
+		expect(queueCallback).toHaveBeenCalledExactlyOnceWith({
+			executionId: "execution-1",
+			queuePosition: 3,
+			waitReason: "queued",
+		});
+		expect(executionCallback).not.toHaveBeenCalled();
+		expect(historyCallback).not.toHaveBeenCalled();
+
+		unsubscribeQueue();
+		unsubscribeExecution();
+		unsubscribeHistory();
+	});
+});
+
 describe("platform-job WebSocket contract", () => {
 	it("dispatches the same durable snapshot by job id", () => {
 		const callback = vi.fn();

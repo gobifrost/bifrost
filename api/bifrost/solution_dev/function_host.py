@@ -38,6 +38,10 @@ class LocalWorkflowImportError(LocalWorkflowError):
     """The ref's target file exists locally but failed to import."""
 
 
+class LocalWorkflowManifestError(LocalWorkflowError):
+    """The local workflow manifest parsed but has an invalid shape."""
+
+
 @dataclass(frozen=True)
 class LocalWorkflowIndex:
     by_ref: dict[str, str] = field(default_factory=dict)       # ref → local path::fn
@@ -49,10 +53,16 @@ def _load_workflow_manifest_entries(workspace: Path) -> list[dict[str, Any]]:
     manifest = workspace / ".bifrost" / "workflows.yaml"
     if not manifest.is_file():
         return []
-    data = yaml.safe_load(manifest.read_text()) or {}
-    workflows = data.get("workflows") or {}
-    if not isinstance(workflows, dict):
+    data = yaml.safe_load(manifest.read_text())
+    if data is None:
         return []
+    if not isinstance(data, dict):
+        raise LocalWorkflowManifestError("root must be a mapping")
+    workflows = data.get("workflows")
+    if workflows is None:
+        return []
+    if not isinstance(workflows, dict):
+        raise LocalWorkflowManifestError("workflows must be a mapping")
     entries: list[dict[str, Any]] = []
     for workflow_id, body in workflows.items():
         if not isinstance(body, dict):
@@ -233,6 +243,9 @@ class FunctionHost:
             # A mid-edit save must degrade to "no aliases + loud failure line",
             # never an exception — an escaped error kills the watcher thread.
             self._failures[".bifrost/workflows.yaml"] = f"invalid YAML: {exc}"
+            entries = []
+        except LocalWorkflowManifestError as exc:
+            self._failures[".bifrost/workflows.yaml"] = f"invalid manifest: {exc}"
             entries = []
         self._index = build_local_workflow_index(entries, set(self._fns), self._failures)
 
