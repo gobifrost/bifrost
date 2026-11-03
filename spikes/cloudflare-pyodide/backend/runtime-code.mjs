@@ -9,9 +9,23 @@ class Default(WorkerEntrypoint):
     async def fetch(self, request):
         body = json.loads(await request.text())
         if body["action"] == "inspect":
+            import importlib, importlib.metadata, re
+            from runtime_guard import require_runtime
+            packages = {}
+            def observe(name, version):
+                canonical = re.sub(r'[-_.]+', '-', name).lower()
+                if canonical in packages and packages[canonical] != version:
+                    raise RuntimeError("Conflicting runtime package metadata")
+                packages[canonical] = version
+            for distribution in importlib.metadata.distributions():
+                observe(distribution.metadata["Name"], distribution.version)
+            for name, module in [("httpx", "httpx"), ("pydantic", "pydantic"), ("pydantic-core", "pydantic_core")]:
+                observe(name, importlib.import_module(module).__version__)
             from src.services.execution.worker import ResourceMetrics
             from src.core.module_cache_sync import mark_execution_child
             return Response.json({"worker_imported": True, "http_module_path_available": callable(mark_execution_child),
+                                  "runtime": require_runtime(), "package_environment": "pyodide",
+                                  "packages": [{"name": name, "version": version} for name, version in sorted(packages.items())],
                                   "unknown_metrics": ResourceMetrics(None,None,None,None,None).__dict__})
         if body["action"] == "sync_transport":
             from src.core.module_cache_sync import _get_http_client

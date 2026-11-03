@@ -12,6 +12,7 @@ import httpx
 from http_invocation import HttpInvocation
 from private_http_pool import PrivateHttpWorkflowPool
 from src.worker.remote.protocol import CredentialRouteChanged
+from test_runtime_inventory import probe as inventory_probe
 
 CLIENT = httpx.AsyncClient
 
@@ -91,6 +92,30 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
             PrivateHttpWorkflowPool(endpoint='http://other.invalid', worker_id=self.worker, lease_ref=self.ref,
                 memory_sample=lambda: (100, 1000), memory_request_bytes=lambda _key: 1,
                 on_result=self.callback, capacity=1)
+
+    async def test_bound_runtime_inventory_is_read_only_and_does_not_enable_native_startup(self):
+        observed = inventory_probe()
+        self.pool.bind_runtime_inventory(observed)
+        observed['packages'][0]['version'] = 'changed'
+        packages = await self.pool.native._remote_packages()
+        self.assertEqual(packages[0]['version'], '1.0.0')
+        packages[0]['version'] = 'also changed'
+        self.assertEqual((await self.pool.native._remote_packages())[0]['version'], '1.0.0')
+        with self.assertRaises(RuntimeError):
+            await self.pool.native.transport.request('package_tool', {'operation': 'install', 'package': 'httpx'})
+        with self.assertRaises(ConnectionError):
+            await self.pool.native.start()
+        self.assertFalse(self.pool.native._started)
+        self.redis_write.assert_not_awaited()
+        with self.assertRaises(RuntimeError):
+            self.pool.bind_runtime_inventory(inventory_probe())
+
+    async def test_retirement_closes_only_the_owned_native_redis_client(self):
+        client = SimpleNamespace(aclose=AsyncMock())
+        self.enterContext(patch.object(self.pool.native, '_redis', client))
+        await self.pool.retire()
+        client.aclose.assert_awaited_once()
+        self.assertIsNone(self.pool.native._redis)
 
     async def test_owner_loss_at_receipt_reservation_never_starts_native_dispatch(self):
         self.journal_owner.return_value = False

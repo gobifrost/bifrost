@@ -13,6 +13,7 @@ import httpx
 from attempt_journal import AttemptJournal, AttemptResult
 from attempt_deadline import report_expired_workflow, supervise_attempt_deadline
 from http_invocation import HttpInvocation
+from runtime_inventory import validate_inventory
 from workflow_request_mux import WorkflowRequestMux
 
 from src.services.execution.process_pool import CredentialRoute
@@ -53,6 +54,7 @@ class PrivateHttpWorkflowPool:
         self._plans = {}
         self._attempts = {}
         self._retired = False
+        self._runtime_inventory = None
         self._lock = asyncio.Lock()
         self.mux = WorkflowRequestMux(lambda: lease_ref.lease.session_generation)
         self.journal = AttemptJournal(capacity=capacity)
@@ -75,6 +77,10 @@ class PrivateHttpWorkflowPool:
                 return memory_request_bytes(key)
 
             async def request(self, action, payload, *, expected_generation=None):
+                if action == 'package_tool':
+                    if payload != {'operation': 'inventory'} or pool._runtime_inventory is None:
+                        raise RuntimeError('Only bound immutable runtime inventory is supported')
+                    return {'packages': json.loads(json.dumps(pool._runtime_inventory['packages']))}
                 if action == 'workflow':
                     pool._start_deadline(payload)
                 try:
@@ -89,6 +95,12 @@ class PrivateHttpWorkflowPool:
             runtime_profile=CLOUDFLARE_PYTHON_RUNTIME_PROFILE, on_result=on_result)
         self._consumer = SimpleNamespace(owner_worker_id=self.worker_id, _handle_result=self._deliver)
         self._deadline_consumer = SimpleNamespace(owner_worker_id=self.worker_id, _handle_result=on_result)
+
+    def bind_runtime_inventory(self, probe):
+        """Trusted provider probe only; does not qualify or start this executor."""
+        if self._retired or self._attempts or self._runtime_inventory is not None:
+            raise RuntimeError('Runtime inventory binding unavailable')
+        self._runtime_inventory = validate_inventory(probe)
 
     def _start_deadline(self, payload):
         # Native ExecutionInfo exists before transport awaits the launch ACK.
@@ -320,6 +332,9 @@ class PrivateHttpWorkflowPool:
                 raise RuntimeError('Owned deadline supervision remains pending')
             await self.journal.retire()
             self.mux.retire()
+            if self.native._redis is not None:
+                await self.native._redis.aclose()
+                self.native._redis = None
             self._attempts.clear()
             self._plans.clear()
             self._retired = True

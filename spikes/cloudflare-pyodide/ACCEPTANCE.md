@@ -45,6 +45,7 @@ The detailed assessment and preserved experiments remain in backend/LIFECYCLE.md
 | Run/tenant credential scope and revocation | Two-tenant local SDK403s; dev cloud SDK receipts | Actual cloud-to-dev transport passes with run credentials, peer403, invalid token401 and ended fixture401. Parent signing key is absent. Canonical cloud dispatch credential issuance/revocation timing remains incomplete. |
 | Live control-session authentication | backend/CONTROL-AUTH.md; canonical-refresh-control-auth.json | Real signed hello/reconnect and invalid-proof/replay/stale-socket rejection pass on isolated API. Empty handlers and no inventory kept execution unadmitted; this does not qualify physical-route adoption. |
 | Signed control to isolate dispatch | backend/OPAQUE-WORKFLOW-HANDLES.md; backend/PRIVATE-HTTP-POOL.md; actual local engine/SDK receipts | Explicit experimental profile supports opaque workflow handles through the actual native pool; Linux defaults remain intact. Private canonical claim/context/result paths pass. Public host still rejects the profile; combined signed startup, dispatch and registration remain unqualified. |
+| Runtime inventory and registration cache | backend/STARTUP-INVENTORY.md; actual probe/cache/engine receipts | Real local Python Worker reports pinned ABI and 11 observed packages; unchanged upstream Redis projection/readback/cleanup passes and owned client closes at retirement. Package mutation and full native startup remain refused. Cache online status is not scheduler admission or qualified memory/cancellation control. |
 | SDK refresh lifecycle | SDK-REFRESH, REFRESH-CHALLENGE, CONCURRENT-REFRESH and REFRESH-INTERRUPTION under backend/ | Local cold challenge/replay, mixed convergence and SDK waiter cancellation after actual API issuance pass. Terminal access/refresh revoked. Whole-execution/isolate interruption and cloud remain unqualified. |
 | Fresh security boundary and contamination | Fresh cloud state probes; local simultaneous canaries; three deployed credentialed fresh-state runs | Builtins/env/module/tmp markers are absent before effects across actual fresh credentialed cloud runs. Positive fixed-fixture evidence, not complete hostile isolation or physical-termination acceptance. |
 | Duplicate physical dispatch | Journal single-launch checks, transport-waiter JUnit, backend/TRANSPORT-INTERRUPTION.md and backend/PROVIDER-INTERRUPTION.md | Actual SDK waiter detachment and provider-process interruption retain one launch. Real interruption produces RemoteProtocolError/no result; explicit upstream recovery fails the run without redispatch. Whole-host recovery/detection remain unqualified. |
@@ -107,7 +108,8 @@ does not authorize production routing or weakened guarantees.
 
 Private companion contract work now includes automatic terminal delivery,
 deadline/receipt recovery, real retained-stream adoption and input preflight.
-Next local work is supported startup/registration. Shared placement/capacity
+Runtime inventory and the registration-cache projection are characterized;
+remaining startup configuration/control operations are unqualified. Shared placement/capacity
 requirements in backend/PRECLAIM-ELIGIBILITY.md still require coordination with
 the other execution owner before edits. A second scheduling service or a workflow
 supplied eligibility boolean is not a substitute.

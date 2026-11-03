@@ -26,7 +26,8 @@ assert.deepEqual(report.running_after_cleanup, []);
 assert.equal(report.cloud_invocations, 0);
 assert.equal(report.physical_termination_verified, false);
 for (const name of ['private_http_pool.py', 'http_invocation.py', 'test_private_http_pool.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  const tested = execFileSync('git', ['show', '0bdc931d97a288414e7f4de80328eb57ca3d11e6:spikes/cloudflare-pyodide/backend/' + name]);
+  assert.equal(hash(tested), report.packet_sha256[name], name);
 }
 assert.equal(report.shared_pool_result.retained_http_preack_loss_verified, true);
 assert.equal(report.shared_pool_result.retained_posts, 1);

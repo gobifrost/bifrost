@@ -5,11 +5,13 @@ import json
 import logging
 import os
 import runpy
+from collections.abc import Awaitable
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import uuid4
 from types import SimpleNamespace
 from unittest.mock import patch
+from typing import cast
 
 import httpx
 from sqlalchemy import delete, select
@@ -21,7 +23,7 @@ from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False):
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False):
     if sum((source_change, late_result, retained_http)) > 1:
         raise ValueError('One fixture mode required')
     if deadline_ack_loss and not late_result:
@@ -57,6 +59,7 @@ async def main(*, source_change=False, late_result=False, retained_http=False, d
     storage, sources, slots, secrets = RepoStorage(), {}, {}, []
     heartbeat, ref = None, None
     fault, patcher = None, None
+    runtime_cache = None
 
     def retained_fault():
         if fault is None:
@@ -284,6 +287,24 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     response = await warmup.post('http://bifrost-pyodide-ddf316c1:8799/__fixture_warmup')
                     if response.status_code != 200:
                         raise RuntimeError('Credential-free local initialization failed')
+                    if startup_inventory:
+                        observed = response.json()
+                        adapter.bind_runtime_inventory(observed)
+                        with remote_owner_context(ref):
+                            if not await renew_remote_owner(ref.lease):
+                                raise RuntimeError('Owner lost before runtime cache registration')
+                            cache = await native._get_redis()
+                            runtime_cache = (native, cache, f'bifrost:pool:{worker_id}')
+                            await native._register_worker()
+                        raw_packages = await cast(Awaitable[str | None], cache.hget(runtime_cache[2], 'packages'))
+                        if raw_packages is None:
+                            raise RuntimeError('Runtime package cache missing after registration')
+                        cached = json.loads(raw_packages)
+                        if cached != observed['packages'] or native._started:
+                            raise RuntimeError('Runtime cache differs from actual probe or claims full startup')
+                        report.update(actual_runtime_inventory=observed,
+                                      native_runtime_cache_projection_verified=True,
+                                      full_native_startup_qualified=False)
                 report['credential_free_prewarm'] = True
                 with remote_owner_context(ref):
                     for _ in range(2):
@@ -586,7 +607,15 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             'accepted_monotonic': slot['accepted_monotonic'], 'terminal_monotonic': slot['terminal_monotonic'],
                             'evidence': slot['evidence'], 'access_after_terminal_status': revoked.status_code,
                             'preparation': slot['preparation']}
+                    if runtime_cache is not None:
+                        await native._unregister_worker()
+                        if await runtime_cache[1].exists(runtime_cache[2]):
+                            raise RuntimeError('Runtime cache cleanup unconfirmed')
+                        runtime_cache = None
+                        report['native_runtime_cache_removed'] = True
                     await adapter.retire()
+                    if native._redis is not None:
+                        raise RuntimeError('Owned native Redis client remains after retirement')
                     if mux.retained_count != 0:
                         raise RuntimeError('Retired request collector retained credentials')
                     report.update(single_native_pool_verified=True, terminal_obligations_released=True,
@@ -612,6 +641,11 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
             raise RuntimeError('Credential exposure: shared evidence withheld')
         print(encoded)
     finally:
+        if runtime_cache is not None:
+            owner, cache, key = runtime_cache
+            await owner._unregister_worker()
+            if await cache.exists(key):
+                raise RuntimeError('Failed fixture runtime cache cleanup unconfirmed')
         if patcher is not None:
             patcher.stop()
         if fault is not None:
@@ -634,7 +668,8 @@ if __name__ == '__main__':
     parser.add_argument('--late-result', action='store_true')
     parser.add_argument('--retained-http', action='store_true')
     parser.add_argument('--deadline-ack-loss', action='store_true')
+    parser.add_argument('--startup-inventory', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
-                     deadline_ack_loss=args.deadline_ack_loss))
+                     deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory))

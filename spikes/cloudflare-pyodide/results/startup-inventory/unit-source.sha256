@@ -1,0 +1,5 @@
+9db4f9289dd6592bc1bacde470a0a5171b8ce45645c5ff7a28b0c5f76d4a0a84  /opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-inventory-v1/private_http_pool.py
+2f1b8abe5e161595ef958b9c120e040bd647fea56d7708030ab013ea690582b3  /opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-inventory-v1/test_private_http_pool.py
+ba7a8a3bbb880fb2c6dff5133ed3d5df2d12a9c1060913f684e0daa62b5989ca  /opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-inventory-v1/runtime_inventory.py
+a89f133a1d6ecbf6fc0e3f3ff9d62343928b9f8da615d2a7ba30170d806b1aa2  /opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-inventory-v1/test_runtime_inventory.py
+3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23  /opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-inventory-v1/runtime_guard.py

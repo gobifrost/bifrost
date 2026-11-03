@@ -1,0 +1,10 @@
+All checks passed!
+venv .venv subdirectory not found in venv path /.
+/qualification/shared-native-pool.py
+  /qualification/shared-native-pool.py:297:46 - error: "str" is not awaitable
+    "str" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+      "__await__" is not present (reportGeneralTypeIssues)
+  /qualification/shared-native-pool.py:297:46 - error: "None" is not awaitable
+    "None" is incompatible with protocol "Awaitable[_T_co@Awaitable]"
+      "__await__" is not present (reportGeneralTypeIssues)
+2 errors, 0 warnings, 0 informations

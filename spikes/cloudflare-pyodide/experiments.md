@@ -1046,3 +1046,26 @@ with recent proofs, retained tail evidence, current official lifecycle/limits do
 and current cloud hold; no per-success isolate kill requirement or implied absence
 of platform CPU enforcement. Next: supported startup/registration and remaining
 output/memory/deployed acceptance boundaries, keeping public admission disabled.
+
+### Actual runtime inventory and native registration-cache projection
+Hypothesis: read-only Pyodide inventory can supply upstream registration metadata
+without pretending Linux subprocess package tooling or memory configuration works.
+Change: credential-free Worker ABI/distribution/loaded-core-version probe; bounded
+immutable parent validation; inventory-only package_tool; owned Redis client close
+at launcher retirement. Full native.start remains refused before _started changes.
+V1: 61 unit cases pass3.446s, Pyright flags fixture Redis sync/async stub union.
+No live V1 run. V2: upstream-style async cast, Ruff/Pyright and Node syntax pass;
+unchanged unit-input hashes retain 61-case proof rather than repeat baseline.
+Command: checked-in v1/v2 scripts; ct128-canonical-failure.py --startup-inventory
+--revision 2. Actual Worker reports correct ABI and 11 packages, including httpx
+0.28.1/pydantic2.14.2/pydantic-core2.50.2. Native _register_worker Redis packages
+match exactly, actual engine/SDK pair passes/replays with busy2,2,1,0 and revocation;
+cache absence and owned client cleanup verified. Total73.270s includes lifecycle.
+Artifacts: backend/STARTUP-INVENTORY.md, source-bound verifier and raw results.
+OS classification: pip subprocess inventory cannot run in Pyodide even if pip is
+compiled; metadata adapter only, no mutation/manager clone. No shared source,
+cloud invocation, credentials/grants, spending or runtime/resource changes.
+This is cache projection, not full/signed startup, compatibility of every listed
+package or admission. Shared configure/memory/control/shutdown interfaces recorded
+for Eddie/review, not independently edited. Next: qualify those remaining physical
+contracts and output/memory/deployed gates while keeping admission disabled.
