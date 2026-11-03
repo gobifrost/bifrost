@@ -1,5 +1,10 @@
 # Authenticated dispatch: remaining physical-handle boundary
 
+Latest correction: [malformed ACK uncertainty](ACK-UNCERTAINTY.md) now retains a
+possibly launched route instead of discarding its late result. The historical
+characterization below remains pinned to its pre-fix source. This correction
+does not accept opaque handles or qualify untrusted execution.
+
 Current-source reconciliation: upstream main025f6c019 is now merged and129
 focused native contracts pass; see [UPSTREAM-RECONCILIATION.md](UPSTREAM-RECONCILIATION.md).
 Upstream now has an external worker-capacity API and signed capacity resource

@@ -1,0 +1,48 @@
+{
+  "cloud_invocations": 0,
+  "commands": [
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-5dc8d94e",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "ruff",
+        "check",
+        "src/worker/remote/remote_pool.py",
+        "tests/unit/dev/test_pyodide_remote_ack_boundary.py",
+        "tests/unit/dev/test_pyodide_remote_boundary.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-5dc8d94e",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "pyright",
+        "src/worker/remote/remote_pool.py",
+        "tests/unit/dev/test_pyodide_remote_ack_boundary.py",
+        "tests/unit/dev/test_pyodide_remote_boundary.py"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

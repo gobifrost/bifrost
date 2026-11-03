@@ -10,7 +10,7 @@ from src.worker.remote.remote_pool import ThinRemoteProcessPool
 
 @pytest.mark.parametrize("pid", [None, False, 0, -1, "isolate-123"])
 def test_current_remote_ack_rejects_non_process_identity(pid):
-    with pytest.raises(RuntimeError, match="missing a valid PID"):
+    with pytest.raises(ConnectionError, match="missing a valid PID"):
         ThinRemoteProcessPool._remote_pid_from_ack({"accepted": True, "pid": pid})
 
 

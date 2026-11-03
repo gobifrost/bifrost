@@ -643,10 +643,13 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                 raise
 
     @staticmethod
-    def _remote_pid_from_ack(response: dict[str, Any]) -> int:
-        pid = response.get("pid")
+    def _remote_pid_from_ack(response: object) -> int:
+        pid = response.get("pid") if isinstance(response, dict) else None
         if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
-            raise RuntimeError("Remote launcher ACK is missing a valid PID")
+            # A malformed success reply does not prove the launcher never
+            # started work. Preserve the route just as for a lost ACK; only
+            # canonical inventory/result reconciliation may resolve it.
+            raise ConnectionError("Remote launcher ACK is missing a valid PID; launch state unknown")
         return pid
 
     async def _request_terminate(

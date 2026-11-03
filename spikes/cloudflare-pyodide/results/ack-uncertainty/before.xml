@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="13" skipped="0" tests="17" time="0.651" timestamp="2026-11-03T01:37:24.772926+00:00" hostname="f3accd1e0176"><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once[ack0]" time="0.011"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_ack_boundary.py:29: in test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once
+    await pool.route_execution("exec-boundary", {"timeout_seconds": 30}, _active("exec-boundary"))
+src/worker/remote/remote_pool.py:561: in route_execution
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once[ack1]" time="0.003"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_ack_boundary.py:29: in test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once
+    await pool.route_execution("exec-boundary", {"timeout_seconds": 30}, _active("exec-boundary"))
+src/worker/remote/remote_pool.py:561: in route_execution
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once[ack2]" time="0.003"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_ack_boundary.py:29: in test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once
+    await pool.route_execution("exec-boundary", {"timeout_seconds": 30}, _active("exec-boundary"))
+src/worker/remote/remote_pool.py:561: in route_execution
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once[ack3]" time="0.003"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_ack_boundary.py:29: in test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once
+    await pool.route_execution("exec-boundary", {"timeout_seconds": 30}, _active("exec-boundary"))
+src/worker/remote/remote_pool.py:561: in route_execution
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once[ack4]" time="0.003"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_ack_boundary.py:29: in test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once
+    await pool.route_execution("exec-boundary", {"timeout_seconds": 30}, _active("exec-boundary"))
+src/worker/remote/remote_pool.py:561: in route_execution
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once[None]" time="0.003"><failure message="AttributeError: 'NoneType' object has no attribute 'get'">tests/unit/dev/test_pyodide_remote_ack_boundary.py:29: in test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once
+    await pool.route_execution("exec-boundary", {"timeout_seconds": 30}, _active("exec-boundary"))
+src/worker/remote/remote_pool.py:561: in route_execution
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:647: in _remote_pid_from_ack
+    pid = response.get("pid")
+          ^^^^^^^^^^^^
+E   AttributeError: 'NoneType' object has no attribute 'get'</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once[ack6]" time="0.003"><failure message="AttributeError: 'list' object has no attribute 'get'">tests/unit/dev/test_pyodide_remote_ack_boundary.py:29: in test_malformed_ack_retains_uncertain_route_and_delivers_late_result_once
+    await pool.route_execution("exec-boundary", {"timeout_seconds": 30}, _active("exec-boundary"))
+src/worker/remote/remote_pool.py:561: in route_execution
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:647: in _remote_pid_from_ack
+    pid = response.get("pid")
+          ^^^^^^^^^^^^
+E   AttributeError: 'list' object has no attribute 'get'</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_legacy_positive_pid_or_lost_ack_retains_route_for_result[response0]" time="0.005" /><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_legacy_positive_pid_or_lost_ack_retains_route_for_result[response1]" time="0.003" /><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_malformed_service_ack_retains_route_without_second_launch_and_delivers_result" time="0.002"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_ack_boundary.py:74: in test_malformed_service_ack_retains_route_without_second_launch_and_delivers_result
+    await pool.route_service(**arguments)
+src/worker/remote/remote_pool.py:636: in route_service
+    handle.process.remote_pid = self._remote_pid_from_ack(response)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_ack_boundary" name="test_explicit_launcher_error_still_rejects_and_cleans_workflow_route" time="0.003" /><testcase classname="tests.unit.dev.test_pyodide_remote_boundary" name="test_current_remote_ack_rejects_non_process_identity[None]" time="0.002"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_boundary.py:14: in test_current_remote_ack_rejects_non_process_identity
+    ThinRemoteProcessPool._remote_pid_from_ack({"accepted": True, "pid": pid})
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_boundary" name="test_current_remote_ack_rejects_non_process_identity[False]" time="0.002"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_boundary.py:14: in test_current_remote_ack_rejects_non_process_identity
+    ThinRemoteProcessPool._remote_pid_from_ack({"accepted": True, "pid": pid})
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_boundary" name="test_current_remote_ack_rejects_non_process_identity[0]" time="0.002"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_boundary.py:14: in test_current_remote_ack_rejects_non_process_identity
+    ThinRemoteProcessPool._remote_pid_from_ack({"accepted": True, "pid": pid})
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_boundary" name="test_current_remote_ack_rejects_non_process_identity[-1]" time="0.002"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_boundary.py:14: in test_current_remote_ack_rejects_non_process_identity
+    ThinRemoteProcessPool._remote_pid_from_ack({"accepted": True, "pid": pid})
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_boundary" name="test_current_remote_ack_rejects_non_process_identity[isolate-123]" time="0.001"><failure message="RuntimeError: Remote launcher ACK is missing a valid PID">tests/unit/dev/test_pyodide_remote_boundary.py:14: in test_current_remote_ack_rejects_non_process_identity
+    ThinRemoteProcessPool._remote_pid_from_ack({"accepted": True, "pid": pid})
+src/worker/remote/remote_pool.py:649: in _remote_pid_from_ack
+    raise RuntimeError("Remote launcher ACK is missing a valid PID")
+E   RuntimeError: Remote launcher ACK is missing a valid PID</failure></testcase><testcase classname="tests.unit.dev.test_pyodide_remote_boundary" name="test_current_remote_capacity_rejects_unavailable_provider_memory" time="0.002" /></testsuite></testsuites>
