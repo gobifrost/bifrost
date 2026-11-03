@@ -1,0 +1,10 @@
+{
+    "spikes/cloudflare-pyodide/dev/cpu-placement/entry.mjs":  "014aacfa2ee555ef4d71a72beea5f7079e624fd0e020b7b2cd9101d8aaf15dcb",
+    "spikes/cloudflare-pyodide/dev/cpu-placement/policy.mjs":  "bf797c50b8203469c446d0bfb3064f60fca933097196e39574fe4e5acf4b1165",
+    "spikes/cloudflare-pyodide/dev/cpu-placement/cloudflare.config.ts":  "8d30427fcbcddde600eb2529875055e92ef1206a4f02d8eb08dc037fd92cce54",
+    "spikes/cloudflare-pyodide/dev/cpu-placement/package.json":  "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "spikes/cloudflare-pyodide/backend/cpu-placement.mjs":  "4a53d6198f9975a879ad1f7cb93c875246802ce689eef98e79ee8315a29a6b9d",
+    "spikes/cloudflare-pyodide/probe-io.mjs":  "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e",
+    "spikes/cloudflare-pyodide/dev/cpu-placement/qualify.py":  "ba506ce2ff77b963ab9b4367e4e5d37e40d4005877f4266b4f737d157482d211",
+    "spikes/cloudflare-pyodide/dev/cpu-placement/run_guest.py":  "3c97dec1e05a77ed2efe569a5ff9ab47976467ce31bad3285429811123487574"
+}

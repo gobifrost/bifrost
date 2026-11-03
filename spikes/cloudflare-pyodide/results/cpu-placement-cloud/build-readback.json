@@ -1,0 +1,13 @@
+{
+    "cloud_cpu_ms":  null,
+    "deployed_bundle_gzip_kib":  2.46,
+    "actual_billed_cost_usd":  null,
+    "cloud_peak_memory_bytes":  null,
+    "provider_entry_sha256":  "c4879ec8ad44ccfbf37e8ba0ab2bcbe333921e13c7f7deaa24e6d6318a691a99",
+    "controller_exit_code":  0,
+    "wrangler_version":  "4.156.0",
+    "cf_cli_version":  "1.0.0-beta.22",
+    "cleanup_sql_count":  0,
+    "deployed_bundle_bytes":  6720,
+    "local_build_entry_sha256":  "c4879ec8ad44ccfbf37e8ba0ab2bcbe333921e13c7f7deaa24e6d6318a691a99"
+}

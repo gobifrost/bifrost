@@ -1,5 +1,6 @@
 frontend/assets/
 frontend/.cloudflare/
 executor/.cloudflare/
+cpu-placement/.cloudflare/
 runtime/
 *.private*

@@ -1,0 +1,125 @@
+{
+  "runtime": "deployed-cloudflare",
+  "canonical_dispatch_verified": false,
+  "physical_termination_verified": false,
+  "cases": [
+    {
+      "case_id": "completion",
+      "http_status": 200,
+      "outcome": {
+        "runtime": "deployed-cloudflare",
+        "outcome": {
+          "case_id": "completion",
+          "status": 200,
+          "body": {
+            "completed": true,
+            "abi": {
+              "python": [
+                3,
+                14,
+                2
+              ],
+              "pyodide": "314.0.6",
+              "soabi": "cpython-314-wasm32-emscripten"
+            }
+          }
+        },
+        "physical_termination_verified": false
+      },
+      "native_roundtrip_ms": 1828.9718180894852,
+      "independent_messages": [
+        "cpu-placement:controller-control",
+        "cpu-placement:completion:parent-preflight",
+        "cpu-placement:completion:before",
+        "cpu-placement:completion:after"
+      ],
+      "execution_id": "a767354b-1205-478f-b3c4-c460c1aedcf2"
+    },
+    {
+      "case_id": "code_limit",
+      "http_status": 200,
+      "outcome": {
+        "runtime": "deployed-cloudflare",
+        "outcome": {
+          "case_id": "code_limit",
+          "status": 200,
+          "body": {
+            "caught": "CpuLimitExceeded",
+            "abi": {
+              "python": [
+                3,
+                14,
+                2
+              ],
+              "pyodide": "314.0.6",
+              "soabi": "cpython-314-wasm32-emscripten"
+            }
+          }
+        },
+        "physical_termination_verified": false
+      },
+      "native_roundtrip_ms": 4421.72986920923,
+      "independent_messages": [
+        "cpu-placement:controller-control",
+        "cpu-placement:code_limit:parent-preflight",
+        "cpu-placement:code_limit:before",
+        "cpu-placement:code_limit:caught",
+        "cpu-placement:code_limit:after"
+      ],
+      "execution_id": "c27526ad-9f9d-479f-83fb-d59d61128e2e"
+    },
+    {
+      "case_id": "entrypoint_limit",
+      "http_status": 200,
+      "outcome": {
+        "runtime": "deployed-cloudflare",
+        "outcome": {
+          "case_id": "entrypoint_limit",
+          "status": 200,
+          "body": {
+            "caught": "CpuLimitExceeded",
+            "abi": {
+              "python": [
+                3,
+                14,
+                2
+              ],
+              "pyodide": "314.0.6",
+              "soabi": "cpython-314-wasm32-emscripten"
+            }
+          }
+        },
+        "physical_termination_verified": false
+      },
+      "native_roundtrip_ms": 4330.555869266391,
+      "independent_messages": [
+        "cpu-placement:controller-control",
+        "cpu-placement:entrypoint_limit:parent-preflight",
+        "cpu-placement:entrypoint_limit:before",
+        "cpu-placement:entrypoint_limit:caught",
+        "cpu-placement:entrypoint_limit:after"
+      ],
+      "execution_id": "f1037c7f-6a2c-47b5-992f-5f82f1ec996b"
+    }
+  ],
+  "cleanup": {
+    "owned_log_streams_deleted": 3,
+    "ended_access_statuses": [
+      401,
+      401,
+      401
+    ],
+    "ended_refresh_statuses": [
+      401,
+      401,
+      401
+    ]
+  },
+  "unsupported_dispatch_status": 422,
+  "invalid_identity": {
+    "phase": "observer-auth",
+    "observer_status": 401
+  },
+  "cross_tenant_log_read_status": 403,
+  "completed": true
+}

@@ -1,5 +1,10 @@
 # Isolated development deployment
 
+Latest termination result: [deployed CPU limit placement](CPU-LIMIT-CLOUD.md).
+Both supported placements raised catchable CpuLimitExceeded and permitted
+subsequent authenticated API effects. Untrusted backend admission stays disabled;
+the temporary test endpoint and guard are retired.
+
 Experimental deployment of upstream source `2037ac0d9ec95e94a77ce440001ae016d4215407`.
 The companion deployment helpers do not modify production infrastructure or upstream orchestration code.
 
