@@ -1,5 +1,9 @@
 # Canonical cutoff and response uncertainty
 
+Follow-on: [retained result reconciliation across the original cutoff](DEADLINE-RETAINED.md)
+now passes locally, including owner rotation, lost ACK replay and no relaunch.
+The uncertain-only experiment below remains preserved against its tested source.
+
 Canonical-mode companion admission now requires the upstream workflow_deadline
 and preserves that absolute cutoff. It no longer grants a fresh timeout_seconds
 window on receipt. Actual guest engine/SDK execution passes with the field.

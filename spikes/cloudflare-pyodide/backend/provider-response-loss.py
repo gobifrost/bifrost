@@ -96,7 +96,8 @@ async def main(*, recover_retained=False, deadline_probe=False):
                 report.update(canonical_deadline=context['workflow_deadline'],
                     deadline_response_loss_probe=True, post_deadline_native_api_write_status=late.status_code,
                     independent_post_deadline_value=71, credential_wall_deadline_revocation=False,
-                    child_gate_bypassed_by_trusted_observer=True)
+                    child_gate_bypassed_by_trusted_observer=True,
+                    provider_result_received_before_deadline=True)
             if recover_retained:
                 assert launcher is not None
                 encoded = json.dumps(evidence)
@@ -205,6 +206,25 @@ async def main(*, recover_retained=False, deadline_probe=False):
             assert current is not None
             lease_ref.lease = current
             event_id, event = next(iter(launcher.pending_terminal.items()))
+            if deadline_probe:
+                from datetime import datetime, timedelta, timezone
+                original_cutoff = datetime.fromisoformat(report['canonical_deadline'])
+                if datetime.now(timezone.utc) <= original_cutoff:
+                    raise RuntimeError('Reconnect did not cross original deadline')
+                if pool_seen.info.started_at + timedelta(seconds=pool_seen.info.timeout_seconds) != original_cutoff:
+                    raise RuntimeError('Reconnect renewed canonical dispatch deadline')
+                relaunched = False
+
+                async def forbidden_relaunch():
+                    nonlocal relaunched
+                    relaunched = True
+                    raise AssertionError('Retained route must never rerun execution')
+
+                replay = await pool_seen.journal.dispatch(current, 'route', fixture_execution_id, forbidden_relaunch)
+                if replay is not pool_seen.receipt or relaunched:
+                    raise RuntimeError('Reconnect lost original uncertain receipt')
+                report.update(reconciled_after_original_deadline=True,
+                              original_deadline_preserved=True, duplicate_after_deadline_reused_receipt=True)
             async with httpx.AsyncClient(timeout=15) as api:
                 active = await api.get("http://api:8000" + module_path,
                     headers={"Authorization": "Bearer " + pool_seen.token})
@@ -278,6 +298,10 @@ async def main(*, recover_retained=False, deadline_probe=False):
                 report.update(credential_revoked_by_canonical_success_status=revoked.status_code,
                               refresh_revoked_by_canonical_success_status=refresh.status_code)
             assert pool_seen.launches == 1
+            if deadline_probe:
+                if pool_seen.info.started_at + timedelta(seconds=pool_seen.info.timeout_seconds) != original_cutoff:
+                    raise RuntimeError('Terminal ACK replay changed original deadline')
+                report['terminal_ack_preserved_deadline'] = True
             report.update(local_recovery_verified=True, persisted_log_count=len(logs_after),
                           upstream_ack_consumed=True, fixture_only_control_receiver_stopped=True)
 
@@ -323,10 +347,10 @@ async def main(*, recover_retained=False, deadline_probe=False):
 
 
 if __name__ == "__main__":
-    assert sys.argv[1:] in (["--response-loss"], ["--retained-response"], ["--deadline-response-loss"])
+    assert sys.argv[1:] in (["--response-loss"], ["--retained-response"], ["--deadline-response-loss"], ["--deadline-retained-response"])
     try:
-        asyncio.run(main(recover_retained=sys.argv[1] == "--retained-response",
-                         deadline_probe=sys.argv[1] == "--deadline-response-loss"))
+        asyncio.run(main(recover_retained=sys.argv[1] in ("--retained-response", "--deadline-retained-response"),
+                         deadline_probe=sys.argv[1] in ("--deadline-response-loss", "--deadline-retained-response")))
     except Exception as exc:
         print(json.dumps({"runtime": "local-workerd-canonical-response-loss", "error_type": type(exc).__name__}))
         raise SystemExit(1)

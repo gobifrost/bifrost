@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const report = JSON.parse(await readFile(new URL('../results/deadline-response-loss/v1.json', import.meta.url), 'utf8'));
 assert.equal(report.api_source, '1d33150eb376b71f8a81b427920eda1b0447f829');
 assert.equal(report.runtime_engine_source, 'f49d4ba99cebd24aa497f1244833b940e640885f');
@@ -12,7 +13,8 @@ assert.equal(report.provider_state_before_cleanup.OOMKilled, false);
 assert.ok(report.commands.every(command => command.exit_code === 0));
 for (const name of ['canonical-local.py', 'provider-response-loss.py', 'task_cleanup.py',
   'ct128-canonical-failure.py', 'authorized-local-entry.mjs', 'attempt-egress.mjs', 'fixture-admission.mjs']) {
-  assert.equal(createHash('sha256').update(await readFile(new URL('./' + name, import.meta.url))).digest('hex'), report.packet_sha256[name], name);
+  const bytes = execFileSync('git', ['show', `37f33d13a:spikes/cloudflare-pyodide/backend/${name}`]);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), report.packet_sha256[name], name);
 }
 for (const name of ['authorized-local-entry.mjs', 'attempt-egress.mjs', 'fixture-admission.mjs']) {
   assert.equal(report.packet_sha256['project/backend/' + name], report.packet_sha256[name], name);

@@ -1,5 +1,11 @@
 # Authenticated dispatch: remaining physical-handle boundary
 
+Lifecycle clarification: [normal completion](LIFECYCLE.md) requires settled work
+and released resources, not isolate destruction. [Retained-result qualification](DEADLINE-RETAINED.md)
+now crosses the original deadline locally without relaunch or a renewed cutoff.
+The remaining shared integration gap is negotiated physical handles, distinct
+from those terminal guarantees and abnormal cancellation qualification.
+
 Latest correction: [malformed ACK uncertainty](ACK-UNCERTAINTY.md) now retains a
 possibly launched route instead of discarding its late result. The historical
 characterization below remains pinned to its pre-fix source. This correction

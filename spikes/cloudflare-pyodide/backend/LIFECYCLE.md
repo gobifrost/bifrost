@@ -60,8 +60,9 @@ write already dispatched before close, committing afterward with a lost response
 The [canonical-cutoff qualification](CANONICAL-DEADLINE.md) now consumes the
 existing absolute dispatch deadline and preserves a lost provider response as
 uncertain across expiry. A trusted observer's direct API write still succeeds
-while the canonical run is live; this is not a child egress escape. Next reconcile
-that uncertainty through canonical ownership without redispatch or a new cutoff.
+while the canonical run is live; this is not a child egress escape. The
+[retained-result follow-on](DEADLINE-RETAINED.md) now reconciles that uncertainty
+locally through canonical ownership without redispatch or a new cutoff.
 Retain the provider obligation until settlement is established. Revoking a token
 alone cannot establish physical CPU stop.
 If network credentials or unrestricted egress escape the gate, post-deadline

@@ -405,6 +405,10 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     context["workflow_deadline"] = (
                         self.info.started_at + timedelta(seconds=self.info.timeout_seconds)
                     ).isoformat()
+                    # Capture the dispatch context before seeding/API awaits.
+                    # A retained route must not serialize later mutations into
+                    # a renewed execution window or different credential set.
+                    dispatch_context = json.loads(json.dumps(context, default=str))
 
                     async def launch():
                         self.launches += 1
@@ -417,7 +421,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 if isolation_label is not None:
                                     await rendezvous("prepared", {"ready": True})
                                     report["provider_start_ms"] = int(time.time() * 1000)
-                                child_context = context
+                                child_context = dispatch_context
                                 if expired_access:
                                     from unittest.mock import patch
                                     from src.services.authorization.tokens import RuntimeSubject, issue_access_token
@@ -434,7 +438,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                     assert "refresh_required" in challenged.headers.get("www-authenticate", "")
                                     report["preflight_challenge_status"] = challenged.status_code
                                     report["preflight_challenge_header"] = challenged.headers["www-authenticate"]
-                                    child_context = {**context, "engine_token": expired.token}
+                                    child_context = {**dispatch_context, "engine_token": expired.token}
                                 async def observe_write_for_interruption():
                                     async with asyncio.timeout(20):
                                         async with httpx.AsyncClient(base_url='http://api:8000', timeout=5) as reader:
