@@ -89,6 +89,9 @@ The v9 overflow follow-up now passes actual 5 MB engine delivery-failure mapping
 canonical failure, peer success and retirement. Eight cases pass in Pyodide;
 scoped tracing measures serializer allocations, excluding inputs/runtime/JS.
 Total isolate peak, physical settlement and deployed enforcement remain gates.
+backend/POST-REVOCATION-LOGS.md proves captured post-revocation token redaction, while
+four captured logs yield only two persisted rows after two 410 responses. The
+companion reports delivery uncertainty; persistence repair is not implemented.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

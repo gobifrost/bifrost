@@ -9,6 +9,7 @@ function replace(before, after) {
 }
 replace('const httpsExecutions=new Map();', `import {withCooperativeRpc} from './cooperative-runtime.mjs';
 import {cooperativeRpcResponse} from './cooperative-rpc-result.mjs';
+import {logDeliveryEvidence} from './log-delivery-evidence.mjs';
 import cooperativeSource from './cooperative-code.mjs';
 import serializationSource from './rpc-serialization-code.mjs';
 const cooperativeEntries=new Map();
@@ -51,8 +52,13 @@ replace(`const response=await entrypoint.fetch(new Request('https://attempt.inva
       // A coroutine receipt is not a canonical terminal result. Keep the
       // transport uncertain rather than fabricating Cancelled or releasing capacity.
       const response=cooperativeRpcResponse(rpcWire,body.execution_id);`);
+replace('const terminal=await terminalResponse(response);',
+  'const terminal=await terminalResponse(response);\n      const logDelivery=logDeliveryEvidence(terminal.value?.logs,calls);');
+replace('if(terminal.oversized) return {runtime_handle:id,',
+  'if(terminal.oversized) return {runtime_handle:id,...(logDelivery ? {log_delivery:logDelivery} : {}),');
 replace('return {runtime_handle:id,result:terminal.value,api_calls:calls,runtime_cleanup,',
   `return {runtime_handle:id,result:terminal.value,api_calls:calls,runtime_cleanup,
+        ...(logDelivery ? {log_delivery:logDelivery} : {}),
         ...(response.headers.get('X-Spike-RPC-Result-Too-Large')==='true' ? {provider_outcome:{
           kind:'rpc_result_too_large',execute_returned:true,engine_outcome_delivered:false,
           rpc_wire_limit_bytes:4194304}} : {}),`);

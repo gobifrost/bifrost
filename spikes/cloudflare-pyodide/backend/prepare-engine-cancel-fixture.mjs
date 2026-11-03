@@ -1,7 +1,7 @@
 // Separate synthetic suppression case; never changes shared fixture/upstream code.
 import {readFileSync, writeFileSync} from 'node:fs';
-if (process.argv.length !== 4 && !(process.argv.length === 5 && process.argv[4] === '--unsuppressed')) {
-  throw new Error('Usage: node prepare-engine-cancel-fixture.mjs <shared-fixture> <new-output> [--unsuppressed]');
+if (process.argv.length !== 4 && !(process.argv.length === 5 && ['--unsuppressed', '--post-revocation-log'].includes(process.argv[4]))) {
+  throw new Error('Usage: node prepare-engine-cancel-fixture.mjs <shared-fixture> <new-output> [--unsuppressed|--post-revocation-log]');
 }
 let source = readFileSync(process.argv[2], 'utf8').replace(/\r\n/g, '\n');
 function replace(before, after) {
@@ -96,5 +96,18 @@ if (process.argv[4] === '--unsuppressed') {
                             'retirement_refused': True,
                             'vendor_after_release': (await api.get('http://bifrost-pyodide-ddf316c1:8820/snapshot')).json()}))
                         raise RuntimeError('Unsuppressed cancellation retains uncertain native obligation; retirement not qualified')`);
+}
+if (process.argv[4] === '--post-revocation-log') {
+  replace("engine_cooperative_cancel_suppressed')", "engine_cooperative_cancel_suppressed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])");
+  replace("                        report['engine_result_before_vendor_release'] = True", `                        marker = 'engine_cooperative_cancel_suppressed credential=[REDACTED]'
+                        if not any(row['message'] == marker for row in early_result['logs']):
+                            raise RuntimeError('Post-revocation captured log redaction missing')
+                        log_delivery = first.evidence.get('log_delivery')
+                        if log_delivery != {'kind': 'runtime_log_delivery_unconfirmed', 'unsuccessful_log_requests': 2,
+                                            'captured_log_entries': 4, 'persistence_verified': False, 'automatic_replay_safe': False}:
+                            raise RuntimeError('Missing bounded post-revocation log delivery evidence')
+                        report['post_revocation_log_redaction_verified'] = True
+                        report['post_revocation_log_delivery'] = log_delivery
+                        report['engine_result_before_vendor_release'] = True`);
 }
 writeFileSync(process.argv[3], source, {flag: 'wx'});

@@ -26,6 +26,8 @@ test('separate canonical candidate uses RPC and refuses to map coroutine receipt
     assert.doesNotMatch(candidate, /cooperativeEntries\.get\(handle\)\.cancel_execution/);
     assert.match(candidate, /await entrypoint\.cancel_execution\(body\.execution_id\)/);
     assert.match(candidate, /finally\{monitorRunning=false;await monitor;\}/);
+    assert.match(candidate, /const logDelivery=logDeliveryEvidence\(terminal\.value\?\.logs,calls\)/);
+    assert.match(candidate, /log_delivery:logDelivery/);
     assert.deepEqual(readFileSync(https), original);
     assert.throws(() => execFileSync(process.execPath, [script('prepare-canonical-cooperative.mjs'), https, output], {stdio: 'pipe'}));
   } finally {rmSync(directory, {recursive: true, force: true});}
