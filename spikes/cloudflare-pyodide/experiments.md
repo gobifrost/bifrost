@@ -1166,3 +1166,16 @@ peerSuccess78,replay/fencing/duplicate/401/accounting2,2,1,0/cleanup pass.
 Artifact: backend/PREDEADLINE-FENCE.md, verifier, results/predeadline-fence.
 No shared/Linux source or cloud change. Full startup/control capability contract,
 deployed memory/isolation and abnormal cancellation remain unqualified.
+
+### 2026-11-03 — known prelaunch refusal remains unacknowledged
+Trace next cleanup boundary after pre-deadline fence. New targeted regression drives
+actual native route with authority/network mocks: noPOST/no deadline/nativebusy0/
+Rediscleanup, failed receipt preserved, duplicate no rerun, retirement refused
+without canonical ACK. One case0.009s; Ruff/Pyright pass. No production code change.
+Artifact: backend/PRELAUNCH-RETENTION.md; results/prelaunch-retention explicitly
+labels transcribed tool observations. Canonical no-launch retirement NOT implemented.
+Passive shared-interface question3495c4ae-4324-4b3a-bd74-df7b7a252bd7 denied
+source_run_not_active,safe_to_resend:false. Preserved; no retry/alternate caller.
+Next: existing caller/native-run receipt reconciliation and shared ownership evidence
+before agreeing canonical refusal ACK/startup controls. Independent local work remains
+possible; no cloud authority, untrusted admission or synthetic ACK inferred.

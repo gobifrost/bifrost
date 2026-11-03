@@ -134,6 +134,36 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
                 await self.pool.native.transport.request('workflow', {'execution_id': self.run}, expected_generation=1)
             start.assert_not_called()
 
+    async def test_prelaunch_refusal_keeps_failed_receipt_until_canonical_reconciliation(self):
+        self.provider()
+        self.owner.side_effect = [True, False]
+        redis = SimpleNamespace(delete=AsyncMock())
+        with patch.object(self.pool.native, '_get_redis', AsyncMock(return_value=redis)):
+            with self.assertRaises(CredentialRouteChanged):
+                await self.route()
+        attempt = self.pool.attempt(self.run)
+        with self.assertRaises(CredentialRouteChanged):
+            await attempt.receipt
+        with self.assertRaises(CredentialRouteChanged):
+            await attempt.delivery
+        self.assertEqual(self.sent, [])
+        self.assertEqual(attempt.launches, 0)
+        self.assertIsNone(attempt._deadline_task)
+        self.assertIsNone(self.pool.mux.collection(self.run))
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        redis.delete.assert_awaited_once()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory()[0]['collection_error_type'], 'CredentialRouteChanged')
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        self.owner.side_effect = None
+        self.owner.return_value = True
+        with self.assertRaises(CredentialRouteChanged):
+            await self.route()
+        self.assertIs(self.pool.attempt(self.run), attempt)
+        self.assertEqual(self.sent, [])
+        with self.assertRaisesRegex(RuntimeError, 'unacknowledged physical routes'):
+            await self.pool.retire()
+
     async def test_retirement_closes_only_the_owned_native_redis_client(self):
         client = SimpleNamespace(aclose=AsyncMock())
         self.enterContext(patch.object(self.pool.native, '_redis', client))
