@@ -1,0 +1,12 @@
+{
+  "key": "pr:1225",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Worker control-connection stability during transient database errors; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1225"
+    ]
+  }
+}
