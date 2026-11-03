@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
-import {readFileSync, mkdtempSync, rmSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdtempSync, rmSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {fileURLToPath} from 'node:url';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const read = path => readFileSync(new URL(path, import.meta.url));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = JSON.parse(read('../results/https-deadline/v1.json'));
 for (const name of ['ct128-canonical-failure.py', 'shared-native-pool.py', 'private_http_pool.py', 'https_policy_binding.py']) {
-  const bytes = name === 'ct128-canonical-failure.py'
+  const bytes = ['ct128-canonical-failure.py', 'shared-native-pool.py'].includes(name)
     ? execFileSync('git', ['show', 'bc6f644ffff25c000555acb6deb089f2cf5067b6:spikes/cloudflare-pyodide/backend/' + name]) : read(name);
   assert.equal(hash(bytes), receipt.packet_sha256[name], name);
 }
@@ -21,7 +20,10 @@ assert.equal(hash(entry), receipt.packet_sha256['project/backend/authorized-loca
 const temporary = mkdtempSync(join(tmpdir(), 'https-deadline-proof-'));
 try {
   const output = join(temporary, 'entry.mjs');
-  execFileSync(process.execPath, [fileURLToPath(new URL('prepare-canonical-https.mjs', import.meta.url)), output]);
+  const generator = join(temporary, 'prepare.mjs');
+  writeFileSync(generator, execFileSync('git', ['show', '9dd2e6639c98e97b198362999a5dc4882a8c4336:spikes/cloudflare-pyodide/backend/prepare-canonical-https.mjs']));
+  writeFileSync(join(temporary, 'authorized-local-entry.mjs'), read('authorized-local-entry.mjs'));
+  execFileSync(process.execPath, [generator, output]);
   assert.deepEqual(readFileSync(output), entry);
 } finally {rmSync(temporary, {recursive: true, force: true});}
 assert.equal(receipt.qualification_passed, true);

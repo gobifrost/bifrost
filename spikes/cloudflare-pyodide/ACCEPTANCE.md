@@ -50,6 +50,11 @@ under the actual PostgreSQL owner lock, including observed rotation blocking,
 stale-owner refusal, no duplicate close and actual Python follow-up410. Its ACK
 explicitly proves neither physical stop nor execution settlement. It is not wired
 to public/native cancellation and does not repair incoming disconnect delivery.
+backend/CANONICAL-CANCEL-REQUEST.md combines actual engine/SDK execution with the
+authorized cancellation API: peer403, ended-token401, duplicate200/Cancelling,
+live credential200, capability-only revocation and reserved capacity through
+settlement. Finite natural completion becomes Success through upstream's existing
+result writer. Cancelled reporting and physical termination remain unqualified.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

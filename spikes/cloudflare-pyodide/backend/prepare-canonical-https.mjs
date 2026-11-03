@@ -9,7 +9,19 @@ replace("const observations=new Map();", `import {createApprovedHttpsCandidate} 
 import redirectPatch from './httpx-redirect-code.mjs';
 import {boundHttpsFixturePolicy} from './fixture-https-policy.mjs';
 const httpsPolicies=new Map();
+const httpsExecutions=new Map();
 const observations=new Map();`);
+replace('const body=await boundedLosslessJson(request,262144);', `if(new URL(request.url).pathname==='/__fixture_revoke') {
+      const control=await boundedLosslessJson(request,1024);
+      const handle=control.runtime_handle;
+      if(httpsExecutions.get(handle)!==control.execution_id || !httpsPolicies.has(handle) || !egressGates.has(handle))
+        return new Response('Unknown bound attempt',{status:404});
+      httpsPolicies.get(handle).close();egressGates.get(handle).close();
+      return Response.json({execution_id:control.execution_id,runtime_handle:handle,
+        capabilities_revoked:true,physical_stopped:false});
+    }
+    const body=await boundedLosslessJson(request,262144);`);
+replace('observations.set(id,calls);', 'observations.set(id,calls);httpsExecutions.set(id,body.execution_id);');
 replace('return admitFixture(body,observations.size,async()=>{', `const boundPolicy=boundHttpsFixturePolicy(body);
     if(!boundPolicy)return new Response('Bound HTTPS fixture policy required',{status:422});
     return admitFixture(body,observations.size,async()=>{`);
@@ -25,7 +37,7 @@ replace('egressGates.set(id,egress);', `egressGates.set(id,egress);
           body:outgoing.method==='GET'?undefined:await outgoing.text(),redirect:'manual'});
       }});
     httpsPolicies.set(id,https);`);
-replace('cleaned=true;', 'cleaned=true;https.close();httpsPolicies.delete(id);');
+replace('cleaned=true;', 'cleaned=true;https.close();httpsPolicies.delete(id);httpsExecutions.delete(id);');
 replace(`const entrypoint=env.LOADER.load(runtimeCode(ctx.exports.TestApi({props:{id,manifest:body.manifest,refresh_gate:!!gate}})))
         .getEntrypoint();`, `const code=runtimeCode(ctx.exports.TestApi({props:{id,manifest:body.manifest,refresh_gate:!!gate}}));
       code.modules['httpx_redirect_patch.py']={py:redirectPatch};

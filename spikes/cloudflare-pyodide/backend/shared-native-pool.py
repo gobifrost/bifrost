@@ -18,15 +18,16 @@ import httpx
 from sqlalchemy import delete, select
 
 from private_http_pool import PrivateHttpWorkflowPool
+from capability_revocation import AttemptCapabilityRevoker
 from task_cleanup import cancel_and_join
 from workspace_prepare import prepare_workspace, WorkspacePreparationError
 from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, https_fixture=False, https_deadline=False):
-    https_fixture = https_fixture or https_deadline
-    late_result = late_result or https_deadline
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, https_fixture=False, https_deadline=False, https_cancel=False):
+    https_fixture = https_fixture or https_deadline or https_cancel
+    late_result = late_result or https_deadline or https_cancel
     if sum((source_change, late_result, retained_http, oversized_result, numeric_result, oversized_body, memory_pressure, refresh_redaction)) > 1:
         raise ValueError('One fixture mode required')
     if deadline_ack_loss and not late_result:
@@ -63,6 +64,7 @@ async def main(*, source_change=False, late_result=False, retained_http=False, d
     heartbeat, ref = None, None
     fault, patcher = None, None
     runtime_cache = None
+    cancel_cleanup = None
 
     def retained_fault():
         if fault is None:
@@ -196,7 +198,7 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         "    else:\n"
                         "        raise RuntimeError('Post-deadline write unexpectedly accepted')\n"
                     ).replace("    if True:\n        raise ValueError('shared fixture failed credential=' + os.environ['BIFROST_ACCESS_TOKEN'])\n", "")
-                    if https_deadline:
+                    if https_deadline or https_cancel:
                         sources[slot['path']] = sources[slot['path']].replace('    await asyncio.sleep(40)\n',
                             "    async with httpx.AsyncClient(timeout=60) as vendor:\n"
                             "        held = await vendor.post('https://vendor.example/hold', content='fails-first', headers={'Authorization': 'Bearer synthetic-vendor'})\n"
@@ -204,6 +206,9 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             "    if held.status_code != 200 or late_https.status_code != 410:\n"
                             "        raise RuntimeError('In-flight HTTPS deadline outcome mismatch')\n"
                             "    logging.getLogger(__name__).warning('post_deadline_https_status=410')\n")
+                        if https_cancel:
+                            sources[slot['path']] = sources[slot['path']].replace(
+                                'post_deadline_https_status=410', 'post_revocation_https_status=410')
                 pending = pending_execution_record(execution_id=execution_id, workflow_id=str(slot['workflow'].id),
                     parameters={'n': slot['n'], 'peer_scope': str(peer['org'].id), 'peer_key': peer['key'],
                         **({'numeric_value': {'integer': 9007199254740993, 'negative': -9007199254740993,
@@ -438,7 +443,101 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         if response.status_code != 204:
                             raise RuntimeError('Authorized synthetic fixture release failed')
 
-                    if late_result:
+                    if https_cancel:
+                        failure_consume_gate.set()
+                        run = str(failed['execution'].id)
+                        first = adapter.attempt(run)
+                        foreign = await api.post(f'/api/executions/{run}/cancel',
+                            headers={'Authorization': 'Bearer ' + peer['token']})
+                        if foreign.status_code != 403:
+                            raise RuntimeError('Live peer tenant could cancel another execution')
+                        await release(peer)
+                        await adapter.attempt(str(peer['execution'].id)).delivery
+                        if native._build_heartbeat()['busy_count'] != 1:
+                            raise RuntimeError('Cancellation peer did not independently settle')
+                        report['native_busy_counts'].append(1)
+                        liveness.update(active_runs=1, runs_handled=1, memory_reserved_bytes=requests[run])
+                        await beat()
+                        async with asyncio.timeout(5):
+                            while not (await api.get('http://bifrost-pyodide-ddf316c1:8820/snapshot')).json()['received']:
+                                await asyncio.sleep(0.05)
+                        denied = await api.post(f'/api/executions/{run}/cancel',
+                            headers={'Authorization': 'Bearer ' + peer['token']})
+                        if denied.status_code != 401:
+                            raise RuntimeError('Ended peer credential reached cancellation')
+                        statuses = []
+                        for _ in range(2):
+                            cancelled = await api.post(f'/api/executions/{run}/cancel',
+                                headers={'Authorization': 'Bearer ' + failed['token']})
+                            if cancelled.status_code != 200 or cancelled.json()['status'] != 'Cancelling':
+                                raise RuntimeError('Authorized cancellation API did not preserve Cancelling')
+                            statuses.append(cancelled.status_code)
+                        live = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + failed['token']},
+                                              json={'key': failed['key']})
+                        if live.status_code != 200:
+                            raise RuntimeError('Upstream Cancelling runtime credential semantics changed')
+                        cancel_cache = await native._get_redis()
+                        cancel_key = f'bifrost:exec:{run}:cancel'
+                        cancel_cleanup = (cancel_cache, cancel_key)
+                        if await cast(Awaitable[str | None], cancel_cache.get(cancel_key)) != '1':
+                            raise RuntimeError('Authoritative API did not publish its cancellation flag')
+                        try:
+                            await native._handle_cancel_request(run)
+                        except RuntimeError as exc:
+                            if str(exc) != 'Physical cancellation is not qualified for this runtime':
+                                raise
+                        else:
+                            raise RuntimeError('Capability revocation bypassed the physical cancellation guard')
+                        revoker = AttemptCapabilityRevoker(adapter.journal)
+
+                        async def close_bound():
+                            response = await api.post('http://bifrost-pyodide-ddf316c1:8799/__fixture_revoke',
+                                json={'execution_id': run, 'runtime_handle': first.invocation.runtime_handle})
+                            response.raise_for_status()
+                            return response.json()
+
+                        revoker.bind(run, first.invocation.runtime_handle, close_bound)
+                        acknowledgement = await revoker.revoke(ref.lease, run)
+                        if acknowledgement['physical_stopped'] or acknowledgement['execution_settled']:
+                            raise RuntimeError('Capability-only acknowledgement claimed execution cancellation')
+                        if mux.collection(run).done() or native._build_heartbeat()['busy_count'] != 1:
+                            raise RuntimeError('Capability revocation prematurely released execution')
+                        async with get_db_context() as db:
+                            row = await db.get(Execution, failed['execution'].id)
+                            worker_row = await db.get(ExecutionWorker, worker_id)
+                            if (row.status != ExecutionStatus.CANCELLING or row.completed_at is not None
+                                or worker_row.active_runs != 1 or worker_row.memory_reserved_bytes != requests[run]):
+                                raise RuntimeError('Cancelling/revoked work lost canonical accounting')
+                        report['vendor_before_cancel_release'] = (await api.get('http://bifrost-pyodide-ddf316c1:8820/snapshot')).json()
+                        if report['vendor_before_cancel_release']['committed']:
+                            raise RuntimeError('Vendor write committed before cancellation observation')
+                        report['native_busy_counts'].append(1)
+                        released = await api.post('http://bifrost-pyodide-ddf316c1:8820/release')
+                        released.raise_for_status()
+                        result = await first.receipt
+                        await first.delivery
+                        if not result['success'] or result['result']['value'] != failed['value']:
+                            raise RuntimeError('Finite workflow did not naturally complete after revocation')
+                        if native.processes or native._build_heartbeat()['busy_count'] != 0:
+                            raise RuntimeError('Natural completion did not release settled routes')
+                        liveness.update(active_runs=0, runs_handled=2, memory_reserved_bytes=0)
+                        await beat()
+                        async with get_db_context() as db:
+                            worker_row = await db.get(ExecutionWorker, worker_id)
+                            if worker_row.active_runs != 0 or worker_row.memory_reserved_bytes != 0:
+                                raise RuntimeError('Completed cancellation race retained canonical reservation')
+                        report['native_busy_counts'].append(0)
+                        await cast(Awaitable[int], cancel_cache.delete(cancel_key))
+                        if await cast(Awaitable[int], cancel_cache.exists(cancel_key)):
+                            raise RuntimeError('Fixture cancellation flag cleanup failed')
+                        cancel_cleanup = None
+                        report.update(canonical_cancel_probe=True, cancel_api_statuses=statuses,
+                            live_peer_cancel_status=foreign.status_code, cancel_flag_absent_at_cleanup=True,
+                            full_native_cancel_delivery_verified=False,
+                            cancelling_credential_status=live.status_code, ended_peer_cancel_status=denied.status_code,
+                            physical_cancellation_guard_preserved=True, capability_revocation_ack=acknowledgement,
+                            accounting_held_while_cancelling=True, natural_success_after_cancel_request=True)
+                    elif late_result:
                         failure_consume_gate.set()
                         first = adapter.attempt(str(failed['execution'].id))
                         cutoff = first.info.started_at + timedelta(seconds=first.info.timeout_seconds)
@@ -686,7 +785,7 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                         attempt = adapter.attempt(run)
                         slot['evidence'], slot['terminal_monotonic'] = attempt.evidence, attempt.terminal_monotonic
                         report['launches'][run] = attempt.launches
-                        status = (ExecutionStatus.TIMEOUT if late_result else ExecutionStatus.FAILED) if slot is failed else ExecutionStatus.SUCCESS
+                        status = (ExecutionStatus.SUCCESS if https_cancel else ExecutionStatus.TIMEOUT if late_result else ExecutionStatus.FAILED) if slot is failed else ExecutionStatus.SUCCESS
                         async with get_db_context() as db:
                             row = await db.get(Execution, slot['execution'].id)
                             logs = list(await db.scalars(select(ExecutionLog.message).where(ExecutionLog.execution_id == slot['execution'].id)))
@@ -761,6 +860,9 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
             raise RuntimeError('Credential exposure: shared evidence withheld')
         print(encoded)
     finally:
+        if cancel_cleanup is not None:
+            cache, key = cancel_cleanup
+            await cast(Awaitable[int], cache.delete(key))
         if runtime_cache is not None:
             owner, cache, key = runtime_cache
             await owner._unregister_worker()
@@ -785,6 +887,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--https-deadline', action='store_true')
+    parser.add_argument('--https-cancel', action='store_true')
     parser.add_argument('--https-fixture', action='store_true')
     parser.add_argument('--source-change', action='store_true')
     parser.add_argument('--late-result', action='store_true')
@@ -798,5 +901,5 @@ if __name__ == '__main__':
     parser.add_argument('--startup-inventory', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main(https_deadline=args.https_deadline, https_fixture=args.https_fixture, source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
+    asyncio.run(main(https_cancel=args.https_cancel, https_deadline=args.https_deadline, https_fixture=args.https_fixture, source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
                      deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction))

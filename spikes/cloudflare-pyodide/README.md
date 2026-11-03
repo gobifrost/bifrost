@@ -23,6 +23,9 @@ executor. Public/untrusted admission stays disabled. Start with
   [Explicit capability revocation](backend/CAPABILITY-REVOCATION.md) passes real
   PostgreSQL owner fencing and Pyodide follow-up denial without claiming physical
   stop or automatically acknowledging/releasing the unsettled execution.
+  [Canonical cancellation request](backend/CANONICAL-CANCEL-REQUEST.md) also
+  qualifies real API authorization, Cancelling liveness and retained accounting.
+  Finite natural completion remains Success; no Cancelled/physical-stop claim.
 * [Startup repair candidate](backend/STARTUP-CANDIDATE.md): 12 source/mock cases,
   [six real Redis cases](backend/STARTUP-REDIS.md), and one
   [signed Linux workflow/retirement](backend/STARTUP-LINUX.md) pass with an isolated
