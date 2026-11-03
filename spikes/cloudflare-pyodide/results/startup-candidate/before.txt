@@ -1,0 +1,123 @@
+test_cancellation_during_registration_rolls_back (test_startup_candidate.StartupCandidateTests.test_cancellation_during_registration_rolls_back) ... FAIL
+test_concurrent_start_waits_for_initial_start (test_startup_candidate.StartupCandidateTests.test_concurrent_start_waits_for_initial_start) ... FAIL
+test_configure_failure_does_not_claim_started_or_clean_unowned_state (test_startup_candidate.StartupCandidateTests.test_configure_failure_does_not_claim_started_or_clean_unowned_state) ... ok
+test_failed_rollback_quarantines_start_and_retains_both_errors (test_startup_candidate.StartupCandidateTests.test_failed_rollback_quarantines_start_and_retains_both_errors) ... ERROR
+test_healthy_start_stop_and_repeat_start (test_startup_candidate.StartupCandidateTests.test_healthy_start_stop_and_repeat_start) ... ok
+test_memory_failure_rolls_back (test_startup_candidate.StartupCandidateTests.test_memory_failure_rolls_back) ... FAIL
+test_registration_failure_rolls_back_then_retry_starts_listeners (test_startup_candidate.StartupCandidateTests.test_registration_failure_rolls_back_then_retry_starts_listeners) ... FAIL
+test_superseded_owner_rollback_does_not_unregister_replacement (test_startup_candidate.StartupCandidateTests.test_superseded_owner_rollback_does_not_unregister_replacement) ... FAIL
+test_tagging_failure_closes_owned_client (test_startup_candidate.StartupCandidateTests.test_tagging_failure_closes_owned_client) ... FAIL
+System.Management.Automation.RemoteException
+======================================================================
+ERROR: test_failed_rollback_quarantines_start_and_retains_both_errors (test_startup_candidate.StartupCandidateTests.test_failed_rollback_quarantines_start_and_retains_both_errors)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 117, in test_failed_rollback_quarantines_start_and_retains_both_errors
+    await self.pool.start()
+  File "/app/src/worker/remote/remote_pool.py", line 389, in start
+    await self._register_worker()
+  File "/usr/local/lib/python3.14/unittest/mock.py", line 2333, in _execute_mock_call
+    raise effect
+RuntimeError: register
+System.Management.Automation.RemoteException
+======================================================================
+FAIL: test_cancellation_during_registration_rolls_back (test_startup_candidate.StartupCandidateTests.test_cancellation_during_registration_rolls_back)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 90, in test_cancellation_during_registration_rolls_back
+    self.assertFalse(self.pool._started)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+System.Management.Automation.RemoteException
+======================================================================
+FAIL: test_concurrent_start_waits_for_initial_start (test_startup_candidate.StartupCandidateTests.test_concurrent_start_waits_for_initial_start)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 106, in test_concurrent_start_waits_for_initial_start
+    self.assertFalse(second.done())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+AssertionError: True is not false
+System.Management.Automation.RemoteException
+======================================================================
+FAIL: test_memory_failure_rolls_back (test_startup_candidate.StartupCandidateTests.test_memory_failure_rolls_back)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 74, in test_memory_failure_rolls_back
+    self.assertFalse(self.pool._started)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+System.Management.Automation.RemoteException
+======================================================================
+FAIL: test_registration_failure_rolls_back_then_retry_starts_listeners (test_startup_candidate.StartupCandidateTests.test_registration_failure_rolls_back_then_retry_starts_listeners)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 55, in test_registration_failure_rolls_back_then_retry_starts_listeners
+    self.assertFalse(self.pool._started)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+System.Management.Automation.RemoteException
+======================================================================
+FAIL: test_superseded_owner_rollback_does_not_unregister_replacement (test_startup_candidate.StartupCandidateTests.test_superseded_owner_rollback_does_not_unregister_replacement)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 133, in test_superseded_owner_rollback_does_not_unregister_replacement
+    self.assertFalse(self.pool._started)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+System.Management.Automation.RemoteException
+======================================================================
+FAIL: test_tagging_failure_closes_owned_client (test_startup_candidate.StartupCandidateTests.test_tagging_failure_closes_owned_client)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 66, in test_tagging_failure_closes_owned_client
+    self.assertFalse(self.pool._started)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+AssertionError: True is not false
+System.Management.Automation.RemoteException
+----------------------------------------------------------------------
+Ran 9 tests in 0.088s
+System.Management.Automation.RemoteException
+FAILED (failures=6, errors=1)
+exit_code=1

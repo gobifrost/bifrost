@@ -1,0 +1,23 @@
+// Produce an isolated review candidate; never edit the shared source checkout.
+import {readFileSync,writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const source=readFileSync(new URL('../../../api/src/worker/remote/remote_pool.py',import.meta.url),'utf8');
+if(createHash('sha256').update(source).digest('hex')!=='dd14eb91761041a0f6ea6ea974295c2c610ad43c9e50e46dbb14028ef9f81789')throw new Error('Reconcile changed upstream source before preparing candidate');
+if(process.argv.length!==3)throw new Error('Task-owned output path required');
+let candidate=source.replace('        self.transport = transport\n','        self._lifecycle_lock = asyncio.Lock()\n        self.transport = transport\n');
+const begin=candidate.indexOf('    async def start(self) -> None:');
+const end=candidate.indexOf('    async def _remote_packages(',begin);
+let start=candidate.slice(begin,end);
+start=start.replace('    async def start(self) -> None:',
+  '    async def start(self) -> None:\n        async with self._lifecycle_lock:\n            await self._start_once()\n\n    async def _start_once(self) -> None:');
+start=start.replace('        if self._started:\n            return',
+  '        if self._started:\n            if self._shutdown:\n                raise RuntimeError("Remote startup rollback incomplete; stop must settle first")\n            return');
+const transaction=start.indexOf('        self._started_at =');
+const body=start.slice(transaction).trimEnd().split('\n').map(line=>line?'    '+line:'').join('\n');
+start=start.slice(0,transaction)+'        try:\n'+body+'\n        except BaseException as startup_error:\n            try:\n                await self._stop_once()\n            except BaseException as cleanup_error:\n                self._shutdown = True\n                raise BaseExceptionGroup(\n                    "Remote startup and rollback failed", [startup_error, cleanup_error]\n                ) from None\n            raise\n\n';
+candidate=candidate.slice(0,begin)+start+candidate.slice(end);
+candidate=candidate.replace('    async def stop(self) -> None:\n',
+  '    async def stop(self) -> None:\n        async with self._lifecycle_lock:\n            await self._stop_once()\n\n    async def _stop_once(self) -> None:\n');
+if(candidate===source||!candidate.includes('await self._stop_once()'))throw new Error('Candidate transformation failed');
+writeFileSync(process.argv[2],candidate);
+console.log(createHash('sha256').update(candidate).digest('hex'));
