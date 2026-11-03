@@ -1,14 +1,18 @@
 {
   "key": "pr:1191",
-  "classification": "other",
+  "classification": "omit",
   "entry_ids": [],
-  "category": "fix",
-  "summary": "Live table rows in apps now appear in their sorted position when a record is created or its sort field changes, and \"Load more\" lists no longer repeat or skip rows after live changes.",
+  "reason": "Routine live-table ordering and pagination repair; no new capability or customer action requiring an in-app announcement.",
+  "security_review": {
+    "status": "not_required"
+  },
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1191",
-      "Claude (Fable) reviewed this routine-fix summary and the change on 2026-11-02 under the author's authorization; new use-table ordering tests fail on main and pass with the fix. No customer upgrade action or security disclosure is required."
+      "Jack explicitly authorized merging the reviewed fix on 2026-11-03, with routine fixes excluded from in-app Product Updates.",
+      "Verified incoming contribution by mlspivey from mlspivey/bifrost into gobifrost/bifrost; original contributor commits and authorship are retained.",
+      "Focused ordering and pagination review found no security-boundary change or required customer upgrade action. Known concurrent-edit and collation limitations remain documented in the PR."
     ]
   }
 }
