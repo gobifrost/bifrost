@@ -1,0 +1,5 @@
+slug: rewst-migration
+name: Rewst Migration
+version: 0.1.0
+allow_outbound_access: false
+allow_inbound_access: true
