@@ -1,14 +1,15 @@
 {
-  "key": "pr:1203",
+  "key": "pr:1214",
   "classification": "omit",
   "entry_ids": [],
   "security_review": {
     "status": "required",
-    "review_ref": "https://github.com/gobifrost/bifrost/pull/1203"
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1214"
   },
   "review": {
     "status": "approved",
     "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1214",
       "https://github.com/gobifrost/bifrost/pull/1203",
       "https://github.com/Midtown-Technology-Group/bifrost/pull/1224",
       "Contributor credit: @MTG-Thomas authored the port and original implementation; existing author commits are preserved.",
@@ -18,7 +19,8 @@
       "Verification: head CI Unit Tests, Lint & Type Check, and CodeQL succeeded. Added regression coverage exercises concurrent unknown keys, failed-refresh cooldown, cache readers waiting on the lock, and generation/cooldown reuse. No live Microsoft authentication was exercised.",
       "Accepted limits: cooldown is per API process; legitimate new keys can wait up to five minutes; cold/expired-cache fetch failures are outside the unknown-key cooldown. No actionable defect found in the scoped patch.",
       "Local verification on current-main-based review/1203-jwks-throttle: ./test.sh tests/unit/services/test_webhook_adapters.py -q passed 49 tests (JUnit: zero failures/errors/skips); ./test.sh quality api passed Pyright with zero errors/warnings and Ruff. Product Updates validate and normalized merge-group validate-event passed. Full suites and live Microsoft authentication were not run. An initial overlapping quality invocation was rejected by the test-stack lock before checks ran; quality passed after the test owner finished.",
-      "Release visibility review: Jack directed internal security hardening to use a reviewed omit disposition. No in-app entry or release-only entry is proposed; required security review, original source links, contributor credit, and verification evidence remain recorded."
+      "Release visibility review: Jack directed internal security hardening to use a reviewed omit disposition. No in-app entry or release-only entry is proposed; required security review, original source links, contributor credit, and verification evidence remain recorded.",
+      "Replacement PR #1214 carries the identical reviewed adapter and regression tests from #1203 on a same-repository branch; the original contributor commits and explicit co-author credit are retained. The source fork denied maintainer writes, so this replacement avoids requiring fork management. The disposition is approved omit under Jack's release visibility policy."
     ]
   },
   "reason": "Internal Bot Framework authentication hardening bounds unknown-key JWKS refresh traffic. This adds no front-facing capability and requires no customer action; omit it from the in-app Product Updates feed. No separate release-only announcement is warranted for this scoped implementation repair."
