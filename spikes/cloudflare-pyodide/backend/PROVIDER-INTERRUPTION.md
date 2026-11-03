@@ -1,5 +1,9 @@
 # Actual local provider-process interruption
 
+Follow-on: [the actual opaque native pool with early streamed acceptance](STREAM-PROVIDER-INTERRUPTION.md)
+now passes this failure boundary on the refined contribution source. The
+historical direct-fixture result below retains its original source and scope.
+
 This test stops the owned local Wrangler/workerd provider container **after** an
 independent authenticated API read observes the workflow's real SDK-written
 document as 70. The fixed workflow is still awaiting an async delay. The

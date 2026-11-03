@@ -75,8 +75,10 @@ no new claim about the previously deployed Worker or current cloud acceptance.
 ## Remaining frontier
 
 Refusing an unsupported reconciliation keeps uncertainty visible; it is not a
-new automatic physical settlement mechanism. Provider interruption before a
-terminal event reaches the launcher remains the next local qualification.
+new automatic physical settlement mechanism. The
+[provider-interruption follow-on](STREAM-PROVIDER-INTERRUPTION.md) now qualifies
+explicit canonical recovery before any terminal event reaches the launcher,
+while keeping the native invocation obligation separate.
 Negotiated/authorized runtime admission, deployed resource enforcement/accounting
 and untrusted isolation remain open. No cloud invocation, resource expansion,
 production setting, credential or admission change is introduced.

@@ -21,11 +21,11 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, revision=1):
     global PACKET, RUN, NAME
-    physical_pool = physical_pool or stream_pool or stream_loss
+    physical_pool = physical_pool or stream_pool or stream_loss or stream_interruption
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -40,6 +40,14 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
     compose_hash = hashlib.sha256((CHECKOUT / 'docker-compose.test.yml').read_bytes()).hexdigest()
     if compose_hash != '33e78480090f97ea3f04be404c5a3d312ea8486ec6d55a60c67361a8ef0bdce9':
         raise RuntimeError('Resource-bounded test Compose changed')
+    api_overlay = {path: hashlib.sha256((CHECKOUT / path).read_bytes()).hexdigest() for path in
+                   ('api/src/worker/remote/protocol.py', 'api/src/worker/remote/remote_pool.py')}
+    image_id = out(['docker', 'image', 'inspect', 'bifrost-test-api-dev:bifrost-test-7ddfac36', '--format', '{{.Id}}'])
+    if stream_interruption and (api_overlay['api/src/worker/remote/remote_pool.py'] !=
+        'dd14eb91761041a0f6ea6ea974295c2c610ad43c9e50e46dbb14028ef9f81789'
+        or api_overlay['api/src/worker/remote/protocol.py'] != '91db42936f3235599243af681d24886fbb79180a7020633dfafe35887b3956d5'
+        or image_id != 'sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b'):
+        raise RuntimeError('Qualified native pool/protocol/dependency image changed')
     for relative in ('canonical-local.py', 'task_cleanup.py', 'project/backend/authorized-local-entry.mjs'):
         if not (PACKET / relative).is_file():
             raise RuntimeError('Incomplete qualification packet: ' + relative)
@@ -51,6 +59,9 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
         raise RuntimeError('Qualified runtime closure changed')
     RUN.mkdir()
     (RUN / 'home').mkdir()
+    if stream_interruption:
+        (RUN / 'control').mkdir()
+        os.chown(RUN / 'control', 1000, 1000)
     shutil.copytree(PACKET / 'project', RUN / 'project')
     cache = ROOT / 'runs/runtime-source-bundle-v1/bundle-cache'
     wrapper = ROOT / 'runs/runtime-source-bundle-v1/workerd-with-cache.sh'
@@ -78,13 +89,16 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
     commands = [['./test.sh', 'stack', 'up'], [*compose, 'stop', 'worker', 'scheduler'], provider,
         [*compose, '--profile', 'test', 'run', '--rm', '--no-deps',
          '--volume', f'{CHECKOUT}/spikes/cloudflare-pyodide:/spike:ro',
-         '--volume', f'{PACKET}:/qualification:ro', 'test-runner',
+         '--volume', f'{PACKET}:/qualification:ro',
+         *(['--volume', f'{RUN}/control:/interruption', '--env', 'PROVIDER_INTERRUPTION_CONTROL=/interruption/ready.json'] if stream_interruption else []),
+         'test-runner',
          'python', '/qualification/provider-response-loss.py' if deadline_response_loss or deadline_retained or stream_loss else '/qualification/canonical-local.py',
-         '--stream-retained-response' if stream_loss else '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
+         '--stream-interruption-probe' if stream_interruption else '--stream-retained-response' if stream_loss else '--stream-pool-probe' if stream_pool else '--physical-pool-probe' if physical_pool else '--deadline-retained-response' if deadline_retained
          else '--deadline-response-loss' if deadline_response_loss else '--failure-probe']]
     report = {'api_source': SOURCE, 'runtime_engine_source': 'f49d4ba99cebd24aa497f1244833b940e640885f',
         'project': project, 'cloud_invocations': 0, 'physical_termination_verified': False,
         'qualification_passed': False, 'commands': [], 'compose_sha256': compose_hash,
+        'api_overlay_sha256': api_overlay, 'dependency_image_id': image_id,
         'packet_sha256': {str(path.relative_to(PACKET)): hashlib.sha256(path.read_bytes()).hexdigest()
                           for path in PACKET.rglob('*') if path.is_file() and path.suffix != '.gz'}}
     started = time.monotonic()
@@ -104,13 +118,55 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
                 else:
                     raise RuntimeError('Local provider readiness deadline')
             with (RUN / f'phase-{index}.private.log').open('x') as log:
-                result = subprocess.run(command, cwd=CHECKOUT, env=env, stdout=log,
-                                        stderr=subprocess.STDOUT, timeout=max(1, 360 - (time.monotonic() - started)))
-            report['commands'].append({'argv': command, 'exit_code': result.returncode})
-            if result.returncode:
+                if index == 3 and stream_interruption:
+                    process = subprocess.Popen(command, cwd=CHECKOUT, env=env, stdout=log, stderr=subprocess.STDOUT)
+                    try:
+                        while process.poll() is None:
+                            if time.monotonic() - started > 360 or shutil.disk_usage(ROOT).free < 4 * 1024**3:
+                                raise RuntimeError('Interruption qualification wall/disk bound')
+                            if not report.get('provider_process_stop_verified'):
+                                try:
+                                    descriptor = os.open(RUN / 'control/ready.json', os.O_RDONLY | os.O_NOFOLLOW)
+                                except FileNotFoundError:
+                                    pass
+                                else:
+                                    with os.fdopen(descriptor) as marker:
+                                        content = marker.read(257)
+                                    if len(content) > 256 or json.loads(content) != {'sdk_write_observed': True, 'value': 70}:
+                                        raise RuntimeError('Invalid interruption positive control')
+                                    subprocess.run(['docker', 'stop', '-t', '1', NAME], capture_output=True, check=True, timeout=15)
+                                    stopped = json.loads(out(['docker', 'inspect', NAME, '--format', '{{json .State}}']))
+                                    if stopped['Running'] or stopped['OOMKilled']:
+                                        raise RuntimeError('Provider-process interruption readback failed')
+                                    report.update(provider_process_stop_verified=True, sdk_write_observed_before_stop=True,
+                                                  provider_state_after_interruption=stopped)
+                            time.sleep(0.1)
+                        exit_code = process.returncode
+                    finally:
+                        if process.poll() is None:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=5)
+                else:
+                    result = subprocess.run(command, cwd=CHECKOUT, env=env, stdout=log,
+                                            stderr=subprocess.STDOUT, timeout=max(1, 360 - (time.monotonic() - started)))
+                    exit_code = result.returncode
+            report['commands'].append({'argv': command, 'exit_code': exit_code})
+            if exit_code:
                 raise RuntimeError('Canonical failure qualification failed; inspect private log')
         records = [json.loads(line) for line in (RUN / 'phase-3.private.log').read_text().splitlines() if line.startswith('{')]
-        if stream_loss:
+        if stream_interruption:
+            probe = next(row for row in reversed(records) if row.get('stream_interruption_probe'))
+            if (not report.get('provider_process_stop_verified') or probe.get('launches') != 1
+                or probe.get('canonical_recovery_status') != 'Failed' or probe.get('result_envelope_received') is not False
+                or not probe.get('opaque_obligation_retained_after_canonical_failure')
+                or not probe.get('fixture_worker_cascade_cleanup_verified')):
+                raise RuntimeError('Native streamed provider loss did not preserve recovery/resource distinction')
+            report['stream_interruption_result'] = probe
+        elif stream_loss:
             probe = next(row for row in reversed(records) if row.get('stream_loss_probe'))
             if (not probe.get('local_recovery_verified') or probe.get('launches') != 1
                 or not probe.get('native_opaque_route_released_after_reconciliation')
@@ -166,8 +222,9 @@ if __name__ == '__main__':
     mode.add_argument('--physical-pool', action='store_true')
     mode.add_argument('--stream-pool', action='store_true')
     mode.add_argument('--stream-loss', action='store_true')
+    mode.add_argument('--stream-interruption', action='store_true')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
     main(egress_gate=args.egress_gate, deadline_response_loss=args.deadline_response_loss,
          deadline_retained=args.deadline_retained, physical_pool=args.physical_pool, stream_pool=args.stream_pool,
-         stream_loss=args.stream_loss, revision=args.revision)
+         stream_loss=args.stream_loss, stream_interruption=args.stream_interruption, revision=args.revision)

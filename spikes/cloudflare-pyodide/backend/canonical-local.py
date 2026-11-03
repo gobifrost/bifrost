@@ -26,7 +26,13 @@ from task_cleanup import cancel_and_join
 async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired_access=False,
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
                node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False,
-               worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False, stream_pool_probe=False):
+               worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False, stream_pool_probe=False,
+               stream_interruption_probe=False):
+    if stream_interruption_probe:
+        if any((isolation_label is not None, refresh_probe, expired_access, concurrent_refresh, interrupt_refresh,
+                failure_probe, transport_waiter, node_pyodide, benchmark_probe, worker_loss_probe)):
+            raise RuntimeError('Stream interruption requires the fixed integration-secret fixture')
+        stream_pool_probe = provider_interruption_probe = integration_probe = integration_secret_probe = True
     physical_pool_probe = physical_pool_probe or stream_pool_probe
     target = urlsplit(os.environ.get("BIFROST_DATABASE_URL", ""))
     if (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
@@ -47,7 +53,7 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
     if failure_probe and (refresh_probe or expired_access or concurrent_refresh or interrupt_refresh or isolation_label is not None):
         raise RuntimeError("Failure qualification is a separate fixed single-run fixture")
     expected_success = not failure_probe
-    if physical_pool_probe and any((isolation_label is not None, refresh_probe, expired_access, concurrent_refresh,
+    if physical_pool_probe and not stream_interruption_probe and any((isolation_label is not None, refresh_probe, expired_access, concurrent_refresh,
         interrupt_refresh, failure_probe, transport_waiter, node_pyodide, integration_probe, benchmark_probe,
         worker_loss_probe, provider_interruption_probe)):
         raise RuntimeError('Opaque pool qualification uses the fixed normal SDK fixture only')
@@ -693,6 +699,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     finally:
                         await cancel_and_join(sent)
                 if provider_interruption_probe:
+                    interrupted_handle = interrupted_info = interrupted_identity = None
                     try:
                         await pool.receipt
                     except httpx.HTTPError as transport_error:
@@ -706,6 +713,15 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                     inventory = journal.inventory()
                     if len(inventory) != 1 or inventory[0]['collection_state'] != 'failed' or inventory[0]['acknowledged']:
                         raise RuntimeError('Interrupted collection state was incorrectly acknowledged')
+                    if stream_interruption_probe:
+                        interrupted_handle = pool.physical_pool.processes[pool.physical_route]
+                        interrupted_info = interrupted_handle.current_execution
+                        interrupted_identity = (interrupted_info.started_at, interrupted_info.timeout_seconds,
+                                                interrupted_handle.process.runtime_handle)
+                        if (not interrupted_identity[2] or interrupted_handle.process.remote_pid is not None
+                            or pool.physical_pool._build_heartbeat()['busy_count'] != 1):
+                            raise RuntimeError('Provider loss discarded the native invocation obligation')
+                        report['opaque_obligation_retained_before_recovery'] = True
                     from src.services.worker_pool.recovery import end_runs_of_lost_worker, announce_lost_runs, EXECUTOR_LOST
                     from src.models.orm.tables import Document, Table
                     async with get_db_context() as db:
@@ -741,6 +757,24 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         raise RuntimeError('Interrupted run credentials remained usable after canonical recovery')
                     if pool.launches != 1:
                         raise RuntimeError('Interrupted provider was relaunched')
+                    if stream_interruption_probe:
+                        assert interrupted_handle is not None and interrupted_info is not None and interrupted_identity is not None
+                        async def forbidden_relaunch():
+                            raise AssertionError('Interrupted accepted invocation must not be redispatched')
+
+                        duplicate = await journal.dispatch(ref.lease, 'route', str(execution.id), forbidden_relaunch)
+                        if duplicate is not pool.receipt:
+                            raise RuntimeError('Interrupted route lost its original failed receipt')
+                        current = pool.physical_pool.processes[pool.physical_route]
+                        if (current is not interrupted_handle or current.current_execution is not interrupted_info
+                            or (interrupted_info.started_at, interrupted_info.timeout_seconds,
+                                current.process.runtime_handle) != interrupted_identity
+                            or pool.physical_pool._build_heartbeat()['busy_count'] != 1
+                            or current.killed_at is not None):
+                            raise RuntimeError('Canonical failure fabricated physical settlement or renewed timing')
+                        report.update(stream_interruption_probe=True, original_identity_and_deadline_preserved=True,
+                            opaque_obligation_retained_after_canonical_failure=True, duplicate_reused_failed_receipt=True,
+                            physical_stop_inferred_from_canonical_failure=False)
                     report.update(canonical_claim_verified=True, canonical_terminal_consumption_verified=False,
                         provider_interruption_recovery_verified=True, canonical_recovery_status='Failed',
                         runtime_access_after_recovery_status=401, runtime_refresh_after_recovery_status=401,
@@ -922,8 +956,10 @@ if __name__ == "__main__":
         parser.add_argument("--provider-interruption-probe", action="store_true")
         parser.add_argument("--physical-pool-probe", action="store_true")
         parser.add_argument("--stream-pool-probe", action="store_true")
+        parser.add_argument("--stream-interruption-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(stream_pool_probe=args.stream_pool_probe, physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
+        asyncio.run(main(stream_interruption_probe=args.stream_interruption_probe,
+                         stream_pool_probe=args.stream_pool_probe, physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
                          worker_loss_probe=args.worker_loss_probe, benchmark_probe=args.benchmark_probe,
                          isolation_label=args.isolation_label, batch=args.batch,
                          refresh_probe=args.refresh_probe, expired_access=args.expired_access,

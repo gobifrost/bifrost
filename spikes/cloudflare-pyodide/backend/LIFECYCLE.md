@@ -66,6 +66,13 @@ an omitted opaque handle as Linux process exit or to issue Linux termination
 for an unowned live invocation. It preserves owner fencing and normal retained
 terminal replay. Refusal retains uncertainty; it is not provider settlement.
 
+The [streamed provider-interruption follow-on](STREAM-PROVIDER-INTERRUPTION.md)
+now loses the provider before the launcher receives any terminal event. Real
+canonical lost-worker recovery records Failed, revokes run credentials and
+drains redacted logs without redispatch. The native invocation remains held.
+An independently stopped local Linux provider is not deployed isolate-stop proof;
+automatic provider-loss observation and settlement remain open.
+
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle
 retention change does not isolate its two causes. The aborted I/O case reported

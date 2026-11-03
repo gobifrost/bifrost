@@ -1,0 +1,11 @@
+{
+    "stage":  "Pyright preflight only; no workflow launched",
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/stream-interruption-v2",
+    "command":  "pyright --project /qualification/pyright-guest-fixtures.json /qualification/canonical-local.py /qualification/ct128-canonical-failure.py",
+    "memory_mib":  512,
+    "cpus":  0.5,
+    "ssh_pct_exit_code":  1,
+    "failure":  "Node reported JavaScript heap out of memory around 250 MiB; no Pyright diagnostic result",
+    "correction":  "One bounded checker-only run with 1 GiB container memory and Node max-old-space-size=768 inside existing CT128 8 GiB allocation. No diagnostic or provider/runtime limit change.",
+    "cloud_invocations":  0
+}

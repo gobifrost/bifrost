@@ -1,0 +1,10 @@
+{
+    "stage":  "preflight only; runtime not launched",
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/stream-interruption-v1",
+    "command":  "ruff check --no-cache canonical-local.py ct128-canonical-failure.py",
+    "exit_code":  1,
+    "finding":  "F821 Undefined name execution_id at canonical-local.py:765",
+    "correction":  "Use str(execution.id) from the canonical fixture scope; corrected source staged separately as v2",
+    "canonical_sha256":  "51b8ac2ebfeb37d63ffb3412ddaf2d0882cad93efe971f0cbbca88ec898d0516",
+    "cloud_invocations":  0
+}

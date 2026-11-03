@@ -73,7 +73,8 @@ ct128-canonical-failure.py`. Both pass on V2 source.
 The initial failed checks, their disposition, passing commands and native overlay
 readback are preserved in [quality-checks.json](../results/stream-loss/quality-checks.json).
 
-Next: establish provider interruption handling when no terminal event reaches
-the launcher, including explicit canonical failure and retained resource
-obligations. Deployed lifecycle/enforcement/accounting and untrusted isolation
+The [provider-interruption follow-on](STREAM-PROVIDER-INTERRUPTION.md) now
+qualifies explicit canonical failure and retained resource obligations when no
+terminal event reaches the launcher locally. Automatic provider-loss observation,
+deployed lifecycle/enforcement/accounting and untrusted isolation
 remain separate gates; these local tests authorize no cloud reopening or rollout.

@@ -19,7 +19,7 @@ assert.equal(hash(await readFile(new URL('../results/stream-loss/v1-provider.txt
 for (const name of ['provider-response-loss.py', 'ct128-canonical-failure.py', 'canonical-local.py',
   'invocation-stream.mjs', 'invocation_stream.py', 'authorized-local-entry.mjs', 'task_cleanup.py',
   'pyright-guest-fixtures.json']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), final.packet_sha256[name], name);
+  assert.equal(hash(execFileSync('git', ['show', `89464d31d:spikes/cloudflare-pyodide/backend/${name}`])), final.packet_sha256[name], name);
 }
 for (const receipt of [first, final]) {
   assert.equal(receipt.qualification_passed, true);

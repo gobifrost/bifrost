@@ -4,6 +4,12 @@ Latest native contract repair: [opaque inventory uncertainty](backend/INVENTORY-
 44 focused native cases pass, including Linux controls, terminal replay and owner
 fencing. Missing invocation inventory no longer fabricates a Linux crash result.
 
+Latest abnormal-path qualification: [streamed provider interruption](backend/STREAM-PROVIDER-INTERRUPTION.md).
+The real opaque pool now survives loss before any terminal result: canonical
+recovery records Failed and revokes credentials while retaining the unresolved
+physical obligation. This is local provider-process failure injection, not
+Cloudflare per-isolate cancellation acceptance.
+
 Latest integration: [accepted stream loss and canonical reconciliation](backend/STREAM-LOSS-RECONCILIATION.md).
 The real ThinRemoteProcessPool now passes a local workerd engine/SDK run and
 canonical lost-ACK replay without a fake PID. Prompt dispatch ACK now passes

@@ -1,5 +1,26 @@
 # Compact experiment log
 
+## Streamed opaque provider interruption without a terminal event, 2026-11-03
+
+Hypothesis: the real native opaque pool can preserve canonical semantics when
+the provider disappears after an SDK effect but before a terminal result reaches
+the launcher. Reuse the fixed integration-secret interruption workload through
+early accepted/result streaming; stop only the owned local cf CLI provider after
+independent document70. V1 preflight Ruff caught an out-of-scope execution_id;
+corrected to str(execution.id) in a separate packet. V2 Ruff passes; Pyright first
+exhausted its Node heap under512 MiB, then passes within a checker-only1 GiB/
+768 MiB old-space bound, no diagnostic or provider change. Actual runtime command:
+`ct128-canonical-failure.py --stream-interruption --revision 2` in the assigned
+CT128 packet. All four phases exit0, supervisor63.397s, provider exited143/PID0,
+no OOM. Actual stream RemoteProtocolError/no result; canonical Running then
+upstream explicit recovery Failed, durable SDK effect70, access+refresh401,
+redacted log drained once, duplicate reuses failed receipt/one launch. Native
+invocation identity/deadline/Busy obligation stays held after canonical failure.
+Artifacts: backend/STREAM-PROVIDER-INTERRUPTION.md, raw v2 receipt and diagnosed
+preflight/quality records under results/stream-interruption. No cloud or physical
+isolate-stop claim. Next: automatic observation/reconciliation of uncertain
+invocations through the existing control plane, without enabling admission.
+
 ## Native opaque inventory uncertainty, 2026-11-03
 
 Hypothesis: Linux inventory conventions still bypass the opaque cancellation
