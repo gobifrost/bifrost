@@ -435,8 +435,9 @@ export function useTable(
  *     the row within the loaded rows (never dropped; see `replaceAt`).
  *   - `delete`: removed if loaded.
  *
- * A row whose update moves it past the loaded prefix can make the next page
- * skip one row until the next snapshot; `loadMore()` dedupes by id, so it
+ * A row whose update moves it past the loaded prefix, or a delete that lands
+ * while a `loadMore()` fetch is in flight, can make the next page skip one
+ * row until the next snapshot; `loadMore()` dedupes by id, so it
  * never shows a row twice.
  */
 export function applyEvent(

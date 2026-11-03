@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { components } from "@/lib/v1";
 import { tables } from "./tables";
 import {
@@ -63,10 +63,12 @@ export function useInfiniteTable(
   const tableIdRef = useRef<string | null>(null);
   const cancelledRef = useRef(false);
 
-  useEffect(() => {
+  // Layout effects, so a `loadMore()` fired right after a live-event render
+  // never reads the previous commit's rows.
+  useLayoutEffect(() => {
     rowsRef.current = rows;
   }, [rows]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
 

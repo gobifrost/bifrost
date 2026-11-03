@@ -3,7 +3,7 @@
   "classification": "other",
   "entry_ids": [],
   "category": "fix",
-  "summary": "Live table rows in apps now appear in their sorted position when a record is created or its sort field changes.",
+  "summary": "Live table rows in apps now appear in their sorted position when a record is created or its sort field changes, and \"Load more\" lists no longer repeat or skip rows after live changes.",
   "review": {
     "status": "approved",
     "evidence": [
