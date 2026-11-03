@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -8,7 +9,8 @@ assert.equal(receipt.qualification_passed, true);
 assert.equal(receipt.cloud_invocations, 0);
 assert.equal(receipt.physical_termination_verified, false);
 assert.deepEqual(receipt.running_after_cleanup, []);
-assert.equal(receipt.packet_sha256['project/backend/cooperative-runtime.mjs'], sha(read('cooperative-runtime.mjs')));
+assert.equal(receipt.packet_sha256['project/backend/cooperative-runtime.mjs'], sha(execFileSync('git',
+  ['show', '5f74ccea1:spikes/cloudflare-pyodide/backend/cooperative-runtime.mjs'])));
 const staged = `export default ${JSON.stringify(read('cooperative_execution.py'))};`;
 assert.equal(receipt.packet_sha256['project/backend/cooperative-code.mjs'], sha(staged));
 assert.equal(receipt.staged_runtime_provenance.bundle_sha256, '61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731');

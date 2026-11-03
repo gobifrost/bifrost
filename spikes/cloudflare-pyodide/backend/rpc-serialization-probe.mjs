@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {writeFileSync} from 'node:fs';
+const response = await fetch('http://127.0.0.1:8799/', {method: 'POST', signal: AbortSignal.timeout(45000)});
+const text = await response.text();
+writeFileSync('/qualification/rpc-serialization-observation.json', JSON.stringify({status: response.status, text}), {flag: 'wx'});
+assert.equal(response.status, 200);
+const body = JSON.parse(text);
+assert.equal(body.tests_run, 6);
+assert.equal(body.failures, 0);
+assert.equal(body.errors, 0);
+assert.equal(body.wire_limit, 4194304);
+assert.equal(body.abi, 'cpython-314-wasm32-emscripten');
+console.log(JSON.stringify({status: response.status, body, cloud_invocations: 0}));

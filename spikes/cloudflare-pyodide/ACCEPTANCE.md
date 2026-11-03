@@ -81,6 +81,10 @@ cooperative-numeric-v6 fixes rounding introduced by the candidate RPC parse:
 actual engine checks large signed integer parameters before effects and preserves
 the positive result through canonical persistence. Existing lossless parsing is
 reused. Marshaling bounds and deployed memory remain unqualified.
+The candidate now enforces a 4 MiB Python RPC wire budget: six cases pass natively
+and in actual local Pyodide. A real 1.2 MB engine result preserves existing body-limit
+failure, peer success and cleanup. This bounds transfer size; allocation peak,
+over-limit engine failure mapping and deployed 128 MiB enforcement remain unqualified.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

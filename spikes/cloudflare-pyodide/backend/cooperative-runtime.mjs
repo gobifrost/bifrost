@@ -1,7 +1,7 @@
 // Candidate composition only. Does not enable dispatch or claim terminal cancellation.
-export function withCooperativeRpc(code, cooperativeSource) {
+export function withCooperativeRpc(code, cooperativeSource, serializationSource) {
   const original = code.modules?.['main.py']?.py;
-  if (typeof original !== 'string' || typeof cooperativeSource !== 'string') {
+  if (typeof original !== 'string' || typeof cooperativeSource !== 'string' || typeof serializationSource !== 'string') {
     throw new Error('Python runtime and cancellation source required');
   }
   let python = original;
@@ -15,8 +15,11 @@ export function withCooperativeRpc(code, cooperativeSource) {
     '    async def _execute_body(self, body):');
   replace('            await close_sdk(get_client())',
     '            await close_sdk(get_client())\n            cleanup_evidence["sdk_close_returned"] = True');
+  replace('        return Response.json(result, headers={"X-Spike-SDK-Close-Returned": "true"})',
+    '        return result');
   python += `
 from cooperative_execution import execute_cooperatively, request_cancel
+from rpc_serialization import encode_rpc
 
 class Default(EngineEntrypoint):
     async def fetch(self, request):
@@ -35,14 +38,14 @@ class Default(EngineEntrypoint):
 
         async def execute():
             cleanup_evidence["sdk_close_returned"] = False
-            response = await self._execute_body(body)
-            # Consume the response while still in the execution invocation.
-            return {"kind": "engine_result", "body": json.loads(await response.text())}
+            result = await self._execute_body(body)
+            return {"kind": "engine_result", "body": result}
 
         outcome = await execute_cooperatively(execution_id, execute, owner_scheduled=True)
-        return json.dumps({"outcome": outcome,
+        return encode_rpc({"outcome": outcome,
             "sdk_close_returned": cleanup_evidence["sdk_close_returned"]})
 `;
   return {...code, modules: {...code.modules, 'main.py': {py: python},
-    'cooperative_execution.py': {py: cooperativeSource}}};
+    'cooperative_execution.py': {py: cooperativeSource},
+    'rpc_serialization.py': {py: serializationSource}}};
 }

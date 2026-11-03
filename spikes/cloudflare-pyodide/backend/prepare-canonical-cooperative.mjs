@@ -10,6 +10,7 @@ function replace(before, after) {
 replace('const httpsExecutions=new Map();', `import {withCooperativeRpc} from './cooperative-runtime.mjs';
 import {cooperativeRpcResponse} from './cooperative-rpc-result.mjs';
 import cooperativeSource from './cooperative-code.mjs';
+import serializationSource from './rpc-serialization-code.mjs';
 const cooperativeEntries=new Map();
 const httpsExecutions=new Map();`);
 replace("if(new URL(request.url).pathname==='/__fixture_revoke') {", `if(new URL(request.url).pathname==='/__fixture_cancel') {
@@ -25,7 +26,7 @@ replace("if(new URL(request.url).pathname==='/__fixture_revoke') {", `if(new URL
     if(new URL(request.url).pathname==='/__fixture_revoke') {`);
 replace('cleaned=true;https.close();', 'cleaned=true;cooperativeEntries.delete(id);https.close();');
 replace('const entrypoint=env.LOADER.load(code).getEntrypoint();',
-  'const entrypoint=env.LOADER.load(withCooperativeRpc(code,cooperativeSource)).getEntrypoint();\n      const cooperativeControl={requested:false};cooperativeEntries.set(id,cooperativeControl);');
+  'const entrypoint=env.LOADER.load(withCooperativeRpc(code,cooperativeSource,serializationSource)).getEntrypoint();\n      const cooperativeControl={requested:false};cooperativeEntries.set(id,cooperativeControl);');
 replace(`const response=await entrypoint.fetch(new Request('https://attempt.invalid/',{
           method:'POST',body:JSON.stringify({action:body.mode==='canonical' ? 'execute_envelope' : 'execute',
             worker_id:body.worker_id,execution_id:body.execution_id,

@@ -36,5 +36,6 @@ try {
     fileURLToPath(new URL('shared-native-pool.py', import.meta.url)), output]);
   assert.equal(sha(readFileSync(output)), receipt.packet_sha256['shared-native-pool.py']);
 } finally {rmSync(directory, {recursive: true, force: true});}
-assert.equal(sha(read('cooperative-runtime.mjs')), receipt.packet_sha256['project/backend/cooperative-runtime.mjs']);
+assert.equal(sha(execFileSync('git', ['show', '5f74ccea1:spikes/cloudflare-pyodide/backend/cooperative-runtime.mjs'])),
+  receipt.packet_sha256['project/backend/cooperative-runtime.mjs']);
 console.log('Actual engine cooperative cancellation/suppression evidence verified; physical stop remains unqualified.');

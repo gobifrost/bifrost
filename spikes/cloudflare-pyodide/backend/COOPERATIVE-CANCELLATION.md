@@ -131,7 +131,7 @@ and confirm accepted held writes still commit after release. Wrong-run and late
 cancel requests remain false. This qualifies this local mechanism, not physical
 stop, canonical cancellation, background-task cleanup or deployed enforcement.
 
-cooperative-http-v13.json records exact packet hashes, Python3.14.2/
+cooperative-http-v13.json records exact packet hashes, Python 3.14.2/
 cpython-314-wasm32-emscripten, 14.375-second whole-launcher lifecycle and stopped
 provider (no OOM). Command is unchanged except --revision 13. Packet:
 /opt/bifrost-tests/pyodide-ddf316c1/inbox/approved-https-v13. Same network-disabled
@@ -326,3 +326,49 @@ effects, four independent HTTPS forwards, reconciliation and owned SDK close.
 Exact packet hashes and existing engine/SDK/bundle/image pins remain in the raw
 receipt. Provider and disposable stack stopped; volumes preserved; no cloud use.
 Marshaling size/memory bounds remain next, independent of numeric correctness.
+
+## Python RPC wire budget and oversized engine result
+
+rpc_serialization.py now enforces a 4 MiB serialized RPC-string budget before
+JavaScript interop. It uses stdlib JSONEncoder.iterencode with ASCII escapes,
+counts actual wire characters/bytes, rejects nonfinite/circular values and emits
+a fixed payload-free oversize exception. The candidate now keeps the actual
+engine result dictionary instead of constructing a Response and parsing it back
+into a second dictionary. Existing engine invocation/envelope/SDK-close code is
+retained; ordinary runtime entry remains unchanged.
+
+This limits wire output, not total allocation: the workflow object already exists,
+JSONEncoder may allocate a large string chunk, and joining retained chunks uses
+memory. No peak/resident-memory or deployed 128 MiB acceptance follows.
+
+Six native cases pass in the network-disabled 0.5 CPU/256 MiB/64-PID cached image:
+exactly 4 MiB and one byte over, large integer, ASCII escape expansion, invalid
+budgets, nonfinite/circular data and payload-free oversize errors. The same six
+unittest cases execute inside actual Pyodide and pass (rpc-serialization-v14.json),
+using Python 3.14.2/cpython-314-wasm32-emscripten and the existing pinned bundle.
+The reused launcher's historical approved-https scope label is not this probe's
+scope: rpc-serialization-entry.mjs runs pure serializer tests without egress or SDK.
+No wheel compilation/replacement is needed for this stdlib-only dependency.
+
+The real engine/SDK oversized-body run also passes (cooperative-budget-v7.json):
+1,202,312 response bytes traverse bounded RPC, then the existing 1 MiB body limit
+produces canonical Failed/ExecutorBodyTooLargeError. SDK effects already occurred;
+the error explicitly preserves that uncertainty. Peer Success, SDK-close evidence,
+one launch each, replay/reconciliation and retirement pass. This engine case is
+below the new 4 MiB RPC limit; only the direct Pyodide tests exercise that limit.
+
+```sh
+python3 /opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-https-v7/run-cooperative-budget.py
+python3 /opt/bifrost-tests/pyodide-ddf316c1/inbox/cooperative-rpc-v9/ct128-sdk-probe.py --approved-https --revision 14
+node spikes/cloudflare-pyodide/backend/verify-cooperative-budget.mjs
+```
+
+The canonical lifecycle is 74.086 seconds. Both providers and the owned disposable
+stack are stopped; volumes preserved. Exact image/runtime/source/packet hashes,
+commands and observations are in the receipts. Ruff passes the new Python files;
+focused Node composition/fidelity tests pass. Earlier engine verifiers explicitly
+read their tested cooperative-runtime source at 5f74ccea1, preserving old receipts.
+
+Next: qualify a real engine result exceeding 4 MiB and its provider-failure mapping,
+then measure serialization allocation/interop overhead. Unsuppressed cancellation
+settlement, post-revocation logging and deployed resource enforcement remain gates.
