@@ -1,0 +1,14 @@
+{
+  "key": "pr:1231",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Recover interrupted platform jobs even when no workers remain.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1231",
+      "Codex reviewed this routine-fix summary against the database-backed regression on 2026-11-03 under the authorized upstream contribution. No customer upgrade action or security disclosure is required."
+    ]
+  }
+}
