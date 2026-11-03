@@ -5,6 +5,10 @@ moves into conditional ranged reads followed by multipart part uploads.
 The default `server` retains the existing `UploadPartCopy` behavior.
 Single-request copies below the copy threshold are unchanged.
 
+Compose installations can set this variable in their deployment `.env` and
+recreate the API and worker containers. The isolated debug stack also passes
+the setting to its storage consumers. Leaving it unset retains `server` mode.
+
 This option is for a provider that supports conditional ranged `GetObject` and
 conditional multipart completion, but does not guarantee conditional
 `UploadPartCopy`. For example, Cloudflare's
