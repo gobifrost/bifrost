@@ -61,6 +61,11 @@ recovering an upstream Launcher-retained result. It does not infer failure or
 retry from a broken response. The control reconnect is simulated; recovery of
 a terminal result never received by the launcher remains unqualified.
 
+The [native inventory repair](INVENTORY-UNCERTAINTY.md) now refuses to interpret
+an omitted opaque handle as Linux process exit or to issue Linux termination
+for an unowned live invocation. It preserves owner fencing and normal retained
+terminal replay. Refusal retains uncertainty; it is not provider settlement.
+
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle
 retention change does not isolate its two causes. The aborted I/O case reported

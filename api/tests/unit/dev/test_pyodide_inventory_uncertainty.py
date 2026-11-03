@@ -1,0 +1,85 @@
+"""Opaque inventory cannot certify physical settlement by Linux conventions."""
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
+import pytest
+
+from src.services.execution.process_pool import ProcessState
+from src.worker.remote.protocol import CLOUDFLARE_PYTHON_RUNTIME_PROFILE
+from src.worker.remote.remote_pool import ThinRemoteProcessPool
+from tests.unit.dev.test_thin_remote_pool import _Transport, _active
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('opaque', [True, False])
+async def test_omitted_inventory_only_settles_the_linux_process_contract(opaque):
+    transport = _Transport()
+    transport.request = AsyncMock(return_value={'runtime_handle': 'invocation-1'} if opaque else {'pid': 123})
+    callback = AsyncMock()
+    options = {'runtime_profile': CLOUDFLARE_PYTHON_RUNTIME_PROFILE} if opaque else {}
+    pool = ThinRemoteProcessPool(transport, on_result=callback, **options)
+    with (patch.object(pool, '_write_context_to_redis', new_callable=AsyncMock),
+          patch.object(pool, '_write_active_execution_lease', new_callable=AsyncMock)):
+        await pool.route_execution('inventory-run', {'timeout_seconds': 30}, _active('inventory-run'))
+    handle = next(iter(pool.processes.values()))
+    original = handle.current_execution
+    if opaque:
+        with pytest.raises(RuntimeError, match='Opaque inventory omission is not settlement'):
+            await pool.reconcile_inventory({'version': 1, 'routes': [], 'terminal_routes': []})
+        callback.assert_not_awaited()
+        assert next(iter(pool.processes.values())) is handle
+        assert handle.current_execution is original
+        assert handle.process.runtime_handle == 'invocation-1'
+        assert handle.state == ProcessState.BUSY and handle.killed_at is None
+        assert pool._build_heartbeat()['busy_count'] == 1
+    else:
+        await pool.reconcile_inventory({'version': 1, 'routes': [], 'terminal_routes': []})
+        callback.assert_awaited_once()
+        assert callback.await_args.args[0]['error_type'] == 'ProcessCrashError'
+        assert pool._build_heartbeat()['busy_count'] == 0
+    transport.request.assert_awaited_once()  # Dispatch only; no guessed termination.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('terminal', [False, True])
+async def test_rejected_opaque_inventory_never_issues_a_linux_terminate(async_session_factory, monkeypatch, terminal):
+    @asynccontextmanager
+    async def context():
+        async with async_session_factory() as session:
+            yield session
+
+    monkeypatch.setattr('src.core.database.get_db_context', context)
+    transport = _Transport()
+    transport.request = AsyncMock()
+    pool = ThinRemoteProcessPool(transport, worker_id=str(uuid4()), runtime_profile=CLOUDFLARE_PYTHON_RUNTIME_PROFILE)
+    inventory = {'version': 1, 'terminal_routes' if terminal else 'routes': [{
+            'route_id': 'unowned-invocation', 'kind': 'workflow', 'subject_id': str(uuid4()),
+            'runtime_handle': 'unowned-handle', 'memory_request_bytes': 128 * 2**20,
+        }]}
+    if terminal:
+        # Already-collected terminal events must remain replayable after the
+        # canonical claim ended, including a commit whose transport ACK was lost.
+        snapshot = await pool.reconcile_inventory(inventory)
+        assert snapshot['workflow_requests'] == {}
+    else:
+        with pytest.raises(RuntimeError, match='Opaque rejected inventory requires physical reconciliation'):
+            await pool.reconcile_inventory(inventory)
+    transport.request.assert_not_awaited()
+    assert pool.processes == {}
+
+
+@pytest.mark.asyncio
+async def test_opaque_omission_preserves_owner_fencing_priority():
+    transport = _Transport()
+    transport.request = AsyncMock(return_value={'runtime_handle': 'invocation-1'})
+    callback = AsyncMock()
+    pool = ThinRemoteProcessPool(transport, runtime_profile=CLOUDFLARE_PYTHON_RUNTIME_PROFILE, on_result=callback)
+    with (patch.object(pool, '_write_context_to_redis', new_callable=AsyncMock),
+          patch.object(pool, '_write_active_execution_lease', new_callable=AsyncMock)):
+        await pool.route_execution('inventory-run', {'timeout_seconds': 30}, _active('inventory-run'))
+    with patch('src.worker.remote.fencing.fence_remote_owner', new_callable=AsyncMock, return_value=False):
+        with pytest.raises(ConnectionError, match='Remote API ownership was replaced'):
+            await pool.reconcile_inventory({'version': 1, 'routes': []})
+    callback.assert_not_awaited()
+    assert pool._build_heartbeat()['busy_count'] == 1

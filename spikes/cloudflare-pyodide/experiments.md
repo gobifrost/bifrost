@@ -1,5 +1,22 @@
 # Compact experiment log
 
+## Native opaque inventory uncertainty, 2026-11-03
+
+Hypothesis: Linux inventory conventions still bypass the opaque cancellation
+boundary. New regressions reproduce two failures on the published pool: omitted
+inventory fabricates a crash result/releases the route, and rejected inventory
+sends Linux terminate. Guard omission after owner fencing; reject unowned live
+opaque entries without invented commands; retain completed terminal replay.
+Three bounded fail-first CT128 runs preserve intermediate evidence: v1 2/3 fail
+then42 pass; v2 adds terminal replay,1/4 fail then43 pass; v3 adds fence priority,
+1/5 fail then44 pass. Ruff/Pyright pass; all owned test containers stop, volumes
+preserved. Command: `ct128-inventory-uncertainty.py --revision 3` under the exact
+assigned guest paths in backend/INVENTORY-UNCERTAINTY.md. Artifacts include raw
+JUnit/receipts and exact packet/source hashes. Historical live verifiers bind
+their original API commits, not this new source. No cloud, runtime/admission or
+production change. Next: interruption before any terminal result reaches the
+launcher, retaining canonical recovery and unresolved provider obligations.
+
 ## Accepted stream loss with retained native result, 2026-11-03
 
 Hypothesis: a real broken accepted stream can preserve the original native

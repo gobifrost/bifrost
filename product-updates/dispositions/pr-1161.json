@@ -8,7 +8,7 @@
     "status": "draft",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1161",
-      "Author proposal only; shared engine stream capture, uncertain launch ACK handling, signed runtime-profile boundaries and opaque workflow-handle representation require maintainer review. Experimental Cloudflare executor acceptance remains incomplete and no production rollout is added."
+      "Author proposal only; shared engine stream capture, uncertain launch ACK handling, signed runtime-profile boundaries, opaque workflow-handle representation and inventory uncertainty guards require maintainer review. Experimental Cloudflare executor acceptance remains incomplete and no production rollout is added."
     ]
   }
 }

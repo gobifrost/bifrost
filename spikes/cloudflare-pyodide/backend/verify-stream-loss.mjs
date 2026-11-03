@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const read = async path => JSON.parse(await readFile(new URL(path, import.meta.url)));
 const first = await read('../results/stream-loss/v1.json');
@@ -11,7 +12,7 @@ assert.equal(quality.intermediate_pyright.exit_code, 1);
 assert.equal(quality.final_pyright.exit_code, 0);
 assert.equal(quality.ruff.exit_code, 0);
 for (const [path, digest] of Object.entries(quality.native_overlay_readback)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(execFileSync('git', ['show', `89464d31d:${path}`])), digest, path);
 }
 assert.equal(hash(await readFile(new URL('../results/stream-loss/v1-provider.txt', import.meta.url))),
   first.packet_sha256['provider-response-loss.py']);

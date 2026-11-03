@@ -17,7 +17,8 @@ const mappings = {'protocol.py': '../../../api/src/worker/remote/protocol.py',
   'test_pyodide_physical_handle.py': '../../../api/tests/unit/dev/test_pyodide_physical_handle.py',
   'ct128-physical-handle.py': './ct128-physical-handle.py'};
 for (const [name, path] of Object.entries(mappings)) {
-  assert.equal(hash(await readFile(new URL(path, import.meta.url))), unit.packet_sha256[name], name);
+  const sourcePath = path.startsWith('../../../') ? path.slice(9) : 'spikes/cloudflare-pyodide/backend/' + path.slice(2);
+  assert.equal(hash(execFileSync('git', ['show', `8767695bd:${sourcePath}`])), unit.packet_sha256[name], name);
 }
 const live = await read('../results/physical-pool/v1.json');
 assert.equal(live.qualification_passed, true);

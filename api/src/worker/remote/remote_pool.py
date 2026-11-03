@@ -146,6 +146,13 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         async with get_db_context() as db:
             if not await fence_remote_owner(db):
                 raise ConnectionError("Remote API ownership was replaced")
+            if self.runtime_profile != LINUX_RUNTIME_PROFILE:
+                present = {entry.get("route_id") for entry in entries if isinstance(entry.get("route_id"), str)}
+                if any(route_id not in present for route_id in self._routes):
+                    # Missing process inventory is meaningful for Linux, but a
+                    # lost invocation handle is not a settlement receipt. Fence
+                    # the owner first; release no obligation or result here.
+                    raise RuntimeError("Opaque inventory omission is not settlement; reconciliation required")
             for entry in entries:
                 route_id, kind = entry.get("route_id"), entry.get("kind")
                 if self.runtime_profile != LINUX_RUNTIME_PROFILE and kind != "workflow":
@@ -271,7 +278,18 @@ class ThinRemoteProcessPool(ProcessPoolManager):
                 else:
                     raise ValueError("Unknown launcher route kind")
             await db.commit()
+        if rejected and self.runtime_profile != LINUX_RUNTIME_PROFILE:
+            # Canonical rejection forbids further authorized work, but cannot
+            # invent a Linux terminate command or certify provider resource stop.
+            live = {entry.get("route_id") for entry in inventory.get("routes", [])
+                    if isinstance(entry.get("route_id"), str)}
+            if any(route_id in live for route_id, _kind in rejected):
+                raise RuntimeError("Opaque rejected inventory requires physical reconciliation")
         for route_id, kind in rejected:
+            if self.runtime_profile != LINUX_RUNTIME_PROFILE:
+                # A retained terminal event may replay after canonical commit
+                # lost its ACK. Leave ACK/route cleanup to the result path.
+                continue
             await self.transport.request(
                 "terminate_job" if kind == "platform_job" else "terminate",
                 {"route_id": route_id, "error_type": "OwnerLost", "error": "Claim no longer belongs to this launcher"},
