@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 
 const base = new URL('../results/journal-await/', import.meta.url);
 const receipt = JSON.parse(await readFile(new URL('receipt.json', base), 'utf8'));
@@ -11,7 +12,11 @@ assert.equal(receipt.cloud_invocations, 0);
 const paths = {'test_pyodide_attempt_journal.py': '../../../api/tests/unit/dev/test_pyodide_attempt_journal.py',
   'test_attempt_journal_owners.py': './test_attempt_journal_owners.py', 'attempt_journal.py': './attempt_journal.py'};
 for (const [name, path] of Object.entries(paths)) {
-  assert.equal(createHash('sha256').update(await readFile(new URL(path, import.meta.url))).digest('hex'), receipt.overlay_sha256[name]);
+  const relative = new URL(path, import.meta.url).pathname.split('/spikes/')[1];
+  const repoPath = name === 'test_pyodide_attempt_journal.py'
+    ? 'api/tests/unit/dev/' + name : 'spikes/' + relative;
+  const tested = execFileSync('git', ['show', 'b6e4dfd4c28e6859c4c6319a1e8a664c221eba84:' + repoPath]);
+  assert.equal(createHash('sha256').update(tested).digest('hex'), receipt.overlay_sha256[name]);
 }
 const unit = await readFile(new URL('unit.txt', base), 'utf8');
 assert.match(unit, /Ran 6 tests/);

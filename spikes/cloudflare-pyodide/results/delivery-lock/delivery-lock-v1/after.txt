@@ -1,0 +1,6 @@
+test_stalled_ack_does_not_block_other_dispatch_or_delivery (test_attempt_delivery.DeliveryTests.test_stalled_ack_does_not_block_other_dispatch_or_delivery) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+OK

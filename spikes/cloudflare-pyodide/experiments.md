@@ -876,3 +876,16 @@ noatomicworkspace, rollback, arbitrary-isolation orCPUstopclaim. Totalsinclude
 setup/prewarm/barriers/cleanup, notpurestartup/CPU/bill. Next: automaticnative
 terminaldelivery/deadlines andsupportedstartupboundary, keeping publicadmission
 closed and without creating another durablejobqueue.
+
+### Per-route terminal acknowledgment concurrency
+Hypothesis: automatic reporting must not let a stalled canonical ACK block other
+attempts. Change: companion journal delivery lock per retained route; keep global
+registry locking for dispatch/retirement and retain both owner fences. Command:
+CT128 results/delivery-lock/pyodide-delivery-lock-v1.sh then v2.sh; bounded Docker
+unittest, Ruff/Pyright, plus six existing owner/reconnect cases. Observation: old
+source deterministically fails unrelated dispatch; changed source passes both
+interleaving/owner-change cases and all six owner guards. V1 read-only Ruff cache
+failure retained; --no-cache corrects invocation in v2. Artifact:
+backend/DELIVERY-LOCK.md and results/delivery-lock. No cloud/production/runtime
+setting change or physical-stop claim. Next experiment: owned automatic terminal
+delivery, error retention and actual canonical callback qualification.

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -43,6 +43,7 @@ class Route:
     task: asyncio.Task[dict[str, Any]]
     receipt: AttemptResult
     acknowledged: bool = False
+    delivery_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def require_owner(self, lease: RemoteOwnerLease) -> None:
         # API owner/session generations may rotate on reconnect. Physical
@@ -116,9 +117,12 @@ class AttemptJournal:
         idempotency. A preflight session check alone cannot fence a commit.
         """
         async with self._lock:
+            route = self.routes[route_id]
+        # Canonical callbacks can wait on I/O. Serialize duplicate ACKs for
+        # this route without holding unrelated routes behind that callback.
+        async with route.delivery_lock:
             if not await owns_remote_session(lease):
                 raise CredentialRouteChanged("stale terminal owner")
-            route = self.routes[route_id]
             route.require_owner(lease)
             if route.acknowledged:
                 return True
@@ -186,9 +190,10 @@ class AttemptJournal:
             or not isinstance(result.get("success"), bool)):
             raise ValueError("canonical retained result envelope required")
         async with self._lock:
+            route = self.routes[route_id]
+        async with route.delivery_lock:
             if not await owns_remote_session(lease):
                 raise CredentialRouteChanged("stale retained result owner")
-            route = self.routes[route_id]
             route.require_owner(lease)
             if route.execution_id != execution.execution_id:
                 raise ValueError("retained execution identity conflict")
