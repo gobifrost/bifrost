@@ -1,0 +1,15 @@
+{
+  "key": "pr:1219",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Repairs plugin distribution metadata and includes documentation, license text, and disclosure guidance for catalog submission. No platform behavior changes or customer announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1219",
+      "https://github.com/gobifrost/bifrost/issues/381",
+      "https://github.com/hashgraph-online/awesome-codex-plugins/pull/643",
+      "Plugin packaging repair; the root Codex manifest now uses the existing plain-file skill mirror so catalog generation retains the four skills. The license matches the repository license byte for byte, and disclosure guidance defers to the canonical security policy."
+    ]
+  }
+}
