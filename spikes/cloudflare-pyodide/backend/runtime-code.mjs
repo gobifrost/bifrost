@@ -1,8 +1,10 @@
 import packaged from './generated-runtime.mjs';
+import {sdkCleanupCode} from './sdk-cleanup-code.mjs';
 
 const main=`
 import json
 from workers import WorkerEntrypoint, Response
+from sdk_cleanup import close_sdk
 from runtime_runner import run_authorized_attempt
 
 class Default(WorkerEntrypoint):
@@ -52,7 +54,7 @@ class Default(WorkerEntrypoint):
             result = await run_authorized_attempt(body["execution_id"],body["context"],body["api_url"])
         finally:
             from bifrost.client import get_client
-            await get_client().close()
+            await close_sdk(get_client())
         if body["action"] == "execute_envelope":
             result = execution_result_envelope(body["execution_id"], body["worker_id"], result,
                 duration_ms=int((time.perf_counter()-started)*1000), metrics=result.get("metrics") or {})
@@ -67,6 +69,7 @@ export function runtimeCode(outbound=null,entrypoint=main) {
     };
   }
   modules['main.py']={py:entrypoint};
+  modules['sdk_cleanup.py']={py:sdkCleanupCode};
   return {compatibilityDate:'2026-10-30',compatibilityFlags:['python_workers'],mainModule:'main.py',
     modules,env:{},globalOutbound:outbound,limits:{cpuMs:1000,subRequests:4}};
 }

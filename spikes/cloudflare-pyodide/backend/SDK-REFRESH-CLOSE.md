@@ -35,6 +35,10 @@ terminal ACK or retirement is inferred from the canceled waiter. No unbounded
 background owner, immortal waitUntil loop, fabricated ACK, provider termination
 claim or upstream SDK rewrite was added to hide the negative control.
 
+Follow-on OWNED-SDK-CLOSE.md now retains/shields the full SDK close task and
+repairs this cooperative waiter case. The original partial-cleanup receipt stays
+unchanged; real platform interruption and physical-stop guarantees remain open.
+
 Ruff/Pyright pass for the changed Python harness; Node syntax and actual workerd
 execution validate the probe. Providers were stopped with not-running readback;
 owned test-stack cleanup left no running containers, volumes retained.

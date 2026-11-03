@@ -16,7 +16,7 @@ for (const name of ['updated', 'baseline']) {
   assert.equal(receipt.physical_termination_verified, false);
   assert.deepEqual(receipt.running_after_cleanup, []);
   assert.ok(receipt.commands.every(command => command.exit_code === 0));
-  const code = readFileSync(new URL('backend/runtime-code.mjs', root), 'utf8');
+  const code = execFileSync('git', ['show', '469846d91b3527084be60a390ec5fafa4bd3014e:spikes/cloudflare-pyodide/backend/runtime-code.mjs'], {encoding: 'utf8'});
   const selected = name === 'updated' ? code.replace("'./generated-runtime.mjs'", "'./generated-runtime-sdk.mjs'") : code;
   assert.equal(hash(selected), receipt.packet_sha256['project/backend/runtime-code.mjs']);
   for (const file of ['authorized-local-entry.mjs', 'ct128-canonical-failure.py']) {

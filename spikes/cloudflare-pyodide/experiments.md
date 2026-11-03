@@ -1255,3 +1255,18 @@ Ruff/Pyright/Node syntax checks pass. No upstream rewrite or synthetic ACK.
 Artifacts: backend/SDK-REFRESH-CLOSE.md, verifier, results/sdk-refresh receipts.
 Next: explicit unsupported transport-option refusal before effects; interrupted
 cleanup ownership and deployed proof remain. No cloud call or new authority.
+
+### 2026-11-03 — retain full SDK close task across cooperative waiter cancel
+Change: small Python completion adapter retains/shields upstream client.close task,
+removes done references and observes errors without raw logs. No SDK rewrite,
+retry, durable owner or waitUntil. Three ownership tests/Ruff/Pyright pass.
+Actual probe --revision7 now closes real async+sync clients after held aclose is
+released, without follow-up; one pending at cancel,zero after. Negative old receipt
+preserved. This is Python waiter cancellation, not real CF disconnect/CPU stop.
+Real updated SDK --sdk-refresh --revision2 and baseline --api-prepare --revision92
+both pass SDK effects, normalclose, redaction/error/Success78, replay/fencing/401,
+accounting2,2,1,0 and cleanup. Raw92.572s/74.406s are lifecycle, not speed comparison.
+Artifact: backend/OWNED-SDK-CLOSE.md, verifier, results/owned-sdk-close.
+Next: transport-option pre-effect refusal/provider module-name collisions; deployed
+interruption/isolation/memory and canonical startup/refusal retirement still gate
+admission. No cloud action or permission/runtime-setting changes.

@@ -10,6 +10,8 @@ executor. Public/untrusted admission stays disabled. Start with
   operations pass with the exact SDK update and pure wheel. [Awaited SDK close](backend/SDK-CLOSE.md)
   passes with both SDK versions; custom TLS and interrupted cleanup remain open.
   Earlier receipts retain their pins.
+* [Owned SDK close completion](backend/OWNED-SDK-CLOSE.md): cooperative waiter
+  cancellation no longer skips sync close; actual platform interruption remains unproved.
 * [Lossless JSON and measured parent overhead](backend/JSON-TRANSPORT-PERFORMANCE.md)
 * [Output-frame and child-body budgets](backend/BODY-BUDGET.md)
 * [Local memory boundary](backend/MEMORY-PRESSURE.md)

@@ -4,6 +4,7 @@ const python = `
 from workers import WorkerEntrypoint, Response
 from runtime_guard import require_runtime
 import importlib
+from sdk_cleanup import close_sdk, _pending
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
         result = {"runtime": require_runtime(), "probes": {}}
@@ -42,7 +43,7 @@ class Default(WorkerEntrypoint):
                     await release.wait()
                     await actual_close()
                 delayed.aclose = held_close
-                waiter = asyncio.create_task(interrupted.close())
+                waiter = asyncio.create_task(close_sdk(interrupted))
                 await entered.wait()
                 waiter.cancel()
                 try:
@@ -52,13 +53,16 @@ class Default(WorkerEntrypoint):
                 else:
                     cancelled = False
                 sync_closed_at_cancel = interrupted._sync_http.is_closed
+                pending_at_cancel = len(_pending)
                 release.set()
-                await owner.cleanup
+                await asyncio.gather(*tuple(_pending))
                 result["interrupted_close"] = {"waiter_cancelled": cancelled,
                     "async_closed_after_release": delayed.is_closed,
                     "owner_cleanup_done": owner.cleanup.done(),
                     "sync_closed_at_cancel": sync_closed_at_cancel,
-                    "sync_closed_without_followup": interrupted._sync_http.is_closed}
+                    "sync_closed_without_followup": interrupted._sync_http.is_closed,
+                    "owned_pending_at_cancel": pending_at_cancel,
+                    "owned_pending_after_completion": len(_pending)}
                 await interrupted.close()
                 result["interrupted_close"]["sync_closed_after_followup"] = interrupted._sync_http.is_closed
             except Exception as error:
