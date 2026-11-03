@@ -12,6 +12,9 @@ executor. Public/untrusted admission stays disabled. Start with
   Earlier receipts retain their pins.
 * [Owned SDK close completion](backend/OWNED-SDK-CLOSE.md): cooperative waiter
   cancellation no longer skips sync close; actual platform interruption remains unproved.
+* [RPC result lifecycle](backend/RPC-RESULT-LIFECYCLE.md): documented result/promise
+  disposal works locally; a gated I/O call still completes after pending-promise
+  disposal. This is resource management, not a physical-stop receipt.
 * [Private no-send refusal acknowledgement](backend/REFUSAL-ACK.md): explicit
   canonical consumption permits cleanup without a synthetic workflow result;
   automatic public-host integration remains open.

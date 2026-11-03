@@ -1384,3 +1384,21 @@ volumes/locks preserved. Privatehostcallbackproposal, not an upstream public API
 Next: provider startup integration needs honest supported configure/control
 capabilities; deployed deadline/CPU/isolation/memory proof remains independently
 unaccepted. Do not ACK Linux settings or enable admission to force readiness.
+
+## 2026-11-03 — Supported RPC promise/result disposal
+Hypothesis: inspecting Worker/entrypoint handles missed the documented returned
+RPC disposal surface. Added --rpc-results to existing credential-free cfdevharness.
+v1 found disposers but invalid plainproperty reads lost Python dictfields; kept.
+v2 strictly reads actualJSMap; v3 adds actualABI314.0.6/Python3.14.2/wasm32.
+v4 strengthens timer-based observation with asyncio.Event heldcall: started2after1
+at disposal, releaseRPC only after disposerreturned, then returned7/after2.
+Thus normal result/promise disposal is available; disposal alone is not a stop
+receipt for this local retained-context call. Not a disconnect/CPU/cloud test.
+Command ct128-sdk-probe.py --rpc-results --revision4;4boundedlocalexperiments,
+networknone/globalOutboundnull,1CPU2GiBprovider, same2CPU8GiBCT128, allstopped.
+Ruff/Pyright and Node syntaxpass; no newdeps/credentials/runtime/security settings,
+resourceexpansion/cloudinvocation. No workflow/SDKcompatibilityclaimfromthisprobe.
+Artifacts backend/RPC-RESULT-LIFECYCLE.md; results/rpc-results allpredecessors/pins.
+Next: do not claim configure/termination support from disposal; actual invocation
+context cancellation/planhardCPU and scopedcapability revocation remain separate
+qualification gates. Keep existing JSON/HTTP transport and admissionclosed.

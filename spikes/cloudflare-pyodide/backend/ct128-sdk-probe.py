@@ -16,10 +16,11 @@ def command(args, timeout=20):
     return subprocess.check_output(args, text=True, timeout=timeout).strip()
 
 
-def main(revision):
-    packet = ROOT / f'inbox/sdk1217-v{revision}'
-    run = ROOT / f'runs/sdk1217-v{revision}'
-    name = f'pyodide-ddf316c1-sdk1217-v{revision}'
+def main(revision, *, rpc_results=False):
+    prefix = 'rpc-results' if rpc_results else 'sdk1217'
+    packet = ROOT / f'inbox/{prefix}-v{revision}'
+    run = ROOT / f'runs/{prefix}-v{revision}'
+    name = f'pyodide-ddf316c1-{prefix}-v{revision}'
     if command(['hostname']) != 'bifrost-pyodide-test-01' or shutil.disk_usage(ROOT).free < 8 * 1024**3:
         raise RuntimeError('Guest/disk guard failed')
     if command(['docker', 'image', 'inspect', IMAGE, '--format', '{{.Id}}']) != 'sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b':
@@ -41,8 +42,9 @@ def main(revision):
     source = config.read_text()
     if source.count('./backend/authorized-local-entry.mjs') != 1:
         raise RuntimeError('Unexpected local CLI configuration')
-    config.write_text(source.replace('./backend/authorized-local-entry.mjs', './backend/latest-sdk-probe-entry.mjs'))
-    report = {'scope': 'credential-free SDK import/constructor only', 'cloud_invocations': 0,
+    entrypoint = './backend/rpc-result-entry.mjs' if rpc_results else './backend/latest-sdk-probe-entry.mjs'
+    config.write_text(source.replace('./backend/authorized-local-entry.mjs', entrypoint))
+    report = {'scope': 'credential-free RPC result lifecycle only' if rpc_results else 'credential-free SDK import/constructor only', 'cloud_invocations': 0,
         'engine_sdk_execution_verified': False, 'sdk_import_constructor_passed': False,
         'packet_sha256': {str(path.relative_to(packet)): hashlib.sha256(path.read_bytes()).hexdigest()
                           for path in packet.rglob('*') if path.is_file() and path.suffix != '.gz'}}
@@ -68,7 +70,7 @@ def main(revision):
             "fetch('http://127.0.0.1:8799',{method:'POST',signal:AbortSignal.timeout(45000)}).then(async r=>{const t=await r.text();if(t.length>1048576)throw Error('Bound');console.log(JSON.stringify({status:r.status,body:JSON.parse(t)}));}).catch(()=>{process.exitCode=1;})"], timeout=55)
         report['observation'] = json.loads(result)
         body = report['observation']['body']
-        report['sdk_import_constructor_passed'] = (report['observation']['status'] == 200
+        report['sdk_import_constructor_passed'] = (not rpc_results and report['observation']['status'] == 200
             and all(value.get('imported') for value in body.get('probes', {}).values())
             and body.get('constructor', {}).get('created') is True)
     finally:
@@ -88,4 +90,6 @@ def main(revision):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
-    main(parser.parse_args().revision)
+    parser.add_argument('--rpc-results', action='store_true')
+    args = parser.parse_args()
+    main(args.revision, rpc_results=args.rpc_results)

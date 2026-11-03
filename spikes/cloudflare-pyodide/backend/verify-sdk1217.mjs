@@ -27,7 +27,7 @@ assert.equal(after.observation.body.certifi_api.certificate_store.x509_ca, 0);
 for (const [local, packet] of [['ct128-sdk-probe.py', 'ct128-sdk-probe.py'],
   ['add-certifi-overlay.py', 'add-certifi-overlay.py'],
   ['latest-sdk-probe-entry.mjs', 'project/backend/latest-sdk-probe-entry.mjs']]) {
-  const bytes = ['add-certifi-overlay.py', 'latest-sdk-probe-entry.mjs'].includes(local)
+  const bytes = ['ct128-sdk-probe.py', 'add-certifi-overlay.py', 'latest-sdk-probe-entry.mjs'].includes(local)
     ? execFileSync('git', ['show', '4abf2981f2d9673ef340d4864c8eddabd0f66bb3:spikes/cloudflare-pyodide/backend/' + local])
     : readFileSync(new URL('backend/' + local, root));
   assert.equal(createHash('sha256').update(bytes).digest('hex'),
