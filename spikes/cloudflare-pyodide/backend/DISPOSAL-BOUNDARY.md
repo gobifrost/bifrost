@@ -1,10 +1,23 @@
-# Explicit disposal is not an available execution-stop operation
+# Worker handles and returned RPC stub disposal are different
+
+Current acceptance correction: normal workflow completion does not require
+physical isolate destruction or a terminate API. Await required work, finish
+streams, return the result, and explicitly dispose returned RPC object stubs.
+Cloudflare manages isolate lifecycle and may reuse isolates. The historical
+handle-inspection experiment below only rules out calling a disposer on those
+particular local handles; it is not a platform lifecycle incompatibility by
+itself. See [the current lifecycle contract](LIFECYCLE.md).
 
 The next hypothesis after failed fetch/RPC-context cancellation was explicit disposal of the live dynamic Worker or its entrypoint. Before running a CPU fixture, the actual local objects must expose the mechanism. A successful Python positive control prevents a failed import/startup from being mistaken for an API result.
 
 Actual CT128 result: Python 3.14.2/Pyodide314.0.6 executed and returned the expected `cpython-314-wasm32-emscripten` ABI. Neither `WorkerStub` nor `getEntrypoint()` exposes callable `Symbol.dispose` or `Symbol.asyncDispose`. The fixture therefore invoked no invented disposer and ran no CPU-cancellation case. This eliminates this specific supported-object route in the tested local runtime; it is not a claim that disposal physically stopped Python, or that every future provider API is incapable of stopping it.
 
-This is a missing provider lifecycle contract, not a pure-Python dependency or missing PyEmscripten wheel. Compiling a package cannot supply a host runtime operation that is not exposed. No replacement orchestration or fake stop receipt was introduced. Existing independent post-abort CPU effects remain separate negative evidence.
+This inspected surface is a host runtime API, not a pure-Python dependency or
+missing PyEmscripten wheel. Compiling a package cannot supply a host operation.
+No replacement orchestration or fake stop receipt was introduced. Existing
+post-abort observations remain separate evidence with the incoming-signal
+qualification in REQUEST-SIGNAL-QUALIFICATION.md; they do not prove absent
+plan-level CPU enforcement.
 
 The official [RPC lifecycle guide](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/) describes disposal of returned RPC object stubs and context lifetime. It does not turn every service binding/WorkerStub into a disposable execution handle. The fixture checks the real objects rather than assigning those semantics from the word “dispose.” A future supported mechanism still needs a noncooperative-work test with an independent observer, canonical late-result fencing and cleanup; a caught exception, rejected RPC or absence of callbacks is insufficient.
 

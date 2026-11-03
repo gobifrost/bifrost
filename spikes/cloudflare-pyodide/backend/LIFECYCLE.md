@@ -1,0 +1,76 @@
+# Completion, cancellation and provider lifecycle
+
+Normal success requires settled workflow work and released resources, not a
+per-job isolate kill. This corrects earlier physical-termination wording without
+discarding failed experiments or admitting untrusted workloads.
+
+## Supported lifecycle contract
+
+| Boundary | Required evidence | Current evidence / gap |
+| --- | --- | --- |
+| Normal completion | Await required engine/SDK work, finish streams, return result, release returned RPC stubs, reconcile canonical terminal ACK | Real engine/SDK cloud workloads pass separately from local canonical replay. Combined deployed contract remains unaccepted. |
+| Bounded background work | Use waitUntil only for bounded ancillary work; do not return success before required effects finish | Local tail v2 observes background completion after response and before native tail. This is a diagnostic, not durable job ownership. |
+| Deadline/cancel | Prevent unauthorized new effects, reconcile in-flight uncertain effects, reject stale terminal reports and retain resource/accounting obligations | Local canonical fencing/recovery tests exist. Deployed noncooperative Python cancellation and resource settlement remain unqualified. |
+| Isolation | Separate tenant/attempt code, state, credentials and capabilities; reject unsupported workloads before effects | Fresh-child contamination controls pass. Successful completion does not prove isolation of later executions or authorize shared interpreter reuse. |
+
+[RPC lifecycle](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/)
+documents explicit disposal of returned RPC object stubs, including containing
+objects and duplicated stubs. Disposal releases references; the server disposer
+runs later and is not a synchronous CPU-stop receipt. The current tail fixture
+uses fetch responses consumed as JSON and no returned workflow RpcTarget.
+The earlier WorkerStub/getEntrypoint inspection did not test returned RPC object
+disposal. Any future RPC-result path must dispose its returned stubs explicitly.
+
+[Context](https://developers.cloudflare.com/workers/runtime-apis/context/)
+documents a shared HTTP waitUntil allowance of up to 30 seconds after response or
+disconnect. Await required work before returning; finish response streams.
+Do not use waitUntil to simulate a persistent executor, hold an attempt forever,
+or replace PostgreSQL scheduling/recovery. No Queue, Durable Object or D1 is
+introduced by this lifecycle assessment.
+
+## Limits are distinct mechanisms
+
+[Dynamic custom limits](https://developers.cloudflare.com/dynamic-workers/usage/limits/)
+throw an exception at CPU/subrequest limits. Both supported placements are
+described in the [API reference](https://developers.cloudflare.com/dynamic-workers/api-reference/).
+The deployed Python catch-and-continue result proves that this exception alone
+is insufficient to guarantee no subsequent effect. It does not establish an
+infinite execution path or absence of all provider enforcement.
+
+[General Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+separately describe execution termination on consistent CPU overruns, with
+isolate flexibility. Plan/configured bounds and their actual deployed behavior
+must be qualified independently. Local workerd enforcement observations do not
+establish deployed behavior. No limit increase or security-setting change was
+made for this assessment.
+
+## Evidence and next bounded qualification
+
+[Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
+control and v2's five successful native tails. The combined observer/handle
+retention change does not isolate its two causes. The aborted I/O case reported
+ok; local CPU/wall fields were zero even during a long loop. Therefore neither
+outcome nor those measurements certifies abnormal cancellation or accounting.
+No new cloud invocation occurred for these controls.
+
+Next local contract work should exercise a deadline/revocation gate while child
+code catches cancellation and keeps trying effects: verify rejected late writes,
+reconcile an effect already in flight, fence late results and retain the provider
+obligation until settlement is established. Reuse canonical authorization and
+attempt ownership. Revoking a token alone cannot establish physical CPU stop.
+If network credentials or unrestricted egress escape the gate, post-deadline
+effects remain an incompatibility; rejecting a terminal result cannot undo them.
+
+A deployed resource-enforcement qualification remains separate: correlate an
+authorized attempt, received cancellation, independent effects and provider
+outcome/accounting using the supported limits. Do not infer stop from exceptions,
+silence, response completion or killing the Linux harness. Do not require an
+undocumented terminate API. Observer receipts must be parent-authenticated: an
+untrusted SDK run can forge its own log messages, so a log prefix is insufficient.
+This document authorizes no new cloud window, access, spending or admission.
+
+Fresh-child benchmark round trips of 5.2–10.5 seconds include execution and
+transport/interop overhead. They are not isolated startup measurements and are
+not directly comparable to Containers reservation-to-start measurements.
+Readiness remains YELLOW for the demonstrated trusted subset; arbitrary untrusted
+execution is not accepted pending the abnormal and isolation gates above.

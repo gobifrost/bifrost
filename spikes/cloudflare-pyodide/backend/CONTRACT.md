@@ -20,10 +20,14 @@ capabilities, a trusted deadline, and scoped runtime credentials. Provider ident
 and runtime identity are separate from the authorization principal. The provider
 must reject unavailable capabilities before running workflow code.
 
-The physical handle is opaque: a Linux PID is one implementation, not the wire
-contract. Its lifecycle must distinguish accepted, started, stop requested,
-physically terminated, terminal submitted, and terminal acknowledged. An abort
-request or disconnected HTTP caller is not evidence of physical termination.
+The proposed physical handle is opaque; current upstream still requires a
+positive Linux PID ACK. Its lifecycle must distinguish accepted, started,
+invocation settled, stop requested, terminal submitted, and terminal acknowledged.
+Normal completion requires awaited workflow work, completed response streams,
+released returned RPC stubs and canonical terminal reconciliation; it does not
+require destroying the isolate. Physical-stop observations are separate evidence
+for abnormal cancellation/resource obligations. A disconnected HTTP caller is
+not evidence of physical termination. See [lifecycle acceptance](LIFECYCLE.md).
 Provider CPU/memory/deadline failures need explicit classifications; unavailable
 resource measurements are null, never invented zeros.
 
@@ -35,9 +39,12 @@ workflow effects exactly once. No automatic redispatch after uncertain effects.
 
 Each untrusted attempt needs a fresh execution security boundary with only its
 own credentials and approved bindings. Logs, return values and exceptions pass
-through upstream redaction and result semantics. Provider cleanup follows
-confirmed physical termination, including abandoned attempts. Artifact hashes,
-provider version, start/stop observations and terminal acknowledgment form the
+through upstream redaction and result semantics. Normal cleanup follows settled
+required work and released capabilities. Abandoned attempts require capability
+revocation, uncertain-effect reconciliation and bounded resource/accounting
+evidence before reuse or recovery. Isolate reuse is a provider implementation
+detail; tenant/attempt separation must still be qualified. Artifact hashes,
+provider version, lifecycle observations and terminal acknowledgment form the
 reviewable receipt.
 
 ## Current frontier
@@ -57,9 +64,9 @@ The CPU probe fails: it completes and delivers its later effect before the
 supervisor's abort timer executes. There is no established physical termination
 primitive here. Consequently this implementation cannot yet advertise arbitrary
 untrusted Python or cancellation-equivalent first-class executor support.
-Cloud testing, genuine run-scoped SDK execution and canonical lifecycle adoption
-remain acceptance gates. Do not conceal these gaps by clearing globals, reporting
-an abort as termination, or adding a second execution queue.
+Subsequent cloud engine/SDK evidence is recorded below; combined canonical
+lifecycle adoption remains an acceptance gate. Do not conceal these gaps by
+clearing globals, reporting an abort as termination, or adding another queue.
 
 A second test moves the abort timer outside workerd and forwards the caller's
 abort signal. It still observes the later CPU effect after the caller disconnects.
@@ -74,3 +81,29 @@ still permits after effects. Cloudflare's CpuLimitExceeded exception can itself
 be caught by Python code, which then emits another effect. Neither a request
 abort nor this exception alone proves an uncatchable physical stop. See
 `results/fresh-cloud-verification.json`; full executor acceptance remains false.
+
+## Current lifecycle assessment
+
+The later [cloud benchmarks](../dev/CLOUD-BENCHMARK.md) execute the real engine
+and SDK with genuine run-scoped identity, including integration reads and table
+writes. The [canonical failure/replay fixture](CANONICAL-FAILURE-REPAIRED.md)
+separately proves upstream persistence/reconciliation locally. These are not yet
+one accepted deployed canonical executor path.
+
+The [incoming-disconnect cloud test](../dev/REQUEST-SIGNAL-CLOUD.md) proves the
+JavaScript signal control arrived, but the Python CPU case does not establish
+physical stop. Earlier local abort tests without that control cannot establish
+that a CPU cancellation request reached the parent. Preserve them as historical
+observations, not stronger cancellation claims.
+
+The [native tail controls](TAIL-OBSERVER-QUALIFICATION.md) now distinguish normal
+settlement (including bounded waitUntil work) from abnormal cancellation. An ok
+tail also occurred on an aborted I/O invocation. Local CPU timing fields were
+zero and unusable. Neither an ok tail nor silence is a stop certificate.
+
+The deployed custom-limit catch-and-continue observation is specific to that
+invocation limit. It does not establish absence of plan-level enforcement or
+infinite execution. Remaining abnormal acceptance is no unauthorized
+post-deadline effects, fenced/reconciled uncertain outcomes and bounded resource
+use, using supported provider mechanisms. An undocumented terminate API is not
+a prerequisite. Untrusted admission remains disabled pending that qualification.

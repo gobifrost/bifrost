@@ -1,5 +1,15 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Current lifecycle assessment: [normal completion and abnormal cancellation](backend/LIFECYCLE.md).
+Normal success requires awaited work, completed streams and released returned
+RPC stubs, not destruction of an isolate. The [local native tail controls](backend/TAIL-OBSERVER-QUALIFICATION.md)
+observe completion after bounded waitUntil work; an aborted I/O case also reports
+ok, so tail outcome alone is not cancellation proof. Custom CPU-limit exceptions
+and plan-level enforcement are separate. Untrusted admission remains disabled.
+The [actual cloud engine/SDK benchmarks](dev/CLOUD-BENCHMARK.md) are fresh-child
+round trips including execution, not pure startup measurements. Historical
+milestones below retain their original scope and do not override this assessment.
+
 Latest guest evidence: [five-workload real engine/SDK measurements](WORKERD-BENCHMARK.md),
 [real Linux signed-control reference](backend/LINUX-CONTROL-REFERENCE.md), and
 [Python RPC cancellation counterexample](backend/RPC-TERMINATION-QUALIFICATION.md).
@@ -35,8 +45,8 @@ remains stopped; no new cloud invocation or deployment is authorized.
 Guest [WASM memory observations](NODE-MEMORY-QUALIFICATION.md) are now preserved
 for that actual SDK workload; they do not establish total Cloudflare isolate memory.
 
-**YELLOW for fixed, trusted, short workflows. RED for arbitrary untrusted Python
-under the current termination contract, including fresh isolates.** Real upstream `engine.execute()` and unmodified SDK
+**YELLOW for fixed, trusted, short workflows. Arbitrary untrusted Python is not
+accepted pending abnormal cancellation, resource and isolation qualification.** Real upstream `engine.execute()` and unmodified SDK
 integration reads/table writes ran in local Cloudflare workerd/Pyodide. This is
 not a production execution target or a completed remote-launcher implementation.
 

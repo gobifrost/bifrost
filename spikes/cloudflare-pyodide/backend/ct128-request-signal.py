@@ -1,5 +1,6 @@
 """Serial local signal qualification with unchanged deployed Worker settings."""
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import shutil
@@ -8,7 +9,6 @@ import time
 
 ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
 SPIKE = ROOT / '785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide'
-PACKET = ROOT / 'inbox/request-signal-v1/packet'
 IMAGE = 'bifrost-test-api-dev:bifrost-test-7ddfac36'
 
 
@@ -16,7 +16,7 @@ def out(command):
     return subprocess.check_output(command, text=True, timeout=30).strip()
 
 
-def qualify(mode):
+def qualify(mode, fixture='request-signal', revision=1):
     if out(['hostname']) != 'bifrost-pyodide-test-01' or shutil.disk_usage(ROOT).free < 5 * 1024**3:
         raise RuntimeError('Assigned guest/disk guard failed')
     if out(['docker', 'image', 'inspect', IMAGE, '--format', '{{.Id}}']) != 'sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b':
@@ -28,15 +28,19 @@ def qualify(mode):
                          (wrapper, '9f9ad4a47455ff2f29a5600471855260f88f0bc42a690917fa47a46ce34bffe7')]:
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise RuntimeError('Pinned runtime/cache wrapper changed')
-    run = ROOT / ('runs/request-signal-v1-' + mode)
+    packet = ROOT / ('inbox/' + fixture + '-v' + str(revision) + '/packet')
+    port = '8816' if fixture == 'request-signal' else '8818'
+    driver = 'request-signal-driver.mjs' if fixture == 'request-signal' else 'tail-observer-driver.mjs'
+    run = ROOT / ('runs/' + fixture + '-v' + str(revision) + '-' + mode)
     run.mkdir()
     (run / 'home').mkdir()
-    shutil.copytree(PACKET, run / 'packet')
-    name = 'pyodide-ddf316c1-request-signal-' + mode
+    shutil.copytree(packet, run / 'packet')
+    name = 'pyodide-ddf316c1-' + fixture + '-v' + str(revision) + '-' + mode
     report = {'mode': mode, 'cloud_invocations': 0, 'physical_termination_verified': False,
-              'source_base': 'cceccf3abe81af72820991a07fd00f7263fd455a',
-              'packet_sha256': {str(path.relative_to(PACKET)): hashlib.sha256(path.read_bytes()).hexdigest()
-                                for path in PACKET.rglob('*') if path.is_file()}}
+              'source_base': ('cceccf3abe81af72820991a07fd00f7263fd455a' if fixture == 'request-signal'
+                              else 'c871d4abfab3e36c8da8055eb0948b63b222a88b'),
+              'packet_sha256': {str(path.relative_to(packet)): hashlib.sha256(path.read_bytes()).hexdigest()
+                                for path in packet.rglob('*') if path.is_file()}}
     command = ['docker', 'run', '-d', '--name', name, '--network=none', '--cpus=1', '--memory=1g',
                '--memory-swap=1g', '--pids-limit=256', '--mount', f'type=bind,src={SPIKE},dst=/spike,readonly',
                '--mount', f'type=bind,src={SPIKE}/node_modules,dst=/qualification/packet/node_modules,readonly',
@@ -56,15 +60,15 @@ def qualify(mode):
             if not json.loads(out(['docker', 'inspect', name]))[0]['State']['Running']:
                 raise RuntimeError('Local cf server stopped')
             check = subprocess.run(['docker', 'exec', name, 'node', '-e',
-                "fetch('http://127.0.0.1:8816/').then(r=>process.exit(r.status===403?0:1)).catch(()=>process.exit(1))"],
+                "fetch('http://127.0.0.1:" + port + "/').then(r=>process.exit(r.status===403?0:1)).catch(()=>process.exit(1))"],
                 capture_output=True, timeout=5)
             if check.returncode == 0:
                 break
             time.sleep(1)
         else:
             raise RuntimeError('Readiness deadline exceeded')
-        result = subprocess.run(['docker', 'exec', name, 'node', 'request-signal-driver.mjs'],
-                                 capture_output=True, text=True, timeout=90)
+        result = subprocess.run(['docker', 'exec', name, 'node', driver],
+                                 capture_output=True, text=True, timeout=120)
         (run / 'driver.log').write_text(result.stdout + result.stderr)
         report['driver_exit_code'] = result.returncode
         if result.returncode:
@@ -83,5 +87,9 @@ def qualify(mode):
 
 
 if __name__ == '__main__':
-    for value in ('disabled', 'enabled'):
-        qualify(value)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--fixture', choices=['request-signal', 'tail-observer'], default='request-signal')
+    parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
+    args = parser.parse_args()
+    for value in (('disabled', 'enabled') if args.fixture == 'request-signal' else ('local',)):
+        qualify(value, args.fixture, args.revision)

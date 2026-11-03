@@ -1,0 +1,302 @@
+{
+  "mode": "local",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "source_base": "c871d4abfab3e36c8da8055eb0948b63b222a88b",
+  "packet_sha256": {
+    "cpu-placement.mjs": "4a53d6198f9975a879ad1f7cb93c875246802ce689eef98e79ee8315a29a6b9d",
+    "tail-observer.mjs": "8845d9023c0d020acd3c4e2bf125e625ddb83ea3135b633225b79c10a579f510",
+    "tail-observer-entry.mjs": "57eda94d87f98ac60f51cf14e6a7b008cf52e56e0756155b4bfd00da7247eec3",
+    "tail-observer.test.mjs": "dfd4ba9ba117b140e0c4010d1bb13933e6e10bd1ba9c67d6624c1906902c3ddd",
+    "wrangler.config.ts": "f6fca07114fe20c732574b99bc9dcf7ce953481e46f27657c49ffaf3040d12de",
+    "package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "tail-observer-driver.mjs": "de5bf527175fa81f0214b8b73745269be38d410960e6acd0cf94adfbac3d3a18",
+    "cloudflare.config.ts": "179b54cc78e8787c0c43b0212b66311a8aa00d33353615457f5398f2e571a95b"
+  },
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-tail-observer-v2-local",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/node_modules,dst=/qualification/packet/node_modules,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/tail-observer-v2-local,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+    "--env",
+    "HOME=/qualification/home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--env",
+    "REQUEST_SIGNAL_MODE=local",
+    "--workdir",
+    "/qualification/packet",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "/spike/node_modules/cf/bin/cf",
+    "dev"
+  ],
+  "driver_exit_code": 0,
+  "observation": {
+    "runtime": "local-workerd",
+    "cloud_invocations": 0,
+    "physical_termination_verified": false,
+    "records": [
+      {
+        "id": "862df022-3d61-4c24-b096-c9cb9678a655",
+        "mode": "js_completion",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 19.581941
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 26.205831000000003
+          },
+          {
+            "event": "native_tail",
+            "elapsed_ms": 29.097589999999997,
+            "metadata": {
+              "schema": 1,
+              "outcome": "ok",
+              "event_timestamp": 1793672752862,
+              "log_count": 1,
+              "exception_count": 0,
+              "raw_numeric_fields": {
+                "cpuTime": 0,
+                "cpuTimeMs": null,
+                "wallTime": 0,
+                "wallTimeMs": null
+              }
+            }
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": {
+            "outcome": {
+              "completed": true
+            }
+          }
+        },
+        "response_elapsed_ms": 36.562517
+      },
+      {
+        "id": "8a3cd4eb-5b88-453e-bcd8-aefa2736d9c2",
+        "mode": "js_background",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 10.745660999999998
+          },
+          {
+            "event": "background_after",
+            "elapsed_ms": 164.20770600000003
+          },
+          {
+            "event": "native_tail",
+            "elapsed_ms": 166.402918,
+            "metadata": {
+              "schema": 1,
+              "outcome": "ok",
+              "event_timestamp": 1793672752892,
+              "log_count": 1,
+              "exception_count": 0,
+              "raw_numeric_fields": {
+                "cpuTime": 0,
+                "cpuTimeMs": null,
+                "wallTime": 0,
+                "wallTimeMs": null
+              }
+            }
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": {
+            "outcome": {
+              "completed": true
+            }
+          }
+        },
+        "response_elapsed_ms": 14.750867999999997
+      },
+      {
+        "id": "2f8f1744-e18b-42fe-94f5-5066878cddcf",
+        "mode": "js_io_abort",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 7.866445999999996
+          },
+          {
+            "event": "parent_abort_requested",
+            "elapsed_ms": 46.501694999999984
+          },
+          {
+            "event": "native_tail",
+            "elapsed_ms": 46.908096,
+            "metadata": {
+              "schema": 1,
+              "outcome": "ok",
+              "event_timestamp": 1793672753066,
+              "log_count": 1,
+              "exception_count": 0,
+              "raw_numeric_fields": {
+                "cpuTime": 0,
+                "cpuTimeMs": null,
+                "wallTime": 0,
+                "wallTimeMs": null
+              }
+            }
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": {
+            "error_type": "AbortError"
+          }
+        },
+        "response_elapsed_ms": 53.26900599999999
+      },
+      {
+        "id": "7b579620-70df-45dd-987f-8597c1f778c8",
+        "mode": "python_io",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 3679.586087
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 3932.4742910000004
+          },
+          {
+            "event": "native_tail",
+            "elapsed_ms": 3937.590919,
+            "metadata": {
+              "schema": 1,
+              "outcome": "ok",
+              "event_timestamp": 1793672756785,
+              "log_count": 0,
+              "exception_count": 0,
+              "raw_numeric_fields": {
+                "cpuTime": 0,
+                "cpuTimeMs": null,
+                "wallTime": 0,
+                "wallTimeMs": null
+              }
+            }
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": {
+            "outcome": {
+              "case_id": "completion",
+              "status": 200,
+              "body": {
+                "completed": true,
+                "abi": {
+                  "python": [
+                    3,
+                    14,
+                    2
+                  ],
+                  "pyodide": "314.0.6",
+                  "soabi": "cpython-314-wasm32-emscripten"
+                }
+              }
+            }
+          }
+        },
+        "response_elapsed_ms": 3942.5352190000003
+      },
+      {
+        "id": "cf448d11-1a9d-4cc5-bfd6-fc086edd5a53",
+        "mode": "python_cpu",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 2156.226012
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 18415.599152000003
+          },
+          {
+            "event": "native_tail",
+            "elapsed_ms": 18422.198395,
+            "metadata": {
+              "schema": 1,
+              "outcome": "ok",
+              "event_timestamp": 1793672759199,
+              "log_count": 0,
+              "exception_count": 0,
+              "raw_numeric_fields": {
+                "cpuTime": 0,
+                "cpuTimeMs": null,
+                "wallTime": 0,
+                "wallTimeMs": null
+              }
+            }
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": {
+            "outcome": {
+              "case_id": "code_limit",
+              "status": 200,
+              "body": {
+                "total": 19999999900000000,
+                "abi": {
+                  "python": [
+                    3,
+                    14,
+                    2
+                  ],
+                  "pyodide": "314.0.6",
+                  "soabi": "cpython-314-wasm32-emscripten"
+                }
+              }
+            }
+          }
+        },
+        "response_elapsed_ms": 18424.8077
+      }
+    ]
+  },
+  "state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 1094082,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T02:25:48.925098255Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 27.29583543399349
+}
