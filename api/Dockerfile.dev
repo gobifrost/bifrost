@@ -8,8 +8,8 @@ FROM node:26.12.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dc
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
-# python:3.14-slim
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
+# Python security patch: interpreter denylist and patched bundled pip.
+FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS builder
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations, and the pip shipped in
-# python:3.14-slim already supports --require-hashes (>= 8.0).
+# python:3.14.10-slim already supports --require-hashes (>= 8.0).
 COPY pyproject.toml requirements.lock requirements-pyright.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
     && pip install --no-cache-dir --require-hashes -r requirements-pyright.lock
@@ -35,8 +35,8 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
-# python:3.14-slim
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+# Python security patch: interpreter denylist and patched bundled pip.
+FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966
 
 WORKDIR /app
 ARG BIFROST_VERSION=unknown
@@ -67,6 +67,12 @@ RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
+
+# Match production's explicit patched trust bundle, without system CA fallback.
+RUN mkdir -p /etc/bifrost-ca/empty \
+    && python -c "import certifi, shutil; shutil.copyfile(certifi.where(), '/etc/bifrost-ca/cacert.pem')"
+ENV SSL_CERT_FILE=/etc/bifrost-ca/cacert.pem \
+    SSL_CERT_DIR=/etc/bifrost-ca/empty
 
 # Install `bifrost` CLI shim. The bifrost Python package is mounted at
 # /app/bifrost/ via PYTHONPATH=/app, so `python -m bifrost` works. The shim
