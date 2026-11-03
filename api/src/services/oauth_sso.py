@@ -10,6 +10,7 @@ All OAuth flows use PKCE for enhanced security.
 Configuration is stored in the database (system_configs table).
 """
 
+import asyncio
 import hashlib
 import io
 import logging
@@ -604,29 +605,33 @@ async def fetch_microsoft_profile_photo(access_token: str) -> tuple[bytes, str] 
     if not access_token:
         return None
     try:
-        async with httpx.AsyncClient(
-            timeout=_MICROSOFT_PHOTO_TIMEOUT_SECONDS,
-            follow_redirects=True,
-            event_hooks={"request": [_authorize_graph_photo_request]},
-        ) as client:
-            response = await client.get(
-                MICROSOFT_GRAPH_PHOTO_URL,
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-    except httpx.HTTPError as exc:
+        async with asyncio.timeout(_MICROSOFT_PHOTO_TIMEOUT_SECONDS):
+            async with httpx.AsyncClient(
+                timeout=_MICROSOFT_PHOTO_TIMEOUT_SECONDS,
+                follow_redirects=True,
+                event_hooks={"request": [_authorize_graph_photo_request]},
+            ) as client:
+                async with client.stream(
+                    "GET",
+                    MICROSOFT_GRAPH_PHOTO_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                ) as response:
+                    if response.url.scheme != "https" or response.status_code == 404:
+                        return None
+                    if response.status_code != 200:
+                        logger.info("Microsoft profile photo unavailable: HTTP %s", response.status_code)
+                        return None
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > _MICROSOFT_PHOTO_MAX_BYTES:
+                            return None
+                        body.extend(chunk)
+    except (httpx.HTTPError, TimeoutError) as exc:
         logger.info("Microsoft profile photo request failed: %s", type(exc).__name__)
         return None
 
-    if response.url.scheme != "https":
-        logger.info("Microsoft profile photo discarded: response was not HTTPS")
-        return None
-    if response.status_code == 404:
-        return None
-    if response.status_code != 200:
-        logger.info("Microsoft profile photo unavailable: HTTP %s", response.status_code)
-        return None
-
-    content_type = _microsoft_photo_content_type(response.content)
+    photo = bytes(body)
+    content_type = _microsoft_photo_content_type(photo)
     if content_type is None:
         return None
-    return response.content, content_type
+    return photo, content_type

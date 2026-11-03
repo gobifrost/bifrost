@@ -1,5 +1,6 @@
 """Entra profile photos are stored only when Graph returns a real image."""
 
+import asyncio
 import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -155,3 +156,39 @@ async def test_apply_keeps_an_existing_avatar_when_graph_has_no_photo(
 
     assert user.avatar_data == b"custom"
     assert user.avatar_content_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_download_stops_at_byte_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    consumed = []
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for index in range(4):
+                consumed.append(index)
+                yield b"x" * (1024 * 1024)
+
+    _route(monkeypatch, lambda _request: httpx.Response(200, stream=Body()))
+
+    assert await fetch_microsoft_profile_photo("graph-token") is None
+    assert consumed == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_total_deadline_stops_a_slow_download(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed = False
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"x"
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            nonlocal closed
+            closed = True
+
+    monkeypatch.setattr(oauth_sso, "_MICROSOFT_PHOTO_TIMEOUT_SECONDS", 0.01)
+    _route(monkeypatch, lambda _request: httpx.Response(200, stream=Body()))
+
+    assert await fetch_microsoft_profile_photo("graph-token") is None
+    assert closed

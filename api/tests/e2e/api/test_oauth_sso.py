@@ -43,6 +43,10 @@ class _ProviderHttpClient:
     async def __aexit__(self, *_args):
         return None
 
+    @asynccontextmanager
+    async def stream(self, method: str, url: str, *, headers: dict[str, str]):
+        yield await self.get(url, headers=headers)
+
     async def get(self, url: str, *, headers: dict[str, str]):
         self.requests.append((url, headers))
         if url == MICROSOFT_GRAPH_PHOTO_URL:
