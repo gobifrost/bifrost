@@ -889,3 +889,22 @@ failure retained; --no-cache corrects invocation in v2. Artifact:
 backend/DELIVERY-LOCK.md and results/delivery-lock. No cloud/production/runtime
 setting change or physical-stop claim. Next experiment: owned automatic terminal
 delivery, error retention and actual canonical callback qualification.
+
+### Owned automatic canonical terminal delivery
+Hypothesis: the private physical adapter can report completion without a caller
+manually reconciling every normal result, while retaining uncertain ACKs. Change:
+one shielded owned delivery task per reserved attempt, observed retained errors,
+retirement guard; actual fixture injects failed ACK after canonical commit and
+requires automatic successful peer delivery. Commands: bounded CT128 Docker unit
+and quality script results/auto-delivery/pyodide-auto-delivery-v1.sh; timeout430
+python3 inbox/auto-delivery-v1/ct128-canonical-failure.py --auto-delivery --revision1
+(with spaces as in backend/AUTOMATIC-DELIVERY.md exact command). Observation:
+27 tests, Ruff/Pyright pass; actual two-tenant engine/SDK qualification passes,
+Success78 automatically persisted, failed ACK recovered under replacement owner,
+no duplicate state/log IDs or relaunch, credentials401, native/PG busy2,2,1,0,
+retirement and owned cleanup verified. Supervisor74.955s includes setup/prewarm/
+barriers/cleanup. Artifact: backend/AUTOMATIC-DELIVERY.md, source-bound verifier,
+results/auto-delivery raw receipt and quality evidence. No cloud calls, CPU-stop
+proof, admission or runtime-setting change. Next: original-deadline supervision
+inside the private adapter without releasing uncertain physical capacity; then
+supported startup/registration boundary and independent deployed acceptance.

@@ -100,6 +100,13 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.pool.mux.retained_count, 0)
 
     async def test_duplicate_snapshot_and_ack_retirement_use_actual_native_pool(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def consume(_result):
+            entered.set()
+            await release.wait()
+
+        self.callback.side_effect = consume
         ack, finish = self.provider()
         ack.set()
         original, active = copy.deepcopy(self.context), copy.deepcopy(self.active)
@@ -115,10 +122,11 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
             await self.route(self.context, active)
         finish.set()
         await attempt.receipt
+        await entered.wait()
         with self.assertRaises(RuntimeError):
             await self.pool.retire()
-        consumed = await self.pool.reconcile(self.run)
-        self.assertTrue(consumed)
+        release.set()
+        self.assertEqual(await attempt.delivery, {'acknowledged': True})
         self.callback.assert_awaited_once()
         self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
         await self.pool.retire()
@@ -140,8 +148,7 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         await self.route()
         finish.set()
         await attempt.receipt
-        consumed = await self.pool.reconcile(self.run)
-        self.assertTrue(consumed)
+        await attempt.delivery
         self.assertEqual(len(self.sent), 1)
         await self.pool.retire()
 
@@ -153,12 +160,51 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         finish.set()
         with self.assertRaises(httpx.ReadError):
             await attempt.receipt
+        with self.assertRaises(httpx.ReadError):
+            await attempt.delivery
         await self.route()
         self.assertEqual(len(self.sent), 1)
         self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
         with self.assertRaises(RuntimeError):
             await self.pool.retire()
         self.callback.assert_not_awaited()
+
+    async def test_failed_automatic_callback_retains_result_for_explicit_reconciliation(self):
+        ack, finish = self.provider()
+        ack.set()
+        self.callback.side_effect = ConnectionError('Synthetic ACK loss')
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        finish.set()
+        with self.assertRaisesRegex(ConnectionError, 'Synthetic ACK loss'):
+            await attempt.delivery
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+        with self.assertRaises(RuntimeError):
+            await self.pool.retire()
+        self.callback.side_effect = None
+        self.assertTrue(await self.pool.reconcile(self.run))
+        self.assertEqual(len(self.sent), 1)
+        await self.pool.retire()
+
+    async def test_cancelled_delivery_waiter_does_not_cancel_reporting(self):
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+
+        async def wait():
+            return await attempt.delivery
+
+        waiter = asyncio.create_task(wait())
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        finish.set()
+        self.assertEqual(await attempt.delivery, {'acknowledged': True})
+        self.callback.assert_awaited_once()
+        await self.pool.retire()
 
     async def test_persistent_service_uses_native_profile_refusal_before_effects(self):
         with self.assertRaisesRegex(RuntimeError, 'persistent services'):

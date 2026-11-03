@@ -169,8 +169,18 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     raise RuntimeError('Shared worker ready transition failed')
             await beat()
             heartbeat = asyncio.create_task(renew())
+            failure_consume_gate = asyncio.Event()
+            lose_failure_ack = True
+
             async def canonical_result(result):
+                nonlocal lose_failure_ack
+                failed_result = slots[result['execution_id']]['label'] == 'fails-first'
+                if failed_result:
+                    await failure_consume_gate.wait()
                 await consumer._handle_result(result)
+                if failed_result and lose_failure_ack:
+                    lose_failure_ack = False
+                    raise ConnectionError('Injected shared failure ACK loss')
 
             adapter = PrivateHttpWorkflowPool(endpoint='http://bifrost-pyodide-ddf316c1:8799', worker_id=worker_id,
                 lease_ref=ref, memory_sample=effective_memory_sample, memory_request_bytes=requests.get,
@@ -302,22 +312,14 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             source_integrity_diagnostic_seen='Workspace module digest mismatch' in json.dumps(failed_evidence))
                     elif result['success'] or result['error_type'] != 'ValueError':
                         raise RuntimeError('Expected first workflow error missing')
-                    original = consumer._handle_result
-
-                    async def lose_ack(result):
-                        await original(result)
-                        raise ConnectionError('Injected shared failure ACK loss')
-
-                    consumer._handle_result = lose_ack
+                    failure_consume_gate.set()
                     try:
-                        await adapter.reconcile(str(failed['execution'].id))
+                        await adapter.attempt(str(failed['execution'].id)).delivery
                     except ConnectionError as exc:
                         if str(exc) != 'Injected shared failure ACK loss':
                             raise
                     else:
                         raise RuntimeError('Lost ACK was not observed')
-                    finally:
-                        consumer._handle_result = original
 
                     async def failed_snapshot():
                         async with get_db_context() as db:
@@ -389,9 +391,10 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                     success = await peer['receipt']
                     if not success['success'] or success['result']['value'] != peer['value']:
                         raise RuntimeError('Independent successful peer result mismatch')
-                    acknowledged = await adapter.reconcile(str(peer['execution'].id))
-                    if not acknowledged or native.processes or native._build_heartbeat()['busy_count'] != 0:
+                    delivered = await adapter.attempt(str(peer['execution'].id)).delivery
+                    if not delivered['acknowledged'] or native.processes or native._build_heartbeat()['busy_count'] != 0:
                         raise RuntimeError('Final settled peer obligation remained')
+                    report['automatic_terminal_delivery_verified'] = True
                     report['native_busy_counts'].append(native._build_heartbeat()['busy_count'])
                     liveness.update(active_runs=0, runs_handled=2, memory_reserved_bytes=0)
                     await beat()

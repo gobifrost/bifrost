@@ -21,9 +21,9 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, shared_pool=False, private_pool=False, api_prepare=False, source_change=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, shared_pool=False, private_pool=False, api_prepare=False, source_change=False, auto_delivery=False, revision=1):
     global PACKET, RUN, NAME
-    api_prepare = api_prepare or source_change
+    api_prepare = api_prepare or source_change or auto_delivery
     private_pool = private_pool or api_prepare
     shared_pool = shared_pool or private_pool
     http_component = http_component or request_mux
@@ -31,7 +31,7 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
     stream_interruption = stream_interruption or automatic_loss or attempt_deadline
     physical_pool = physical_pool or stream_pool or stream_loss or stream_interruption or late_settlement or shared_pool
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('source-change' if source_change else 'api-prepare' if api_prepare else 'private-pool' if private_pool else 'shared-pool' if shared_pool else 'request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('auto-delivery' if auto_delivery else 'source-change' if source_change else 'api-prepare' if api_prepare else 'private-pool' if private_pool else 'shared-pool' if shared_pool else 'request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -176,6 +176,8 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
                 or list(probe.get('launches', {}).values()) != [1, 1]):
                 raise RuntimeError('Shared pool did not qualify two independent native attempts')
             report['shared_pool_result'] = probe
+            if auto_delivery and not probe.get('automatic_terminal_delivery_verified'):
+                raise RuntimeError('Automatic canonical terminal delivery was not qualified')
             if private_pool and not probe.get('reusable_private_adapter_verified'):
                 raise RuntimeError('Reusable private backend was not exercised')
             if api_prepare and (not probe.get('api_preparation_verified') or probe.get('invalid_preparation_credential_status') != 401):
@@ -289,6 +291,7 @@ if __name__ == '__main__':
     mode.add_argument('--private-pool', action='store_true')
     mode.add_argument('--api-prepare', action='store_true')
     mode.add_argument('--source-change', action='store_true')
+    mode.add_argument('--auto-delivery', action='store_true')
     parser.add_argument('--revision', type=int, choices=range(1, 100), default=1)
     args = parser.parse_args()
     main(egress_gate=args.egress_gate, deadline_response_loss=args.deadline_response_loss,
@@ -297,4 +300,4 @@ if __name__ == '__main__':
          automatic_loss=args.automatic_loss, attempt_deadline=args.attempt_deadline,
          late_settlement=args.late_settlement, http_component=args.http_component, request_mux=args.request_mux,
          shared_pool=args.shared_pool, private_pool=args.private_pool, api_prepare=args.api_prepare,
-         source_change=args.source_change, revision=args.revision)
+         source_change=args.source_change, auto_delivery=args.auto_delivery, revision=args.revision)

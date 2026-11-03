@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const source = name => execFileSync('git', ['show', 'b6e4dfd4c28e6859c4c6319a1e8a664c221eba84:spikes/cloudflare-pyodide/backend/' + name]);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const base = new URL('../results/source-change/', import.meta.url);
 const bytes = name => readFile(new URL(name, base));
@@ -36,10 +38,10 @@ for (const report of reports) {
   }
   for (const name of ['shared-native-pool.py', 'ct128-canonical-failure.py', 'source-integrity-response.mjs',
     'source-integrity-response.test.mjs', 'module-response.mjs']) {
-    assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+    assert.equal(hash(source(name)), report.packet_sha256[name], name);
   }
   for (const name of ['authorized-local-entry.mjs', 'source-integrity-response.mjs']) {
-    assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256['project/backend/' + name], name);
+    assert.equal(hash(source(name)), report.packet_sha256['project/backend/' + name], name);
   }
   assert.equal(report.qualification_passed, true);
   assert.ok(report.commands.every(command => command.exit_code === 0));

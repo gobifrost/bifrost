@@ -7,7 +7,7 @@ import time
 from types import SimpleNamespace
 from uuid import UUID
 
-from attempt_journal import AttemptJournal
+from attempt_journal import AttemptJournal, AttemptResult
 from http_invocation import HttpInvocation
 from workflow_request_mux import WorkflowRequestMux
 
@@ -20,6 +20,13 @@ from src.worker.remote.remote_pool import ThinRemoteProcessPool
 class _Attempt(SimpleNamespace):
     def __repr__(self):
         return 'PrivateHttpAttempt()'
+
+
+def _observe_delivery(task):
+    # Retain the error on the owned task/receipt without an unobserved-task
+    # warning. No retry, synthetic terminal result or credential-bearing log.
+    if not task.cancelled():
+        task.exception()
 
 
 class PrivateHttpWorkflowPool:
@@ -165,6 +172,16 @@ class PrivateHttpWorkflowPool:
             except Exception:
                 self._attempts.pop(execution_id, None)
                 raise
+
+            async def deliver_terminal():
+                await slot.receipt
+                if not await self.reconcile(execution_id):
+                    raise ConnectionError('Terminal not acknowledged; reconciliation required')
+                return {'acknowledged': True}
+
+            slot._delivery_task = asyncio.create_task(deliver_terminal())
+            slot._delivery_task.add_done_callback(_observe_delivery)
+            slot.delivery = AttemptResult(slot._delivery_task)
             await asyncio.shield(slot.routed)
 
     async def _deliver(self, result):
@@ -184,6 +201,8 @@ class PrivateHttpWorkflowPool:
         # ACKs have to traverse the actual upstream callback before the companion
         # journal permits retirement. Neither operation establishes CPU stop.
         async with self._lock:
+            if any(not slot._delivery_task.done() for slot in self._attempts.values()):
+                raise RuntimeError('Owned terminal delivery remains pending')
             await self.journal.retire()
             self.mux.retire()
             self._attempts.clear()
