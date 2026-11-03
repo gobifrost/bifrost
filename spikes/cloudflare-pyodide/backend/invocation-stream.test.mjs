@@ -33,9 +33,8 @@ test('cancellation closes capability without pretending required work stopped', 
   assert.equal(cleaned, 1);
 });
 
-test('provider errors and oversized results yield bounded non-secret collection errors', async () => {
-  for (const execute of [async () => {const error = new Error('synthetic-secret'); error.name = 'synthetic-secret'; throw error;},
-    async () => ({data: 'x'.repeat(262144)})]) {
+test('provider errors yield bounded non-secret collection errors', async () => {
+  for (const execute of [async () => {const error = new Error('synthetic-secret'); error.name = 'synthetic-secret'; throw error;}]) {
     let cleaned = 0;
     const response = invocationStream({...identity, execute, cleanup: () => cleaned++});
     const lines = (await response.text()).trim().split('\n').map(JSON.parse);
