@@ -56,6 +56,28 @@ permissions:
   contents: read
 
 jobs:
+  skill-tools:
+    runs-on: ubuntu-latest
+    name: Skill Tools
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check packaged skills and extraction helper
+        run: |
+          python3 scripts/check_skill_mirrors.py
+          python3 scripts/sync_rewst_migration_client.py --check
+          python3 -B -m unittest scripts.test_rewst_extraction
+          PYTHONPATH=examples/rewst-migration python3 -B -m unittest discover -s examples/rewst-migration/tests
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+      - name: Check Rewst pilot app helpers
+        working-directory: examples/rewst-migration/apps/rewst-migration
+        run: |
+          npm ci --ignore-scripts
+          npm test
+
   lint:
     runs-on: ubuntu-latest
     name: Lint & Type Check

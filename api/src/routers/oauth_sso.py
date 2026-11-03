@@ -23,6 +23,7 @@ from src.core.cache.keys import (
 from src.core.log_safety import log_safe
 from src.core.auth import CurrentActiveUser, get_current_user_from_db
 from src.core.db_deps import DbSession
+from src.models import User
 from src.services.oauth_sso import OAuthError, OAuthService
 from src.services.user_provisioning import ensure_user_provisioned
 from shared.auth_cookies import set_auth_cookies
@@ -32,6 +33,21 @@ from shared.identities import refuse_identity_sign_in
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
+
+
+async def _save_microsoft_profile_photo(
+    oauth_service: OAuthService,
+    user: User,
+    provider: str,
+    access_token: str,
+) -> None:
+    """Store an Entra profile photo without letting photo errors fail login."""
+    if provider != "microsoft":
+        return
+    try:
+        await oauth_service.apply_microsoft_profile_photo(user, access_token)
+    except Exception:
+        logger.warning("Microsoft profile photo was not saved", exc_info=True)
 
 
 # =============================================================================
@@ -298,6 +314,9 @@ async def oauth_callback(
 
         # Update OAuth account
         await oauth_service.link_oauth_account(user, user_info, tokens)
+        await _save_microsoft_profile_photo(
+            oauth_service, user, callback_data.provider, tokens.access_token
+        )
         await db.commit()
 
     else:
@@ -326,6 +345,9 @@ async def oauth_callback(
             user.last_login = datetime.now(timezone.utc)
             user.is_registered = True
             user.is_verified = True
+            await _save_microsoft_profile_photo(
+                oauth_service, user, callback_data.provider, tokens.access_token
+            )
             await db.commit()
 
         except ValueError as e:

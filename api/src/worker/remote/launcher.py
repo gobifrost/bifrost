@@ -22,6 +22,7 @@ from shared.version import get_version
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import effective_memory_sample, memory_pressure_ratio
 from src.services.execution.template_process import TemplateProcess
+from src.worker.remote.control_connection import connect_control, load_control_headers
 from src.worker.remote.identity import LauncherIdentity, load_launcher_identity
 from src.worker.remote.protocol import (
     CREDENTIAL_PROTOCOL,
@@ -175,10 +176,12 @@ class Launcher:
         secret: str,
         on_ready: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
+        authenticated_control: bool = False,
     ) -> None:
         self.socket = socket
         self.identity = identity
         self.secret = secret
+        self._authenticated_control = authenticated_control
         self.session_generation = 0
         self._sequence = 0
         self._last_command_sequence = 0
@@ -228,7 +231,11 @@ class Launcher:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    raise ConnectionError("remote control transport is unavailable") from exc
+                    # Background task logging must not recover credentials
+                    # echoed in a transport exception or WebSocket close reason.
+                    raise ConnectionError("remote control transport is unavailable") from (
+                        None if self._authenticated_control else exc
+                    )
                 sent += 1
             self._sequence += sent
 
@@ -782,11 +789,10 @@ async def _run_launcher(
     on_stop: Callable[[], None] | None = None,
 ) -> int:
     """Run one physical launcher, reconnecting without killing live children."""
-    from websockets.asyncio.client import connect
-
     api_url = os.environ.get("BIFROST_API_URL", "http://api:8000").rstrip("/")
     control_url = api_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
     control_url += "/api/worker-control"
+    control_headers = load_control_headers(control_url)
     identity = load_launcher_identity()
     secret = os.environ["BIFROST_SECRET_KEY"]
     launcher: Launcher | None = None
@@ -799,12 +805,13 @@ async def _run_launcher(
         drain_task: asyncio.Task[None] | None = None
         while launcher is None or (not launcher.retired.is_set() and not launcher.failed):
             try:
-                async with connect(control_url, max_size=2**20, open_timeout=10) as socket:
+                async with connect_control(control_url, control_headers) as socket:
                     if launcher is None:
                         if candidate is None:
                             candidate = Launcher(
                                 socket, identity=identity, secret=secret,
                                 on_ready=on_ready, on_stop=on_stop,
+                                authenticated_control=bool(control_headers),
                             )
                         else:
                             # A lost welcome may follow a committed enrollment.
@@ -850,11 +857,18 @@ async def _run_launcher(
                         break
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 if launcher is not None and launcher.failed:
-                    logger.error("Remote launcher initialization or supervision failed", exc_info=True)
+                    message = "Remote launcher initialization or supervision failed"
+                    level = logging.ERROR
                 else:
-                    logger.warning("Remote control connection lost; preserving local children", exc_info=True)
+                    message = "Remote control connection lost; preserving local children"
+                    level = logging.WARNING
+                if control_headers:
+                    # Transport exceptions can retain request headers or echoed secrets.
+                    logger.log(level, "%s (%s)", message, type(exc).__name__)
+                else:
+                    logger.log(level, message, exc_info=True)
                 if stopping.is_set() or (launcher is not None and launcher.failed):
                     break
                 await asyncio.sleep(1)

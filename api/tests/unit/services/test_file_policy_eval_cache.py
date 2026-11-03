@@ -155,4 +155,61 @@ async def test_resolution_memo_is_per_organization(db_session) -> None:
         )
         assert decision.allowed
 
-    assert set(cache.resolved) == {(org_a.id, row.id), (org_b.id, row.id)}
+    assert set(cache.resolved) == {
+        (org_a.id, None, row.id),
+        (org_b.id, None, row.id),
+    }
+
+
+@pytest.mark.parametrize("reverse_order", [False, True])
+async def test_shared_policy_cache_keeps_solution_ref_decisions_isolated(
+    db_session, reverse_order: bool,
+) -> None:
+    """One shared policy can resolve the same ref differently in two installs."""
+    from src.models.orm.file_metadata import FilePolicy
+    from src.models.orm.policy_rule import PolicyRule
+    from src.models.orm.solutions import Solution
+
+    org = Organization(id=uuid4(), name=f"Cache-{uuid4().hex[:8]}", created_by="test")
+    solutions = [
+        Solution(
+            id=uuid4(), slug=f"cache-{uuid4().hex}", name=action,
+            organization_id=org.id,
+        )
+        for action in ("read", "write")
+    ]
+    db_session.add(org)
+    await db_session.flush()
+    db_session.add_all(solutions)
+    await db_session.flush()
+    rule_name = f"files_{uuid4().hex}"
+    location = f"cache-{uuid4().hex[:8]}"
+    db_session.add(FilePolicy(
+        organization_id=org.id, location=location, path="",
+        policies={"policies": [{"$ref": rule_name}]}, created_by=uuid4(),
+    ))
+    for solution, action in zip(solutions, ("read", "write"), strict=True):
+        db_session.add(PolicyRule(
+            organization_id=org.id, solution_id=solution.id,
+            name=rule_name, domain="file", body={"actions": [action], "when": None},
+            created_by=uuid4(),
+        ))
+    await db_session.flush()
+
+    if reverse_order:
+        solutions.reverse()
+    service = FilePolicyService(db_session)
+    cache = FilePolicyEvalCache()
+    user = _user(org.id)
+    cached, uncached, expected = [], [], []
+    for solution in solutions:
+        for action in ("read", "write"):
+            arguments = dict(
+                organization_id=org.id, solution_id=solution.id,
+                location=location, path="report.txt", user=user,
+            )
+            cached.append((await service.evaluate(action, **arguments, cache=cache)).allowed)
+            uncached.append(await service.is_allowed(action, **arguments))
+            expected.append(action == solution.name)
+
+    assert cached == uncached == expected

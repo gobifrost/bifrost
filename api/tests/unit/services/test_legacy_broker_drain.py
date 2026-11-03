@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -52,11 +52,15 @@ def world(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch: 
     monkeypatch.setattr(drain, "get_redis", get_redis)
     wake = AsyncMock()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
-    monkeypatch.setattr("src.services.execution.queue_tracker.publish_queue_positions", AsyncMock())
+    refresh_requested = Mock()
+    monkeypatch.setattr(
+        "src.services.execution.queue_tracker.request_queue_position_refresh", refresh_requested
+    )
 
     class World:
         sessions = async_session_factory
         wakes = wake
+        queue_refresh = refresh_requested
 
         def put(self, key: str, value: dict[str, Any]) -> None:
             redis.values[key] = json.dumps(value)
@@ -146,6 +150,7 @@ async def test_a_queued_run_without_a_row_is_accepted_for_its_recorded_user(worl
     assert dispatch.message["code"] == "eA=="
     assert not world.has(drain._workflow_pending_key(execution_id))
     world.wakes.assert_awaited()
+    world.queue_refresh.assert_called_once_with()
 
 
 async def test_a_promoted_scheduled_run_gets_its_dispatch_and_lineage(world) -> None:  # type: ignore[no-untyped-def]

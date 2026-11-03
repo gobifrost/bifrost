@@ -1,0 +1,29 @@
+{
+  "key": "pr:1215",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Optional worker-control transport configuration and credential-isolation hardening. This adds no front-facing product capability and requires no customer action; omit it from the in-app Product Updates feed. No separate release-only announcement is warranted.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1215",
+      "https://github.com/gobifrost/bifrost/pull/1208",
+      "https://github.com/gobifrost/bifrost/issues/1207",
+      "Contributor credit: Thomas Bray (@MTG-Thomas) authored the source contribution in Midtown-Technology-Group/bifrost. Original commits c40440eecd2589da9b03b8d43849950942eb91ab and 6c2a78742207c2aeda977e8f15af28d3672f2ea7 are retained.",
+      "Jack approved scoped repairs, verification and the protected merge lifecycle in the private review thread on 2026-11-03. Release visibility follows his direction to omit internal transport configuration and security hardening from the modal.",
+      "Manual security review: configured credentials require WSS; redirects and transport-header overrides are refused; signed launcher authentication and admission remain unchanged. Both execution-template profiles exclude the credential environment variable; package tooling retains its existing allowlisted environment.",
+      "The background send path previously retained echoed credentials in exception causes printed by Launcher.task_finished. The repair removes that cause only for authenticated control connections at the shared Launcher.send boundary; default diagnostics, terminal replay, cancellation and job cleanup remain intact.",
+      "Regression evidence: the new background logging test reproduced disclosure for both a WebSocket close reason and a generic transport exception before the repair; the two unauthenticated controls passed. These are synthetic credential values, not a reported production exposure.",
+      "Verification: ./test.sh tests/unit/dev/test_control_connection.py tests/unit/dev/test_thin_launcher.py tests/unit/test_package_tool_env.py -v passed 91 tests, with zero failures, errors or skips in JUnit. Both synthetic credential-echo cases no longer reproduce, while the unauthenticated diagnostic controls and existing launcher lifecycle tests pass.",
+      "Verification: ./test.sh quality api passed Pyright with zero errors/warnings and Ruff. Product Updates validate and normalized merge-group validate-event for PR 1208 passed. An independent read-only candidate review found no concrete surviving bypass or regression. Full backend E2E and browser suites were not run locally; the protected merge queue remains their gate.",
+      "Accepted limits: no live Cloudflare Access enrollment or Azure execution acceptance was exercised. Gateway policy, credential provisioning/rotation and scoped worker signing credentials remain separate deployment concerns.",
+      "Replacement PR #1215 retains Thomas Bray's original contribution from #1208 and the scoped credential-logging repair. GitHub denied maintainer pushes to the organization-owned source fork with HTTP 403. Jack approved creating this same-repository replacement with the existing title and an empty body; public comments and review prose remain separately gated.",
+      "Canonical disposition migrated to pr:1215 after GitHub assigned the replacement number. Product Updates validate and normalized merge-group validate-event for PR 1215 passed; the reviewed omit, security evidence and original contributor credit are retained.",
+      "CI failure disposition: https://github.com/gobifrost/bifrost/actions/runs/41586355920 on initial draft head 113fd382ba10b64d88fceddab470bb126d3b7801 failed with missing canonical disposition for pr:1215. The replacement number was assigned only at creation. This follow-up replaces pr-1208.json with the approved pr-1215.json and passes normalized merge-group validation; no gate is bypassed and no blind retry is used."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1215"
+  }
+}

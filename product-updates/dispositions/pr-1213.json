@@ -1,0 +1,24 @@
+{
+  "key": "pr:1213",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1213",
+      "Reviewed omit: development container default identity; no customer-facing announcement. Jack authorized verification and protected merge in the private PR review thread.",
+      "Contributor credit: Thomas Bray (@MTG-Thomas), ported from Midtown-Technology-Group/bifrost#1255. Original contributor commits are retained.",
+      "Security review: USER bifrost defaults the development image to uid 1000. Production Dockerfile and entrypoint are unchanged; explicit root overrides still repair mounted-directory ownership and exec gosu bifrost. Debug/test API and scheduler explicitly select root; workers select uid 1000.",
+      "Runtime verification: built development image defaults to bifrost, writes /workspace and /tmp/bifrost as uid 1000, and an explicit root launch repairs a root-owned mounted /workspace before dropping to uid 1000. Disposable verification volume removed.",
+      "Verification: ./test.sh stack up completed on fresh per-worktree volumes; ./test.sh tests/unit/test_api_dockerfile_security.py tests/unit/test_api_allocator_entrypoint.py -v passed 17 tests (0 failures/errors/skips); validate-event with normalized merge_group scope for PR 1204 passed. Full suites are delegated to the protected merge queue.",
+      "https://github.com/gobifrost/bifrost/pull/1213",
+      "Superseded by same-repository PR #1213, retaining the original contributor commits because the organization-owned fork rejects maintainer pushes.",
+      "Source contribution: https://github.com/gobifrost/bifrost/pull/1204 by @MTG-Thomas. Jack authorized the same-repository replacement with the approved title and empty PR body."
+    ]
+  },
+  "reason": "The API development image defaults to the existing unprivileged bifrost user. Production privilege dropping is unchanged.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1213"
+  }
+}

@@ -36,10 +36,14 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
     _EXPECTED_ISSUER = "https://api.botframework.com"
     _CACHE_TTL_SECONDS = 24 * 60 * 60
     _UNKNOWN_KEY_REFRESH_INTERVAL_SECONDS = 5 * 60
-    _jwks: list[dict[str, Any]] | None = None
-    _jwks_expires_at = 0.0
-    _jwks_refreshed_at = 0.0
-    _jwks_lock = asyncio.Lock()
+
+    def __init__(self) -> None:
+        self._jwks: list[dict[str, Any]] | None = None
+        self._jwks_expires_at = 0.0
+        self._jwks_refreshed_at = 0.0
+        self._jwks_generation = 0
+        self._unknown_key_refresh_attempted_at = float("-inf")
+        self._jwks_lock = asyncio.Lock()
 
     config_schema = {
         "type": "object",
@@ -180,55 +184,101 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
 
     async def _get_signing_jwk(self, kid: str) -> dict[str, Any]:
         keys = await self._get_jwks()
+        observed_generation = self._jwks_generation
         match = next((key for key in keys if key.get("kid") == kid), None)
-        cache_age = time.monotonic() - self._jwks_refreshed_at
-        if match is None and cache_age >= self._UNKNOWN_KEY_REFRESH_INTERVAL_SECONDS:
-            keys = await self._get_jwks(force_refresh=True)
+        latest_refresh_or_attempt = max(
+            self._jwks_refreshed_at,
+            self._unknown_key_refresh_attempted_at,
+        )
+        if (
+            match is None
+            and time.monotonic() - latest_refresh_or_attempt
+            >= self._UNKNOWN_KEY_REFRESH_INTERVAL_SECONDS
+        ):
+            keys = await self._get_jwks(
+                refresh_for_unknown_kid_generation=observed_generation
+            )
             match = next((key for key in keys if key.get("kid") == kid), None)
         if match is None:
             raise ValueError("Unknown Bot Framework signing key")
         return match
 
-    async def _get_jwks(self, force_refresh: bool = False) -> list[dict[str, Any]]:
-        now = time.monotonic()
-        if not force_refresh and self._jwks is not None and now < self._jwks_expires_at:
+    def _cached_jwks_for_request(
+        self,
+        now: float,
+        refresh_for_unknown_kid_generation: int | None,
+    ) -> list[dict[str, Any]] | None:
+        """Return keys that already satisfy this normal or unknown-key lookup."""
+        if self._jwks is None:
+            return None
+        if refresh_for_unknown_kid_generation is None:
+            return self._jwks if now < self._jwks_expires_at else None
+        if self._jwks_generation != refresh_for_unknown_kid_generation:
             return self._jwks
+        latest_refresh_or_attempt = max(
+            self._jwks_refreshed_at,
+            self._unknown_key_refresh_attempted_at,
+        )
+        if (
+            now - latest_refresh_or_attempt
+            < self._UNKNOWN_KEY_REFRESH_INTERVAL_SECONDS
+        ):
+            return self._jwks
+        return None
+
+    async def _fetch_signing_keys(self) -> list[dict[str, Any]]:
+        """Fetch and validate the provider metadata and signing-key collection."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            metadata_response = await client.get(self._OPENID_URL)
+            metadata_response.raise_for_status()
+            metadata = metadata_response.json()
+            if metadata.get("issuer") != self._EXPECTED_ISSUER:
+                raise ValueError("Unexpected Bot Framework issuer metadata")
+            if "RS256" not in metadata.get(
+                "id_token_signing_alg_values_supported", []
+            ):
+                raise ValueError("Bot Framework metadata does not allow RS256")
+
+            jwks_uri = str(metadata.get("jwks_uri") or "")
+            parsed_uri = urlparse(jwks_uri)
+            if (
+                parsed_uri.scheme != "https"
+                or parsed_uri.hostname != "login.botframework.com"
+            ):
+                raise ValueError("Unexpected Bot Framework signing-key URL")
+
+            keys_response = await client.get(jwks_uri)
+            keys_response.raise_for_status()
+            keys = keys_response.json().get("keys")
+            if not isinstance(keys, list) or not keys:
+                raise ValueError("Bot Framework signing keys are unavailable")
+            return keys
+
+    async def _get_jwks(
+        self,
+        refresh_for_unknown_kid_generation: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return cached keys or publish one lock-fenced provider refresh."""
+        now = time.monotonic()
+        if refresh_for_unknown_kid_generation is None:
+            cached = self._cached_jwks_for_request(now, None)
+            if cached is not None:
+                return cached
 
         async with self._jwks_lock:
             now = time.monotonic()
-            if (
-                not force_refresh
-                and self._jwks is not None
-                and now < self._jwks_expires_at
-            ):
-                return self._jwks
+            cached = self._cached_jwks_for_request(
+                now,
+                refresh_for_unknown_kid_generation,
+            )
+            if cached is not None:
+                return cached
+            if refresh_for_unknown_kid_generation is not None:
+                self._unknown_key_refresh_attempted_at = now
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                metadata_response = await client.get(self._OPENID_URL)
-                metadata_response.raise_for_status()
-                metadata = metadata_response.json()
-                if metadata.get("issuer") != self._EXPECTED_ISSUER:
-                    raise ValueError("Unexpected Bot Framework issuer metadata")
-                if "RS256" not in metadata.get(
-                    "id_token_signing_alg_values_supported", []
-                ):
-                    raise ValueError("Bot Framework metadata does not allow RS256")
-
-                jwks_uri = str(metadata.get("jwks_uri") or "")
-                parsed_uri = urlparse(jwks_uri)
-                if (
-                    parsed_uri.scheme != "https"
-                    or parsed_uri.hostname != "login.botframework.com"
-                ):
-                    raise ValueError("Unexpected Bot Framework signing-key URL")
-
-                keys_response = await client.get(jwks_uri)
-                keys_response.raise_for_status()
-                keys = keys_response.json().get("keys")
-                if not isinstance(keys, list) or not keys:
-                    raise ValueError("Bot Framework signing keys are unavailable")
-
+            keys = await self._fetch_signing_keys()
             self._jwks = keys
             self._jwks_refreshed_at = time.monotonic()
             self._jwks_expires_at = self._jwks_refreshed_at + self._CACHE_TTL_SECONDS
+            self._jwks_generation += 1
             return keys

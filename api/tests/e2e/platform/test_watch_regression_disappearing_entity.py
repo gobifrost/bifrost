@@ -219,8 +219,7 @@ class TestWatchDisappearingEntityRegression:
                 )
             finally:
                 # Release the httpx transport bound to this loop.
-                if client._http is not None:
-                    await client._http.aclose()
+                await client.close()
 
         asyncio.run(_run_batch())
 

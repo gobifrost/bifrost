@@ -10,6 +10,7 @@ import pytest
 from src.models.contracts.policies import FilePolicies
 from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.organizations import Organization
+from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.solutions import Solution
 from src.services.file_policy_service import FilePolicyService
 
@@ -318,6 +319,69 @@ async def test_service_uses_solution_metadata_for_solution_creator_policy(
         path=path,
         user=_user(org.id, user_id=org_creator_id),
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_solution_file_policy_ref_prefers_own_solution_rule(
+    db_session,
+) -> None:
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    solution = Solution(
+        id=uuid4(),
+        slug=f"files-{uuid4().hex[:8]}",
+        name="Files",
+        organization_id=org.id,
+    )
+    rule_name = f"solution_files_{uuid4().hex[:8]}"
+    db_session.add_all([org, solution])
+    await db_session.flush()
+
+    db_session.add_all([
+        PolicyRule(
+            organization_id=org.id,
+            solution_id=None,
+            name=rule_name,
+            domain="file",
+            body={"actions": ["read"], "when": None},
+            created_by=uuid4(),
+        ),
+        PolicyRule(
+            organization_id=org.id,
+            solution_id=solution.id,
+            name=rule_name,
+            domain="file",
+            body={"actions": ["write"], "when": None},
+            created_by=uuid4(),
+        ),
+        FilePolicy(
+            organization_id=org.id,
+            solution_id=solution.id,
+            location="finance",
+            path="reports",
+            policies={"policies": [{"$ref": rule_name}]},
+            created_by=uuid4(),
+        ),
+    ])
+    await db_session.flush()
+
+    service = FilePolicyService(db_session)
+    user = _user(org.id)
+    assert await service.is_allowed(
+        "read",
+        organization_id=org.id,
+        solution_id=solution.id,
+        location="finance",
+        path="reports/q1.txt",
+        user=user,
+    ) is False
+    assert await service.is_allowed(
+        "write",
+        organization_id=org.id,
+        solution_id=solution.id,
+        location="finance",
+        path="reports/q1.txt",
+        user=user,
+    ) is True
 
 
 @pytest.mark.asyncio
