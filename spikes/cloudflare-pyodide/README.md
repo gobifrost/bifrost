@@ -1,5 +1,11 @@
 # BiFrost on Python Workers: empirical spike 0.1.0
 
+Latest lifecycle qualification: [late finite completion after Timeout](backend/LATE-SETTLEMENT.md).
+An actual 40-second engine/SDK success now returns after canonical Timeout; the
+real result/ACK path releases its held handle without overwriting the outcome,
+relaunching, or requiring a per-job process kill. Deployed cancellation and
+untrusted admission remain unaccepted.
+
 Latest native contract repair: [opaque inventory uncertainty](backend/INVENTORY-UNCERTAINTY.md).
 44 focused native cases pass, including Linux controls, terminal replay and owner
 fencing. Missing invocation inventory no longer fabricates a Linux crash result.

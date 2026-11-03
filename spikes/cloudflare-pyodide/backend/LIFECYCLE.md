@@ -80,6 +80,11 @@ The [per-attempt deadline adapter](ATTEMPT-DEADLINE.md) now persists Timeout at
 the original cutoff while the relay stays Ready and the physical obligation
 stays held. It propagates a lost post-commit delivery receipt and replays through
 the existing consumer. No CPU-stop or deployed-accounting claim follows.
+The [finite late-completion qualification](LATE-SETTLEMENT.md) now receives real
+engine Success after logical Timeout and releases its held handle through the
+normal result/ACK path, preserving the canonical outcome. The provider is still
+running before fixture teardown: normal invocation settlement needs no process
+kill. This is finite awaited-work evidence, not arbitrary-code cancellation.
 
 [Tail receipts](TAIL-OBSERVER-QUALIFICATION.md) preserve v1's missing background
 control and v2's five successful native tails. The combined observer/handle

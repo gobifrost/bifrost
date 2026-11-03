@@ -12,7 +12,7 @@ import os
 import re
 import runpy
 import time
-from contextlib import suppress
+from contextlib import suppress, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -27,7 +27,14 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
                concurrent_refresh=False, interrupt_refresh=False, failure_probe=False, transport_waiter=False,
                node_pyodide=False, integration_probe=False, integration_secret_probe=False, benchmark_probe=False,
                worker_loss_probe=False, provider_interruption_probe=False, physical_pool_probe=False, stream_pool_probe=False,
-               stream_interruption_probe=False, automatic_loss_probe=False, attempt_deadline_probe=False):
+               stream_interruption_probe=False, automatic_loss_probe=False, attempt_deadline_probe=False,
+               late_settlement_probe=False):
+    if late_settlement_probe:
+        if any((provider_interruption_probe, stream_interruption_probe, automatic_loss_probe, attempt_deadline_probe,
+                worker_loss_probe, integration_probe, integration_secret_probe, failure_probe, refresh_probe,
+                expired_access, concurrent_refresh, interrupt_refresh, benchmark_probe, isolation_label is not None)):
+            raise RuntimeError('Late settlement uses the fixed normal SDK workflow only')
+        stream_pool_probe = True
     if automatic_loss_probe and attempt_deadline_probe:
         raise RuntimeError('Relay loss and attempt deadline are separate fixed probes')
     stream_interruption_probe = stream_interruption_probe or automatic_loss_probe or attempt_deadline_probe
@@ -226,7 +233,9 @@ async def main(*, isolation_label=None, batch=None, refresh_probe=False, expired
 ''' if integration_probe else ""
     benchmark_code = (f"    from {helper} import measure\n"
                       f"    refresh_evidence.update(await measure({key!r}, {integration_name!r}, {table!r}))\n") if benchmark_probe else ""
-    interruption_code = "    import asyncio\n    await asyncio.sleep(20)\n" if provider_interruption_probe else ""
+    interruption_code = ("    import asyncio\n    await asyncio.sleep(40)\n" if late_settlement_probe
+                         else "    import asyncio\n    await asyncio.sleep(20)\n" if provider_interruption_probe else "")
+    before_effect_code = '    logging.getLogger(__name__).warning("late settlement before deadline")\n' if late_settlement_probe else ''
     source = f'''from bifrost import workflow, config, tables
 from {helper} import fold
 import logging, os
@@ -238,6 +247,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
     refresh_evidence = {{}}
 {refresh_code.rstrip()}
 {failure_code.rstrip()}
+{before_effect_code.rstrip()}
     doc = await tables.upsert({table!r}, id="proof", data={{"value": value + fold(n)}})
 {interruption_code.rstrip()}
 {benchmark_code.rstrip()}
@@ -286,6 +296,14 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
         async with committed_world(get_engine()) as world, helpers["cleanup_fixture_audit"](world, get_engine()):
             org, other = await world.organization(), await world.organization()
             user = await world.person(org)
+            if late_settlement_probe:
+                from src.models.orm.config import Config
+                from src.models.enums import ConfigType
+
+                # Fixture-owned row teardown must not rely on a run credential
+                # after the real deadline consumer revokes it.
+                await world._add(Config(key=key, value={'value': 42}, config_type=ConfigType.INT,
+                    organization_id=org.id, updated_by=str(user.id)))
             permissions = ("configs.read", "configs.readwrite", "tables.read", "tables.readwrite")
             role = await world.role(*permissions, *(("integrations.read", "secrets.read") if integration_probe else ()))
             if integration_probe:
@@ -399,6 +417,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                 async def route_execution(self, *, execution_id, context, credential_route, active_execution):
                     provider_sent = asyncio.Event()
                     self.provider_sent = provider_sent
+                    self.effect_observed = asyncio.Event()
 
                     async def trace_provider(event, _info):
                         # Observe only the fixed provider request's transport phase;
@@ -433,7 +452,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         self.launches += 1
                         headers = {"Authorization": f"Bearer {self.token}"}
                         async with httpx.AsyncClient(base_url="http://api:8000", timeout=60) as api:
-                            async with helpers["seeded_config"](api, headers, key, str(org.id)):
+                            async with (nullcontext() if late_settlement_probe else helpers["seeded_config"](api, headers, key, str(org.id))):
                                 denied = await api.post("/api/sdk/config/get", headers=headers,
                                                         json={"key": key, "scope": str(other.id)})
                                 assert denied.status_code == 403
@@ -468,6 +487,9 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                                     if observed.json()['data']['value'] != expected_value:
                                                         raise RuntimeError('Interruption write positive control failed')
                                                     report['independent_document_value'] = expected_value
+                                                    if late_settlement_probe:
+                                                        self.effect_observed.set()
+                                                        return
                                                     temporary_marker = Path('/interruption/ready.tmp')
                                                     with temporary_marker.open('x') as marker:
                                                         json.dump({'sdk_write_observed': True, 'value': expected_value}, marker)
@@ -478,7 +500,7 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                                     raise RuntimeError('Interruption observer API read failed')
                                                 await asyncio.sleep(0.25)
 
-                                observer = asyncio.create_task(observe_write_for_interruption()) if provider_interruption_probe else None
+                                observer = asyncio.create_task(observe_write_for_interruption()) if provider_interruption_probe or late_settlement_probe else None
                                 try:
                                     async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
                                         request_body = json.loads(json.dumps({"mode": "canonical", "worker_id": str(worker.id),
@@ -554,12 +576,13 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                                 if expected_success:
                                     assert result["result"]["parent_secret_present"] is False
                                 assert result["metrics"]["code_hash"] == manifest[path]
-                                document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
-                                                         params={"scope": str(org.id)})
-                                if expected_success:
+                                if not late_settlement_probe:
+                                    document = await api.get(f"/api/tables/{table}/documents/proof", headers=headers,
+                                                             params={"scope": str(org.id)})
+                                if expected_success and not late_settlement_probe:
                                     assert document.status_code == 200 and document.json()["data"]["value"] == expected_value
                                     report["independent_document_value"] = expected_value
-                                else:
+                                elif not expected_success:
                                     assert document.status_code == 404
                                     report["independent_document_absent"] = True
                                 report["cross_tenant_status"] = denied.status_code
@@ -701,7 +724,69 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None, forbidden_ke
                         report["cancelled_waiter_collection_retained"] = True
                     finally:
                         await cancel_and_join(sent)
-                if provider_interruption_probe:
+                if late_settlement_probe:
+                    from attempt_deadline import supervise_attempt_deadline
+
+                    deadline_task = asyncio.create_task(supervise_attempt_deadline(ref.lease, consumer, pool.info,
+                                                                                pool.physical_pool.transport.collection))
+                    try:
+                        async with asyncio.timeout(20):
+                            await pool.effect_observed.wait()
+                        if not await deadline_task:
+                            raise RuntimeError('Finite invocation completed before the deadline control')
+                    finally:
+                        await cancel_and_join(deadline_task)
+                    if pool.physical_pool.transport.collection.done() or pool.physical_pool._build_heartbeat()['busy_count'] != 1:
+                        raise RuntimeError('Deadline unexpectedly settled the finite invocation')
+                    async with get_db_context() as db:
+                        timed_out = await db.get(Execution, execution.id)
+                        if timed_out.status != ExecutionStatus.TIMEOUT or timed_out.result is not None:
+                            raise RuntimeError('Logical deadline did not persist canonical Timeout')
+                        completed_at = timed_out.completed_at
+                        logs_before = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
+                    async with httpx.AsyncClient(base_url='http://api:8000', timeout=15) as api:
+                        revoked = await api.post('/api/sdk/config/get', headers={'Authorization': 'Bearer ' + pool.token}, json={'key': key})
+                        if revoked.status_code != 401:
+                            raise RuntimeError('Deadline did not revoke before late completion')
+                    late_result = await pool.receipt
+                    if late_result['success'] is not True or late_result['result']['value'] != expected_value:
+                        raise RuntimeError('Finite upstream invocation did not return its actual late success')
+                    original_callback = consumer._handle_result
+
+                    async def lose_late_ack(result):
+                        await original_callback(result)
+                        raise ConnectionError('Injected late settlement ACK loss')
+
+                    consumer._handle_result = lose_late_ack
+                    try:
+                        await journal.reconcile_workflow(ref.lease, 'route', terminal_consumer, pool.info)
+                    except ConnectionError as loss:
+                        if str(loss) != 'Injected late settlement ACK loss':
+                            raise
+                    else:
+                        raise RuntimeError('Late settlement ACK loss was not observed')
+                    finally:
+                        consumer._handle_result = original_callback
+                    if pool.physical_pool._build_heartbeat()['busy_count'] != 1:
+                        raise RuntimeError('Lost settlement ACK prematurely released the invocation')
+                    consumed = await journal.reconcile_workflow(ref.lease, 'route', terminal_consumer, pool.info)
+                    if not consumed or pool.physical_pool.processes or pool.physical_pool._build_heartbeat()['busy_count']:
+                        raise RuntimeError('Actual terminal replay did not release the settled invocation')
+                    async with get_db_context() as db:
+                        row = await db.get(Execution, execution.id)
+                        logs_after = list(await db.scalars(select(ExecutionLog.id).where(ExecutionLog.execution_id == execution.id)))
+                        if row.status != ExecutionStatus.TIMEOUT or row.result is not None or row.completed_at != completed_at:
+                            raise RuntimeError('Late success overwrote canonical Timeout')
+                        if logs_after != logs_before:
+                            raise RuntimeError('Late terminal replay changed persisted logs')
+                    await journal.retire()
+                    report.update(late_settlement_probe=True, canonical_timeout_preserved=True,
+                        deadline_obligation_held_until_actual_terminal=True, late_success_received=True,
+                        late_ack_loss_retained_handle=True, actual_terminal_released_handle=True,
+                        no_redispatch_verified=pool.launches == 1, launches=pool.launches,
+                        access_revoked_before_late_result_status=revoked.status_code,
+                        persisted_log_count=len(logs_after), result=pool.evidence)
+                elif provider_interruption_probe:
                     interrupted_handle = interrupted_info = interrupted_identity = None
                     try:
                         await pool.receipt
@@ -1060,8 +1145,9 @@ if __name__ == "__main__":
         parser.add_argument("--stream-interruption-probe", action="store_true")
         parser.add_argument("--automatic-loss-probe", action="store_true")
         parser.add_argument("--attempt-deadline-probe", action="store_true")
+        parser.add_argument("--late-settlement-probe", action="store_true")
         args = parser.parse_args()
-        asyncio.run(main(attempt_deadline_probe=args.attempt_deadline_probe,
+        asyncio.run(main(late_settlement_probe=args.late_settlement_probe, attempt_deadline_probe=args.attempt_deadline_probe,
                          automatic_loss_probe=args.automatic_loss_probe, stream_interruption_probe=args.stream_interruption_probe,
                          stream_pool_probe=args.stream_pool_probe, physical_pool_probe=args.physical_pool_probe, provider_interruption_probe=args.provider_interruption_probe,
                          worker_loss_probe=args.worker_loss_probe, benchmark_probe=args.benchmark_probe,

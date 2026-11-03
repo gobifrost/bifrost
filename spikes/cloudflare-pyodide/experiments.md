@@ -1,5 +1,24 @@
 # Compact experiment log
 
+## Finite late result settles an invocation after logical Timeout, 2026-11-03
+
+Hypothesis: validated normal completion/EOF can release a held opaque handle
+after canonical Timeout, with no per-job kill or outcome overwrite. Add a fixed
+40-second async workflow, keep provider alive, and deliver the original30-second
+cutoff with the owned native task. Real SDK write70 independently read; native
+deadline persists Timeout/401 while collection stays pending. Actual engine
+returns Success/70 (wall40137ms); late log upload410. First settlement ACK lost:
+handle stays held. Replay through real pool/consumer releases it; Timeout,
+completed_at and log IDs unchanged, one launch/write. Provider independently
+still running/no OOM before harness cleanup. V1 four phases exit0, supervisor
+102.800s, Ruff/Pyright pass; unchanged deadline-helper ten-case proof retained.
+Command: `ct128-canonical-failure.py --late-settlement`, assigned CT128 packet
+in backend/LATE-SETTLEMENT.md. Fixture-owned config teardown avoids using the
+revoked run credential. Raw results/late-settlement and source-bound verifier.
+No cloud/admission or native shared-source changes, no arbitrary CPU-stop claim.
+Next: reusable transport with immutable per-attempt state and same-relay
+concurrency, retaining upstream authority and current admission holds.
+
 ## Owned per-attempt deadline delivery without worker-wide failure, 2026-11-03
 
 Hypothesis: the native companion can deliver an authorized original cutoff through

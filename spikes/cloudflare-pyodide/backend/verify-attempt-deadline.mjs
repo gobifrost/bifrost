@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const base = new URL('../results/attempt-deadline/', import.meta.url);
 const bytes = name => readFile(new URL(name, base));
@@ -28,10 +29,10 @@ for (const report of [initial, failed, final]) {
 }
 for (const name of ['attempt_deadline.py', 'test_attempt_deadline.py', 'canonical-local.py',
   'ct128-canonical-failure.py', 'task_cleanup.py', 'invocation_stream.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), final.packet_sha256[name], name);
+  assert.equal(hash(execFileSync('git', ['show', `9e9f24885:spikes/cloudflare-pyodide/backend/${name}`])), final.packet_sha256[name], name);
 }
 for (const [path, digest] of Object.entries(final.api_overlay_sha256)) {
-  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+  assert.equal(hash(execFileSync('git', ['show', `9e9f24885:${path}`])), digest, path);
 }
 const run = final.stream_interruption_result;
 for (const name of ['attempt_deadline_probe', 'early_deadline_rejected', 'owned_deadline_supervisor_verified',

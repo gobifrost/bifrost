@@ -75,7 +75,7 @@ relay silence was then recovered by the existing API control replica, without
 clock patches, direct recovery calls or a new queue. A per-invocation failure/
 deadline policy is required for a relay that manages multiple invocations;
 stopping the whole relay on one uncertain child can harm unrelated work. Any
-new physical settlement signal remains a proposal, not an existing upstream API.
+additional abnormal physical settlement signal remains a proposal, not an existing upstream API.
 Its authorization/accounting requirements cannot be replaced by a guest log,
 caught exception, revoked token or disconnected HTTP caller.
 
@@ -84,6 +84,10 @@ delivery at the immutable cutoff through the actual upstream consumer, without
 worker-wide recovery or physical release. Its owned native timer retains the
 collection Task and propagates lost delivery receipts for replay. This is a
 tested local increment, not a new public API or production admission grant.
+The [late finite completion case](LATE-SETTLEMENT.md) now also proves normal
+result/EOF settlement and lost-ACK replay after logical Timeout, with the provider
+daemon still running. It does not require per-success isolate destruction or
+certify abnormal noncooperative CPU cancellation.
 
 ### Historical isolation and cancellation probes
 

@@ -81,8 +81,8 @@ runtime startup/admission. The fixture starts supervision after observed collect
 failure; the helper also accepts retained pending Tasks, covered at the unit
 boundary. It is not yet wired as a production dispatcher backend.
 
-Next local qualification: allow a finite invocation to return after logical
-timeout and prove that the real result path settles/releases the held handle
-without overwriting canonical Timeout. Deployed enforcement/accounting and
+The [late finite completion follow-on](LATE-SETTLEMENT.md) now proves that the
+real result path settles/releases the held handle without overwriting canonical
+Timeout locally, including lost settlement ACK/replay. Deployed enforcement/accounting and
 untrusted isolation remain separate acceptance gates. No silent Linux fallback
 or workflow redispatch is introduced.
