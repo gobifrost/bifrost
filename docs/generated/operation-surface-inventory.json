@@ -2590,6 +2590,59 @@
     {
       "observed": {
         "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "workflows.parameters",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.execute"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "WorkflowRepository execution access and execution-context policy",
+        "cli": null,
+        "exclusions": {
+          "cli": "The CLI supplies execution parameters directly and does not render the rerun dialog.",
+          "manifest": "Parameter metadata is derived from the Workflow signature and does not mutate portable definitions.",
+          "mcp": "Parameter metadata is only used to render the authenticated platform rerun dialog.",
+          "native_builder": "Rerun dialog metadata is not a Builder authoring target.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "workflows.parameters",
+        "rest": {
+          "method": "GET",
+          "path": "/api/workflows/{workflow_id}/parameters",
+          "request_model": null,
+          "response_model": "list[WorkflowParameter]"
+        },
+        "side_effects": [],
+        "summary": "Get current parameters for a launchable Workflow",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": [
             "workflows",
             "get"
@@ -10197,7 +10250,7 @@
     "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 694,
+    "rest": 695,
     "sdk": 21
   },
   "schema_version": 1,

@@ -107,6 +107,27 @@ def test_api_shares_fixture_subdir_for_install_from_repo():
     )
 
 
+def test_executor_git_caches_are_separate_and_accessible_to_isolation_fixtures():
+    """Native Git tests need fresh replicas without sharing a checkout."""
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    script = _find_repo_file("test.sh").read_text()
+    for service in ("worker", "scheduler"):
+        source = f"solution-repo-fixtures/git-checkouts/{service}"
+        assert f"${{LOG_DIR:-/tmp/bifrost}}/{source}:/tmp/git" in (
+            compose["services"][service]["volumes"]
+        )
+        assert f'mkdir -p "$LOG_DIR/{source}"' in script
+    assert "${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost" in (
+        compose["services"]["test-runner"]["volumes"]
+    )
+    reset = script.split("reset_state() {", 1)[1].split("\n}", 1)[0]
+    cleanup = '--profile test run --rm --no-deps test-runner python -c'
+    assert cleanup in reset
+    assert reset.index("rm -sfv api worker scheduler") < reset.index(cleanup)
+    assert reset.index(cleanup) < reset.index('up -d --no-build')
+    assert 'Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts")' in reset
+
+
 def test_stack_up_reconciles_running_containers_with_current_compose_config():
     """A healthy long-lived stack may still have stale mounts or environment."""
     script = _find_repo_file("test.sh").read_text()

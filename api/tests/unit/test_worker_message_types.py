@@ -14,26 +14,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from src.models.orm.agent_runs import AgentRun
-
-
-@pytest.mark.asyncio
-async def test_summarize_message_calls_summarizer():
-    """handle_summarize_message claims the summary, then delegates to summarize_run."""
-    from src.jobs.summarize_worker import handle_summarize_message
-
-    run_id = uuid4()
-    with (
-        patch(
-            "src.services.execution.summary_dispatch.claim_summary",
-            new=AsyncMock(return_value=True),
-        ),
-        patch("src.jobs.summarize_worker.summarize_run", new=AsyncMock()) as mock,
-    ):
-        await handle_summarize_message({"run_id": str(run_id), "dispatch_id": str(uuid4())})
-        mock.assert_awaited_once()
-        called_run_id = mock.await_args.args[0]
-        assert isinstance(called_run_id, UUID)
-        assert called_run_id == run_id
+from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 
 
 @pytest.mark.asyncio
@@ -81,6 +62,11 @@ async def test_summarize_failure_marks_run_failed(
         summary_status="pending",
     )
     db_session.add(run)
+    worker_id = uuid4()
+    claim_id = uuid4()
+    db_session.add(ExecutionWorker(id=worker_id, form="static", state="ready", slots=1))
+    await db_session.flush()
+    db_session.add(ExecutionWorkerClaim(id=claim_id, worker_id=worker_id, family="agent_summary", subject_id=run.id))
     # Use commit so the handler's separate session sees the row.
     # Cleanup happens at the end of the test below.
     await db_session.commit()
@@ -98,8 +84,9 @@ async def test_summarize_failure_marks_run_failed(
         ):
             # Should not raise — errors are swallowed to prevent retry loops.
             await handle_summarize_message(
-                {"run_id": str(run.id), "dispatch_id": str(uuid4())},
+                {"run_id": str(run.id), "dispatch_id": str(uuid4()), "claim_id": str(claim_id)},
                 session_factory=async_session_factory,
+                worker_id=worker_id,
             )
 
         # Verify in a fresh session so we see the handler's commit.
@@ -115,6 +102,7 @@ async def test_summarize_failure_marks_run_failed(
     finally:
         # Manual cleanup since we committed past the db_session rollback boundary.
         async with async_session_factory() as cleanup:
+            await cleanup.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
             await cleanup.execute(
                 AgentRun.__table__.delete().where(AgentRun.id == run.id)
             )

@@ -130,7 +130,9 @@ async def get_sdk_config_value(
         The config value with its type, or None when the key is not set
         (the caller maps None to its default).
     """
-    # Canonical SDK config load: cascade (global + org-specific) merged.
+    # Canonical SDK config load: one keyed read with the same global+org
+    # cascade used by listing. This keeps hot ``config.get`` calls from
+    # deserializing every configuration value in the organization.
     # An EXTERNAL portal caller gets org-only — no global tier — so a global
     # secret value is never returned (and never decrypted below). EXT-1 NEW-1.
     # NOTE: attribute access at call time (not a top-level from-import) keeps
@@ -140,12 +142,12 @@ async def get_sdk_config_value(
     repo = config_repo_module.ConfigRepository(
         session, org_id=org_id, is_superuser=True
     )
-    all_config = await repo.merged_for_sdk(external=external_credential_restrictions(caller))
+    entry = await repo.get_for_sdk(
+        key, external=external_credential_restrictions(caller)
+    )
 
-    if key not in all_config:
+    if entry is None:
         return None
-
-    entry = all_config[key]
     raw_value = entry.get("value")
     config_type = entry.get("type", "string")
 

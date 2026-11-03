@@ -6,15 +6,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import exists, func, select, text, tuple_, update
 
 from src.core.database import get_db_context, get_liveness_db_context
-from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
+from src.models.orm.execution_workers import MANAGED_WORKER_FORMS, ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.kubernetes_execution import load_kubernetes_policy
 from src.worker.remote.fencing import fence_remote_owner
+from src.worker.remote.protocol import EXECUTION_HANDLERS
 
 # Shared with the capacity controller: launches and idle drains serialize.
 CAPACITY_LOCK = "bifrost:worker-pool:capacity"
@@ -24,18 +25,8 @@ HEAD_OF_LINE_WAIT = timedelta(seconds=30)
 
 # Handlers this worker build can run, by version. A dispatch for any other
 # (handler, version) stays for a compatible worker.
-SUPPORTED_HANDLERS: tuple[tuple[str, int], ...] = (
-    ("workflow.execute", 1),
-    ("agent.run", 1),
-    ("agent.summarize", 1),
-    ("agent.summarize_backfill", 1),
-)
-# What a physical worker (a remote launcher) runs: workflow runs and agent
-# runs, each in its own child process. Summaries stay in the API.
-REMOTE_WORKER_HANDLERS: tuple[tuple[str, int], ...] = (
-    ("workflow.execute", 1),
-    ("agent.run", 1),
-)
+SUPPORTED_HANDLERS = EXECUTION_HANDLERS
+REMOTE_WORKER_HANDLERS = EXECUTION_HANDLERS
 REMOTE_WORKER_HANDLER_NAMES: tuple[str, ...] = tuple(
     handler for handler, _version in REMOTE_WORKER_HANDLERS
 )
@@ -89,6 +80,32 @@ async def admit_worker(
                 ready_at=now,
                 heartbeat_at=func.now(),
                 last_claim_at=now,
+            )
+            .returning(ExecutionWorker.slots)
+        )
+
+
+async def admit_external_worker(
+    incarnation_id: UUID, *, resource_uid: str, launcher_id: UUID, version: str | None, hostname: str,
+) -> int | None:
+    """Bind the first physical process to a prepared external incarnation."""
+    async with get_db_context() as db:
+        if not await fence_remote_owner(db, for_update=True):
+            return None
+        return await db.scalar(
+            update(ExecutionWorker)
+            .where(
+                ExecutionWorker.id == incarnation_id,
+                ExecutionWorker.form == "external",
+                ExecutionWorker.state == "starting",
+                ExecutionWorker.capacity_resource_uid == resource_uid,
+                ExecutionWorker.remote_launcher_id.is_(None),
+                ExecutionWorker.version.is_not(None),
+                ExecutionWorker.version == version,
+            )
+            .values(
+                state="ready", remote_launcher_id=launcher_id, version=version, hostname=hostname,
+                ready_at=_now(), heartbeat_at=func.now(), last_claim_at=_now(),
             )
             .returning(ExecutionWorker.slots)
         )
@@ -149,6 +166,22 @@ async def mark_static_ready(incarnation_id: UUID, *, memory_budget_bytes: int) -
             .returning(ExecutionWorker.id)
         )
     return ready is not None
+
+
+async def report_worker_handlers(incarnation_id: UUID, handlers: list[str]) -> bool:
+    """Persist negotiated physical capabilities under the current owner fence."""
+    async with get_db_context() as db:
+        if not await fence_remote_owner(db, for_update=True):
+            return False
+        return await db.scalar(
+            update(ExecutionWorker)
+            .where(
+                ExecutionWorker.id == incarnation_id,
+                ExecutionWorker.state.in_(("starting", "ready", "draining")),
+            )
+            .values(supported_handlers=handlers)
+            .returning(ExecutionWorker.id)
+        ) is not None
 
 
 async def claim_next(
@@ -251,8 +284,10 @@ async def claim_next(
             ).one_or_none()
             if row is None:
                 return None
+            claim_id = uuid4()
             db.add(
                 ExecutionWorkerClaim(
+                    id=claim_id,
                     worker_id=incarnation_id,
                     family=row.dispatch_family,
                     subject_id=row.subject,
@@ -276,7 +311,10 @@ async def claim_next(
             claim = PoolClaim(
                 dispatch_id=row.dispatch_id,
                 handler=row.handler,
-                message=row.message,
+                message={
+                    **row.message,
+                    **({"claim_id": str(claim_id)} if row.dispatch_family == "agent_summary" else {}),
+                },
                 subject_id=row.subject,
                 memory_request_bytes=row.memory_request_bytes,
                 queued_at=row.queued_at,
@@ -304,13 +342,15 @@ async def heartbeat_worker(
     memory_pressured: bool,
     memory_budget_bytes: int | None,
     memory_reserved_bytes: int,
+    active_handler_counts: dict[str, int] | None = None,
 ) -> str | None:
     """Renew liveness; return the state the controller sees (None if gone).
 
     A static executor heartbeats while ``starting`` too: its pool start can
     outlast the window after which a silent executor is lost. On the
     executor's own heartbeat connection, so a heartbeat never waits behind
-    the runs' queries."""
+    the runs' queries. Missing handler occupancy is stored as unknown, never
+    inferred to mean that constrained handler slots are idle."""
     async with get_liveness_db_context() as db:
         if not await fence_remote_owner(db, for_update=True):
             return None
@@ -324,6 +364,7 @@ async def heartbeat_worker(
                 # The database's clock: liveness is judged against it.
                 heartbeat_at=func.now(),
                 active_runs=active_runs,
+                active_handler_counts=active_handler_counts,
                 runs_handled=runs_handled,
                 package_generation=package_generation,
                 memory_pressured=memory_pressured,
@@ -374,7 +415,7 @@ async def begin_idle_drain(incarnation_id: UUID) -> bool:
         )
         ready_jobs = await db.scalar(
             select(func.count(ExecutionWorker.id)).where(
-                ExecutionWorker.form == "job",
+                ExecutionWorker.form.in_(MANAGED_WORKER_FORMS),
                 ExecutionWorker.resource_class == "standard",
                 ExecutionWorker.state == "ready",
             )

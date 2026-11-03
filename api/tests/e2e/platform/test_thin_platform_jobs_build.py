@@ -1,8 +1,8 @@
 """Live thin-worker coverage for build and Git-backed PlatformJob handlers.
 
-This is one lifecycle because an independent App deploy creates the retained
-source needed by the SDK update.  The remaining jobs each prove one canonical
-handler crosses the thin worker boundary and leaves its durable outcome behind.
+The App lifecycle retains deploy-to-SDK-update state. Independent Solution and
+Git lifecycles each prove their canonical handlers leave durable outcomes without
+coupling their cleanup or timeout budget to two real App builds.
 """
 
 from __future__ import annotations
@@ -134,16 +134,14 @@ async def _platform_job_id(async_session_factory, *, job_type: str, resource_id:
     return job_id
 
 
-async def test_thin_worker_executes_build_and_git_platform_jobs(
+async def test_thin_worker_executes_application_platform_jobs(
     e2e_client, platform_admin, async_session_factory, request
 ) -> None:
-    """Run the seven build/Git handlers through physical thin worker children.
+    """Run three application jobs through physical thin worker children.
 
-    Cost: seven PlatformJobs.  The deploy and SDK-update jobs each perform a
+    Cost: three PlatformJobs. The deploy and SDK-update jobs each perform a
     real Vite build because their transition proves retained-source rebuilding;
-    publish proves the legacy bundle promotion path; deploy/export prove the
-    Solution artifact paths; and the two Git jobs use local repositories on the
-    shared test mount, so no external service is involved.
+    publish proves the legacy bundle promotion path.
     """
     headers = platform_admin.headers
     suffix = uuid.uuid4().hex[:8]
@@ -235,6 +233,13 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
     )
     assert published["result"]["files_published"] >= 2
 
+
+async def test_thin_worker_executes_solution_artifact_jobs(
+    e2e_client, platform_admin, async_session_factory, request
+) -> None:
+    """Two jobs prove workspace ZIP deployment and durable backup export."""
+    headers = platform_admin.headers
+    suffix = uuid.uuid4().hex[:8]
     solution_response = e2e_client.post(
         "/api/solutions",
         headers=headers,
@@ -261,22 +266,32 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
         "async def thin_solution_workflow():\n"
         "    return 'deployed'\n"
     )
+    solution_archive = io.BytesIO()
+    with zipfile.ZipFile(solution_archive, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "bifrost.solution.yaml",
+            f"slug: thin-solution-{suffix}\nname: Thin Solution\n",
+        )
+        archive.writestr("workflows/thin_solution.py", workflow_source)
+        archive.writestr(
+            ".bifrost/workflows.yaml",
+            json.dumps(
+                {
+                    "workflows": {
+                        str(uuid.uuid4()): {
+                            "name": workflow_name,
+                            "function_name": "thin_solution_workflow",
+                            "path": "workflows/thin_solution.py",
+                            "type": "workflow",
+                        }
+                    }
+                }
+            ),
+        )
     solution_deploy_response = e2e_client.post(
         f"/api/solutions/{solution_id}/deploy",
-        headers=headers,
-        json={
-            "python_files": {"workflows/thin_solution.py": workflow_source},
-            "workflows": [
-                {
-                    "id": str(uuid.uuid4()),
-                    "name": workflow_name,
-                    "function_name": "thin_solution_workflow",
-                    "path": "workflows/thin_solution.py",
-                    "type": "workflow",
-                    "source": workflow_source,
-                }
-            ],
-        },
+        headers={key: value for key, value in headers.items() if key.lower() != "content-type"},
+        files={"file": ("solution.zip", solution_archive.getvalue(), "application/zip")},
     )
     assert solution_deploy_response.status_code == 202, solution_deploy_response.text
     solution_deploy = wait_for_job(
@@ -318,6 +333,13 @@ async def test_thin_worker_executes_build_and_git_platform_jobs(
     with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
         assert ".bifrost/workflows.yaml" in archive.namelist()
 
+
+async def test_thin_worker_executes_git_platform_jobs(
+    e2e_client, platform_admin, async_session_factory, request
+) -> None:
+    """Two jobs prove Solution sync and workspace fetch using local Git remotes."""
+    headers = platform_admin.headers
+    suffix = uuid.uuid4().hex[:8]
     git_solution_slug = f"thin-git-solution-{suffix}"
     git_solution_repo = _make_solution_repository(git_solution_slug)
     git_solution = Solution(

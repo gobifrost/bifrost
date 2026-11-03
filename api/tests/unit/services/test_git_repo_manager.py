@@ -159,6 +159,37 @@ class TestSyncDown:
     """Tests for sync_down operation."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("restore", ["workspace", "checkpoint"])
+    async def test_empty_repository_survives_file_only_storage_round_trip(self, manager, tmp_path, restore):
+        import shutil
+
+        from git import Repo
+
+        source = tmp_path / "source"
+        Repo.init(source, initial_branch="main")
+        target = tmp_path / "fresh-worker"
+
+        async def download_files(_command):
+            for path in source.rglob("*"):
+                if path.is_file():
+                    destination = target / path.relative_to(source)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(path, destination)
+            assert not (target / ".git" / "objects").exists()
+            assert not (target / ".git" / "refs").exists()
+
+        with patch.object(manager, "_run_aws_cli", side_effect=download_files), \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
+            if restore == "workspace":
+                await manager.sync_down(target)
+            else:
+                await manager.restore_workspace_checkpoint(str(uuid4()), target)
+
+        restored = Repo(target)
+        assert restored.git.symbolic_ref("HEAD") == "refs/heads/main"
+        assert not restored.head.is_valid()
+
+    @pytest.mark.asyncio
     async def test_calls_aws_sync_with_correct_args(self, manager, tmp_path):
         with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run, \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
@@ -203,6 +234,43 @@ class TestSyncUp:
 
 class TestStorageBaseline:
     """A working dir is only trusted while S3 _repo/ still matches its last sync."""
+
+    @pytest.mark.asyncio
+    async def test_empty_worker_hydrates_before_checking_freshness(self, manager, tmp_path):
+        async def transfer(_cmd):
+            (tmp_path / ".git").mkdir()
+
+        with patch.object(manager, "_run_aws_cli", side_effect=transfer) as transfer_mock, \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
+            await manager.ensure_storage_unchanged(tmp_path, "main")
+            transfer_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_worker_rejects_write_during_hydration(self, manager, tmp_path):
+        async def transfer(_cmd):
+            (tmp_path / ".git").mkdir()
+
+        with patch.object(manager, "_run_aws_cli", side_effect=transfer), \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(side_effect=["before", "after"])):
+            with pytest.raises(WorkspaceStorageChanged, match="Run Fetch"):
+                await manager.ensure_storage_unchanged(tmp_path, "main")
+
+    @pytest.mark.asyncio
+    async def test_nonempty_worker_is_not_hydrated(self, manager, tmp_path):
+        local = tmp_path / "local-only.txt"
+        local.write_text("do not overwrite")
+        with patch.object(manager, "sync_down", new_callable=AsyncMock) as transfer:
+            with pytest.raises(WorkspaceStorageChanged, match="Nothing was changed"):
+                await manager.ensure_storage_unchanged(tmp_path, "main")
+            transfer.assert_not_awaited()
+        assert local.read_text() == "do not overwrite"
+
+    @pytest.mark.asyncio
+    async def test_empty_worker_without_persisted_git_is_refused(self, manager, tmp_path):
+        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
+            with pytest.raises(WorkspaceStorageChanged, match="Run Fetch"):
+                await manager.ensure_storage_unchanged(tmp_path, "main")
 
     @pytest.mark.asyncio
     async def test_sync_down_trusts_the_listing_taken_before_transfer(self, manager, tmp_path):

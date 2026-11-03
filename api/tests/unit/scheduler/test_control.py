@@ -59,8 +59,8 @@ def _control(lease: FakeLease, **kwargs) -> ControlPlane:
     )
 
 
-# The schedule each system task had in the scheduler before control was
-# extracted. Moving control between hosts must not add, drop or retime any.
+# Expected system schedules, including deliberate catalog changes. Moving
+# control between hosts must not add, drop or retime any of these tasks.
 LEGACY_SCHEDULES = {
     "app_sdk_upgrades": ("interval", {"minutes": 1}, True),
     "schedule_processor": ("cron", {"minute": "*/1"}, False),
@@ -68,6 +68,7 @@ LEGACY_SCHEDULES = {
     "deferred_execution_promoter": ("interval", {"seconds": 60}, True),
     "workspace_bundle_preview_cleanup": ("interval", {"hours": 1}, True),
     "workflow_operation_usage_flush": ("interval", {"minutes": 15}, True),
+    "usage_reporting": ("interval", {"hours": 1}, True),
     "logo_thumbnail_backfill": ("interval", {"minutes": 1}, True),
     "execution_cleanup": ("cron", {"minute": "*/5"}, True),
     "oauth_token_refresh": ("interval", {"minutes": 15}, True),

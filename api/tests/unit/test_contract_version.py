@@ -401,7 +401,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # ADDITIVE shared models; existing CLI contracts and minimum are unchanged.
     # Hosted App SDK provenance adds optional sdk_binding_api_major. Existing
     # clients can ignore the additive field; the CLI minimum remains unchanged.
-    "96bcbe77e663f3dfe4ac7b47ca592dce1de54c292252c5f5b020c57436095677"
+    # External capacity models and daily UsageReport are both additive.
+    # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
+    "88fba09d40e34dbfbb15f4ad882d12b81ab32255d81dc13524928089254c0bc9"
 )
 
 

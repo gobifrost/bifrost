@@ -23,11 +23,11 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.memory_requests import AGENT_RUN_REQUEST_BYTES
-from src.services.work_dispatch import hand_off, stage_dispatch
+from src.services.work_dispatch import WAKE_AGENT_RUN, hand_off, stage_dispatch
 
 logger = logging.getLogger(__name__)
 
-FAMILY = "agent_run"
+FAMILY = WAKE_AGENT_RUN
 HANDLER = "agent.run"
 HANDLER_VERSION = 1
 REDIS_PREFIX = "bifrost:agent_run"
@@ -54,7 +54,7 @@ def stage_agent_run(
 
 
 async def hand_off_agent_run() -> None:
-    await hand_off()
+    await hand_off(FAMILY)
 
 
 async def lock_waiting_agent_run(db: AsyncSession, run_id: UUID) -> bool | None:
@@ -97,7 +97,7 @@ async def release_agent_run(*, worker_id: UUID, run_id: UUID, dispatch_id: UUID)
             )
         )
         await db.commit()
-    await hand_off()
+    await hand_off(FAMILY)
 
 
 async def report_unclaimed_agent_run(

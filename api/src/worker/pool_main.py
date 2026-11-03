@@ -5,7 +5,7 @@ controller as one Kubernetes Job lifetime (it carries an incarnation). A
 *static* worker is a long-running container (the ``scheduler`` and ``worker``
 services, through their entry points) that registers itself and never idles
 out. A remote executor runs workflows, agent runs, services and local platform
-jobs in its launcher's children; the API-resident executor runs summaries.
+jobs and summaries in its launcher's children.
 
 A job worker admits itself
 to its incarnation (Job UID bound before start, pod UID bound once), then
@@ -32,7 +32,7 @@ from uuid import UUID
 
 from shared.schema_gate import wait_for_schema
 from shared.version import get_version
-from src.config import Settings, get_settings
+from src.config import get_settings
 from src.core.database import close_db, get_db_context, get_engine, init_db
 from src.core.redis_client import PendingExecution
 from src.jobs.schedulers.platform_jobs import (
@@ -74,6 +74,10 @@ from src.services.worker_pool.claims import (
     retire_worker,
 )
 from src.services.worker_pool.recovery import UNSTARTED_CLAIM_WINDOW, release_unstarted_claims
+from src.worker.remote.protocol import (
+    HANDLER_CONCURRENCY_LIMITS,
+    WORKER_DRAIN_GRACE_SECONDS as DRAIN_GRACE_SECONDS,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,27 +104,10 @@ SWEEP_SECONDS = 15.0
 HEARTBEAT_SECONDS = 5.0
 # How long a job worker uses the Idle time it read from Settings -> Kubernetes.
 POLICY_REFRESH_SECONDS = 10.0
-DRAIN_GRACE_SECONDS = 300.0
 # How often the platform-job loop looks while it runs jobs or admission holds
 # it back; idle, it waits for a wake-up and sweeps every SWEEP_SECONDS, which
 # is also how often it recovers jobs whose runner lease expired.
 PLATFORM_JOB_POLL_SECONDS = 2.0
-
-
-def executor_database_settings(settings: Settings) -> Settings:
-    """Keep every connection the executor may open, instead of discarding overflow.
-
-    An executor uses the database on every claim and every run. SQLAlchemy
-    closes overflow connections when they are returned, so with a small pool
-    each run reconnected (and re-read asyncpg's type catalogue) on the hot
-    path. The total stays ``pool_size + max_overflow``; only the churn goes.
-    """
-    return settings.model_copy(
-        update={
-            "database_pool_size": settings.database_pool_size + settings.database_max_overflow,
-            "database_max_overflow": 0,
-        }
-    )
 
 
 class PoolWorker:
@@ -255,14 +242,18 @@ class PoolWorker:
         one backfill summary at a time is policy, so a large backfill never
         delays live summaries."""
         handlers = [pair for pair in self._handlers if pair[0] in {"workflow.execute", "agent.run"}]
-        for summary_handler in ("agent.summarize", "agent.summarize_backfill"):
-            if (summary_handler, 1) in self._handlers and not self._tasks[summary_handler]:
+        for summary_handler, limit in HANDLER_CONCURRENCY_LIMITS:
+            if (summary_handler, 1) in self._handlers and len(self._tasks[summary_handler]) < limit:
                 handlers.append((summary_handler, 1))
         return tuple(handlers)
 
+    def active_handler_counts(self) -> dict[str, int]:
+        """Physical task occupancy, including superseded tasks still exiting."""
+        return {handler: len(tasks) for handler, tasks in self._tasks.items()}
+
     async def _initialize_runtime(self) -> bool:
         """Initialize this process's database runtime and join the worker pool."""
-        get_engine(executor_database_settings(self.settings))
+        get_engine(self.settings)
         await init_db()
         await wait_for_schema(get_engine())
         from sqlalchemy.orm import configure_mappers
@@ -629,7 +620,7 @@ class PoolWorker:
                 assert self._agent_consumer is not None
                 await self._agent_consumer.process_message(claim.message)
             else:
-                await handle_summarize_message(claim.message)
+                await self._execute_summary(claim)
         except Exception:
             logger.exception(
                 "Pool run failed in its consumer",
@@ -644,6 +635,10 @@ class PoolWorker:
             else:
                 self.admission.release(str(claim.dispatch_id))
             self.runs_handled += 1
+
+    async def _execute_summary(self, claim: PoolClaim) -> None:
+        """Execute a summary on this executor's physical runtime."""
+        await handle_summarize_message(claim.message, worker_id=self.incarnation_id)
 
     async def _platform_job_loop(self) -> None:
         """Claim local platform jobs while their memory fits the free budget.
@@ -706,14 +701,22 @@ class PoolWorker:
 
     async def _wake_listener(self) -> None:
         """Turn acceptance hints into an immediate claim attempt."""
-        from src.services.work_dispatch import listen_for_pool_wake
+        from src.services.work_dispatch import (
+            DISPATCH_WAKE_FAMILIES,
+            WAKE_PACKAGE,
+            WAKE_PLATFORM_JOB,
+            WAKE_SERVICE,
+            listen_for_pool_wake,
+        )
 
         await listen_for_pool_wake(
             self.settings.redis_url,
-            self._wake,
-            self._platform_wake,
-            self._service_wake,
-            self._package_wake,
+            {
+                **{family: self._wake for family in DISPATCH_WAKE_FAMILIES},
+                WAKE_PLATFORM_JOB: self._platform_wake,
+                WAKE_SERVICE: self._service_wake,
+                WAKE_PACKAGE: self._package_wake,
+            },
         )
 
     async def _package_loop(self) -> None:
@@ -750,6 +753,7 @@ class PoolWorker:
                 state = await asyncio.wait_for(heartbeat_worker(
                     self.incarnation_id,
                     active_runs=self.active_runs(),
+                    active_handler_counts=self.active_handler_counts(),
                     runs_handled=self.runs_handled,
                     package_generation=self.package_generation,
                     memory_pressured=(

@@ -24,7 +24,6 @@ import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructi
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
 import { KubernetesSettings } from "@/pages/settings/KubernetesSettings";
-import { getKubernetesStatus } from "@/services/kubernetes";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -35,7 +34,6 @@ import {
 	DollarSign,
 	Key,
 	Layers3,
-	Loader2,
 	MessageSquareText,
 	Palette,
 	Plug,
@@ -44,7 +42,6 @@ import {
 	Wrench,
 } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
-import { KubernetesIcon } from "@/components/icons/KubernetesIcon";
 
 type SettingsItem = {
 	value: string;
@@ -161,10 +158,10 @@ function findActiveSectionId(sections: SettingsSection[], currentTab: string) {
 	);
 }
 
-const kubernetesSection: SettingsSection = {
-	id: "kubernetes",
-	label: "Kubernetes",
-	icon: KubernetesIcon,
+const workerSection: SettingsSection = {
+	id: "workers",
+	label: "Workers",
+	icon: Container,
 	items: [
 		{
 			value: "kubernetes-executions",
@@ -174,47 +171,16 @@ const kubernetesSection: SettingsSection = {
 		},
 	],
 };
+const allSettingsSections = [...settingsSections, workerSection];
 
 export function Settings() {
 	const navigate = useNavigate();
 	const location = useLocation();
-	// null until the status check answers.
-	const [kubernetesAvailable, setKubernetesAvailable] = useState<
-		boolean | null
-	>(null);
-
-	// The Kubernetes section appears wherever this API may manage
-	// Kubernetes Jobs, whether or not build jobs are isolated.
-	useEffect(() => {
-		let active = true;
-		getKubernetesStatus()
-			.then((status) => {
-				if (active) setKubernetesAvailable(status.configured);
-			})
-			.catch(() => {
-				if (active) setKubernetesAvailable(false);
-			});
-		return () => {
-			active = false;
-		};
-	}, []);
-
 	// Parse the current tab from the URL path
 	const requestedTab = location.pathname.split("/settings/")[1];
 
-	// A link straight to a Kubernetes tab waits on its tab while the status
-	// check is in flight, instead of redirecting before the answer; the
-	// page itself mounts only once the deployment is known to configure it.
-	const showKubernetes =
-		kubernetesAvailable ??
-		kubernetesSection.items.some((item) => item.value === requestedTab);
-	const sections = useMemo(
-		() =>
-			showKubernetes
-				? [...settingsSections, kubernetesSection]
-				: settingsSections,
-		[showKubernetes],
-	);
+	// Scaling and job concurrency apply to every worker provider.
+	const sections = allSettingsSections;
 	const currentTab = sections.some((section) =>
 		section.items.some((item) => item.value === requestedTab),
 	)
@@ -413,21 +379,7 @@ export function Settings() {
 										key={item.value}
 										hidden={item.value !== currentTab}
 									>
-										{kubernetesSection.items.includes(item) &&
-										kubernetesAvailable !== true ? (
-											<p
-												role="status"
-												className="flex items-center gap-2 text-sm text-muted-foreground"
-											>
-												<Loader2
-													aria-hidden="true"
-													className="size-4 animate-spin motion-reduce:animate-none"
-												/>
-												Checking Kubernetes…
-											</p>
-										) : (
-											createElement(item.content)
-										)}
+										{createElement(item.content)}
 									</div>
 								))}
 						</div>

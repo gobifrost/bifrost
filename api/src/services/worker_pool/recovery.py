@@ -19,6 +19,7 @@ from src.services.execution.agent_run_service import announce_ended_agent_run
 from src.services.memory_requests import WORKFLOW_REQUEST_MARGIN_BYTES, record_peak_growth
 from src.services.execution.summary_dispatch import FAMILY as SUMMARY_FAMILY
 from src.services.execution.summary_dispatch import stage_summary
+from src.services.work_dispatch import WAKE_AGENT_RUN, WAKE_WORKFLOW
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,12 @@ class LostRuns:
     workflow_runs: list[UUID] = field(default_factory=list)
     # Agent runs it had claimed; announce_lost_runs ends those still live.
     agent_runs: list[UUID] = field(default_factory=list)
+    summary_runs: list[UUID] = field(default_factory=list)
 
     def extend(self, other: LostRuns) -> None:
         self.workflow_runs.extend(other.workflow_runs)
         self.agent_runs.extend(other.agent_runs)
+        self.summary_runs.extend(other.summary_runs)
 
 
 async def end_runs_of_lost_worker(
@@ -77,8 +80,8 @@ async def end_runs_of_lost_worker(
             )
         )
     ).all()
-    workflow_ids = [subject for family, subject in claims if family == "workflow_execution"]
-    agent_ids = [subject for family, subject in claims if family == "agent_run"]
+    workflow_ids = [subject for family, subject in claims if family == WAKE_WORKFLOW]
+    agent_ids = [subject for family, subject in claims if family == WAKE_AGENT_RUN]
     if agent_ids:
         agent_ids = list((await db.scalars(
             select(AgentRun.id).where(
@@ -133,12 +136,18 @@ async def end_runs_of_lost_worker(
                 "agent_runs": len(agent_ids),
             },
         )
-    return LostRuns(workflow_runs=ended, agent_runs=agent_ids)
+    return LostRuns(workflow_runs=ended, agent_runs=agent_ids, summary_runs=summary_ids)
 
 
 async def announce_lost_runs(lost: LostRuns) -> None:
     """End a lost executor's live agent runs and wake every caller of its runs."""
     await announce_ended_runs(lost.workflow_runs)
+    from src.services.execution.summary_dispatch import report_unclaimed_summary
+
+    for run_id in lost.summary_runs:
+        # The child may have committed its result before it was lost, but not
+        # yet refreshed backfill progress. Canonical aggregation is replay-safe.
+        await report_unclaimed_summary(run_id, {}, EXECUTOR_LOST)
     for run_id in lost.agent_runs:
         try:
             await announce_ended_agent_run(run_id, EXECUTOR_LOST)
@@ -172,7 +181,7 @@ async def release_unstarted_claims(worker_id: UUID, started: set[str]) -> list[U
                     .join(Execution, Execution.id == ExecutionWorkerClaim.subject_id)
                     .where(
                         ExecutionWorkerClaim.worker_id == worker_id,
-                        ExecutionWorkerClaim.family == "workflow_execution",
+                        ExecutionWorkerClaim.family == WAKE_WORKFLOW,
                         recent,
                         Execution.status == ExecutionStatus.RUNNING,
                     )
@@ -200,10 +209,10 @@ async def release_unstarted_claims(worker_id: UUID, started: set[str]) -> list[U
                 ).all()
             )
         unstarted = [
-            (dispatch_id, subject)
-            for dispatch_id, subject in (
+            (dispatch_id, subject, family)
+            for dispatch_id, subject, family in (
                 await db.execute(
-                    select(WorkDispatch.id, WorkDispatch.subject_id).where(
+                    select(WorkDispatch.id, WorkDispatch.subject_id, WorkDispatch.family).where(
                         WorkDispatch.assigned_worker_id == worker_id
                     )
                 )
@@ -213,10 +222,10 @@ async def release_unstarted_claims(worker_id: UUID, started: set[str]) -> list[U
         if unstarted:
             await db.execute(
                 update(WorkDispatch)
-                .where(WorkDispatch.id.in_([dispatch_id for dispatch_id, _ in unstarted]))
+                .where(WorkDispatch.id.in_([dispatch_id for dispatch_id, _, _ in unstarted]))
                 .values(assigned_worker_id=None)
             )
-        released = orphaned + [subject for _, subject in unstarted]
+        released = orphaned + [subject for _, subject, _ in unstarted]
         if released:
             await db.execute(
                 delete(ExecutionWorkerClaim).where(
@@ -232,7 +241,8 @@ async def release_unstarted_claims(worker_id: UUID, started: set[str]) -> list[U
     if unstarted:
         from src.services.work_dispatch import wake_pool_workers
 
-        await wake_pool_workers()
+        for family in {family for _, _, family in unstarted}:
+            await wake_pool_workers(family)
     await announce_ended_runs(ended, CLAIM_NOT_STARTED)
     return ended
 

@@ -10,7 +10,7 @@ provide the internal default `http://api:8000`, and that internal connectivity
 is required for a launcher to become ready.
 
 The API owns the canonical `PoolWorker` control for each authenticated launcher.
-It claims workflows, services, and local PlatformJobs and sends the physical
+It claims workflows, agent runs, summaries, services, and local PlatformJobs and sends the physical
 launcher only the process operations it must perform. Durable workflow claims,
 service leases, and PlatformJob leases stay in PostgreSQL. Child SDK code uses
 scoped API HTTP tokens; it never receives the launcher-control socket. The
@@ -23,15 +23,16 @@ operators.
 
 - **On-demand worker Jobs.** The API's worker controller keeps **Warm Workers**
   (default 1) launchers warm and starts more, up to **Max Workers** (default
-  6), when accepted workflow, service, or PlatformJob work exceeds free
+  6), when accepted workflow, agent, summary, service, or PlatformJob work exceeds free
   physical-launcher capacity. Idle Job workers drain back to the warm minimum.
-  The controller does not add agent capacity.
-- **API agents.** One `ApiAgentExecutor` runs per API process. It accepts only
-  agent runs and summaries from that API process's memory budget. Scale API
-  replicas and API memory independently for agent demand; worker Jobs do not
-  provide overflow capacity for agents.
+  Each capable launcher adds agent-run, live-summary and backfill-summary capacity
+  under the same physical memory budget.
+- **Agent and summary children.** Agent runs and summaries execute in separate
+  children of each physical launcher's agent template. Live summaries and
+  backfill summaries have separate admission slots. API replicas retain control
+  and fencing; they do not execute summary provider calls.
 - **Policy lives in Settings.** Warm Workers, Max Workers, Worker Memory,
-  Largest Worker and Idle Time are set in Settings → Kubernetes → Scaling &
+  Largest Worker and Idle Time are set in Settings → Workers → Scaling &
   Isolation. The controller reads them every pass and launchers read Warm
   Workers and Idle Time when they decide to drain, so a change applies without
   a restart; a Worker Memory change sizes new Jobs only. An upgraded install
@@ -57,7 +58,11 @@ operators.
 ### Upgrading and rolling back
 
 Upgrading from an earlier release works without a manifest change: the
-existing Deployments keep their commands and probes, and work runs on them.
+existing Deployments keep their commands and probes. Upgrade their worker image
+alongside the API and ensure at least one launcher advertises the summary claim
+protocol. Older launchers retain workflow and agent-run eligibility but cannot
+claim summaries; live summaries and backfills remain queued until a capable
+launcher is available. There is no API summary executor as a fallback.
 Applying the new base manifests is recommended: it lets the API start
 on-demand worker Jobs (`k8s/api/rbac.yaml`) and retires the static executors
 (below). Then remove what earlier releases
@@ -201,14 +206,14 @@ retirement. Draining Jobs continue to count toward Max Workers until their
 children finish.
 
 A drain the platform asks for (idle, rotated, maximum lifetime) stops new
-workflow, service, and PlatformJob dispatch to that launcher and lets its
+workflow, agent-run, summary, service, and PlatformJob dispatch to that launcher and lets its
 physical children finish under their own timeout and lease rules. A run without
 a timeout keeps its drained Job (and its place under Max Workers) until it ends,
 and the API logs a warning once such a drain passes the maximum lifetime.
 
-API rollout drain is distinct. An API process drains its `ApiAgentExecutor` for
-up to 300 seconds and its supported deployment gives it a 310-second shutdown
-budget. A launcher whose WebSocket is closed during that lifecycle remains
+API rollout drain is distinct. The API stops accepting launchers and drains the
+canonical executors of still-connected launchers before closing its database
+and transport clients. A launcher whose WebSocket closes before that drain remains
 alive for a successor API replica to adopt; it is not treated as a request to
 kill its children. Keep any launcher pod grace period above the time its own
 running children require:

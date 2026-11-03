@@ -10,13 +10,12 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.services.memory_requests import MIB
 from src.worker.admission import Admission
-from src.worker.api_agent import ApiAgentExecutor
 from src.worker.remote import agent_route
 from src.worker.remote.agent_route import RemoteAgentConsumer
 from src.worker.remote.host import ApiExecutor, Bridge, RemoteSession
@@ -41,7 +40,7 @@ class Launcher:
 
     async def request(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         self.requests.append((action, payload))
-        if action == "agent_run":
+        if action in ("agent_run", "agent_summary"):
             if self.refuse is not None:
                 raise self.refuse
             self.launched.set()
@@ -127,6 +126,45 @@ async def test_a_launch_refused_for_memory_hands_the_run_back(announce, monkeypa
     release.assert_awaited_once_with(
         worker_id=LEASE.worker_id, run_id=UUID(body["run_id"]),
         dispatch_id=UUID(body["dispatch_id"]),
+    )
+    announce.assert_not_awaited()
+    assert consumer.routes == {}
+
+
+@pytest.mark.parametrize("handler", ["agent.summarize", "agent.summarize_backfill"])
+async def test_summary_routes_use_the_physical_worker_and_preserve_the_original_run(announce, monkeypatch, handler) -> None:
+    report = AsyncMock()
+    failure = AsyncMock()
+    monkeypatch.setattr(agent_route, "report_unclaimed_summary", report)
+    monkeypatch.setattr(agent_route, "fail_remote_summary", failure)
+    launcher = Launcher()
+    consumer = RemoteAgentConsumer(launcher, worker_id=LEASE.worker_id)
+    body = {**_body(), "claim_id": str(uuid4())}
+    waiting = asyncio.create_task(consumer.process_message(body, handler=handler))
+    await asyncio.wait_for(launcher.launched.wait(), 1)
+    [route_id] = consumer.routes
+    action, payload = launcher.requests[0]
+    assert action == "agent_summary"
+    assert payload["handler"] == handler
+    assert payload["worker_id"] == str(LEASE.worker_id)
+    assert payload["memory_request_bytes"] == 32 * MIB
+    await consumer.handle_exit({"route_id": route_id, "ok": False, "error": "child crashed"})
+    await asyncio.wait_for(waiting, 1)
+    failure.assert_awaited_once()
+    assert failure.await_args.kwargs["run_id"] == UUID(body["run_id"])
+    announce.assert_not_awaited()
+    assert consumer.routes == {}
+
+
+async def test_summary_memory_refusal_returns_its_dispatch_without_failing_the_agent(announce, monkeypatch) -> None:
+    release = AsyncMock()
+    monkeypatch.setattr(agent_route, "release_summary", release)
+    consumer = RemoteAgentConsumer(Launcher(refuse=MemoryError("pressure")), worker_id=LEASE.worker_id)
+    body = {**_body(), "claim_id": str(uuid4())}
+    await consumer.process_message(body, handler="agent.summarize")
+    release.assert_awaited_once_with(
+        worker_id=LEASE.worker_id, run_id=UUID(body["run_id"]), dispatch_id=UUID(body["dispatch_id"]),
+        claim_id=UUID(body["claim_id"]),
     )
     announce.assert_not_awaited()
     assert consumer.routes == {}
@@ -300,19 +338,22 @@ async def test_an_agent_exit_waits_for_reconciliation_then_is_acknowledged_if_un
     assert _acks(bridge) == ["exit-2"]
 
 
-def test_the_api_executor_runs_only_summaries() -> None:
-    executor = ApiAgentExecutor(Admission(
-        budget_bytes=256 * MIB, under_pressure=lambda: False,
-        running_workflow_ids=set, workflow_growth=dict,
-    ))
-    assert "agent.run" not in {handler for handler, _version in executor._claimable()}
+def test_summary_claims_require_a_capable_physical_launcher() -> None:
+    from src.worker.remote.protocol import EXECUTION_HANDLERS
+
+    bridge = _bridge()
+    assert ("agent.summarize", 1) not in ApiExecutor(bridge, LEASE.worker_id)._claimable()
+    bridge.handlers = EXECUTION_HANDLERS
+    executor = ApiExecutor(bridge, LEASE.worker_id)
+    assert ("agent.summarize", 1) in executor._claimable()
+    assert ("agent.summarize_backfill", 1) in executor._claimable()
 
 
 # --- adoption from inventory -------------------------------------------------
 
 
 @asynccontextmanager
-async def _seeded_run(async_session_factory, *, status: str, claimed: bool = True):
+async def _seeded_run(async_session_factory, *, status: str, claimed: bool = True, family: str = "agent_run"):
     worker_id, run_id = uuid4(), uuid4()
     async with async_session_factory() as session:
         session.add(ExecutionWorker(
@@ -321,7 +362,7 @@ async def _seeded_run(async_session_factory, *, status: str, claimed: bool = Tru
         session.add(AgentRun(id=run_id, trigger_type="sdk", status=status))
         await session.flush()
         if claimed:
-            session.add(ExecutionWorkerClaim(worker_id=worker_id, family="agent_run", subject_id=run_id))
+            session.add(ExecutionWorkerClaim(worker_id=worker_id, family=family, subject_id=run_id))
         await session.commit()
     try:
         yield worker_id, run_id
@@ -358,6 +399,38 @@ async def test_inventory_adopts_a_live_child_of_its_claimed_run(
 
     assert snapshot["agent_runs"] == {route["route_id"]: (run_id, 48 * MIB)}
     transport.request.assert_not_awaited()
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("current", [False, True])
+async def test_inventory_accepts_only_the_current_summary_claim(
+    async_session_factory, monkeypatch, terminal, current,
+) -> None:
+    @asynccontextmanager
+    async def context():
+        async with async_session_factory() as session:
+            yield session
+
+    monkeypatch.setattr("src.core.database.get_db_context", context)
+    async with _seeded_run(async_session_factory, status="completed", family="agent_summary") as (worker_id, run_id):
+        transport = AsyncMock()
+        pool = ThinRemoteProcessPool(transport, worker_id=str(worker_id))
+        async with async_session_factory() as db:
+            claim_id = await db.scalar(select(ExecutionWorkerClaim.id).where(
+                ExecutionWorkerClaim.worker_id == worker_id, ExecutionWorkerClaim.subject_id == run_id,
+            ))
+        route = {**_agent_route(run_id), "kind": "agent_summary", "handler": "agent.summarize_backfill", "claim_id": str(claim_id if current else uuid4())}
+        snapshot = await pool.reconcile_inventory({
+            "version": 1, "routes": [] if terminal else [route],
+            "terminal_routes": [route] if terminal else [],
+        })
+    if current:
+        assert snapshot["summaries"] == {route["route_id"]: (run_id, 48 * MIB, "agent.summarize_backfill", claim_id)}
+        transport.request.assert_not_awaited()
+    else:
+        assert snapshot["summaries"] == {}
+        transport.request.assert_awaited_once()
+        assert transport.request.await_args.args[0] == "terminate"
 
 
 @pytest.mark.parametrize("finished", ["completed", "unclaimed"])
@@ -423,7 +496,7 @@ async def test_a_drain_past_its_grace_ends_live_agent_runs_before_retiring(annou
     executor = ApiExecutor(bridge, LEASE.worker_id)
     executor._on_ready = None
     for name in (
-        "_start_executor", "_claim_loop", "_heartbeat_loop", "_wake_listener",
+        "_initialize_runtime", "_start_executor", "_claim_loop", "_heartbeat_loop", "_wake_listener",
         "_package_loop", "_platform_job_loop",
     ):
         monkeypatch.setattr(executor, name, AsyncMock())

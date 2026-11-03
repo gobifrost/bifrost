@@ -143,6 +143,11 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
         trigger_args={"minutes": 15}, run_at_startup=True,
     ),
     ScheduledTaskDefinition(
+        "usage_reporting", "Send Aggregate Usage Report", "At startup and hourly",
+        callback="src.jobs.schedulers.usage_reporting:report_usage_schedule",
+        trigger_args={"hours": 1}, run_at_startup=True,
+    ),
+    ScheduledTaskDefinition(
         "execution_worker_cleanup", "Clean Up Executors", "Hourly",
         callback="src.services.worker_pool.maintenance:prune_execution_workers",
         trigger_args={"hours": 1},

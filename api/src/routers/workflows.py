@@ -43,6 +43,7 @@ from src.models import (
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
     WorkflowMetadata,
+    WorkflowParameter,
     WorkflowReference,
     WorkflowRolesResponse,
     WorkflowUpdateRequest,
@@ -843,9 +844,12 @@ async def register_workflow(
     # 6b. Reconcile the service definition with the registered row: service
     # rows get an ensured definition; rows converting away from service are
     # parked (disabled + stopped) so stale desire can never launch them.
-    from src.services.service_lifecycle import sync_definition_for_registration
+    from src.services.service_lifecycle import ServiceConflictError, sync_definition_for_registration
 
-    await sync_definition_for_registration(db, workflow, created_by=user.email)
+    try:
+        await sync_definition_for_registration(db, workflow, created_by=user.email)
+    except ServiceConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     await emit_audit(
         db,
@@ -1153,6 +1157,14 @@ async def update_workflow(
         # Update tags if provided
         if request.tags is not None:
             workflow.tags = request.tags
+
+        if workflow.type == "service" and "organization_id" in request.model_fields_set:
+            from src.services.service_lifecycle import ServiceConflictError, sync_service_organization
+
+            try:
+                await sync_service_organization(db, workflow)
+            except ServiceConflictError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
         await db.commit()
         await db.refresh(workflow)
@@ -1743,6 +1755,48 @@ async def remove_role_from_workflow(
         details={"role_id": str(role_id)},
     )
     logger.info(f"Removed role {log_safe(role_id)} from workflow {log_safe(workflow_id)}")
+
+
+@router.get(
+    "/{workflow_id}/parameters",
+    response_model=list[WorkflowParameter],
+    summary="Get launchable Workflow parameters",
+    description=(
+        "Returns current input parameters for a Workflow the caller may execute. "
+        "Uses the same sharing, organization reach, and Solution scope checks as execution."
+    ),
+**operation_route("workflows.parameters"))
+async def get_workflow_parameters(
+    workflow_id: UUID,
+    ctx: Context,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> list[WorkflowParameter]:
+    """Return signature metadata without granting broader Workflow read access."""
+    from shared.sdk_workflow_execution import (
+        SdkWorkflowExecutionError,
+        resolve_sdk_workflow_for_execution,
+    )
+
+    try:
+        resolved = await resolve_sdk_workflow_for_execution(
+            db,
+            user,
+            WorkflowExecutionRequest(workflow_id=str(workflow_id)),
+            context_solution_id=ctx.solution_id,
+            context_app_id=ctx.app_id,
+            context_caller_solution_id=ctx.caller_solution_id,
+            context_dev_solution_id=getattr(ctx, "dev_solution_id", None),
+        )
+    except SdkWorkflowExecutionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+
+    assert resolved.workflow is not None
+    return [
+        WorkflowParameter(**parameter)
+        for parameter in resolved.workflow.parameters_schema or []
+        if isinstance(parameter, dict)
+    ]
 
 
 @router.get(

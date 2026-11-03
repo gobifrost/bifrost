@@ -621,6 +621,7 @@
 | PATCH | `/api/workflows/{workflow_id}` |
 | GET | `/api/workflows/{workflow_id}/compatible-replacements` |
 | POST | `/api/workflows/{workflow_id}/deactivate` |
+| GET | `/api/workflows/{workflow_id}/parameters` |
 | GET | `/api/workflows/{workflow_id}/recommended-access` |
 | POST | `/api/workflows/{workflow_id}/recreate` |
 | POST | `/api/workflows/{workflow_id}/remap` |

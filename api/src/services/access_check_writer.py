@@ -29,7 +29,7 @@ from shared.access_trace_storage import compact_access_check_details
 from src.core.cache.redis_client import get_shared_redis
 from src.core.database import get_db_context
 from src.models.contracts.access_list import AccessEntry
-from src.models.orm import Agent, AgentRun, Artifact, Execution
+from src.models.orm import Agent, AgentRun, Artifact, Execution, User
 from src.services.agent_write_policy import may_use_tools
 from src.repositories.audit_logs import AuditLogRepository
 from src.services.authorization.explain import (
@@ -212,6 +212,7 @@ class _Writer:
         self.collector = collector
         self.operation = operation
         self.stored_run_user_id = collector.run_user_id
+        self._defer_audit_run_user_id = False
         self.run_key = (
             f"agent-run:{collector.agent_run_id}"
             if collector.agent_run_id
@@ -253,8 +254,16 @@ class _Writer:
             await self.redis.eval(_SETTLE_SCRIPT, 1, claim.key, claim.token)
 
     async def _insert(self, **row: Any) -> None:
+        if self._defer_audit_run_user_id:
+            self.stored_run_user_id = await _audit_run_user_id(self.db, self.collector.run_user_id)
+            self._defer_audit_run_user_id = False
+            row["user_id"] = self.stored_run_user_id
         await self.repo.create(**row)
         await self.db.commit()
+
+    def defer_audit_run_user_id(self) -> None:
+        """Resolve the audit FK only if a captured decision is written."""
+        self._defer_audit_run_user_id = True
 
     async def _write_once(self, parts: list[Any], **row: Any) -> bool:
         """Insert the audit ``row`` unless it was written for ``parts`` today;
@@ -370,6 +379,34 @@ def _enforced(note: Note) -> bool:
     return bool(note.facts.get("enforced", False))
 
 
+def _uses_captured_authority(note: Note) -> bool:
+    """Whether ``note`` can be persisted from its enforced request decision.
+
+    Object ownership, coverage gaps, and Run As have observer-side work that
+    must remain current. Other enforced decisions already carry the exact
+    subject and trace used by enforcement.
+    """
+    return (
+        _enforced(note)
+        and note.decision is not None
+        and "owned" not in note.facts
+        and "gap" not in note.facts
+        and note.kind != "run_as"
+    )
+
+
+async def _audit_run_user_id(db: AsyncSession, run_user_id: UUID | None) -> UUID | None:
+    """Return a live audit FK without rebuilding the user's authority.
+
+    An enforced trace remains useful after its original user is deleted, but
+    the audit row must then store a null foreign key just as a normal user
+    deletion would leave behind.
+    """
+    if run_user_id is None:
+        return None
+    return (await db.execute(select(User.id).where(User.id == run_user_id))).scalar_one_or_none()
+
+
 async def _write(db: AsyncSession, collector: Collector, *, operation: str, route: tuple[str, str] | None) -> None:
     writer = _Writer(db, await get_shared_redis(), collector, operation)
     notes: list[tuple[Note, Claim | None]] = []
@@ -380,9 +417,17 @@ async def _write(db: AsyncSession, collector: Collector, *, operation: str, rout
             notes.append((note, claim))
     if not notes:
         return
-    run_user = None if collector.run_user_id is None else await load_run_user(db, collector.run_user_id)
-    writer.stored_run_user_id = None if run_user is None else run_user.user_id
-    powers = None if collector.direct or collector.workflow_id is None else await load_powers(db, collector.workflow_id)
+    if any(not _uses_captured_authority(note) for note, _claim in notes):
+        run_user = None if collector.run_user_id is None else await load_run_user(db, collector.run_user_id)
+        writer.stored_run_user_id = None if run_user is None else run_user.user_id
+        powers = None if collector.direct or collector.workflow_id is None else await load_powers(db, collector.workflow_id)
+    else:
+        # Captured decisions have their run user and trace, but audit
+        # attribution must still respect a deletion after the response. Most
+        # captured permission successes write nothing, so defer this lookup
+        # until an audit row is actually inserted.
+        run_user, powers = None, None
+        writer.defer_audit_run_user_id()
     entry = None if route is None else _entries_by_route().get(route)
     for noted, claim in notes:
         decided_user = run_user if noted.decision is None else noted.decision[0]

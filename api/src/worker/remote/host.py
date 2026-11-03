@@ -26,10 +26,11 @@ from src.models.orm.execution_workers import ExecutionWorker
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
 from src.services.memory_requests import MemoryBudget
 from src.services.worker_pool.claims import (
-    REMOTE_WORKER_HANDLER_NAMES,
-    REMOTE_WORKER_HANDLERS,
+    PoolClaim,
+    admit_external_worker,
     admit_worker,
     register_static_worker,
+    report_worker_handlers,
 )
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
@@ -47,9 +48,11 @@ from src.worker.remote.protocol import (
     ControlEnvelope,
     CredentialRouteChanged,
     FragmentAssembler,
+    LEGACY_EXECUTION_HANDLERS,
     ProtocolError,
     SignedHello,
     hello_credential_protocol,
+    hello_execution_handlers,
     nonce_digest,
     fragment,
     verify_hello,
@@ -69,7 +72,7 @@ def _reply_timeout(action: str) -> float:
     if action in ("package_tool", "recycle"):
         # Package installation uses the existing long bounded pip calls.
         return 600
-    if action == "agent_run":
+    if action in ("agent_run", "agent_summary"):
         # It may wait while the launcher replaces a dead agent template.
         return TEMPLATE_START_TIMEOUT_SECONDS + COMMAND_REPLY_SECONDS
     return COMMAND_REPLY_SECONDS
@@ -105,6 +108,7 @@ class Bridge:
         )
         self.baseline_bytes = self.current
         self.hostname = hello["hostname"]
+        self.handlers = hello.get("handlers", LEGACY_EXECUTION_HANDLERS)
         self.sample_at = time.monotonic()
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.jobs: dict[str, RemoteProcess] = {}
@@ -486,7 +490,7 @@ class ApiExecutor(PoolWorker):
             job_uid="remote-controlled",
             pod_uid="remote-controlled",
             on_ready=ready,
-            handlers=REMOTE_WORKER_HANDLERS,
+            handlers=bridge.handlers,
         )
         self.incarnation_id = incarnation_id
         self.bridge = bridge
@@ -494,7 +498,9 @@ class ApiExecutor(PoolWorker):
         self._reconciled_generation = 0
 
     async def _initialize_runtime(self) -> bool:
-        return True
+        return await report_worker_handlers(
+            self.incarnation_id, [handler for handler, _version in self._handlers],
+        )
 
     async def _start_executor(self) -> None:
         """Keep the canonical heartbeat alive while the launcher bootstraps."""
@@ -532,6 +538,9 @@ class ApiExecutor(PoolWorker):
         if self.bridge.agents is None:
             self.bridge.agents = RemoteAgentConsumer(self.bridge, worker_id=self.incarnation_id)
         return self.bridge.agents
+
+    async def _execute_summary(self, claim: PoolClaim) -> None:
+        await self._make_agent_consumer().process_message(claim.message, handler=claim.handler)
 
     def _measure_budget(self) -> MemoryBudget:
         current, limit = self.bridge.memory()
@@ -630,6 +639,11 @@ class ApiExecutor(PoolWorker):
                 # A same-owner reconnect: its original wait still runs.
                 continue
             self._wait_for_adopted_agent_run(agents.adopt(route_id, run_id), request_bytes)
+        for route_id, (run_id, request_bytes, handler, claim_id) in snapshot.get("summaries", {}).items():
+            if not agents.tracks(route_id):
+                self._wait_for_adopted_agent_run(
+                    agents.adopt(route_id, run_id, handler=handler, claim_id=claim_id), request_bytes,
+                )
         if self._service_claim_loop is None:
             return
         for owned in snapshot["services"]:
@@ -655,7 +669,7 @@ class ApiExecutor(PoolWorker):
     def _wait_for_adopted_agent_run(self, route: AgentRoute, request_bytes: int) -> None:
         """Hold an adopted child's memory and count it as a run until it ends."""
         assert self.admission is not None and self.bridge.agents is not None
-        key = f"agent_run:{route.run_id}"
+        key = f"{route.handler}:{route.run_id}"
         self.admission.hold(key, request_bytes)
 
         async def wait() -> None:
@@ -671,7 +685,7 @@ class ApiExecutor(PoolWorker):
                 self.admission.release(key)
 
         task = asyncio.create_task(wait(), name=f"pool-adopted-agent-{route.run_id}")
-        in_flight = self._tasks["agent.run"]
+        in_flight = self._tasks[route.handler]
         in_flight.add(task)
         task.add_done_callback(in_flight.discard)
 
@@ -888,41 +902,15 @@ class RemoteControlHost:
     def __init__(self) -> None:
         self.owner_id = uuid4()
         self.sessions: dict[UUID, RemoteSession] = {}
-        self.agent_executor: Any = None
-        self.agent_task: asyncio.Task[Any] | None = None
         self.stopping = False
-
-    async def start(self) -> None:
-        """Start the single API-resident agent/summary executor for this replica."""
-        if self.agent_task is not None:
-            return
-        from src.services.memory_requests import measure_budget, under_pressure
-        from src.worker.admission import Admission
-        from src.worker.api_agent import ApiAgentExecutor
-
-        threshold = get_settings().memory_pressure_threshold
-        budget = measure_budget(threshold)
-        admission = Admission(
-            budget_bytes=budget.budget_bytes,
-            under_pressure=lambda: under_pressure(threshold),
-            running_workflow_ids=set,
-            workflow_growth=dict,
-        )
-        self.agent_executor = ApiAgentExecutor(admission)
-        self.agent_task = asyncio.create_task(self.agent_executor.run(), name="api-agent-executor")
-        self.agent_task.add_done_callback(_observe_task)
 
     async def stop(self) -> None:
         """Begin canonical drains before the lifespan closes control sockets."""
         self.stopping = True
-        if self.agent_executor is not None:
-            self.agent_executor.request_stop()
         await asyncio.gather(*(
             session.stop() if session.bridge.connected else session.detach()
             for session in self.sessions.values()
         ), return_exceptions=True)
-        if self.agent_task is not None:
-            await asyncio.gather(self.agent_task, return_exceptions=True)
 
     async def connect(self, socket: WebSocket) -> tuple[RemoteSession, FragmentAssembler]:
         await socket.accept()
@@ -946,6 +934,7 @@ class RemoteControlHost:
                 "pressure_ratio": float(pressure_ratio),
                 "requirements": initial.get("requirements", {}),
                 "hostname": hello.hostname,
+                "handlers": hello_execution_handlers(initial),
             }
             credential_protocol = hello_credential_protocol(initial)
         except (AuthenticationError, ProtocolError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -976,21 +965,45 @@ class RemoteControlHost:
                     )
                 if bound_pod is None:
                     raise AuthenticationError("launcher pod is not the admitted Job pod")
+        elif hello.form == "external":
+            assert hello.resource_uid is not None
+            version = initial.get("version")
+            admitted = await admit_external_worker(
+                hello.incarnation_id, resource_uid=hello.resource_uid,
+                launcher_id=hello.launcher_id, version=version if isinstance(version, str) else None,
+                hostname=hello.hostname,
+            )
+            if admitted is None:
+                async with get_liveness_db_context() as db:
+                    bound_resource = await db.scalar(
+                        select(ExecutionWorker.id).where(
+                            ExecutionWorker.id == hello.incarnation_id,
+                            ExecutionWorker.form == "external",
+                            ExecutionWorker.state.in_(("ready", "draining")),
+                            ExecutionWorker.capacity_resource_uid == hello.resource_uid,
+                            ExecutionWorker.remote_launcher_id == hello.launcher_id,
+                            ExecutionWorker.version.is_not(None),
+                            ExecutionWorker.version == version,
+                        )
+                    )
+                if bound_resource is None:
+                    raise AuthenticationError("launcher is not bound to the prepared capacity resource")
         else:
             async with get_liveness_db_context() as db:
-                existing_static = await db.scalar(
-                    select(ExecutionWorker.id).where(
+                existing_form = await db.scalar(
+                    select(ExecutionWorker.form).where(
                         ExecutionWorker.id == hello.incarnation_id,
-                        ExecutionWorker.form == "static",
                     )
                 )
-            if existing_static is None:
+            if existing_form is not None and existing_form != "static":
+                raise AuthenticationError("static launcher cannot claim a managed incarnation")
+            if existing_form is None:
                 version = initial.get("version")
                 await register_static_worker(
                     hostname=hello.hostname,
                     version=version if isinstance(version, str) else None,
                     incarnation_id=hello.incarnation_id,
-                    supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
+                    supported_handlers=[handler for handler, _version in bootstrap["handlers"]],
                 )
         acquiring_at = time.monotonic()
         lease = await acquire_remote_owner(
@@ -1053,7 +1066,6 @@ async def start_remote_control_host(_application: Any) -> None:
     global _host
     if _host is None:
         _host = RemoteControlHost()
-        await _host.start()
 
 
 async def stop_remote_control_host() -> None:

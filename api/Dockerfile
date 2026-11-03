@@ -46,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     curl \
     gosu \
+    libnss-wrapper \
     git \
     awscli \
     libjemalloc2 \

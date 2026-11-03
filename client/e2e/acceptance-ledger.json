@@ -58,7 +58,7 @@
 			"tests": [
 				{
 					"spec": "executions.admin.spec.ts",
-					"title": "[EXEC-02 desktop] actual rerun creates a new execution with the expected output",
+					"title": "[EXEC-02 desktop] edited rerun creates a new execution with the expected output",
 					"project": "platform-admin",
 					"variant": "desktop",
 					"proof": "real-platform"

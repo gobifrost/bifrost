@@ -232,7 +232,18 @@ class GitRepoManager:
         # shows up as a change rather than being silently absorbed.
         fingerprint = await self._storage_fingerprint()
         await self._run_aws_cli(cmd)
+        self._restore_git_directories(target)
         self._write_storage_baseline(target, fingerprint)
+
+    @staticmethod
+    def _restore_git_directories(target: Path) -> None:
+        # Object storage preserves files, not empty directories. Git requires
+        # both directories even for an unborn branch or fully packed refs.
+        # Restore the repository layout without initializing or changing HEAD.
+        git_dir = target / ".git"
+        if (git_dir / "HEAD").is_file():
+            for name in ("objects", "refs"):
+                (git_dir / name).mkdir(exist_ok=True)
 
     async def sync_up(self, source: Path) -> None:
         """Sync a local directory back to S3 _repo/ with --delete."""
@@ -249,7 +260,14 @@ class GitRepoManager:
         Editor, MCP and CLI writes reach S3 only. An operation that commits the
         working dir or syncs it back to S3 with --delete would otherwise revert
         or delete them.
+
+        Callers hold the repository lock. A newly assigned worker has no local
+        checkout, so hydrate it from the persisted repository first. Never do
+        this over existing files: they may contain local commits or an unfinished
+        merge, and must retain the normal fail-closed freshness check.
         """
+        if work_dir.is_dir() and not any(work_dir.iterdir()):
+            await self.sync_down(work_dir)
         baseline = work_dir / ".git" / STORAGE_BASELINE_FILE
         if not baseline.is_file() or baseline.read_text() != await self._storage_fingerprint():
             raise WorkspaceStorageChanged(
@@ -297,6 +315,7 @@ class GitRepoManager:
         await self._run_aws_cli(
             self._build_sync_cmd(self._checkpoint_uri(checkpoint_id), str(target), delete=True)
         )
+        self._restore_git_directories(target)
 
     async def delete_workspace_checkpoint(self, checkpoint_id: str) -> None:
         """Remove a checkpoint only after successful publication."""

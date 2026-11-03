@@ -29,7 +29,12 @@ import pytest_asyncio
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 from tests.e2e.conftest import write_and_register
-from tests.e2e.fixtures.run_as import RUN_AS_DENIED, create_person, ok, recorded_run_as
+from tests.e2e.fixtures.run_as import (
+    RUN_AS_DENIED,
+    create_person,
+    ok,
+    recorded_run_as,
+)
 
 
 pytestmark = pytest.mark.e2e
@@ -190,6 +195,221 @@ def test_cross_org_execute_is_404(
         json={"workflow_id": org1_scoped_workflow["id"], "input_data": {}},
     )
     assert resp.status_code == 404, resp.text
+
+
+@pytest.fixture(scope="module")
+def workflow_parameter_access_world(
+    e2e_client, platform_admin, org1, org2, async_session_factory
+):
+    """Execution-only callers and Workflow sharing boundaries for parameter reads."""
+    tag = uuid4().hex[:8]
+    admin = platform_admin.headers
+    execute_role = ok(
+        e2e_client.post(
+            "/api/roles",
+            headers=admin,
+            json={"name": f"Workflow Parameter Execute {tag}"},
+        ),
+        201,
+    )
+    no_execute_role = ok(
+        e2e_client.post(
+            "/api/roles",
+            headers=admin,
+            json={"name": f"Workflow Parameter No Execute {tag}"},
+        ),
+        201,
+    )
+    async def grant_execute_permission() -> None:
+        from src.core.database import close_db
+        from src.models.orm.users import RolePermission
+
+        try:
+            async with async_session_factory() as session:
+                session.add(
+                    RolePermission(
+                        role_id=UUID(execute_role["id"]),
+                        permission="workflows.execute",
+                    )
+                )
+                await session.commit()
+        finally:
+            await close_db()
+
+    asyncio.run(grant_execute_permission())
+
+    allowed = create_person(
+        e2e_client,
+        admin,
+        org1,
+        tag,
+        "parameter-allowed",
+        additional=[
+            {
+                "role_id": execute_role["id"],
+                "boundaries": [
+                    {"kind": "organization", "organization_id": org1["id"]}
+                ],
+            }
+        ],
+    )
+    no_execute = create_person(
+        e2e_client,
+        admin,
+        org1,
+        tag,
+        "parameter-no-execute",
+        additional=[],
+    )
+    ok(
+        e2e_client.put(
+            f"/api/users/{no_execute.user_id}/role-assignments",
+            headers=admin,
+            json={"base_role_id": no_execute_role["id"], "additional": []},
+        )
+    )
+    other_org = create_person(
+        e2e_client,
+        admin,
+        org2,
+        tag,
+        "parameter-other-org",
+        additional=[
+            {
+                "role_id": execute_role["id"],
+                "boundaries": [
+                    {"kind": "organization", "organization_id": org2["id"]}
+                ],
+            }
+        ],
+    )
+
+    def register(label: str) -> dict:
+        function = f"e2e_workflow_parameters_{label}_{tag}"
+        return write_and_register(
+            e2e_client,
+            admin,
+            f"{function}.py",
+            WORKFLOW_CONTENT.format(name=function, func=function),
+            function,
+            organization_id=org1["id"],
+        )
+
+    shared_workflow = register("shared")
+    denied_sharing_workflow = register("restricted")
+    ok(
+        e2e_client.patch(
+            f"/api/workflows/{shared_workflow['id']}",
+            headers=admin,
+            json={"access_level": "authenticated"},
+        )
+    )
+    workflow_role = ok(
+        e2e_client.post(
+            "/api/roles",
+            headers=admin,
+            json={"name": f"Workflow Parameter Resource {tag}"},
+        ),
+        201,
+    )
+    ok(
+        e2e_client.patch(
+            f"/api/workflows/{denied_sharing_workflow['id']}",
+            headers=admin,
+            json={"access_level": "role_based", "role_ids": [workflow_role["id"]]},
+        )
+    )
+
+    yield {
+        "allowed": allowed,
+        "no_execute": no_execute,
+        "other_org": other_org,
+        "shared_workflow": shared_workflow,
+        "denied_sharing_workflow": denied_sharing_workflow,
+    }
+
+    for workflow in (shared_workflow, denied_sharing_workflow):
+        e2e_client.delete(
+            f"/api/files/editor?path={workflow['path']}", headers=admin
+        )
+    for person in (allowed, no_execute, other_org):
+        e2e_client.delete(f"/api/users/{person.user_id}", headers=admin)
+    e2e_client.delete(f"/api/roles/{workflow_role['id']}", headers=admin)
+    e2e_client.delete(f"/api/roles/{no_execute_role['id']}", headers=admin)
+    e2e_client.delete(f"/api/roles/{execute_role['id']}", headers=admin)
+
+
+def test_execution_only_user_reads_current_workflow_parameters(
+    e2e_client, workflow_parameter_access_world
+):
+    world = workflow_parameter_access_world
+    response = e2e_client.get(
+        f"/api/workflows/{world['shared_workflow']['id']}/parameters",
+        headers=world["allowed"].headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == [
+        {
+            "name": "foo",
+            "type": "string",
+            "required": False,
+            "label": "Foo",
+            "default_value": "bar",
+            "description": None,
+            "options": None,
+            "python_type": "str",
+            "json_schema": {"type": "string"},
+        }
+    ]
+
+
+def test_parameter_read_respects_workflow_sharing(
+    e2e_client, workflow_parameter_access_world
+):
+    world = workflow_parameter_access_world
+    response = e2e_client.get(
+        f"/api/workflows/{world['denied_sharing_workflow']['id']}/parameters",
+        headers=world["allowed"].headers,
+    )
+
+    assert response.status_code == 404, response.text
+
+
+def test_parameter_read_requires_workflow_execute_permission(
+    e2e_client, workflow_parameter_access_world
+):
+    world = workflow_parameter_access_world
+    response = e2e_client.get(
+        f"/api/workflows/{world['shared_workflow']['id']}/parameters",
+        headers=world["no_execute"].headers,
+    )
+
+    assert response.status_code == 403, response.text
+
+
+def test_parameter_read_respects_original_user_organization_reach(
+    e2e_client, workflow_parameter_access_world
+):
+    world = workflow_parameter_access_world
+    response = e2e_client.get(
+        f"/api/workflows/{world['shared_workflow']['id']}/parameters",
+        headers=world["other_org"].headers,
+    )
+
+    assert response.status_code == 404, response.text
+
+
+def test_parameter_read_respects_solution_inbound_scope(
+    e2e_client, platform_admin, workflow_parameter_access_world
+):
+    response = e2e_client.get(
+        f"/api/workflows/{workflow_parameter_access_world['shared_workflow']['id']}/parameters",
+        headers=platform_admin.headers,
+        params={"solution": str(uuid4())},
+    )
+
+    assert response.status_code == 404, response.text
 
 
 def test_run_as_without_impersonate_users_is_403(

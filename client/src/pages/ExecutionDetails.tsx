@@ -412,7 +412,14 @@ export function ExecutionDetails({
 		}
 	};
 
-	const handleRerunExecution = async () => {
+	const openRerunDialog = () => {
+		setRerunError(undefined);
+		setShowRerunDialog(true);
+	};
+
+	const handleRerunExecution = async (
+		parameters: Record<string, unknown>,
+	) => {
 		if (!execution || rerunBusy.current) return;
 		setRerunError(undefined);
 
@@ -428,7 +435,7 @@ export function ExecutionDetails({
 		try {
 			const result = (await executeWorkflowWithContext(
 				execution.workflow_id,
-				execution.input_data as Record<string, unknown>,
+				parameters,
 			)) as WorkflowExecutionResponse;
 
 			toast.success(
@@ -444,14 +451,14 @@ export function ExecutionDetails({
 						state: {
 							workflow_name: execution.workflow_name,
 							workflow_id: execution.workflow_id,
-							input_data: execution.input_data,
+							input_data: parameters,
 						},
 					});
 				}
 			}
 		} catch {
 			setRerunError(
-				"Couldn't start the workflow. Your original input is ready to retry.",
+				"Couldn't start the workflow. Your edited input is ready to retry.",
 			);
 		} finally {
 			rerunBusy.current = false;
@@ -757,7 +764,7 @@ export function ExecutionDetails({
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={() => setShowRerunDialog(true)}
+						onClick={openRerunDialog}
 						disabled={isRerunning}
 						title="Rerun"
 						aria-label="Rerun execution"
@@ -887,14 +894,21 @@ export function ExecutionDetails({
 					onConfirm={handleCancelExecution}
 				/>
 
-				<ExecutionRerunDialog
-					open={showRerunDialog}
-					onOpenChange={setShowRerunDialog}
-					workflowName={execution.workflow_name}
-					isRerunning={isRerunning}
-					error={rerunError}
-					onConfirm={handleRerunExecution}
-				/>
+				{showRerunDialog && (
+					<ExecutionRerunDialog
+						open={showRerunDialog}
+						onOpenChange={setShowRerunDialog}
+						workflowName={execution.workflow_name}
+						workflowId={execution.workflow_id ?? null}
+						inputData={
+							(execution.input_data as Record<string, unknown>) ??
+							{}
+						}
+						isRerunning={isRerunning}
+						error={rerunError}
+						onConfirm={handleRerunExecution}
+					/>
+				)}
 			</div>
 		);
 	}
@@ -933,7 +947,7 @@ export function ExecutionDetails({
 					}
 					onRerun={
 						canRerunExecution && isComplete
-							? () => setShowRerunDialog(true)
+							? openRerunDialog
 							: undefined
 					}
 					onCancel={
@@ -1069,15 +1083,21 @@ export function ExecutionDetails({
 				onConfirm={handleCancelExecution}
 			/>
 
-			{/* Rerun Confirmation Dialog */}
-			<ExecutionRerunDialog
-				open={showRerunDialog}
-				onOpenChange={setShowRerunDialog}
-				workflowName={execution.workflow_name}
-				isRerunning={isRerunning}
-				error={rerunError}
-				onConfirm={handleRerunExecution}
-			/>
+			{/* Review previous inputs before starting a new execution. */}
+			{showRerunDialog && (
+				<ExecutionRerunDialog
+					open={showRerunDialog}
+					onOpenChange={setShowRerunDialog}
+					workflowName={execution.workflow_name}
+					workflowId={execution.workflow_id ?? null}
+					inputData={
+						(execution.input_data as Record<string, unknown>) ?? {}
+					}
+					isRerunning={isRerunning}
+					error={rerunError}
+					onConfirm={handleRerunExecution}
+				/>
+			)}
 		</div>
 	);
 }

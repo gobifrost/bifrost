@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.principal import UserPrincipal
 from src.models.contracts.kubernetes import KubernetesPolicyUpdate
 from src.routers import kubernetes as router
+from src.services.worker_pool.external_client import CapacityProviderUnavailable
 
 
 @pytest.fixture
@@ -52,6 +53,24 @@ async def test_an_inconsistent_update_is_rejected(
             admin,  # type: ignore[arg-type]
         )
     assert raised.value.status_code == 422
+
+
+async def test_unavailable_provider_returns_503_without_committing(
+    admin: UserPrincipal, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = "Cannot verify capacity provider limits; worker settings were not saved"
+    monkeypatch.setattr(router.KubernetesExecutionService, "update_policy", AsyncMock(
+        side_effect=CapacityProviderUnavailable(message),
+    ))
+    commit = AsyncMock()
+    monkeypatch.setattr(db_session, "commit", commit)
+    with pytest.raises(HTTPException) as error:
+        await router.update_kubernetes_policy(
+            KubernetesPolicyUpdate(max_workers=2), db_session, admin,  # type: ignore[arg-type]
+        )
+    assert error.value.status_code == 503
+    assert error.value.detail == message
+    commit.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

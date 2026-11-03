@@ -9,10 +9,10 @@ Key Components:
     - invalidation: Cache invalidation functions (used by API routes)
 
 Usage (SDK reads):
-    from src.core.cache import get_redis, config_hash_key
+    from src.repositories.config import ConfigRepository
 
-    async with get_redis() as r:
-        data = await r.hget(config_hash_key(org_id), key)
+    repo = ConfigRepository(session, org_id=org_id, is_superuser=True)
+    data = await repo.get_for_sdk(key)
 
 Usage (API invalidation):
     from src.core.cache import invalidate_config

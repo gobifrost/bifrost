@@ -140,6 +140,10 @@ async def set_config(
 
     try:
         write = await repo.set_config(request, updated_by=user.email)
+        # The config cache is versioned. Advance its generation only after the
+        # database row is durable; otherwise a concurrent reader can fill the
+        # new generation from the old transaction state.
+        await ctx.db.commit()
 
         # Upsert to cache after successful write (dual-write pattern).
         # The cache holds the stored value (ciphertext for secrets); the
@@ -196,6 +200,10 @@ async def update_config(
 
     write, old_org_id, old_key = update
     result = write.response
+
+    # Commit before any cache generation advance, including an old-scope
+    # invalidation for a rename or org move.
+    await ctx.db.commit()
 
     new_org_id_str = str(result.org_id) if result.org_id else None
     old_org_id_str = str(old_org_id) if old_org_id else None
@@ -256,6 +264,10 @@ async def delete_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Configuration not found",
         )
+
+    # The invalidation advances a version read by concurrent SDK requests.
+    # Keep the old cache generation visible until this delete is committed.
+    await ctx.db.commit()
 
     # Invalidate cache after successful delete
     org_id_str = str(deleted.organization_id) if deleted.organization_id else None

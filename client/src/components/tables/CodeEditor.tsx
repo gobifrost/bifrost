@@ -25,6 +25,8 @@ export interface CodeEditorProps {
 	onChange: (next: string) => void;
 	/** Monaco needs a unique path per mounted editor — used as `aria-label` in the test mock. */
 	path: string;
+	/** Human-readable field name, separate from the unique Monaco model path. */
+	ariaLabel?: string;
 	/** CSS height; defaults to 320px. */
 	height?: string;
 	/**
@@ -41,6 +43,7 @@ export function CodeEditor({
 	text,
 	onChange,
 	path,
+	ariaLabel,
 	height = "320px",
 	readOnly = false,
 	"data-testid": testId,
@@ -64,7 +67,7 @@ export function CodeEditor({
 					minimap: { enabled: false },
 					scrollBeyondLastLine: false,
 					...monacoAppearance.options,
-					ariaLabel: path || "Structured document",
+					ariaLabel: ariaLabel ?? (path || "Structured document"),
 
 					wordWrap: "on",
 					automaticLayout: true,

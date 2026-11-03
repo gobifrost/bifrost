@@ -8905,6 +8905,20 @@
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
+    "path": "/api/workflows/{workflow_id}/parameters",
+    "permission": "workflows.execute",
+    "reason": "Uses the canonical Workflow execution resolver: original-user reach, resource sharing, Solution scope, and execution permission remain enforced."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
     "path": "/api/workflows/{workflow_id}/recommended-access",
     "permission": "workflows.read",
     "reason": "Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent."

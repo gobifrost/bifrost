@@ -16,6 +16,9 @@ which claims the summary itself before it runs.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from functools import partial
 from typing import Any
 from uuid import UUID
 
@@ -32,7 +35,7 @@ __all__ = ["handle_summarize_message"]
 
 async def summarize_run(
     run_id: UUID,
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]],
 ) -> None:
     """Lazy forwarding wrapper for the heavyweight summarization service.
 
@@ -49,6 +52,8 @@ async def summarize_run(
 async def handle_summarize_message(
     message: dict[str, Any],
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    *,
+    worker_id: UUID,
 ) -> None:
     """Claim ``{"run_id": "...", "dispatch_id": "..."}`` and summarize.
 
@@ -63,25 +68,29 @@ async def handle_summarize_message(
     If the run belongs to a backfill (``summary_backfill_job_id``) the
     outcome is counted against it.
     """
-    from src.services.execution.backfill_tracker import record_backfill_outcome
-    from src.services.execution.summary_dispatch import claim_summary
+    from src.services.execution.backfill_tracker import refresh_backfill_progress
+    from src.services.execution.summary_dispatch import (
+        SummaryOwnershipLost, claim_summary, summary_owner_session,
+    )
 
     factory = session_factory or get_session_factory()
     run_id = UUID(message["run_id"])
+    claim_id = UUID(message["claim_id"])
+    fenced_factory = partial(summary_owner_session, factory, run_id, worker_id, claim_id)
     job_id: UUID | None = None
-    async with factory() as db:
+    async with fenced_factory() as db:
         claimed = await claim_summary(db, run_id, UUID(message["dispatch_id"]))
         await db.commit()
     if not claimed:
         return
-    succeeded = True
     try:
-        await summarize_run(run_id, factory)
+        await summarize_run(run_id, fenced_factory)
+    except SummaryOwnershipLost:
+        raise
     except Exception as exc:
         logger.exception("Summarization failed for run %s", run_id)
-        succeeded = False
         try:
-            async with factory() as db:
+            async with fenced_factory() as db:
                 run = (
                     await db.execute(
                         select(AgentRun).where(AgentRun.id == run_id)
@@ -107,8 +116,6 @@ async def handle_summarize_message(
                     )
                 ).scalar_one_or_none()
                 if run is not None:
-                    if run.summary_status == "failed":
-                        succeeded = False
                     job_id = run.summary_backfill_job_id
         except Exception:
             logger.exception(
@@ -116,9 +123,7 @@ async def handle_summarize_message(
             )
 
     if job_id is not None:
-        await record_backfill_outcome(
+        await refresh_backfill_progress(
             job_id=job_id,
-            run_id=run_id,
-            succeeded=succeeded,
             session_factory=factory,
         )

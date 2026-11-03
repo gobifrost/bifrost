@@ -1,4 +1,4 @@
-"""Reusable execution worker incarnations (one Kubernetes Job lifetime each)."""
+"""Physical executor incarnations and their canonical claims."""
 
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -9,19 +9,20 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.orm.base import Base
 
+MANAGED_WORKER_FORMS = ("job", "external")
+
 
 class ExecutionWorker(Base):
     """One executor incarnation.
 
-    ``form`` is ``job`` (a controller-created Kubernetes Job and the pod it
-    admitted; drains itself when idle) or ``static`` (a long-running
-    Deployment or Compose container that registers itself and never idles
-    out).
+    ``form`` is ``job`` (a Kubernetes resource), ``external`` (a prepared
+    external-provider resource), or ``static`` (a long-running Deployment or
+    Compose container). Managed forms drain when idle; static workers do not.
 
-    States: ``reserved`` (row committed, Job not yet bound) → ``starting``
-    (Job UID bound) → ``ready`` (pod admitted, claiming) → ``draining`` (no
+    States: ``reserved`` (row committed, resource not yet bound) → ``starting``
+    (resource UID bound) → ``ready`` (launcher admitted, claiming) → ``draining`` (no
     new claims) → ``retired``; or ``lost`` (stopped heartbeating, start
-    deadline missed, or its Job vanished).
+    deadline missed, or its resource vanished).
     """
 
     __tablename__ = "execution_workers"
@@ -36,6 +37,10 @@ class ExecutionWorker(Base):
     hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     kubernetes_job_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
     kubernetes_pod_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    capacity_scope: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    capacity_resource_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Durable provider cleanup receipt; loss/retirement and immutable UID remain intact.
+    capacity_resource_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The physical launcher and the API replica controlling it are distinct
     # identities.  A websocket is only a transport for this persisted fence.
     remote_launcher_id: Mapped[UUID | None] = mapped_column(unique=True, nullable=True)
@@ -74,6 +79,9 @@ class ExecutionWorker(Base):
         ),
     )
     active_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Owner-fenced occupancy for handlers with per-worker concurrency limits.
+    # NULL means unreported; capacity planning cannot assume those slots free.
+    active_handler_counts: Mapped[dict[str, int] | None] = mapped_column(JSONB, nullable=True)
     # Over its memory threshold: claims nothing, so its free slots are not
     # capacity the controller can count on.
     memory_pressured: Mapped[bool] = mapped_column(
@@ -108,6 +116,13 @@ class ExecutionWorker(Base):
 
     __table_args__ = (
         Index("ix_execution_workers_state", "state"),
+        Index(
+            "ix_execution_workers_external_cleanup", "capacity_scope",
+            postgresql_where=text(
+                "form = 'external' AND state IN ('lost', 'retired') "
+                "AND capacity_resource_deleted_at IS NULL"
+            ),
+        ),
         Index("ix_execution_workers_remote_owner_lease", "remote_owner_lease_expires_at"),
     )
 

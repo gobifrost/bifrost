@@ -1,32 +1,15 @@
-"""Unit tests for AgentIndexer."""
+"""AgentIndexer tests isolated by the shared database-session rollback."""
 
 from uuid import uuid4
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
 from src.models.orm.agents import Agent, AgentTool
 from src.models.orm.workflows import Workflow
 from src.services.file_storage.indexers.agent import AgentIndexer
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def cleanup_agents(db_session: AsyncSession):
-    """Clean up test agents after each test."""
-    yield
-    await db_session.execute(
-        delete(Agent).where(Agent.created_by == "file_sync")
-    )
-    await db_session.execute(
-        delete(AIModelProfile).where(AIModelProfile.name.like("Indexer Profile %"))
-    )
-    await db_session.execute(
-        delete(AIProviderConnection).where(AIProviderConnection.name.like("Indexer Provider %"))
-    )
-    await db_session.commit()
 
 
 @pytest.mark.e2e

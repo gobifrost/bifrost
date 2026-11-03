@@ -6511,12 +6511,15 @@ class TestDeletionSweepMatchesExport:
     async def test_sweep_never_removes_rows_the_export_excludes(
         self,
         db_session: AsyncSession,
+        tmp_path: Path,
     ):
         from bifrost.manifest import get_all_entity_ids
         from src.models.orm.agents import Agent
         from src.models.orm.applications import Application
+        from src.models.orm.config import Config
         from src.models.orm.events import EventSource, EventSubscription
-        from src.services.manifest_generator import generate_manifest
+        from src.models.orm.integrations import Integration
+        from src.services.github_sync import GitHubSyncService
         from src.services.manifest_import import ManifestResolver
 
         suffix = uuid4().hex[:8]
@@ -6552,15 +6555,45 @@ class TestDeletionSweepMatchesExport:
             id=uuid4(), name=f"sweep-active-{suffix}", system_prompt="x",
             channels=["chat"], is_active=True, created_by="test",
         )
-        db_session.add_all([inactive_sub, exported_agent])
+        exported_integration = Integration(name=f"sweep-exported-{suffix}")
+        excluded_integration = Integration(
+            name=f"sweep-deleted-{suffix}", is_deleted=True,
+        )
+        db_session.add_all([
+            inactive_sub,
+            exported_agent,
+            exported_integration,
+            excluded_integration,
+        ])
         await db_session.flush()
-        excluded_ids = {str(row.id) for row in [*excluded, inactive_sub]}
+        exported_config = Config(
+            key=f"sweep_exported_{suffix}", value={"value": "exported"},
+            integration_id=exported_integration.id, updated_by="test",
+        )
+        standalone_config = Config(
+            key=f"sweep_standalone_{suffix}", value={"value": "standalone"},
+            updated_by="test",
+        )
+        excluded_config = Config(
+            key=f"sweep_excluded_{suffix}", value={"value": "excluded"},
+            integration_id=excluded_integration.id, updated_by="test",
+        )
+        db_session.add_all([exported_config, standalone_config, excluded_config])
+        await db_session.flush()
+        excluded_ids = {
+            *(str(row.id) for row in [*excluded, inactive_sub]),
+            str(excluded_integration.id),
+            str(excluded_config.id),
+        }
 
         try:
-            manifest = await generate_manifest(db_session)
+            await GitHubSyncService._regenerate_manifest_to_dir(db_session, tmp_path)
+            manifest = read_manifest_from_dir(tmp_path / ".bifrost")
             assert not excluded_ids & get_all_entity_ids(manifest)
-            # Removing an exported row from the manifest still sweeps it.
+            # Removing exported rows from the manifest still sweeps them.
             del manifest.agents[str(exported_agent.id)]
+            del manifest.configs[str(exported_config.id)]
+            del manifest.configs[str(standalone_config.id)]
             changes = await ManifestResolver(db_session)._resolve_deletions(
                 manifest=manifest, dry_run=True,
             )
@@ -6570,6 +6603,8 @@ class TestDeletionSweepMatchesExport:
         removed = {c.entity_id for c in changes if c.action == "removed"}
         assert not removed & excluded_ids
         assert str(exported_agent.id) in removed
+        assert str(exported_config.id) in removed
+        assert str(standalone_config.id) in removed
 
     async def test_workspace_export_omits_solution_owned_events(
         self,
