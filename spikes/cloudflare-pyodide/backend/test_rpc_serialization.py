@@ -1,10 +1,21 @@
 import json
 from unittest import TestCase
 
-from rpc_serialization import encode_rpc, RpcResultTooLargeError, MAX_RPC_BYTES
+from rpc_serialization import encode_rpc, encode_engine_rpc, RpcResultTooLargeError, MAX_RPC_BYTES
 
 
 class RpcSerializationTests(TestCase):
+    def test_completed_engine_oversize_has_payload_free_delivery_failure(self):
+        wire = encode_engine_rpc({'kind': 'engine_result', 'body': 'sensitive' * 1000}, True, max_bytes=256)
+        self.assertEqual(json.loads(wire), {'outcome': {'kind': 'rpc_result_too_large'}, 'sdk_close_returned': True})
+        self.assertNotIn('sensitive', wire)
+
+    def test_incomplete_cleanup_and_coroutine_receipts_cannot_be_mapped(self):
+        for outcome, closed in [({'kind': 'engine_result', 'body': 'x' * 1000}, False),
+                                ({'cooperative_task_cancelled': True, 'body': 'x' * 1000}, True)]:
+            with self.assertRaises(RpcResultTooLargeError):
+                encode_engine_rpc(outcome, closed, max_bytes=256)
+
     def test_default_four_mib_boundary(self):
         overhead = len(encode_rpc({'payload': ''}))
         self.assertEqual(len(encode_rpc({'payload': 'x' * (MAX_RPC_BYTES-overhead)})), MAX_RPC_BYTES)

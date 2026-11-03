@@ -19,7 +19,7 @@ test('candidate retains actual engine invocation, envelope mapping and owned SDK
   assert.match(source, /result = execution_result_envelope\(body\["execution_id"\], body\["worker_id"\], result,/);
   assert.match(source, /finally:\n            from bifrost.client import get_client\n            await close_sdk\(get_client\(\)\)\n            cleanup_evidence/);
   assert.match(source, /owner_scheduled=True/);
-  assert.match(source, /return encode_rpc/);
+  assert.match(source, /return encode_engine_rpc/);
   assert.doesNotMatch(source, /json\.loads\(await response\.text\(\)\)/);
   assert.equal(candidate.modules['rpc_serialization.py'].py, serialization);
   assert.match(source, /Candidate RPC only/);

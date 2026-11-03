@@ -372,3 +372,51 @@ read their tested cooperative-runtime source at 5f74ccea1, preserving old receip
 Next: qualify a real engine result exceeding 4 MiB and its provider-failure mapping,
 then measure serialization allocation/interop overhead. Unsuppressed cancellation
 settlement, post-revocation logging and deployed resource enforcement remain gates.
+
+## Real engine RPC overflow and allocation measurements
+
+encode_engine_rpc now substitutes a compact delivery-failure marker only after
+the actual engine returns and owned SDK cleanup completes. The parent binds
+ExecutorRpcResultTooLargeError to its own execution identity and reports
+provider_outcome.rpc_result_too_large with engine_outcome_delivered=false.
+Oversized payloads and user exception text are excluded. Coroutine cancellation
+or incomplete cleanup cannot take this path. A red regression reproduced the
+missing mapping; the fixed cases pass.
+
+The authored fixture returns 5,000,000 characters after real SDK/HTTPS effects.
+V8 failed before engine execution: its older packet lacked the existing
+capability_revocation.py helper imported by the newer fixture. V9 adds that
+tested helper and passes. Both receipts are preserved.
+
+```sh
+python3 /opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-https-v9/run-cooperative-overflow.py
+node spikes/cloudflare-pyodide/backend/verify-cooperative-overflow.mjs
+```
+
+V9 exit0, 72.920-second lifecycle: canonical Failed with RPC delivery error,
+peer Success, SDK closes returned, one launch each, duplicate/lost-ACK
+reconciliation and retirement. Effects are observed and not replayed.
+cooperative-overflow-v9.json binds exact source/runtime/image/packet hashes.
+Provider and disposable stack stopped; volumes preserved; no cloud invocation.
+
+Eight cases pass natively and in Pyodide (rpc-allocation-v15.json). The shared
+rpc_allocation.py additionally measures Python-tracked serializer allocations
+for inputs allocated before tracing starts:
+
+| Payload bytes | Pyodide wire bytes | Pyodide traced peak bytes | Native traced peak bytes |
+| --- | --- | --- | --- |
+| 262144 | 262228 | 525775 | 527207 |
+| 1048576 | 1048660 | 2098731 | 2100255 |
+| 5000000 | 69 (delivery failure) | 5003878 | 5007981 |
+
+These exclude input allocation, runtime baseline, JavaScript, WASM heap capacity
+and non-traced memory. They are not resident/isolate peaks or deployed 128 MiB
+acceptance. No speed/CPU/cost comparison follows. Native raw samples are in
+rpc-allocation-native-v15.json: cached image, network none, 0.5 CPU/256 MiB/
+64 PIDs, 30-second bound. Pyodide uses unchanged network-none 1 CPU/2 GiB/
+128-PID provider and pinned publisher runtime. Both providers are stopped.
+
+Ruff passes. A failed lint-container mount into a read-only directory was
+reconciled as absent and corrected to a separate mount; no rule was waived.
+Historical verifiers retain their tested source. Next: logging obligations after
+revocation; physical settlement and deployed enforcement remain unresolved.

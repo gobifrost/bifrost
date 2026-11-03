@@ -19,7 +19,7 @@ export function withCooperativeRpc(code, cooperativeSource, serializationSource)
     '        return result');
   python += `
 from cooperative_execution import execute_cooperatively, request_cancel
-from rpc_serialization import encode_rpc
+from rpc_serialization import encode_engine_rpc
 
 class Default(EngineEntrypoint):
     async def fetch(self, request):
@@ -42,8 +42,7 @@ class Default(EngineEntrypoint):
             return {"kind": "engine_result", "body": result}
 
         outcome = await execute_cooperatively(execution_id, execute, owner_scheduled=True)
-        return encode_rpc({"outcome": outcome,
-            "sdk_close_returned": cleanup_evidence["sdk_close_returned"]})
+        return encode_engine_rpc(outcome, cleanup_evidence["sdk_close_returned"])
 `;
   return {...code, modules: {...code.modules, 'main.py': {py: python},
     'cooperative_execution.py': {py: cooperativeSource},

@@ -17,3 +17,16 @@ test('coroutine-only receipt never becomes a canonical result or SDK-close proof
     cooperative_task_cancelled: true, physical_stopped: false, execution_settled: false,
   }, sdk_close_returned: true})), /canonical execution remains uncertain/);
 });
+
+test('completed engine RPC oversize maps to explicit provider failure bound to parent identity', async () => {
+  const wire = JSON.stringify({outcome: {kind: 'rpc_result_too_large'}, sdk_close_returned: true});
+  const response = cooperativeRpcResponse(wire, 'parent-run');
+  const result = (await terminalResponse(response)).value;
+  assert.equal(result.execution_id, 'parent-run');
+  assert.equal(result.success, false);
+  assert.equal(result.error_type, 'ExecutorRpcResultTooLargeError');
+  assert.equal(response.headers.get('X-Spike-RPC-Result-Too-Large'), 'true');
+  assert.throws(() => cooperativeRpcResponse(wire), /parent identity required/);
+  assert.throws(() => cooperativeRpcResponse(JSON.stringify({outcome: {kind: 'rpc_result_too_large'},
+    sdk_close_returned: false}), 'parent-run'), /cleanup and parent identity required/);
+});

@@ -50,5 +50,10 @@ replace(`const response=await entrypoint.fetch(new Request('https://attempt.inva
       finally{monitorRunning=false;await monitor;}
       // A coroutine receipt is not a canonical terminal result. Keep the
       // transport uncertain rather than fabricating Cancelled or releasing capacity.
-      const response=cooperativeRpcResponse(rpcWire);`);
+      const response=cooperativeRpcResponse(rpcWire,body.execution_id);`);
+replace('return {runtime_handle:id,result:terminal.value,api_calls:calls,runtime_cleanup,',
+  `return {runtime_handle:id,result:terminal.value,api_calls:calls,runtime_cleanup,
+        ...(response.headers.get('X-Spike-RPC-Result-Too-Large')==='true' ? {provider_outcome:{
+          kind:'rpc_result_too_large',execute_returned:true,engine_outcome_delivered:false,
+          rpc_wire_limit_bytes:4194304}} : {}),`);
 writeFileSync(process.argv[3], source, {flag: 'wx'});

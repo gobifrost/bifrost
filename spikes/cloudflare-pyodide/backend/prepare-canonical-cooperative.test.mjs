@@ -17,7 +17,7 @@ test('separate canonical candidate uses RPC and refuses to map coroutine receipt
     execFileSync(process.execPath, ['--check', output]);
     const candidate = readFileSync(output, 'utf8');
     assert.match(candidate, /entrypoint\.run_execution/);
-    assert.match(candidate, /const response=cooperativeRpcResponse\(rpcWire\)/);
+    assert.match(candidate, /const response=cooperativeRpcResponse\(rpcWire,body\.execution_id\)/);
     assert.doesNotMatch(candidate, /rpc=JSON\.parse/);
     assert.match(candidate, /execution_settled:false/);
     assert.match(candidate, /cooperativeEntries\.delete\(id\)/);

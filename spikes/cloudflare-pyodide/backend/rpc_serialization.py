@@ -23,3 +23,16 @@ def encode_rpc(value, *, max_bytes=MAX_RPC_BYTES):
             raise RpcResultTooLargeError('RPC result exceeds wire budget; workflow effects may already exist')
         chunks.append(chunk)
     return ''.join(chunks)
+
+
+def encode_engine_rpc(outcome, sdk_close_returned, *, max_bytes=MAX_RPC_BYTES):
+    envelope = {'outcome': outcome, 'sdk_close_returned': sdk_close_returned}
+    try:
+        return encode_rpc(envelope, max_bytes=max_bytes)
+    except RpcResultTooLargeError:
+        # Only a returned engine result with completed owned cleanup has this
+        # compact delivery-failure outcome. Cancellation stays uncertain.
+        if outcome.get('kind') != 'engine_result' or sdk_close_returned is not True:
+            raise
+        return encode_rpc({'outcome': {'kind': 'rpc_result_too_large'},
+                           'sdk_close_returned': True}, max_bytes=max_bytes)

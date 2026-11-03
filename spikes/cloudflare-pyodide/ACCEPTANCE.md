@@ -85,6 +85,10 @@ The candidate now enforces a 4 MiB Python RPC wire budget: six cases pass native
 and in actual local Pyodide. A real 1.2 MB engine result preserves existing body-limit
 failure, peer success and cleanup. This bounds transfer size; allocation peak,
 over-limit engine failure mapping and deployed 128 MiB enforcement remain unqualified.
+The v9 overflow follow-up now passes actual 5 MB engine delivery-failure mapping,
+canonical failure, peer success and retirement. Eight cases pass in Pyodide;
+scoped tracing measures serializer allocations, excluding inputs/runtime/JS.
+Total isolate peak, physical settlement and deployed enforcement remain gates.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains
