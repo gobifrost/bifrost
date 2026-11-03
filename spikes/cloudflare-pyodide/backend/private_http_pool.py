@@ -161,6 +161,13 @@ class PrivateHttpWorkflowPool:
                 if previous.fingerprint != fingerprint:
                     raise ConnectionError('Existing workflow dispatch changed; reconcile original attempt')
                 return previous.routed
+            envelope = {'mode': 'canonical', 'worker_id': str(self.worker_id), 'execution_id': execution_id,
+                        'context': frozen, 'manifest': manifest}
+            HttpInvocation.validated_request(envelope)
+            # Budget the longest UTC isoformat string the native pool can add.
+            # This copy is for sizing only; the actual cutoff remains native.
+            HttpInvocation.validated_request({**envelope, 'context': {
+                **frozen, 'workflow_deadline': '9999-12-31T23:59:59.999999+00:00'}})
             slot = _Attempt(fingerprint=fingerprint, invocation=None, evidence=None, info=None,
                 route=None, receipt=None, accepted_monotonic=None, terminal_monotonic=None, launches=0,
                 routed=asyncio.get_running_loop().create_future(),

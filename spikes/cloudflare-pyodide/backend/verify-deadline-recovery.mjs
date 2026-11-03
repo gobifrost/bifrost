@@ -14,7 +14,7 @@ for (const line of before) {
   const name = path.split('/').at(-1);
   const source = name === 'private_http_pool.py'
     ? execFileSync('git', ['show', 'e82e81c84bb8c4e010a2c86aa2e2735d04b6af03:spikes/cloudflare-pyodide/backend/' + name])
-    : await readFile(new URL('./' + name, import.meta.url));
+    : execFileSync('git', ['show', '91dc4a6840189d8aa35c9e3c4d3886788e3d728c:spikes/cloudflare-pyodide/backend/' + name]);
   assert.equal(hash(source), digest, name);
 }
 const raw = await read('deadline-recovery-v2/receipt.json');
@@ -27,7 +27,8 @@ assert.equal(report.physical_termination_verified, false);
 assert.deepEqual(report.running_after_cleanup, []);
 for (const name of ['private_http_pool.py', 'test_private_http_pool.py',
   'shared-native-pool.py', 'ct128-canonical-failure.py']) {
-  assert.equal(hash(await readFile(new URL('./' + name, import.meta.url))), report.packet_sha256[name], name);
+  const tested = execFileSync('git', ['show', '91dc4a6840189d8aa35c9e3c4d3886788e3d728c:spikes/cloudflare-pyodide/backend/' + name]);
+  assert.equal(hash(tested), report.packet_sha256[name], name);
 }
 const probe = report.shared_pool_result;
 for (const field of ['explicit_deadline_receipt_recovery_verified', 'original_deadline_receipt_failure_preserved',

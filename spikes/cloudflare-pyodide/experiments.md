@@ -1025,3 +1025,24 @@ retirement and cleanup pass. Total112.124s includes setup/prewarm/waits/cleanup.
 Artifact: backend/DEADLINE-RECOVERY.md, source-bound verifier and raw results.
 No cloud, new credentials/grants, shared upstream source or runtime setting change;
 no CPU-stop claim. Next: oversized input preflight, startup and deployed gates.
+
+### Exact request preflight before native bookkeeping
+Hypothesis: input that cannot fit the companion HTTP budget should be rejected
+before native context/route/collection state. V1 regression invoked Redis-write
+path before encoder rejection, exit1; Redis/HTTP are doubled in this unit proof.
+Change: reuse physical validated_request encoder before reservation, checking
+original context and sizing-only maximum UTC deadline copy. Budget remains
+262144 bytes, not a smaller context cap. Commands: checked-in request-preflight
+v1/v2 scripts; actual control ct128-canonical-failure.py --retained-http --revision2
+under guarded retained-http-v2 packet. Observed: 54 native tests (3.355s), Ruff/
+Pyright pass; ASCII, escaped Unicode, combined budget negatives and positive
+262137-262144-byte transport request with real native deadline. Actual ordinary-
+size engine/SDK retention still passes, one POST/launch, state/log replay stable,
+credentials401, busy2,2,1,0 and cleanup. Supervisor73.446s includes all setup/waits.
+Artifacts: backend/REQUEST-PREFLIGHT.md, source-bound verifier and raw results.
+Maximum-size Pyodide execution/output/peak memory remain unqualified. No cloud,
+credentials/grants, package/resource/runtime changes. Acceptance ledger reconciled
+with recent proofs, retained tail evidence, current official lifecycle/limits docs
+and current cloud hold; no per-success isolate kill requirement or implied absence
+of platform CPU enforcement. Next: supported startup/registration and remaining
+output/memory/deployed acceptance boundaries, keeping public admission disabled.

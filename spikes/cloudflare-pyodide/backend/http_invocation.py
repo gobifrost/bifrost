@@ -34,8 +34,9 @@ class HttpInvocation:
             raise ValueError('Invocation framing and session headers are reserved')
         return copied
 
-    def __init__(self, endpoint, envelope, on_accepted, *, headers=None):
-        self._endpoint = self.validated_endpoint(endpoint)
+    @staticmethod
+    def validated_request(envelope):
+        """Share exact identity/byte validation with pre-dispatch admission."""
         if not isinstance(envelope, dict):
             raise ValueError('Canonical invocation identity required')
         execution_id = envelope.get('execution_id')
@@ -50,11 +51,14 @@ class HttpInvocation:
         body = json.dumps(envelope, allow_nan=False, separators=(',', ':')).encode('utf-8')
         if len(body) > 262144:
             raise ValueError('Invocation request exceeds bound')
-        self._execution_id = execution_id
-        self._body = body
+        return execution_id, body
+
+    def __init__(self, endpoint, envelope, on_accepted, *, headers=None):
+        self._endpoint = self.validated_endpoint(endpoint)
+        self._execution_id, self._body = self.validated_request(envelope)
         self._headers = self.validated_headers(headers)
         self._headers.update({'Accept': 'application/x-ndjson', 'Content-Type': 'application/json'})
-        self._reader = InvocationStream(execution_id, on_accepted)
+        self._reader = InvocationStream(self._execution_id, on_accepted)
         self._started = False
 
     def __repr__(self):

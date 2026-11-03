@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 
+from http_invocation import HttpInvocation
 from private_http_pool import PrivateHttpWorkflowPool
 from src.worker.remote.protocol import CredentialRouteChanged
 
@@ -98,6 +99,54 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         self.redis_write.assert_not_awaited()
         self.assertEqual(self.pool.journal.inventory(), [])
         self.assertEqual(self.pool.mux.retained_count, 0)
+
+    async def test_oversized_first_dispatch_is_rejected_before_native_bookkeeping(self):
+        self.enterContext(patch.object(self.pool.native, '_get_redis',
+            new=AsyncMock(return_value=SimpleNamespace(delete=AsyncMock()))))
+        self.provider()
+        with self.assertRaises(ValueError):
+            await self.route({**self.context, 'parameters': {'blob': 'x' * 262144}})
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        with self.assertRaises(KeyError):
+            self.pool.attempt(self.run)
+
+    async def test_escaped_unicode_is_budgeted_as_encoded_bytes_before_bookkeeping(self):
+        with self.assertRaises(ValueError):
+            await self.route({**self.context, 'parameters': {'blob': '\u6f22' * 50000}})
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+
+    async def test_combined_manifest_and_context_budget_precedes_bookkeeping(self):
+        self.run = str(uuid4())
+        manifest = {f'm{i}_' + 'x' * 490 + '.py': 'a' * 64 for i in range(128)}
+        self.pool.bind_manifest(self.run, manifest)
+        self.context.update(execution_id=self.run, file_path=next(iter(manifest)), parameters={'blob': 'x' * 200000})
+        self.active['execution_id'] = self.run
+        with self.assertRaises(ValueError):
+            await self.route()
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+
+    async def test_maximum_budget_request_is_not_replaced_by_a_smaller_context_limit(self):
+        context = {**self.context, 'parameters': {'blob': ''},
+                   'workflow_deadline': '9999-12-31T23:59:59.999999+00:00'}
+        envelope = {'mode': 'canonical', 'worker_id': str(self.worker), 'execution_id': self.run,
+                    'context': context, 'manifest': self.manifest}
+        _, empty = HttpInvocation.validated_request(envelope)
+        self.context['parameters'] = {'blob': 'x' * (262144 - len(empty))}
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        self.assertLessEqual(len(json.dumps(self.sent[0], separators=(',', ':')).encode()), 262144)
+        self.assertGreaterEqual(len(json.dumps(self.sent[0], separators=(',', ':')).encode()), 262137)
+        self.assertNotEqual(self.sent[0]['context']['workflow_deadline'], context['workflow_deadline'])
+        finish.set()
+        await self.pool.attempt(self.run).delivery
+        await self.pool.retire()
 
     async def test_duplicate_snapshot_and_ack_retirement_use_actual_native_pool(self):
         entered, release = asyncio.Event(), asyncio.Event()
