@@ -8,6 +8,39 @@ from sdk_cleanup import close_sdk, _pending
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
         result = {"runtime": require_runtime(), "probes": {}}
+        import hashlib, inspect, ssl
+        from httpx import Limits
+        from httpx._transports.jsfetch import JavascriptFetchTransport, AsyncJavascriptFetchTransport
+        cases = {
+            "default": {}, "verify_false": {"verify": False},
+            "ca_path": {"verify": "/nonexistent-synthetic-ca.pem"},
+            "ssl_context": {"verify": ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)},
+            "client_certificate": {"cert": ("/synthetic-cert.pem", "/synthetic-key.pem")},
+            "proxy": {"proxy": "https://synthetic-proxy.invalid"},
+            "unix_socket": {"uds": "/synthetic.sock"},
+            "local_address": {"local_address": "192.0.2.1"},
+            "retries": {"retries": 2}, "http2": {"http2": True},
+            "http1_disabled": {"http1": False},
+            "pool_limits": {"limits": Limits(max_connections=1)},
+            "socket_options": {"socket_options": [(1, 2, 3)]},
+        }
+        result["transport_options"] = {}
+        for transport_type in (JavascriptFetchTransport, AsyncJavascriptFetchTransport):
+            observed = {}
+            for name, options in cases.items():
+                try:
+                    transport = transport_type(**options)
+                    observed[name] = {"accepted": True, "instance_keys": sorted(vars(transport))}
+                    if isinstance(transport, AsyncJavascriptFetchTransport):
+                        await transport.aclose()
+                    else:
+                        transport.close()
+                except Exception as error:
+                    observed[name] = {"accepted": False, "error_type": type(error).__name__}
+            result["transport_options"][transport_type.__name__] = observed
+        result["transport_source_sha256"] = hashlib.sha256(
+            inspect.getsource(importlib.import_module("httpx._transports.jsfetch")).encode()).hexdigest()
+        result["transport_network_requests_attempted"] = 0
         for name in ("ssl", "certifi", "bifrost.client"):
             try:
                 module = importlib.import_module(name)

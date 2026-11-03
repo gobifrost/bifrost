@@ -1284,3 +1284,17 @@ Artifacts: backend/BOOTSTRAP-PROVENANCE.md and results/bootstrap-provenance.
 No cloud use; no readiness upgrade. Next: unsupported fetch transport options
 must fail before effects; deployed cancellation/isolation and canonical startup/
 prelaunch retirement remain open.
+
+## 2026-11-03 — Actual transport-option constructors
+Hypothesis: bundled fetch transports silently accept native-only options.
+Change: credential-free probe instantiates both actual transport classes with13
+cases each; source hash observed from actual runtime matches preserved source.
+Command: CT128 ct128-sdk-probe.py --revision8, cached cf dev,1CPU/2GiB provider,
+network none/null outbound, same guest allocation. Exit0,26accepted/empty-state;
+normal and cooperatively canceled SDKclose controls still pass. No request is
+sent by constructor cases; zero field is scope declaration, not network telemetry.
+Artifact: backend/TRANSPORT-OPTIONS.md; results/transport-options/receipt.json.
+No patch/compile needed: missing fetch contract cannot be supplied by a wheel.
+Next: explicit capability/admission seam; blanket SSLContext refusal would reject
+upstream SDK default too. Runtime pre-effect enforcement NOT implemented, untrusted
+admission disabled. No new cloud use, credentials, or setting changes.

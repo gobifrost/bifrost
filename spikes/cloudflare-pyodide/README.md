@@ -12,6 +12,9 @@ executor. Public/untrusted admission stays disabled. Start with
   Earlier receipts retain their pins.
 * [Owned SDK close completion](backend/OWNED-SDK-CLOSE.md): cooperative waiter
   cancellation no longer skips sync close; actual platform interruption remains unproved.
+* [HTTP transport option boundary](backend/TRANSPORT-OPTIONS.md): 26 actual local
+  constructor cases silently accept unsupported settings; pre-effect enforcement
+  remains incomplete and untrusted admission stays disabled.
 * [Lossless JSON and measured parent overhead](backend/JSON-TRANSPORT-PERFORMANCE.md)
 * [Output-frame and child-body budgets](backend/BODY-BUDGET.md)
 * [Local memory boundary](backend/MEMORY-PRESSURE.md)

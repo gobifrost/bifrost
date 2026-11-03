@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const read = name => JSON.parse(readFileSync(new URL('results/owned-sdk-close/' + name + '.json', root), 'utf8').replace(/^\uFEFF/, ''));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const probe = read('probe');
-assert.equal(hash(readFileSync(new URL('backend/latest-sdk-probe-entry.mjs', root))), probe.packet_sha256['project/backend/latest-sdk-probe-entry.mjs']);
+assert.equal(hash(execFileSync('git', ['show', '0b3b84f8ebb2406bb9cd627b976065c1e97bb044:spikes/cloudflare-pyodide/backend/latest-sdk-probe-entry.mjs'])), probe.packet_sha256['project/backend/latest-sdk-probe-entry.mjs']);
 assert.deepEqual(probe.observation.body.interrupted_close, {
   waiter_cancelled: true, async_closed_after_release: true, owner_cleanup_done: true,
   sync_closed_at_cancel: false, sync_closed_without_followup: true,
