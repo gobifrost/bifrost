@@ -1,0 +1,15 @@
+{
+  "key": "pr:1211",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal Product Updates review metadata repair for already reviewed omit dispositions; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1211",
+      "https://github.com/gobifrost/bifrost/pull/1200",
+      "https://github.com/gobifrost/bifrost/pull/1202",
+      "Jack authorized this metadata repair and approved the existing omit classifications in the private review thread. Original contributions by MTG-Thomas; source ports are Midtown-Technology-Group/bifrost#798 and #1247."
+    ]
+  }
+}
