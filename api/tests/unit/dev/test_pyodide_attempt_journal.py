@@ -86,7 +86,7 @@ async def test_distinct_live_remote_owner_cannot_adopt_another_launchers_route(o
         assert await ownership.owns_remote_session(lease)
         assert await ownership.owns_remote_session(other)
         receipt = await journal.dispatch(lease, "route", "execution", launch)
-        await receipt
+        assert await receipt == {"execution_id": "execution", "success": True}
         with pytest.raises(ValueError, match="route owner conflict"):
             await journal.dispatch(other, "route", "execution", launch)
         accept = AsyncMock(return_value=True)
@@ -178,7 +178,7 @@ async def test_failed_collection_is_not_a_terminal_receipt_or_physical_stop(owne
     launch = AsyncMock(side_effect=error("must-not-appear-in-inventory"))
     receipt = await journal.dispatch(lease, "route", "execution", launch)
     with pytest.raises(error):
-        await receipt
+        _ = await receipt
     inventory = journal.inventory()
     assert "terminal" not in inventory[0]
     assert inventory[0]["collection_state"] == ("cancelled" if cancelled else "failed")
@@ -229,7 +229,7 @@ async def test_upstream_retained_result_recovers_failed_collection_and_lost_ack(
     launch = AsyncMock(side_effect=ConnectionError("provider response lost"))
     receipt = await journal.dispatch(lease, "route", execution_id, launch)
     with pytest.raises(ConnectionError):
-        await receipt
+        _ = await receipt
     launcher = Launcher(AsyncMock(send=AsyncMock(side_effect=OSError("control disconnected"))),
         identity=LauncherIdentity(lease.launcher_id, uuid4(), None, None, "unit", "static"),
         secret="unit-only-not-a-live-credential")
@@ -321,7 +321,7 @@ async def test_retained_result_rejects_unbound_or_inapplicable_delivery(owner, c
         assert await receipt == {"execution_id": "execution", "success": True}
     elif case != "collector-pending":
         with pytest.raises(ConnectionError):
-            await receipt
+            _ = await receipt
     result = {"execution_id": "execution", "success": True}
     event = {"event": "result", "route_id": "route", "_event_id": "retained", "result": result}
     consumer = SimpleNamespace(owner_worker_id=lease.worker_id, _handle_result=AsyncMock())

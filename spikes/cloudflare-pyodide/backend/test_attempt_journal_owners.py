@@ -19,7 +19,7 @@ class RouteOwnerTests(unittest.IsolatedAsyncioTestCase):
         self.journal = attempt_journal.AttemptJournal()
         self.launch = AsyncMock(return_value={'execution_id': 'execution', 'success': True})
         self.receipt = await self.journal.dispatch(self.lease, 'route', 'execution', self.launch)
-        await self.receipt
+        self.assertEqual(await self.receipt, {'execution_id': 'execution', 'success': True})
 
     async def test_another_live_worker_cannot_retrieve_route_result(self):
         other = replace(self.lease, worker_id=uuid4())
@@ -51,7 +51,7 @@ class RouteOwnerTests(unittest.IsolatedAsyncioTestCase):
         failed = AsyncMock(side_effect=ConnectionError('synthetic response loss'))
         receipt = await self.journal.dispatch(self.lease, 'failed-route', 'failed-execution', failed)
         with self.assertRaises(ConnectionError):
-            await receipt
+            _ = await receipt
         other = replace(self.lease, worker_id=uuid4())
         consumer = SimpleNamespace(owner_worker_id=other.worker_id, _handle_result=AsyncMock())
         execution = SimpleNamespace(execution_id='failed-execution', attach_transport_metadata=lambda value: value)
