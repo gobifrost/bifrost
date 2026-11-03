@@ -8,10 +8,17 @@
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1203"
   },
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1203",
-      "Port of MTG fork PR #1224; unknown-kid refresh throttling with four regression tests."
+      "https://github.com/Midtown-Technology-Group/bifrost/pull/1224",
+      "Contributor credit: @MTG-Thomas authored the port and original implementation; existing author commits are preserved.",
+      "Jack approved the protected merge lifecycle in the private review thread after reviewing behavior, evidence, and limitations.",
+      "Security review of 025f6c019928d8be78bfe47f1cb62702b4ad2226..270d07319c8cf1a5e0197a19bf94d1c40dce21dc: unknown-key refresh attempts are fenced by the instance lock, successful refresh generations are reused, and failed unknown-key attempts start the five-minute cooldown. The process registry reuses the adapter instance.",
+      "Authentication remains fail-closed: RS256, issuer, audience, expiry, service URL matching, HTTPS, and Teams key endorsement checks are retained; metadata issuer and signing-key host validation are unchanged.",
+      "Verification: head CI Unit Tests, Lint & Type Check, and CodeQL succeeded. Added regression coverage exercises concurrent unknown keys, failed-refresh cooldown, cache readers waiting on the lock, and generation/cooldown reuse. No live Microsoft authentication was exercised.",
+      "Accepted limits: cooldown is per API process; legitimate new keys can wait up to five minutes; cold/expired-cache fetch failures are outside the unknown-key cooldown. No actionable defect found in the scoped patch.",
+      "Copy review: existing Other / hardening summary accurately describes the scoped unknown-key refresh behavior."
     ]
   },
   "category": "hardening"
