@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from src.models.contracts.agents import ChatStreamChunk
     from src.models.orm.agent_runs import AgentRun
+    from src.services.execution.queue_tracker import QueuePositionRefresher
 
 from src.config import get_settings
 from src.core.cache.keys import (
@@ -89,6 +90,20 @@ class ConnectionManager:
     connections: dict[str, set[WebSocket]] = field(default_factory=dict)
     # Resilient pub/sub listener for receiving messages
     _pubsub_listener: ResilientPubSubListener | None = None
+    _queue_refresher: QueuePositionRefresher | None = field(default=None, init=False)
+
+    def request_queue_position_refresh(self, *, announce: bool = False) -> None:
+        """Coalesce advisory queue work outside admission and delivery paths."""
+        if not announce and not any(
+            sockets for channel, sockets in self.connections.items()
+            if channel.startswith("execution:")
+        ):
+            return
+        if self._queue_refresher is None:
+            from src.services.execution.queue_tracker import QueuePositionRefresher
+
+            self._queue_refresher = QueuePositionRefresher(self)
+        self._queue_refresher.request(announce=announce)
 
     async def connect(self, websocket: WebSocket, channels: list[str]) -> None:
         """
@@ -113,6 +128,7 @@ class ConnectionManager:
                 self.connections[channel] = set()
             self.connections[channel].add(websocket)
             logger.debug(f"WebSocket connected to channel: {log_safe(channel)}")
+        self.request_queue_position_refresh()
 
     def disconnect(self, websocket: WebSocket) -> None:
         """Remove WebSocket from all channels."""
@@ -164,7 +180,7 @@ class ConnectionManager:
             return
 
         dead_connections = set()
-        for websocket in self.connections[channel]:
+        for websocket in tuple(self.connections[channel]):
             try:
                 dispatcher = getattr(websocket, "_delivery_dispatcher", None)
                 if dispatcher is None:
@@ -206,6 +222,9 @@ class ConnectionManager:
             async def on_message(channel: str, data: dict) -> None:
                 # Strip "bifrost:" prefix from channel
                 local_channel = channel.replace("bifrost:", "")
+                if local_channel == "queue:positions":
+                    self.request_queue_position_refresh()
+                    return
                 await self._send_local(local_channel, data)
                 await self._bridge_service_log(local_channel, data)
 
@@ -224,6 +243,9 @@ class ConnectionManager:
         """Clean up connections."""
         if self._pubsub_listener:
             await self._pubsub_listener.stop()
+        if self._queue_refresher:
+            await self._queue_refresher.close()
+            self._queue_refresher = None
 
 
 # Global connection manager instance

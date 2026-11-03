@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -38,8 +38,9 @@ def harness(
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     redis = AsyncMock()
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", lambda: redis)
+    refresh_requested = Mock()
     monkeypatch.setattr(
-        "src.services.execution.queue_tracker.publish_queue_positions", AsyncMock()
+        "src.services.execution.queue_tracker.request_queue_position_refresh", refresh_requested
     )
     updates = AsyncMock()
     monkeypatch.setattr("src.core.pubsub.publish_execution_update", updates)
@@ -49,6 +50,7 @@ def harness(
         wakes = wake
         cache = redis
         live_updates = updates
+        queue_refresh = refresh_requested
 
         async def execution(self, execution_id: str) -> Execution | None:
             async with async_session_factory() as session:
@@ -130,6 +132,7 @@ async def test_acceptance_commits_a_pending_run_before_waking_executors(harness)
         1,
     )
     harness.wakes.assert_awaited_once()
+    harness.queue_refresh.assert_called_once_with()
     from src.services.execution.queue_tracker import get_queued_executions
 
     async with harness.sessions() as session:
@@ -151,18 +154,6 @@ async def test_reconciler_leaves_a_young_dispatch_alone(harness) -> None:
 
     await work_dispatch.reconcile_work_dispatches()
 
-    assert await harness.dispatch(execution_id) is not None
-
-
-async def test_queue_snapshot_outage_does_not_fail_acceptance(harness, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(
-        "src.services.execution.queue_tracker.publish_queue_positions",
-        AsyncMock(side_effect=ConnectionError("queue snapshot unavailable")),
-    )
-
-    execution_id = await _accept()
-
-    assert (await harness.execution(execution_id)).status == ExecutionStatus.PENDING
     assert await harness.dispatch(execution_id) is not None
 
 
