@@ -491,6 +491,7 @@
 | GET | `/api/sdk/context` |
 | GET | `/api/sdk/download` |
 | POST | `/api/sdk/integrations/delete_mapping` |
+| POST | `/api/sdk/integrations/find_mapping` |
 | POST | `/api/sdk/integrations/get` |
 | POST | `/api/sdk/integrations/get_mapping` |
 | POST | `/api/sdk/integrations/list_mappings` |
