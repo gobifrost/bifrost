@@ -296,3 +296,33 @@ exception alone cannot provide it. SDK-close completion after unsuppressed
 cancellation is also not externally established by this failed transport path.
 Independent local work remains: RPC numeric fidelity, marshaling budgets and log
 obligations. No cloud, production or ordinary-backend change was made.
+
+## RPC numeric fidelity repair
+
+The candidate's ordinary JSON.parse rounded9007199254740993 to9007199254740992
+before HTTP framing. A red regression in cooperative-rpc-result.test.mjs also
+reproduced signed-zero/exponent changes. cooperative-rpc-result.mjs now uses the
+existing parseLosslessJson; the canonical candidate invokes this helper rather
+than parsing RPC results itself. Coroutine-only receipts still cannot become
+canonical terminal results. Eight focused parser/composition cases pass.
+
+Actual CT128 engine/SDK qualification also passes (cooperative-numeric-v6.json).
+The workflow checks positive/negative9007199254740993 and0.1 parameters before
+effects, then returns the positive integer for independent canonical persistence
+verification. Negative-result, signed-zero and exponent output preservation are
+unit-level proof here, not additional deployed/engine observations. The first
+verifier incorrectly expected a negative result field; inspection corrected it
+to the actual fixture contract without changing the runtime result.
+
+```sh
+python3 /opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-https-v6/run-cooperative-numeric.py
+node spikes/cloudflare-pyodide/backend/verify-cooperative-numeric.mjs
+```
+
+The explicit wrapper combines existing controller https_fixture/numeric_result
+options; no controller/upstream changes or extra queue are introduced. Exit0,
+72.459-second lifecycle, one launch per run, canonical Failed/Success, real SDK
+effects, four independent HTTPS forwards, reconciliation and owned SDK close.
+Exact packet hashes and existing engine/SDK/bundle/image pins remain in the raw
+receipt. Provider and disposable stack stopped; volumes preserved; no cloud use.
+Marshaling size/memory bounds remain next, independent of numeric correctness.

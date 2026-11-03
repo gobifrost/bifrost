@@ -77,6 +77,10 @@ unqualified. Accepted external writes can still commit after cancellation.
 The unsuppressed v6 diagnostic observes failed collection, canonical Timeout,
 credential401, retained native capacity and actual retirement refusal. Its run
 remains incomplete/exit1; no trusted physical-settlement acknowledgment exists.
+cooperative-numeric-v6 fixes rounding introduced by the candidate RPC parse:
+actual engine checks large signed integer parameters before effects and preserves
+the positive result through canonical persistence. Existing lossless parsing is
+reused. Marshaling bounds and deployed memory remain unqualified.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

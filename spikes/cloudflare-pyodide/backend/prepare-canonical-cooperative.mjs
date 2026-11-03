@@ -8,6 +8,7 @@ function replace(before, after) {
   source = source.replace(before, after);
 }
 replace('const httpsExecutions=new Map();', `import {withCooperativeRpc} from './cooperative-runtime.mjs';
+import {cooperativeRpcResponse} from './cooperative-rpc-result.mjs';
 import cooperativeSource from './cooperative-code.mjs';
 const cooperativeEntries=new Map();
 const httpsExecutions=new Map();`);
@@ -43,12 +44,10 @@ replace(`const response=await entrypoint.fetch(new Request('https://attempt.inva
           }
         }
       })();
-      let rpc;
-      try{rpc=JSON.parse(await Promise.race([pending,monitor.then(()=>pending)]));}
+      let rpcWire;
+      try{rpcWire=await Promise.race([pending,monitor.then(()=>pending)]);}
       finally{monitorRunning=false;await monitor;}
       // A coroutine receipt is not a canonical terminal result. Keep the
       // transport uncertain rather than fabricating Cancelled or releasing capacity.
-      if(rpc.outcome?.kind!=='engine_result')throw new Error('Cooperative coroutine settled; canonical execution remains uncertain');
-      const response=Response.json(rpc.outcome.body,{headers:{
-        'X-Spike-SDK-Close-Returned':rpc.sdk_close_returned===true ? 'true' : 'false'}});`);
+      const response=cooperativeRpcResponse(rpcWire);`);
 writeFileSync(process.argv[3], source, {flag: 'wx'});
