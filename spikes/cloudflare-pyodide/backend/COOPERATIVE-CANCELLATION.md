@@ -150,3 +150,28 @@ actual run_authorized_attempt under this scheduler and retains owned SDK close.
 It must preserve original success/error envelopes and report coroutine-only
 cancellation separately; no synthetic canonical Cancelled result or capacity
 release is authorized by this mechanism alone.
+
+## Engine candidate composition (not executed yet)
+
+cooperative-runtime.mjs now composes a candidate from the actual runtimeCode
+object. It preserves the existing run_authorized_attempt call, original result
+envelope mapping and close_sdk finally block. It consumes the response inside
+the execution invocation and returns a JSON string through RPC. Direct fetch
+is refused. Control RPC requests only the bound coroutine cancellation; the
+owner-scheduled monitor remains responsible for delivery. The candidate reports
+actual SDK-close completion separately from its result/coroutine receipt.
+It does not manufacture a canonical Cancelled envelope or release capacity.
+
+Three local Node cases pass (composition, source-shape refusal and packaging).
+They inspect the real runtime entry template without importing the generated
+bundle; they do not execute the engine. A generated Python entry with SHA256
+e0532bf409b6828ce1050d897c8b7459792d74d7695a4a73001f964fa4c7eb55
+also passes native Python bytecode compilation in CT128's cached dependency
+image, network-none, 0.5 CPU/256 MiB/64 PIDs, 30-second bound. The owned container
+is removed; source remains inbox/cooperative-engine-v1.py. Compilation performs
+no imports or workflow execution and establishes syntax only.
+
+Next: wire this explicit candidate into a separate canonical fixture, keeping
+ordinary runtime/dispatcher behavior unchanged, and run genuine run-credential
+engine/SDK cases plus cancellation cleanup. Source composition and syntax do not
+qualify engine integration, canonical terminal cancellation or deployed behavior.
