@@ -260,3 +260,39 @@ Next: unsuppressed engine cancellation must retain uncertain transport/capacity
 and reconcile through existing upstream recovery. Separately qualify bounded
 RPC result marshaling, log obligations after revocation and real deployed limits.
 No new cloud invocation, public admission or ordinary backend behavior changed.
+
+## Unsuppressed engine cancellation: logical recovery, physical obligation retained
+
+The generator's explicit --unsuppressed variant re-raises CancelledError instead
+of returning success. V5 exposed a harness defect: the deliberate consumer-ACK
+hold also prevented its deadline callback. It timed out waiting for canonical
+Timeout. engine-unsuppressed-v5.json preserves the failed run and source hashes;
+no product deadline defect is inferred from that blocked fixture callback.
+
+V6 releases that test-only hold once failed collection is observed. The actual
+engine-backed collection fails with ConnectionError and supplies no engine
+terminal result. The original canonical deadline then produces Timeout, access
+gets401, and native busy_count stays1. Calling adapter.retire actually refuses
+with "unacknowledged physical routes remain". The previously accepted held vendor
+write still commits when explicitly released. No synthetic Cancelled envelope,
+retry, forced ACK or automatic capacity release was introduced.
+
+```sh
+python3 /opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-cancel-v6/ct128-canonical-failure.py --https-cancel --revision 6
+```
+
+This run exits1 and qualification_passed remains false: after recording the
+diagnostic it deliberately stops at unqualified retirement. It is not a passing
+end-to-end cancellation qualification. engine-unsuppressed-v6.json records
+100.153-second full lifecycle, exact commands/source hashes and stopped test
+stack. engine-unsuppressed-v6-diagnostic.json captures the bounded observation
+before fixture cleanup. verify-engine-unsuppressed.mjs verifies those facts and
+the generated source, without upgrading the result. V6 source compiles through
+the actual test runner; generator regression cases pass. Volumes are preserved.
+
+Remaining settlement needs trustworthy provider/invocation termination evidence
+and an owner-fenced acknowledgment of canonical recovery. Timeout/401 or a caught
+exception alone cannot provide it. SDK-close completion after unsuppressed
+cancellation is also not externally established by this failed transport path.
+Independent local work remains: RPC numeric fidelity, marshaling budgets and log
+obligations. No cloud, production or ordinary-backend change was made.

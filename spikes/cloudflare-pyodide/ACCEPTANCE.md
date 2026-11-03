@@ -74,6 +74,9 @@ canonical Success. A parent-invocation monitor fixes the preserved cross-request
 stub failure. Consumer ACK is deliberately held by the fixture; unsuppressed
 cancellation recovery, post-revocation log obligations and physical stop remain
 unqualified. Accepted external writes can still commit after cancellation.
+The unsuppressed v6 diagnostic observes failed collection, canonical Timeout,
+credential401, retained native capacity and actual retirement refusal. Its run
+remains incomplete/exit1; no trusted physical-settlement acknowledgment exists.
 
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains

@@ -24,3 +24,19 @@ test('engine cancel fixture preserves owner fencing and labels deliberate ACK ho
     assert.throws(() => execFileSync(process.execPath, [script, input, output], {stdio: 'pipe'}));
   } finally {rmSync(directory, {recursive: true, force: true});}
 });
+
+test('unsuppressed diagnostic demands failed collection and real deadline before reporting uncertainty', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'engine-cancel-unsuppressed-'));
+  const input = fileURLToPath(new URL('shared-native-pool.py', import.meta.url));
+  const script = fileURLToPath(new URL('prepare-engine-cancel-fixture.mjs', import.meta.url));
+  const output = join(directory, 'fixture.py');
+  try {
+    execFileSync(process.execPath, [script, input, output, '--unsuppressed']);
+    const source = readFileSync(output, 'utf8');
+    assert.doesNotMatch(source, /engine_cooperative_cancel_suppressed/);
+    assert.match(source, /Unsuppressed cancellation fabricated an engine result/);
+    assert.match(source, /current\.status == ExecutionStatus\.TIMEOUT/);
+    assert.match(source, /after_timeout\.status_code != 401/);
+    assert.match(source, /Unsuppressed cancellation retains uncertain native obligation/);
+  } finally {rmSync(directory, {recursive: true, force: true});}
+});
