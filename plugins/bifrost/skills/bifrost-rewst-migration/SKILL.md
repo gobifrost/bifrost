@@ -16,11 +16,17 @@ capabilities; carry no other installation's IDs, credentials, progress, or polic
 ## Choose the requested stage
 
 - **Start a reusable pilot:** install the repository's
-  [Rewst Migration Solution](https://github.com/gobifrost/bifrost/tree/codex/rewst-migration-skill/examples/rewst-migration).
+  [Rewst Migration Solution](https://github.com/gobifrost/bifrost/tree/main/examples/rewst-migration).
   Start with its labeled sample, then follow its Configuration and live-export
   steps. The private Rewst API adapter remains unverified against a current
   customer account. Use the app's Agent Handoff to resume through the user's
   external Codex or Claude agent; no internal Coding Agent is required.
+  Read its installation guide and walk through the steps with the user. Check
+  the CLI, selected instance, and authentication first; use `bifrost:setup` if
+  setup is missing. Execute the authorized Solution install, record its ID and
+  source commit, and verify the sample before guiding secret Configuration and
+  live extraction. Ask the user to enter the cookie in Bifrost; never request
+  its value in chat. Resume through the saved migration context after export.
 - **Extract or refresh Rewst:** read [Extraction](references/extraction.md).
   Use the user's own authorized browser session and current read requests. The
   bundled helper exports captured queries; it is not a universal Rewst backup.

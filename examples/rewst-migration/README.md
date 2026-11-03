@@ -12,6 +12,10 @@ resource was recovered. Coverage gaps remain visible in the migration record.
 
 ## Install
 
+With the updated Bifrost plugin, invoke `rewst-migration` in Codex or Claude to
+walk through setup, installation, the sample, and live extraction. The direct
+installation steps below are the same path used by the skill.
+
 Use an up-to-date CLI downloaded from your Bifrost instance and sign in as an
 administrator. Choose a private Bifrost test organization for this pilot.
 The instance must support repository-installed Solutions, V2 Apps, install-scoped
@@ -26,11 +30,11 @@ on its next state-file write.
 ```bash
 bifrost solution install-repo https://github.com/gobifrost/bifrost \
   --subpath examples/rewst-migration \
-  --ref codex/rewst-migration-skill
+  --ref main
 ```
 
-This is a moving pilot branch. Record the installed Git commit when reporting a
-result. After the PR lands, use the merged ref or an explicitly chosen commit.
+The pilot follows the development branch. Record the installed Git commit when
+reporting a result, or pin `--ref` to a tested commit for a repeatable installation.
 Repository installs are Git-managed; customize a fork rather than editing
 managed definitions on the instance. Installation remaps portable definition
 identities and creates fresh runtime storage. No previous customer's migration

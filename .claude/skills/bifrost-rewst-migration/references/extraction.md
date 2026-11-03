@@ -34,7 +34,7 @@ the application's permissions.
 ## Reuse a server-side credential when available
 
 For a new installation, prefer the packaged
-[Rewst Migration Solution](https://github.com/gobifrost/bifrost/tree/codex/rewst-migration-skill/examples/rewst-migration).
+[Rewst Migration Solution](https://github.com/gobifrost/bifrost/tree/main/examples/rewst-migration).
 It includes the app, server-side export workflows, config declarations, private
 runtime storage, and a network-free sample. Install from the documented subpath;
 then enter values in **Solutions → Rewst Migration → Configuration**:
