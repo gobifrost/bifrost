@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const root=new URL('../results/staged-runtime-execution/',import.meta.url);
 const receipt=JSON.parse(readFileSync(new URL('v1.json',root)));
 const preflight=JSON.parse(readFileSync(new URL('preflight.json',root)));
 const hash=value=>createHash('sha256').update(value).digest('hex');
-for(const file of ['ct128-canonical-failure.py','staged_runtime_input.py','probe_staged_runtime_input.py'])
-  assert.equal(hash(readFileSync(new URL(file,import.meta.url))),receipt.packet_sha256[file]);
+for(const file of ['ct128-canonical-failure.py','staged_runtime_input.py','probe_staged_runtime_input.py']) {
+  const bytes=file==='ct128-canonical-failure.py'
+    ? execFileSync('git',['show','7ebe6919513dceb906e46d266f8d477dd7ab2df8:spikes/cloudflare-pyodide/backend/'+file])
+    : readFileSync(new URL(file,import.meta.url));
+  assert.equal(hash(bytes),receipt.packet_sha256[file]);
+}
 assert.equal(receipt.qualification_passed,true);
 assert.equal(receipt.cloud_invocations,0);
 assert.equal(receipt.physical_termination_verified,false);

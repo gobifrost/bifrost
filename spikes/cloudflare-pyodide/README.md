@@ -6,6 +6,11 @@ SDK proofs kept separately. This is experimental YELLOW, not a production
 executor. Public/untrusted admission stays disabled. Start with
 [the acceptance ledger](ACCEPTANCE.md), then these recent increments:
 
+* [Canonical synthetic HTTPS](backend/CANONICAL-HTTPS.md): actual engine/SDK,
+  run identity, tenant separation and Failed/Success/replay/cleanup pass alongside
+  controlled HTTPX vendor calls. The separate local candidate includes the
+  [pinned redirect repair](backend/HTTPX-REDIRECT-QUALIFICATION.md); general
+  HTTPS admission and deployed canonical execution remain unqualified.
 * [Startup repair candidate](backend/STARTUP-CANDIDATE.md): 12 source/mock cases,
   [six real Redis cases](backend/STARTUP-REDIS.md), and one
   [signed Linux workflow/retirement](backend/STARTUP-LINUX.md) pass with an isolated

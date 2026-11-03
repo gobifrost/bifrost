@@ -24,7 +24,7 @@ from retained_http_fault import RetainedHttpFault
 import http_invocation as invocation_module
 
 
-async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False):
+async def main(*, source_change=False, late_result=False, retained_http=False, deadline_ack_loss=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, https_fixture=False):
     if sum((source_change, late_result, retained_http, oversized_result, numeric_result, oversized_body, memory_pressure, refresh_redaction)) > 1:
         raise ValueError('One fixture mode required')
     if deadline_ack_loss and not late_result:
@@ -131,6 +131,17 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
              'peer_status': peer_status, 'parent_secret_present': 'BIFROST_SECRET_KEY' in os.environ,
              'credential': os.environ['BIFROST_ACCESS_TOKEN']}}
 '''
+                if https_fixture:
+                    https_code = f"""    async with httpx.AsyncClient(follow_redirects=True) as vendor:
+        denied = await vendor.post('https://vendor.example/write', headers={{'X-Run': os.environ['BIFROST_ACCESS_TOKEN']}})
+        written = await vendor.post('https://vendor.example/write', content={slot['label']!r}, headers={{'Authorization': 'Bearer synthetic-vendor'}})
+        redirected = await vendor.post('https://vendor.example/redirect', content={slot['label']!r}, headers={{'Authorization': 'Bearer synthetic-vendor'}})
+    if denied.status_code != 403 or written.status_code != 200 or written.text != 'written' or redirected.status_code != 403 or [r.status_code for r in redirected.history] != [302]:
+        raise RuntimeError('Synthetic HTTPS capability contract mismatch')
+    logging.getLogger(__name__).warning('synthetic_https_qualified')
+"""
+                    source = source.replace('    logging.getLogger(__name__).warning(\'shared label=',
+                                            https_code + '    logging.getLogger(__name__).warning(\'shared label=')
                 if numeric_result:
                     source = source.replace(
                         'async def qualified(n: int, peer_scope: str, peer_key: str):',
@@ -684,6 +695,8 @@ async def qualified(n: int, peer_scope: str, peer_key: str):
                             report['bounded_memory_matching_log_count'] = len(observed)
                             report['bounded_memory_outcome'] = outcomes[0]
                             report['bounded_memory_probe_bytes'] = 160 * 1024 * 1024
+                        if https_fixture and not any('synthetic_https_qualified' in message for message in logs):
+                            raise RuntimeError('Canonical HTTPS workflow evidence missing')
                         report['attempts'][run] = {'label': slot['label'], 'canonical_status': status.value,
                             'canonical_result': persisted_result, 'canonical_error': error, 'persisted_logs': logs,
                             'runtime_handle': slot['evidence']['runtime_handle'], 'route': slot['route'],
@@ -748,6 +761,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
+    parser.add_argument('--https-fixture', action='store_true')
     parser.add_argument('--source-change', action='store_true')
     parser.add_argument('--late-result', action='store_true')
     parser.add_argument('--retained-http', action='store_true')
@@ -760,5 +774,5 @@ if __name__ == '__main__':
     parser.add_argument('--startup-inventory', action='store_true')
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main(source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
+    asyncio.run(main(https_fixture=args.https_fixture, source_change=args.source_change, late_result=args.late_result, retained_http=args.retained_http,
                      deadline_ack_loss=args.deadline_ack_loss, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction))

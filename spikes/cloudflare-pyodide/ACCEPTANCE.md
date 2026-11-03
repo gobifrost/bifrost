@@ -25,6 +25,14 @@ Settled invocation/resource cleanup and synchronous CPU cessation are separate
 proofs. No Queues/DO/D1 orchestration is introduced for this purpose.
 The detailed assessment and preserved experiments remain in backend/LIFECYCLE.md.
 
+Local HTTPS integration delta: backend/CANONICAL-HTTPS.md records two actual
+engine/SDK workflows with run-scoped identity, controlled synthetic vendor
+HTTPX requests and canonical Failed/Success/replay/cleanup. Independent destination
+evidence contains exactly four approved forwards. This fixed local candidate is
+not general external HTTPS admission or deployed canonical acceptance; the ordinary
+private adapter still rejects that requirement. The transport redirect repair
+is confined to the candidate. CPU, memory and cancellation gaps remain unchanged.
+
 Recent evidence delta: the common startup repair candidate now has 12 mocked,
 six real-Redis and one signed Linux engine/SDK/retirement qualification; it remains
 an isolated overlay, not an applied shared-source repair. Local request-context

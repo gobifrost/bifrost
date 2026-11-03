@@ -21,8 +21,9 @@ def out(args, **kwargs):
     return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
 
 
-def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, shared_pool=False, private_pool=False, api_prepare=False, source_change=False, auto_delivery=False, late_adapter=False, retained_http=False, deadline_recovery=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, sdk_update=False, sdk_refresh=False, staged_runtime=False, revision=1):
+def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=False, physical_pool=False, stream_pool=False, stream_loss=False, stream_interruption=False, automatic_loss=False, attempt_deadline=False, late_settlement=False, http_component=False, request_mux=False, shared_pool=False, private_pool=False, api_prepare=False, source_change=False, auto_delivery=False, late_adapter=False, retained_http=False, deadline_recovery=False, startup_inventory=False, oversized_result=False, numeric_result=False, oversized_body=False, memory_pressure=False, refresh_redaction=False, sdk_update=False, sdk_refresh=False, staged_runtime=False, https_fixture=False, revision=1):
     global PACKET, RUN, NAME
+    staged_runtime = staged_runtime or https_fixture
     if staged_runtime and (sdk_update or sdk_refresh):
         raise ValueError('One explicit runtime artifact profile required')
     sdk_update = sdk_update or sdk_refresh
@@ -35,7 +36,7 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
     stream_interruption = stream_interruption or automatic_loss or attempt_deadline
     physical_pool = physical_pool or stream_pool or stream_loss or stream_interruption or late_settlement or shared_pool
     if egress_gate or deadline_response_loss or deadline_retained or physical_pool:
-        prefix = ('staged-runtime' if staged_runtime else 'sdk-refresh' if sdk_refresh else 'sdk-execution' if sdk_update else 'refresh-redaction' if refresh_redaction else 'memory-pressure' if memory_pressure else 'body-budget' if oversized_body else 'numeric-fidelity' if numeric_result else 'output-integration' if oversized_result else 'startup-inventory' if startup_inventory else 'deadline-recovery' if deadline_recovery else 'retained-http' if retained_http else 'late-adapter' if late_adapter else 'auto-delivery' if auto_delivery else 'source-change' if source_change else 'api-prepare' if api_prepare else 'private-pool' if private_pool else 'shared-pool' if shared_pool else 'request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
+        prefix = ('canonical-https' if https_fixture else 'staged-runtime' if staged_runtime else 'sdk-refresh' if sdk_refresh else 'sdk-execution' if sdk_update else 'refresh-redaction' if refresh_redaction else 'memory-pressure' if memory_pressure else 'body-budget' if oversized_body else 'numeric-fidelity' if numeric_result else 'output-integration' if oversized_result else 'startup-inventory' if startup_inventory else 'deadline-recovery' if deadline_recovery else 'retained-http' if retained_http else 'late-adapter' if late_adapter else 'auto-delivery' if auto_delivery else 'source-change' if source_change else 'api-prepare' if api_prepare else 'private-pool' if private_pool else 'shared-pool' if shared_pool else 'request-mux' if request_mux else 'http-component' if http_component else 'late-settlement' if late_settlement else 'attempt-deadline' if attempt_deadline else 'automatic-loss' if automatic_loss else 'stream-interruption' if stream_interruption else 'stream-loss' if stream_loss else 'stream-pool' if stream_pool else 'physical-pool' if physical_pool else 'deadline-retained' if deadline_retained
                   else 'deadline-response-loss' if deadline_response_loss else 'egress-canonical')
         PACKET = ROOT / f'inbox/{prefix}-v{revision}'
         RUN = ROOT / f'runs/{prefix}-v{revision}'
@@ -117,6 +118,8 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
          else '--deadline-response-loss' if deadline_response_loss else '--failure-probe']]
     if shared_pool:
         commands[-1][-2:] = ['/qualification/shared-native-pool.py']
+        if https_fixture:
+            commands[-1].append('--https-fixture')
         if source_change:
             commands[-1].append('--source-change')
         if late_adapter:
@@ -163,6 +166,8 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
                     time.sleep(1)
                 else:
                     raise RuntimeError('Local provider readiness deadline')
+            if index == 3 and https_fixture:
+                out(['docker', 'exec', '-d', NAME, 'node', '/qualification/project/backend/canonical-https-observer.mjs'])
             with (RUN / f'phase-{index}.private.log').open('x') as log:
                 if index == 3 and stream_interruption:
                     process = subprocess.Popen(command, cwd=CHECKOUT, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -306,6 +311,13 @@ def main(*, egress_gate=False, deadline_response_loss=False, deadline_retained=F
                 or not canonical.get('persisted_failure_stdout_redaction_verified')):
                 raise RuntimeError('Required real failure/stdout consumption not observed')
             report['canonical_result'] = canonical
+        if https_fixture:
+            observed = json.loads(out(['docker', 'exec', NAME, 'node', '-e',
+                "fetch('http://127.0.0.1:8820/snapshot').then(r=>r.text()).then(console.log)"]))
+            expected = sorted((label, path) for label in ('fails-first', 'succeeds-second') for path in ('/write', '/redirect'))
+            if sorted((row['body'], row['path']) for row in observed) != expected or not all(row['vendor_authorization_matches'] for row in observed):
+                raise RuntimeError('Independent HTTPS destination evidence mismatch')
+            report['synthetic_https_effects'] = observed
         report['qualification_passed'] = True
     finally:
         if source_change and (RUN / 'phase-3.private.log').exists():
@@ -352,6 +364,7 @@ if __name__ == '__main__':
     mode.add_argument('--deadline-recovery', action='store_true')
     mode.add_argument('--sdk-refresh', action='store_true')
     mode.add_argument('--staged-runtime', action='store_true')
+    mode.add_argument('--https-fixture', action='store_true')
     mode.add_argument('--sdk-update', action='store_true')
     mode.add_argument('--refresh-redaction', action='store_true')
     mode.add_argument('--memory-pressure', action='store_true')
@@ -367,4 +380,4 @@ if __name__ == '__main__':
          automatic_loss=args.automatic_loss, attempt_deadline=args.attempt_deadline,
          late_settlement=args.late_settlement, http_component=args.http_component, request_mux=args.request_mux,
          shared_pool=args.shared_pool, private_pool=args.private_pool, api_prepare=args.api_prepare,
-         source_change=args.source_change, auto_delivery=args.auto_delivery, late_adapter=args.late_adapter, retained_http=args.retained_http, deadline_recovery=args.deadline_recovery, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction, sdk_update=args.sdk_update, sdk_refresh=args.sdk_refresh, staged_runtime=args.staged_runtime, revision=args.revision)
+         source_change=args.source_change, auto_delivery=args.auto_delivery, late_adapter=args.late_adapter, retained_http=args.retained_http, deadline_recovery=args.deadline_recovery, startup_inventory=args.startup_inventory, oversized_result=args.oversized_result, numeric_result=args.numeric_result, oversized_body=args.oversized_body, memory_pressure=args.memory_pressure, refresh_redaction=args.refresh_redaction, sdk_update=args.sdk_update, sdk_refresh=args.sdk_refresh, staged_runtime=args.staged_runtime, https_fixture=args.https_fixture, revision=args.revision)
