@@ -8,6 +8,8 @@ import time
 from types import SimpleNamespace
 from uuid import UUID
 
+import httpx
+
 from attempt_journal import AttemptJournal, AttemptResult
 from attempt_deadline import report_expired_workflow, supervise_attempt_deadline
 from http_invocation import HttpInvocation
@@ -75,7 +77,13 @@ class PrivateHttpWorkflowPool:
             async def request(self, action, payload, *, expected_generation=None):
                 if action == 'workflow':
                     pool._start_deadline(payload)
-                return await mux.request(action, payload, expected_generation=expected_generation)
+                try:
+                    return await mux.request(action, payload, expected_generation=expected_generation)
+                except httpx.TransportError as exc:
+                    # A request may have reached the child before its ACK was
+                    # lost. Native ConnectionError preserves that route; the
+                    # original collection task still retains its exact error.
+                    raise ConnectionError('Physical HTTP outcome uncertain; reconciliation required') from exc
 
         self.native = ThinRemoteProcessPool(Transport(), worker_id=str(self.worker_id),
             runtime_profile=CLOUDFLARE_PYTHON_RUNTIME_PROFILE, on_result=on_result)

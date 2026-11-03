@@ -236,6 +236,40 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
         self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
         await self.pool.retire()
 
+    async def test_transport_loss_before_ack_retains_native_capacity_and_never_relaunches(self):
+        self.context['timeout_seconds'] = 1
+        sends = []
+        cleanup = AsyncMock()
+        self.enterContext(patch.object(self.pool.native, '_get_redis',
+            new=AsyncMock(return_value=SimpleNamespace(delete=cleanup))))
+
+        def lose_before_ack(request):
+            sends.append(json.loads(request.content))
+            raise httpx.ReadError('Synthetic response lost before ACK')
+
+        self.enterContext(patch('http_invocation.httpx.AsyncClient',
+            side_effect=lambda **kw: CLIENT(transport=httpx.MockTransport(lose_before_ack), **kw)))
+        with patch('attempt_deadline.owns_remote_session', new_callable=AsyncMock, return_value=True):
+            try:
+                await self.route()
+            except httpx.ReadError:
+                pass  # Expose the old definitive-failure path before the fix.
+            attempt = self.pool.attempt(self.run)
+            with self.assertRaises(httpx.ReadError):
+                await attempt.receipt
+            with self.assertRaises(httpx.ReadError):
+                await attempt.delivery
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1,
+                             'uncertain started invocation lost native capacity')
+            cleanup.assert_not_awaited()
+            await self.route()
+            self.assertEqual(len(sends), 1)
+            self.assertEqual(await attempt.deadline, {'expired': True})
+            self.assertEqual(self.callback.await_args.args[0]['error_type'], 'TimeoutError')
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+            with self.assertRaises(RuntimeError):
+                await self.pool.retire()
+
 
 if __name__ == '__main__':
     main()

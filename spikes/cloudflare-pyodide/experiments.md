@@ -950,3 +950,19 @@ No cloud/admission/resource/security-setting change or physicalCPUstop proof.
 Next: fail-first pre-ACK transport-loss capacity test; source inspection suggests
 Httpx errors can reach native definitive-failure branch despite started collection.
 Then supported startup/registration and independent deployed abnormal enforcement.
+
+### Pre-ACK HTTP transport loss retains native uncertainty
+Hypothesis: a started request losing its ACK must not enter native definitive
+failure cleanup. New bounded MockTransport ReadError regression reproduced
+busy0instead1 on the previous adapter, exit1. Change: companion transport maps
+httpx.TransportError to existing native ConnectionError uncertainty, while the
+original collection/delivery receipts retain the original subtype. Commands:
+results/preack-loss/pyodide-preack-loss-v1.sh (fail-first), v2.sh (changedsource
+40targetedtests plus Ruff/Pyright). Observed: 40pass2.326s, qualityzero; noRedis
+cleanup, onePOSTacrossduplicate, nativebusy1throughlogicaltimeout, unacknowledged
+retirementrefused. Source/receiptguardverifier and exactbefore/afterSHA retained.
+Artifact: backend/PREACK-LOSS.md and results/preack-loss. No shared API changes,
+realSDKfaultclaim, cloudcall, runtime/securitysetting or credentialchange.
+No physical stop inferred. Next: real localengine/HTTP pre-ACK fault and trusted
+retained-terminaladoption; oversizedcontextpreflightbeforebookkeeping also needs
+inspection. Startup/registration and deployed CPU enforcement remain later gates.
