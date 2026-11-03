@@ -934,7 +934,7 @@ class ManifestFiles(BaseModel):
     @field_validator("locations", mode="before")
     @classmethod
     def normalize_locations(cls, value: list[str]) -> list[str]:
-        from shared.file_paths import validate_location_name
+        from bifrost.file_locations import validate_location_name
 
         if not isinstance(value, list):
             raise ValueError("locations must be a list")

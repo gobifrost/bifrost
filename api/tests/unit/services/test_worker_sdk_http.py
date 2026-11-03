@@ -1281,7 +1281,8 @@ class TestEngineLocalTransportSelection:
         with pytest.raises(RuntimeError, match="not installed"):
             client._get_engine_sync_client()
 
-    def test_engine_local_entry_points_select_transport(self):
+    @pytest.mark.asyncio
+    async def test_engine_local_entry_points_select_transport(self):
         """The engine-local entry points use the socket once injected."""
         client = BifrostClient("http://dead-api", "token")
         network_async = client._get_async_client()
@@ -1297,8 +1298,10 @@ class TestEngineLocalTransportSelection:
         assert client._async_http_for(engine_local=True) is client._get_engine_async_client()
         assert client._async_http_for(engine_local=False) is network_async
         assert client._sync_http_for(engine_local=True) is client._get_engine_sync_client()
+        await client.close()
 
-    def test_engine_clients_are_cached_and_rebind_on_path(self):
+    @pytest.mark.asyncio
+    async def test_engine_clients_are_cached_and_rebind_on_path(self):
         """Same socket path reuses one client; a new injection rebuilds it."""
         client = BifrostClient("http://dead-api", "token")
         _install_engine_socket(f"/tmp/bifrost-a-{uuid4().hex}.sock")
@@ -1310,6 +1313,7 @@ class TestEngineLocalTransportSelection:
         _install_engine_socket(f"/tmp/bifrost-b-{uuid4().hex}.sock")
         assert client._get_engine_async_client() is not async_client
         assert client._get_engine_sync_client() is not sync_client
+        await client.close()
 
     def test_engine_async_client_rebinds_per_event_loop(self):
         """A cached async client is not reused across event loops."""
@@ -1343,7 +1347,7 @@ class TestEngineLocalTransportSelection:
             assert value == "via-socket"
             # The proof rides the client's cached engine-local HTTPX client,
             # not a per-call AsyncClient.
-            assert client._engine_http is not None
+            assert client._clients_for_loop().engine_http is not None
         finally:
             await server.stop()
 
@@ -1425,7 +1429,8 @@ class TestEngineLocalTransportSelection:
         )
         assert network_http.stream.call_count == 1
 
-    def test_engine_and_network_stream_clients_share_read_timeout(self):
+    @pytest.mark.asyncio
+    async def test_engine_and_network_stream_clients_share_read_timeout(self):
         """Both transports preserve HTTPX's 30s per-read gap bound."""
         client = BifrostClient("http://dead-api", "token")
         _install_engine_socket(f"/tmp/bifrost-{uuid4().hex}.sock")
@@ -1433,6 +1438,7 @@ class TestEngineLocalTransportSelection:
         network = client._get_async_client()
         assert engine.timeout.read == 30.0
         assert network.timeout.read == 30.0
+        await client.close()
 
     @pytest.mark.asyncio
     async def test_engine_stream_socket_failure_does_not_reach_network(self):
@@ -1510,7 +1516,7 @@ class TestEngineLocalTransportSelection:
         assert chunks[-1].output_tokens == 6
         assert provider_stream.closed is True
         # The exact mounted route served it: the body rode the engine client.
-        assert client._engine_http is not None
+        assert client._clients_for_loop().engine_http is not None
 
     @pytest.mark.asyncio
     async def test_engine_local_401_without_the_challenge_does_not_refresh_or_replay(self):

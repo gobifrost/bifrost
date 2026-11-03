@@ -1,0 +1,13 @@
+{
+  "key": "pr:1202",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1202",
+      "Port of MTG fork PR #1247; local Solution preview diagnostics only."
+    ]
+  },
+  "reason": "A malformed .bifrost/workflows.yaml is reported as an invalid manifest instead of crashing the local Solution watcher. No customer-facing product surface changes."
+}

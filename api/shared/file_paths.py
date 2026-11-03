@@ -30,38 +30,27 @@ addressable through the resolver.
 
 from __future__ import annotations
 
-import re
 from uuid import UUID
+
+from bifrost.file_locations import (
+    BLOCKED_LOCATION_NAMES,
+    FREEFORM_LOCATION_NAME_RE,
+    RESERVED_LOCATIONS,
+    validate_location_name,
+)
+
+__all__ = [
+    "BLOCKED_LOCATION_NAMES",
+    "FREEFORM_LOCATION_NAME_RE",
+    "RESERVED_LOCATIONS",
+    "validate_location_name",
+    "resolve_s3_key",
+    "scope_to_org_id",
+]
 
 WORKSPACE_PREFIX = "_repo/"
 TEMP_PREFIX = "_tmp/"
 UPLOADS_PREFIX = "uploads/"
-
-RESERVED_LOCATIONS: frozenset[str] = frozenset({"workspace", "uploads", "temp"})
-BLOCKED_LOCATION_NAMES: frozenset[str] = frozenset({"_repo", "_tmp", "_apps"})
-
-_FREEFORM_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-
-
-def validate_location_name(location: str) -> None:
-    """Validate that `location` is a recognized reserved name or a legal freeform name.
-
-    Reserved direct prefix names (`_repo`, `_tmp`, `_apps`) are rejected as locations
-    so users can't bypass the `{location}/{scope}/` layout by addressing the underlying
-    bucket prefix directly.
-    """
-    if location in RESERVED_LOCATIONS:
-        return
-    if location in BLOCKED_LOCATION_NAMES:
-        raise ValueError(
-            f"Invalid location: '{location}' is a reserved bucket prefix; "
-            "use 'workspace', 'temp', or 'uploads' instead."
-        )
-    if not _FREEFORM_NAME_RE.match(location):
-        raise ValueError(
-            f"Invalid location name: '{location}' must match {_FREEFORM_NAME_RE.pattern}"
-        )
-
 
 def _validate_path(path: str) -> None:
     if ".." in path.split("/"):
@@ -86,9 +75,7 @@ def resolve_s3_key(location: str, scope: str | None, path: str) -> str:
         return f"{WORKSPACE_PREFIX}{clean_path}"
 
     if scope is None or scope == "":
-        raise ValueError(
-            f"Scope is required for location '{location}'."
-        )
+        raise ValueError(f"Scope is required for location '{location}'.")
 
     if location == "uploads":
         return f"{UPLOADS_PREFIX}{scope}/{clean_path}"

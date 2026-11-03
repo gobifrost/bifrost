@@ -62,7 +62,8 @@ async def test_wait_outside_service_execution_raises():
         await service.wait_until_stopping()
 
 
-def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
+@pytest.mark.asyncio
+async def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
     from bifrost.client import (
         _clear_engine_socket,
         _install_engine_socket,
@@ -77,16 +78,21 @@ def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
     previous = getattr(_thread_local, "bifrost_client", None)
     _thread_local.bifrost_client = None
     _install_engine_socket("/tmp/service-test.sock")
+    client = None
     try:
         assert install_legacy_service_token("initial-token")
         assert getattr(_thread_local, "bifrost_client", None) is None
         client = get_client()
-        assert client._get_engine_async_client().headers["Authorization"] == "Bearer initial-token"
+        pool = client._get_engine_async_client()
+        assert pool.headers["Authorization"] == "Bearer initial-token"
 
         assert install_legacy_service_token("rotated-token")
         assert get_client() is client
-        assert client._get_engine_async_client().headers["Authorization"] == "Bearer rotated-token"
+        assert client._get_engine_async_client() is pool
+        assert pool.headers["Authorization"] == "Bearer rotated-token"
     finally:
+        if client is not None:
+            await client.close()
         _clear_engine_socket()
         _thread_local.bifrost_client = previous
 
