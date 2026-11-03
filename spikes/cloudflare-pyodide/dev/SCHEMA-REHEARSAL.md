@@ -40,6 +40,14 @@ before each loose copy was removed. Restore into a new reproduction packet.
 Disk free rose from 8,186 to 8,227 MiB; the 8,192 MiB guard was retained.
 No volumes, uncertain locks, active inputs or resource allocations changed.
 
-Next: synthetic duplicate-name refusal/rollback, then matched API qualification.
+V2 (`ct128-schema-rehearsal-v2.py --duplicate-probe`) completed in 9.743 seconds,
+exit 0. Two synthetic global table names caused the actual migration to refuse;
+both rows and the prior revision were preserved, with neither unique index
+partially created. Renaming the synthetic duplicate allowed upgrade; both rows
+survived. The disposable database was removed and original dev revision unchanged.
+Raw receipt: `schema-rehearsal-v2.json`. The executed script had one unused local
+variable subsequently removed; no behavioral change or repeat run was needed.
+
+Next: matched API qualification.
 Empty-schema success does not prove existing-data upgrade safety. No original
 dev upgrade, cloud invocation, public admission or CPU-stop acceptance is claimed.

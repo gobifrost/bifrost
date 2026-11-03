@@ -1,5 +1,6 @@
 """Rehearse pinned migrations on an empty schema clone, never the dev database."""
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import shutil
@@ -24,7 +25,12 @@ def sql(database, statement):
                  '-U', 'bifrost', '-d', database, '-Atc', statement]).decode().strip()
 
 
-def main():
+def main(*, duplicate_probe=False):
+    global RUN, DATABASE, DEST
+    if duplicate_probe:
+        RUN = ROOT / 'runs/schema-rehearsal-v2'
+        DATABASE = 'bifrost_pyodide_schema_v2'
+        DEST = '/tmp/pyodide-ddf316c1-schema-v2'
     if call(['hostname']).decode().strip() != 'bifrost-pyodide-test-01':
         raise RuntimeError('Wrong guest')
     if shutil.disk_usage(ROOT).free < 8 * 1024**3:
@@ -65,7 +71,41 @@ config = Config('/app/alembic.ini')
 config.set_main_option('script_location', '/tmp/pyodide-ddf316c1-schema-v1/alembic')
 command.upgrade(config, '20261101_table_name_unique')
 '''
+        script = script.replace('bifrost_pyodide_schema_v1', DATABASE).replace(
+            '/tmp/pyodide-ddf316c1-schema-v1', DEST)
+        if duplicate_probe:
+            prefix = script.rsplit('command.upgrade', 1)[0]
+            call(['docker', 'exec', '-i', API, 'python', '-'],
+                 (prefix + "command.upgrade(config, '20261101_capacity_cleanup')\n").encode(), timeout=90)
+            sql(DATABASE, "INSERT INTO tables (id,name) VALUES "
+                "('00000000-0000-0000-0000-000000000001','synthetic-duplicate'),"
+                "('00000000-0000-0000-0000-000000000002','synthetic-duplicate')")
+            before = sql(DATABASE, 'SELECT id,name FROM tables ORDER BY id')
+            refusal = prefix + '''try:
+    command.upgrade(config, '20261101_table_name_unique')
+except RuntimeError as exc:
+    if 'duplicate _repo tables exist' not in str(exc):
+        raise
+    print('EXPECTED_DUPLICATE_REFUSAL')
+else:
+    raise AssertionError('Duplicate names did not stop migration')
+'''
+            result = call(['docker', 'exec', '-i', API, 'python', '-'], refusal.encode(), timeout=90)
+            report['duplicate_refused'] = b'EXPECTED_DUPLICATE_REFUSAL' in result
+            report['rows_unchanged_after_refusal'] = sql(DATABASE, 'SELECT id,name FROM tables ORDER BY id') == before
+            report['revision_after_refusal'] = sql(DATABASE, 'SELECT version_num FROM alembic_version')
+            report['unique_indexes_after_refusal'] = sql(DATABASE,
+                "SELECT count(*) FROM pg_indexes WHERE indexname IN ('ix_tables_org_name_unique','ix_tables_global_name_unique')")
+            if (not report['duplicate_refused'] or not report['rows_unchanged_after_refusal']
+                or report['revision_after_refusal'] != '20261101_capacity_cleanup'
+                or report['unique_indexes_after_refusal'] != '0'):
+                raise RuntimeError('Duplicate refusal was not transactional')
+            sql(DATABASE, "UPDATE tables SET name='synthetic-distinct' WHERE id='00000000-0000-0000-0000-000000000002'")
         call(['docker', 'exec', '-i', API, 'python', '-'], script.encode(), timeout=90)
+        if duplicate_probe:
+            report['synthetic_rows_after_upgrade'] = sql(DATABASE, 'SELECT count(*) FROM tables')
+            if report['synthetic_rows_after_upgrade'] != '2':
+                raise RuntimeError('Synthetic rows lost on upgrade')
         report['revision'] = sql(DATABASE, 'SELECT version_num FROM alembic_version')
         report['columns'] = sql(DATABASE, "SELECT column_name FROM information_schema.columns WHERE table_name='execution_workers' AND column_name IN ('active_handler_counts','capacity_scope','capacity_resource_uid','capacity_resource_deleted_at') ORDER BY column_name").splitlines()
         report['indexes'] = sql(DATABASE, "SELECT indexname FROM pg_indexes WHERE indexname IN ('ix_execution_workers_external_cleanup','ix_tables_org_name_unique','ix_tables_global_name_unique') ORDER BY indexname").splitlines()
@@ -84,4 +124,6 @@ command.upgrade(config, '20261101_table_name_unique')
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--duplicate-probe', action='store_true')
+    main(duplicate_probe=parser.parse_args().duplicate_probe)
