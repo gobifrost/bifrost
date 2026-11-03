@@ -119,6 +119,26 @@ class PrivatePoolTests(IsolatedAsyncioTestCase):
             self.pool.bind_manifest(execution_id, self.manifest, requirements=[], packages={})
         self.redis_write.assert_not_awaited()
 
+    async def test_direct_https_requirement_is_refused_by_api_only_transport(self):
+        execution_id = str(uuid4())
+        for requirements in [['platform-fetch-https'], ['bifrost-http-sdk', 'platform-fetch-https']]:
+            with self.subTest(requirements=requirements), self.assertRaises(ValueError):
+                self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements, packages={})
+            self.assertNotIn(execution_id, self.pool._plans)
+        self.redis_write.assert_not_awaited()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        self.assertEqual(self.pool.native.processes, {})
+
+    async def test_api_sdk_requirement_declaration_remains_supported(self):
+        execution_id = str(uuid4())
+        requirements = ['json', 'async-workflow', 'pinned-workspace', 'bifrost-http-sdk']
+        self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements, packages={})
+        self.assertEqual(self.pool._plans[execution_id]['requirements'], tuple(sorted(requirements)))
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+
     async def test_package_requirements_refuse_before_binding_and_freeze_observed_match(self):
         execution_id = str(uuid4())
         with self.assertRaises(ValueError):

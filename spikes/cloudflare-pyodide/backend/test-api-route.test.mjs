@@ -18,3 +18,8 @@ test('existing SDK and table paths retain the fixed destination',()=>{
     assert.equal(testApiRouteAllowed(new URL('https://test-api.invalid'+path)),true);
   }
 });
+
+test('this capability does not supply direct external HTTPS orchestration',()=>{
+  assert.equal(testApiRouteAllowed(new URL('https://example.com/')),false);
+  assert.equal(testApiRouteAllowed(new URL('https://graph.microsoft.com/v1.0/users')),false);
+});

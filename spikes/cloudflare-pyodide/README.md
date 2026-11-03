@@ -43,6 +43,8 @@ executor. Public/untrusted admission stays disabled. Start with
 * [Private declared-capability check](backend/CAPABILITY-CONTRACT.md): pinned,
   reviewed workflows require an explicit supported declaration before dispatch;
   arbitrary-code discovery and admission remain unsupported.
+  [API-only egress correction](backend/HTTPS-CAPABILITY.md) refuses direct external
+  HTTPS before effects; an approved-origin adapter is still required for it.
 * [HTTP transport option boundary](backend/TRANSPORT-OPTIONS.md): 26 actual local
   constructor cases silently accept unsupported settings; pre-effect enforcement
   remains incomplete and untrusted admission stays disabled.

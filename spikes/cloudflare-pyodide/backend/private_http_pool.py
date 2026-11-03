@@ -24,7 +24,7 @@ from src.worker.remote.remote_pool import ThinRemoteProcessPool
 # Companion profile vocabulary, not an upstream scheduler/admission API.
 # These declarations are trusted-host input; arbitrary Python can lie about them.
 SUPPORTED_REQUIREMENTS = frozenset(('json', 'async-workflow', 'pinned-workspace',
-                                   'bifrost-http-sdk', 'platform-fetch-https'))
+                                   'bifrost-http-sdk'))
 
 
 class _Attempt(SimpleNamespace):

@@ -1,0 +1,13 @@
+✔ actual SDK and router refresh path is admitted (0.6486ms)
+✔ refresh admission cannot select another origin or auth route (0.8208ms)
+✔ existing SDK and table paths retain the fixed destination (0.1778ms)
+✔ this capability does not supply direct external HTTPS orchestration (0.1155ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 93.2744
+exit_code=0

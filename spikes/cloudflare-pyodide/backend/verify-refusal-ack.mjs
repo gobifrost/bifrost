@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const repo = new URL('../../../', import.meta.url);
 const root = new URL('../', import.meta.url);
 const read = name => readFileSync(new URL('results/refusal-ack/' + name, root), 'utf8');
@@ -8,7 +9,10 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 const receipt = JSON.parse(read('receipt.json')), sdk = JSON.parse(read('sdk.json'));
 for (const name of ['attempt_journal.py', 'private_http_pool.py', 'workflow_request_mux.py',
   'test_private_http_pool.py', 'test_workflow_request_mux.py']) {
-  assert.equal(hash(readFileSync(new URL('backend/' + name, root))), sdk.packet_sha256[name], name);
+  const bytes = ['private_http_pool.py', 'test_private_http_pool.py'].includes(name)
+    ? execFileSync('git', ['show', 'ea9a8eae02bee6c98357b25d35124301331c83e3:spikes/cloudflare-pyodide/backend/' + name])
+    : readFileSync(new URL('backend/' + name, root));
+  assert.equal(hash(bytes), sdk.packet_sha256[name], name);
 }
 const allowed = new Set(['api/src/jobs/consumers/workflow_execution.py',
   'api/tests/unit/dev/test_pyodide_attempt_journal.py', 'spikes/cloudflare-pyodide/backend/attempt_journal.py']);

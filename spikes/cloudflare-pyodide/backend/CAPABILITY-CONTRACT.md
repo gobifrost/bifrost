@@ -2,7 +2,7 @@
 
 `PrivateHttpWorkflowPool.bind_manifest` now requires a keyword-only
 `requirements` list/tuple. The companion vocabulary is `json`, `async-workflow`,
-`pinned-workspace`, `bifrost-http-sdk`, and `platform-fetch-https`. An explicit
+`pinned-workspace` and `bifrost-http-sdk`. An explicit
 empty declaration is valid for code needing none of these capabilities; omission
 is an error. Unknown, duplicate, malformed or over-32-item declarations fail
 before the plan is stored, native bookkeeping, journal reservation or HTTP
@@ -16,6 +16,12 @@ change it after binding. No canonical context or remote wire schema is changed.
 This is a **private companion proposal**, not an existing upstream scheduling or
 authorization API. It introduces no queue, token issuer, direct DB update or
 automatic Linux fallback.
+
+Correction: [the API-only transport cannot promise direct HTTPS](HTTPS-CAPABILITY.md).
+The earlier vocabulary included platform-fetch-https without a matching route in
+the parent capability. That declaration is now refused before binding or dispatch.
+The original source/test receipts below remain pinned to their historical version;
+they do not establish direct external HTTPS support.
 
 This is a declaration check, not code discovery or a Python sandbox. Arbitrary
 Python can conceal a capability requirement or mutate runtime objects. The check
