@@ -204,13 +204,19 @@ async def resolve_module_name(
     # Concurrent cold requests for the same import share one storage probe in
     # this API process. This bounds S3 amplification during a workflow fan-out;
     # the Redis result remains the cross-process/pod cache.
-    async with _resolution_lock(cache_key):
-        generation = await get_module_resolution_generation(cache_key)
-        cached = await get_module_resolution_cache(cache_key)
-        if cached is not None:
-            hydrated = await hydrate_cached_resolution(cached)
-            if hydrated is not None:
-                return hydrated
+    # Cache keys have a byte ceiling so untrusted import names cannot consume
+    # unbounded Redis memory. Oversized names retain normal storage resolution;
+    # they simply bypass the shared metadata cache.
+    lock = _resolution_lock(cache_key) if cache_key is not None else asyncio.Lock()
+    async with lock:
+        generation: str | None = None
+        if cache_key is not None:
+            generation = await get_module_resolution_generation(cache_key)
+            cached = await get_module_resolution_cache(cache_key)
+            if cached is not None:
+                hydrated = await hydrate_cached_resolution(cached)
+                if hydrated is not None:
+                    return hydrated
 
         # Resolve one scope completely before considering the next. A Solution
         # namespace is still a hit in that Solution and must not be shadowed by a
@@ -230,16 +236,17 @@ async def resolve_module_name(
                         "content": module["content"],
                         "hash": module["hash"],
                     }
-                    await set_module_resolution_cache(
-                        cache_key,
-                        {
-                            "kind": kind,
-                            "path": relative_path,
-                            "storage_path": storage_path,
-                            "hash": module["hash"],
-                        },
-                        generation=generation,
-                    )
+                    if cache_key is not None and generation is not None:
+                        await set_module_resolution_cache(
+                            cache_key,
+                            {
+                                "kind": kind,
+                                "path": relative_path,
+                                "storage_path": storage_path,
+                                "hash": module["hash"],
+                            },
+                            generation=generation,
+                        )
                     return module_result
 
             # The trailing slash is significant: without it, ``modules/foo``
@@ -250,13 +257,68 @@ async def resolve_module_name(
                     "kind": "namespace",
                     "path": base_path,
                 }
-                await set_module_resolution_cache(cache_key, namespace_result, generation=generation)
+                if cache_key is not None and generation is not None:
+                    await set_module_resolution_cache(cache_key, namespace_result, generation=generation)
                 return namespace_result
 
         logger.debug("SDK module resolver miss: %s", log_safe(name))
         miss_result: dict[str, object] = {"kind": "not_found", "path": base_path}
-        await set_module_resolution_cache(cache_key, miss_result, generation=generation)
+        if cache_key is not None and generation is not None:
+            await set_module_resolution_cache(cache_key, miss_result, generation=generation)
         return miss_result
+
+
+async def resolve_module_names(
+    names: list[str],
+    *,
+    scope: ModuleSourceScope,
+    max_sources: int,
+    max_source_bytes: int,
+) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
+    """Resolve a bounded speculative import batch without changing import errors.
+
+    Each entry deliberately uses :func:`resolve_module_name` in order. This
+    preserves Solution-before-workspace precedence and bounds storage work to
+    one serial sequence rather than a burst of concurrent cache/S3 requests.
+    A failed speculative lookup is returned by name, not raised: an import only
+    observes that failure if Python later asks for the same name through the
+    ordinary single-name resolver.
+    """
+    modules: dict[str, dict[str, object]] = {}
+    errors: dict[str, dict[str, object]] = {}
+    source_count = 0
+    source_bytes = 0
+
+    for name in dict.fromkeys(names):
+        try:
+            result = await resolve_module_name(name, scope=scope)
+        except ModuleSourceError as exc:
+            errors[name] = {"status_code": exc.status_code, "detail": exc.detail}
+            continue
+        except Exception:
+            # This route is intentionally speculative. Preserve the failure in
+            # its typed response and leave the demand path to surface the
+            # original error if this import is actually requested.
+            logger.exception("Speculative SDK module resolution failed for %s", log_safe(name))
+            errors[name] = {
+                "status_code": 500,
+                "detail": "Module resolution is unavailable",
+            }
+            continue
+
+        content = result.get("content")
+        if isinstance(content, str):
+            content_bytes = len(content.encode("utf-8"))
+            if (
+                source_count >= max_sources
+                or content_bytes > max_source_bytes - source_bytes
+            ):
+                continue
+            source_count += 1
+            source_bytes += content_bytes
+        modules[name] = result
+
+    return modules, errors
 
 
 async def fetch_module_source(

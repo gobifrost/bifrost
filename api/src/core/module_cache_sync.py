@@ -37,6 +37,13 @@ logger = logging.getLogger(__name__)
 # TTL for cached modules (24 hours)
 MODULE_CACHE_TTL = 86400
 
+# Static-import prefetch is intentionally small. The route also enforces these
+# limits, while this per-execution budget prevents a broad import graph from
+# retaining unbounded source in a long-lived worker child.
+MODULE_PREFETCH_MAX_NAMES = 32
+MODULE_PREFETCH_MAX_SOURCES = 32
+MODULE_PREFETCH_MAX_SOURCE_BYTES = 1_048_576
+
 REPO_PREFIX = "_repo/"
 SOLUTIONS_ROOT = "_solutions"
 
@@ -73,6 +80,14 @@ class ModuleResolution:
     storage_path: str | None = None
 
 
+@dataclass
+class ModulePrefetchBudget:
+    """Per-execution cap for source retained by speculative imports."""
+
+    remaining_sources: int = MODULE_PREFETCH_MAX_SOURCES
+    remaining_bytes: int = MODULE_PREFETCH_MAX_SOURCE_BYTES
+
+
 class ModuleResolutionError(RuntimeError):
     """Raised when targeted module resolution cannot reach the API."""
 
@@ -83,12 +98,14 @@ def set_solution_context(solution_id: UUID | str, global_repo_access: bool) -> N
         solution_id=str(solution_id), global_repo_access=bool(global_repo_access)
     )
     _solution_ctx.resolution_cache = {}
+    _solution_ctx.prefetch_budget = ModulePrefetchBudget()
 
 
 def clear_solution_context() -> None:
     """Deactivate the solution import root (restore plain _repo/ behavior)."""
     _solution_ctx.value = None
     _solution_ctx.resolution_cache = {}
+    _solution_ctx.prefetch_budget = ModulePrefetchBudget()
 
 
 def get_solution_context() -> SolutionContext | None:
@@ -102,6 +119,14 @@ def _get_resolution_cache() -> dict[tuple[str, str | None, bool], ModuleResoluti
         cache = {}
         _solution_ctx.resolution_cache = cache
     return cache
+
+
+def _get_prefetch_budget() -> ModulePrefetchBudget:
+    budget = getattr(_solution_ctx, "prefetch_budget", None)
+    if budget is None:
+        budget = ModulePrefetchBudget()
+        _solution_ctx.prefetch_budget = budget
+    return budget
 
 
 def _get_http_client() -> Any:
@@ -402,6 +427,145 @@ def _resolve_via_engine_transport(client: Any, name: str) -> ModuleResolution:
     )
 
 
+def _module_resolution_from_payload(data: object, name: str) -> ModuleResolution:
+    """Validate one module-resolution object returned by the batch route."""
+    if not isinstance(data, dict):
+        raise ModuleResolutionError(
+            f"Module resolver batch returned invalid entry for {name}"
+        )
+    kind = data.get("kind")
+    if kind not in {"module", "package", "namespace", "not_found"}:
+        raise ModuleResolutionError(
+            f"Module resolver batch returned invalid kind for {name}"
+        )
+    path = data.get("path")
+    if not isinstance(path, str):
+        raise ModuleResolutionError(
+            f"Module resolver batch returned invalid path for {name}"
+        )
+    content = data.get("content")
+    if content is not None and not isinstance(content, str):
+        raise ModuleResolutionError(
+            f"Module resolver batch returned invalid content for {name}"
+        )
+    module_hash = data.get("hash") or ""
+    if not isinstance(module_hash, str):
+        raise ModuleResolutionError(
+            f"Module resolver batch returned invalid hash for {name}"
+        )
+    storage_path = data.get("storage_path")
+    if storage_path is not None and not isinstance(storage_path, str):
+        raise ModuleResolutionError(
+            f"Module resolver batch returned invalid storage path for {name}"
+        )
+    return ModuleResolution(
+        kind=kind,
+        path=path,
+        content=content,
+        hash=module_hash,
+        storage_path=storage_path,
+    )
+
+
+def _module_resolutions_from_batch_payload(
+    data: object, names: list[str]
+) -> dict[str, ModuleResolution]:
+    """Read successful speculative results; errors stay deferred to demand."""
+    if not isinstance(data, dict):
+        raise ModuleResolutionError("Module resolver batch returned invalid payload")
+    modules = data.get("modules")
+    if not isinstance(modules, dict):
+        raise ModuleResolutionError("Module resolver batch returned invalid modules")
+    errors = data.get("errors", {})
+    if not isinstance(errors, dict):
+        raise ModuleResolutionError("Module resolver batch returned invalid errors")
+
+    for name, error in errors.items():
+        if name in names:
+            logger.debug("Speculative module resolution deferred for %s: %s", name, error)
+
+    return {
+        name: _module_resolution_from_payload(modules[name], name)
+        for name in names
+        if name in modules
+    }
+
+
+def _resolve_batch_via_engine_transport(
+    client: Any,
+    names: list[str],
+    *,
+    max_sources: int,
+    max_source_bytes: int,
+) -> dict[str, ModuleResolution]:
+    """Resolve a bounded static-import batch over the scoped engine transport."""
+    ctx = get_solution_context()
+    params: dict[str, object] = {}
+    if ctx is not None:
+        params["solution_id"] = ctx.solution_id
+        params["global_repo_access"] = ctx.global_repo_access
+    try:
+        response = client.engine_request_sync(
+            "POST",
+            "/api/sdk/modules-resolve-batch",
+            params=params,
+            json={
+                "names": names,
+                "max_sources": max_sources,
+                "max_source_bytes": max_source_bytes,
+            },
+        )
+    except Exception as e:
+        raise ModuleResolutionError(
+            f"Engine-local module resolver batch failed: {e}"
+        ) from e
+    if response.status_code != 200:
+        raise ModuleResolutionError(
+            f"Engine-local module resolver batch returned {response.status_code}"
+        )
+    return _module_resolutions_from_batch_payload(response.json(), names)
+
+
+def _fetch_module_resolution_batch_from_api(
+    names: list[str],
+    *,
+    max_sources: int,
+    max_source_bytes: int,
+) -> dict[str, ModuleResolution] | None:
+    """Parent-only HTTP variant of the bounded batch resolver."""
+    creds = _get_engine_credentials()
+    if not creds:
+        return None
+    creds_url, token = creds
+    api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
+    if not api_url:
+        return None
+    ctx = get_solution_context()
+    params: dict[str, object] = {}
+    if ctx is not None:
+        params["solution_id"] = ctx.solution_id
+        params["global_repo_access"] = ctx.global_repo_access
+    try:
+        response = _get_http_client().post(
+            f"{api_url}/api/sdk/modules-resolve-batch",
+            headers={"Authorization": f"Bearer {token}"},
+            params=params,
+            json={
+                "names": names,
+                "max_sources": max_sources,
+                "max_source_bytes": max_source_bytes,
+            },
+            extensions=_fetch_extensions(),
+        )
+        if response.status_code != 200:
+            logger.debug("API module-resolve batch returned %s", response.status_code)
+            return None
+        return _module_resolutions_from_batch_payload(response.json(), names)
+    except Exception as e:
+        logger.debug("API module-resolve batch error: %s", e)
+        return None
+
+
 def _fetch_via_engine_transport(client: Any, storage_path: str) -> CachedModule | None:
     """Fetch one candidate's source through the scoped SDK transport.
 
@@ -436,13 +600,15 @@ def _fetch_via_engine_transport(client: Any, storage_path: str) -> CachedModule 
     return cast(CachedModule, dict(module))
 
 
-def _resolution_redis_key(name: str) -> str:
+def _resolution_redis_key(name: str) -> str | None:
     ctx = get_solution_context()
     cache_key = module_resolution_cache_key(
         name,
         solution_id=ctx.solution_id if ctx is not None else None,
         global_repo_access=ctx.global_repo_access if ctx is not None else False,
     )
+    if cache_key is None:
+        return None
     return f"{MODULE_RESOLUTION_KEY_PREFIX}{cache_key}"
 
 
@@ -475,6 +641,8 @@ def _get_cached_module_resolution(name: str) -> ModuleResolution | None:
     try:
         client = _get_sync_redis()
         resolution_key = _resolution_redis_key(name)
+        if resolution_key is None:
+            return None
         raw_resolution = client.eval(
             MODULE_RESOLUTION_READ_SCRIPT, 2,
             module_resolution_generation_key(resolution_key), resolution_key,
@@ -573,6 +741,73 @@ def resolve_module_sync(name: str) -> ModuleResolution:
 
     cache[cache_key] = resolution
     return resolution
+
+
+def prefetch_module_resolutions(names: list[str]) -> None:
+    """Warm direct static imports without changing Python's demand semantics.
+
+    Only the virtual finder calls this with names discovered from module-body
+    import statements. Results live in the current execution's thread-local
+    resolution cache. Failed or budget-excluded speculative names are not
+    cached, so a later real import takes the existing single-name path.
+    """
+    budget = _get_prefetch_budget()
+    if budget.remaining_sources <= 0 or budget.remaining_bytes <= 0:
+        return
+
+    ctx = get_solution_context()
+    cache = _get_resolution_cache()
+    candidates: list[str] = []
+    for name in dict.fromkeys(names):
+        if len(candidates) >= MODULE_PREFETCH_MAX_NAMES:
+            break
+        cache_key = (
+            name,
+            ctx.solution_id if ctx is not None else None,
+            ctx.global_repo_access if ctx is not None else False,
+        )
+        if cache_key not in cache:
+            candidates.append(name)
+    if not candidates:
+        return
+
+    try:
+        engine_client = _get_engine_client()
+        if engine_client is not None:
+            prefetched = _resolve_batch_via_engine_transport(
+                engine_client,
+                candidates,
+                max_sources=min(budget.remaining_sources, MODULE_PREFETCH_MAX_SOURCES),
+                max_source_bytes=min(budget.remaining_bytes, MODULE_PREFETCH_MAX_SOURCE_BYTES),
+            )
+        else:
+            prefetched = _fetch_module_resolution_batch_from_api(
+                candidates,
+                max_sources=min(budget.remaining_sources, MODULE_PREFETCH_MAX_SOURCES),
+                max_source_bytes=min(budget.remaining_bytes, MODULE_PREFETCH_MAX_SOURCE_BYTES),
+            )
+    except Exception as exc:
+        logger.debug("Speculative module prefetch is unavailable: %s", exc)
+        return
+    if prefetched is None:
+        return
+
+    for name, resolution in prefetched.items():
+        source_bytes = 0
+        if resolution.content is not None:
+            source_bytes = len(resolution.content.encode("utf-8"))
+            if (
+                budget.remaining_sources <= 0
+                or source_bytes > budget.remaining_bytes
+            ):
+                continue
+            budget.remaining_sources -= 1
+            budget.remaining_bytes -= source_bytes
+        cache[(
+            name,
+            ctx.solution_id if ctx is not None else None,
+            ctx.global_repo_access if ctx is not None else False,
+        )] = resolution
 
 
 def _get_s3_client() -> Any:

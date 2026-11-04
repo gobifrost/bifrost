@@ -776,9 +776,10 @@ class TestRouteReuse:
         )
 
     def test_sdk_module_route_selection_is_exact(self):
-        """Gate C5i mounts only the resolve GET and the greedy fetch GET."""
+        """Gate C5i mounts the single, bounded-batch, and fetch module routes."""
         assert SDK_MODULES_ROUTE_METHODS == {
             "/api/sdk/modules-resolve": frozenset({"GET"}),
+            "/api/sdk/modules-resolve-batch": frozenset({"POST"}),
             "/api/sdk/modules/{path:path}": frozenset({"GET"}),
         }
         assert set(SDK_MODULES_ROUTE_METHODS).isdisjoint(
