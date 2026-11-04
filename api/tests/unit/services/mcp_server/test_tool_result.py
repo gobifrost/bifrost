@@ -30,7 +30,7 @@ class TestSuccessResult:
         sdk_result = result.to_call_tool_result()
 
         assert isinstance(sdk_result, CallToolResult)
-        assert sdk_result.structuredContent == {"count": 5}
+        assert sdk_result.structured_content == {"count": 5}
         assert sdk_result.content[0].text.startswith("Found items")
 
 

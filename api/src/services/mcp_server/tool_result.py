@@ -52,8 +52,8 @@ class ToolResult:
     def to_call_tool_result(self) -> CallToolResult:
         return CallToolResult(
             content=self.content,
-            structuredContent=self.structured_content,
-            isError=self.is_error,
+            structured_content=self.structured_content,
+            is_error=self.is_error,
         )
 
 
