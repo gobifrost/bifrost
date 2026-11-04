@@ -113,9 +113,9 @@ def test_access_only_bearer_cannot_bootstrap_a_new_refresh_session(e2e_client, o
 @pytest.mark.parametrize("legacy_registration", [False, True])
 async def test_official_mcp_client_completes_discovery_registration_and_consent(e2e_api_url, org1_user, legacy_registration):
     """Use the shipped MCP SDK; only route its advertised localhost origin to the test API."""
-    import httpx
+    import httpx2 as httpx
     from mcp.client.auth import OAuthClientProvider
-    from mcp.shared.auth import OAuthClientMetadata, OAuthClientInformationFull
+    from mcp.shared.auth import AuthorizationCodeResult, OAuthClientMetadata, OAuthClientInformationFull
 
     class LocalAPITransport(httpx.AsyncBaseTransport):
         def __init__(self):
@@ -173,7 +173,7 @@ async def test_official_mcp_client_completes_discovery_registration_and_consent(
             callback.extend([values["code"][0], values["state"][0]])
 
         async def receive_callback():
-            return callback[0], callback[1]
+            return AuthorizationCodeResult(code=callback[0], state=callback[1])
 
         metadata_response = await browser.get(f"{e2e_api_url}/.well-known/oauth-protected-resource")
         resource_url = metadata_response.json()["resource"]
