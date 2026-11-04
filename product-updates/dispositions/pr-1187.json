@@ -1,0 +1,25 @@
+{
+  "key": "pr:1187",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1187",
+      "https://github.com/gobifrost/bifrost/blob/20c9db7be9fdbdd617ecd338adba11eb4657c292/docs/product-updates-authoring.md",
+      "Original dependency contribution by dependabot[bot], commit d2386c8174ac91b867f7d3e1034dfd9571981848; preserved in this branch.",
+      "Compatibility review: aio-pika is used only by legacy_broker_drain.py. Python 3.11+ is already required; recovery reads JSON bodies, never mutates decoded AMQP headers. No customer workflow, configuration, integration or custom-code changes are required for the supported platform/SDK surface.",
+      "https://github.com/mosquito/aio-pika/releases/tag/10.0.0",
+      "https://github.com/mosquito/aio-pika/releases/tag/10.2.2",
+      "https://github.com/gmr/pamqp/releases/tag/5.0.0",
+      "Security review: OSV querybatch on 2026-11-03 returned no known advisories for aio-pika 10.2.2, aiormq 7.2.5 and pamqp 5.0.0. This is routine dependency maintenance, not a security disclosure.",
+      "Verification: ./test.sh tests/unit/services/test_legacy_broker_drain.py -v passed 20 tests, zero failures or skips, using aio-pika 10.2.2. A disposable RabbitMQ 4 broker separately verified real message recovery, acknowledgement, requeue on handler failure, empty queues and missing queues with the upgraded library. The first broker rehearsal used a transient nonexclusive queue disallowed by RabbitMQ 4; the fixture was corrected to a durable queue; Bifrost passively opens existing queues and does not create them.",
+      "Local complete backend, client and browser suites were not run; the protected merge queue supplies complete-suite verification.",
+      "Verification: BIFROST_SKIP_BUILD=1 BIFROST_TEST_IMAGE_TAG=bifrost-test-e90ab149 ./test.sh quality api passed with zero pyright errors and clean Ruff checks against the locally built aio-pika 10.2.2 image."
+    ]
+  },
+  "reason": "Routine internal dependency maintenance for legacy queued-work recovery; no customer action or announcement value.",
+  "security_review": {
+    "status": "not_required"
+  }
+}
