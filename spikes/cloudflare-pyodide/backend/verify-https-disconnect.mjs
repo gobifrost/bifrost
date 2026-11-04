@@ -14,7 +14,10 @@ for (const [source, packet] of [
   ['ct128-sdk-probe.py', 'ct128-sdk-probe.py'],
 ]) {
   const bytes = source === 'https-disconnect-entry.mjs'
-    ? execFileSync('git', ['show', 'bc6f644ffff25c000555acb6deb089f2cf5067b6:spikes/cloudflare-pyodide/backend/' + source]) : read(source);
+    ? execFileSync('git', ['show', 'bc6f644ffff25c000555acb6deb089f2cf5067b6:spikes/cloudflare-pyodide/backend/' + source])
+    : source === 'https-disconnect-probe.mjs'
+      ? execFileSync('git', ['show', '96d7f2727c3d329c1fab637f70554d50575534df:spikes/cloudflare-pyodide/backend/' + source])
+      : read(source);
   assert.equal(hash(bytes), receipt.packet_sha256[packet], source);
 }
 for (const revision of [7, 8]) {

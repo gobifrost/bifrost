@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
+import {boundedText, diagnosticJson} from '../probe-io.mjs';
 const response = await fetch('http://127.0.0.1:8799/', {method: 'POST', signal: AbortSignal.timeout(45000)});
-const text = await response.text();
-writeFileSync('/qualification/rpc-serialization-observation.json', JSON.stringify({status: response.status, text}), {flag: 'wx'});
+const text = await boundedText(response);
+writeFileSync('/qualification/rpc-serialization-observation.json', diagnosticJson({status: response.status, text}), {flag: 'wx'});
 assert.equal(response.status, 200);
 const body = JSON.parse(text);
 assert.equal(body.tests_run, 8);

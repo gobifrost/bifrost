@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
+import {boundedText, diagnosticJson} from '../probe-io.mjs';
 
 const response = await fetch('http://127.0.0.1:8799/', {
   method: 'POST', signal: AbortSignal.timeout(45000),
 });
-const text = await response.text();
+const text = await boundedText(response);
 const observation = {status: response.status, text, cloud_invocations: 0};
-writeFileSync('/qualification/cooperative-observation.json', JSON.stringify(observation, null, 2), {flag: 'wx'});
+writeFileSync('/qualification/cooperative-observation.json', diagnosticJson(observation), {flag: 'wx'});
 assert.equal(response.status, 200);
 const body = JSON.parse(text);
 for (const item of body.cases) {

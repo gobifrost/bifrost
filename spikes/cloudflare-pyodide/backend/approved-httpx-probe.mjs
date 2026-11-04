@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {writeFileSync} from 'node:fs';
+import {boundedJson, diagnosticJson} from '../probe-io.mjs';
 const effects = [];
 const server = createServer(async (request, response) => {
   if (effects.length >= 8) return response.writeHead(429).end();
@@ -14,11 +15,11 @@ const server = createServer(async (request, response) => {
 await new Promise((resolve, reject) => {server.once('error', reject); server.listen(8820, '127.0.0.1', resolve);});
 try {
   const response = await fetch('http://127.0.0.1:8799/', {method: 'POST', signal: AbortSignal.timeout(45000)});
-  const body = await response.json();
+  const body = await boundedJson(response);
   const observation = {status: response.status, body, effects, cloud_invocations: 0};
   // Fixed owned run directory, exclusive creation; retain evidence even if an
   // assertion fails after Python completes. No workflow-selected file path.
-  writeFileSync('/qualification/httpx-observation.json', JSON.stringify(observation, null, 2) + '\n', {flag: 'wx'});
+  writeFileSync('/qualification/httpx-observation.json', diagnosticJson(observation), {flag: 'wx'});
   console.log(JSON.stringify(observation));
   assert.equal(response.status, 200);
   assert.deepEqual(body.rows.map(row => row.status), [200, 403, 200]);

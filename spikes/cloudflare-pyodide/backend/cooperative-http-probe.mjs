@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {writeFileSync} from 'node:fs';
+import {boundedText, diagnosticJson} from '../probe-io.mjs';
 
 const states = new Map(); let requests = 0;
 function snapshot(state) {
@@ -41,7 +42,7 @@ let report, failure;
 try {
   const response = await fetch('http://127.0.0.1:8799/', {method: 'POST',
     headers: {'x-cooperative-io': 'true', 'x-owner-scheduled': 'true'}, signal: AbortSignal.timeout(45000)});
-  const text = await response.text();
+  const text = await boundedText(response);
   report = {status: response.status, text, cloud_invocations: 0};
   assert.equal(response.status, 200);
   const body = JSON.parse(text);
@@ -65,8 +66,11 @@ try {
   for (const state of states.values()) state.release?.();
   report = {...report, before_cleanup: beforeCleanup, failure: failure?.message ?? null,
     physical_termination_verified: false, engine_sdk_execution_verified: false};
-  writeFileSync('/qualification/cooperative-http-observation.json', JSON.stringify(report, null, 2), {flag: 'wx'});
-  server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  try {
+    writeFileSync('/qualification/cooperative-http-observation.json', diagnosticJson(report), {flag: 'wx'});
+  } finally {
+    server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
+  }
 }
 if (failure) throw failure;
 console.log(JSON.stringify({status: report.status, body: report.body, cloud_invocations: 0}));

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const read = path => readFileSync(new URL(path, import.meta.url));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const receipt = JSON.parse(read('../results/httpx-redirect/v6.json'));
@@ -12,7 +13,12 @@ for (const [source, packet] of [
   ['approved-https-candidate.mjs', 'project/backend/approved-https-candidate.mjs'],
   ['attempt-egress.mjs', 'project/backend/attempt-egress.mjs'],
   ['ct128-sdk-probe.py', 'ct128-sdk-probe.py'],
-]) assert.equal(hash(read(source)), hashes[packet], source);
+]) {
+  const bytes = source === 'approved-httpx-probe.mjs'
+    ? execFileSync('git', ['show', '96d7f2727c3d329c1fab637f70554d50575534df:spikes/cloudflare-pyodide/backend/'+source])
+    : read(source);
+  assert.equal(hash(bytes), hashes[packet], source);
+}
 assert.equal(hashes['project/backend/generated-runtime.mjs'], '61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731');
 const generated = read('../results/httpx-redirect/patch-code.mjs');
 assert.equal(hash(generated), hashes['project/backend/httpx-redirect-code.mjs']);
