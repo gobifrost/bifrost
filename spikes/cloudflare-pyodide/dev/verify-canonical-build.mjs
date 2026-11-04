@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
 const sha = value => createHash('sha256').update(value).digest('hex');
 const source = JSON.parse(read('canonical-build-source-v1.json'));
@@ -9,7 +10,10 @@ const worker = JSON.parse(read('canonical-build-worker-v2.json'));
 const receipt = JSON.parse(read('canonical-build-v2-receipt.json'));
 for (const [name, digest] of Object.entries(source.files_sha256)) {
   if (name.endsWith('cooperative-code.mjs') || name.endsWith('rpc-serialization-code.mjs')) continue;
-  const bytes = readFileSync(new URL('../'+name, import.meta.url));
+  // The v2 build predates the separate declared-capability admission guard.
+  const bytes = name === 'dev/executor/canonical-entry.mjs'
+    ? execFileSync('git', ['show', 'b578cae4b561cf213ea44339a2afe96885e174ca:spikes/cloudflare-pyodide/'+name])
+    : readFileSync(new URL('../'+name, import.meta.url));
   const actual = name === 'dev/executor/cloudflare.config.ts'
     ? bytes.toString().replace("entrypoint: './entry.mjs'", "entrypoint: './canonical-entry.mjs'") : bytes;
   assert.equal(sha(actual), digest, name);

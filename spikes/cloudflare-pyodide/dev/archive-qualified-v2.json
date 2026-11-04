@@ -1,0 +1,108 @@
+{
+  "archives": [
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/approved-https-v4/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/approved-https-v5/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/approved-https-v6/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-cancel-v2/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-cancel-v5/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-cancel-v6/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-https-v2/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-https-v3/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-https-v4/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-https-v5/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-https-v8/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/canonical-https-v9/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/capability-revocation-v3/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/capability-revocation-v4/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/capability-revocation-v6/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/https-deadline-v1/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    },
+    {
+      "archive": "/opt/bifrost-tests/pyodide-ddf316c1/runs/staged-runtime-v1/project/backend/generated-runtime.mjs.gz",
+      "sha256": "03b529dc4ff91fa53f0683b9c4685444f3468d2dfaf78dd5d9fed29cb9dc24f9",
+      "original_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+      "bytes": 4395547
+    }
+  ],
+  "volumes_deleted": false,
+  "guard_changed": false
+}

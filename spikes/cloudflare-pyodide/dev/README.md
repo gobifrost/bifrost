@@ -4,6 +4,10 @@ Current preparation: [guarded canonical candidate](CANONICAL-CANDIDATE.md) build
 offline with cf CLI; [closed-guard/API alignment](CANONICAL-ALIGNMENT.md) verifies
 local denial and an actual dev-schema mismatch. This candidate is not deployed.
 
+[Matched API runtime](MATCHED-API.md) now boots at the canonical source/schema
+in the isolated test project. Changed candidate admission has focused regression
+coverage; execution through that changed entry and its deployment remain pending.
+
 Latest cancellation qualification: [deployed incoming disconnect](REQUEST-SIGNAL-CLOUD.md).
 The parent and I/O delivery controls pass; CPU physical termination remains
 unproved. The temporary flag, endpoint and guard were retired after the test.

@@ -6,7 +6,7 @@ import cooperativeSource from './cooperative-code.mjs';
 import serializationSource from './rpc-serialization-code.mjs';
 import {cooperativeRpcResponse} from '../../backend/cooperative-rpc-result.mjs';
 import {boundedLosslessJson} from '../../backend/lossless-json.mjs';
-import {admitFixture} from '../../backend/fixture-admission.mjs';
+import {admitCanonicalFixture} from './canonical-admission.mjs';
 import {createAttemptEgress} from '../../backend/attempt-egress.mjs';
 import {invocationStream} from '../../backend/invocation-stream.mjs';
 import {terminalResponse} from '../../backend/terminal-response.mjs';
@@ -49,7 +49,7 @@ export default {
     try {body = await boundedLosslessJson(request, 262144);}
     catch {return new Response('Invalid bounded request', {status: 400});}
     if (body?.mode !== 'canonical' || body.fixture_mode !== undefined) return new Response('Canonical fixed fixture only', {status: 422});
-    try {return await admitFixture(body, attempts.size, async () => {
+    try {return await admitCanonicalFixture(body, attempts.size, async () => {
       const id = crypto.randomUUID();
       const payload = {...attemptPayload(body, env.API_ORIGIN), action: 'execute_envelope', worker_id: body.worker_id};
       const egress = createAttemptEgress(Date.parse(body.context.workflow_deadline), outgoing => {
