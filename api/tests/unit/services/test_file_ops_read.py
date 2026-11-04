@@ -205,8 +205,9 @@ class TestMoveFileModuleCache:
     async def test_move_invalidates_before_database_failure(self):
         old_record = SimpleNamespace(content=None, content_hash="source-hash")
         service, s3 = self._service(old_record)
+        existing_reads = list(service.db.execute.side_effect)[:2]
         service.db.execute.side_effect = [
-            *service.db.execute.side_effect,
+            *existing_reads,
             RuntimeError("database unavailable"),
         ]
 
