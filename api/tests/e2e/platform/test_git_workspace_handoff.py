@@ -75,6 +75,29 @@ async def test_commit_is_published_by_another_executor(
     committed = await service.desktop_commit("commit before executor handoff")
     assert committed.success, committed.error
     assert committed.commit_sha
+    if warm_executor:
+        # Force regenerated manifest bytes to differ without adding an entity
+        # absent from the pending commit (which correctly needs delete review).
+        from src.services.git_workspace_state import GitWorkspaceState, tree_fingerprint
+
+        pending_fingerprint = tree_fingerprint(first)
+        receipt_path = GitWorkspaceState._receipt_path(first)
+        receipt = receipt_path.read_bytes()
+        regenerate = service._regenerate_manifest_to_dir
+        manifest_paths = []
+
+        async def regenerate_with_comment(db, work_dir):
+            await regenerate(db, work_dir)
+            manifest = next((work_dir / ".bifrost").glob("*.yaml"))
+            manifest.write_text(manifest.read_text() + "\n# Reimport regression\n")
+            manifest_paths.append(manifest.relative_to(work_dir).as_posix())
+
+        monkeypatch.setattr(service, "_regenerate_manifest_to_dir", regenerate_with_comment)
+        await service.reimport_from_repo()
+        assert b"# Reimport regression" in await storage.read(manifest_paths[0])
+        assert tree_fingerprint(first) == pending_fingerprint
+        assert receipt_path.read_bytes() == receipt
+        assert (await service.desktop_status()).commits_ahead == 1
     preflight = await service.preflight()
     assert preflight.valid, preflight.issues
 

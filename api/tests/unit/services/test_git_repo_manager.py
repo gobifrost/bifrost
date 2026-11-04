@@ -496,6 +496,52 @@ class TestCheckout:
             mock_up.assert_not_awaited()
 
 
+@pytest.mark.parametrize("writer_fails", [False, True])
+async def test_isolated_checkout_publishes_without_replacing_pending_work(
+    manager, tmp_path, monkeypatch, writer_fails,
+):
+    from src.services.git_workspace_state import GitWorkspaceState, tree_fingerprint
+
+    pending = tmp_path / "pending"
+    pending.mkdir()
+    (pending / "draft.txt").write_text("unacknowledged local work")
+    monkeypatch.setattr("src.services.git_repo_manager.PERSISTENT_WORK_DIR", pending)
+    state = GitWorkspaceState(manager)
+    state.record(pending, "acknowledged-etag", tree_fingerprint(pending))
+    receipt = state._receipt_path(pending).read_bytes()
+
+    async def download(target):
+        target.mkdir(parents=True)
+        (target / "draft.txt").write_text("published content")
+        await manager._record_source_receipt(target)
+
+    uploaded = []
+
+    async def upload(source):
+        uploaded.append((source / "draft.txt").read_text())
+
+    monkeypatch.setattr(manager, "sync_down", download)
+    monkeypatch.setattr(manager, "sync_up", upload)
+    views = []
+
+    async def write():
+        async with manager.checkout(isolated=True) as view:
+            views.append(view)
+            (view / "draft.txt").write_text("regenerated published content")
+            if writer_fails:
+                raise RuntimeError("writer failed")
+
+    if writer_fails:
+        with pytest.raises(RuntimeError, match="writer failed"):
+            await write()
+    else:
+        await write()
+    assert uploaded == ([] if writer_fails else ["regenerated published content"])
+    assert (pending / "draft.txt").read_text() == "unacknowledged local work"
+    assert state._receipt_path(pending).read_bytes() == receipt
+    assert not views[0].parent.exists()
+
+
 @pytest.mark.parametrize("reader_fails", [False, True])
 async def test_readonly_checkout_preserves_unacknowledged_local_work(
     manager, tmp_path, monkeypatch, reader_fails,
