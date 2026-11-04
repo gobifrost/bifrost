@@ -14,7 +14,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -71,13 +70,13 @@ def _tool_returns(messages: list[ModelMessage], name: str) -> list[Any]:
     ]
 
 
-def _retry_feedback(messages: list[ModelMessage], tool_name: str) -> list[RetryPromptPart]:
+def _retry_feedback(messages: list[ModelMessage], tool_name: str) -> list[ToolReturnPart]:
     return [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, RetryPromptPart) and part.tool_name == tool_name
+        if isinstance(part, ToolReturnPart) and part.tool_name == tool_name and part.outcome == "retried"
     ]
 
 

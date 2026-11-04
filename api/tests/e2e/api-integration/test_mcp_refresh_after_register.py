@@ -161,7 +161,12 @@ async def {function_name}(message: str) -> dict:
                     "jsonrpc": "2.0",
                     "id": 4,
                     "method": "tools/call",
-                    "params": {"name": function_name, "arguments": {}},
+                    "params": {
+                        "name": function_name, "arguments": {},
+                        # Existing requests above the SDK v2 4 MiB default still
+                        # reach argument validation, without another workflow job.
+                        "_meta": {"compatibility_padding": "x" * (4 * 1024 * 1024)},
+                    },
                 },
                 headers=mcp_h,
             )

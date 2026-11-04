@@ -338,9 +338,11 @@ def get_mcp_asgi_app():
     # We deliberately retain stateless JSON responses to match the former
     # FastMCP mount's wire contract.
     session_manager = StreamableHTTPSessionManager(
-        app=fastmcp_server._mcp_server,
+        app=fastmcp_server._lowlevel_server,
         json_response=True,
         stateless=True,
+        # Match the documented ingress ceiling; the SDK defaults to only 4 MiB.
+        max_request_body_size=100 * 1024 * 1024,
     )
 
     async def mcp_endpoint(scope, receive, send):

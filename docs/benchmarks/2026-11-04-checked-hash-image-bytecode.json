@@ -1,0 +1,105 @@
+{
+  "classification": "component screening; not complete startup or Cloudflare acceptance",
+  "measured_source": "457134dffb8ec7af12b0a9be437e66a3bc7b7400",
+  "proposal_base": "65b677669755dece507bd0e2f3103e90fb92b360",
+  "official_image": "ghcr.io/gobifrost/bifrost-api@sha256:782288689f7ab0c1e95ff1992f13ada09044293320197df945c748400ed536c3",
+  "image_config": "sha256:83a02dcc4f2868adc6a4313b656e9476eaf2bd1b9ffe6250aa6a006c5314b65e",
+  "environment": {
+    "platform": "linux/amd64",
+    "python": "3.14",
+    "cpu_limit": 0.5,
+    "memory_mib": 768,
+    "pids_limit": 32,
+    "network": "none",
+    "cache_regime": "fresh container and measured interpreter; app source pre-read both variants; host page cache otherwise uncontrolled/cached"
+  },
+  "baseline": {
+    "run_id": "abd3700f-7251-44c5-9443-4c770a479332",
+    "samples_ms": [
+      6768.901708070189,
+      6772.354817949235,
+      6813.674131873995
+    ],
+    "metrics": [
+      {
+        "cpu_ms": 3369.742198,
+        "precompiled_bytes": 0,
+        "precompile_ms": 0.0012740492820739746
+      },
+      {
+        "cpu_ms": 3373.0722370000003,
+        "precompiled_bytes": 0,
+        "precompile_ms": 0.001298263669013977
+      },
+      {
+        "cpu_ms": 3413.503735,
+        "precompiled_bytes": 0,
+        "precompile_ms": 0.0012279488146305084
+      }
+    ],
+    "median_ms": 6772.354817949235
+  },
+  "candidate": {
+    "run_id": "16b6c76e-a922-407d-b299-9f99f328910d",
+    "samples_ms": [
+      6136.349077802151,
+      5990.991486702114,
+      6123.928193002939
+    ],
+    "metrics": [
+      {
+        "cpu_ms": 3086.297289,
+        "precompiled_bytes": 14469678,
+        "precompile_ms": 3687.7029994502664
+      },
+      {
+        "cpu_ms": 2990.114125,
+        "precompiled_bytes": 14469678,
+        "precompile_ms": 3459.399634040892
+      },
+      {
+        "cpu_ms": 3074.687393,
+        "precompiled_bytes": 14469678,
+        "precompile_ms": 3477.971339132637
+      }
+    ],
+    "median_ms": 6123.928193002939
+  },
+  "invariant": {
+    "module_hash": "7fb9e76f61dce70bc9b644a251786186b6c593027648d31e3baf62e1b14b5b76",
+    "source_hash": "399ad3e41b5181a3fd4c7da37ec17215299a882df453255a44066b4301dbc3a7",
+    "source_files": 926,
+    "snapshot_type": "DataSnapshot"
+  },
+  "validation": {
+    "compile_command": [
+      "python",
+      "-m",
+      "compileall",
+      "-f",
+      "--invalidation-mode",
+      "checked-hash",
+      "-q",
+      "/app/src",
+      "/app/shared",
+      "/app/bifrost"
+    ],
+    "platform_sources_checked": 926,
+    "all_cache_headers_checked_hash": true,
+    "same_size_mtime_control": {
+      "timestamp": 11,
+      "checked-hash": 22
+    },
+    "fresh_agent_module_parity": true,
+    "exit": 0,
+    "cleanup": true
+  },
+  "limitations": [
+    "Frozen measured source differs from proposal base; candidate release image still needs build and complete startup acceptance.",
+    "Three samples per variant, no p95 or statistical significance claim.",
+    "Scope is agent imports, configure_mappers and price snapshot; excludes model-catalog DB warm, GC freeze, Docker/SSH/build and full readiness.",
+    "The old same-interpreter compile/import benchmark was confounded and is not evidence for this result.",
+    "Extra compressed layer/pull latency and full Cloudflare gain unmeasured.",
+    "Casey generic host metadata describes Windows orchestrator; command executes on Linux. Inherited label says64PIDs; actual command32 is reported here."
+  ]
+}

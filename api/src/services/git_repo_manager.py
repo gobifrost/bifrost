@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import re
 from uuid import UUID, uuid4
 from contextlib import asynccontextmanager
@@ -231,9 +232,30 @@ class GitRepoManager:
         # Fingerprint before transferring: a write that lands mid-transfer then
         # shows up as a change rather than being silently absorbed.
         fingerprint = await self._storage_fingerprint()
+        await self._invalidate_ambiguous_sync_timestamps(target)
         await self._run_aws_cli(cmd)
         self._restore_git_directories(target)
         self._write_storage_baseline(target, fingerprint)
+
+    async def _invalidate_ambiguous_sync_timestamps(self, target: Path) -> None:
+        """Make AWS download content changes hidden by equal size and timestamp."""
+        from src.services.repo_storage import RepoStorage
+
+        files = [path for path in target.rglob("*") if path.is_file()]
+        if not files:
+            return
+        listing = await RepoStorage(self._settings).list_with_metadata("")
+        for path in files:
+            remote = listing.get(path.relative_to(target).as_posix())
+            local = path.stat()
+            if remote is None or local.st_size != remote.size or local.st_mtime != remote.last_modified.timestamp():
+                continue
+            # Single-part S3 ETags can prove equality. An opaque/multipart ETag
+            # cannot, so download that ambiguous object rather than trust stats.
+            with path.open("rb") as source:
+                digest = hashlib.file_digest(source, lambda: hashlib.md5(usedforsecurity=False)).hexdigest()
+            if digest != remote.etag:
+                os.utime(path, (local.st_atime, 0))
 
     @staticmethod
     def _restore_git_directories(target: Path) -> None:

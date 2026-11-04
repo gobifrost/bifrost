@@ -50,7 +50,8 @@ async function recordDependabotDisposition({ github, repository, number, alertSt
         (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename) && !isActionPinUpdate(file)) ||
         (file.filename !== LEDGER && file.filename !== itemPath && !DEPENDENCY_FILES.has(file.filename) &&
           !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(file.filename)))) {
-    throw new Error("Dependabot PR changes files outside dependency maintenance");
+    // Compatibility repairs need maintainer review, never an automated write or merge.
+    return { changed: false, manualReview: true };
   }
   const ledger = await readLedgerFile(github, repository, LEDGER, pr.head.sha);
   if (ledger.schema_version !== 1 || Object.hasOwn(ledger, "items")) {

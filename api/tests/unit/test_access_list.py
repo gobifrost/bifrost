@@ -2014,6 +2014,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.mcp_server.server._get_context_from_token": (3, "actor_facts"),
     "src.services.mcp_server.server._get_runtime_context": (3, "actor_facts"),
     "src.services.mcp_server.server.context_from_principal": (3, "actor_facts"),
+    # Shared login policy derives the legacy recovery exclusion from persisted
+    # Platform Admin facts; explicit user/org exclusions replace blanket exemption.
+    "src.services.oauth_config_service.OAuthConfigService._is_login_method_allowed_for": (1, "current_role_derivation"),
+    "src.services.oauth_config_service.OAuthConfigService.get_login_preference_for_settings": (1, "current_role_derivation"),
     "src.services.policy_rule_service.PolicyRuleService._get": (1, "internal_authorized_resource"),
     "src.services.solutions.deploy.SolutionDeployer._upsert_file_policies": (1, "internal_authorized_resource"),
     "src.services.solutions.deploy.SolutionDeployer._upsert_tables": (1, "internal_authorized_resource"),
@@ -2087,6 +2091,8 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {}
 # trusts); workflow code can write Redis today, so each one closes at the
 # cutover.
 _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
+    "bifrost._logging.append_log_to_stream": (2, "cutover"),
+    "bifrost._logging.append_log_to_stream_async": (2, "cutover"),
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
     "shared.browser_impersonation.validate_browser_impersonation": (1, "cutover"),

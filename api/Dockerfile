@@ -104,6 +104,10 @@ RUN PYTHONPATH=/app python /app/scripts/build_cli_artifact.py \
       --output /app/artifacts \
       --version "${BIFROST_VERSION}"
 
+# Compile platform source after CLI packaging, before npm adds dependency trees.
+# Checked hashes preserve source-change invalidation; keep the full preload graph.
+RUN python -m compileall -f --invalidation-mode checked-hash -q /app/src /app/shared /app/bifrost
+
 # Install app compiler Node.js dependencies
 COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
 COPY api/src/services/app_compiler/compile.js /app/src/services/app_compiler/

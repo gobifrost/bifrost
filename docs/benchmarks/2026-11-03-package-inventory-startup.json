@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "kind": "local component experiment; not Cloudflare cold-start acceptance",
+  "runtime_source": "457134dffb8ec7af12b0a9be437e66a3bc7b7400",
+  "proposal_base": "8a17af37d31c39ffdfde48fc3ac214af6268a779",
+  "image_config": "sha256:83a02dcc4f2868adc6a4313b656e9476eaf2bd1b9ffe6250aa6a006c5314b65e",
+  "resources": {
+    "cpus": 0.5,
+    "memory_mib": 768,
+    "pids": 64,
+    "network": "none"
+  },
+  "scope": "Python helper process entry through complete parsed inventory validated against canonical pip list; Docker and SSH setup/cleanup outside reported component timer, retained as outer timing",
+  "correctness": "Full parsed inventory equals canonical pip list; 153 packages; before, during and after measurement",
+  "baseline": {
+    "run_id": "39310bf1-61ef-4f03-85d0-759c724f14ca",
+    "samples_ms": [
+      3512.07572594285,
+      3592.4561247229576,
+      3560.5194056406617
+    ],
+    "summary": {
+      "median_ms": 3560.5194056406617,
+      "min_ms": 3512.07572594285,
+      "max_ms": 3592.4561247229576,
+      "mad_pct": 0.8969679825842535
+    }
+  },
+  "candidate": {
+    "run_id": "e63da5e2-fd95-421f-b5ba-d04be75720c7",
+    "samples_ms": [
+      1516.6097120381892,
+      1504.7803148627281,
+      1493.4319350868464
+    ],
+    "summary": {
+      "median_ms": 1504.7803148627281,
+      "min_ms": 1493.4319350868464,
+      "max_ms": 1516.6097120381892,
+      "mad_pct": 0.7541552520187647
+    },
+    "modified_source_overlay": true
+  },
+  "physical_floor": "unknown",
+  "limitations": [
+    "Host image/page cache uncontrolled and likely cached",
+    "Same image and resources, fresh disposable container each repetition",
+    "Candidate source overlay changes package_helper.py only; no image or live provider mutation",
+    "No full-startup gain, package mutation correctness, or handler runtime acceptance implied by this component benchmark"
+  ],
+  "initial_proposal_base": "47130eeb15308a5d6b5fd4c0819432c13e4e4499"
+}

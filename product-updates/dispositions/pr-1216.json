@@ -1,0 +1,20 @@
+{
+  "key": "pr:1216",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine file-record cleanup and internal isolation repair; no new capability or customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1216",
+      "Source contribution by MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream, original head 422d608c87fb3af7db9282701e3fa5764a9a8687.",
+      "Jack approved scoped repair, verification and protected merge in native mobile decision ce8f310f-775d-425c-ab11-0f0dcd15d0ac. Routine correction omitted under release visibility policy; no public announcement authorized.",
+      "Isolation review: retain existing scope authorization; delete only the record selected by organization/solution, location and path. No historical cleanup, schema migration or customer upgrade action.",
+      "Security assessment: fixes metadata selection after existing file authorization. No authorization widening, secret exposure or established incident; no separate security disclosure required.",
+      "Verification: 76 focused SDK, HTTP adapter and database-backed policy-service tests passed, including org/global and Solution/non-Solution collision preservation. Full API Pyright and Ruff passed. Independent Astra isolation review found no blockers. Broader backend/browser suites deferred to protected merge queue."
+    ]
+  },
+  "security_review": {
+    "status": "not_required"
+  }
+}
