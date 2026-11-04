@@ -18,6 +18,7 @@ import {
 } from "@/hooks/useFormFileUpload";
 
 interface FileUploadFieldProps {
+	orgId?: string;
 	formId: string;
 	fieldName: string;
 	label: string | null;
@@ -60,6 +61,7 @@ function formatFileSize(bytes: number): string {
 }
 
 export function FileUploadField({
+	orgId,
 	formId,
 	fieldName,
 	label,
@@ -81,6 +83,7 @@ export function FileUploadField({
 	const activeUploadsRef = useRef(0);
 
 	const { uploadFile } = useFormFileUpload(formId, {
+		orgId,
 		maxSizeMb,
 		allowedTypes,
 		fieldName,

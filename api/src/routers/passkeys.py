@@ -37,10 +37,19 @@ from src.services.passkey_service import PasskeyService
 
 # Import login response generation from auth router
 from src.routers.auth import _generate_login_tokens, LoginResponse
+from src.models.orm.users import User
+from src.services.oauth_config_service import PASSKEY_SSO_ONLY_DETAIL
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/passkeys", tags=["passkeys"])
+
+
+async def _passkey_allowed_for(db: DbSession, user=None) -> bool:
+    """Whether passkey use is allowed under the SSO-only policy."""
+    from src.services.oauth_config_service import OAuthConfigService
+
+    return await OAuthConfigService(db).is_passkey_allowed_for(user)
 
 
 def _refuse_impersonation_enrollment(user: CurrentActiveUser) -> None:
@@ -71,6 +80,11 @@ async def get_registration_options(
 ) -> PasskeyRegistrationOptionsResponse:
     """Generate WebAuthn registration options for the current user."""
     _refuse_impersonation_enrollment(user)
+    if not await _passkey_allowed_for(db, await db.get(User, user.user_id)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSKEY_SSO_ONLY_DETAIL,
+        )
     service = PasskeyService(db)
 
     try:
@@ -103,6 +117,11 @@ async def verify_registration(
 ) -> PasskeyRegistrationVerifyResponse:
     """Verify and complete passkey registration."""
     _refuse_impersonation_enrollment(user)
+    if not await _passkey_allowed_for(db, await db.get(User, user.user_id)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSKEY_SSO_ONLY_DETAIL,
+        )
     service = PasskeyService(db)
 
     try:
@@ -148,20 +167,20 @@ async def verify_registration(
     summary="Get passkey authentication options",
     description="Generate WebAuthn authentication options for passwordless login. "
     "Returns a challenge that should be passed to navigator.credentials.get(). "
-    "If email is provided, limits credentials to that user. "
-    "If email is omitted, uses discoverable credentials (passkey autofill).",
+    "Uses discoverable credentials without disclosing account membership. "
+    "The optional email field is accepted without changing the public challenge.",
 )
 async def get_authentication_options(
     request: PasskeyAuthOptionsRequest,
     db: DbSession,
 ) -> PasskeyAuthOptionsResponse:
     """Generate WebAuthn authentication options (public endpoint)."""
+    # A challenge conveys no authentication authority. Resolve and enforce
+    # exclusions only after proving possession of the credential in verify.
     service = PasskeyService(db)
 
     try:
-        challenge_id, options = await service.generate_authentication_options(
-            email=request.email,
-        )
+        challenge_id, options = await service.generate_authentication_options()
 
         return PasskeyAuthOptionsResponse(
             challenge_id=challenge_id,
@@ -199,6 +218,12 @@ async def verify_authentication(
             credential_json=credential_json,
         )
 
+        if not await _passkey_allowed_for(db, user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=PASSKEY_SSO_ONLY_DETAIL,
+            )
+
         await db.commit()
 
         logger.info(f"Passkey authentication successful for user {user.id}")
@@ -212,6 +237,8 @@ async def verify_authentication(
             detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to verify authentication: {e}")
         raise HTTPException(
