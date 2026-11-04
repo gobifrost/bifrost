@@ -391,7 +391,6 @@ async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors()
     path = "modules/helpers/tool.py"
     names = ["modules", "modules.helpers", "modules.helpers.tool"]
     from src.core.module_cache import set_module
-    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
     pipeline = MagicMock()
     pipeline.__aenter__ = AsyncMock(return_value=pipeline)
@@ -405,7 +404,7 @@ async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors()
         await set_module(path, "VALUE = 1", "hash")
 
     assert [call.args[2] for call in pipeline.eval.call_args_list] == [
-        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
+        f"{module_cache_contract.MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
     assert all(
         call.args[0] == module_cache_contract.MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT
@@ -425,7 +424,6 @@ async def test_invalidate_module_resolution_cache_handles_solution_package_paths
     path = "_solutions/solution-a/workflows/triage/__init__.py"
     names = ["workflows", "workflows.triage"]
     from src.core.module_cache import invalidate_module_resolution_cache
-    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
     pipeline = MagicMock()
     pipeline.__aenter__ = AsyncMock(return_value=pipeline)
@@ -439,7 +437,7 @@ async def test_invalidate_module_resolution_cache_handles_solution_package_paths
         await invalidate_module_resolution_cache(path)
 
     assert [call.args[2] for call in pipeline.eval.call_args_list] == [
-        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
+        f"{module_cache_contract.MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
     assert all(
         call.args[0] == module_cache_contract.MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT
@@ -460,7 +458,6 @@ async def test_invalidate_module_resolution_cache_skips_delete_when_no_names_mat
     path = "modules/helpers/tool.py"
     names = ["modules", "modules.helpers", "modules.helpers.tool"]
     from src.core.module_cache import invalidate_module_resolution_cache
-    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
     pipeline = MagicMock()
     pipeline.__aenter__ = AsyncMock(return_value=pipeline)
@@ -474,7 +471,7 @@ async def test_invalidate_module_resolution_cache_skips_delete_when_no_names_mat
         await invalidate_module_resolution_cache(path)
 
     assert [call.args[2] for call in pipeline.eval.call_args_list] == [
-        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
+        f"{module_cache_contract.MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
     assert all(
         call.args[0] == module_cache_contract.MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT

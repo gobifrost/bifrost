@@ -630,7 +630,7 @@ class FileOperationsService:
         # Move file in S3 _repo/ prefix for all file types
         old_s3_key = f"{REPO_PREFIX}{old_path}"
         new_s3_key = f"{REPO_PREFIX}{new_path}"
-        storage_error: BaseException | None = None
+        storage_completed = False
         try:
             async with self._s3_client.get_client() as s3:
                 await s3.copy_object(
@@ -642,29 +642,22 @@ class FileOperationsService:
                     Bucket=self.settings.s3_bucket,
                     Key=old_s3_key,
                 )
-        except BaseException as exc:
-            storage_error = exc
-
-        if old_path.endswith(".py") or new_path.endswith(".py"):
-            # Invalidate as soon as storage may have changed, before a DB
-            # failure can leave a destination miss or old source rehydratable.
-            # Both paths are safe after a failed copy and necessary after a
-            # successful copy followed by a failed source delete.
+            storage_completed = True
+        finally:
+            # Cleanup also runs during cancellation, without intercepting the
+            # original exception. Invalidate before fallible DB maintenance.
             try:
                 if old_path.endswith(".py"):
                     await invalidate_module(old_path)
                 if new_path.endswith(".py"):
                     await invalidate_module(new_path)
             except Exception:
-                if storage_error is None:
+                if storage_completed:
                     raise
                 logger.exception(
                     "Module cache invalidation failed after storage move failure: %s -> %s",
                     log_safe(old_path), log_safe(new_path),
                 )
-
-        if storage_error is not None:
-            raise storage_error
 
         # Update entity table paths for Python files. Scope to _repo/ rows
         # (solution_id IS NULL): renaming a WORKSPACE file must never rewrite the

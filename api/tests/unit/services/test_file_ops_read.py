@@ -226,6 +226,25 @@ class TestMoveFileModuleCache:
         move_index.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("storage_error_type", [None, RuntimeError, asyncio.CancelledError])
+    async def test_move_preserves_storage_failure_when_cache_cleanup_also_fails(self, storage_error_type):
+        service, s3 = self._service(SimpleNamespace(content=None, content_hash="source-hash"))
+        storage_error = storage_error_type() if storage_error_type else None
+        s3.delete_object.side_effect = storage_error
+        cache_error = RuntimeError("cache unavailable")
+        expected = storage_error if storage_error is not None else cache_error
+        with (
+            patch("src.services.file_storage.file_ops.invalidate_module", new_callable=AsyncMock,
+                  side_effect=cache_error),
+            patch("src.services.file_storage.file_ops.FileIndexService.move_index", new_callable=AsyncMock) as move_index,
+            pytest.raises(type(expected)) as raised,
+        ):
+            await service.move_file("workflows/old.py", "workflows/new.py")
+
+        assert raised.value is expected
+        move_index.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_move_invalidates_before_database_failure(self):
         old_record = SimpleNamespace(content=None, content_hash="source-hash")
         service, s3 = self._service(old_record)
