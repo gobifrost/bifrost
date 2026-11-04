@@ -219,40 +219,12 @@ class PasskeyService:
     # Authentication
     # ========================================================================
 
-    async def generate_authentication_options(
-        self,
-        email: str | None = None,
-    ) -> tuple[str, dict]:
-        """
-        Generate WebAuthn authentication options.
-
-        Args:
-            email: Optional email to target specific user's credentials.
-                   If None, uses discoverable credentials (resident keys).
-
-        Returns:
-            Tuple of (challenge_id, options_dict)
-        """
-        allow_credentials = None
-
-        if email:
-            # Get user's passkeys for targeted authentication
-            user = await self._get_user_by_email(email)
-            if user:
-                passkeys = await self._get_user_passkeys(user.id)
-                if passkeys:
-                    allow_credentials = [
-                        PublicKeyCredentialDescriptor(
-                            id=passkey.credential_id,
-                            transports=_normalize_transports(passkey.transports),
-                        )
-                        for passkey in passkeys
-                    ]
-
+    async def generate_authentication_options(self) -> tuple[str, dict]:
+        """Generate an account-independent challenge for resident credentials."""
         # Generate authentication options
         options = generate_authentication_options(
             rp_id=self.settings.webauthn_rp_id,
-            allow_credentials=allow_credentials,
+            allow_credentials=None,
             user_verification=UserVerificationRequirement.REQUIRED,
         )
 

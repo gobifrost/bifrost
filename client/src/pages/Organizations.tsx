@@ -1,3 +1,4 @@
+import { OrganizationSsoExclusion } from "@/components/users/SsoExclusions";
 import {
 	useEffect,
 	useMemo,
@@ -1036,6 +1037,23 @@ export function Organizations() {
 										/>
 									)}
 								</form>
+								{selectedOrg &&
+									authorization.isPlatformAdmin && (
+										<section
+											aria-label="Sign-In Settings"
+											className="mt-5 space-y-3 border-t pt-5"
+										>
+											<h3 className="font-medium">
+												Sign-In Settings
+											</h3>
+											<OrganizationSsoExclusion
+												organizationId={selectedOrg.id}
+												disabled={
+													updateMutation.isPending
+												}
+											/>
+										</section>
+									)}
 							</TabsContent>
 
 							<TabsContent value="instructions" className="mt-0">
