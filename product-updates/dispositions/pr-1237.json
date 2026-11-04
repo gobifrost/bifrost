@@ -1,0 +1,23 @@
+{
+  "key": "pr:1237",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "Require explicit approval before connecting external apps to your Bifrost account.",
+  "category": "hardening",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1237",
+      "Jack authorized the shared CLI/MCP approval repair, compatibility verification, and delivery in the private #381 thread on 2026-11-04.",
+      "Independent boundary and candidate reviews traced callback registration, explicit consent, personal approval rights, session binding, impersonation/runtime refusal, and one-time consumption. Candidate objections were reproduced and repaired: access-only credentials cannot bootstrap refresh sessions, and Alembic no longer depends on Redis.",
+      "Focused unit, access-list, DTO/CLI contract, API, and browser checks pass. The official MCP Python SDK completes fresh registration and imports an existing Redis client ID while changing a native loopback callback port. Existing CLI browser login and polling remain valid.",
+      "The consent display names the acting account and callback; omitted/null/blank app names display Unnamed App. New authorization codes require an explicit decision bound to the request, human session, and live browser refresh cookie. Existing access/refresh contracts and minimum CLI version remain unchanged.",
+      "A production-client browser failure exposed cross-worktree replacement of the shared latest frontend image. Browser/client-check image tags now follow the existing per-worktree API tag, and the corrected browser run passes.",
+      "Security and any formal release notice retain the separate release review requirement. Actual Claude/Copilot desktop clients were not exercised; the standard protocol and shipped MCP SDK were verified. Public catalog reply and acceptance remain separate."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1237"
+  }
+}
