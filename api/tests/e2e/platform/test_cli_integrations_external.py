@@ -181,6 +181,7 @@ async def global_integration(e2e_client, platform_admin, db_session, org1):
         "integration_id": str(integration_id),
         "provider_name": provider_name,
         "org_id": org1["id"],
+        "entity_id": f"ext-entity-{uniq}",
     }
 
     # Remove the exact fixture, including config overrides. REST deletion is
@@ -269,6 +270,12 @@ def _call_endpoint(e2e_client, headers, endpoint, integ):
             headers=headers,
             json={"name": name},
         )
+    if endpoint == "find_mapping":
+        return e2e_client.post(
+            "/api/sdk/integrations/find_mapping",
+            headers=headers,
+            json={"name": name, "entity_id": integ["entity_id"]},
+        )
     if endpoint == "upsert_mapping":
         # Re-upsert the caller's OWN org mapping (scope = own org); the response
         # echoes merged config (the post-write echo — cli.py:1110, a NEW-G site).
@@ -285,7 +292,7 @@ def _call_endpoint(e2e_client, headers, endpoint, integ):
     raise AssertionError(f"unknown endpoint {endpoint}")
 
 
-_CONFIG_ENDPOINTS = ["get", "list_mappings", "get_mapping", "upsert_mapping"]
+_CONFIG_ENDPOINTS = ["get", "list_mappings", "get_mapping", "find_mapping", "upsert_mapping"]
 
 
 @pytest.mark.parametrize("endpoint", _CONFIG_ENDPOINTS)
