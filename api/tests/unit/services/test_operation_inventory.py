@@ -23,7 +23,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 173,
         "manifest": 16,
         "mcp": 94,
-        "rest": 695,
+        "rest": 697,
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -31,6 +31,19 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         for row in rows:
             assert row["status"]
             assert row["reason"]
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_app_consent_is_authentication_transport(method: str) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(
+        row for row in inventory["uncataloged"]["rest"]
+        if row["path"] == "/auth/app-connections/{request_id}" and row["method"] == method
+    )
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Reviews or records the user's app authentication decision; owns no entity state."
+    )
 
 
 def test_solution_dev_context_is_authentication_transport() -> None:
