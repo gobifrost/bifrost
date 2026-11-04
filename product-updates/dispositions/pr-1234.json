@@ -1,0 +1,14 @@
+{
+  "key": "pr:1234",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal remote-worker package-inventory startup optimization; no new capability, customer action, or end-to-end latency promise requiring an announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1234",
+      "Codex reviewed this editorial classification under the customer-facing selection policy. This records the contributor's disposition, not a maintainer approval or merge decision.",
+      "The candidate preserves canonical pip inventory and package-tool environment filtering. Component benchmark scope and current-source CI limits are recorded in docs/benchmarks/2026-11-03-package-inventory-startup.md."
+    ]
+  }
+}

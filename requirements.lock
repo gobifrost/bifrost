@@ -4,9 +4,9 @@
 #
 #    pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml
 #
-aio-pika==9.6.2 \
-    --hash=sha256:2a5478af920d169795071c9c09c7542cd8cdece60438cf7804533dcbcce93b7f \
-    --hash=sha256:c49e9246080dc8ffa1bb0e4aca407bf3d8ad78c3ee3a93df88b68fe65d7a49b9
+aio-pika==10.2.2 \
+    --hash=sha256:578a12b71c1d8bd4ca526f413dfc17f9224b9d5176c2edc778eaf9de90857a1e \
+    --hash=sha256:80db36df038cc183c8e7e2f75c5991af6e0ad6a7a5c2e5c9a81d6bdde5488621
     # via bifrost-api (pyproject.toml)
 aiohappyeyeballs==2.6.1 \
     --hash=sha256:c3f9d0113123803ccadfdf3f0faa505bc78e6a72d1cc4806cbd719826e943558 \
@@ -134,9 +134,9 @@ aiohttp==3.13.5 \
     --hash=sha256:fe6970addfea9e5e081401bcbadf865d2b6da045472f58af08427e108d618540 \
     --hash=sha256:fee86b7c4bd29bdaf0d53d14739b08a106fdda809ca5fe032a15f52fae5fe254
     # via bifrost-api (pyproject.toml)
-aiormq==6.9.4 \
-    --hash=sha256:0e7c01b662804e1cc7ace9a17794e8c1192a27fc2afa96162362a6e61ae8e8ef \
-    --hash=sha256:726a8586695e863fba68cf88842065ab12348c9438dcebdfc9d0bddaf6083277
+aiormq==7.2.5 \
+    --hash=sha256:250dc99381c004e0b9c3a58a38b0fc04564339aa1e05740fcf3a9578fe810fc2 \
+    --hash=sha256:c408686d190d10788ca132899c5ede6b123541bee2ce54ea7167404fac11d779
     # via aio-pika
 aiosignal==1.4.0 \
     --hash=sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e \
@@ -1878,9 +1878,9 @@ packaging==26.2 \
     # via
     #   bifrost-api (pyproject.toml)
     #   pytest
-pamqp==3.3.0 \
-    --hash=sha256:40b8795bd4efcf2b0f8821c1de83d12ca16d5760f4507836267fd7a02b06763b \
-    --hash=sha256:c901a684794157ae39b52cbf700db8c9aae7a470f13528b9d7b4e5f7202f8eb0
+pamqp==5.0.0 \
+    --hash=sha256:d76dd4af900802483cda5f318a5328c86a1e9b127159f5455b17d9a0bb658b89 \
+    --hash=sha256:f426351b57f6a9e453ee27682431e532c44771cb61b4f74018b8a7088f4cac20
     # via aiormq
 pathspec==1.1.0 \
     --hash=sha256:574b128f7456bd899045ccd142dd446af7e6cfd0072d63ad73fbc55fbb4aaa42 \

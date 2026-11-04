@@ -1,0 +1,13 @@
+{
+  "key": "pr:1188",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1188",
+      "https://github.com/gobifrost/bifrost/blob/20c9db7be9fdbdd617ecd338adba11eb4657c292/docs/product-updates-authoring.md"
+    ]
+  },
+  "reason": "Routine dependency maintenance with compatibility and regression repairs; no new customer capability or required action. The README retry fixture now uses a supported heading. Git fetch now detects same-size storage edits with equal timestamps; deterministic regression coverage reproduces the merge-group failure. Dependency audit introduces no new vulnerable packages compared with main. The bot-only auto-merge check rejects maintainer source/test repairs by design; this reviewed change uses the protected maintainer merge queue."
+}

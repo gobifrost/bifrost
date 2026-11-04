@@ -2087,6 +2087,8 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {}
 # trusts); workflow code can write Redis today, so each one closes at the
 # cutover.
 _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
+    "bifrost._logging.append_log_to_stream": (2, "cutover"),
+    "bifrost._logging.append_log_to_stream_async": (2, "cutover"),
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
     "shared.browser_impersonation.validate_browser_impersonation": (1, "cutover"),
