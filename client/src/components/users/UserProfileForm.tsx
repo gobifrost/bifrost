@@ -236,9 +236,6 @@ export function UserProfileForm({
 						"min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6",
 				)}
 			>
-				{authorization.isPlatformAdmin && (
-					<UserSsoExclusion user={user} />
-				)}
 				{isEditingSelf && (
 					<Alert>
 						<AlertCircle className="h-4 w-4" />
@@ -418,6 +415,15 @@ export function UserProfileForm({
 								</p>
 							)}
 					</div>
+				)}
+				{authorization.isPlatformAdmin && (
+					<section
+						aria-label="Sign-In Settings"
+						className="space-y-3 border-t pt-4"
+					>
+						<h3 className="font-medium">Sign-In Settings</h3>
+						<UserSsoExclusion user={user} />
+					</section>
 				)}
 			</div>
 			{showFooter && (
