@@ -439,3 +439,27 @@ async def test_resolve_module_rehydrates_cached_module_metadata_from_module_cach
     mock_get.assert_awaited_once_with("modules/helpers.py")
     mock_set.assert_not_called()
     mock_prefix.assert_not_called()
+
+@pytest.mark.parametrize("failure_point", ["read", "prefix"])
+async def test_storage_errors_propagate_without_caching(failure_point):
+    from shared.sdk_modules import resolve_module_name
+
+    error = RuntimeError("storage unavailable")
+    redis = MagicMock()
+    redis.get = AsyncMock(return_value=None)
+    with (
+        patch(f"{SERVICE}.get_module_resolution_cache", new_callable=AsyncMock, return_value=None),
+        patch(f"{SERVICE}.set_module_resolution_cache", new_callable=AsyncMock) as cache,
+        patch("src.core.module_cache.get_redis_client", return_value=redis),
+        patch("src.core.module_cache._read_module_from_storage", new_callable=AsyncMock,
+              side_effect=error if failure_point == "read" else None) as read,
+        patch(f"{SERVICE}._prefix_exists", new_callable=AsyncMock, side_effect=error) as prefix,
+    ):
+        if failure_point == "prefix":
+            from botocore.exceptions import ClientError
+            read.side_effect = ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        with pytest.raises(RuntimeError, match="storage unavailable"):
+            await resolve_module_name("modules.missing", scope=ModuleSourceScope(solution_id=None, global_repo_access=False))
+        cache.assert_not_awaited()
+        if failure_point == "prefix":
+            prefix.assert_awaited_once()

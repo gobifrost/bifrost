@@ -13,6 +13,8 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+
+from botocore.exceptions import ClientError
 from typing import Awaitable, cast
 from uuid import uuid4
 
@@ -71,7 +73,9 @@ async def get_module(path: str) -> CachedModule | None:
     # Redis miss — try S3 fallback
     try:
         content_bytes = await _read_module_from_storage(path)
-    except Exception:
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in {"NoSuchKey", "404", "NotFound"}:
+            raise
         logger.debug(f"Module not in cache or S3: {log_safe(path)}")
         return None
 
