@@ -15,7 +15,6 @@ Covers the migrated surface that does not need a forked child:
 
 from __future__ import annotations
 
-import asyncio
 import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -298,10 +297,11 @@ class TestContextFacadeEngineRequest:
             base_url="http://external-api",
             transport=httpx.MockTransport(_handler),
         )
-        client._http = async_http
-        client._http_loop = asyncio.get_running_loop()
+        clients = client._clients_for_loop()
+        clients.http = async_http
+        clients.clients.append(async_http)
         try:
             assert await client._fetch_context() == payload
         finally:
-            await async_http.aclose()
+            await client.close()
         assert captured == ["http://external-api/api/sdk/context"]
