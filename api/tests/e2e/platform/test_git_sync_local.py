@@ -2355,11 +2355,13 @@ class TestSplitManifestFormat:
         assert table.schema is not None
         assert len(table.schema["columns"]) == 2
 
+    @pytest.mark.parametrize("global_scope", [False, True])
     async def test_pull_custom_claim_from_manifest(
         self,
         db_session: AsyncSession,
         sync_service,
         working_clone,
+        global_scope,
     ):
         """Pull manifest with custom claim → creates CustomClaim in DB."""
         from uuid import UUID as UUIDType
@@ -2381,7 +2383,7 @@ class TestSplitManifestFormat:
                     "id": claim_id,
                     "name": "allowed_campus_ids",
                     "description": "Campuses this user can read",
-                    "organization_id": org_id,
+                    "organization_id": None if global_scope else org_id,
                     "type": "list",
                     "query": {
                         "table": "user_campus_access",
@@ -2402,7 +2404,7 @@ class TestSplitManifestFormat:
         claim = await db_session.get(CustomClaim, UUIDType(claim_id))
         assert claim is not None
         assert claim.name == "allowed_campus_ids"
-        assert claim.organization_id == UUIDType(org_id)
+        assert claim.organization_id == (None if global_scope else UUIDType(org_id))
         assert claim.query["select"] == "campus_id"
 
     async def test_pull_table_with_policies_round_trip(

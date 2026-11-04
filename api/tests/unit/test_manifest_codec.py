@@ -45,7 +45,10 @@ def test_claim_git_sync_preserves_nullable_organization(organization_id):
         type="list",
         query={"table": "users", "select": "id"},
     )
-    assert ManifestCustomClaim.from_row(claim).view(Destination.GIT_SYNC)["organization_id"] == organization_id
+    exported = ManifestCustomClaim.from_row(claim).view(Destination.GIT_SYNC)
+    assert exported["organization_id"] == organization_id
+    imported = ManifestCustomClaim.model_validate(exported).to_orm_values(Destination.GIT_SYNC)
+    assert imported.direct["organization_id"] == organization_id
 
 
 def assert_parity(produced: dict, legacy: dict, *, label: str = "") -> None:
