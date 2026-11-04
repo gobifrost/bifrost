@@ -9,6 +9,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
+from threading import Lock
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from urllib.parse import parse_qs
@@ -28,13 +29,13 @@ async def reset_shared_s3_http_client() -> AsyncIterator[None]:
     s3_transport._shared_http_client = None
     s3_transport._shared_http_client_loop = None
     s3_transport._shared_http_client_pid = None
-    s3_transport._shared_http_client_initialization = None
+    s3_transport._shared_http_client_lock = Lock()
     yield
     await s3_transport.close_shared_s3_client()
     s3_transport._shared_http_client = None
     s3_transport._shared_http_client_loop = None
     s3_transport._shared_http_client_pid = None
-    s3_transport._shared_http_client_initialization = None
+    s3_transport._shared_http_client_lock = Lock()
 
 
 class RawStream(httpx.AsyncByteStream):
@@ -696,3 +697,71 @@ async def test_presigned_urls_are_usable_by_ordinary_http_clients() -> None:
         assert (await browser.get(get_url)).status_code == 200
     assert [request.method for request in seen] == ["PUT", "GET"]
     await signer.aclose()
+
+
+def test_concurrent_thread_loops_publish_only_one_default_pool(monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event
+
+    first_factory_started = Event()
+    second_thread_started = Event()
+    release_factory = Event()
+    acquired = Barrier(2)
+    original_factory = s3_transport._new_http_client
+
+    def create_client():
+        first_factory_started.set()
+        assert release_factory.wait(5)
+        return original_factory()
+
+    monkeypatch.setattr(s3_transport, "_new_http_client", create_client)
+
+    def run(second=False):
+        if second:
+            second_thread_started.set()
+
+        async def acquire_and_close():
+            client, shared = await s3_transport._default_http_client()
+            acquired.wait(timeout=5)
+            if shared:
+                await s3_transport.close_shared_s3_client()
+            else:
+                await client.aclose()
+            return shared, client.is_closed
+
+        return asyncio.run(acquire_and_close())
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(run)
+        assert first_factory_started.wait(5)
+        second = pool.submit(run, True)
+        assert second_thread_started.wait(5)
+        release_factory.set()
+        results = [first.result(timeout=5), second.result(timeout=5)]
+
+    assert sum(shared for shared, _closed in results) == 1
+    assert all(closed for _shared, closed in results)
+
+
+def test_fork_replaces_an_inherited_locked_pool_mutex() -> None:
+    read_fd, write_fd = os.pipe()
+    parent_lock = s3_transport._shared_http_client_lock
+    try:
+        with parent_lock:
+            pid = os.fork()
+            if pid == 0:
+                os.close(read_fd)
+                acquired = s3_transport._shared_http_client_lock.acquire(blocking=False)
+                os.write(write_fd, b"1" if acquired else b"0")
+                os._exit(0)
+            os.close(write_fd)
+            write_fd = -1
+            result = os.read(read_fd, 1)
+            _pid, status = os.waitpid(pid, 0)
+            assert status == 0
+            assert result == b"1"
+            assert parent_lock.locked()
+    finally:
+        os.close(read_fd)
+        if write_fd >= 0:
+            os.close(write_fd)

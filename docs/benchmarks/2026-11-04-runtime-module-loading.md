@@ -37,14 +37,14 @@ A fresh diagnostic interpreter performed seven alternating pairs of the same 15
 read-only production-storage probes: ten absent objects and five empty prefixes.
 Both arms used the same signing and verified TLS behavior. No serving process or
 workflow source was modified. The benchmarked candidate's AST matches the
-implemented transport; subsequent changes to that file were formatting only.
+implemented transport, including cross-thread publication and fork-lock reset.
 
 | Transport | Observations | Median | Range |
 | --- | ---: | ---: | ---: |
-| Separate HTTP client per operation | 7 | 326.9 ms | 270.7–393.0 ms |
-| Shared process/loop-owned HTTP pool | 7 | 183.3 ms | 135.6–251.5 ms |
+| Separate HTTP client per operation | 7 | 302.5 ms | 254.1–512.3 ms |
+| Shared process/loop-owned HTTP pool | 7 | 182.4 ms | 138.6–411.1 ms |
 
-The median reduction is 43.9%. This is a component comparison, not a workflow
+The median reduction is 39.7%. This is a component comparison, not a workflow
 latency or capacity claim. Provider and network timing were uncontrolled, and the
 sample is too small for a tail-latency claim. Injected clients remain externally
 owned; foreign loops and forked processes cannot borrow another owner's pool.

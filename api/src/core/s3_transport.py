@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mappin
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from io import BytesIO
+from threading import Lock
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote, unquote_plus, urlencode
@@ -33,9 +34,7 @@ _default_credentials_provider: tuple[int, auth.AwsCredentialsProvider] | None = 
 _shared_http_client: httpx.AsyncClient | None = None
 _shared_http_client_loop: asyncio.AbstractEventLoop | None = None
 _shared_http_client_pid: int | None = None
-_shared_http_client_initialization: (
-    tuple[int, asyncio.AbstractEventLoop, asyncio.Lock] | None
-) = None
+_shared_http_client_lock = Lock()
 _MAX_ATTEMPTS = 5
 _RETRYABLE_S3_CODES = frozenset({"InternalError", "SlowDown", "RequestTimeout", "BadDigest"})
 # HTTPX adds Connection before signing. Spaces' ingress removes that hop-by-hop
@@ -75,18 +74,17 @@ def _owns_shared_http_client() -> bool:
     )
 
 
-def _shared_http_client_initialization_lock() -> asyncio.Lock:
-    """Return the one initialization lock for this process and event loop."""
-    global _shared_http_client_initialization
-    loop = asyncio.get_running_loop()
-    pid = os.getpid()
-    if (
-        _shared_http_client_initialization is None
-        or _shared_http_client_initialization[0] != pid
-        or _shared_http_client_initialization[1] is not loop
-    ):
-        _shared_http_client_initialization = (pid, loop, asyncio.Lock())
-    return _shared_http_client_initialization[2]
+def _reset_shared_s3_after_fork() -> None:
+    """Discard inherited pool references and a possibly locked parent mutex."""
+    global _shared_http_client, _shared_http_client_loop, _shared_http_client_pid
+    global _shared_http_client_lock
+    _shared_http_client = None
+    _shared_http_client_loop = None
+    _shared_http_client_pid = None
+    _shared_http_client_lock = Lock()
+
+
+os.register_at_fork(after_in_child=_reset_shared_s3_after_fork)
 
 
 def _new_http_client() -> httpx.AsyncClient:
@@ -105,7 +103,7 @@ async def _default_http_client() -> tuple[httpx.AsyncClient, bool]:
     """
     global _shared_http_client, _shared_http_client_loop, _shared_http_client_pid
 
-    async with _shared_http_client_initialization_lock():
+    with _shared_http_client_lock:
         if _owns_shared_http_client():
             assert _shared_http_client is not None
             if not _shared_http_client.is_closed:
@@ -138,16 +136,17 @@ async def _default_http_client() -> tuple[httpx.AsyncClient, bool]:
 async def close_shared_s3_client() -> None:
     """Close the default S3 HTTP pool from its owning service lifecycle."""
     global _shared_http_client, _shared_http_client_loop, _shared_http_client_pid
-    if _shared_http_client is None:
-        return
-    if not _owns_shared_http_client():
-        logger.warning("Refusing to close shared S3 HTTP client from another loop or process")
-        return
+    with _shared_http_client_lock:
+        if _shared_http_client is None:
+            return
+        if not _owns_shared_http_client():
+            logger.warning("Refusing to close shared S3 HTTP client from another loop or process")
+            return
 
-    client = _shared_http_client
-    _shared_http_client = None
-    _shared_http_client_loop = None
-    _shared_http_client_pid = None
+        client = _shared_http_client
+        _shared_http_client = None
+        _shared_http_client_loop = None
+        _shared_http_client_pid = None
     await client.aclose()
     logger.debug("Closed shared S3 HTTP client")
 
