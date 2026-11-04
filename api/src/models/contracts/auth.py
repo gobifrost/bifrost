@@ -32,6 +32,7 @@ class AuthStatusResponse(BaseModel):
     """
     needs_setup: bool
     password_login_enabled: bool
+    passkey_login_enabled: bool = True
     mfa_required_for_password: bool
     oauth_providers: list[OAuthProviderInfo]
     auto_redirect_to_sso: bool = False

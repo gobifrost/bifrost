@@ -166,6 +166,17 @@ beforeEach(() => {
 });
 
 describe("UserProfileForm", () => {
+	it("places sign-in settings below the user's basic details", () => {
+		renderWithProviders(
+			<UserProfileForm user={makeUser()} variant="page" />,
+		);
+		const lastDetail = screen.getByLabelText("External User");
+		const policy = screen.getByText("Shared User Sign-In Control");
+		expect(
+			lastDetail.compareDocumentPosition(policy) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	});
 	it("pre-fills the display name and keeps the email fixed", () => {
 		renderWithProviders(
 			<UserProfileForm user={makeUser()} variant="page" />,
@@ -401,3 +412,8 @@ describe("UserProfileForm", () => {
 		).toBeEnabled();
 	});
 });
+
+// This suite isolates profile edits; shared policy behavior has sibling coverage.
+vi.mock("./SsoExclusions", () => ({
+	UserSsoExclusion: () => <span>Shared User Sign-In Control</span>,
+}));
