@@ -17,6 +17,7 @@ From an isolated worktree, select the approved account/container explicitly:
 
 ```bash
 export BIFROST_TEST_OBJECT_STORAGE_PROVIDER=azure_blob
+export BIFROST_TEST_AZURE_BLOB_RESET=1
 export BIFROST_AZURE_BLOB_ACCOUNT_URL=https://YOUR-TEST-ACCOUNT.blob.core.windows.net
 export BIFROST_AZURE_BLOB_CONTAINER=adapter-qualification
 export BIFROST_AZURE_BLOB_AUTH=managed_identity
@@ -28,6 +29,12 @@ export BIFROST_TEST_S3_ACCESS_KEY= BIFROST_TEST_S3_SECRET_KEY=
 ./test.sh stack up
 ./test.sh tests/azure_qualification/blob_contract.py -v --durations=0
 ```
+
+The reset flag explicitly approves clearing every object in the configured
+application test container, including private Git checkpoints. Use a disposable
+container; keep evidence/bootstrap objects in a separate container. Blob tests
+refuse to reset without this flag, and never use Compose's clean-boot shortcut
+for external Blob state. A new Compose stack does not imply an empty account.
 
 Managed identity requires an Azure-hosted runner whose existing identity has
 the approved Blob data/delegation permissions. It does not fall back to a

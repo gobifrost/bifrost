@@ -138,6 +138,11 @@ require_stack_up() {
 }
 
 reset_state() {
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ] && \
+        [ "${BIFROST_TEST_AZURE_BLOB_RESET:-0}" != "1" ]; then
+        echo "ERROR: Blob tests clear the configured container. Select a disposable target and set BIFROST_TEST_AZURE_BLOB_RESET=1." >&2
+        return 1
+    fi
     echo "Resetting state..."
 
     # Reload scheduler-fixtures too: its source is bind-mounted but its simple
@@ -182,6 +187,12 @@ for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdi
     docker compose -f "$COMPOSE_FILE" rm -sf seaweedfs > /dev/null
     docker compose -f "$COMPOSE_FILE" up -d seaweedfs > /dev/null
 
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ]; then
+        docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps \
+            -e BIFROST_TEST_AZURE_BLOB_RESET=1 \
+            test-runner python scripts/reset_test_blob_storage.py
+    fi
+
     rm -f client/e2e/.auth/credentials.json \
           client/e2e/.auth/platform_admin.json \
           client/e2e/.auth/org1_user.json \
@@ -207,7 +218,9 @@ prepare_test_state() {
     # afterward is equivalent state with roughly a minute of avoidable churn.
     # The marker makes this a one-shot optimization: a second suite in the same
     # project still receives the normal full reset.
-    if [ "${BIFROST_TEST_USE_CLEAN_BOOT:-0}" = "1" ] && [ ! -e "$boot_marker" ]; then
+    # An external Blob container can retain state even when Compose is new.
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "s3" ] && \
+        [ "${BIFROST_TEST_USE_CLEAN_BOOT:-0}" = "1" ] && [ ! -e "$boot_marker" ]; then
         mkdir -p "$LOG_DIR"
         touch "$boot_marker"
         echo "Using clean state from the newly booted test stack."
