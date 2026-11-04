@@ -29,6 +29,8 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from typing import cast
+from uuid import UUID
 
 from shared.file_access import (
     FileCaller,
@@ -546,12 +548,21 @@ async def sdk_delete_file(
             from src.core.pubsub import publish_file_change
             from src.services.file_policy_service import FilePolicyService
 
-            await FilePolicyService(caller.db).delete_metadata(
-                organization_id=await install_org_id(caller, solution_id),
-                location=location,
-                path=path,
-                solution_id=solution_id,
+            from shared.file_paths import SCOPE_SKIP, scope_to_org_id
+
+            # Match the metadata address used by record_file_write_metadata.
+            metadata_org_id = (
+                await install_org_id(caller, solution_id)
+                if solution_id is not None
+                else scope_to_org_id(location, effective_scope)
             )
+            if metadata_org_id is not SCOPE_SKIP:
+                await FilePolicyService(caller.db).delete_metadata(
+                    organization_id=cast(UUID | None, metadata_org_id),
+                    location=location,
+                    path=path,
+                    solution_id=solution_id,
+                )
             # Do not acknowledge or publish the deletion while its metadata
             # is still visible to another transaction.
             await caller.db.commit()
