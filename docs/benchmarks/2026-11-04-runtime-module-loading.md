@@ -131,3 +131,23 @@ container, `npm run generate:types` (with `OPENAPI_URL=/evidence/openapi.json`),
 in the review-pack seed helper. The real-fork test intentionally exercises a fork
 from the threaded test process and emits Python's corresponding deprecation
 warning; neither warning is silenced.
+
+### PR review follow-up
+
+The three CodeQL quality comments on PR #1238 were fixed in source. File-move
+cleanup now uses `try/finally` instead of catching and storing `BaseException`.
+Storage errors and cancellation propagate naturally; cleanup failures preserve an
+existing storage failure and still propagate after otherwise successful storage.
+Three new unit cases verify that error precedence. The two flagged test modules
+now use one module import style with qualified member access.
+
+```sh
+./test.sh tests/unit/core/test_module_cache.py tests/unit/services/test_file_ops_read.py -q
+./test.sh tests/e2e/platform/test_module_resolution_generations.py -q --durations=0
+./test.sh quality api
+```
+
+The focused unit run passed 39 tests, the real-Redis run passed four, and Pyright
+and Ruff passed after rebuilding for the intervening dependency update on main.
+OpenAPI generation against that updated API produced no further type changes.
+The complete protected checks remain the merge gate.
