@@ -595,11 +595,12 @@ export function Login() {
 								{showAdminExpander && (
 									<details className="mt-6 rounded-md border border-dashed px-4 py-3">
 										<summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
-											Platform Admin Sign-In
+											Excluded Account Sign-In
 										</summary>
 										<p className="pt-1 text-sm text-muted-foreground">
-											For platform admins. Everyone else
-											continues with SSO.
+											For accounts excluded from the login
+											policy. Other accounts continue with
+											SSO.
 										</p>
 										<div className="space-y-4 pt-4">
 											{passkeyHiddenByPolicy && (

@@ -160,6 +160,20 @@ class TestSSOOnlyPasswordGates:
         finally:
             _reset_policy(e2e_client, headers)
 
+    def test_bad_credentials_do_not_disclose_enforcement_or_account_membership(
+        self, e2e_client, private_client, platform_admin, org1_user
+    ):
+        headers = platform_admin.headers
+        try:
+            _enable_sso_only(e2e_client, headers)
+            responses = [private_client.post('/auth/login', data={
+                'username': email, 'password': 'WrongPassword123!',
+            }) for email in (org1_user.email, platform_admin.email, 'unknown-sso@gobifrost.dev')]
+            assert all(response.status_code == 401 for response in responses)
+            assert responses[0].json() == responses[1].json() == responses[2].json()
+        finally:
+            _reset_policy(e2e_client, headers)
+
     def test_mfa_login_refused_for_non_admin(
         self, e2e_client, private_client, platform_admin, org1_user
     ):
@@ -372,13 +386,12 @@ class TestSSOOnlyPasskeyGates:
                 "/auth/passkeys/authenticate/options",
                 json={"email": org1_user.email},
             )
-            assert refused.status_code == 403
-            assert refused.json()["detail"] == PASSKEY_SSO_DETAIL
+            assert refused.status_code == 200
 
             refused_anonymous = e2e_client.post(
                 "/auth/passkeys/authenticate/options", json={}
             )
-            assert refused_anonymous.status_code == 403
+            assert refused_anonymous.status_code == 200
 
             # Unknown emails keep the generic path (no user enumeration change).
             unknown = e2e_client.post(
@@ -386,6 +399,8 @@ class TestSSOOnlyPasskeyGates:
                 json={"email": "nobody@gobifrost.dev"},
             )
             assert unknown.status_code == 200
+            for options_response in (refused, refused_anonymous, unknown):
+                assert not options_response.json()["options"].get("allowCredentials")
 
             allowed = e2e_client.post(
                 "/auth/passkeys/authenticate/options",
@@ -394,3 +409,135 @@ class TestSSOOnlyPasskeyGates:
             assert allowed.status_code == 200, allowed.text
         finally:
             _reset_policy(e2e_client, headers)
+
+
+@pytest.mark.e2e
+class TestSSOExclusions:
+    def test_excluded_user_and_organization_are_shared_login_policy(
+        self, e2e_client, private_client, platform_admin, org1_user, org1, org2_user
+    ):
+        headers = platform_admin.headers
+        try:
+            _enable_sso_only(e2e_client, headers)
+            preference = e2e_client.get('/api/settings/oauth', headers=headers).json()['login_preference']
+            preference['excluded_user_ids'].append(str(org1_user.user_id))
+            response = e2e_client.put('/api/settings/oauth/login-preference', headers=headers, json=preference)
+            assert response.status_code == 200, response.text
+            login = private_client.post('/auth/login', data={'username': org1_user.email, 'password': org1_user.password})
+            assert login.status_code == 200, login.text
+            preference['excluded_user_ids'].remove(str(org1_user.user_id))
+            preference['excluded_organization_ids'] = [str(org1['id'])]
+            response = e2e_client.put('/api/settings/oauth/login-preference', headers=headers, json=preference)
+            assert response.status_code == 200, response.text
+            login = private_client.post('/auth/login', data={'username': org1_user.email, 'password': org1_user.password})
+            assert login.status_code == 200, login.text
+            other_org = private_client.post('/auth/login', data={'username': org2_user.email, 'password': org2_user.password})
+            assert other_org.status_code == 403
+            preference['excluded_organization_ids'] = []
+            assert e2e_client.put('/api/settings/oauth/login-preference', headers=headers, json=preference).status_code == 200
+            login = private_client.post('/auth/login', data={'username': org1_user.email, 'password': org1_user.password})
+            assert login.status_code == 403
+        finally:
+            _reset_policy(e2e_client, headers)
+
+    def test_last_excluded_admin_guard_serializes_policy_and_deactivation(
+        self, e2e_client, platform_admin, org1
+    ):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        headers = platform_admin.headers
+        temp = E2EUser(email='sso-recovery-race@gobifrost.dev', name='SSO Recovery Race', password='RecoveryRace123!')
+        created = e2e_client.post('/api/users', headers=headers, json={
+            'email': temp.email, 'name': temp.name, 'organization_id': org1['id'], 'is_superuser': True,
+        })
+        assert created.status_code == 201, created.text
+        temp.user_id = created.json()['id']
+        _register_and_authenticate_user(temp)
+        try:
+            _enable_sso_only(e2e_client, headers)
+            preference = e2e_client.get('/api/settings/oauth', headers=headers).json()['login_preference']
+            # The existing maintainer admin is the sole recovery account.
+            preference['excluded_user_ids'] = [str(platform_admin.user_id)]
+            assert e2e_client.put('/api/settings/oauth/login-preference', headers=headers, json=preference).status_code == 200
+            nonexcluded_admin = e2e_client.post('/auth/login', data={'username': temp.email, 'password': temp.password})
+            assert nonexcluded_admin.status_code == 403, nonexcluded_admin.text
+            rejected = e2e_client.patch(f'/api/users/{platform_admin.user_id}', headers=temp.headers, json={'is_active': False})
+            assert rejected.status_code == 409, rejected.text
+            rejected = e2e_client.put('/api/settings/oauth/login-preference', headers=headers, json={**preference, 'excluded_user_ids': []})
+            assert rejected.status_code == 400, rejected.text
+
+            # Policy moves recovery to temp while the current admin deactivates
+            # temp. Exactly one operation must lose the shared role-lock race.
+            barrier = Barrier(2)
+            def move_exclusion():
+                barrier.wait()
+                return e2e_client.put('/api/settings/oauth/login-preference', headers=platform_admin.headers,
+                    json={**preference, 'excluded_user_ids': [str(temp.user_id)]}, timeout=30)
+            def deactivate():
+                barrier.wait()
+                return e2e_client.patch(f'/api/users/{temp.user_id}', headers=platform_admin.headers,
+                    json={'is_active': False}, timeout=30)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(move_exclusion)
+                second = pool.submit(deactivate)
+                responses = [first.result(), second.result()]
+            assert sorted(r.status_code for r in responses) in ([200, 400], [200, 409]), [r.text for r in responses]
+        finally:
+            _reset_policy(e2e_client, headers)
+            _deactivate_and_delete(e2e_client, headers, str(temp.user_id))
+
+    def test_enabling_policy_and_removing_last_provider_are_serialized(
+        self, e2e_client, platform_admin
+    ):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        headers = platform_admin.headers
+        try:
+            _reset_policy(e2e_client, headers)
+            configured = e2e_client.put('/api/settings/oauth/microsoft', headers=headers, json=MICROSOFT_CONFIG)
+            assert configured.status_code == 200, configured.text
+            barrier = Barrier(2)
+            def enforce():
+                barrier.wait()
+                return e2e_client.put('/api/settings/oauth/login-preference',
+                    headers=platform_admin.headers, json=SSO_ONLY_PREFERENCE)
+            def remove():
+                barrier.wait()
+                return e2e_client.delete('/api/settings/oauth/microsoft', headers=platform_admin.headers)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                enforcing = pool.submit(enforce)
+                removing = pool.submit(remove)
+                results = (enforcing.result(), removing.result())
+            assert tuple(response.status_code for response in results) in ((200, 409), (400, 204)), [response.text for response in results]
+        finally:
+            _reset_policy(e2e_client, headers)
+
+
+@pytest.mark.e2e
+class TestSSOInvitePasskeys:
+    def test_invite_enrollment_uses_the_same_user_exclusion(self, e2e_client, platform_admin, org1):
+        headers = platform_admin.headers
+        created = e2e_client.post('/api/users', headers=headers, json={
+            'email': 'sso-invite-passkey@gobifrost.dev', 'name': 'SSO Invite Example',
+            'organization_id': org1['id'],
+        })
+        assert created.status_code == 201, created.text
+        user = created.json()
+        token = user['registration_url'].split('token=', 1)[1]
+        try:
+            _enable_sso_only(e2e_client, headers)
+            options = e2e_client.post('/auth/register-from-invite/passkey/options', json={'token': token})
+            assert options.status_code == 403, options.text
+            verify = e2e_client.post('/auth/register-from-invite/passkey/verify', json={'token': token, 'credential': {}})
+            assert verify.status_code == 403, verify.text
+            policy = e2e_client.get('/api/settings/oauth', headers=headers).json()['login_preference']
+            policy['excluded_user_ids'].append(user['id'])
+            updated = e2e_client.put('/api/settings/oauth/login-preference', headers=headers, json=policy)
+            assert updated.status_code == 200, updated.text
+            options = e2e_client.post('/auth/register-from-invite/passkey/options', json={'token': token})
+            assert options.status_code == 200, options.text
+        finally:
+            _reset_policy(e2e_client, headers)
+            _deactivate_and_delete(e2e_client, headers, user['id'])

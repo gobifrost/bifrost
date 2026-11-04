@@ -1,3 +1,4 @@
+import { UserSsoExclusion } from "./SsoExclusions";
 import { UserLookupNotice } from "./UserLookupNotice";
 import { useState, useEffect, useRef } from "react";
 import { getErrorMessage } from "@/lib/api-error";
@@ -235,6 +236,9 @@ export function UserProfileForm({
 						"min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6",
 				)}
 			>
+				{authorization.isPlatformAdmin && (
+					<UserSsoExclusion user={user} />
+				)}
 				{isEditingSelf && (
 					<Alert>
 						<AlertCircle className="h-4 w-4" />

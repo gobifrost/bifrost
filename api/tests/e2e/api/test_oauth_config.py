@@ -36,11 +36,14 @@ class TestOAuthLoginPreference:
 
             response = e2e_client.get("/api/settings/oauth", headers=headers)
             assert response.status_code == 200
-            assert response.json()["login_preference"] == {
+            preference = response.json()["login_preference"]
+            assert str(platform_admin.user_id) in preference.pop("excluded_user_ids")
+            assert preference == {
                 "auto_redirect_to_sso": True,
                 "default_sso_provider": "microsoft",
                 "password_login_enabled": True,
                 "passkey_login_enabled": True,
+                "excluded_organization_ids": [],
             }
 
             response = e2e_client.get("/auth/status")
@@ -73,11 +76,14 @@ class TestOAuthLoginPreference:
 
             response = e2e_client.get("/api/settings/oauth", headers=headers)
             assert response.status_code == 200
-            assert response.json()["login_preference"] == {
+            preference = response.json()["login_preference"]
+            assert str(platform_admin.user_id) in preference.pop("excluded_user_ids")
+            assert preference == {
                 "auto_redirect_to_sso": False,
                 "default_sso_provider": None,
                 "password_login_enabled": True,
                 "passkey_login_enabled": True,
+                "excluded_organization_ids": [],
             }
         finally:
             e2e_client.put(

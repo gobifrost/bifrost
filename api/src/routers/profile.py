@@ -284,7 +284,7 @@ async def change_password(
         OAuthConfigService,
     )
 
-    if not await OAuthConfigService(db).is_password_allowed_for(user.is_superuser):
+    if not await OAuthConfigService(db).is_password_allowed_for(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=PASSWORD_SSO_ONLY_DETAIL,

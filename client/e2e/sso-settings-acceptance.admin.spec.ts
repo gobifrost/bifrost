@@ -175,7 +175,7 @@ test.describe.serial("SSO settings acceptance", () => {
 		).toBe(true);
 
 		let settings = await readOAuthSettings(api);
-		expect(settings.login_preference).toEqual({
+		expect(settings.login_preference).toMatchObject({
 			auto_redirect_to_sso: false,
 			default_sso_provider: "google",
 			password_login_enabled: true,

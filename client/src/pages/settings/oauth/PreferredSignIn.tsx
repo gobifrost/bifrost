@@ -21,16 +21,15 @@ import type {
 	OAuthProviderConfig,
 } from "@/services/oauth-config";
 
-/**
- * Full login-preference value, mirroring the generated OAuthLoginPreference
- * type without depending on it (keeps this file decoupled from codegen).
- */
-export interface LoginPreferenceValue {
-	auto_redirect_to_sso: boolean;
-	default_sso_provider: OAuthProvider | null;
-	password_login_enabled: boolean;
-	passkey_login_enabled: boolean;
-}
+export type LoginPreferenceValue = Required<
+	Pick<
+		import("@/services/oauth-config").OAuthLoginPreference,
+		| "auto_redirect_to_sso"
+		| "default_sso_provider"
+		| "password_login_enabled"
+		| "passkey_login_enabled"
+	>
+>;
 
 export function PreferredSignIn({
 	configuredProviders,
@@ -191,15 +190,15 @@ export function LoginPolicy({
 			<CardHeader>
 				<CardTitle>Login Policy</CardTitle>
 				<CardDescription>
-					Require SSO for everyone except platform admins by turning
-					off a sign-in method below.
+					Restrict sign-in methods for accounts without an exclusion
+					by turning off a sign-in method below.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">
 				<p className="flex items-start gap-2 rounded-md border px-3 py-2 text-sm text-muted-foreground">
 					<Lock className="mt-0.5 h-4 w-4 shrink-0" />
-					Platform admins are always exempt — this is the recovery
-					path when the provider is unreachable.
+					At least one active platform admin must remain excluded for
+					recovery when the provider is unreachable.
 				</p>
 				<div className="flex min-h-11 items-start justify-between gap-4">
 					<div className="min-w-0 space-y-1">
@@ -210,7 +209,8 @@ export function LoginPolicy({
 							Password Sign-In
 						</Label>
 						<p className="text-sm text-muted-foreground">
-							Allow non-admins to sign in with email and password.
+							Allow accounts without an exclusion to sign in with
+							email and password.
 						</p>
 					</div>
 					<Switch
@@ -235,7 +235,8 @@ export function LoginPolicy({
 							Passkey Sign-In
 						</Label>
 						<p className="text-sm text-muted-foreground">
-							Allow non-admins to sign in with a passkey.
+							Allow accounts without an exclusion to sign in with
+							a passkey.
 						</p>
 					</div>
 					<Switch

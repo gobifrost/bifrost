@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,8 +77,8 @@ async def test_login_method_allowed_truth_table(
         "has_any_users",
         new=AsyncMock(return_value=has_users),
     ):
-        assert await service.is_password_allowed_for(is_admin) is expect_password
-        assert await service.is_passkey_allowed_for(is_admin) is expect_passkey
+        assert await service.is_password_allowed_for(SimpleNamespace(id=uuid4(), is_superuser=is_admin, organization_id=None)) is expect_password
+        assert await service.is_passkey_allowed_for(SimpleNamespace(id=uuid4(), is_superuser=is_admin, organization_id=None)) is expect_passkey
 
 
 @pytest.mark.asyncio

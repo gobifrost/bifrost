@@ -186,7 +186,7 @@ describe("SSO-only login policy", () => {
 		).toBeInTheDocument();
 		// The admin form lives inside the closed expander, not on the page.
 		const expander = screen
-			.getByText("Platform Admin Sign-In")
+			.getByText("Excluded Account Sign-In")
 			.closest("details");
 		expect(expander).not.toHaveAttribute("open");
 		expect(screen.getByLabelText("Email").closest("details")).toBe(
@@ -194,7 +194,7 @@ describe("SSO-only login policy", () => {
 		);
 		expect(loginWithPasskey).not.toHaveBeenCalled();
 
-		await user.click(screen.getByText("Platform Admin Sign-In"));
+		await user.click(screen.getByText("Excluded Account Sign-In"));
 		expect(expander).toHaveAttribute("open");
 		expect(await screen.findByLabelText("Password")).toBeInTheDocument();
 	});
@@ -210,7 +210,7 @@ describe("SSO-only login policy", () => {
 
 		expect(await screen.findByLabelText("Email")).toBeInTheDocument();
 		const expander = screen
-			.getByText("Platform Admin Sign-In")
+			.getByText("Excluded Account Sign-In")
 			.closest("details");
 		expect(expander).not.toHaveAttribute("open");
 		expect(

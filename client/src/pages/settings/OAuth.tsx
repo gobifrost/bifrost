@@ -1,3 +1,5 @@
+import { useIsMutating } from "@tanstack/react-query";
+import { SsoExclusions } from "@/components/users/SsoExclusions";
 import {
 	LoginPolicy,
 	PreferredSignIn,
@@ -34,6 +36,10 @@ import {
 } from "@/services/oauth-config";
 
 export function OAuth() {
+	const policyPending =
+		useIsMutating({
+			mutationKey: ["put", "/api/settings/oauth/login-preference"],
+		}) > 0;
 	// Form state for each provider
 	const [microsoftForm, setMicrosoftForm] = useState({
 		client_id: "",
@@ -118,10 +124,11 @@ export function OAuth() {
 		true;
 
 	const saveLoginPreference = async () => {
-		if (updateLoginPreference.isPending) return;
+		if (updateLoginPreference.isPending || policyPending) return;
 		try {
 			// Built as a detached object so the payload shape stays explicit.
 			const body = {
+				...configData.login_preference,
 				auto_redirect_to_sso: autoRedirectToSso,
 				default_sso_provider: defaultSsoProvider ?? null,
 				password_login_enabled: passwordLoginEnabled,
@@ -148,7 +155,7 @@ export function OAuth() {
 				defaultSsoProvider={defaultSsoProvider}
 				passwordLoginEnabled={passwordLoginEnabled}
 				passkeyLoginEnabled={passkeyLoginEnabled}
-				pending={updateLoginPreference.isPending}
+				pending={updateLoginPreference.isPending || policyPending}
 				failed={updateLoginPreference.isError}
 				onChange={setLoginPreferenceDraft}
 				onSave={() => {
@@ -159,7 +166,7 @@ export function OAuth() {
 				passwordLoginEnabled={passwordLoginEnabled}
 				passkeyLoginEnabled={passkeyLoginEnabled}
 				hasProviders={configuredProviders.length > 0}
-				pending={updateLoginPreference.isPending}
+				pending={updateLoginPreference.isPending || policyPending}
 				failed={updateLoginPreference.isError}
 				onChange={(policy) => {
 					setLoginPreferenceDraft({
@@ -172,6 +179,8 @@ export function OAuth() {
 					void saveLoginPreference();
 				}}
 			/>
+
+			<SsoExclusions />
 
 			{/* Microsoft */}
 			<OAuthProviderCard

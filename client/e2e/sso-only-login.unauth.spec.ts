@@ -34,9 +34,9 @@ test.describe("SSO-only login page", () => {
 		await expect(
 			page.getByRole("button", { name: /sign in with passkey/i }),
 		).not.toBeVisible();
-		await expect(page.getByText("Platform Admin Sign-In")).toBeVisible();
+		await expect(page.getByText("Excluded Account Sign-In")).toBeVisible();
 
-		await page.getByText("Platform Admin Sign-In").click();
+		await page.getByText("Excluded Account Sign-In").click();
 		await expect(page.getByLabel("Email")).toBeVisible();
 		await expect(page.getByLabel("Password")).toBeVisible();
 	});

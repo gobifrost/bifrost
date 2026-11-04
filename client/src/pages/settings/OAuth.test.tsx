@@ -3,6 +3,10 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 import { OAuth } from "./OAuth";
 import { LoginPolicy } from "./oauth/PreferredSignIn";
 
+vi.mock("@/components/users/SsoExclusions", () => ({
+	SsoExclusions: () => null,
+}));
+
 const refetch = vi.fn();
 const updateLoginPreference = vi.fn();
 const configData = {
