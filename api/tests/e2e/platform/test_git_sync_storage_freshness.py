@@ -11,6 +11,7 @@ The working tree, including ``.git/config``, is mirrored to storage and into
 retry checkpoints, so the GitHub token must never be written into it.
 """
 
+import os
 import shutil
 from pathlib import Path
 
@@ -85,6 +86,12 @@ async def test_platform_edits_after_fetch_are_never_overwritten(
     await storage.write(EDITED, b"second, longer version\n")
     await storage.write(SAME_SIZE, b"value=2\n")
     await storage.write(CREATED, b"created in the editor\n")
+    # S3 timestamps have second resolution. Reproduce a same-size edit whose
+    # timestamp matches the old local copy, without relying on wall-clock speed.
+    metadata = await storage.head(SAME_SIZE)
+    assert metadata is not None
+    timestamp = metadata.last_modified.timestamp()
+    os.utime(work_dir / SAME_SIZE, (timestamp, timestamp))
 
     commit = await service.desktop_commit("stale commit")
     sync = await service.desktop_sync()
@@ -100,6 +107,7 @@ async def test_platform_edits_after_fetch_are_never_overwritten(
     # Fetch picks the edits up, including one that kept the file's size.
     fetched = await service.desktop_fetch()
     assert fetched.success, fetched.error
+    assert (work_dir / SAME_SIZE).read_bytes() == b"value=2\n"
     commit = await service.desktop_commit("fresh commit")
     assert commit.success, commit.error
     head = Repo(str(work_dir)).head.commit
