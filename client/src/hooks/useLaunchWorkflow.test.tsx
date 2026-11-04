@@ -94,3 +94,40 @@ it("clears pending loading when the next form has no startup", async () => {
 	await act(async () => finish({ result: {}, startup_handle: "stale" }));
 	expect(state.setStartupHandle).not.toHaveBeenCalledWith("stale");
 });
+
+it("reloads startup in the new organization and ignores the previous organization's late result", async () => {
+	let finishOld!: (value: unknown) => void;
+	execute
+		.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishOld = resolve;
+				}),
+		)
+		.mockResolvedValueOnce({
+			result: { customer: "new" },
+			startup_handle: "new-handle",
+		});
+	const { rerender } = renderHook(
+		({ orgId }) => useLaunchWorkflow({ form, orgId }),
+		{ initialProps: { orgId: "old" } },
+	);
+	rerender({ orgId: "new" });
+	await waitFor(() =>
+		expect(state.setStartupHandle).toHaveBeenLastCalledWith("new-handle"),
+	);
+	await act(async () =>
+		finishOld({
+			result: { customer: "old" },
+			startup_handle: "old-handle",
+		}),
+	);
+	expect(execute).toHaveBeenLastCalledWith(
+		form.id,
+		state.context.query,
+		"new",
+	);
+	expect(state.setWorkflowResults).toHaveBeenLastCalledWith({
+		customer: "new",
+	});
+});

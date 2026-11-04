@@ -10,6 +10,12 @@ import jwt
 import time
 
 
+@pytest.fixture(autouse=True)
+def fresh_browser_credentials(org1_user, human_minter):
+    """Approval needs the matching live cookie as well as the bearer token."""
+    human_minter(org1_user)
+
+
 @pytest.mark.e2e
 def test_denied_device_login_is_final(e2e_client: httpx.Client, org1_user):
     code = e2e_client.post("/auth/device/code").json()

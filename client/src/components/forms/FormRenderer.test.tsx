@@ -377,9 +377,13 @@ describe("FormRenderer — field types", () => {
 			const { user } = renderWithProviders(<FormRenderer form={form} />);
 
 			await user.click(screen.getByRole("combobox"));
-			await user.click(screen.getByRole("option", { name: "Contoso HQ" }));
+			await user.click(
+				screen.getByRole("option", { name: "Contoso HQ" }),
+			);
 			await user.click(screen.getByRole("combobox"));
-			await user.click(screen.getByRole("option", { name: "Contoso HQ" }));
+			await user.click(
+				screen.getByRole("option", { name: "Contoso HQ" }),
+			);
 
 			expect(screen.getByRole("combobox")).toHaveTextContent(shown);
 		},
@@ -736,10 +740,48 @@ it("starts independent choices while another field's request is pending", async 
 			"form-1",
 			"fast",
 			undefined,
+			undefined,
 		),
 	);
 	finishSlow([]);
 	await waitFor(() =>
 		expect(screen.getAllByRole("combobox")).toHaveLength(2),
+	);
+});
+
+it("submits and reloads form inputs within the selected organization", async () => {
+	mockMutateAsync.mockResolvedValue({
+		mode: "execution",
+		execution_id: "org-run",
+		status: "Success",
+	});
+	const form = makeForm([
+		{
+			name: "summary",
+			label: "Summary",
+			type: "text",
+			required: false,
+		} as FormField,
+	]);
+	const { user, rerender } = renderWithProviders(
+		<FormRenderer form={form} orgId="old" />,
+	);
+	await user.type(screen.getByLabelText("Summary"), "Old customer data");
+	rerender(<FormRenderer form={form} orgId="new" />);
+	expect(screen.getByLabelText("Summary")).toHaveValue("");
+	await user.type(screen.getByLabelText("Summary"), "New customer data");
+	await user.click(screen.getByRole("button", { name: /^Submit/ }));
+	await waitFor(() =>
+		expect(mockMutateAsync).toHaveBeenCalledWith(
+			expect.objectContaining({
+				params: {
+					path: { form_id: "form-1" },
+					query: { org_id: "new" },
+				},
+				body: expect.objectContaining({
+					form_data: { summary: "New customer data" },
+				}),
+			}),
+		),
 	);
 });

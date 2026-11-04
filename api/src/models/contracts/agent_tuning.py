@@ -12,6 +12,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from src.models.contracts.agents import AGENT_PROMPT_MAX_LENGTH
+
 
 class ConsolidatedProposalResponse(BaseModel):
     """Output of ``POST /api/agents/{id}/tuning-session``.
@@ -32,12 +34,13 @@ class DryRunPerRun(BaseModel):
     would_still_decide_same: bool
     reasoning: str
     confidence: float
+    evaluation_failed: bool = False
 
 
 class ConsolidatedDryRunRequest(BaseModel):
     """Body for ``POST /api/agents/{id}/tuning-session/dry-run``."""
 
-    proposed_prompt: str = Field(min_length=1, max_length=20000)
+    proposed_prompt: str = Field(min_length=1, max_length=AGENT_PROMPT_MAX_LENGTH)
 
 
 class ConsolidatedDryRunResponse(BaseModel):
@@ -49,7 +52,7 @@ class ConsolidatedDryRunResponse(BaseModel):
 class ApplyTuningRequest(BaseModel):
     """Body for ``POST /api/agents/{id}/tuning-session/apply``."""
 
-    new_prompt: str = Field(min_length=1, max_length=20000)
+    new_prompt: str = Field(min_length=1, max_length=AGENT_PROMPT_MAX_LENGTH)
     reason: str | None = Field(default=None, max_length=500)
 
 

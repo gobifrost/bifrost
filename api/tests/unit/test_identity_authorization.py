@@ -242,6 +242,31 @@ class TestUpdateUser:
         assert user.base_role_id == USER_ROLE_ID
         assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == {("platform", None)}
 
+    async def test_last_excluded_admin_cannot_be_demoted_or_deactivated(self, db_session) -> None:
+        from shared.sdk_users import UserServiceError
+        from src.models.contracts.oauth_config import OAuthLoginPreference
+        from src.services.oauth_config_service import OAuthConfigService
+
+        recovery = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        await OAuthConfigService(db_session).set_login_preference(
+            OAuthLoginPreference(excluded_user_ids=[recovery.id])
+        )
+        for fields in ({"is_superuser": False}, {"is_active": False}):
+            with pytest.raises(UserServiceError, match="active platform admin"):
+                await self._update(db_session, admin_caller(), recovery, **fields)
+
+    async def test_new_admin_defaults_to_excluded_after_policy_is_explicit(self, db_session) -> None:
+        from src.models.contracts.oauth_config import OAuthLoginPreference
+        from src.services.oauth_config_service import OAuthConfigService
+
+        recovery = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        policy = OAuthConfigService(db_session)
+        await policy.set_login_preference(OAuthLoginPreference(excluded_user_ids=[recovery.id]))
+        promoted = await _user(db_session, PROVIDER_ORG_ID)
+        await self._update(db_session, admin_caller(), promoted, is_superuser=True)
+        assert promoted.id in (await policy.get_login_preference()).excluded_user_ids
+
     async def test_last_active_platform_admin_cannot_be_demoted_or_deactivated(self, db_session) -> None:
         from shared.sdk_users import UserServiceError
 
