@@ -39,13 +39,15 @@ export function useUpdateOAuthLoginPreference() {
 	const queryClient = useQueryClient();
 
 	return $api.useMutation("put", "/api/settings/oauth/login-preference", {
-		onSuccess: () => {
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/settings/oauth"],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/auth/status"],
-			});
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({
+					queryKey: ["get", "/api/settings/oauth"],
+				}),
+				queryClient.invalidateQueries({
+					queryKey: ["get", "/auth/status"],
+				}),
+			]);
 		},
 	});
 }

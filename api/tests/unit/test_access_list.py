@@ -2014,6 +2014,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.mcp_server.server._get_context_from_token": (3, "actor_facts"),
     "src.services.mcp_server.server._get_runtime_context": (3, "actor_facts"),
     "src.services.mcp_server.server.context_from_principal": (3, "actor_facts"),
+    # Shared login policy derives the legacy recovery exclusion from persisted
+    # Platform Admin facts; explicit user/org exclusions replace blanket exemption.
+    "src.services.oauth_config_service.OAuthConfigService._is_login_method_allowed_for": (1, "current_role_derivation"),
+    "src.services.oauth_config_service.OAuthConfigService.get_login_preference_for_settings": (1, "current_role_derivation"),
     "src.services.policy_rule_service.PolicyRuleService._get": (1, "internal_authorized_resource"),
     "src.services.solutions.deploy.SolutionDeployer._upsert_file_policies": (1, "internal_authorized_resource"),
     "src.services.solutions.deploy.SolutionDeployer._upsert_tables": (1, "internal_authorized_resource"),

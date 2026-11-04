@@ -793,7 +793,7 @@ def _object_headers(values: Mapping[str, Any]) -> dict[str, str]:
         "ContentType": "content-type", "ContentDisposition": "content-disposition", "ContentEncoding": "content-encoding",
         "ContentLanguage": "content-language", "CacheControl": "cache-control", "Expires": "expires",
         "CopySourceIfMatch": "x-amz-copy-source-if-match", "CopySourceRange": "x-amz-copy-source-range",
-        "IfNoneMatch": "if-none-match", "MetadataDirective": "x-amz-metadata-directive",
+        "IfNoneMatch": "if-none-match", "IfMatch": "if-match", "MetadataDirective": "x-amz-metadata-directive",
     }
     headers = {wire: str(values[name]) for name, wire in names.items() if values.get(name) is not None}
     for key, value in (values.get("Metadata") or {}).items():

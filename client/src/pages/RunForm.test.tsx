@@ -12,7 +12,7 @@ const { mockFormRenderer, embedClaims, mockUseFormRuntime, mockUseAuth } =
 	}));
 
 vi.mock("@/hooks/useForms", () => ({
-	useFormRuntime: () => mockUseFormRuntime(),
+	useFormRuntime: (...args: unknown[]) => mockUseFormRuntime(...args),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -35,6 +35,7 @@ beforeEach(() => {
 		form_id: "form-1",
 		grant: "public",
 	};
+	mockUseFormRuntime.mockReset();
 	mockUseFormRuntime.mockReturnValue({
 		data: {
 			id: "form-1",
@@ -197,4 +198,72 @@ it("keeps the runtime mounted while a cached form refresh fails and retries", as
 	rerender(<RunForm />);
 	expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
 	expect(screen.getByText("Rendered Form")).toBeVisible();
+});
+
+vi.mock("@/components/execution/ExecutionOrganizationSelect", () => ({
+	ExecutionOrganizationSelect: ({
+		onChange,
+		disabled,
+	}: {
+		onChange: (id: string) => void;
+		disabled?: boolean;
+	}) => (
+		<button
+			type="button"
+			disabled={disabled}
+			onClick={() => onChange("contoso")}
+		>
+			Run in Contoso
+		</button>
+	),
+}));
+
+it("offers organization selection only outside embed sessions and passes the target to the renderer", async () => {
+	const { user, rerender } = renderWithProviders(<RunForm />);
+	expect(
+		screen.queryByRole("button", { name: "Run in Contoso" }),
+	).not.toBeInTheDocument();
+	mockUseAuth.mockReturnValue({
+		isPlatformAdmin: true,
+		hasRole: () => false,
+	});
+	rerender(<RunForm />);
+	await user.click(screen.getByRole("button", { name: "Run in Contoso" }));
+	expect(mockFormRenderer).toHaveBeenLastCalledWith(
+		expect.objectContaining({ orgId: "contoso" }),
+	);
+});
+
+it("lets a signed-in user select an organization before loading its form runtime", async () => {
+	mockUseAuth.mockReturnValue({
+		isPlatformAdmin: false,
+		hasRole: () => false,
+	});
+	mockUseFormRuntime.mockImplementation((_id?: string, orgId?: string) =>
+		orgId === "contoso"
+			? {
+					data: {
+						id: "form-1",
+						name: "Customer Intake",
+						is_active: true,
+						organization_id: null,
+					},
+					isLoading: false,
+				}
+			: {
+					data: undefined,
+					isLoading: false,
+					error: new Error(
+						"Access denied in the default organization",
+					),
+				},
+	);
+	const { user } = renderWithProviders(<RunForm />);
+	expect(screen.getByRole("alert")).toHaveTextContent("Form unavailable");
+	await user.click(screen.getByRole("button", { name: "Run in Contoso" }));
+	expect(screen.getByText("Rendered Form")).toBeVisible();
+	expect(mockUseFormRuntime).toHaveBeenLastCalledWith("form-1", "contoso");
+	expect(mockFormRenderer).toHaveBeenLastCalledWith(
+		expect.objectContaining({ orgId: "contoso" }),
+	);
 });

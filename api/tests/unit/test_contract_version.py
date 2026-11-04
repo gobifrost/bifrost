@@ -190,6 +190,9 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 #: Committed fingerprint of the contract surface above. If a code change flips
 #: the live fingerprint, this test fails — update this value, and raise the
 #: server's MIN_CLI_VERSION IF the change requires a new CLI. See module docstring.
+# Additive Global scope marker on the existing string org_id field; its
+# description now documents that value. Existing CLI shapes and minimum version
+# are unchanged.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -403,7 +406,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # clients can ignore the additive field; the CLI minimum remains unchanged.
     # External capacity models and daily UsageReport are both additive.
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
-    "88fba09d40e34dbfbb15f4ad882d12b81ab32255d81dc13524928089254c0bc9"
+    # The existing org_id string also accepts the additive Global scope marker.
+    # Only its description changes in the DTO; existing CLI shapes and minimum stay unchanged.
+    "4cef75fd6777f54b62915c610b78e72456afcac955ee201c18951695af77386f"
 )
 
 

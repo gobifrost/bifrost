@@ -114,22 +114,28 @@ async function renderPage() {
 }
 
 describe("AgentTuneWorkbench — shell", () => {
-	it("renders the header, stat strip, and three panes", async () => {
+	it("renders the compact header and evidence controls", async () => {
 		await renderPage();
 
 		expect(
 			screen.getByRole("heading", { name: /tune agent/i }),
 		).toBeInTheDocument();
-		expect(screen.getByText("Flagged runs")).toBeInTheDocument();
-		expect(screen.getByText("Runs (7d)")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Flagged Runs (2)" }),
+		).toBeInTheDocument();
+		expect(screen.getByLabelText("Agent Statistics")).toHaveTextContent(
+			"Runs (7d)",
+		);
 		expect(screen.getByText("47")).toBeInTheDocument();
 
-		expect(screen.getByTestId("tune-pane-flagged")).toBeInTheDocument();
-		expect(screen.getByTestId("tune-pane-editor")).toBeInTheDocument();
+		expect(screen.getByTestId("editor-empty-state")).toBeInTheDocument();
 	});
 
-	it("lists flagged runs in the left pane", async () => {
-		await renderPage();
+	it("shows flagged runs in the evidence sheet", async () => {
+		const { user } = await renderPage();
+		await user.click(
+			screen.getByRole("button", { name: "Flagged Runs (2)" }),
+		);
 		const pane = screen.getByTestId("tune-pane-flagged");
 		expect(pane).toHaveTextContent("asked-a");
 		expect(pane).toHaveTextContent("asked-b");
@@ -187,9 +193,14 @@ describe("AgentTuneWorkbench — generate proposal", () => {
 		});
 	});
 
-	it("renders the editable textarea with the proposal after generate", async () => {
+	it("defaults to Diff and opens Edit without losing the proposal", async () => {
 		const { user } = await renderPage();
 		await user.click(screen.getByTestId("generate-proposal-button"));
+		expect(screen.getByRole("tab", { name: "Diff" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		await user.click(screen.getByRole("tab", { name: "Edit" }));
 		const textarea = await screen.findByTestId("proposal-textarea");
 		expect(textarea).toHaveValue(sampleProposal.proposed_prompt);
 	});
@@ -205,13 +216,17 @@ describe("AgentTuneWorkbench — generate proposal", () => {
 	it("edits to the textarea update the diff viewer content", async () => {
 		const { user } = await renderPage();
 		await user.click(screen.getByTestId("generate-proposal-button"));
+		await user.click(screen.getByRole("tab", { name: "Edit" }));
 		const textarea = (await screen.findByTestId(
 			"proposal-textarea",
 		)) as HTMLTextAreaElement;
 		await user.clear(textarea);
 		await user.type(textarea, "Brand new prompt.");
 		expect(textarea).toHaveValue("Brand new prompt.");
-		expect(screen.getByText(/brand new prompt\./i)).toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: "Diff" }));
+		expect(
+			screen.getByRole("tabpanel", { name: "Diff" }),
+		).toHaveTextContent("Brand new prompt.");
 	});
 
 	it("Discard returns to the empty state", async () => {
@@ -262,6 +277,7 @@ describe("AgentTuneWorkbench — dry-run", () => {
 	it("dry-run sends the current textarea contents", async () => {
 		const { user } = await renderPage();
 		await user.click(screen.getByTestId("generate-proposal-button"));
+		await user.click(screen.getByRole("tab", { name: "Edit" }));
 		const textarea = (await screen.findByTestId(
 			"proposal-textarea",
 		)) as HTMLTextAreaElement;
@@ -284,6 +300,9 @@ describe("AgentTuneWorkbench — dry-run", () => {
 		await user.click(screen.getByTestId("generate-proposal-button"));
 		await screen.findByTestId("proposal-textarea");
 		await user.click(screen.getByTestId("dryrun-button"));
+		await user.click(
+			screen.getByRole("button", { name: /Evaluation.*Ready/ }),
+		);
 		await screen.findByTestId("dryrun-results");
 		expect(screen.getByText(/1 of 2/i)).toBeInTheDocument();
 		expect(screen.getByText(/now routes to support/i)).toBeInTheDocument();
@@ -295,6 +314,9 @@ describe("AgentTuneWorkbench — dry-run", () => {
 		await user.click(screen.getByTestId("generate-proposal-button"));
 		await screen.findByTestId("proposal-textarea");
 		await user.click(screen.getByTestId("dryrun-button"));
+		await user.click(
+			screen.getByRole("button", { name: /Evaluation.*Ready/ }),
+		);
 		await screen.findByTestId("dryrun-results");
 
 		mockTuningDryRun.mockImplementation((_args, opts) => {
@@ -310,7 +332,11 @@ describe("AgentTuneWorkbench — dry-run", () => {
 			});
 		});
 
+		await user.click(screen.getByRole("button", { name: "Close" }));
 		await user.click(screen.getByTestId("dryrun-button"));
+		await user.click(
+			screen.getByRole("button", { name: /Evaluation.*Ready/ }),
+		);
 		await waitFor(() => {
 			expect(screen.queryByText(/still answers itself/i)).toBeNull();
 			expect(
@@ -360,6 +386,7 @@ describe("AgentTuneWorkbench — apply", () => {
 	it("apply sends the current textarea contents, not the original proposal", async () => {
 		const { user } = await renderPageWithProbe();
 		await user.click(screen.getByTestId("generate-proposal-button"));
+		await user.click(screen.getByRole("tab", { name: "Edit" }));
 		const textarea = (await screen.findByTestId(
 			"proposal-textarea",
 		)) as HTMLTextAreaElement;

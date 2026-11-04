@@ -127,7 +127,14 @@ vi.mock("@/hooks/useOrganizations", () => ({
 	},
 }));
 
+vi.mock("@/components/users/SsoExclusions", () => ({
+	OrganizationSsoExclusion: () => (
+		<div>Shared Organization Sign-In Control</div>
+	),
+}));
+
 const authz = vi.hoisted(() => ({
+	isPlatformAdmin: false,
 	canAt: (_permission: string, _target: { kind: string; id?: string }) =>
 		true as boolean,
 	canAnywhere: (_permission: string) => true as boolean,
@@ -155,6 +162,7 @@ vi.mock("@/pages/settings/RequiredInstructionsSettings", () => ({
 import { Organizations } from "./Organizations";
 
 beforeEach(() => {
+	authz.isPlatformAdmin = false;
 	authz.canAt = () => true;
 	authz.canAnywhere = () => true;
 	mockUseOrganizations.mockClear();
@@ -167,6 +175,27 @@ beforeEach(() => {
 });
 
 describe("Organizations", () => {
+	it("places organization sign-in settings after basic details for admins", async () => {
+		authz.isPlatformAdmin = true;
+		const user = userEvent.setup();
+		render(<Organizations />);
+		await user.click(screen.getByRole("row", { name: /Acme/ }));
+		const status = screen.getByLabelText("Organization Status");
+		const policy = screen.getByText("Shared Organization Sign-In Control");
+		expect(
+			status.compareDocumentPosition(policy) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	});
+	it("keeps organization sign-in controls hidden from ordinary organization managers", async () => {
+		const user = userEvent.setup();
+		render(<Organizations />);
+		await user.click(screen.getByRole("row", { name: /Acme/ }));
+		expect(
+			screen.queryByText("Shared Organization Sign-In Control"),
+		).not.toBeInTheDocument();
+	});
+
 	it("hides inactive organizations until requested", async () => {
 		const user = userEvent.setup();
 		render(<Organizations />);
