@@ -154,6 +154,14 @@ async def set_platform_admin(
             )
         )
     user.is_superuser = is_admin
+    if is_admin:
+        from src.services.oauth_config_service import OAuthConfigService
+
+        policy_service = OAuthConfigService(session)
+        preference = await policy_service.get_login_preference()
+        if preference.excluded_user_ids is not None and user.id not in preference.excluded_user_ids:
+            preference.excluded_user_ids.append(user.id)
+            await policy_service.set_login_preference(preference, updated_by=assigned_by)
     await invalidate_user_role_cache(user.id)
 
 

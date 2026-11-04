@@ -6,7 +6,7 @@ MCP server for Bifrost platform capabilities using the bundled MCP SDK.
 Architecture:
     - MCPContext: Holds user/org context for permission-scoped tool execution
     - BifrostMCPServer: Creates MCP servers with registered tools
-    - Uses the MCP SDK FastMCP transport (Claude Desktop, etc.)
+    - Uses the MCP SDK MCPServer transport (Claude Desktop, etc.)
 
 Usage:
     # For external access (MCP SDK HTTP)
@@ -18,16 +18,15 @@ Usage:
 import json
 import logging
 from dataclasses import dataclass, field
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.server.fastmcp.tools.base import Tool as SDKTool
-from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase, FuncMetadata
-from mcp.types import CallToolResult, ContentBlock, Icon
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.tools.base import Tool as SDKTool
+from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase, FuncMetadata
+from mcp.types import CallToolResult, Icon, InputRequiredResult
 
 
 if TYPE_CHECKING:
@@ -61,11 +60,11 @@ BIFROST_WEBSITE_URL = "https://docs.gobifrost.com"
 
 # Workflow tools are registered with normalized names for MCP compatibility.
 # The reverse mapping lets agent-scoped access resolve a workflow UUID to its
-# current FastMCP tool name. Its values also track names during refresh.
+# current MCPServer tool name. Its values also track names during refresh.
 _WORKFLOW_ID_TO_TOOL_NAME: dict[str, str] = {}
 
 # Stored references for refresh_workflow_tools()
-_fastmcp_instance: FastMCP | None = None
+_fastmcp_instance: MCPServer | None = None
 
 # Dynamic workflow schemas are validated by ``SDKWorkflowTool.run``. Every
 # wrapper therefore shares this empty SDK argument model instead of creating a
@@ -173,7 +172,7 @@ class MCPContext:
 
 
 # =============================================================================
-# Context Helper Functions (for FastMCP authentication)
+# Context Helper Functions (for MCPServer authentication)
 # =============================================================================
 
 
@@ -290,7 +289,7 @@ async def _get_runtime_context() -> MCPContext:
 # =============================================================================
 
 
-class BifrostSDKServer(FastMCP):
+class BifrostSDKServer(MCPServer):
     """MCP SDK server with Bifrost's existing fail-closed tool policy."""
 
     async def list_tools(self) -> list:
@@ -299,12 +298,12 @@ class BifrostSDKServer(FastMCP):
         return await ToolFilterMiddleware().filter_tools(await super().list_tools())
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        self, name: str, arguments: dict[str, Any], context: Context | None = None
+    ) -> CallToolResult | InputRequiredResult:
         from src.services.mcp_server.middleware import ToolFilterMiddleware
 
         await ToolFilterMiddleware().authorize_tool_call(name)
-        return await super().call_tool(name, arguments)
+        return await super().call_tool(name, arguments, context)
 
 
 class BifrostMCPServer:
@@ -342,7 +341,7 @@ class BifrostMCPServer:
         # MCP SDK server (lazy initialized)
         self._fastmcp: Any = None
 
-    def get_fastmcp_server(self, auth: Any = None) -> FastMCP:
+    def get_fastmcp_server(self, auth: Any = None) -> MCPServer:
         """
         Get the MCP SDK server for HTTP access.
 
@@ -360,7 +359,7 @@ class BifrostMCPServer:
         icons = [
             Icon(
                 src=BIFROST_ICON_URL,
-                mimeType="image/svg+xml",
+                mime_type="image/svg+xml",
                 sizes=["any"],
             )
         ]
@@ -767,7 +766,7 @@ async def _notify_duplicate_workflow_names(duplicates: dict[str, list]) -> None:
         )
 
 
-async def _register_workflow_tools(mcp: FastMCP) -> int:
+async def _register_workflow_tools(mcp: MCPServer) -> int:
     """
     Register workflow tools with the MCP SDK using human-readable names.
 
@@ -913,7 +912,7 @@ async def refresh_workflow_tools() -> int:
     count = await _register_workflow_tools(_fastmcp_instance)
     new_tool_names = set(_WORKFLOW_ID_TO_TOOL_NAME.values())
 
-    # Remove tools that no longer exist from FastMCP
+    # Remove tools that no longer exist from MCPServer
     for stale_name in old_tool_names - new_tool_names:
         try:
             _fastmcp_instance._tool_manager.remove_tool(stale_name)

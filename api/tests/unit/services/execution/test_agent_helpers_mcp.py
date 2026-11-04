@@ -442,8 +442,8 @@ async def test_catalog_sync_descriptor_reaches_agent_tool_definition(
     discovered_tool = SimpleNamespace(
         name="search_records",
         description="Search approved records.",
-        inputSchema=input_schema,
-        outputSchema=output_schema,
+        input_schema=input_schema,
+        output_schema=output_schema,
     )
 
     with (

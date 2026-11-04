@@ -8,14 +8,18 @@ import logging
 import sys
 from typing import Any
 
-from src.jobs.consumers.package_install import PackageInstallConsumer
-from src.services.execution.process_pool import _get_installed_packages
+from src.services.execution.requirements_setup_helper import _get_installed_packages
 
 
 async def dispatch(command: dict[str, Any]) -> dict[str, Any]:
     """Use canonical pip helpers without creating a process pool in this process."""
-    helper = PackageInstallConsumer()
     operation = command["operation"]
+    if operation == "inventory":
+        return {"packages": await asyncio.to_thread(_get_installed_packages)}
+
+    from src.jobs.consumers.package_install import PackageInstallConsumer
+
+    helper = PackageInstallConsumer()
     if operation == "install":
         error = await helper._pip_install(command["package"], command.get("version"))
         return {"error": error}
@@ -25,8 +29,6 @@ async def dispatch(command: dict[str, Any]) -> dict[str, Any]:
     if operation == "requirements":
         error = await helper._pip_install_requirements()
         return {"error": error}
-    if operation == "inventory":
-        return {"packages": await asyncio.to_thread(_get_installed_packages)}
     raise ValueError(f"Unknown package tool operation: {operation}")
 
 

@@ -125,6 +125,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Record canonical dependency disposition
+        id: disposition
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           DEPENDABOT_ALERT_STATE: ${{ steps.advisory.outputs.alert-state }}
@@ -132,15 +133,16 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const { recordDependabotDisposition } = require(`${process.env.GITHUB_WORKSPACE}/scripts/dependabot_product_updates.cjs`);
-            await recordDependabotDisposition({
+            const result = await recordDependabotDisposition({
               github,
               repository: context.repo,
               number: context.payload.pull_request.number,
               alertState: process.env.DEPENDABOT_ALERT_STATE,
             });
+            core.setOutput("manual-review", result.manualReview === true);
 
       - name: Enable auto-merge (enters the merge queue once checks pass)
-        if: steps.eligible.outputs.merge == 'true'
+        if: steps.eligible.outputs.merge == 'true' && steps.disposition.outputs.manual-review != 'true'
         run: gh pr merge --auto "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -148,6 +150,7 @@ jobs:
 
       - name: Label majors and Docker for human review
         if: |
+          steps.disposition.outputs.manual-review == 'true' ||
           steps.metadata.outputs.update-type == 'version-update:semver-major' ||
           steps.metadata.outputs.package-ecosystem == 'docker'
         run: gh pr edit "$PR_URL" --add-label needs-review

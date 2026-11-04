@@ -292,7 +292,7 @@ class TestRegisterFromInvite:
         assert login_resp.status_code == 401
         assert (
             login_resp.json()["detail"]
-            == "Account does not have password authentication enabled"
+            == "Incorrect email or password"
         )
 
         e2e_client.patch(

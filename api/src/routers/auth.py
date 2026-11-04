@@ -57,6 +57,11 @@ from src.core.principal import UserPrincipal
 from src.core.rate_limit import auth_limiter, device_token_limiter, mfa_limiter, get_client_ip
 from src.services.audit import emit_audit
 from src.services.audit_context import ActorContext, current_actor
+from src.services.oauth_config_service import (
+    PASSWORD_SSO_ONLY_DETAIL,
+    PASSKEY_SSO_ONLY_DETAIL,
+    OAuthConfigService,
+)
 from shared.browser_impersonation import (
     BrowserImpersonationError,
     IMPERSONATION_COOKIE_NAME,
@@ -216,6 +221,11 @@ async def _refuse_login(
     )
 
 
+async def _password_allowed_for(db: AsyncSession, user=None) -> bool:
+    """Whether password login/creation is allowed under the SSO-only policy."""
+    return await OAuthConfigService(db).is_password_allowed_for(user)
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -264,17 +274,25 @@ async def login(
     if not user:
         await _refuse_login(db, email=form_data.username, reason="user_not_found")
     if is_identity(user):
-        await _refuse_login(db, email=user.email, reason="identity", user=user, detail="Invalid credentials")
+        await _refuse_login(db, email=user.email, reason="identity", user=user)
     if not user.hashed_password:
         await _refuse_login(
             db,
             email=user.email,
             reason="no_password",
             user=user,
-            detail="Account does not have password authentication enabled",
         )
     if not verify_password(form_data.password, user.hashed_password):
         await _refuse_login(db, email=user.email, reason="wrong_password", user=user)
+    if not await _password_allowed_for(db, user):
+        await _refuse_login(
+            db,
+            email=user.email,
+            reason="sso_only_password_disabled",
+            user=user,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
     if not user.is_active:
         await _refuse_login(
             db,
@@ -518,6 +536,15 @@ async def mfa_initial_verify(
             detail="User not found or inactive",
         )
     refuse_identity_sign_in(user)
+    if not await _password_allowed_for(db, user):
+        await _refuse_login(
+            db,
+            email=user.email,
+            reason="sso_only_password_disabled",
+            user=user,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
 
     mfa_service = MFAService(db)
 
@@ -600,6 +627,15 @@ async def verify_mfa_login(
             detail="User not found or inactive",
         )
     refuse_identity_sign_in(user)
+    if not await _password_allowed_for(db, user):
+        await _refuse_login(
+            db,
+            email=user.email,
+            reason="sso_only_password_disabled",
+            user=user,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
 
     mfa_service = MFAService(db)
 
@@ -1188,6 +1224,14 @@ async def register_user(
             detail="User registration is disabled. Contact an administrator for access.",
         )
 
+    # Resolve existing invitees or the same domain-based organization used by
+    # provisioning before applying the shared policy. Bootstrap stays reachable.
+    if not await OAuthConfigService(db).is_password_registration_allowed(user_data.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
+
     # Check if email already exists
     existing_user = await user_repo.get_by_email(user_data.email)
 
@@ -1316,7 +1360,8 @@ async def get_auth_status(db: DbSession = None) -> AuthStatusResponse:
 
     return AuthStatusResponse(
         needs_setup=not has_users,
-        password_login_enabled=True,  # Always enabled for now
+        password_login_enabled=await oauth_config_service.is_password_allowed_for(),
+        passkey_login_enabled=await oauth_config_service.is_passkey_allowed_for(),
         mfa_required_for_password=settings.mfa_enabled,
         oauth_providers=oauth_providers,
         auto_redirect_to_sso=login_preference.auto_redirect_to_sso,
@@ -1756,6 +1801,18 @@ async def register_from_invite(
     password was supplied) their hashed_password is set.
     """
     svc = UserInviteService(db)
+    if request.password is not None:
+        # Password variant only: resolve the invitee so platform admins keep
+        # the password path while regular invitees are refused under SSO-only.
+        try:
+            _, invited_user = await svc.get_valid_invite_user(token=request.token)
+        except InviteConsumeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not await _password_allowed_for(db, invited_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=PASSWORD_SSO_ONLY_DETAIL,
+            )
     try:
         registered = await svc.consume(token=request.token, password=request.password)
     except InviteConsumeError as e:
@@ -1781,6 +1838,8 @@ async def register_from_invite_passkey_options(
     invite_svc = UserInviteService(db)
     try:
         _, invited_user = await invite_svc.get_valid_invite_user(token=request.token)
+        if not await OAuthConfigService(db).is_passkey_allowed_for(invited_user):
+            raise HTTPException(status_code=403, detail=PASSKEY_SSO_ONLY_DETAIL)
         options = await PasskeyService(db).generate_registration_options(invited_user.id)
     except (InviteConsumeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1806,6 +1865,8 @@ async def register_from_invite_passkey_verify(
     invite_svc = UserInviteService(db)
     try:
         _, invited_user = await invite_svc.get_valid_invite_user(token=request.token)
+        if not await OAuthConfigService(db).is_passkey_allowed_for(invited_user):
+            raise HTTPException(status_code=403, detail=PASSKEY_SSO_ONLY_DETAIL)
         passkey_service = PasskeyService(db)
         await passkey_service.verify_registration(
             user_id=invited_user.id,

@@ -10,7 +10,9 @@ All OAuth flows use PKCE for enhanced security.
 Configuration is stored in the database (system_configs table).
 """
 
+import asyncio
 import hashlib
+import io
 import logging
 import secrets
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from uuid import UUID
 
 import httpx
 import jwt
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +38,14 @@ logger = logging.getLogger(__name__)
 MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
 # Google addresses that are not Workspace accounts, so carry no `hd` claim.
 GOOGLE_CONSUMER_DOMAINS = {"gmail.com", "googlemail.com"}
+# Signed-in user's profile photo. User.Read, already requested for Entra
+# sign-in, covers this call. It is best-effort and must not fail login.
+MICROSOFT_GRAPH_PHOTO_URL = "https://graph.microsoft.com/v1.0/me/photo/$value"
+_MICROSOFT_PHOTO_TIMEOUT_SECONDS = 10.0
+# Same ceiling as a manual avatar upload in the profile router.
+_MICROSOFT_PHOTO_MAX_BYTES = 2 * 1024 * 1024
+_MICROSOFT_PHOTO_MAX_PIXELS = 4096 * 4096
+_MICROSOFT_PHOTO_CONTENT_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png"}
 
 
 @dataclass
@@ -332,7 +343,9 @@ class OAuthService:
                 # Graph's `mail` is free text and never identifies a Bifrost user.
                 email=_normalized_email(data.get("userPrincipalName")),
                 name=data.get("displayName"),
-                picture=None,  # Microsoft requires separate Graph API call for photo
+                # Graph /me has no picture URL. The photo is fetched separately
+                # from /me/photo/$value and stored on the user at sign-in.
+                picture=None,
                 email_verified=None,
                 raw_data=data,
             )
@@ -459,6 +472,18 @@ class OAuthService:
 
         return oauth_account
 
+    async def apply_microsoft_profile_photo(self, user: User, access_token: str) -> None:
+        """Copy the Entra profile photo onto ``user`` when Graph returns one.
+
+        A missing photo, a 404, or an unreadable body leaves whatever avatar
+        the user already has in place. Network and HTTP failures return
+        without raising so the caller can finish signing the user in.
+        """
+        photo = await fetch_microsoft_profile_photo(access_token)
+        if photo is None:
+            return
+        user.avatar_data, user.avatar_content_type = photo
+
     async def unlink_oauth_account(
         self,
         user_id: UUID,
@@ -539,3 +564,74 @@ def _provider_user_id(value: object) -> str:
 def _normalized_email(value: object) -> str:
     """Normalize an optional email-like claim without deciding whether to trust it."""
     return value.strip().lower() if isinstance(value, str) else ""
+
+
+async def _authorize_graph_photo_request(request: httpx.Request) -> None:
+    """Keep the Entra access token on graph.microsoft.com.
+
+    ``/me/photo/$value`` sometimes redirects to a short-lived download URL.
+    That URL authenticates itself. The bearer token must not follow it to
+    another host.
+    """
+    if request.url.scheme != "https" or request.url.host != "graph.microsoft.com":
+        request.headers.pop("Authorization", None)
+
+
+def _microsoft_photo_content_type(body: bytes) -> str | None:
+    """Return image/jpeg or image/png when ``body`` is a bounded photo."""
+    if not body or len(body) > _MICROSOFT_PHOTO_MAX_BYTES:
+        return None
+    try:
+        with Image.open(io.BytesIO(body)) as image:
+            content_type = _MICROSOFT_PHOTO_CONTENT_TYPES.get(image.format or "")
+            if content_type is None or image.width < 1 or image.height < 1:
+                return None
+            if image.width * image.height > _MICROSOFT_PHOTO_MAX_PIXELS:
+                return None
+            image.load()
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as exc:
+        logger.info("Microsoft profile photo discarded: %s", type(exc).__name__)
+        return None
+    return content_type
+
+
+async def fetch_microsoft_profile_photo(access_token: str) -> tuple[bytes, str] | None:
+    """Fetch the signed-in user's Graph profile photo.
+
+    Returns ``(bytes, content_type)`` or None. A missing photo (including
+    Graph's 404), a timeout, a non-image body, or any other photo error
+    returns None and never raises.
+    """
+    if not access_token:
+        return None
+    try:
+        async with asyncio.timeout(_MICROSOFT_PHOTO_TIMEOUT_SECONDS):
+            async with httpx.AsyncClient(
+                timeout=_MICROSOFT_PHOTO_TIMEOUT_SECONDS,
+                follow_redirects=True,
+                event_hooks={"request": [_authorize_graph_photo_request]},
+            ) as client:
+                async with client.stream(
+                    "GET",
+                    MICROSOFT_GRAPH_PHOTO_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                ) as response:
+                    if response.url.scheme != "https" or response.status_code == 404:
+                        return None
+                    if response.status_code != 200:
+                        logger.info("Microsoft profile photo unavailable: HTTP %s", response.status_code)
+                        return None
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > _MICROSOFT_PHOTO_MAX_BYTES:
+                            return None
+                        body.extend(chunk)
+    except (httpx.HTTPError, TimeoutError) as exc:
+        logger.info("Microsoft profile photo request failed: %s", type(exc).__name__)
+        return None
+
+    photo = bytes(body)
+    content_type = _microsoft_photo_content_type(photo)
+    if content_type is None:
+        return None
+    return photo, content_type

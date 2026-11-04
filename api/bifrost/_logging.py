@@ -17,7 +17,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Awaitable, Iterable, cast
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,7 @@ from uuid import UUID
 
 import redis as redis_sync
 
-from src.core.cache.keys import execution_log_recovery_cursor_key, execution_logs_stream_key
+from src.core.cache.keys import TTL_EXECUTION_LOGS, execution_log_recovery_cursor_key, execution_logs_stream_key
 from src.core.log_safety import log_safe
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,18 @@ _local = threading.local()
 # Per-execution sequence counters for log ordering.
 # Thread-local counters for sync callers, dict for async callers.
 _async_sequence_counters: dict[str, int] = {}
+
+# Cleanup after a partially successful XADD/EXPIRE transaction must not erase a
+# stream whose expiry was already present or repaired by a concurrent writer.
+# Redis executes scripts atomically, so no writer can set a TTL between this
+# check and the conditional delete.
+_DELETE_UNBOUNDED_STREAM_SCRIPT = """
+local ttl = redis.call("TTL", KEYS[1])
+if ttl == -1 then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
+"""
 
 
 def clear_sequence_counter(execution_id: str) -> None:
@@ -152,9 +164,24 @@ def append_log_to_stream(
 
     try:
         r = _get_sync_redis()
-        # XADD with automatic ID generation (*)
-        # MAXLEN ~ 10000 keeps stream bounded (approximate trimming)
-        entry_id: str = r.xadd(stream_key, entry, maxlen=10000)  # type: ignore[misc]
+        # The transaction prevents a process failure between creating a stream
+        # and assigning its retention bound. MAXLEN limits entries per stream;
+        # expiry also bounds empty stream metadata after acknowledgements.
+        with r.pipeline(transaction=True) as pipeline:
+            pipeline.xadd(stream_key, entry, maxlen=10000)
+            pipeline.expire(stream_key, TTL_EXECUTION_LOGS)
+            # EXEC may commit XADD while returning an error for EXPIRE.
+            entry_id, expiry_applied = pipeline.execute(raise_on_error=False)
+        if isinstance(entry_id, Exception):
+            raise entry_id
+        if isinstance(expiry_applied, Exception):
+            r.eval(_DELETE_UNBOUNDED_STREAM_SCRIPT, 1, stream_key)
+            raise RuntimeError(
+                "Failed to apply execution log stream expiry"
+            ) from expiry_applied
+        if not expiry_applied:
+            r.eval(_DELETE_UNBOUNDED_STREAM_SCRIPT, 1, stream_key)
+            raise RuntimeError("Failed to apply execution log stream expiry")
         return entry_id
     except Exception as e:
         logger.warning(f"Failed to append log to stream: {e}")
@@ -362,7 +389,27 @@ async def append_log_to_stream_async(
 
     try:
         async with get_redis() as r:
-            entry_id = await r.xadd(stream_key, entry, maxlen=10000)  # type: ignore[misc]
+            async with r.pipeline(transaction=True) as pipeline:
+                pipeline.xadd(stream_key, entry, maxlen=10000)
+                pipeline.expire(stream_key, TTL_EXECUTION_LOGS)
+                # EXEC may commit XADD while returning an error for EXPIRE.
+                entry_id, expiry_applied = await pipeline.execute(raise_on_error=False)
+            if isinstance(entry_id, Exception):
+                raise entry_id
+            if isinstance(expiry_applied, Exception):
+                await cast(
+                    Awaitable[int],
+                    r.eval(_DELETE_UNBOUNDED_STREAM_SCRIPT, 1, stream_key),
+                )
+                raise RuntimeError(
+                    "Failed to apply execution log stream expiry"
+                ) from expiry_applied
+            if not expiry_applied:
+                await cast(
+                    Awaitable[int],
+                    r.eval(_DELETE_UNBOUNDED_STREAM_SCRIPT, 1, stream_key),
+                )
+                raise RuntimeError("Failed to apply execution log stream expiry")
             return entry_id
     except Exception as e:
         logger.warning(f"Failed to append log to stream (async): {e}")
