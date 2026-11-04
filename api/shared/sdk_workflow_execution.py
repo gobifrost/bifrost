@@ -278,7 +278,10 @@ async def resolve_sdk_workflow_for_execution(
         from src.services.authorization.enforce import load_caller
 
         caller = await load_caller(session, principal)
-        requested_scope = UUID(request.org_id) if request.org_id else UNSET
+        requested_scope = (
+            None if request.org_id == "global"
+            else UUID(request.org_id) if request.org_id else UNSET
+        )
         try:
             lookup_org_id = resolve_effective_scope(
                 caller=caller, requested_scope=requested_scope
