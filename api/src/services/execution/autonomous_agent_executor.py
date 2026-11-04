@@ -1664,8 +1664,8 @@ class AutonomousAgentExecutor:
             if isinstance(result, MCPToolResult):
                 wire_result = result.to_call_tool_result()
                 result_data = {
-                    "content": pydantic_core.to_jsonable_python(wire_result.content),
-                    "structured_content": wire_result.structuredContent,
+                    "content": pydantic_core.to_jsonable_python(wire_result.content, by_alias=True),
+                    "structured_content": wire_result.structured_content,
                 }
             elif hasattr(result, "content"):
                 result_data = pydantic_core.to_jsonable_python(result.content)

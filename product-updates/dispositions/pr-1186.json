@@ -6,8 +6,10 @@
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1186",
-      "https://github.com/gobifrost/bifrost/blob/20c9db7be9fdbdd617ecd338adba11eb4657c292/docs/product-updates-authoring.md"
+      "https://github.com/gobifrost/bifrost/blob/20c9db7be9fdbdd617ecd338adba11eb4657c292/docs/product-updates-authoring.md",
+      "https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/docs/migration.md",
+      "https://github.com/gobifrost/bifrost/pull/1186/files"
     ]
   },
-  "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
+  "reason": "Internal MCP SDK upgrade and Bifrost compatibility repairs. Existing customer tool names, workflow schemas, authentication, configuration, and integration result formats are preserved; no customer action or in-app announcement is required."
 }
