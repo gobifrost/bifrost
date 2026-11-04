@@ -1,0 +1,16 @@
+{
+  "key": "pr:1218",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal activation of the already approved SDK client lifecycle fix from PR #1217 in the cumulative Product Updates feed. No new runtime behavior or announcement prose.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1218",
+      "https://github.com/gobifrost/bifrost/pull/1217",
+      "Jack authorized merging and shipping the SDK repair. This follows the repository release workflow to refresh verified metadata after the source lands.",
+      "Retains all 337 landed commit/PR records and previous contributor evidence. The exact 40 approved entries remain unchanged; the reviewed pr:1217 Other summary is added to the prepared bundle.",
+      "Validation: cumulative coverage, deterministic image preparation and all 44 Product Updates tooling tests passed in Docker. The canonical file is assigned immediately after GitHub created PR #1218, before queue admission."
+    ]
+  }
+}

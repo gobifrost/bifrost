@@ -11,12 +11,17 @@ Skips silently when S3-compatible storage is not configured.
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
 from src.services.file_index_service import FileIndexService
 from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE, serialize_manifest_dir
+from src.services.legacy_entity_files import (
+    LEGACY_ENTITY_SUFFIXES,
+    is_legacy_entity_file,
+)
 from src.services.manifest_generator import generate_manifest
 from src.services.repo_storage import RepoStorage
 
@@ -37,6 +42,19 @@ class RepoSyncWriter:
     @property
     def _s3_available(self) -> bool:
         return self._settings.s3_configured
+
+    async def delete_legacy_entity_file(
+        self, entity_type: str, entity_id: UUID | str
+    ) -> None:
+        """Delete the retired companion file for one form or agent."""
+        if not self._s3_available:
+            return
+        directory = f"{entity_type}s"
+        suffix = LEGACY_ENTITY_SUFFIXES.get(directory)
+        if suffix is None:
+            raise ValueError(f"unsupported legacy entity type: {entity_type}")
+        normalized_id = str(UUID(str(entity_id)))
+        await self._file_index.delete(f"{directory}/{normalized_id}{suffix}")
 
     async def regenerate_manifest(self) -> None:
         """Generate manifest from DB and write split files to _repo/.bifrost/."""
@@ -61,4 +79,11 @@ class RepoSyncWriter:
             await self._file_index.delete(f".bifrost/{MANIFEST_LEGACY_FILE}")
         except Exception:
             pass  # Already gone
+        # Inline manifest content superseded UUID-named form/agent companions.
+        # Remove only that historical shape so ordinary user YAML is preserved.
+        for directory in LEGACY_ENTITY_SUFFIXES:
+            paths = await self._file_index.repo_storage.list(f"{directory}/")
+            for path in paths:
+                if is_legacy_entity_file(path):
+                    await self._file_index.delete(path)
         logger.debug("Regenerated split manifest files in _repo/.bifrost/")

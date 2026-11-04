@@ -1,7 +1,7 @@
 {
   "name": "bifrost",
-  "description": "Bifrost — MSP automation platform. Skills for building workflows, forms, agents, independent Apps, Solutions, tables, and files with the Bifrost SDK + CLI. Includes :build, :setup, :copilot-cowork-package, and :migrate for moving legacy v1 Apps into independent V2 projects or installable Solutions.",
-  "version": "1.4.1",
+  "description": "Bifrost — MSP automation platform. Skills for building workflows, forms, agents, Apps, Solutions, tables, and files; setting up development; packaging Copilot Cowork agents; migrating legacy v1 Apps; and migrating Rewst automation with private API extraction, planning, testing, and cutover guidance.",
+  "version": "1.4.2-dev.1",
   "author": {
     "name": "Jack Musick",
     "url": "https://github.com/gobifrost/bifrost"

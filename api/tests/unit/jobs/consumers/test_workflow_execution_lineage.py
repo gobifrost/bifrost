@@ -64,16 +64,20 @@ async def test_setup_failure_fences_owner_and_notifies_only_after_written(writte
     assert consumer._redis_client.push_result.await_count == int(written)
 
 
-async def _created_with(claimed: dict, *, queue_error: Exception | None = None) -> dict:
+async def _created_with(claimed: dict) -> dict:
     with (
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
         patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
         patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
-        patch("src.services.execution.queue_tracker.publish_queue_positions", new=AsyncMock(side_effect=queue_error)),
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ) as refresh,
     ):
         consumer = _consumer()
         await consumer.process_message(MESSAGE, claimed)  # type: ignore[arg-type]
     consumer._pool.route_execution.assert_awaited_once()
+    refresh.assert_called_once_with()
     assert create.await_args is not None
     return dict(create.await_args.kwargs)
 
@@ -126,7 +130,10 @@ async def test_a_run_that_moved_on_is_discarded_and_wakes_its_sync_caller() -> N
             "src.services.execution.workflow_dispatch.notify_discarded_sync_run",
             new=AsyncMock(),
         ) as notify,
-        patch("src.services.execution.queue_tracker.publish_queue_positions", new=AsyncMock()),
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ) as refresh,
     ):
         consumer = _consumer()
         await consumer.process_message({**MESSAGE, "sync": True}, None)
@@ -134,14 +141,7 @@ async def test_a_run_that_moved_on_is_discarded_and_wakes_its_sync_caller() -> N
     create.assert_not_awaited()
     consumer._pool.route_execution.assert_not_awaited()
     notify.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("error", [TimeoutError("queue unavailable"), ConnectionError("queue unavailable")])
-async def test_ui_queue_tracking_failure_does_not_abandon_a_claimed_workflow(error) -> None:
-    created = await _created_with(_claimed(), queue_error=error)
-
-    assert created["execution_id"] == EXECUTION_ID
+    refresh.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -158,7 +158,10 @@ async def test_credentials_are_minted_for_the_route_chosen_first(
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
         patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
         patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
-        patch("src.services.execution.queue_tracker.publish_queue_positions", new=AsyncMock()),
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ) as refresh,
         patch(
             "src.services.authorization.tokens.issue_run_credentials", new=AsyncMock(return_value=issued)
         ) as mint,
@@ -172,3 +175,4 @@ async def test_credentials_are_minted_for_the_route_chosen_first(
     assert routed["credential_route"] == route
     assert routed["context"]["engine_token"] == "access"
     assert routed["context"].get("engine_refresh_token") == refresh_token
+    refresh.assert_called_once_with()

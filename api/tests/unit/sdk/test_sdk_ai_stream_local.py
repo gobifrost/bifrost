@@ -269,8 +269,9 @@ async def test_external_network_stream_uses_same_parser_and_route():
         transport=httpx.MockTransport(handler), base_url="https://example.test"
     ) as http:
         client = BifrostClient("https://example.test", "token")
-        client._http = http
-        client._http_loop = asyncio.get_running_loop()
+        clients = client._clients_for_loop()
+        clients.http = http
+        clients.clients.append(http)
         with patch("bifrost.ai.get_client", return_value=client):
             chunks = [chunk async for chunk in ai_facade.stream("Hi")]
 
@@ -297,8 +298,9 @@ async def test_external_network_stream_preflight_error_matches_local():
         transport=httpx.MockTransport(handler), base_url="https://example.test"
     ) as http:
         client = BifrostClient("https://example.test", "token")
-        client._http = http
-        client._http_loop = asyncio.get_running_loop()
+        clients = client._clients_for_loop()
+        clients.http = http
+        clients.clients.append(http)
         with (
             patch("bifrost.ai.get_client", return_value=client),
             pytest.raises(BifrostAuthorizationError, match="denied"),

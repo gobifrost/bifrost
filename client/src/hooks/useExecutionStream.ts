@@ -60,6 +60,7 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 		}
 
 		let unsubscribeUpdate: (() => void) | null = null;
+		let unsubscribeQueueUpdate: (() => void) | null = null;
 		let unsubscribeLog: (() => void) | null = null;
 		let disposed = false;
 
@@ -104,6 +105,12 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 							currentStore.updateStatus(
 								executionId,
 								update.status as ExecutionStatus,
+								{
+									queuePosition: update.queuePosition,
+									waitReason: update.waitReason,
+									availableMemoryMb: update.availableMemoryMb,
+									requiredMemoryMb: update.requiredMemoryMb,
+								},
 							);
 						}
 
@@ -120,6 +127,15 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 								onComplete(executionId);
 							}
 						}
+					},
+				);
+
+				unsubscribeQueueUpdate = webSocketService.onExecutionQueueUpdate(
+					executionId,
+					(update) => {
+						useExecutionStreamStore
+							.getState()
+							.updateQueuePosition(executionId, update);
 					},
 				);
 
@@ -160,6 +176,9 @@ export function useExecutionStream(options: UseExecutionStreamOptions) {
 			disposed = true;
 			if (unsubscribeUpdate) {
 				unsubscribeUpdate();
+			}
+			if (unsubscribeQueueUpdate) {
+				unsubscribeQueueUpdate();
 			}
 			if (unsubscribeLog) {
 				unsubscribeLog();
