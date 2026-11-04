@@ -73,6 +73,18 @@ def transport_for(handler: httpx.MockTransport, **kwargs) -> S3Transport:
     )
 
 
+@pytest.mark.asyncio
+async def test_put_object_signs_if_match_precondition():
+    seen = []
+    def handle(request):
+        seen.append(request)
+        return httpx.Response(200, headers={"etag": '"new"'})
+    async with transport_for(httpx.MockTransport(handle)) as client:
+        await client.put_object(Bucket="bucket", Key="key", Body=b"value", IfMatch='"old"')
+    assert seen[0].headers["if-match"] == '"old"'
+    assert "if-match" in seen[0].headers["authorization"]
+
+
 def regional_transport_for(handler: httpx.MockTransport, **kwargs) -> S3Transport:
     return S3Transport(
         endpoint_url=None,

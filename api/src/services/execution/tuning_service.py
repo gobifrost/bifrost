@@ -325,15 +325,16 @@ async def dry_run_consolidated(
     db: AsyncSession,
     session_factory: async_sessionmaker[AsyncSession],
     caller: "Caller",
-) -> list[tuple[UUID, bool, str, float]]:
+) -> list[tuple[UUID, bool, str, float, bool]]:
     """Run :func:`evaluate_against_prompt` for each flagged run (capped).
 
-    Returns a list of ``(run_id, would_still_decide_same, reasoning, confidence)``
+    Returns a list of
+    ``(run_id, would_still_decide_same, reasoning, confidence, evaluation_failed)``
     tuples, capped at :data:`CONSOLIDATED_DRY_RUN_LIMIT` runs to bound cost.
     """
     pairs = await _load_flagged_runs_with_conversations(agent_id, db, caller)
     capped = pairs[:CONSOLIDATED_DRY_RUN_LIMIT]
-    results: list[tuple[UUID, bool, str, float]] = []
+    results: list[tuple[UUID, bool, str, float, bool]] = []
     for run, _conv in capped:
         verdict = await evaluate_against_prompt(
             run_id=run.id,
@@ -346,6 +347,7 @@ async def dry_run_consolidated(
                 verdict.would_still_decide_same,
                 verdict.reasoning,
                 verdict.confidence,
+                verdict.evaluation_failed,
             )
         )
     return results

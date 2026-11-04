@@ -108,3 +108,18 @@ it("distinguishes failed option requests from a successful empty list", async ()
 	post.mockResolvedValueOnce({ data: { options: [] } });
 	await expect(getFormFieldOptions("form-1", "owner")).resolves.toEqual([]);
 });
+
+it("loads field choices in the selected organization", async () => {
+	post.mockResolvedValue({ data: { options: [] } });
+	await getFormFieldOptions("form-1", "customer", {}, "contoso");
+	expect(post).toHaveBeenCalledWith(
+		"/api/forms/{form_id}/fields/{field_name}/options",
+		{
+			params: {
+				path: { form_id: "form-1", field_name: "customer" },
+				query: { org_id: "contoso" },
+			},
+			body: { inputs: {} },
+		},
+	);
+});

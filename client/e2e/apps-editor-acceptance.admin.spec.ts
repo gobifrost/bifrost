@@ -10,6 +10,7 @@
 import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
 import type { Page } from "./fixtures/api-fixture";
+import type { components } from "../src/lib/v1";
 import { editorForPath, readEditorContent } from "./fixtures/monaco-editor";
 
 type ViewportCase = {
@@ -153,6 +154,20 @@ for (const viewport of VIEWPORTS) {
 		// Source compilation belongs to fixture setup, independently of the
 		// browser action budget. Teardown receives a live API context on failure.
 		test.beforeAll(async ({ api }) => {
+			// This journey starts after onboarding. Own the receipt state instead
+			// of relying on another test or a closing login page to acknowledge it.
+			const feedResponse = await api.get("/api/product-updates");
+			expect(feedResponse.ok(), await feedResponse.text()).toBe(true);
+			const feed = (await feedResponse.json()) as
+				components["schemas"]["ProductUpdatesFeedResponse"];
+			const receipt = await api.post("/api/product-updates/receipts", {
+				data: {
+					entry_ids: feed.bundle.entries
+						.filter((entry) => entry.in_app !== false)
+						.map((entry) => entry.id),
+				},
+			});
+			expect(receipt.ok(), await receipt.text()).toBe(true);
 			app = await createInlineApp(api);
 			await writeWorkspaceFile(
 				api,

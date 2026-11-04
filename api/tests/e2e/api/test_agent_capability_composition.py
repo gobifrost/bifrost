@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic_ai.messages import (
-    LoadCapabilityReturnPart,
+    UserPromptPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -63,11 +63,13 @@ class _LoadsSpecialistCapability(TestModel):
     ) -> ModelResponse:
         del model_settings
         loaded_instructions = [
-            part.instructions
+            part.content
             for message in messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, LoadCapabilityReturnPart) and part.instructions
+            if isinstance(part, UserPromptPart)
+            and isinstance(part.content, str)
+            and self._child_instruction in part.content
         ]
         self.loaded_instruction_text = "\n".join(loaded_instructions)
         completed = {
@@ -89,12 +91,17 @@ class _LoadsSpecialistCapability(TestModel):
                 model_name=self.model_name,
             )
 
-        assert loaded_instructions == [
+        # TestModel has no inline system-message support; the framework delivers
+        # loaded policy in its trusted <system> frame on the user-message channel.
+        assert len(loaded_instructions) == 1
+        assert "<system>" in loaded_instructions[0]
+        assert "</system>" in loaded_instructions[0]
+        assert (
             f"{self._child_instruction}\n\n"
             "Search for an approved individual tool only after loading this skill. "
             "Use it only for work this specialist owns and return evidence to the "
             "owning conversation."
-        ]
+        ) in loaded_instructions[0]
         search_completed = any(
             isinstance(message, ModelRequest)
             and any(

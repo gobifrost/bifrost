@@ -13,7 +13,7 @@ import logging
 from types import SimpleNamespace
 
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from src.services.mcp_server.agent_scope import (
     get_scoped_agent_id as _get_agent_id_from_scope,
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class ToolFilterMiddleware:
     """
-    FastMCP middleware for gateway and agent-scoped tool surfaces.
+    MCPServer middleware for gateway and agent-scoped tool surfaces.
 
     The unscoped ``/mcp`` endpoint exposes only the stable gateway tools.
     The ``/mcp/{agent_id}`` endpoint preserves the native per-agent tool
@@ -68,7 +68,7 @@ class ToolFilterMiddleware:
         Filter tools/list response based on user permissions.
 
         Args:
-            context: FastMCP middleware context
+            context: MCPServer middleware context
             call_next: Next handler in the chain
 
         Returns:
@@ -152,7 +152,7 @@ class ToolFilterMiddleware:
         call a tool directly without going through tools/list.
 
         Args:
-            context: FastMCP middleware context
+            context: MCPServer middleware context
             call_next: Next handler in the chain
 
         Returns:

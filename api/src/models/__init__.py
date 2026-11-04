@@ -170,6 +170,7 @@ if TYPE_CHECKING:
         FormPublic,
         FormCaptchaChallenge,
         FormRuntimeDefinition,
+        AuthenticatedFormRuntimeDefinition,
         FormPublicationPublic,
         FormPublicationReview,
         FormPublicationUpdate,

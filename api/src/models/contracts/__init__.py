@@ -129,6 +129,7 @@ if TYPE_CHECKING:
         FormPublicationUpdate,
         FormPublic,
         FormRuntimeDefinition,
+        AuthenticatedFormRuntimeDefinition,
         FormSchema,
         FormSubmissionRequest,
         FormSubmissionResponse,
