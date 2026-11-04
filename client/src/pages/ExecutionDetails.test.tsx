@@ -806,6 +806,10 @@ describe("ExecutionDetails — editable rerun", () => {
 				expect(executeWorkflowWithContext).toHaveBeenCalledWith(
 					execution.workflow_id,
 					{ message: "edited" },
+					undefined,
+					undefined,
+					undefined,
+					{ orgId: execution.org_id ?? undefined },
 				),
 			);
 			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

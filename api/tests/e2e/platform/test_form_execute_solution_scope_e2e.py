@@ -369,3 +369,63 @@ class TestCrossOrgFormExecuteAnchor:
             "cross-org caller could not resolve the install's own launch "
             f"workflow: {r.status_code} {r.text}"
         )
+
+
+@pytest.mark.e2e
+class TestGlobalFormOrganizationSelection:
+    async def test_global_form_runs_in_the_explicit_selected_organization(
+        self, db_session, e2e_client, platform_admin
+    ):
+        db = db_session
+        selected_org = (await _org(db)).id
+        workflow = Workflow(
+            id=uuid4(),
+            name="global-form-selection",
+            function_name="main",
+            path=f"workflows/global_form_selection_{uuid4().hex[:8]}.py",
+            type="workflow",
+            is_active=True,
+            organization_id=None,
+            solution_id=None,
+        )
+        form = Form(
+            id=uuid4(),
+            name="global-form-selection",
+            organization_id=None,
+            workflow_id=str(workflow.id),
+            created_by="test",
+        )
+        db.add_all([workflow, form])
+        await db.commit()
+
+        try:
+            runtime = e2e_client.get(
+                f"/api/forms/{form.id}/runtime", headers=platform_admin.headers
+            )
+            assert runtime.status_code == 200, runtime.text
+            assert runtime.json()["organization_id"] is None
+
+            response = e2e_client.post(
+                f"/api/forms/{form.id}/submissions",
+                params={"org_id": str(selected_org)},
+                headers=platform_admin.headers,
+                json={"form_data": {}, "delay_seconds": 3600},
+            )
+            assert response.status_code == 200, response.text
+
+            execution = (
+                await db.execute(
+                    select(Execution).where(
+                        Execution.id == UUID(response.json()["execution_id"])
+                    )
+                )
+            ).scalar_one()
+            assert execution.organization_id == selected_org
+        finally:
+            await db.execute(delete(Execution).where(Execution.form_id == form.id))
+            await db.execute(delete(Form).where(Form.id == form.id))
+            await db.execute(delete(Workflow).where(Workflow.id == workflow.id))
+            await db.execute(
+                delete(Organization).where(Organization.id == selected_org)
+            )
+            await db.commit()

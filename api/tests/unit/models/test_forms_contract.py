@@ -19,6 +19,7 @@ from src.models.contracts.forms import (
     DataProviderInputConfig,
     Form,
     FormCreate,
+    FormRuntimeDefinition,
     FormSubmissionRequest,
     FormField,
     FormUpdate,
@@ -63,6 +64,23 @@ class TestFormConfirmationContract:
     def test_update_rejects_markdown_over_limit(self):
         with pytest.raises(ValidationError):
             FormUpdate(confirmation_markdown="x" * 20_001)
+
+
+class TestFormRuntimeDefinition:
+    def test_includes_persisted_organization_scope(self):
+        organization_id = UUID("00000000-0000-0000-0000-000000000123")
+
+        runtime = FormRuntimeDefinition.model_validate(
+            {
+                "id": UUID("00000000-0000-0000-0000-000000000456"),
+                "organization_id": organization_id,
+                "name": "Scoped form",
+                "form_schema": {"fields": []},
+                "is_active": True,
+            }
+        )
+
+        assert runtime.organization_id == organization_id
 
 
 class TestFormSchema:

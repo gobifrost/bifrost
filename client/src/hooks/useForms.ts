@@ -114,11 +114,15 @@ export async function submitForm(
 export async function executeFormStartup(
 	formId: string,
 	inputData: Record<string, unknown> = {},
+	orgId?: string,
 ): Promise<FormStartupResponse> {
 	const { data, error } = await apiClient.POST(
 		"/api/forms/{form_id}/startup",
 		{
-			params: { path: { form_id: formId } },
+			params: {
+				path: { form_id: formId },
+				...(orgId ? { query: { org_id: orgId } } : {}),
+			},
 			body: inputData,
 		},
 	);

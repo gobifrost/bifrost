@@ -19767,6 +19767,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Organization Id */
+            organization_id?: string | null;
             /** Name */
             name: string;
             /** Description */
@@ -36303,7 +36305,10 @@ export interface operations {
     };
     submit_form_api_forms__form_id__submissions_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36338,7 +36343,10 @@ export interface operations {
     };
     execute_startup_workflow_api_forms__form_id__startup_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36375,7 +36383,10 @@ export interface operations {
     };
     get_form_field_options_api_forms__form_id__fields__field_name__options_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36411,7 +36422,10 @@ export interface operations {
     };
     generate_upload_url_api_forms__form_id__upload_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to store a global form upload. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;

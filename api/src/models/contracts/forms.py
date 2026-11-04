@@ -523,6 +523,7 @@ class FormRuntimeDefinition(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    organization_id: UUID | None = None
     name: str
     description: str | None = None
     form_schema: FormRuntimeSchema
@@ -564,6 +565,7 @@ class FormRuntimeDefinition(BaseModel):
 
         return {
             "id": data.id,
+            "organization_id": data.organization_id,
             "name": data.name,
             "description": data.description,
             "form_schema": FormRuntimeSchema(fields=fields),

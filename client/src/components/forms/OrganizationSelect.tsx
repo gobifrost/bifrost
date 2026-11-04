@@ -197,6 +197,7 @@ export function OrganizationSelect({
 			<PopoverTrigger asChild>
 				<Button
 					{...triggerProps}
+					type="button"
 					aria-label={
 						triggerProps["aria-label"] ??
 						label ??

@@ -198,3 +198,37 @@ it("keeps the runtime mounted while a cached form refresh fails and retries", as
 	expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
 	expect(screen.getByText("Rendered Form")).toBeVisible();
 });
+
+vi.mock("@/components/execution/ExecutionOrganizationSelect", () => ({
+	ExecutionOrganizationSelect: ({
+		onChange,
+		disabled,
+	}: {
+		onChange: (id: string) => void;
+		disabled?: boolean;
+	}) => (
+		<button
+			type="button"
+			disabled={disabled}
+			onClick={() => onChange("contoso")}
+		>
+			Run in Contoso
+		</button>
+	),
+}));
+
+it("offers organization selection only outside embed sessions and passes the target to the renderer", async () => {
+	const { user, rerender } = renderWithProviders(<RunForm />);
+	expect(
+		screen.queryByRole("button", { name: "Run in Contoso" }),
+	).not.toBeInTheDocument();
+	mockUseAuth.mockReturnValue({
+		isPlatformAdmin: true,
+		hasRole: () => false,
+	});
+	rerender(<RunForm />);
+	await user.click(screen.getByRole("button", { name: "Run in Contoso" }));
+	expect(mockFormRenderer).toHaveBeenLastCalledWith(
+		expect.objectContaining({ orgId: "contoso" }),
+	);
+});

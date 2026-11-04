@@ -1,3 +1,5 @@
+import { ExecutionOrganizationSelect } from "@/components/execution/ExecutionOrganizationSelect";
+import type { components } from "@/lib/v1";
 import {
 	PageWorkspace,
 	PageScrollArea,
@@ -201,12 +203,48 @@ export function RunForm() {
 			</div>
 
 			<PageScrollArea className="space-y-6">
-				<FormRenderer
+				<OrganizationForm
+					key={form.id}
 					form={form}
 					devMode={isPlatformAdmin && devMode}
 					onDevModeChange={isPlatformAdmin ? setDevMode : undefined}
 				/>
 			</PageScrollArea>
 		</PageWorkspace>
+	);
+}
+
+function OrganizationForm({
+	form,
+	devMode,
+	onDevModeChange,
+}: {
+	form: components["schemas"]["FormRuntimeDefinition"];
+	devMode: boolean;
+	onDevModeChange?: (enabled: boolean) => void;
+}) {
+	const [orgId, setOrgId] = useState<string>();
+	const [busy, setBusy] = useState(false);
+	return (
+		<div className="space-y-6">
+			<div className="mx-auto w-full max-w-2xl">
+				<ExecutionOrganizationSelect
+					value={orgId}
+					onChange={setOrgId}
+					organizationId={form.organization_id}
+					disabled={busy}
+					resetInputs
+					resourceType="form"
+				/>
+			</div>
+			<FormRenderer
+				key={orgId ?? "default"}
+				form={form}
+				orgId={orgId}
+				onBusyChange={setBusy}
+				devMode={devMode}
+				onDevModeChange={onDevModeChange}
+			/>
+		</div>
 	);
 }

@@ -436,6 +436,10 @@ export function ExecutionDetails({
 			const result = (await executeWorkflowWithContext(
 				execution.workflow_id,
 				parameters,
+				undefined,
+				undefined,
+				undefined,
+				{ orgId: execution.org_id ?? undefined },
 			)) as WorkflowExecutionResponse;
 
 			toast.success(
