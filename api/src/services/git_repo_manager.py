@@ -1,5 +1,5 @@
 """
-Git Repo Manager â€” S3-backed persistent git working tree.
+Git Repo Manager — S3-backed persistent git working tree.
 
 Manages the lifecycle of a persistent local git working directory backed by
 S3 _repo/. Uses `aws s3 sync` for efficient incremental transfer of the
@@ -172,7 +172,7 @@ class GitRepoManager:
         The lock prevents concurrent git operations from overwriting each
         other's changes in the shared S3 _repo/ prefix.
 
-        The working directory is NOT deleted on exit â€” it persists for
+        The working directory is NOT deleted on exit — it persists for
         incremental syncs on subsequent operations.
 
         Usage:
@@ -243,7 +243,7 @@ class GitRepoManager:
         """Acquire a Redis lock for the duration of a git operation."""
         redis_url = self._settings.redis_url
         if not redis_url:
-            # No Redis â€” skip locking (e.g., in tests)
+            # No Redis — skip locking (e.g., in tests)
             logger.debug("No Redis URL configured, skipping git lock")
             yield
             return
@@ -253,7 +253,7 @@ class GitRepoManager:
         try:
             acquired = await lock.acquire()
             if not acquired:
-                raise RuntimeError("Failed to acquire git lock â€” another git operation is in progress")
+                raise RuntimeError("Failed to acquire git lock — another git operation is in progress")
             logger.debug("Acquired git lock")
             yield
         finally:
