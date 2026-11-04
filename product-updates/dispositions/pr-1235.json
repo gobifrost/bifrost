@@ -1,0 +1,23 @@
+{
+  "key": "pr:1235",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal Python/container certificate security maintenance; no new front-facing capability or customer configuration change. Retain security evidence for formal release review.",
+  "category": "hardening",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1235"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1235",
+      "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
+      "https://github.com/advisories/GHSA-82r6-8w77-94w6",
+      "https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576",
+      "Jack conditionally approved scoped repairs and protected merge on 2026-11-04; merge requires existing private-CA installations to work without customer configuration changes.",
+      "Original contribution: Thomas Bray (@MTG-Thomas), https://github.com/gobifrost/bifrost/pull/1235. Maintainer repair preserves system trust selection and disables only retired distro roots by certificate identity.",
+      "Maintainer security review: production-image default and pip trust reject retired anchors; directory pruning persists across update-ca-certificates. Production TLS controls accept installed private CAs and existing explicit file/directory settings. Focused trust-pruning and SDK tests pass; Python and CA-package pins retain verified upstream provenance."
+    ]
+  }
+}

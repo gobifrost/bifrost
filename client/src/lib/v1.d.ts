@@ -1332,7 +1332,7 @@ export interface paths {
         put?: never;
         /**
          * Get passkey authentication options
-         * @description Generate WebAuthn authentication options for passwordless login. Returns a challenge that should be passed to navigator.credentials.get(). If email is provided, limits credentials to that user. If email is omitted, uses discoverable credentials (passkey autofill).
+         * @description Generate WebAuthn authentication options for passwordless login. Returns a challenge that should be passed to navigator.credentials.get(). Uses discoverable credentials without disclosing account membership. The optional email field is accepted without changing the public challenge.
          */
         post: operations["get_authentication_options_auth_passkeys_authenticate_options_post"];
         delete?: never;
@@ -14355,6 +14355,11 @@ export interface components {
             needs_setup: boolean;
             /** Password Login Enabled */
             password_login_enabled: boolean;
+            /**
+             * Passkey Login Enabled
+             * @default true
+             */
+            passkey_login_enabled: boolean;
             /** Mfa Required For Password */
             mfa_required_for_password: boolean;
             /** Oauth Providers */
@@ -17137,6 +17142,11 @@ export interface components {
             reasoning: string;
             /** Confidence */
             confidence: number;
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
         };
         /**
          * DryRunRequest
@@ -17164,6 +17174,11 @@ export interface components {
             alternative_action?: string | null;
             /** Confidence */
             confidence: number;
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
         };
         /** DryRunTurn */
         DryRunTurn: {
@@ -17182,6 +17197,11 @@ export interface components {
              * @enum {string}
              */
             predicted: "up" | "down";
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
             /**
              * At
              * Format: date-time
@@ -23568,6 +23588,28 @@ export interface components {
              * @description Configured SSO provider used for the preferred redirect
              */
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
+            /**
+             * Password Login Enabled
+             * @description Whether password login is available to accounts without an SSO exclusion
+             * @default true
+             */
+            password_login_enabled: boolean;
+            /**
+             * Passkey Login Enabled
+             * @description Whether passkey login/enrollment is available to accounts without an SSO exclusion
+             * @default true
+             */
+            passkey_login_enabled: boolean;
+            /**
+             * Excluded User Ids
+             * @description Users exempt from login restrictions; null safely exempts platform admins
+             */
+            excluded_user_ids?: string[] | null;
+            /**
+             * Excluded Organization Ids
+             * @description Organizations exempt from login restrictions
+             */
+            excluded_organization_ids?: string[];
         };
         /**
          * OAuthProviderConfigResponse

@@ -30,6 +30,27 @@ def test_import_fields_shape():
     assert f.direct == {"a": 1} and f.indexer_content == {} and f.restamp == {}
 
 
+@pytest.mark.parametrize("organization_id", [None, "00000000-0000-0000-0000-000000000002"])
+def test_claim_git_sync_preserves_nullable_organization(organization_id):
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    from bifrost.manifest import ManifestCustomClaim
+
+    claim = SimpleNamespace(
+        id=UUID("00000000-0000-0000-0000-000000000003"),
+        name="global_claim",
+        description=None,
+        organization_id=UUID(organization_id) if organization_id else None,
+        type="list",
+        query={"table": "users", "select": "id"},
+    )
+    exported = ManifestCustomClaim.from_row(claim).view(Destination.GIT_SYNC)
+    assert exported["organization_id"] == organization_id
+    imported = ManifestCustomClaim.model_validate(exported).to_orm_values(Destination.GIT_SYNC)
+    assert imported.direct["organization_id"] == organization_id
+
+
 def assert_parity(produced: dict, legacy: dict, *, label: str = "") -> None:
     """Byte-parity assertion for entity conversions: key-set first, then values."""
     only_new = set(produced) - set(legacy)

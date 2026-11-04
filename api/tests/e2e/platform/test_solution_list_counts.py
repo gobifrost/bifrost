@@ -23,7 +23,7 @@ pytestmark = pytest.mark.e2e
 
 
 @pytest.mark.asyncio
-async def test_solution_list_includes_entity_counts(e2e_client, platform_admin, db_session):
+async def test_solution_list_includes_entity_counts(e2e_client, platform_admin, db_session, request):
     slug = f"counted-{uuid.uuid4().hex[:8]}"
     create = e2e_client.post(
         "/api/solutions",
@@ -32,6 +32,17 @@ async def test_solution_list_includes_entity_counts(e2e_client, platform_admin, 
     )
     assert create.status_code in (200, 201), create.text
     solution_id = UUID(create.json()["id"])
+
+    def cleanup():
+        response = e2e_client.delete(
+            f"/api/solutions/{solution_id}",
+            headers=platform_admin.headers,
+            params={"confirm": slug},
+        )
+        assert response.status_code == 200, response.text
+
+    request.addfinalizer(cleanup)
+    table_name = f"counted_table_{uuid.uuid4().hex[:8]}"
 
     db_session.add_all(
         [
@@ -58,11 +69,11 @@ async def test_solution_list_includes_entity_counts(e2e_client, platform_admin, 
                 created_by=str(platform_admin.user_id),
                 solution_id=solution_id,
             ),
-            Table(name=f"counted_table_{uuid.uuid4().hex[:8]}", solution_id=solution_id),
+            Table(name=table_name, solution_id=solution_id),
             CustomClaim(
                 name=f"counted_claim_{uuid.uuid4().hex[:8]}",
                 type="list",
-                query={"table": "counted_table", "select": "id"},
+                query={"table": table_name, "select": "id"},
                 solution_id=solution_id,
             ),
             FileMetadata(
