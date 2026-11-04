@@ -417,8 +417,8 @@ class PydanticAIClient(BaseLLMClient):
             return False
         return (
             isinstance(decoded, dict)
-            and set(decoded).issubset({"instructions"})
-            and ("instructions" not in decoded or isinstance(decoded["instructions"], str))
+            and set(decoded).issubset({"message", "instructions"})
+            and all(isinstance(value, str) for value in decoded.values())
         )
 
     @staticmethod

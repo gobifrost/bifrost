@@ -58,8 +58,7 @@ async def test_native_tool_search_reveals_ranked_tools_to_code_mode() -> None:
             return ModelResponse(parts=[ToolCallPart("search_tools", {"queries": ["read record"]}, "search")])
         if len(seen) == 2:
             assert names == {"run_code", "search_tools"}
-            assert info.instructions is not None
-            assert "def read_record(*, record_id: str) -> Any:" in info.instructions
+            assert "read_record" in json.dumps(_tool_returns(messages, "search_tools"))
             return ModelResponse(parts=[ToolCallPart("run_code", {"code": "record = read_record(record_id='r-7')\nrecord['status']"}, "code")])
         return ModelResponse(parts=[TextPart("complete")])
 
@@ -137,7 +136,7 @@ async def test_code_mode_dispatches_every_colliding_and_reserved_tool_name() -> 
 
 
 @pytest.mark.asyncio
-async def test_native_provider_search_serializes_bounded_mcp_names() -> None:
+async def test_native_provider_keeps_deferred_code_mode_tools_off_wire() -> None:
     source = "mcp__00000000-0000-0000-0000-000000000007__" + "read_remote_record_" * 5
     name_map = code_mode_safe_name_map((source,))
     [alias] = name_map
@@ -192,8 +191,8 @@ async def test_native_provider_search_serializes_bounded_mcp_names() -> None:
     assert result.output == "complete"
     [body] = requests
     tools = {tool["name"]: tool for tool in body["tools"]}
-    assert alias in tools
-    assert tools[alias]["defer_loading"] is True
+    assert alias not in tools
+    assert set(tools) == {"search_tools", "run_code"}
     assert source not in tools
     assert all(len(name) <= 64 for name in tools)
 

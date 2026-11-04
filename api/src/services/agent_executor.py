@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     TextPartDelta,
-    RetryPromptPart,
+    ToolReturnPart,
 )
 from pydantic_ai.usage import RunUsage
 from sqlalchemy import func, select
@@ -170,6 +170,19 @@ def _serialize_tool_result_for_runtime(tool_result: ToolResult) -> str:
             }
         )
     return _serialize_for_json(tool_result.result)
+
+
+def _tool_result_from_framework_part(
+    tool_call: ToolCall, part: ToolReturnPart[Any]
+) -> ToolResult:
+    """Map a Pydantic AI framework result to Bifrost's persisted receipt."""
+    is_error = part.outcome != "success"
+    return ToolResult(
+        tool_call_id=tool_call.id,
+        tool_name=part.tool_name,
+        result=None if is_error else part.content,
+        error=_serialize_for_json(part.content) if is_error else None,
+    )
 
 
 # Fallback system prompt (used if no config set)
@@ -1046,14 +1059,11 @@ class AgentExecutor:
                                 if tool_call_id is None:
                                     raise ValueError("Framework tool result has no call identity")
                                 handled_runtime_ids.add(tool_call_id)
-                                is_error = isinstance(part, RetryPromptPart)
                                 await persist_tool_result(
                                     tool_call_id,
-                                    ToolResult(
-                                        tool_call_id=tool_calls[tool_call_id].id,
-                                        tool_name=part.tool_name,
-                                        result=None if is_error else part.content,
-                                        error=_serialize_for_json(part.content) if is_error else None,
+                                    _tool_result_from_framework_part(
+                                        tool_calls[tool_call_id],
+                                        part,
                                     ),
                                 )
                         elif isinstance(event, AgentRunResultEvent):

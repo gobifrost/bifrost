@@ -153,6 +153,41 @@ def test_only_completed_framework_receipts_restore_typed_framework_parts():
     assert type(search_receipt) is ToolReturnPart
 
 
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {"instructions": "Legacy loaded capability instructions."},
+        {"message": "Capability 'capability:knowledge' loaded. Its instructions, if any, follow."},
+    ],
+)
+def test_completed_capability_load_receipts_restore_typed_framework_parts(receipt: dict[str, str]):
+    """Both persisted loader receipt formats restore native load state."""
+    converted = PydanticAIClient.convert_messages(
+        [
+            LLMMessage(
+                role="assistant",
+                tool_calls=[
+                    ToolCallRequest(
+                        id="load",
+                        name="load_capability",
+                        arguments={"id": "capability:knowledge"},
+                    )
+                ],
+            ),
+            LLMMessage(
+                role="tool",
+                content=json.dumps(receipt),
+                tool_call_id="load",
+                tool_name="load_capability",
+            ),
+        ]
+    )
+
+    assert isinstance(converted[0].parts[0], LoadCapabilityCallPart)
+    assert isinstance(converted[1].parts[0], LoadCapabilityReturnPart)
+    assert converted[1].parts[0].content == receipt
+
+
 @pytest.mark.asyncio
 async def test_deferred_capability_survives_legacy_chat_history_without_a_second_load():
     """A resumed chat restores native loaded tools from durable receipts.
@@ -213,9 +248,9 @@ async def test_deferred_capability_survives_legacy_chat_history_without_a_second
         nonlocal first_requests
         first_requests += 1
         visible = {
-            tool.name
-            for tool in info.function_tools
-            if info.model_request_parameters.visibility_of(tool.name)
+            name
+            for name in info.model_request_parameters.tool_defs
+            if info.model_request_parameters.visibility_of(name)
             in {"visible", "via_history"}
         }
         if first_requests == 1:
@@ -316,9 +351,9 @@ async def test_deferred_capability_survives_legacy_chat_history_without_a_second
         nonlocal second_requests
         second_requests += 1
         visible = {
-            tool.name
-            for tool in info.function_tools
-            if info.model_request_parameters.visibility_of(tool.name)
+            name
+            for name in info.model_request_parameters.tool_defs
+            if info.model_request_parameters.visibility_of(name)
             in {"visible", "via_history"}
         }
         # The next turn restores both the loaded specialist and its discovered
