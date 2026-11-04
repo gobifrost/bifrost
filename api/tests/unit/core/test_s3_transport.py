@@ -6,6 +6,7 @@ import base64
 import gzip
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
