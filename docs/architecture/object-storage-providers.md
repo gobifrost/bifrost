@@ -3,6 +3,9 @@
 S3 remains the default. Native Azure Blob is an explicit installation option;
 it does not translate requests through an S3 proxy or provision Azure resources.
 High-level storage services retain their existing policies and key layouts.
+Changing providers does not migrate existing objects. For an existing
+installation, review and verify the data-migration plan before changing its
+selected provider.
 
 ## Configuration
 
