@@ -1,0 +1,16 @@
+{
+  "key": "pr:1242",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Preserve global custom claims when round-tripping Git and Solution manifests.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1242",
+      "Source contribution by MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream; functional head 4b42c44cf7054ca6794d19affaa317719a10a041.",
+      "Codex reviewed this routine-fix wording under Thomas Bray's explicit publication authorization. Contributor editorial review is not maintainer approval, security attestation or merge authorization.",
+      "Preserves the already-valid null/global scope rather than emitting the string None; organization UUID serialization and authorization are unchanged. Exact source passed 41 codec/fixture/ordered Git tests, full API Ruff and Pyright."
+    ]
+  }
+}
