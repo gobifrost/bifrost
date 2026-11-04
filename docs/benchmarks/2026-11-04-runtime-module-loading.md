@@ -151,3 +151,19 @@ The focused unit run passed 39 tests, the real-Redis run passed four, and Pyrigh
 and Ruff passed after rebuilding for the intervening dependency update on main.
 OpenAPI generation against that updated API produced no further type changes.
 The complete protected checks remain the merge gate.
+
+### Generated endpoint records follow-up
+
+The full CI unit job on `ca63610` passed 11,467 tests and failed three
+freshness/count checks: the new batch endpoint was absent from the generated
+operation inventory, its expected REST count, and the OpenAPI skill digest.
+Regenerated the inventory and canonical/public skill digests and updated the
+REST count to 696. No runtime behavior changed in this correction.
+
+```sh
+./test.sh tests/unit/services/test_operation_inventory.py tests/unit/test_skill_appendix_fresh.py -v
+python3 scripts/check_skill_mirrors.py
+```
+
+All 12 focused tests passed, and the skill mirror check passed. The full local
+unit suite was not repeated; protected CI remains the complete-suite gate.

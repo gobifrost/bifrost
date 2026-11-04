@@ -504,6 +504,7 @@
 | POST | `/api/sdk/knowledge/store` |
 | POST | `/api/sdk/knowledge/store-many` |
 | GET | `/api/sdk/modules-resolve` |
+| POST | `/api/sdk/modules-resolve-batch` |
 | GET | `/api/sdk/modules/{path}` |
 | GET | `/api/sdk/requirements` |
 | POST | `/api/sdk/runtime/data-provider-cache/read` |
