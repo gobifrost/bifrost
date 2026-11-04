@@ -27,7 +27,7 @@ class _StatusRepoManager:
         self.is_initialized = is_initialized
 
     @asynccontextmanager
-    async def lock(self):
+    async def workspace(self, *, readonly: bool = False):
         yield self.work_dir
 
 

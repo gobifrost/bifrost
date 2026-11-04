@@ -159,7 +159,7 @@ services:
       # whole LOG_DIR over the api's /tmp/bifrost: the api runs as root and its
       # entrypoint `chown -R`s /tmp/bifrost to the bifrost uid (1000), which
       # would clobber the host-owned LOG_DIR (test-runner.log, test-results.xml,
-      # *.log) — on a CI runner whose uid != 1000 the host-side `tee
+      # *.log) â€” on a CI runner whose uid != 1000 the host-side `tee
       # $LOG_DIR/test-runner.log` in run_pytest then fails with EPERM and the
       # step exits 1 even though every test passed. The fixture repos are created
       # by the uid-1000 test-runner, so chown-ing just this subdir to 1000 is a
@@ -197,6 +197,7 @@ services:
       context: .
       dockerfile: api/Dockerfile.dev
     environment:
+      BIFROST_GIT_WORK_DIR: /tmp/bifrost/solution-repo-fixtures/git-checkouts/worker
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
@@ -216,7 +217,7 @@ services:
       # Executors run Git sync platform jobs too.
       GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
       GITHUB_TEST_REPO: ${GITHUB_TEST_REPO:-jackmusick/e2e-test-workspace}
-      # Worker needs minimal DB connections — Redis-first pattern for agent runs
+      # Worker needs minimal DB connections â€” Redis-first pattern for agent runs
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
       # C1.5: Parity with production hardening
@@ -274,6 +275,7 @@ services:
       context: .
       dockerfile: api/Dockerfile.dev
     environment:
+      BIFROST_GIT_WORK_DIR: /tmp/bifrost/solution-repo-fixtures/git-checkouts/scheduler
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
@@ -400,7 +402,7 @@ services:
       # Embeddings E2E test configuration (optional - tests skip if not set)
       # Uses OpenAI text-embedding-3-small for vector embeddings
       EMBEDDINGS_AI_TEST_KEY: ${EMBEDDINGS_AI_TEST_KEY:-}
-      # Phase 1 hardening is applied to this stack — posture assertions always on
+      # Phase 1 hardening is applied to this stack â€” posture assertions always on
       BIFROST_POSTURE_HARDENED: "1"
     volumes:
       - ./api/src:/app/src
@@ -427,7 +429,7 @@ services:
       - ./k8s:/k8s:ro  # Kubernetes deployment contract tests
       - ./deploy:/deploy:ro  # Optional Kubernetes deployment overlays
       - ./scripts/kubernetes:/scripts/kubernetes:ro
-      - ./docker-compose.test.yml:/app/docker-compose.test.yml:ro  # Read-only —
+      - ./docker-compose.test.yml:/app/docker-compose.test.yml:ro  # Read-only â€”
                                       # the harness guard in
                                       # tests/unit/test_compose_test_harness.py
                                       # asserts the api service never re-binds
@@ -435,7 +437,7 @@ services:
       - ./docker-compose.yml:/app/docker-compose.yml:ro  # Production deployment contract.
       - ./docker-compose.dev.yml:/app/docker-compose.dev.yml:ro  # Development deployment contract.
       - ./docker-compose.debug.yml:/app/docker-compose.debug.yml:ro  # Isolated debug deployment contract.
-      - ./client/src:/client/src:ro  # Read-only — the drift test in
+      - ./client/src:/client/src:ro  # Read-only â€” the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.
       - ./client/e2e:/app/client/e2e:ro  # Browser smoke selection is part of
@@ -444,11 +446,11 @@ services:
       - ./client/nginx.conf:/app/client/nginx.conf:ro  # Production routing contract.
       - ./client/Dockerfile:/app/client/Dockerfile:ro  # Production asset-mode contract.
       - ./docs/generated:/app/docs/generated:ro  # Canonical operation inventory freshness.
-      - ./.claude/skills:/.claude/skills:ro  # Read-only — the drift test in
+      - ./.claude/skills:/.claude/skills:ro  # Read-only â€” the drift test in
                                       # tests/unit/test_platform_api_docs.py reads
                                       # bifrost-build/platform-api.md to enforce docs
                                       # cover every PLATFORM_EXPORT_NAMES entry.
-      # Host-mounted for test results (junitxml) — per-worktree, driven by
+      # Host-mounted for test results (junitxml) â€” per-worktree, driven by
       # LOG_DIR (set by test.sh to /tmp/bifrost-$COMPOSE_PROJECT_NAME) so two
       # worktrees running in parallel don't clobber each other's results.
       - ${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost

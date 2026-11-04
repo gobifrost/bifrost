@@ -160,6 +160,9 @@ reset_state() {
 import shutil
 from pathlib import Path
 for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdir():
+    if not checkout.is_dir() or checkout.is_symlink():
+        checkout.unlink()
+        continue
     for entry in checkout.iterdir():
         if entry.is_dir() and not entry.is_symlink():
             shutil.rmtree(entry)
