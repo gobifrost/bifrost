@@ -147,19 +147,15 @@ class FilePolicyService:
         path in ``upsert_metadata`` — so the row is found even though
         ``organization_id`` is the install's org UUID, not the install UUID itself.
         Non-solution deletes match by ``(organization_id, location, path)``
-        unchanged."""
-        if solution_id is not None:
-            stmt = delete(FileMetadata).where(
-                FileMetadata.solution_id == solution_id,
-                FileMetadata.location == location,
-                FileMetadata.path == path,
+        and exclude Solution rows, which may share that address."""
+        stmt = delete(FileMetadata).where(
+            *self._scoped_row_filter(
+                organization_id=organization_id,
+                solution_id=solution_id,
+                location=location,
+                path=path,
             )
-        else:
-            stmt = delete(FileMetadata).where(
-                FileMetadata.organization_id == organization_id,
-                FileMetadata.location == location,
-                FileMetadata.path == path,
-            )
+        )
         await self.db.execute(stmt)
         await self.db.flush()
 
