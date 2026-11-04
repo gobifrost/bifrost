@@ -35,6 +35,7 @@ from src.config import Settings, get_settings
 
 if TYPE_CHECKING:
     from git import Repo as GitRepo
+    from src.services.blob_workspace_mirror import BlobWorkspaceMirror
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,14 @@ class GitRepoManager:
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
+        self._blob_mirror: BlobWorkspaceMirror | None = None
 
+    def _get_blob_mirror(self) -> BlobWorkspaceMirror:
+        if self._blob_mirror is None:
+            from src.services.blob_workspace_mirror import BlobWorkspaceMirror
+
+            self._blob_mirror = BlobWorkspaceMirror(self._settings)
+        return self._blob_mirror
 
     @property
     def work_dir(self) -> Path:
@@ -267,6 +275,14 @@ class GitRepoManager:
     async def sync_down(self, target: Path) -> None:
         """Mirror S3 _repo/ into a local directory, removing stale local files."""
         target.mkdir(parents=True, exist_ok=True)
+        if self._settings.object_storage_provider == "azure_blob":
+            self._clear_storage_baseline(target)
+            fingerprint = await self._storage_fingerprint()
+            await self._get_blob_mirror().download("_repo/", target)
+            self._restore_git_directories(target)
+            self._write_storage_baseline(target, fingerprint)
+            await self._record_source_receipt(target)
+            return
         s3_uri = self._s3_uri()
         # Without --exact-timestamps the CLI skips an S3 object that kept its
         # size when the local copy is older, so a same-size edit never arrives.
@@ -322,6 +338,15 @@ class GitRepoManager:
 
     async def sync_up(self, source: Path) -> None:
         """Sync a local directory back to S3 _repo/ with --delete."""
+        if self._settings.object_storage_provider == "azure_blob":
+            baseline = source / ".git" / STORAGE_BASELINE_FILE
+            expected = baseline.read_text() if baseline.is_file() else None
+            self._clear_storage_baseline(source)
+            await self._get_blob_mirror().upload(
+                source, "_repo/", expected_fingerprint=expected
+            )
+            self._write_storage_baseline(source, await self._storage_fingerprint())
+            return
         s3_uri = self._s3_uri()
         cmd = self._build_sync_cmd(source=str(source), dest=s3_uri, delete=True)
         logger.info(f"sync_up: {source} -> {s3_uri}")
@@ -372,6 +397,13 @@ class GitRepoManager:
     async def checkpoint_workspace(self, source: Path) -> str:
         """Persist an exact workspace snapshot for a post-DB publication retry."""
         checkpoint_id = str(uuid4())
+        if self._settings.object_storage_provider == "azure_blob":
+            from src.services.blob_workspace_mirror import BlobWorkspaceMirror
+
+            await BlobWorkspaceMirror(self._settings).upload(
+                source, self._checkpoint_prefix(checkpoint_id)
+            )
+            return checkpoint_id
         uri = self._checkpoint_uri(checkpoint_id)
         await self._run_aws_cli(self._build_sync_cmd(str(source), uri, delete=True))
         return checkpoint_id
@@ -379,6 +411,19 @@ class GitRepoManager:
     async def restore_workspace_checkpoint(self, checkpoint_id: str, target: Path) -> None:
         """Restore a checkpoint exactly, including Git objects and uncommitted files."""
         target.mkdir(parents=True, exist_ok=True)
+        if self._settings.object_storage_provider == "azure_blob":
+            from src.services.blob_workspace_mirror import BlobWorkspaceMirror
+
+            prefix = self._checkpoint_prefix(checkpoint_id)
+            # The caller validates freshness before restoring its authorized
+            # publication checkpoint. Its old marker predates a possibly
+            # successful storage publish; pin the restored bytes to the
+            # workspace version observed now, not to the checkpoint's marker.
+            fingerprint = await self._storage_fingerprint()
+            await BlobWorkspaceMirror(self._settings).download(prefix, target)
+            self._restore_git_directories(target)
+            self._write_storage_baseline(target, fingerprint)
+            return
         await self._run_aws_cli(
             self._build_sync_cmd(self._checkpoint_uri(checkpoint_id), str(target), delete=True)
         )
@@ -386,6 +431,13 @@ class GitRepoManager:
 
     async def delete_workspace_checkpoint(self, checkpoint_id: str) -> None:
         """Remove a checkpoint only after successful publication."""
+        if self._settings.object_storage_provider == "azure_blob":
+            from src.services.blob_workspace_mirror import BlobWorkspaceMirror
+
+            await BlobWorkspaceMirror(self._settings).delete(
+                self._checkpoint_prefix(checkpoint_id)
+            )
+            return
         cmd = ["aws", "s3", "rm", self._checkpoint_uri(checkpoint_id), "--recursive"]
         endpoint_url = self._settings.s3_endpoint_url
         if endpoint_url:
@@ -427,14 +479,15 @@ class GitRepoManager:
         checkpoint. Another process's working dir is rewritten the next time a
         git operation opens it there.
         """
+        from src.core.storage_transport import storage_transport
         from src.core.s3_transport import S3NoSuchKey, S3Transport
 
         local = PERSISTENT_WORK_DIR / ".git" / "config"
         if local.is_file():
             local.write_text(_URL_CREDENTIALS.sub(r"\1", local.read_text()))
 
-        bucket = self._settings.s3_bucket
-        async with S3Transport(endpoint_url=self._settings.s3_endpoint_url, access_key_id=self._settings.s3_access_key, secret_access_key=self._settings.s3_secret_key, region=self._settings.s3_region) as client:
+        bucket = self._settings.storage_bucket
+        async with storage_transport(self._settings, s3_factory=S3Transport) as client:
             keys = ["_repo/.git/config"]
             paginator = client.get_paginator("list_objects_v2")
             async for page in paginator.paginate(
@@ -468,12 +521,12 @@ class GitRepoManager:
 
     def _s3_uri(self) -> str:
         """Build the S3 URI for _repo/."""
-        bucket = self._settings.s3_bucket
+        bucket = self._settings.storage_bucket
         return f"s3://{bucket}/_repo/"
 
     def _checkpoint_uri(self, checkpoint_id: str) -> str:
         """Build a bounded, validated prefix for one workspace checkpoint."""
-        return f"s3://{self._settings.s3_bucket}/{self._checkpoint_prefix(checkpoint_id)}"
+        return f"s3://{self._settings.storage_bucket}/{self._checkpoint_prefix(checkpoint_id)}"
 
     @staticmethod
     def _checkpoint_prefix(checkpoint_id: str) -> str:
@@ -491,6 +544,7 @@ class GitRepoManager:
         exact_timestamps: bool = False,
     ) -> list[str]:
         """Build the aws s3 sync command with proper flags."""
+        self._require_s3_cli()
         cmd = ["aws", "s3", "sync", source, dest]
         if delete:
             cmd.append("--delete")
@@ -516,9 +570,13 @@ class GitRepoManager:
             env["AWS_DEFAULT_REGION"] = self._settings.s3_region
         return env
 
+    def _require_s3_cli(self) -> None:
+        if self._settings.object_storage_provider == "azure_blob":
+            raise RuntimeError("AWS CLI must not be used for native Azure Blob storage")
 
     async def _run_aws_cli(self, cmd: list[str]) -> None:
         """Run an aws CLI command as a subprocess."""
+        self._require_s3_cli()
         env = self._build_env()
         process = await asyncio.create_subprocess_exec(
             *cmd,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from src.config import Settings
 from uuid import uuid4
 
 import pytest
@@ -63,7 +63,8 @@ async def test_write_from_path_streams_bounded_bytes_through_shared_storage(monk
 
     monkeypatch.setattr(source_artifact, "S3StorageClient", SharedStorage)
     monkeypatch.setattr(source_artifact, "S3Transport", DirectTransport)
-    settings = SimpleNamespace(
+    settings = Settings(
+        _env_file=None,
         s3_bucket="bucket",
         s3_endpoint_url="http://s3.test",
         s3_access_key="access",

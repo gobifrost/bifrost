@@ -20,7 +20,7 @@ class ApplicationSourceArtifactStorage:
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
         self._storage = S3StorageClient(self._settings)
-        self._bucket = self._settings.s3_bucket or ""
+        self._bucket = self._settings.storage_bucket or ""
 
     @staticmethod
     def deployment_source_key(app_id: UUID | str, deployment_id: UUID | str) -> str:

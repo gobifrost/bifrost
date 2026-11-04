@@ -145,10 +145,8 @@ async def test_expired_preview_with_active_job_is_retained_for_retry(monkeypatch
     async def db_context():
         yield Db()
 
-    class Settings:
-        s3_bucket = "test"
-
-    monkeypatch.setattr(storage_module, "get_settings", Settings)
+    from src.config import Settings
+    monkeypatch.setattr(storage_module, "get_settings", lambda: Settings(_env_file=None, s3_bucket="test"))
     monkeypatch.setattr(storage_module, "S3StorageClient", RootStorage)
     monkeypatch.setattr(storage_module, "WorkspaceBundleStorage", Preview)
     monkeypatch.setattr("src.core.database.get_db_context", db_context)

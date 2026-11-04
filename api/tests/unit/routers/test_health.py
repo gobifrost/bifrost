@@ -1,11 +1,11 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 from fastapi import Response
 
 from src.routers import health
+from src.config import Settings
 
 
 class DummyDB:
@@ -26,10 +26,10 @@ def fresh_process(monkeypatch):
 
 
 def _settings(s3_configured: bool = True):
-    return SimpleNamespace(
-        environment="test",
+    return Settings(
+        _env_file=None,
+        environment="testing",
         redis_url="redis://redis-secret@example:6379/0",
-        s3_configured=s3_configured,
         s3_bucket="bucket-secret" if s3_configured else None,
         s3_endpoint_url="http://object-store-secret:8333" if s3_configured else None,
         s3_access_key="access-secret" if s3_configured else None,
@@ -107,7 +107,7 @@ async def test_health_is_liveness_and_does_not_check_dependencies(monkeypatch):
     result = await health.health_check()
 
     assert result.status == "healthy"
-    assert result.environment == "test"
+    assert result.environment == "testing"
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_live_is_liveness_and_does_not_check_dependencies(monkeypatch):
     result = await health.live_health_check()
 
     assert result.status == "healthy"
-    assert result.environment == "test"
+    assert result.environment == "testing"
 
 
 @pytest.mark.asyncio

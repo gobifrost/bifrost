@@ -2,9 +2,10 @@
 from contextlib import asynccontextmanager
 import hashlib
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from src.services.repo_storage import RepoStorage
+from src.config import Settings
 
 
 @pytest.fixture
@@ -118,13 +119,8 @@ def test_compute_hash():
 
 
 def _mock_settings():
-    s = MagicMock()
-    s.s3_bucket = "test-bucket"
-    s.s3_endpoint_url = "http://localhost:8333"
-    s.s3_access_key = "test"
-    s.s3_secret_key = "test"
-    s.s3_region = "us-east-1"
-    return s
+    return Settings(_env_file=None, s3_bucket="test-bucket", s3_endpoint_url="http://localhost:8333",
+        s3_access_key="test", s3_secret_key="test", s3_region="us-east-1")
 
 
 class TestListDirectory:

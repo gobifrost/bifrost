@@ -189,7 +189,7 @@ async def isolate_s3(request) -> AsyncGenerator[None, None]:
 
     Prevents stale manifest files written by one test (via manifest/import's
     ``files`` param or RepoStorage.write) from polluting subsequent tests.
-    Only runs when S3 is configured in the test environment.
+    Only runs when object storage is configured in the test environment.
     """
     # Skip for unit tests — they mock S3 or don't touch it at all.
     if "unit" in request.fspath.strpath:
@@ -201,7 +201,7 @@ async def isolate_s3(request) -> AsyncGenerator[None, None]:
         from src.services.repo_storage import RepoStorage
 
         settings = get_settings()
-        if not settings.s3_configured:
+        if not settings.storage_configured:
             yield
             return
 
@@ -210,7 +210,7 @@ async def isolate_s3(request) -> AsyncGenerator[None, None]:
         for path in paths:
             await repo.delete(path)
     except Exception as e:
-        raise RuntimeError("Configured S3 test isolation failed") from e
+        raise RuntimeError("Configured object storage test isolation failed") from e
 
     yield
 

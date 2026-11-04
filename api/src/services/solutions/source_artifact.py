@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import UUID
 
 from src.config import Settings, get_settings
+from src.core.storage_transport import storage_transport
 from src.core.s3_transport import S3NoSuchKey, S3Transport
 from src.services.application_deploy_storage import CHUNK_SIZE
 from src.services.file_storage.s3_client import S3StorageClient
@@ -29,17 +30,12 @@ class SolutionSourceArtifactStorage:
         self.solution_id = str(solution_id)
         self.prefix = f"{SOURCE_ARTIFACTS_ROOT}/{self.solution_id}/"
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
+        self._bucket: str = self._settings.storage_bucket or ""
         self._storage = S3StorageClient(self._settings)
 
     @asynccontextmanager
     async def _get_client(self):
-        async with S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        ) as client:
+        async with storage_transport(self._settings, s3_factory=S3Transport) as client:
             yield client
 
     def _key(self) -> str:

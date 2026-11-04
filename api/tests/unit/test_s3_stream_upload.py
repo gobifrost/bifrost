@@ -1,5 +1,6 @@
 """Multipart streams require a valid provider upload ID before sending parts."""
 
+import asyncio
 import hashlib
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.services.file_storage.s3_client import S3StorageClient
+from src.config import Settings
 
 
 def storage_with_response(response, monkeypatch):
@@ -18,7 +20,7 @@ def storage_with_response(response, monkeypatch):
         abort_multipart_upload=AsyncMock(),
         put_object=AsyncMock(),
     )
-    storage = S3StorageClient(SimpleNamespace(s3_bucket="test-bucket"))
+    storage = S3StorageClient(Settings(_env_file=None, s3_bucket="test-bucket"))
 
     @asynccontextmanager
     async def get_client():
@@ -51,3 +53,22 @@ async def test_valid_multipart_upload_preserves_bytes_and_digest(monkeypatch):
     assert all(call.kwargs["UploadId"] == "upload-1" for call in uploaded_parts)
     client.complete_multipart_upload.assert_awaited_once()
     client.abort_multipart_upload.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", [asyncio.CancelledError(), ValueError("input failed")])
+async def test_abort_failure_preserves_original_stream_error(monkeypatch, failure, caplog):
+    storage, client = storage_with_response({"UploadId": "upload-1"}, monkeypatch)
+    client.abort_multipart_upload.side_effect = ConnectionError("abort unavailable")
+
+    async def interrupted():
+        yield b"part"
+        raise failure
+
+    with pytest.raises(type(failure)) as raised:
+        await storage.put_object_from_chunks("backup.zip", interrupted(), part_size=4)
+    assert raised.value is failure
+    client.abort_multipart_upload.assert_awaited_once_with(
+        Bucket="test-bucket", Key="backup.zip", UploadId="upload-1"
+    )
+    client.complete_multipart_upload.assert_not_awaited()
+    assert "Could not abort multipart upload" in caplog.text

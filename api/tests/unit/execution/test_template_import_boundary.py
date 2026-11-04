@@ -35,6 +35,18 @@ def test_ready_template_keeps_engine_warm_without_database_or_http_server():
         simple_worker.install_requirements = install_requirements
         os.environ["BIFROST_REDIS_URL"] = "redis://user:password@redis:6379/0"
         os.environ["REDIS_URL"] = "redis://user:password@redis:6379/0"
+        blob_keys = [
+            "BIFROST_OBJECT_STORAGE_PROVIDER",
+            "BIFROST_AZURE_BLOB_ACCOUNT_URL",
+            "BIFROST_AZURE_BLOB_CONTAINER",
+            "BIFROST_AZURE_BLOB_ACCOUNT_NAME",
+            "BIFROST_AZURE_BLOB_ACCOUNT_KEY",
+            "BIFROST_AZURE_BLOB_AUTH",
+            "BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID",
+        ]
+        for key in blob_keys:
+            os.environ[key] = "fixture-only"
+        os.environ["BIFROST_OBJECT_STORAGE_PROVIDER"] = "azure_blob"
         from src.services.execution.template_process import _template_main
 
         class StartupPipe:
@@ -53,6 +65,9 @@ def test_ready_template_keeps_engine_warm_without_database_or_http_server():
             "redis_env_present": "BIFROST_REDIS_URL" in os.environ,
             "redis_alias_present": "REDIS_URL" in os.environ,
             "settings_redis_url": get_settings().redis_url,
+            "blob_env_present": any(key in os.environ for key in blob_keys),
+            "settings_blob_key_present": get_settings().azure_blob_account_key is not None,
+            "settings_provider": get_settings().object_storage_provider,
         }))
     ''')
     result = subprocess.run(
@@ -70,3 +85,6 @@ def test_ready_template_keeps_engine_warm_without_database_or_http_server():
     assert observed["redis_env_present"] is False
     assert observed["redis_alias_present"] is False
     assert observed["settings_redis_url"] == "redis://127.0.0.1:0/0"
+    assert observed["blob_env_present"] is False
+    assert observed["settings_blob_key_present"] is False
+    assert observed["settings_provider"] == "s3"

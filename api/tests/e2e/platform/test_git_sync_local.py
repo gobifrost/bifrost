@@ -207,7 +207,7 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     persistent_dir.mkdir()
 
     @asynccontextmanager
-    async def local_checkout():
+    async def local_checkout(*, reset_local_state=False):
         """Simulates S3 sync down -> yield -> S3 sync up."""
         import tempfile
         work_dir = Path(tempfile.mkdtemp(prefix="bifrost-test-repo-"))
@@ -235,8 +235,11 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
             shutil.rmtree(work_dir, ignore_errors=True)
 
     @asynccontextmanager
-    async def local_lock():
-        """Simulates Redis lock -- just yields the persistent dir directly."""
+    async def local_lock(*, readonly=False):
+        """Business-test seam with one canonical filesystem workspace.
+
+        Cross-executor durability uses real storage in test_git_workspace_handoff.
+        """
         yield persistent_dir
 
     sync_up_calls: list[Path] = []
@@ -264,6 +267,7 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     service.repo_manager.checkout = local_checkout  # type: ignore[assignment]
     service.repo_manager.checkout_readonly = local_checkout_readonly  # type: ignore[assignment]
     service.repo_manager.lock = local_lock  # type: ignore[assignment]
+    service.repo_manager.workspace = local_lock  # type: ignore[assignment]
     service.repo_manager.sync_up = noop_sync_up  # type: ignore[assignment]
     service.repo_manager.checkpoint_workspace = checkpoint_workspace  # type: ignore[assignment]
     service.repo_manager.restore_workspace_checkpoint = restore_workspace_checkpoint  # type: ignore[assignment]

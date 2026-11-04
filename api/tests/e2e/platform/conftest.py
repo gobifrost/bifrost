@@ -223,7 +223,7 @@ def _clear_s3_bifrost_sync() -> None:
         from src.services.repo_storage import RepoStorage
 
         settings = get_settings()
-        if not settings.s3_configured:
+        if not settings.storage_configured:
             return
         repo = RepoStorage(settings)
         paths = await repo.list(".bifrost/")
@@ -369,3 +369,36 @@ async def run_retention_lease(db_session: AsyncSession):
     await db_session.rollback()
     await db_session.execute(delete(PlatformJob).where(PlatformJob.id == held.job_id))
     await db_session.commit()
+
+
+@pytest_asyncio.fixture(params=["s3", "azure_blob"])
+async def backend(request):
+    """Mandatory real local storage matrix, shared through pytest discovery."""
+    from src.core.azure_blob_transport import AzureBlobTransport
+    from src.core.s3_transport import S3Transport
+    from src.core.storage_transport import storage_transport
+    from tests.storage_contract import LOCAL_ACCOUNT_KEY, local_settings
+
+    settings = local_settings(request.param)
+    if request.param == "azure_blob":
+        from azure.storage.blob.aio import BlobServiceClient
+        from azure.core.credentials import AzureNamedKeyCredential
+        from azure.core.exceptions import ResourceExistsError
+
+        async with BlobServiceClient(
+            settings.azure_blob_account_url,
+            credential=AzureNamedKeyCredential("bifrostcontract", LOCAL_ACCOUNT_KEY),
+        ) as service:
+            try:
+                await service.create_container(settings.azure_blob_container)
+            except ResourceExistsError:
+                assert await service.get_container_client(settings.azure_blob_container).exists()
+    prefix = f"_contract/{uuid.uuid4().hex}/"
+    async with storage_transport(settings) as client:
+        assert isinstance(client, AzureBlobTransport if request.param == "azure_blob" else S3Transport)
+        yield settings, client, prefix
+        async for page in client.get_paginator("list_objects_v2").paginate(
+            Bucket=settings.storage_bucket, Prefix=prefix
+        ):
+            for item in page.get("Contents", []):
+                await client.delete_object(Bucket=settings.storage_bucket, Key=item["Key"])

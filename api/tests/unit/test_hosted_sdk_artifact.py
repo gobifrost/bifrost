@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from types import SimpleNamespace
+from src.config import Settings
 
 import pytest
 from fastapi import HTTPException
@@ -79,7 +80,7 @@ async def test_publish_then_read_uses_platform_prefix_and_exact_bytes() -> None:
     from src.services.sdk_package import HostedSdkArtifactStorage
 
     client = _Client()
-    storage = HostedSdkArtifactStorage(settings=SimpleNamespace(s3_bucket="sdk-artifacts"))
+    storage = HostedSdkArtifactStorage(settings=Settings(_env_file=None, s3_bucket="sdk-artifacts"))
     storage._get_client = _Storage(client)._get_client  # type: ignore[method-assign]
     artifact = _artifact()
 
@@ -100,7 +101,7 @@ async def test_read_rejects_tampered_or_missing_content() -> None:
     from src.services.sdk_package import HostedSdkArtifactStorage
 
     client = _Client()
-    storage = HostedSdkArtifactStorage(settings=SimpleNamespace(s3_bucket="sdk-artifacts"))
+    storage = HostedSdkArtifactStorage(settings=Settings(_env_file=None, s3_bucket="sdk-artifacts"))
     storage._get_client = _Storage(client)._get_client  # type: ignore[method-assign]
     artifact = _artifact()
     client.objects[f"_platform/app-sdk/v1/{artifact.fingerprint}.js"] = b"tampered"

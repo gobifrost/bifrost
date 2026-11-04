@@ -25,6 +25,7 @@ from uuid import UUID
 from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
 from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
+from src.core.storage_transport import storage_transport
 from src.core.s3_transport import S3Transport
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class SolutionAppBuilder:
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
+        self._bucket: str = self._settings.storage_bucket or ""
 
     def _dist_key(
         self,
@@ -75,12 +76,7 @@ class SolutionAppBuilder:
         return f"{base}{rel.lstrip('/')}" if rel else base
 
     def _client(self):
-        return S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        )
+        return storage_transport(self._settings, s3_factory=S3Transport)
 
     def compile_dist(
         self,

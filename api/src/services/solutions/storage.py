@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from src.config import Settings, get_settings
+from src.core.storage_transport import storage_transport
 from src.core.s3_transport import S3Transport
 from src.services.repo_storage import S3FileMetadata
 
@@ -36,16 +37,11 @@ class SolutionStorage:
         self.solution_id = str(solution_id)
         self.prefix = f"{SOLUTIONS_ROOT}/{self.solution_id}/"
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
+        self._bucket: str = self._settings.storage_bucket or ""
 
     @asynccontextmanager
     async def _get_client(self):
-        async with S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        ) as client:
+        async with storage_transport(self._settings, s3_factory=S3Transport) as client:
             yield client
 
     def _key(self, path: str) -> str:

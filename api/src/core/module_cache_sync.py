@@ -591,14 +591,19 @@ def _get_s3_client() -> Any:
     region = os.environ.get("BIFROST_S3_REGION", "us-east-1")
 
     try:
-        from src.core.s3_transport import SyncS3Transport
+        if os.environ.get("BIFROST_OBJECT_STORAGE_PROVIDER") == "azure_blob":
+            from src.config import get_settings
+            from src.core.azure_blob_transport import SyncAzureBlobTransport
+            client = SyncAzureBlobTransport(get_settings())
+        else:
+            from src.core.s3_transport import SyncS3Transport
 
-        client = SyncS3Transport(
-            endpoint_url=endpoint_url,
-            access_key_id=access_key,
-            secret_access_key=secret_key,
-            region=region,
-        )
+            client = SyncS3Transport(
+                endpoint_url=endpoint_url,
+                access_key_id=access_key,
+                secret_access_key=secret_key,
+                region=region,
+            )
         _s3_client = client
         _s3_available = True
         return client
@@ -627,7 +632,11 @@ def _get_s3_module(storage_path: str) -> bytes | None:
     verbatim. This is available only to parent synchronous callers. Returns
     raw bytes or None if not found.
     """
-    bucket = os.environ.get("BIFROST_S3_BUCKET")
+    bucket = os.environ.get(
+        "BIFROST_AZURE_BLOB_CONTAINER"
+        if os.environ.get("BIFROST_OBJECT_STORAGE_PROVIDER") == "azure_blob"
+        else "BIFROST_S3_BUCKET"
+    )
     if not bucket:
         return None
 

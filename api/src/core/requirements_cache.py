@@ -125,7 +125,11 @@ def get_requirements_sync() -> str | None:
 
 def _read_requirements_from_s3(get_client_fn: Any) -> str | None:
     """Read _repo/requirements.txt from S3 using the synchronous CRT transport."""
-    bucket = os.environ.get("BIFROST_S3_BUCKET")
+    bucket = os.environ.get(
+        "BIFROST_AZURE_BLOB_CONTAINER"
+        if os.environ.get("BIFROST_OBJECT_STORAGE_PROVIDER") == "azure_blob"
+        else "BIFROST_S3_BUCKET"
+    )
     if not bucket:
         return None
 

@@ -41,7 +41,7 @@ class RepoSyncWriter:
 
     @property
     def _s3_available(self) -> bool:
-        return self._settings.s3_configured
+        return self._settings.storage_configured
 
     async def delete_legacy_entity_file(
         self, entity_type: str, entity_id: UUID | str

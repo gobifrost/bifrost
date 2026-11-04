@@ -56,7 +56,7 @@ def handoff(tmp_path, monkeypatch):
     snapshots = tmp_path / "snapshots"
     snapshots.mkdir()
     pointer = PointerStore()
-    monkeypatch.setattr(GitWorkspaceState, "_client", Mock(return_value=pointer))
+    monkeypatch.setattr("src.services.git_workspace_state.storage_transport", Mock(return_value=pointer))
 
     async def create(root):
         key = str(uuid4())
@@ -71,7 +71,7 @@ def handoff(tmp_path, monkeypatch):
         shutil.rmtree(snapshots / key)
 
     manager = SimpleNamespace(
-        _settings=SimpleNamespace(s3_bucket="fixture"),
+        _settings=SimpleNamespace(storage_bucket="fixture", object_storage_provider="s3"),
         checkpoint_workspace=AsyncMock(side_effect=create),
         restore_workspace_checkpoint=AsyncMock(side_effect=restore),
         delete_workspace_checkpoint=AsyncMock(side_effect=delete),

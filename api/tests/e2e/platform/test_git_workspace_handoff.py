@@ -16,31 +16,10 @@ pytestmark = pytest.mark.e2e
 
 
 @pytest_asyncio.fixture
-async def backend():
-    from src.config import get_settings
-    from src.core.s3_transport import S3Transport
-
-    settings = get_settings()
-    prefix = f"_contract/{uuid4().hex}/"
-    async with S3Transport(
-        endpoint_url=settings.s3_endpoint_url,
-        access_key_id=settings.s3_access_key,
-        secret_access_key=settings.s3_secret_key,
-        region=settings.s3_region,
-    ) as client:
-        yield settings, client, prefix
-        async for page in client.get_paginator("list_objects_v2").paginate(
-            Bucket=settings.s3_bucket, Prefix=prefix,
-        ):
-            for item in page.get("Contents", []):
-                await client.delete_object(Bucket=settings.s3_bucket, Key=item["Key"])
-
-
-@pytest_asyncio.fixture
 async def workspace_backend(backend, monkeypatch):
     settings, client, prefix = backend
     monkeypatch.setattr("src.services.git_workspace_state.STATE_KEY", prefix + "git-state.json")
-    bucket = settings.s3_bucket
+    bucket = settings.storage_bucket
 
     async def checkpoint_keys():
         return {

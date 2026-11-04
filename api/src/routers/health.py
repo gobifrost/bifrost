@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.core.database import get_db, get_session_factory
+from src.core.storage_transport import storage_transport
 from src.core.s3_transport import S3Transport
 from shared.version import get_version
 
@@ -75,8 +76,14 @@ class S3HealthClient:
     @staticmethod
     def _key(settings: Settings) -> Hashable:
         return (
+            settings.object_storage_provider,
+            settings.azure_blob_account_url,
+            settings.azure_blob_account_name,
+            settings.azure_blob_auth,
+            settings.azure_blob_account_key,
+            settings.azure_blob_managed_identity_client_id,
             settings.s3_endpoint_url,
-            settings.s3_bucket,
+            settings.storage_bucket,
             settings.s3_access_key,
             settings.s3_secret_key,
             settings.s3_region,
@@ -102,12 +109,7 @@ class S3HealthClient:
                 return client
 
             await self.close()
-            context = S3Transport(
-                endpoint_url=settings.s3_endpoint_url,
-                access_key_id=settings.s3_access_key,
-                secret_access_key=settings.s3_secret_key,
-                region=settings.s3_region,
-            )
+            context = storage_transport(settings, s3_factory=S3Transport)
             client = await context.__aenter__()
             self.client = client
             self.context = context
@@ -212,14 +214,14 @@ async def close_health_check_clients() -> None:
 
 
 async def check_s3(settings: Settings) -> tuple[str, ComponentStatus]:
-    if not settings.s3_configured:
+    if not settings.storage_configured:
         await _s3_health_client.close()
         return "s3", _component("not_configured", "s3")
 
     async def head_bucket() -> None:
         client = await _s3_health_client.get(settings)
         try:
-            await cast(Awaitable[object], client.head_bucket(Bucket=settings.s3_bucket))
+            await cast(Awaitable[object], client.head_bucket(Bucket=settings.storage_bucket))
         except Exception:
             await _s3_health_client.discard(client)
             raise

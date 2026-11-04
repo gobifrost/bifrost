@@ -16,7 +16,8 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from src.core.s3_transport import S3NoSuchKey, S3Transport
+from src.core.s3_transport import S3NoSuchKey
+from src.core.storage_transport import storage_transport
 from src.services.git_repo_manager import STORAGE_BASELINE_FILE, WORKSPACE_CHECKPOINT_PREFIX
 
 if TYPE_CHECKING:
@@ -97,21 +98,13 @@ class GitWorkspaceState:
         # S3's existing AWS CLI checkpoint path follows links. Blob's canonical
         # file mirror rejects them. Hash the bytes that each path actually saves.
         return await asyncio.to_thread(
-            tree_fingerprint, root, follow_links=True,
-        )
-
-    def _client(self) -> S3Transport:
-        return S3Transport(
-            endpoint_url=self.settings.s3_endpoint_url,
-            access_key_id=self.settings.s3_access_key,
-            secret_access_key=self.settings.s3_secret_key,
-            region=self.settings.s3_region,
+            tree_fingerprint, root, follow_links=self.settings.object_storage_provider == "s3",
         )
 
     async def read(self) -> tuple[WorkspaceState | None, str | None]:
-        async with self._client() as client:
+        async with storage_transport(self.settings) as client:
             try:
-                response = await client.get_object(Bucket=self.settings.s3_bucket, Key=STATE_KEY)
+                response = await client.get_object(Bucket=self.settings.storage_bucket, Key=STATE_KEY)
             except S3NoSuchKey:
                 return None, None
             body = response["Body"]
@@ -243,9 +236,9 @@ class GitWorkspaceState:
         condition = {"IfMatch": etag} if etag is not None else {"IfNoneMatch": "*"}
         # Do not delete either checkpoint after an ambiguous PUT: its pointer
         # may already be committed. A later reader sees one complete snapshot.
-        async with self._client() as client:
+        async with storage_transport(self.settings) as client:
             response = await client.put_object(
-                Bucket=self.settings.s3_bucket, Key=STATE_KEY,
+                Bucket=self.settings.storage_bucket, Key=STATE_KEY,
                 Body=json.dumps(asdict(state)).encode(), ContentType="application/json", **condition,
             )
         self.record(root, response["ETag"], fingerprint)
