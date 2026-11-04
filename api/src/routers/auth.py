@@ -25,8 +25,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.device_auth import decide_device_login
-from shared.models import BrowserImpersonationTokenResponse, DeviceAuthorizeRequest
+from shared.app_connections import decide_app_connection, preview_mcp_connection, require_browser_app_approver
+from shared.models import (
+    AppConnectionDecision, AppConnectionDetails, AppConnectionResult,
+    BrowserImpersonationTokenResponse, DeviceAuthorizeRequest,
+)
 from src.core.cache import get_shared_redis
 from src.core.cache.keys import (
     device_code_key,
@@ -1727,45 +1730,29 @@ async def setup_passkey_verify(
 @router.post("/device/authorize", response_model=DeviceAuthorizeResponse)
 async def authorize_device(
     authorize_request: DeviceAuthorizeRequest,
+    request: Request,
     current_user: CurrentActiveUser,
 ) -> DeviceAuthorizeResponse:
     """Approve a CLI login after explicit confirmation. The first decision is final."""
+    await require_browser_app_approver(request, current_user)
     return await _record_device_decision(authorize_request.user_code, True, current_user)
 
 
 @router.post("/device/deny", response_model=DeviceAuthorizeResponse)
 async def deny_device(
     deny_request: DeviceAuthorizeRequest,
+    request: Request,
     current_user: CurrentActiveUser,
 ) -> DeviceAuthorizeResponse:
     """Deny a CLI login without ever calling the approval endpoint."""
+    await require_browser_app_approver(request, current_user)
     return await _record_device_decision(deny_request.user_code, False, current_user)
 
 
 async def _record_device_decision(
     user_code: str, approved: bool, current_user: UserPrincipal,
 ) -> DeviceAuthorizeResponse:
-    if is_browser_impersonation(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Exit impersonation before authorizing a CLI login",
-        )
-
-    decision = await decide_device_login(
-        user_code,
-        str(current_user.user_id),
-        approved,
-    )
-    if decision == "expired":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invalid or expired user code",
-        )
-    if decision == "decided":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This CLI login has already been approved or denied. Start a new login from your CLI.",
-        )
+    await decide_app_connection("cli", user_code, current_user, approved)
 
     logger.info(
         "CLI device login %s by user: %s",
@@ -1775,6 +1762,25 @@ async def _record_device_decision(
     )
 
     return DeviceAuthorizeResponse(success=True)
+
+
+@router.get("/app-connections/{request_id}", response_model=AppConnectionDetails)
+async def get_app_connection(request_id: str, request: Request, response: Response, current_user: CurrentActiveUser) -> AppConnectionDetails:
+    """Review one MCP connection; opening this endpoint never issues credentials."""
+    await require_browser_app_approver(request, current_user)
+    response.headers["Cache-Control"] = "no-store"
+    return await preview_mcp_connection(request_id, current_user)
+
+
+@router.post("/app-connections/{request_id}", response_model=AppConnectionResult)
+async def decide_app_connection_request(
+    request_id: str, decision: AppConnectionDecision, request: Request, current_user: CurrentActiveUser,
+) -> AppConnectionResult:
+    """Record a user-bound, explicit approval or denial before handing off to the app."""
+    await require_browser_app_approver(request, current_user)
+    return await decide_app_connection(
+        "mcp", request_id, current_user, decision.approved, decision.consent_token,
+    )
 
 
 # =============================================================================

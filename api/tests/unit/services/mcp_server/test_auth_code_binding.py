@@ -22,9 +22,11 @@ import pytest
 
 from src.services.mcp_server.auth import (
     BifrostAuthProvider,
-    _mcp_auth_code_key,
-    _mcp_state_key,
 )
+
+from shared.mcp_oauth import _mcp_auth_code_key, _mcp_state_key, _seal_auth_code_record
+from shared.app_connections import preview_mcp_connection, decide_app_connection
+from src.core.principal import UserPrincipal
 
 _VERIFIER = "verifier-for-unit-tests"
 _REDIRECT_URI = "http://client.example/cb"
@@ -105,43 +107,26 @@ def minted(user: SimpleNamespace, redis: _FakeRedis):
 
 async def _issue_code(provider: BifrostAuthProvider, redis: _FakeRedis, user: SimpleNamespace) -> str:
     """Run the login callback for ``user`` and return the issued code."""
-    redis.values[_mcp_state_key("internal")] = json.dumps({
+    redis.values[_mcp_state_key("internal")] = _seal_auth_code_record("internal", {
         "client_id": "client",
         "redirect_uri": _REDIRECT_URI,
         "state": "client-state",
         "code_challenge": _challenge(_VERIFIER),
         "scope": "mcp:access",
     })
-    request = SimpleNamespace(
-        query_params={"internal_state": "internal"},
-        cookies={"access_token": "session.jwt"},
-        headers={"accept": "application/json"},
-    )
-    payload = {"sub": str(user.id), "email": user.email, "name": user.name, "org_id": str(user.organization_id)}
-    principal = SimpleNamespace(
-        user_id=user.id,
-        email=user.email,
-        name=user.name,
-        is_superuser=user.is_superuser,
-        organization_id=user.organization_id,
-    )
-
+    principal = UserPrincipal(user_id=user.id, email=user.email, organization_id=user.organization_id)
     @asynccontextmanager
     async def get_db_context():
         yield AsyncMock()
-
     with (
-        patch("src.core.security.decode_token", return_value=payload),
-        patch("src.core.database.get_db_context", get_db_context),
-        patch("src.services.authorization.tokens.parse_human_claims", return_value=object()),
-        patch(
-            "src.services.authorization.tokens.authenticate_human_token",
-            new=AsyncMock(return_value=SimpleNamespace(principal=principal, refresh_required=False)),
-        ),
-        patch.object(provider, "_check_mcp_access", new=AsyncMock(return_value=True)),
+        patch("shared.app_connections.get_shared_redis", new=AsyncMock(return_value=redis)),
+        patch("shared.app_connections.get_db_context", get_db_context),
+        patch("shared.app_connections.get_mcp_config_cached", new=AsyncMock(return_value=SimpleNamespace(enabled=True))),
     ):
-        response = await provider._callback(request)  # type: ignore[arg-type]
-    redirect_url = json.loads(bytes(response.body))["redirect_url"]
+        details = await preview_mcp_connection("internal", principal)
+        result = await decide_app_connection("mcp", "internal", principal, True, details.consent_token)
+    redirect_url = result.redirect_url
+    assert redirect_url is not None
     return parse_qs(urlsplit(redirect_url).query)["code"][0]
 
 
@@ -161,70 +146,24 @@ async def _exchange(
 
 
 @pytest.mark.parametrize("claim", ["impersonated_by_user_id", "impersonation_session_id"])
-async def test_callback_rejects_support_token_in_normal_access_cookie(
-    redis: _FakeRedis, user: SimpleNamespace, claim: str
-) -> None:
-    from src.core.security import create_access_token
+async def test_impersonated_user_cannot_approve_connection(redis, user, claim):
+    from fastapi import HTTPException
+    principal = UserPrincipal(user_id=user.id, email=user.email, organization_id=user.organization_id)
+    setattr(principal, claim, uuid4())
+    with pytest.raises(HTTPException) as error:
+        await preview_mcp_connection("internal", principal)
+    assert error.value.status_code == 403
+    assert redis.values == {}
 
+
+async def test_callback_does_not_consume_state_or_create_code(redis):
     provider = BifrostAuthProvider(base_url="http://test")
-    redis.values[_mcp_state_key("internal")] = json.dumps({
-        "client_id": "client",
-        "redirect_uri": _REDIRECT_URI,
-        "state": "client-state",
-        "code_challenge": _challenge(_VERIFIER),
-        "scope": "mcp:access",
-    })
-    request = SimpleNamespace(
-        query_params={"internal_state": "internal"},
-        cookies={"access_token": create_access_token({"sub": str(user.id), claim: str(uuid4())})},
-        headers={"accept": "application/json"},
-    )
-    with (
-        patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=redis)),
-        patch.object(provider, "_check_mcp_access", new=AsyncMock(return_value=True)) as access,
-    ):
-        response = await provider._callback(request)  # type: ignore[arg-type]
-
-    assert response.status_code == 403
-    access.assert_not_awaited()
-    assert list(redis.values) == [_mcp_state_key("internal")]
-
-
-async def test_callback_refresh_challenge_preserves_state_before_code_creation(
-    redis: _FakeRedis, user: SimpleNamespace,
-) -> None:
-    provider = BifrostAuthProvider(base_url="http://test")
-    state_key = _mcp_state_key("internal")
-    redis.values[state_key] = "binding-must-survive"
-    request = SimpleNamespace(
-        query_params={"internal_state": "internal"},
-        cookies={"access_token": "session.jwt"},
-        headers={"accept": "application/json"},
-    )
-
-    @asynccontextmanager
-    async def get_db_context():
-        yield AsyncMock()
-
-    with (
-        patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=redis)),
-        patch("src.core.security.decode_token", return_value={"sub": str(user.id)}),
-        patch("src.core.database.get_db_context", get_db_context),
-        patch("src.services.authorization.tokens.parse_human_claims", return_value=object()),
-        patch(
-            "src.services.authorization.tokens.authenticate_human_token",
-            new=AsyncMock(return_value=SimpleNamespace(principal=None, refresh_required=True)),
-        ),
-        patch.object(provider, "_check_mcp_access", new=AsyncMock()) as access,
-    ):
-        response = await provider._callback(request)  # type: ignore[arg-type]
-
-    assert response.status_code == 401
-    assert response.headers["WWW-Authenticate"] == (
-        'Bearer error="invalid_token", error_description="refresh_required"'
-    )
-    assert redis.values == {state_key: "binding-must-survive"}
-    access.assert_not_awaited()
+    redis.values[_mcp_state_key("internal")] = "binding-must-survive"
+    request = SimpleNamespace(query_params={"internal_state": "internal"}, cookies={})
+    response = await provider._callback(request)
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://test/connect-app?request=internal"
+    assert redis.values == {_mcp_state_key("internal"): "binding-must-survive"}
 
 
 async def test_code_round_trip_mints_tokens_for_the_signed_in_user(

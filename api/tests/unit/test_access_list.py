@@ -2125,7 +2125,9 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.services.legacy_broker_drain._redis_json": (1, "cutover"),
     "src.services.legacy_broker_drain.recover_agent_run": (1, "cutover"),
     "src.services.legacy_broker_drain.recover_workflow_run": (2, "cutover"),
-    "src.services.mcp_server.auth.BifrostAuthProvider._callback": (2, "cutover"),
+    "shared.app_connections.begin_mcp_connection": (1, "cutover"),  # One-way import of legacy callback metadata into the durable registry.
+    "shared.app_connections._pending_mcp": (1, "cutover"),  # Signed state is authenticated before consent.
+    "shared.app_connections.decide_app_connection": (1, "cutover"),  # One-time, user-bound consent consumes state.
     "src.services.mcp_server.auth.BifrostAuthProvider._token": (1, "cutover"),
     "shared.runtime_io.service_control": (2, "internal_authorized_resource"),
     "src.services.notification_service.NotificationService._is_admin_notification": (1, "cutover"),
@@ -3036,6 +3038,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/auth/revoke-all"): "Own sessions.",
     ("POST", "/auth/device/authorize"): "Own device-code authorization.",
     ("POST", "/auth/device/deny"): "Own device-code denial.",
+    ("POST", "/auth/app-connections/{request_id}"): "Own account connection; approval proof binds the authenticated human/session to the signed request.",
     ("POST", "/auth/mfa/totp/setup"): "Own MFA enrollment.",
     ("POST", "/auth/mfa/totp/verify"): "Own MFA enrollment.",
     ("DELETE", "/auth/mfa"): "Own MFA enrollment.",

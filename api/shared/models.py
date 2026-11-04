@@ -16,6 +16,30 @@ SEMVER_PATTERN = (
 )
 
 
+class AppConnectionDetails(BaseModel):
+    """A user-bound preview of one external app connection."""
+
+    client_name: str
+    redirect_uri: str
+    consent_token: str
+
+
+class AppConnectionDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
+    consent_token: str = Field(min_length=64, max_length=64)
+
+
+class AppConnectionResult(BaseModel):
+    redirect_url: str | None = None
+
+
+class MCPClientRegistration(BaseModel):
+    client_name: str | None = Field(default=None, max_length=255)
+    redirect_uris: list[str] = Field(min_length=1, max_length=20)
+
+
 class UsageReport(BaseModel):
     """Pseudonymous aggregate activity for one completed UTC day."""
 
