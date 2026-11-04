@@ -2,15 +2,14 @@
 
 These files are deliberately outside default pytest discovery. They access
 real Azure and must use a disposable, explicitly authorized storage target with
-synthetic data. They do not provision resources or grant access. See the
-[cloud plan](../../../docs/contributions/azure-blob-cloud-plan.md) for resource
-ownership, cost bounds and verified cleanup, and the
-[readiness packet](../../../docs/contributions/azure-blob-readiness.md) for
-source-bound commands, results and remaining limits.
+synthetic data. They do not provision resources or grant access. See
+[provider configuration and limits](../../../docs/architecture/object-storage-providers.md).
+Record the exact approved account/container, source commit, ownership, cost and
+lifetime bounds before running; retain source-bound results and cleanup receipts.
 
-Keep bootstrap/evidence in a separate container from the application test
-container. The normal test harness resets application state. Never point it at
-an existing deployment or customer storage.
+Keep evidence outside application fixture prefixes: the normal test harness
+resets application state. Never put credentials in bootstrap objects or point
+this lane at an existing deployment or customer storage.
 
 ## Dockerized contracts
 
