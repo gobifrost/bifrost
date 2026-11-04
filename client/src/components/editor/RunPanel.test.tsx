@@ -311,3 +311,38 @@ describe("RunPanel service files", () => {
 		).toBeInTheDocument();
 	});
 });
+
+vi.mock("@/components/execution/ExecutionOrganizationSelect", () => ({
+	ExecutionOrganizationSelect: ({
+		onChange,
+		disabled,
+	}: {
+		onChange: (id: string) => void;
+		disabled?: boolean;
+	}) => (
+		<button
+			type="button"
+			disabled={disabled}
+			onClick={() => onChange("contoso")}
+		>
+			Run in Contoso
+		</button>
+	),
+}));
+it("runs the editor workflow in the selected organization", async () => {
+	mutateAsync.mockResolvedValue({ status: "Success", result: {}, logs: [] });
+	const { user } = renderWithProviders(<RunPanel />);
+	await user.click(screen.getByRole("button", { name: "Run in Contoso" }));
+	await user.type(
+		screen.getByRole("textbox", { name: /review id/i }),
+		"Review",
+	);
+	await user.click(screen.getByRole("button", { name: "Run Workflow" }));
+	await waitFor(() =>
+		expect(mutateAsync).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: expect.objectContaining({ org_id: "contoso" }),
+			}),
+		),
+	);
+});

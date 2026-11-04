@@ -45,6 +45,7 @@ const initialState: UploadState = {
 };
 
 interface UseFormFileUploadOptions {
+	orgId?: string;
 	/** Called when upload starts */
 	onUploadStart?: () => void;
 	/** Called when upload completes or errors */
@@ -80,8 +81,14 @@ export function useFormFileUpload(
 	options: UseFormFileUploadOptions = {},
 ): UseFormFileUploadReturn {
 	const [uploadState, setUploadState] = useState<UploadState>(initialState);
-	const { onUploadStart, onUploadEnd, maxSizeMb, allowedTypes, fieldName } =
-		options;
+	const {
+		orgId,
+		onUploadStart,
+		onUploadEnd,
+		maxSizeMb,
+		allowedTypes,
+		fieldName,
+	} = options;
 
 	const reset = useCallback(() => {
 		setUploadState(initialState);
@@ -147,7 +154,10 @@ export function useFormFileUpload(
 				const { data, error } = await apiClient.POST(
 					"/api/forms/{form_id}/upload",
 					{
-						params: { path: { form_id: formId } },
+						params: {
+							path: { form_id: formId },
+							...(orgId ? { query: { org_id: orgId } } : {}),
+						},
 						body: {
 							file_name: file.name,
 							content_type:
@@ -277,6 +287,7 @@ export function useFormFileUpload(
 			}
 		},
 		[
+			orgId,
 			formId,
 			maxSizeMb,
 			allowedTypes,

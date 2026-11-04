@@ -214,3 +214,15 @@ describe("OrganizationSelect", () => {
  await user.click(screen.getByRole("option", { name: /Only me/ }));
  expect(onChange).toHaveBeenCalledWith(PERSONAL_SCOPE);
  });
+
+it("opens inside a form without submitting it", async () => {
+	const submit = vi.fn((event: React.FormEvent) => event.preventDefault());
+	const { user } = renderWithProviders(
+		<form onSubmit={submit}>
+			<OrganizationSelect value="org-1" onChange={vi.fn()} />
+		</form>,
+	);
+	await user.click(screen.getByRole("combobox"));
+	expect(screen.getByRole("option", { name: /^Acme/ })).toBeVisible();
+	expect(submit).not.toHaveBeenCalled();
+});

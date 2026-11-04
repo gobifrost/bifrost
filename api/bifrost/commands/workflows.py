@@ -226,8 +226,9 @@ async def register_workflow(
     type=str,
     default=None,
     help=(
-        "Override execution org context (UUID or name). Requires platform "
-        "admin. Omit to use the caller's default org."
+        "Override execution org context (UUID or name). Requires workflow "
+        "execution permission at a reachable organization. Omit to use the "
+        "caller's default org."
     ),
 )
 @click.pass_context

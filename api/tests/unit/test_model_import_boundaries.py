@@ -159,6 +159,7 @@ def test_contract_all_resolves_every_public_export_and_alias() -> None:
 
         import src.models.contracts as contracts
         from src.models.contracts import sdk
+        from src.models.contracts.forms import AuthenticatedFormRuntimeDefinition
 
         failed = []
         for name in contracts.__all__:
@@ -171,13 +172,17 @@ def test_contract_all_resolves_every_public_export_and_alias() -> None:
             "count": len(contracts.__all__),
             "failed": failed,
             "sdk_alias": contracts.SDKOAuthCredentials is sdk.OAuthCredentials,
+            "authenticated_form_alias": (
+                contracts.AuthenticatedFormRuntimeDefinition is AuthenticatedFormRuntimeDefinition
+            ),
         }))
         """
     )
 
-    assert result["count"] == 486
+    assert result["count"] == 487
     assert result["failed"] == []
     assert result["sdk_alias"] is True
+    assert result["authenticated_form_alias"] is True
 
 
 def test_root_model_all_preserves_public_exports_and_resolves_every_symbol() -> None:
@@ -199,13 +204,17 @@ def test_root_model_all_preserves_public_exports_and_resolves_every_symbol() -> 
             "count": len(models.__all__),
             "failed": failed,
             "contract_tail_matches": models.__all__[-len(contracts.__all__):] == contracts.__all__,
+            "authenticated_form_alias": (
+                models.AuthenticatedFormRuntimeDefinition is contracts.AuthenticatedFormRuntimeDefinition
+            ),
         }))
         """
     )
 
-    assert result["count"] == 544
+    assert result["count"] == 545
     assert result["failed"] == []
     assert result["contract_tail_matches"] is True
+    assert result["authenticated_form_alias"] is True
 
 
 def test_lazy_model_packages_raise_meaningful_attribute_errors() -> None:
