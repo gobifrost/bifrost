@@ -1,0 +1,10 @@
+{
+  "key": "pr:1227",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Bound execution log stream retention; internal storage hygiene, no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1227"]
+  }
+}

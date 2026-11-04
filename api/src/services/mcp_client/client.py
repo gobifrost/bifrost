@@ -1,6 +1,6 @@
 """Streamable HTTP MCP client wrapper, per connection.
 
-Exactly one transport: ``mcp.client.streamable_http.streamablehttp_client``.
+Exactly one transport: ``mcp.client.streamable_http.streamable_http_client``.
 No SSE, no stdio — both are deliberately omitted. If a future requirement
 lands for stdio transport (e.g. a local development server), it goes in a
 separate module rather than as a parallel branch here, so the public surface
@@ -59,7 +59,8 @@ async def open_session(
     # Imported lazily so the mcp SDK (and its sse_starlette/uvicorn deps)
     # stays out of the worker import closure (tests/unit/test_import_hygiene.py).
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
+    from mcp.shared._httpx_utils import create_mcp_http_client
 
     server_url = _resolve_server_url(connection)
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -70,11 +71,14 @@ async def open_session(
         server_url,
     )
 
-    async with streamablehttp_client(server_url, headers=headers) as (
-        read_stream,
-        write_stream,
-        _get_session_id,
-    ):
-        async with ClientSession(read_stream, write_stream) as session:
-            await session.initialize()
-            yield session
+    # v1 did not cap SSE event sizes; preserve existing large tool results.
+    async with create_mcp_http_client(headers=headers) as http_client:
+        async with streamable_http_client(
+            server_url, http_client=http_client, max_sse_event_size=None
+        ) as (
+            read_stream,
+            write_stream,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                yield session

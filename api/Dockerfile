@@ -3,7 +3,7 @@
 # Multi-stage build for efficient image size
 
 # Use the same supported Node runtime for every App build surface.
-FROM node:26.12.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS node-toolchain
+FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-toolchain
 
 # =============================================================================
 # Stage 1: Builder
@@ -95,6 +95,10 @@ RUN PYTHONPATH=/app python /app/scripts/build_cli_artifact.py \
       --source /app/bifrost \
       --output /app/artifacts \
       --version "${BIFROST_VERSION}"
+
+# Compile platform source after CLI packaging, before npm adds dependency trees.
+# Checked hashes preserve source-change invalidation; keep the full preload graph.
+RUN python -m compileall -f --invalidation-mode checked-hash -q /app/src /app/shared /app/bifrost
 
 # Install app compiler Node.js dependencies
 COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
