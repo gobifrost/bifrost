@@ -403,7 +403,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # clients can ignore the additive field; the CLI minimum remains unchanged.
     # External capacity models and daily UsageReport are both additive.
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
-    "88fba09d40e34dbfbb15f4ad882d12b81ab32255d81dc13524928089254c0bc9"
+    # App connection consent and registration models are additive (2026-11-04).
+    # Existing CLI requests/responses and minimum version remain unchanged.
+    "83629eb758ec4d943aec9e6beb1db3ef9e17ba3c479d96f6819131c90c913c52"
 )
 
 

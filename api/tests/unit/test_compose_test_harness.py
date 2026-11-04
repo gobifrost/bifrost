@@ -357,7 +357,7 @@ def test_playwright_uses_the_production_client_image():
     """Browser gates must cover compiled assets and nginx, not Vite transforms."""
     compose = yaml.safe_load(_COMPOSE.read_text())
     client = compose["services"]["client"]
-    assert client["image"] == "bifrost-test-client-e2e:latest"
+    assert client["image"] == "bifrost-test-client-e2e:${BIFROST_TEST_IMAGE_TAG:-latest}"
     assert client["build"]["dockerfile"] == "Dockerfile"
     assert client["build"]["target"] == "production"
     assert "volumes" not in client

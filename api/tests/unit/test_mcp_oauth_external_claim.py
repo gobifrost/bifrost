@@ -8,7 +8,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.services.mcp_server.auth import BifrostAuthProvider, _seal_auth_code_record
+from src.services.mcp_server.auth import BifrostAuthProvider
+from shared.mcp_oauth import _seal_auth_code_record
 
 
 @asynccontextmanager

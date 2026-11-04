@@ -145,7 +145,7 @@ def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> Non
 
     compose = yaml.safe_load(TEST_COMPOSE.read_text())
     client = compose["services"]["client"]
-    assert client["image"] == "bifrost-test-client-e2e:latest"
+    assert client["image"] == "bifrost-test-client-e2e:${BIFROST_TEST_IMAGE_TAG:-latest}"
     assert client["build"]["dockerfile"] == "Dockerfile"
     assert client["build"]["target"] == "production"
     assert "volumes" not in client

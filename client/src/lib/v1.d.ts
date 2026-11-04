@@ -805,6 +805,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/app-connections/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Connection
+         * @description Review one MCP connection; opening this endpoint never issues credentials.
+         */
+        get: operations["get_app_connection_auth_app_connections__request_id__get"];
+        put?: never;
+        /**
+         * Decide App Connection Request
+         * @description Record a user-bound, explicit approval or denial before handing off to the app.
+         */
+        post: operations["decide_app_connection_request_auth_app_connections__request_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/register-from-invite": {
         parameters: {
             query?: never;
@@ -13263,6 +13287,30 @@ export interface components {
             output_tokens: number;
             /** Ai Cost */
             ai_cost?: string;
+        };
+        /** AppConnectionDecision */
+        AppConnectionDecision: {
+            /** Approved */
+            approved: boolean;
+            /** Consent Token */
+            consent_token: string;
+        };
+        /**
+         * AppConnectionDetails
+         * @description A user-bound preview of one external app connection.
+         */
+        AppConnectionDetails: {
+            /** Client Name */
+            client_name: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /** Consent Token */
+            consent_token: string;
+        };
+        /** AppConnectionResult */
+        AppConnectionResult: {
+            /** Redirect Url */
+            redirect_url?: string | null;
         };
         /**
          * AppDependencyIssue
@@ -32479,6 +32527,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_app_connection_auth_app_connections__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectionDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_app_connection_request_auth_app_connections__request_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppConnectionDecision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectionResult"];
                 };
             };
             /** @description Validation Error */
