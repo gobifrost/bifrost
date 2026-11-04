@@ -1,0 +1,17 @@
+{
+  "key": "pr:1238",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Reduce repeated module lookups and storage connection setup during workflow startup.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1238",
+      "User authorized completing, testing and merging the runtime cache and startup improvements. This editorial approval records the contributor disposition, not maintainer review or a bypass of merge protection.",
+      "Focused cache, real Redis, HTTP pool ownership, native-thread/fork, worker import, Solution lifecycle, permission inventory and DTO/CLI checks passed. API Pyright/Ruff and generated OpenAPI TypeScript checks passed; the merge queue supplies complete-suite verification.",
+      "Measured component results, memory bounds, exact commands and iteration failure dispositions are documented in docs/benchmarks/2026-11-04-runtime-module-loading.md. No additive or end-to-end performance guarantee is made.",
+      "Copy review: the summary names the reduced lookup and connection work without claiming that workflow execution or provider latency is eliminated."
+    ]
+  }
+}
