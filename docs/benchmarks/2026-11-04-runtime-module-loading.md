@@ -180,3 +180,29 @@ API models, route, client helpers and dedicated tests were removed together.
 The existing on-demand import boundary remains authoritative. Create, update and
 delete before first import are checked against workspace and Solution storage.
 Matched prototype timings are not a whole-workflow performance claim.
+
+### Final Verification After Narrowing
+
+Against main `418d8ca97`, 323 focused unit/contract checks and 19 live-service
+checks passed. A final Git Discard consumer fix then passed all 36 Git sync unit
+checks: executable-source refresh now precedes fallible search maintenance.
+Pyright reported zero errors/warnings and Ruff passed on the final source.
+OpenAPI types, operation/access inventories and both skill mirrors were
+regenerated; the final schema has no net change from main. An intervening
+source-branch merge was preserved without changing the verified source tree.
+
+```sh
+./test.sh tests/unit/core/test_module_cache.py tests/unit/core/test_s3_transport.py tests/unit/scheduler/test_api_host.py tests/unit/test_worker_network.py tests/unit/core/test_module_cache_import_boundary.py tests/unit/execution/test_sdk_import_cache.py tests/unit/routers/test_sdk_modules.py tests/unit/services/test_file_ops_read.py tests/unit/services/test_solution_python_cache_order.py tests/unit/test_virtual_import_s3_fallback.py tests/unit/test_worker_s3_code_loading.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py tests/unit/test_access_list.py tests/unit/services/test_operation_inventory.py tests/unit/test_skill_appendix_fresh.py tests/unit/test_solution_source_artifact_lifecycle.py tests/unit/test_solution_deploy_s3_after_commit.py -q
+./test.sh tests/e2e/platform/test_module_resolution_generations.py tests/e2e/platform/test_virtual_import_integration.py -q
+./test.sh tests/unit/services/test_github_sync.py -q
+./test.sh quality api
+```
+
+All service/build checks ran inside the shared heavy lease; each lifecycle
+stopped only this worktree's stack before releasing it. Full backend suites,
+Vitest and Playwright were not run locally; protected checks remain the complete
+merge gate. Regeneration initially lacked its source PYTHONPATH, corrected
+before freshness verification. The new rolling-upgrade test also needed an
+Awaitable annotation for Redis's union return stub; the runtime test passed and
+the corrected annotation passed final static checks. No failure was retried or
+suppressed without fixing its cause.
