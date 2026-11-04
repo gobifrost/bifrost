@@ -247,5 +247,5 @@ long-lived import template. The next execution forks from the new template.
 | `bifrost:exec:{execution_id}:context` | Worker process context | 1 hour |
 | `bifrost:result:{execution_id}` | Sync execution result (BLPOP) | 1 hour |
 | `bifrost:pool:{worker_id}` | Worker registration/heartbeat | 30 seconds |
-| `bifrost:logs:{execution_id}` | Real-time log stream | Until flush |
+| `bifrost:logs:{execution_id}` | Real-time log stream | Acknowledged after flush; 7-day hard expiry |
 | `bifrost:workflow:metadata:{workflow_id}` | Cached workflow metadata | 5 minutes |
