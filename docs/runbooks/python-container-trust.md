@@ -1,12 +1,15 @@
 # Python container trust
 
-The API and development images select the CA bundle from their hash-locked
-certifi dependency for Python/OpenSSL default TLS contexts. `SSL_CERT_FILE`
-points to the image's `/etc/bifrost-ca/cacert.pem`; `SSL_CERT_DIR` points to an
-empty directory so a system CA directory cannot reintroduce retired roots.
-This also covers the S3 transport's `ssl.create_default_context()` path;
-updating certifi alone would leave that path using the operating system store.
+The API and development images preserve OpenSSL's default system trust selection.
+The image build disables only the two retired distro anchors by SHA256 identity
+in `/etc/ca-certificates.conf`, then rebuilds both the system bundle and hashed
+certificate directory. Later `update-ca-certificates` runs preserve the exclusions.
 Certificate and hostname verification remain enabled.
+
+Existing private roots installed through `update-ca-certificates`, mounted system
+stores, and explicit `SSL_CERT_FILE` / `SSL_CERT_DIR` selections keep their existing
+behavior. No new bundle setting is required. HTTPX and SDK clients retain their
+existing trust-selection precedence; updating certifi protects their default bundle.
 
 The dependency lock updates certifi to 2026.10.19 and AnyIO to 4.14.2 for
 [GHSA-6q48-6c7w-9gw2](https://github.com/advisories/GHSA-6q48-6c7w-9gw2) and
@@ -24,15 +27,24 @@ The multiarch base is pinned to
 the registry records Docker Library source
 `01dcc3d31fcd879f9af36e097bd96328a457f4bd`, `3.14/slim-trixie`.
 
-Deployments needing a private CA can explicitly select a reviewed replacement
-bundle with `SSL_CERT_FILE`. Include the required public roots and private CA;
-retain an empty `SSL_CERT_DIR` unless an additional reviewed directory is
-intentional. Never restore a retired compromised root to make a connection pass.
-Rebuild/redeploy images to adopt future locked CA updates. These settings do
-not modify the host store or qualify Chromium's separate trust implementation.
+Continue installing private CAs through the existing system certificate mechanism
+or the installation's existing explicit trust selection. Never restore a retired
+compromised root to make a connection pass. Rebuild/redeploy images to adopt future
+CA and interpreter updates. Container settings do not modify the host store or
+Chromium's separate trust implementation.
 
-`tests/unit/core/test_python_trust_store.py` checks the actual default context,
-retired public anchor identities, explicit-file root set and empty fallback
-directory. The synthetic HTTPS fixture bundle can add its own test root without
-weakening those checks. Live service handshakes and any provider-specific
-acceptance remain separate from these credential-free trust checks.
+`tests/unit/core/test_python_trust_store.py` checks default contexts, pip's bundle,
+and the hashed system directory for retired anchors. `test_prune_retired_ca.py`
+checks persistent exclusions without deleting other roots. Production-image
+verification also exercises a TLS connection using an installed synthetic private
+CA, including after another system certificate-store update.
+
+Run the private-CA control only in a disposable, credential-free container; it
+changes that container's certificate store:
+
+```bash
+docker run --rm --network none --user 0 --entrypoint python \
+  -v "$PWD/api/tests/image_checks/python_trust.py:/verify.py:ro" \
+  -v "$PWD/api/tests/unit/core/test_python_trust_store.py:/trust_test.py:ro" \
+  <production-candidate-image> -B /verify.py
+```

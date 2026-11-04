@@ -68,13 +68,10 @@ COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
 
-# OpenSSL's system store can retain roots removed by a certifi security update.
-# Select the locked bundle for Python default contexts as well as HTTPX, and
-# prevent the old system CA directory from adding those roots back lazily.
-RUN mkdir -p /etc/bifrost-ca/empty \
-    && python -c "import certifi, shutil; shutil.copyfile(certifi.where(), '/etc/bifrost-ca/cacert.pem')"
-ENV SSL_CERT_FILE=/etc/bifrost-ca/cacert.pem \
-    SSL_CERT_DIR=/etc/bifrost-ca/empty
+# Keep OpenSSL's system/private CA selection. Exclude only retired distro
+# roots, including their hashed-directory entries, and persist those exclusions.
+COPY api/scripts/prune_retired_ca.py /tmp/prune_retired_ca.py
+RUN python /tmp/prune_retired_ca.py && rm /tmp/prune_retired_ca.py
 
 # Install `bifrost` CLI shim. The bifrost Python package is mounted at
 # /app/bifrost/ via PYTHONPATH=/app, so `python -m bifrost` works. The shim

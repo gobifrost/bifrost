@@ -33,17 +33,15 @@ class PythonTrustStoreTests(unittest.TestCase):
         self.assertTrue(anchors)
         self.assertFalse(anchors.intersection(RETIRED_ANCHORS))
 
-    def test_selected_bundle_has_no_system_directory_fallback(self):
+    def test_default_directory_cannot_restore_retired_anchors(self):
         paths = ssl.get_default_verify_paths()
-        assert paths.cafile is not None
         assert paths.capath is not None
-        # The test harness can extend SSL_CERT_FILE with its synthetic fixture
-        # root. That explicit file remains authoritative, without system roots.
-        self.assertFalse(any(Path(paths.capath).iterdir()))
-        selected = ssl.create_default_context(cafile=paths.cafile)
-        default = ssl.create_default_context()
-        self.assertEqual(set(default.get_ca_certs(binary_form=True)),
-                         set(selected.get_ca_certs(binary_form=True)))
+        # OpenSSL loads hashed-directory roots lazily. Check each certificate,
+        # rather than relying on get_ca_certs() before any TLS handshake.
+        for certificate in Path(paths.capath).glob("*.pem"):
+            with self.subTest(certificate=certificate.name):
+                der = ssl.PEM_cert_to_DER_cert(certificate.read_text())
+                self.assertNotIn(hashlib.sha256(der).hexdigest(), RETIRED_ANCHORS)
 
 
 if __name__ == '__main__':

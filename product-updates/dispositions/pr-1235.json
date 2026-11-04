@@ -2,21 +2,22 @@
   "key": "pr:1235",
   "classification": "omit",
   "entry_ids": [],
-  "reason": "Proposed omission under the routine dependency/container maintenance policy. This security-impacting trust update remains subject to explicit maintainer review; release visibility and any required canonical security notice are not approved by this proposal.",
+  "reason": "Internal Python/container certificate security maintenance; no new front-facing capability or customer configuration change. Retain security evidence for formal release review.",
   "category": "hardening",
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1235"
   },
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1235",
       "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
       "https://github.com/advisories/GHSA-82r6-8w77-94w6",
       "https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576",
-      "Author proposal only. Docker base and security/disposition review remain pending; no human approval or production clearance is claimed.",
-      "Credential-free bounded controls: the prior pinned base fails all three actual trust checks; Python 3.14.10 with the selected certifi bundle passes all three. Full application-image CI, service handshakes and browser acceptance remain separate."
+      "Jack conditionally approved scoped repairs and protected merge on 2026-11-04; merge requires existing private-CA installations to work without customer configuration changes.",
+      "Original contribution: Thomas Bray (@MTG-Thomas), https://github.com/gobifrost/bifrost/pull/1235. Maintainer repair preserves system trust selection and disables only retired distro roots by certificate identity.",
+      "Maintainer security review: production-image default and pip trust reject retired anchors; directory pruning persists across update-ca-certificates. Production TLS controls accept installed private CAs and existing explicit file/directory settings. Focused trust-pruning and SDK tests pass; Python and CA-package pins retain verified upstream provenance."
     ]
   }
 }
