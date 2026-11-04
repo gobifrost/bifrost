@@ -100,3 +100,17 @@ async def test_batch_caps_source_result_count_and_bytes() -> None:
 
     assert set(modules) == {"small"}
     assert errors == {}
+
+
+async def test_batch_stops_speculative_probes_after_storage_failure() -> None:
+    scope = ModuleSourceScope(solution_id=None, global_repo_access=False)
+    with patch.object(
+        sdk_modules, "resolve_module_name", side_effect=RuntimeError("storage unavailable")
+    ) as resolve:
+        modules, errors = await sdk_modules.resolve_module_names(
+            ["first", "second"], scope=scope, max_sources=32, max_source_bytes=1_048_576,
+        )
+
+    resolve.assert_awaited_once_with("first", scope=scope)
+    assert modules == {}
+    assert set(errors) == {"first"}

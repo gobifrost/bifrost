@@ -21,7 +21,7 @@ Endpoints:
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from src.models.contracts.sdk import (
+from shared.models import (
     SDKModuleResolveBatchRequest,
     SDKModuleResolveBatchResponse,
 )

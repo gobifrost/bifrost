@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -118,55 +120,40 @@ if False:
     )
 
 
-def test_prefetch_warms_actual_virtual_import_graph_with_one_engine_request() -> None:
+def test_registered_root_executes_direct_imports_with_one_batch_request() -> None:
+    from src.services.execution.module_loader import exec_from_db
+
+    names = ["batch_root_first", "batch_root_second"]
     mcs.clear_solution_context()
     client = MagicMock()
     client.engine_request_sync.return_value = httpx.Response(
         200,
-        json={
-            "modules": {
-                "workspace": {
-                    "kind": "namespace",
-                    "path": "workspace",
-                },
-                "workspace.client": {
-                    "kind": "module",
-                    "path": "workspace/client.py",
-                    "storage_path": "workspace/client.py",
-                    "content": "VALUE = 1\n",
-                    "hash": "client",
-                },
-                "sdk_helpers": {
-                    "kind": "module",
-                    "path": "sdk_helpers.py",
-                    "storage_path": "sdk_helpers.py",
-                    "content": "HELPER = 1\n",
-                    "hash": "helper",
-                },
-            },
-            "errors": {},
-        },
+        json={"modules": {
+            name: {"kind": "module", "path": f"{name}.py",
+                   "storage_path": f"{name}.py", "content": f"VALUE = {index}\n",
+                   "hash": name}
+            for index, name in enumerate(names, 1)
+        }, "errors": {}},
     )
+    finder = virtual_import.VirtualModuleFinder()
+    sys.meta_path.insert(0, finder)
     try:
         with patch.object(mcs, "_get_engine_client", return_value=client):
-            mcs.prefetch_module_resolutions(
-                ["workspace", "workspace.client", "sdk_helpers"]
+            module = exec_from_db(
+                code=("import batch_root_first\nimport batch_root_second\n"
+                      "def run():\n    return [batch_root_first.VALUE, batch_root_second.VALUE]\n"),
+                path="workflows/batch_root_entry.py", function_name="run",
             )
-            assert mcs.resolve_module_sync("workspace.client").content == "VALUE = 1\n"
-            assert mcs.resolve_module_sync("sdk_helpers").content == "HELPER = 1\n"
+            assert module.run() == [1, 2]
+        client.engine_request_sync.assert_called_once()
+        assert client.engine_request_sync.call_args.args == (
+            "POST", "/api/sdk/modules-resolve-batch",
+        )
     finally:
+        sys.meta_path.remove(finder)
+        for name in [*names, "workflows.batch_root_entry"]:
+            sys.modules.pop(name, None)
         mcs.clear_solution_context()
-
-    client.engine_request_sync.assert_called_once_with(
-        "POST",
-        "/api/sdk/modules-resolve-batch",
-        params={},
-        json={
-            "names": ["workspace", "workspace.client", "sdk_helpers"],
-            "max_sources": 32,
-            "max_source_bytes": 1_048_576,
-        },
-    )
 
 
 def test_prefetch_enforces_client_source_budget_and_defers_excluded_name() -> None:
@@ -290,3 +277,24 @@ def test_solution_context_reset_drops_prefetch_source_budget() -> None:
     assert second_budget.remaining_bytes == mcs.MODULE_PREFETCH_MAX_SOURCE_BYTES
 
     mcs.clear_solution_context()
+
+
+def test_namespace_only_prefetch_has_a_total_execution_entry_bound() -> None:
+    mcs.clear_solution_context()
+    mcs._solution_ctx.prefetch_budget = mcs.ModulePrefetchBudget(remaining_names=2)
+    client = MagicMock()
+    client.engine_request_sync.return_value = httpx.Response(
+        200, json={"modules": {
+            name: {"kind": "namespace", "path": name}
+            for name in ("one", "two")
+        }, "errors": {}},
+    )
+    try:
+        with patch.object(mcs, "_get_engine_client", return_value=client):
+            mcs.prefetch_module_resolutions(["one", "two", "three"])
+            mcs.prefetch_module_resolutions(["four"])
+        client.engine_request_sync.assert_called_once()
+        assert len(mcs._get_resolution_cache()) == 2
+        assert mcs._get_prefetch_budget().remaining_names == 0
+    finally:
+        mcs.clear_solution_context()

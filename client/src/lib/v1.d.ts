@@ -11450,6 +11450,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/modules-resolve-batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Module Batch
+         * @description Resolve a bounded static-import batch under one authoritative scope.
+         *
+         *     This is speculative runtime acceleration, not a replacement import path:
+         *     per-name errors are returned without caching them in the child, so an
+         *     import observes the existing single-name behavior only when requested.
+         */
+        post: operations["resolve_module_batch_api_sdk_modules_resolve_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sdk/modules/{path}": {
         parameters: {
             query?: never;
@@ -26525,6 +26549,75 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * SDKModuleResolution
+         * @description One resolved workspace import, package, namespace, or miss.
+         */
+        SDKModuleResolution: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "module" | "package" | "namespace" | "not_found";
+            /** Path */
+            path: string;
+            /** Content */
+            content?: string | null;
+            /**
+             * Hash
+             * @default
+             */
+            hash: string;
+            /** Storage Path */
+            storage_path?: string | null;
+        };
+        /**
+         * SDKModuleResolveBatchError
+         * @description A speculative name that could not be resolved without changing imports.
+         */
+        SDKModuleResolveBatchError: {
+            /** Status Code */
+            status_code: number;
+            /** Detail */
+            detail: string;
+        };
+        /**
+         * SDKModuleResolveBatchRequest
+         * @description Bounded speculative resolution for static workspace imports.
+         */
+        SDKModuleResolveBatchRequest: {
+            /**
+             * Names
+             * @description Logical Python import names to resolve in request order
+             */
+            names: string[];
+            /**
+             * Max Sources
+             * @description Maximum source-bearing module results to return
+             * @default 32
+             */
+            max_sources: number;
+            /**
+             * Max Source Bytes
+             * @description Maximum UTF-8 source bytes to return
+             * @default 1048576
+             */
+            max_source_bytes: number;
+        };
+        /**
+         * SDKModuleResolveBatchResponse
+         * @description Results and deferred errors from a bounded module-resolution batch.
+         */
+        SDKModuleResolveBatchResponse: {
+            /** Modules */
+            modules?: {
+                [key: string]: components["schemas"]["SDKModuleResolution"];
+            };
+            /** Errors */
+            errors?: {
+                [key: string]: components["schemas"]["SDKModuleResolveBatchError"];
+            };
         };
         /**
          * SDKTableCreateRequest
@@ -52308,6 +52401,42 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_module_batch_api_sdk_modules_resolve_batch_post: {
+        parameters: {
+            query?: {
+                solution_id?: string | null;
+                global_repo_access?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKModuleResolveBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKModuleResolveBatchResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

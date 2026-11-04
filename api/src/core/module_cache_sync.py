@@ -41,6 +41,8 @@ MODULE_CACHE_TTL = 86400
 # limits, while this per-execution budget prevents a broad import graph from
 # retaining unbounded source in a long-lived worker child.
 MODULE_PREFETCH_MAX_NAMES = 32
+MODULE_PREFETCH_MAX_EXECUTION_NAMES = 256
+MODULE_PREFETCH_MAX_NAME_BYTES = 512
 MODULE_PREFETCH_MAX_SOURCES = 32
 MODULE_PREFETCH_MAX_SOURCE_BYTES = 1_048_576
 
@@ -86,6 +88,7 @@ class ModulePrefetchBudget:
 
     remaining_sources: int = MODULE_PREFETCH_MAX_SOURCES
     remaining_bytes: int = MODULE_PREFETCH_MAX_SOURCE_BYTES
+    remaining_names: int = MODULE_PREFETCH_MAX_EXECUTION_NAMES
 
 
 class ModuleResolutionError(RuntimeError):
@@ -752,15 +755,17 @@ def prefetch_module_resolutions(names: list[str]) -> None:
     cached, so a later real import takes the existing single-name path.
     """
     budget = _get_prefetch_budget()
-    if budget.remaining_sources <= 0 or budget.remaining_bytes <= 0:
+    if budget.remaining_sources <= 0 or budget.remaining_bytes <= 0 or budget.remaining_names <= 0:
         return
 
     ctx = get_solution_context()
     cache = _get_resolution_cache()
     candidates: list[str] = []
     for name in dict.fromkeys(names):
-        if len(candidates) >= MODULE_PREFETCH_MAX_NAMES:
+        if len(candidates) >= min(MODULE_PREFETCH_MAX_NAMES, budget.remaining_names):
             break
+        if len(name.encode("utf-8")) > MODULE_PREFETCH_MAX_NAME_BYTES:
+            continue
         cache_key = (
             name,
             ctx.solution_id if ctx is not None else None,
@@ -793,6 +798,8 @@ def prefetch_module_resolutions(names: list[str]) -> None:
         return
 
     for name, resolution in prefetched.items():
+        if budget.remaining_names <= 0:
+            break
         source_bytes = 0
         if resolution.content is not None:
             source_bytes = len(resolution.content.encode("utf-8"))
@@ -803,6 +810,7 @@ def prefetch_module_resolutions(names: list[str]) -> None:
                 continue
             budget.remaining_sources -= 1
             budget.remaining_bytes -= source_bytes
+        budget.remaining_names -= 1
         cache[(
             name,
             ctx.solution_id if ctx is not None else None,

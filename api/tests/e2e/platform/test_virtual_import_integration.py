@@ -244,11 +244,11 @@ class TestVirtualImportIntegration:
             second_path: "VALUE = 'second'\n",
         }
         storage = RepoStorage()
-        for path, source in sources.items():
-            await storage.write(path, source.encode())
-            await set_module(path, source, f"{prefix}-{path}")
-
         try:
+            for path, source in sources.items():
+                await storage.write(path, source.encode())
+                await set_module(path, source, f"{prefix}-{path}")
+
             response = e2e_client.post(
                 "/api/workflows/execute",
                 headers=platform_admin.headers,

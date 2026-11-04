@@ -53,6 +53,30 @@ class TestReadFileModuleCacheGuard:
 
 class TestWriteFileDecoratorAcceptance:
     @pytest.mark.asyncio
+    async def test_python_cache_is_updated_before_search_index_failure(self):
+        from src.services.file_storage.file_ops import FileOperationsService
+
+        service = FileOperationsService.__new__(FileOperationsService)
+        service.db = AsyncMock()
+        service.settings = SimpleNamespace(s3_bucket="test-bucket")
+        service._s3_client = MagicMock()
+        s3 = AsyncMock()
+        service._s3_client.get_client.return_value.__aenter__.return_value = s3
+        service._compute_hash = MagicMock(return_value="source-hash")
+        service._guess_content_type = MagicMock(return_value="text/plain")
+
+        with (
+            patch("src.services.file_storage.file_ops.set_module", new_callable=AsyncMock) as cached,
+            patch("src.services.file_storage.file_ops.FileIndexService.index", new_callable=AsyncMock,
+                  side_effect=RuntimeError("index unavailable")),
+            pytest.raises(RuntimeError, match="index unavailable"),
+        ):
+            await service.write_file("workflows/current.py", b"VALUE = 2\n")
+
+        s3.put_object.assert_awaited_once()
+        cached.assert_awaited_once_with("workflows/current.py", "VALUE = 2\n", "source-hash")
+
+    @pytest.mark.asyncio
     async def test_rejects_decorator_source_before_storage_or_metadata_side_effects(self):
         from src.services.file_storage.file_ops import FileOperationsService
 

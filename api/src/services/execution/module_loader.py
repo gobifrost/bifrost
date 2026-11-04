@@ -285,6 +285,9 @@ def exec_from_db(
 
     # Execute in the namespace
     try:
+        from src.services.execution.virtual_import import prefetch_static_imports
+
+        prefetch_static_imports(code, fullname=module_name, is_package=False)
         exec(code_obj, namespace)
     except Exception as e:
         logger.error(f"Error executing workflow code at {path}: {e}")

@@ -8,70 +8,12 @@ Includes:
 All response models use `str` for UUIDs and datetime fields (JSON-friendly, matches SDK patterns).
 """
 
-from typing import TYPE_CHECKING, Any, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Iterator
 
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     pass
-
-
-# ==================== SDK MODULE RESOLUTION ====================
-
-
-class SDKModuleResolveBatchRequest(BaseModel):
-    """Bounded speculative resolution for static workspace imports."""
-
-    names: list[str] = Field(
-        ...,
-        min_length=1,
-        max_length=32,
-        description="Logical Python import names to resolve in request order",
-    )
-    max_sources: int = Field(
-        default=32,
-        ge=1,
-        le=32,
-        description="Maximum source-bearing module results to return",
-    )
-    max_source_bytes: int = Field(
-        default=1_048_576,
-        ge=1,
-        le=1_048_576,
-        description="Maximum UTF-8 source bytes to return",
-    )
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKModuleResolution(BaseModel):
-    """One resolved workspace import, package, namespace, or miss."""
-
-    kind: Literal["module", "package", "namespace", "not_found"]
-    path: str
-    content: str | None = None
-    hash: str = ""
-    storage_path: str | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKModuleResolveBatchError(BaseModel):
-    """A speculative name that could not be resolved without changing imports."""
-
-    status_code: int
-    detail: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class SDKModuleResolveBatchResponse(BaseModel):
-    """Results and deferred errors from a bounded module-resolution batch."""
-
-    modules: dict[str, SDKModuleResolution] = Field(default_factory=dict)
-    errors: dict[str, SDKModuleResolveBatchError] = Field(default_factory=dict)
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 # ==================== SDK FILE OPERATIONS ====================

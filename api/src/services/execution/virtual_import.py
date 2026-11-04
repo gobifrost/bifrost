@@ -418,7 +418,7 @@ class VirtualModuleFinder(MetaPathFinder):
             return None
         if resolution.kind in {"module", "package"} and resolution.content is not None:
             is_package = resolution.kind == "package"
-            self._prefetch_direct_imports(
+            prefetch_static_imports(
                 resolution.content,
                 fullname=fullname,
                 is_package=is_package,
@@ -453,43 +453,43 @@ class VirtualModuleFinder(MetaPathFinder):
 
         return None
 
-    def _prefetch_direct_imports(
-        self,
-        source: str,
-        *,
-        fullname: str,
-        is_package: bool,
-    ) -> None:
-        """Warm only workspace candidates, leaving installed packages alone."""
-        names = _module_body_import_names(
-            source,
-            fullname=fullname,
-            is_package=is_package,
-        )
-        if not names:
-            return
-        installed_roots = {
-            root: self._has_installed_top_level(root)
-            for root in {name.split(".", 1)[0] for name in names}
-            if root not in STDLIB_PREFIXES
-        }
-        workspace_candidates = [
-            name
-            for name in names
-            if name.split(".", 1)[0] not in STDLIB_PREFIXES
-            and not installed_roots[name.split(".", 1)[0]]
-        ]
-        if workspace_candidates:
-            prefetch_module_resolutions(workspace_candidates)
 
-    @staticmethod
-    def _has_installed_top_level(fullname: str) -> bool:
-        """Check normal top-level precedence without importing application code."""
-        try:
-            spec = PathFinder.find_spec(fullname.split(".", 1)[0])
-        except (ImportError, AttributeError):
-            return False
-        return spec is not None and not _is_bifrost_source_spec(spec)
+def prefetch_static_imports(
+    source: str,
+    *,
+    fullname: str,
+    is_package: bool,
+) -> None:
+    """Warm only workspace candidates, leaving installed packages alone."""
+    names = _module_body_import_names(
+        source,
+        fullname=fullname,
+        is_package=is_package,
+    )
+    if not names:
+        return
+    installed_roots = {
+        root: _has_installed_top_level(root)
+        for root in {name.split(".", 1)[0] for name in names}
+        if root not in STDLIB_PREFIXES
+    }
+    workspace_candidates = [
+        name
+        for name in names
+        if name.split(".", 1)[0] not in STDLIB_PREFIXES
+        and not installed_roots[name.split(".", 1)[0]]
+    ]
+    if workspace_candidates:
+        prefetch_module_resolutions(workspace_candidates)
+
+
+def _has_installed_top_level(fullname: str) -> bool:
+    """Check normal top-level precedence without importing application code."""
+    try:
+        spec = PathFinder.find_spec(fullname.split(".", 1)[0])
+    except (ImportError, AttributeError):
+        return False
+    return spec is not None and not _is_bifrost_source_spec(spec)
 
 
 def _is_bifrost_source_spec(spec: ModuleSpec) -> bool:

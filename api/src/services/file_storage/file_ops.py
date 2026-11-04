@@ -206,14 +206,15 @@ class FileOperationsService:
                 ContentType=content_type,
             )
 
-        await FileIndexService(self.db).index(path, content, content_hash, updated_by)
-        await self.db.flush()
         content_str = cached_content_str or content.decode("utf-8", errors="replace")
 
         # Update module cache in Redis for immediate availability in virtual imports.
         # Both workflows and modules need caching — workers load code via Redis→S3.
         if path.endswith(".py"):
             await set_module(path, content_str, content_hash)
+
+        await FileIndexService(self.db).index(path, content, content_hash, updated_by)
+        await self.db.flush()
 
         # Extract metadata for workflows/forms/agents
         # Pass cached AST and content_str to avoid re-parsing large Python files

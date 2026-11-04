@@ -304,7 +304,9 @@ async def resolve_module_names(
                 "status_code": 500,
                 "detail": "Module resolution is unavailable",
             }
-            continue
+            # A storage outage must not turn speculation into a sequence of
+            # failing storage probes. Remaining names stay on the demand path.
+            break
 
         content = result.get("content")
         if isinstance(content, str):
