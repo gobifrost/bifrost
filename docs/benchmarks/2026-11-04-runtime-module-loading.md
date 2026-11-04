@@ -91,3 +91,43 @@ evidence collection under `supervision/runtime-final-20261104/`. It contains the
 paired S3 script/results, cache memory script/results, source snapshots and AST
 comparison, original workflow traces, JUnit reports and quality logs. Private
 workflow inputs and production identities are deliberately not copied here.
+
+### Focused command ledger
+
+Commands below ran through `./test.sh` against this worktree's Docker stack:
+
+```sh
+./test.sh tests/unit/core/test_s3_transport.py tests/unit/scheduler/test_api_host.py tests/unit/test_worker_network.py -q
+./test.sh tests/unit/core/test_module_cache.py tests/unit/routers/test_sdk_modules.py tests/unit/services/test_file_ops_read.py tests/unit/core/test_module_cache_import_boundary.py tests/unit/execution/test_sdk_import_cache.py tests/unit/test_virtual_import_s3_fallback.py tests/unit/services/test_worker_sdk_http.py -v
+./test.sh tests/unit/services/test_file_ops_read.py tests/unit/test_access_list.py -q
+./test.sh tests/unit/routers/test_sdk_modules.py tests/unit/services/test_sdk_module_batch.py tests/unit/execution/test_module_import_prefetch.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py -q
+./test.sh tests/unit/services/test_file_ops_read.py tests/unit/services/test_solution_python_cache_order.py -v
+./test.sh tests/unit/test_solution_source_artifact_lifecycle.py tests/unit/test_solution_deploy_s3_after_commit.py -v --durations=0
+./test.sh tests/unit/execution/test_module_import_prefetch.py tests/unit/core/test_module_cache_import_boundary.py -v
+./test.sh tests/unit/execution/test_module_import_prefetch.py tests/unit/test_worker_s3_code_loading.py -q
+./test.sh tests/e2e/platform/test_module_resolution_generations.py tests/e2e/platform/test_virtual_import_integration.py tests/unit/test_solution_source_artifact_lifecycle.py -q --durations=0
+./test.sh quality api
+```
+
+The S3/lifecycle run passed 70 tests, including concurrent native-thread loops and
+a real fork with the parent mutex locked. The first 174-test cache/consumer run
+passed 173 tests and exposed a new mock fixture that indexed an iterator. The
+fixture was corrected, then corrected again to inject its failure at the intended
+DB operation; the final file-operation run passed. Permission verification exposed
+two new Redis read sites and a stale generated route inventory. Both were recorded
+and regenerated; all 83 file-operation/permission checks then passed. The final
+batch/DTO/CLI run passed 99 tests, write-order tests passed 12, Solution-storage
+checks passed five, and root-loading/worker-source checks passed 19.
+
+After `main` updated MCP, an already-created quality container still had the old
+dependency image and reported missing MCP imports. The rebuilt image was verified
+to contain MCP 2.3.0 and its required module, then tagged separately for the final
+quality and live runs. Pyright reported zero errors/warnings and Ruff passed.
+These were diagnosed iteration failures, not skipped tests or unexplained reruns.
+
+OpenAPI types were generated from the running test API's schema. In a Node 26.13.0
+container, `npm run generate:types` (with `OPENAPI_URL=/evidence/openapi.json`),
+`npm run tsc`, and `npm run lint` passed. Lint retained one existing console warning
+in the review-pack seed helper. The real-fork test intentionally exercises a fork
+from the threaded test process and emits Python's corresponding deprecation
+warning; neither warning is silenced.
