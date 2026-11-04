@@ -9,6 +9,7 @@ accessing OAuth provider settings.
 import logging
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 import httpx
 from sqlalchemy import delete, select
@@ -192,7 +193,12 @@ class OAuthConfigService:
         return preference
 
     async def _is_login_method_allowed_for(
-        self, preference: OAuthLoginPreference, enabled: bool, user: User | None = None
+        self,
+        preference: OAuthLoginPreference,
+        enabled: bool,
+        user: User | None = None,
+        *,
+        registration_organization_id: UUID | None = None,
     ) -> bool:
         """Evaluate the shared policy against a resolved account, never caller claims."""
         if enabled:
@@ -203,8 +209,11 @@ class OAuthConfigService:
                 excluded is not None and user.id in excluded
             ):
                 return True
-            if user.organization_id in preference.excluded_organization_ids:
-                return True
+        organization_id = (
+            user.organization_id if user is not None else registration_organization_id
+        )
+        if organization_id in preference.excluded_organization_ids:
+            return True
         from src.repositories.users import UserRepository
 
         return not await UserRepository(self.db).has_any_users()
@@ -224,7 +233,12 @@ class OAuthConfigService:
             org = await OrganizationRepository(self.db).get_by_domain(
                 email.split("@")[1].lower()
             )
-            user = User(is_superuser=False, organization_id=org.id if org else None)
+            preference = await self.get_login_preference()
+            return await self._is_login_method_allowed_for(
+                preference,
+                preference.password_login_enabled,
+                registration_organization_id=org.id if org else None,
+            )
         return await self.is_password_allowed_for(user)
 
     async def is_passkey_allowed_for(self, user: User | None = None) -> bool:

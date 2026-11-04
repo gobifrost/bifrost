@@ -57,3 +57,22 @@ async def test_policy_must_include_an_active_admin_not_just_an_unknown_id():
     with patch("shared.account_guards._lock_roles", AsyncMock()):
         with pytest.raises(OAuthLoginPreferenceError, match="active platform admin"):
             await validate_recovery_admin(db, OAuthLoginPreference(excluded_user_ids=[uuid4()]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("known_domain,excluded,expected", [
+    (True, True, True), (True, False, False), (False, False, False),
+])
+async def test_new_registration_uses_only_resolved_organization_exclusion(known_domain, excluded, expected):
+    org = SimpleNamespace(id=uuid4()) if known_domain else None
+    service = OAuthConfigService(AsyncMock())
+    service.get_login_preference = AsyncMock(return_value=OAuthLoginPreference(
+        password_login_enabled=False,
+        excluded_organization_ids=[org.id] if excluded else [],
+    ))
+    with (
+        patch.object(UserRepository, "get_by_email", AsyncMock(return_value=None)),
+        patch("src.repositories.organizations.OrganizationRepository.get_by_domain", AsyncMock(return_value=org)),
+        patch.object(UserRepository, "has_any_users", AsyncMock(return_value=True)),
+    ):
+        assert await service.is_password_registration_allowed("new@example.com") is expected
