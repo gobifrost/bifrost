@@ -68,6 +68,9 @@ private and preserve SAS expiry and permissions.
 - Bucket arguments identify the configured container; cross-container copy is
   outside the application's current single-container contract. Unknown write
   options fail explicitly.
+- Blob workspace mirrors reject symbolic links, while the existing S3 AWS CLI
+  mirror can follow them. Workspaces relying on links need a compatibility
+  decision before enabling Blob; this is not transparent filesystem parity.
 - Workflow environment scrubbing preserves the parent/child storage boundary,
   but it does not isolate an ambient host identity or metadata endpoint. Treat
   workflow-code trust and identity reachability as deployment security concerns.
