@@ -268,61 +268,6 @@ async def resolve_module_name(
         return miss_result
 
 
-async def resolve_module_names(
-    names: list[str],
-    *,
-    scope: ModuleSourceScope,
-    max_sources: int,
-    max_source_bytes: int,
-) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
-    """Resolve a bounded speculative import batch without changing import errors.
-
-    Each entry deliberately uses :func:`resolve_module_name` in order. This
-    preserves Solution-before-workspace precedence and bounds storage work to
-    one serial sequence rather than a burst of concurrent cache/S3 requests.
-    A failed speculative lookup is returned by name, not raised: an import only
-    observes that failure if Python later asks for the same name through the
-    ordinary single-name resolver.
-    """
-    modules: dict[str, dict[str, object]] = {}
-    errors: dict[str, dict[str, object]] = {}
-    source_count = 0
-    source_bytes = 0
-
-    for name in dict.fromkeys(names):
-        try:
-            result = await resolve_module_name(name, scope=scope)
-        except ModuleSourceError as exc:
-            errors[name] = {"status_code": exc.status_code, "detail": exc.detail}
-            continue
-        except Exception:
-            # This route is intentionally speculative. Preserve the failure in
-            # its typed response and leave the demand path to surface the
-            # original error if this import is actually requested.
-            logger.exception("Speculative SDK module resolution failed for %s", log_safe(name))
-            errors[name] = {
-                "status_code": 500,
-                "detail": "Module resolution is unavailable",
-            }
-            # A storage outage must not turn speculation into a sequence of
-            # failing storage probes. Remaining names stay on the demand path.
-            break
-
-        content = result.get("content")
-        if isinstance(content, str):
-            content_bytes = len(content.encode("utf-8"))
-            if (
-                source_count >= max_sources
-                or content_bytes > max_source_bytes - source_bytes
-            ):
-                continue
-            source_count += 1
-            source_bytes += content_bytes
-        modules[name] = result
-
-    return modules, errors
-
-
 async def fetch_module_source(
     path: str,
     *,

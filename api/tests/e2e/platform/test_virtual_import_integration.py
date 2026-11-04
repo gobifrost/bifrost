@@ -186,41 +186,12 @@ class TestVirtualImportIntegration:
                 "path": "resolver_live/missing",
             }
 
-            batch_resp = e2e_client.post(
-                "/api/sdk/modules-resolve-batch",
-                json={
-                    "names": ["resolver_live.pkg.helper", "resolver_live.missing"],
-                    "max_sources": 2,
-                    "max_source_bytes": 1_024,
-                },
-                headers=platform_admin.headers,
-            )
-            assert batch_resp.status_code == 200
-            assert batch_resp.json() == {
-                "modules": {
-                    "resolver_live.pkg.helper": {
-                        "kind": "module",
-                        "path": "resolver_live/pkg/helper.py",
-                        "storage_path": "resolver_live/pkg/helper.py",
-                        "content": "VALUE = 42",
-                        "hash": "resolver-live-hash",
-                    },
-                    "resolver_live.missing": {
-                        "kind": "not_found",
-                        "path": "resolver_live/missing",
-                        "content": None,
-                        "hash": "",
-                        "storage_path": None,
-                    },
-                },
-                "errors": {},
-            }
         finally:
             await clear_module_cache()
             await storage.delete("resolver_live/pkg/helper.py")
 
     @pytest.mark.asyncio
-    async def test_inline_execution_prefetches_direct_workspace_imports(
+    async def test_inline_execution_loads_direct_workspace_imports(
         self,
         e2e_client,
         platform_admin,

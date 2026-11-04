@@ -21,7 +21,6 @@ during find_spec() because the import system itself may trigger imports
 2. Early exit for known stdlib module prefixes
 """
 
-import ast
 import logging
 import sys
 import threading
@@ -33,7 +32,6 @@ from typing import Any
 
 from src.core.module_cache_sync import (
     ModuleResolutionError,
-    prefetch_module_resolutions,
     resolve_module_sync,
 )
 
@@ -168,62 +166,6 @@ _BIFROST_SOURCE_ROOTS = (
     _APP_ROOT / "shared",
     _APP_ROOT / "bifrost",
 )
-
-
-def _module_body_import_names(
-    source: str,
-    *,
-    fullname: str,
-    is_package: bool,
-) -> list[str]:
-    """Return direct, ordinary imports that execute with this module.
-
-    Speculation deliberately stops at ``tree.body``. Imports inside conditionals,
-    ``try`` blocks, functions, or dynamic import helpers are demand-only and
-    retain Python's existing timing and error behavior.
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        # The real loader will preserve the syntax error if this module is
-        # imported. A prefetch must never surface it early.
-        return []
-
-    package = fullname if is_package else fullname.rpartition(".")[0]
-    package_parts = package.split(".") if package else []
-    names: list[str] = []
-    for statement in tree.body:
-        if isinstance(statement, ast.Import):
-            names.extend(alias.name for alias in statement.names)
-            continue
-        if not isinstance(statement, ast.ImportFrom):
-            continue
-        if statement.level:
-            if statement.level > len(package_parts) + 1:
-                continue
-            anchor = ".".join(package_parts[: len(package_parts) - statement.level + 1])
-            if statement.module:
-                target = f"{anchor}.{statement.module}" if anchor else statement.module
-                names.append(target)
-            else:
-                names.extend(
-                    f"{anchor}.{alias.name}" if anchor else alias.name
-                    for alias in statement.names
-                )
-        elif statement.module:
-            names.append(statement.module)
-
-    expanded: list[str] = []
-    for name in names:
-        for index in range(1, len(name.split(".")) + 1):
-            candidate = ".".join(name.split(".")[:index])
-            # The active module and its parents are already in Python's import
-            # chain; prefetching them adds no useful work.
-            if candidate == fullname or fullname.startswith(f"{candidate}."):
-                continue
-            if candidate not in expanded:
-                expanded.append(candidate)
-    return expanded
 
 
 
@@ -418,11 +360,6 @@ class VirtualModuleFinder(MetaPathFinder):
             return None
         if resolution.kind in {"module", "package"} and resolution.content is not None:
             is_package = resolution.kind == "package"
-            prefetch_static_imports(
-                resolution.content,
-                fullname=fullname,
-                is_package=is_package,
-            )
             loader = VirtualModuleLoader(
                 resolution.path,
                 resolution.content,
@@ -452,44 +389,6 @@ class VirtualModuleFinder(MetaPathFinder):
             return spec
 
         return None
-
-
-def prefetch_static_imports(
-    source: str,
-    *,
-    fullname: str,
-    is_package: bool,
-) -> None:
-    """Warm only workspace candidates, leaving installed packages alone."""
-    names = _module_body_import_names(
-        source,
-        fullname=fullname,
-        is_package=is_package,
-    )
-    if not names:
-        return
-    installed_roots = {
-        root: _has_installed_top_level(root)
-        for root in {name.split(".", 1)[0] for name in names}
-        if root not in STDLIB_PREFIXES
-    }
-    workspace_candidates = [
-        name
-        for name in names
-        if name.split(".", 1)[0] not in STDLIB_PREFIXES
-        and not installed_roots[name.split(".", 1)[0]]
-    ]
-    if workspace_candidates:
-        prefetch_module_resolutions(workspace_candidates)
-
-
-def _has_installed_top_level(fullname: str) -> bool:
-    """Check normal top-level precedence without importing application code."""
-    try:
-        spec = PathFinder.find_spec(fullname.split(".", 1)[0])
-    except (ImportError, AttributeError):
-        return False
-    return spec is not None and not _is_bifrost_source_spec(spec)
 
 
 def _is_bifrost_source_spec(spec: ModuleSpec) -> bool:

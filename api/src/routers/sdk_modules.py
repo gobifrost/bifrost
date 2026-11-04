@@ -21,15 +21,10 @@ Endpoints:
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from shared.models import (
-    SDKModuleResolveBatchRequest,
-    SDKModuleResolveBatchResponse,
-)
 from shared.sdk_modules import (
     ModuleSourceError,
     fetch_module_source,
     resolve_module_name,
-    resolve_module_names,
     module_scope_for_principal,
 )
 from src.core.auth import CurrentActiveUser
@@ -37,39 +32,6 @@ from src.core.db_deps import DbSession
 from src.core.requirements_cache import get_requirements
 
 router = APIRouter(prefix="/api/sdk", tags=["SDK Internals"])
-
-
-@router.post("/modules-resolve-batch", response_model=SDKModuleResolveBatchResponse)
-async def resolve_module_batch(
-    request: SDKModuleResolveBatchRequest,
-    user: CurrentActiveUser,
-    db: DbSession,
-    solution_id: str | None = None,
-    global_repo_access: bool = False,
-) -> SDKModuleResolveBatchResponse:
-    """Resolve a bounded static-import batch under one authoritative scope.
-
-    This is speculative runtime acceleration, not a replacement import path:
-    per-name errors are returned without caching them in the child, so an
-    import observes the existing single-name behavior only when requested.
-    """
-    try:
-        scope = await module_scope_for_principal(
-            db,
-            user,
-            solution_id=solution_id,
-            global_repo_access=global_repo_access,
-        )
-    except ModuleSourceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    modules, errors = await resolve_module_names(
-        request.names,
-        scope=scope,
-        max_sources=request.max_sources,
-        max_source_bytes=request.max_source_bytes,
-    )
-    return SDKModuleResolveBatchResponse(modules=modules, errors=errors)
 
 
 @router.get("/modules/{path:path}")

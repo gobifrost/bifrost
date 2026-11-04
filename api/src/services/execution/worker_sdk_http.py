@@ -269,15 +269,13 @@ SDK_CONTEXT_ROUTE_METHODS: dict[str, frozenset[str]] = {
 
 # The SDK cold import-hook module routes, selected from
 # ``src.routers.sdk_modules`` by path AND method. ``modules-resolve`` resolves
-# one logical import name, ``modules-resolve-batch`` prefetches bounded static
-# imports, and ``modules/{path:path}`` fetches one candidate storage path's
-# source; all are the original APIRoute objects, so the
+# one logical import name and ``modules/{path:path}`` fetches one candidate
+# storage path's source; both are the original APIRoute objects, so the
 # engine bearer-token auth, the signed per-execution Solution scope, the
 # Redis→S3 lookup, and the status mapping are the API's own. The dict order
 # registers the exact resolve path before the greedy module path.
 SDK_MODULES_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/sdk/modules-resolve": frozenset({"GET"}),
-    "/api/sdk/modules-resolve-batch": frozenset({"POST"}),
     "/api/sdk/modules/{path:path}": frozenset({"GET"}),
 }
 SDK_MODULES_ROUTE_PATHS: frozenset[str] = frozenset(SDK_MODULES_ROUTE_METHODS)

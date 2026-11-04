@@ -1,7 +1,8 @@
 # Bounded module loading and S3 connection reuse
 
-The runtime now batches direct static workspace imports, reuses an S3 HTTP pool,
-and caches confirmed missing modules for the existing 24-hour resolution lifetime.
+The runtime reuses an S3 HTTP pool and caches confirmed missing modules for the
+existing 24-hour resolution lifetime. Imports resolve on demand; speculative
+execution-local batching has been removed from this PR.
 The cache change includes write invalidation and source-refill race fixes; a TTL
 change alone would have retained incorrect absence or stale executable source.
 
@@ -23,21 +24,18 @@ Executable cache updates precede fallible search-index maintenance; Solution har
 deletions invalidate their Python source too. Storage and decoding failures do not
 become cached missing modules.
 
-Prefetch retains at most 32 source-bearing results and 1 MiB of UTF-8 source per
-execution, plus at most 256 speculative entries with bounded names. Each request
-contains at most 32 names and resolves serially under one authoritative scope.
-Registered root workflows and virtual dependency modules use the same discovery
-helper. Installed libraries, conditional imports, dynamic imports, and imported
-attributes are not speculative storage targets. Failed or excluded speculation
-leaves the normal Python import behavior in control.
+The final scope retains ordinary demand imports. Earlier batching and validation
+prototypes are deferred: the fast speculative cache could hide intervening source
+mutations, and tested validation designs did not preserve its speedup. No new
+module-resolution API or authorization surface remains in this change.
 
 ## Matched S3 component comparison
 
 A fresh diagnostic interpreter performed seven alternating pairs of the same 15
 read-only production-storage probes: ten absent objects and five empty prefixes.
 Both arms used the same signing and verified TLS behavior. No serving process or
-workflow source was modified. The benchmarked candidate's AST matches the
-implemented transport, including cross-thread publication and fork-lock reset.
+workflow source was modified. The measured pool-ownership and connection-reuse functions match the retained
+implementation, including cross-thread publication and fork-lock reset.
 
 | Transport | Observations | Median | Range |
 | --- | ---: | ---: | ---: |
@@ -67,14 +65,17 @@ key-dictionary overhead. Source content is not part of these resolver records.
 A further 1,000 reads of retained names added no keys or measured bytes. Actual
 memory depends on names and scopes; these observations demonstrate eviction and
 stable repeated reads, rather than a universal byte total for every installation.
-Pre-upgrade resolver records expire under their original lifetimes and are not
-used by the new versioned cache.
+Pre-upgrade resolver metadata expires under its original lifetime and is not
+used by the new versioned metadata cache. The generation namespace is shared
+across versions so writes invalidate both readers during rolling upgrades.
+Existing generation keys enter the bounded index on use; untouched old keys
+expire under their prior TTL. The byte measurements predate that final namespace
+choice and are historical observations, not a deployment memory guarantee.
 
 ## Verification and workflow replay
 
 Focused Docker tests cover pool ownership, streaming/cancellation, invalidation,
-source-refill races, bounded eviction, scope preservation, static discovery and a
-real worker importing ordinary workspace code. Existing SDK/import consumers,
+source-refill races, bounded eviction, scope preservation, a real worker importing ordinary workspace code. Existing SDK/import consumers,
 permission inventory, DTO/CLI tripwires and API/client static checks are included.
 The merge queue supplies the complete suites; full local backend, Vitest and
 Playwright suites are not claimed.
@@ -92,7 +93,10 @@ paired S3 script/results, cache memory script/results, source snapshots and AST
 comparison, original workflow traces, JUnit reports and quality logs. Private
 workflow inputs and production identities are deliberately not copied here.
 
-### Focused command ledger
+### Earlier Investigation Command Ledger
+
+The following records include batching experiments that were removed from the
+final scope. They describe earlier investigation, not the final verification set.
 
 Commands below ran through `./test.sh` against this worktree's Docker stack:
 
@@ -167,3 +171,12 @@ python3 scripts/check_skill_mirrors.py
 
 All 12 focused tests passed, and the skill mirror check passed. The full local
 unit suite was not repeated; protected CI remains the complete-suite gate.
+
+### Final Scope
+
+Jack authorized proceeding with the recommended narrower scope: bounded shared
+cache, invalidation/source-refill correctness, and S3 pool reuse. Batching and its
+API models, route, client helpers and dedicated tests were removed together.
+The existing on-demand import boundary remains authoritative. Create, update and
+delete before first import are checked against workspace and Solution storage.
+Matched prototype timings are not a whole-workflow performance claim.

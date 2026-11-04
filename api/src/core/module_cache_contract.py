@@ -11,11 +11,11 @@ from typing import NotRequired, TypedDict
 
 MODULE_KEY_PREFIX = "bifrost:module:"
 MODULE_INDEX_KEY = "bifrost:module:index"
-# Versioned prefixes keep pre-bound cache records outside the new bounded
-# indexes. Their existing TTLs drain naturally; every record created by this
-# version is tracked and evictable.
+# Version metadata so pre-bound records drain under their existing TTLs.
+# Preserve the generation namespace: old and new writers must invalidate one
+# another during a rolling upgrade. Existing tokens enter the index on use.
 MODULE_RESOLUTION_KEY_PREFIX = "bifrost:module:resolution:v3:"
-MODULE_RESOLUTION_GENERATION_PREFIX = "bifrost:module:resolution:generation:v2:"
+MODULE_RESOLUTION_GENERATION_PREFIX = "bifrost:module:resolution:generation:"
 MODULE_RESOLUTION_INDEX_KEY = "bifrost:module:resolution:v3:index"
 MODULE_RESOLUTION_GENERATION_INDEX_KEY = "bifrost:module:resolution:generation:v2:index"
 MODULE_RESOLUTION_TTL = 86400

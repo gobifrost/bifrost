@@ -403,9 +403,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # clients can ignore the additive field; the CLI minimum remains unchanged.
     # External capacity models and daily UsageReport are both additive.
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
-    # Bounded module-resolution batch DTOs (2026-11-04) are additive internal
-    # SDK transport models. Existing requests/responses and the CLI floor stay unchanged.
-    "4e002d109344d7e3d6de93acb7f869537f4dddc9cb0abbafcc1cdef3338e6216"
+    "88fba09d40e34dbfbb15f4ad882d12b81ab32255d81dc13524928089254c0bc9"
 )
 
 
