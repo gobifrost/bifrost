@@ -652,7 +652,13 @@ class TestAutonomousAgentExecutor:
         async def system_tool(context, **_arguments):
             nonlocal captured_context
             captured_context = context
-            return "ok"
+            from mcp.types import ImageContent
+            from src.services.mcp_server.tool_result import ToolResult
+
+            return ToolResult(
+                content=[ImageContent(type="image", data="aGVsbG8=", mime_type="image/png")],
+                structured_content={"ok": True},
+            )
 
         mock_agent.knowledge_sources = ["current-agent-kb"]
         executor = AutonomousAgentExecutor(mock_session)
@@ -670,7 +676,7 @@ class TestAutonomousAgentExecutor:
             "src.services.mcp_server.server.get_system_tool_function",
             return_value=system_tool,
         ):
-            await executor._execute_system_tool(
+            result = await executor._execute_system_tool(
                 ToolCallRequest(
                     id="tc1",
                     name="specialist_system_tool",
@@ -689,6 +695,10 @@ class TestAutonomousAgentExecutor:
         assert captured_context.is_provider_org is False
         assert captured_context.accessible_namespaces == ["current-agent-kb"]
         assert captured_context.session is mock_session._mock_session
+
+        payload = json.loads(result)
+        assert payload["structured_content"] == {"ok": True}
+        assert payload["content"][0]["mimeType"] == "image/png"
 
     @pytest.mark.asyncio
     async def test_system_tool_refuses_missing_canonical_caller(

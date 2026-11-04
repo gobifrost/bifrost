@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from mcp.types import Tool
 
 from src.services.mcp_client.catalog_sync import sync_catalog
 
@@ -79,11 +80,11 @@ async def test_sync_catalog_preserves_advertised_output_schema() -> None:
         },
         "$defs": {"result": {"type": "object"}},
     }
-    tool = SimpleNamespace(
+    tool = Tool(
         name="search_records",
         description="Search approved records.",
-        inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
-        outputSchema=output_schema,
+        input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        output_schema=output_schema,
     )
 
     catalog_row = await _sync_tool(tool)
@@ -103,8 +104,8 @@ async def test_sync_catalog_does_not_invent_an_absent_output_schema() -> None:
     tool = SimpleNamespace(
         name="search_records",
         description=None,
-        inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
-        outputSchema=None,
+        input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        output_schema=None,
     )
 
     catalog_row = await _sync_tool(tool)
