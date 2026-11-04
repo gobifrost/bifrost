@@ -439,7 +439,7 @@ export function ExecutionDetails({
 				undefined,
 				undefined,
 				undefined,
-				{ orgId: execution.org_id ?? undefined },
+				{ orgId: execution.org_id ?? null },
 			)) as WorkflowExecutionResponse;
 
 			toast.success(

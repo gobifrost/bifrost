@@ -1,5 +1,4 @@
 import { ExecutionOrganizationSelect } from "@/components/execution/ExecutionOrganizationSelect";
-import type { components } from "@/lib/v1";
 import {
 	PageWorkspace,
 	PageScrollArea,
@@ -27,13 +26,22 @@ export function RunForm() {
 	const [embedClaims] = useState(() => getEmbedTokenClaims());
 	const embedFormId = embedClaims?.form_id;
 	const runtimeFormId = formId || embedFormId;
+	const [selection, setSelection] = useState<{
+		formId?: string;
+		orgId?: string;
+	}>();
+	const orgId =
+		!isEmbed && selection?.formId === runtimeFormId
+			? selection?.orgId
+			: undefined;
+	const [busyFormId, setBusyFormId] = useState<string | null>(null);
 	const {
 		data: form,
 		isLoading,
 		error,
 		isFetching,
 		refetch,
-	} = useFormRuntime(runtimeFormId);
+	} = useFormRuntime(runtimeFormId, orgId);
 	const embedPresentation = parseFormEmbedPresentation(
 		location.pathname,
 		location.search,
@@ -61,6 +69,24 @@ export function RunForm() {
 		localStorage.setItem(DEV_MODE_STORAGE_KEY, String(devMode));
 	}, [devMode]);
 
+	const fixedOrgId =
+		form && "organization_id" in form ? form.organization_id : null;
+	const executionOrgId = fixedOrgId ? undefined : orgId;
+	const organizationPicker = !isEmbed ? (
+		<div className="mx-auto w-full max-w-2xl">
+			<ExecutionOrganizationSelect
+				value={executionOrgId}
+				onChange={(orgId) =>
+					setSelection({ formId: runtimeFormId, orgId })
+				}
+				organizationId={fixedOrgId}
+				disabled={busyFormId === runtimeFormId}
+				resetInputs
+				resourceType="form"
+			/>
+		</div>
+	) : null;
+
 	if (isLoading && !form) {
 		return (
 			<div
@@ -68,6 +94,7 @@ export function RunForm() {
 				aria-label="Loading form"
 				className="mx-auto w-full max-w-2xl space-y-6"
 			>
+				{organizationPicker}
 				<Skeleton className="h-12 w-64 max-w-full" />
 				<Skeleton className="h-96 w-full" />
 			</div>
@@ -77,6 +104,7 @@ export function RunForm() {
 	if (!form) {
 		return (
 			<div className="space-y-6">
+				{organizationPicker}
 				<Alert variant="destructive">
 					<XCircle className="h-4 w-4" />
 					<AlertTitle>
@@ -203,48 +231,22 @@ export function RunForm() {
 			</div>
 
 			<PageScrollArea className="space-y-6">
-				<OrganizationForm
-					key={form.id}
-					form={form}
-					devMode={isPlatformAdmin && devMode}
-					onDevModeChange={isPlatformAdmin ? setDevMode : undefined}
-				/>
+				<div className="space-y-6">
+					{organizationPicker}
+					<FormRenderer
+						key={`${form.id}:${executionOrgId ?? "default"}`}
+						form={form}
+						orgId={executionOrgId}
+						onBusyChange={(busy) =>
+							setBusyFormId(busy ? (runtimeFormId ?? null) : null)
+						}
+						devMode={isPlatformAdmin && devMode}
+						onDevModeChange={
+							isPlatformAdmin ? setDevMode : undefined
+						}
+					/>
+				</div>
 			</PageScrollArea>
 		</PageWorkspace>
-	);
-}
-
-function OrganizationForm({
-	form,
-	devMode,
-	onDevModeChange,
-}: {
-	form: components["schemas"]["FormRuntimeDefinition"];
-	devMode: boolean;
-	onDevModeChange?: (enabled: boolean) => void;
-}) {
-	const [orgId, setOrgId] = useState<string>();
-	const [busy, setBusy] = useState(false);
-	return (
-		<div className="space-y-6">
-			<div className="mx-auto w-full max-w-2xl">
-				<ExecutionOrganizationSelect
-					value={orgId}
-					onChange={setOrgId}
-					organizationId={form.organization_id}
-					disabled={busy}
-					resetInputs
-					resourceType="form"
-				/>
-			</div>
-			<FormRenderer
-				key={orgId ?? "default"}
-				form={form}
-				orgId={orgId}
-				onBusyChange={setBusy}
-				devMode={devMode}
-				onDevModeChange={onDevModeChange}
-			/>
-		</div>
 	);
 }

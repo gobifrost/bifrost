@@ -188,11 +188,16 @@ export function useForm(formId: string | undefined) {
 	);
 }
 
-export function useFormRuntime(formId: string | undefined) {
+export function useFormRuntime(formId: string | undefined, orgId?: string) {
 	return $api.useQuery(
 		"get",
 		"/api/forms/{form_id}/runtime",
-		{ params: { path: { form_id: formId ?? "" } } },
+		{
+			params: {
+				path: { form_id: formId ?? "" },
+				...(orgId ? { query: { org_id: orgId } } : {}),
+			},
+		},
 		{ enabled: !!formId },
 	);
 }

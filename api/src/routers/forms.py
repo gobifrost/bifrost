@@ -47,6 +47,7 @@ from src.models.contracts.forms import (
     FormFieldOptionsRequest,
     FormFieldOptionsResponse,
     FormRuntimeDefinition,
+    AuthenticatedFormRuntimeDefinition,
     FormSubmissionRequest,
     FormSubmissionResponse,
 )
@@ -707,7 +708,7 @@ async def rotate_form_publication_key(
 
 @router.get(
     "/{form_id}/runtime",
-    response_model=FormRuntimeDefinition,
+    response_model=AuthenticatedFormRuntimeDefinition | FormRuntimeDefinition,
     summary="Load a sanitized form runtime definition",
 )
 async def get_form_runtime(
@@ -716,7 +717,11 @@ async def get_form_runtime(
     ctx: Context,
     user: CurrentActiveUser,
     db: DbSession,
-) -> FormRuntimeDefinition:
+    org_id: Annotated[
+        UUID | None,
+        Query(description="Organization in which to load a global form."),
+    ] = None,
+) -> AuthenticatedFormRuntimeDefinition | FormRuntimeDefinition:
     form = (
         await db.execute(
             select(FormORM)
@@ -727,10 +732,15 @@ async def get_form_runtime(
     if form is None or not form.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
 
-    publication = await _authorize_form_runtime(db, ctx, form)
+    publication = await _authorize_form_runtime(
+        db, ctx, form, selected_organization_id=UNSET if org_id is None else org_id,
+    )
+    if ctx.user.embed and org_id is not None:
+        raise HTTPException(status_code=403, detail="Embedded form sessions cannot select an organization")
     await _limit_embed_action(http_request, ctx, "runtime")
 
-    runtime = FormRuntimeDefinition.model_validate(form)
+    runtime_model = FormRuntimeDefinition if ctx.user.embed else AuthenticatedFormRuntimeDefinition
+    runtime = runtime_model.model_validate(form)
     return runtime.model_copy(
         update={
             "captcha_required": bool(

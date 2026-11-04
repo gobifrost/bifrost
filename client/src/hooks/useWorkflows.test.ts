@@ -20,3 +20,18 @@ it("preserves the execution organization when rerunning", async () => {
 		}),
 	});
 });
+
+it("preserves Global scope instead of using the caller's default organization", async () => {
+	post.mockResolvedValue({ data: { execution_id: "global-run" } });
+	await executeWorkflowWithContext(
+		"workflow",
+		{},
+		undefined,
+		undefined,
+		undefined,
+		{ orgId: null },
+	);
+	expect(post).toHaveBeenLastCalledWith("/api/workflows/execute", {
+		body: expect.objectContaining({ org_id: "global" }),
+	});
+});

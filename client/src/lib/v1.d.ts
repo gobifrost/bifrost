@@ -14372,6 +14372,38 @@ export interface components {
             /** Default Sso Provider */
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
         };
+        /**
+         * AuthenticatedFormRuntimeDefinition
+         * @description Execution scope metadata for signed-in callers, excluded from embeds.
+         */
+        AuthenticatedFormRuntimeDefinition: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            form_schema: components["schemas"]["FormRuntimeSchema"];
+            /** Allowed Query Params */
+            allowed_query_params?: string[] | null;
+            /**
+             * Has Startup
+             * @default false
+             */
+            has_startup: boolean;
+            /**
+             * Captcha Required
+             * @default false
+             */
+            captcha_required: boolean;
+            /** Is Active */
+            is_active: boolean;
+            /** Organization Id */
+            organization_id: string | null;
+        };
         /** AuthorizationBaseRole */
         AuthorizationBaseRole: {
             /**
@@ -19767,8 +19799,6 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Organization Id */
-            organization_id?: string | null;
             /** Name */
             name: string;
             /** Description */
@@ -30517,7 +30547,7 @@ export interface components {
             script_name?: string | null;
             /**
              * Org Id
-             * @description Override execution org context within the caller's reach. Requires workflows.execute in the target organization.
+             * @description Override execution org context within the caller's reach; use global for Global scope. Requires workflows.execute in the target organization.
              */
             org_id?: string | null;
             /**
@@ -36037,7 +36067,10 @@ export interface operations {
     };
     get_form_runtime_api_forms__form_id__runtime_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to load a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36052,7 +36085,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FormRuntimeDefinition"];
+                    "application/json": components["schemas"]["AuthenticatedFormRuntimeDefinition"] | components["schemas"]["FormRuntimeDefinition"];
                 };
             };
             /** @description Validation Error */

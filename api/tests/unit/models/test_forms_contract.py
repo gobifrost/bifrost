@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from src.models import (
     CreateFormRequest,
@@ -20,6 +20,7 @@ from src.models.contracts.forms import (
     Form,
     FormCreate,
     FormRuntimeDefinition,
+    AuthenticatedFormRuntimeDefinition,
     FormSubmissionRequest,
     FormField,
     FormUpdate,
@@ -67,20 +68,27 @@ class TestFormConfirmationContract:
 
 
 class TestFormRuntimeDefinition:
-    def test_includes_persisted_organization_scope(self):
+    def test_only_authenticated_runtime_includes_organization_scope(self):
         organization_id = UUID("00000000-0000-0000-0000-000000000123")
+        data = {
+            "id": UUID("00000000-0000-0000-0000-000000000456"),
+            "organization_id": organization_id,
+            "name": "Scoped form",
+            "form_schema": {"fields": []},
+            "is_active": True,
+        }
+        assert AuthenticatedFormRuntimeDefinition.model_validate(data).organization_id == organization_id
+        assert "organization_id" not in FormRuntimeDefinition.model_validate(data).model_dump()
 
-        runtime = FormRuntimeDefinition.model_validate(
-            {
-                "id": UUID("00000000-0000-0000-0000-000000000456"),
-                "organization_id": organization_id,
-                "name": "Scoped form",
-                "form_schema": {"fields": []},
-                "is_active": True,
-            }
+
+    def test_runtime_response_union_keeps_embed_metadata_sanitized(self):
+        runtime = FormRuntimeDefinition(
+            id=UUID("00000000-0000-0000-0000-000000000456"),
+            name="Embedded form", form_schema={"fields": []}, is_active=True,
         )
-
-        assert runtime.organization_id == organization_id
+        response = TypeAdapter(AuthenticatedFormRuntimeDefinition | FormRuntimeDefinition)
+        validated = response.validate_python(runtime)
+        assert "organization_id" not in response.dump_python(validated)
 
 
 class TestFormSchema:

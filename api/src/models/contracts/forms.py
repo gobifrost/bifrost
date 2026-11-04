@@ -523,7 +523,6 @@ class FormRuntimeDefinition(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    organization_id: UUID | None = None
     name: str
     description: str | None = None
     form_schema: FormRuntimeSchema
@@ -565,13 +564,30 @@ class FormRuntimeDefinition(BaseModel):
 
         return {
             "id": data.id,
-            "organization_id": data.organization_id,
             "name": data.name,
             "description": data.description,
             "form_schema": FormRuntimeSchema(fields=fields),
             "allowed_query_params": data.allowed_query_params,
             "has_startup": data.launch_workflow_id is not None,
             "is_active": data.is_active,
+        }
+
+
+class AuthenticatedFormRuntimeDefinition(FormRuntimeDefinition):
+    """Execution scope metadata for signed-in callers, excluded from embeds."""
+
+    organization_id: UUID | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_authenticated_scope(cls, data):
+        if isinstance(data, FormRuntimeDefinition):
+            return data.model_dump()
+        if isinstance(data, dict):
+            return data
+        return {
+            **FormRuntimeDefinition.project_runtime_fields(data),
+            "organization_id": data.organization_id,
         }
 
 

@@ -228,7 +228,7 @@ export async function executeWorkflowWithContext(
 	transient?: boolean,
 	code?: string,
 	scriptName?: string,
-	options?: { orgId?: string; userId?: string },
+	options?: { orgId?: string | null; userId?: string },
 ) {
 	const client = options?.userId
 		? withUserContext(options.userId)
@@ -237,7 +237,9 @@ export async function executeWorkflowWithContext(
 	const { data, error } = await client.POST("/api/workflows/execute", {
 		body: {
 			workflow_id: workflowId ?? null,
-			...(options?.orgId ? { org_id: options.orgId } : {}),
+			...(options?.orgId !== undefined
+				? { org_id: options.orgId ?? "global" }
+				: {}),
 			input_data: parameters,
 			form_id: null,
 			transient: transient ?? false,
