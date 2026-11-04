@@ -79,6 +79,8 @@ export function Login() {
 	const [oauthProviders, setOAuthProviders] = useState<OAuthProvider[]>([]);
 	const [authStatusLoaded, setAuthStatusLoaded] = useState(false);
 	const [autoRedirectToSso, setAutoRedirectToSso] = useState(false);
+	const [passwordLoginEnabled, setPasswordLoginEnabled] = useState(true);
+	const [passkeyLoginEnabled, setPasskeyLoginEnabled] = useState(true);
 	const [defaultSsoProvider, setDefaultSsoProvider] = useState<string | null>(
 		null,
 	);
@@ -86,6 +88,12 @@ export function Login() {
 	// `window` that returns the same value across renders for the lifetime of
 	// the page, so it does not need to live in state.
 	const passkeySupported = useMemo(() => supportsPasskeys(), []);
+	// Under SSO-only enforcement the server refuses these methods for
+	// non-admins; the page de-emphasizes them but stays usable for admins.
+	const passwordHiddenByPolicy = !passwordLoginEnabled;
+	const passkeyHiddenByPolicy = passkeySupported && !passkeyLoginEnabled;
+	const showAdminExpander = passwordHiddenByPolicy || passkeyHiddenByPolicy;
+	const passkeyAllowed = passkeySupported && passkeyLoginEnabled;
 
 	// Redirect path from URL query params (for MCP OAuth) or location state
 	const searchParams = new URLSearchParams(location.search);
@@ -202,6 +210,8 @@ export function Login() {
 				setAutoRedirectToSso(
 					status.auto_redirect_to_sso && !status.needs_setup,
 				);
+				setPasswordLoginEnabled(status.password_login_enabled);
+				setPasskeyLoginEnabled(status.passkey_login_enabled);
 				setDefaultSsoProvider(status.default_sso_provider ?? null);
 			})
 			.catch(() => {
@@ -266,6 +276,7 @@ export function Login() {
 			supported &&
 			authStatusLoaded &&
 			!autoRedirectToSso &&
+			passkeyLoginEnabled &&
 			!authLoading &&
 			!isAuthenticated &&
 			!hasAttempted &&
@@ -284,6 +295,7 @@ export function Login() {
 		authStatusLoaded,
 		autoRedirectToSso,
 		isAuthenticated,
+		passkeyLoginEnabled,
 		step,
 		handlePasskeyLogin,
 		passkeySupported,
@@ -486,8 +498,8 @@ export function Login() {
 
 						{step === "credentials" && (
 							<>
-								{/* Passkey login (if supported) */}
-								{passkeySupported && (
+								{/* Passkey login (if supported and allowed) */}
+								{passkeyAllowed && (
 									<>
 										<Button
 											type="button"
@@ -506,74 +518,180 @@ export function Login() {
 											Sign in with passkey
 										</Button>
 
-										<div className="relative mb-4">
-											<div className="absolute inset-0 flex items-center">
-												<span className="w-full border-t" />
+										{!passwordHiddenByPolicy && (
+											<div className="relative mb-4">
+												<div className="absolute inset-0 flex items-center">
+													<span className="w-full border-t" />
+												</div>
+												<div className="relative flex justify-center text-xs uppercase">
+													<span className="bg-card px-2 text-muted-foreground">
+														Or use email
+													</span>
+												</div>
 											</div>
-											<div className="relative flex justify-center text-xs uppercase">
-												<span className="bg-card px-2 text-muted-foreground">
-													Or use email
-												</span>
-											</div>
-										</div>
+										)}
 									</>
 								)}
 
-								<form
-									onSubmit={handleCredentialsSubmit}
-									className="space-y-4"
-								>
-									<div className="space-y-2">
-										<Label htmlFor="email">Email</Label>
-										<div className="relative">
-											<Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-											<Input
-												id="email"
-												type="email"
-												placeholder="you@example.com"
-												value={email}
-												onChange={(e) =>
-													setEmail(e.target.value)
-												}
-												className="h-11 pl-10"
-												required
-												autoFocus
-											/>
-										</div>
-									</div>
-									<div className="space-y-2">
-										<Label htmlFor="password">
-											Password
-										</Label>
-										<div className="relative">
-											<Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-											<Input
-												id="password"
-												type="password"
-												placeholder="Enter your password"
-												value={password}
-												onChange={(e) =>
-													setPassword(e.target.value)
-												}
-												className="h-11 pl-10"
-												required
-											/>
-										</div>
-									</div>
-									<Button
-										type="submit"
-										className="min-h-11 w-full"
-										disabled={
-											isLoading || !email || !password
-										}
+								{!passwordHiddenByPolicy && (
+									<form
+										onSubmit={handleCredentialsSubmit}
+										className="space-y-4"
 									>
-										{isLoading ? (
-											<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none mr-2" />
-										) : null}
-										Sign In
-									</Button>
-								</form>
+										<div className="space-y-2">
+											<Label htmlFor="email">Email</Label>
+											<div className="relative">
+												<Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+												<Input
+													id="email"
+													type="email"
+													placeholder="you@example.com"
+													value={email}
+													onChange={(e) =>
+														setEmail(e.target.value)
+													}
+													className="h-11 pl-10"
+													required
+													autoFocus
+												/>
+											</div>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="password">
+												Password
+											</Label>
+											<div className="relative">
+												<Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+												<Input
+													id="password"
+													type="password"
+													placeholder="Enter your password"
+													value={password}
+													onChange={(e) =>
+														setPassword(
+															e.target.value,
+														)
+													}
+													className="h-11 pl-10"
+													required
+												/>
+											</div>
+										</div>
+										<Button
+											type="submit"
+											className="min-h-11 w-full"
+											disabled={
+												isLoading || !email || !password
+											}
+										>
+											{isLoading ? (
+												<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none mr-2" />
+											) : null}
+											Sign In
+										</Button>
+									</form>
+								)}
 
+								{showAdminExpander && (
+									<details className="mt-6 rounded-md border border-dashed px-4 py-3">
+										<summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+											Excluded Account Sign-In
+										</summary>
+										<p className="pt-1 text-sm text-muted-foreground">
+											For accounts excluded from the login
+											policy. Other accounts continue with
+											SSO.
+										</p>
+										<div className="space-y-4 pt-4">
+											{passkeyHiddenByPolicy && (
+												<Button
+													type="button"
+													variant="outline"
+													className="min-h-11 w-full"
+													onClick={handlePasskeyLogin}
+													disabled={
+														isLoading ||
+														isPasskeyLoading
+													}
+												>
+													{isPasskeyLoading ? (
+														<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none mr-2" />
+													) : (
+														<Fingerprint className="h-4 w-4 mr-2" />
+													)}
+													Sign in with passkey
+												</Button>
+											)}
+											{passwordHiddenByPolicy && (
+												<form
+													onSubmit={
+														handleCredentialsSubmit
+													}
+													className="space-y-4"
+												>
+													<div className="space-y-2">
+														<Label htmlFor="email">
+															Email
+														</Label>
+														<div className="relative">
+															<Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+															<Input
+																id="email"
+																type="email"
+																placeholder="you@example.com"
+																value={email}
+																onChange={(e) =>
+																	setEmail(
+																		e.target
+																			.value,
+																	)
+																}
+																className="h-11 pl-10"
+																required
+															/>
+														</div>
+													</div>
+													<div className="space-y-2">
+														<Label htmlFor="password">
+															Password
+														</Label>
+														<div className="relative">
+															<Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+															<Input
+																id="password"
+																type="password"
+																placeholder="Enter your password"
+																value={password}
+																onChange={(e) =>
+																	setPassword(
+																		e.target
+																			.value,
+																	)
+																}
+																className="h-11 pl-10"
+																required
+															/>
+														</div>
+													</div>
+													<Button
+														type="submit"
+														className="min-h-11 w-full"
+														disabled={
+															isLoading ||
+															!email ||
+															!password
+														}
+													>
+														{isLoading ? (
+															<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none mr-2" />
+														) : null}
+														Sign In
+													</Button>
+												</form>
+											)}
+										</div>
+									</details>
+								)}
 								{oauthProviders.length > 0 && (
 									<>
 										<div className="relative my-6">
