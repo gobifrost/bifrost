@@ -19,6 +19,37 @@ SOLUTION_A = "12345678-1234-5678-1234-567812345678"
 SOLUTION_B = "87654321-4321-8765-4321-876543218765"
 
 
+async def test_oversized_module_name_resolves_without_allocating_cache_metadata():
+    """Untrusted long names retain resolution behavior without Redis key growth."""
+    from shared.sdk_modules import resolve_module_name
+
+    name = "m" * 513
+    module = {"content": "VALUE = 1", "hash": "digest"}
+    with (
+        patch(f"{SERVICE}.get_module", new_callable=AsyncMock, return_value=module) as get_module,
+        patch(f"{SERVICE}.get_module_resolution_generation", new_callable=AsyncMock) as generation,
+        patch(f"{SERVICE}.get_module_resolution_cache", new_callable=AsyncMock) as cached,
+        patch(f"{SERVICE}.set_module_resolution_cache", new_callable=AsyncMock) as set_cached,
+        patch(f"{SERVICE}._prefix_exists", new_callable=AsyncMock) as prefix,
+    ):
+        result = await resolve_module_name(
+            name, scope=ModuleSourceScope(solution_id=None, global_repo_access=False),
+        )
+
+    assert result == {
+        "kind": "module",
+        "path": f"{name}.py",
+        "storage_path": f"{name}.py",
+        "content": "VALUE = 1",
+        "hash": "digest",
+    }
+    get_module.assert_awaited_once_with(f"{name}.py")
+    generation.assert_not_awaited()
+    cached.assert_not_awaited()
+    set_cached.assert_not_awaited()
+    prefix.assert_not_awaited()
+
+
 @pytest.fixture(autouse=True)
 def resolver_generation():
     with patch(f"{SERVICE}.get_module_resolution_generation", new_callable=AsyncMock, return_value="generation"):
@@ -447,6 +478,9 @@ async def test_storage_errors_propagate_without_caching(failure_point):
     error = RuntimeError("storage unavailable")
     redis = MagicMock()
     redis.get = AsyncMock(return_value=None)
+    redis_conn = AsyncMock()
+    redis_conn.eval.return_value = "generation"
+    redis._get_redis = AsyncMock(return_value=redis_conn)
     with (
         patch(f"{SERVICE}.get_module_resolution_cache", new_callable=AsyncMock, return_value=None),
         patch(f"{SERVICE}.set_module_resolution_cache", new_callable=AsyncMock) as cache,
@@ -456,8 +490,8 @@ async def test_storage_errors_propagate_without_caching(failure_point):
         patch(f"{SERVICE}._prefix_exists", new_callable=AsyncMock, side_effect=error) as prefix,
     ):
         if failure_point == "prefix":
-            from botocore.exceptions import ClientError
-            read.side_effect = ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+            from src.core.s3_transport import S3NoSuchKey
+            read.side_effect = S3NoSuchKey("NoSuchKey", 404)
         with pytest.raises(RuntimeError, match="storage unavailable"):
             await resolve_module_name("modules.missing", scope=ModuleSourceScope(solution_id=None, global_repo_access=False))
         cache.assert_not_awaited()
