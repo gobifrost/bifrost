@@ -777,10 +777,14 @@ async def run_launcher(
     on_stop: Callable[[], None] | None = None,
 ) -> int:
     """Keep optional private networking alive through physical worker drain."""
+    from src.core.s3_transport import close_shared_s3_client
     from src.worker.network import worker_network
 
-    async with worker_network():
-        return await _run_launcher(on_ready=on_ready, on_stop=on_stop)
+    try:
+        async with worker_network():
+            return await _run_launcher(on_ready=on_ready, on_stop=on_stop)
+    finally:
+        await close_shared_s3_client()
 
 
 async def _run_launcher(
