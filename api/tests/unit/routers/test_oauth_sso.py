@@ -64,6 +64,7 @@ async def _callback(
     provision_result: SimpleNamespace | None = None,
     reject_validation: bool = False,
     get_user_info_side_effect: object | None = None,
+    photo_side_effect: object | None = None,
 ):
     state = "callback-state"
     redis = _Redis(state)
@@ -85,8 +86,10 @@ async def _callback(
         "get_user_info",
         AsyncMock(return_value=user_info, side_effect=get_user_info_side_effect),
     )
+    photo = AsyncMock(side_effect=photo_side_effect)
     monkeypatch.setattr(OAuthService, "find_user_by_oauth", lookup)
     monkeypatch.setattr(OAuthService, "link_oauth_account", AsyncMock())
+    monkeypatch.setattr(OAuthService, "apply_microsoft_profile_photo", photo)
     monkeypatch.setattr(oauth_sso, "ensure_user_provisioned", provision)
     monkeypatch.setattr(
         oauth_sso,
@@ -107,7 +110,7 @@ async def _callback(
             json={"provider": user_info.provider, "code": "code", "state": state},
         )
 
-    return response, lookup, provision
+    return response, lookup, provision, photo
 
 
 @pytest.mark.asyncio
@@ -141,7 +144,7 @@ async def test_existing_stable_identity_authenticates_despite_current_unlinkable
 ):
     established_user = _user()
 
-    response, lookup, provision = await _callback(
+    response, lookup, provision, _photo = await _callback(
         monkeypatch,
         user_info=user_info,
         tokens=tokens,
@@ -164,7 +167,7 @@ async def test_new_microsoft_link_uses_upn_and_never_graph_mail(monkeypatch):
     )
     provisioned_user = _user("attacker@clientco.com")
 
-    response, _, provision = await _callback(
+    response, _, provision, photo = await _callback(
         monkeypatch,
         user_info=user_info,
         tokens=OAuthTokens("access", id_token=_id_token("tenant")),
@@ -174,6 +177,9 @@ async def test_new_microsoft_link_uses_upn_and_never_graph_mail(monkeypatch):
 
     assert response.status_code == 200
     assert provision.await_args.kwargs["email"] == "attacker@clientco.com"
+    saved_user, access_token = photo.await_args.args
+    assert saved_user is provisioned_user
+    assert access_token == "access"
 
 
 @pytest.mark.asyncio
@@ -186,7 +192,7 @@ async def test_new_microsoft_link_uses_upn_and_never_graph_mail(monkeypatch):
     ],
 )
 async def test_new_link_with_untrusted_email_never_provisions(monkeypatch, user_info):
-    response, lookup, provision = await _callback(
+    response, lookup, provision, photo = await _callback(
         monkeypatch,
         user_info=user_info,
         tokens=OAuthTokens("access"),
@@ -196,13 +202,14 @@ async def test_new_link_with_untrusted_email_never_provisions(monkeypatch, user_
     assert response.status_code == 400
     lookup.assert_awaited_once_with(provider=user_info.provider, provider_user_id=user_info.provider_user_id)
     provision.assert_not_awaited()
+    photo.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_missing_email_only_blocks_a_new_link(monkeypatch):
     user_info = OAuthUserInfo("oidc", "new-id", "", raw_data={})
 
-    response, lookup, provision = await _callback(
+    response, lookup, provision, _photo = await _callback(
         monkeypatch,
         user_info=user_info,
         tokens=OAuthTokens("access"),
@@ -227,7 +234,7 @@ async def test_missing_stable_id_cannot_reach_lookup_or_provision(monkeypatch, p
     async def parse_provider_response(*_args, **_kwargs):
         return OAuthService(MagicMock())._parse_user_info(provider, claims)
 
-    response, lookup, provision = await _callback(
+    response, lookup, provision, _photo = await _callback(
         monkeypatch,
         user_info=OAuthUserInfo(provider, "unused", "unused@example.com"),
         tokens=OAuthTokens("access"),
@@ -238,3 +245,52 @@ async def test_missing_stable_id_cannot_reach_lookup_or_provision(monkeypatch, p
     assert response.status_code == 400
     lookup.assert_not_awaited()
     provision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_microsoft_sign_in_loads_the_profile_photo(monkeypatch):
+    user = _user()
+
+    response, _, _, photo = await _callback(
+        monkeypatch,
+        user_info=OAuthUserInfo("microsoft", "microsoft-id", "kim@clientco.com"),
+        tokens=OAuthTokens("graph-access-token", id_token=_id_token("tenant")),
+        existing_user=user,
+    )
+
+    assert response.status_code == 200
+    saved_user, access_token = photo.await_args.args
+    assert saved_user is user
+    assert access_token == "graph-access-token"
+
+
+@pytest.mark.asyncio
+async def test_profile_photo_errors_do_not_fail_microsoft_sign_in(monkeypatch):
+    response, _, _, photo = await _callback(
+        monkeypatch,
+        user_info=OAuthUserInfo("microsoft", "microsoft-id", "kim@clientco.com"),
+        tokens=OAuthTokens("graph-access-token", id_token=_id_token("tenant")),
+        existing_user=_user(),
+        photo_side_effect=RuntimeError("graph down"),
+    )
+
+    assert response.status_code == 200
+    photo.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_google_sign_in_does_not_fetch_a_microsoft_photo(monkeypatch):
+    response, _, _, photo = await _callback(
+        monkeypatch,
+        user_info=OAuthUserInfo(
+            "google",
+            "google-id",
+            "kim@clientco.com",
+            raw_data={"email_verified": True, "hd": "clientco.com"},
+        ),
+        tokens=OAuthTokens("access"),
+        existing_user=_user(),
+    )
+
+    assert response.status_code == 200
+    photo.assert_not_awaited()
