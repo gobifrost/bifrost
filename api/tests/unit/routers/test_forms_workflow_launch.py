@@ -145,7 +145,10 @@ async def test_upload_uses_the_selected_execution_organization(monkeypatch):
     from shared import file_paths
 
     storage = SimpleNamespace(
-        generate_presigned_upload_url=AsyncMock(return_value="https://uploads.example/file")
+        generate_presigned_upload_url=AsyncMock(return_value="https://uploads.example/file"),
+        presigned_upload_headers=MagicMock(return_value={
+            "Content-Type": "text/plain", "x-ms-blob-type": "BlockBlob",
+        }),
     )
     monkeypatch.setattr(file_storage, "FileStorageService", MagicMock(return_value=storage))
     captured: dict[str, str] = {}
@@ -156,7 +159,7 @@ async def test_upload_uses_the_selected_execution_organization(monkeypatch):
 
     monkeypatch.setattr(file_paths, "resolve_s3_key", resolve_s3_key)
 
-    await forms.generate_upload_url(
+    response = await forms.generate_upload_url(
         form.id,
         SimpleNamespace(),
         FileUploadRequest(
@@ -173,6 +176,10 @@ async def test_upload_uses_the_selected_execution_organization(monkeypatch):
     )
     assert captured["location"] == "uploads"
     assert captured["scope"] == str(selected_org)
+    storage.presigned_upload_headers.assert_called_once_with("text/plain")
+    assert response.headers == {
+        "Content-Type": "text/plain", "x-ms-blob-type": "BlockBlob",
+    }
 
 
 @pytest.mark.asyncio

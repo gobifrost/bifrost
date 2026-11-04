@@ -122,4 +122,3 @@ async def test_process_death_recovers_only_the_acknowledged_pointer(backend, tmp
     finally:
         for stored_key in await keys() - before:
             await client.delete_object(Bucket=settings.storage_bucket, Key=stored_key)
-

@@ -74,4 +74,3 @@ async def test_checkpoint_pack_and_many_files_round_trip(backend, tmp_path, monk
     finally:
         for key in await keys() - before:
             await client.delete_object(Bucket=settings.storage_bucket, Key=key)
-
