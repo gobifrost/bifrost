@@ -130,17 +130,17 @@ test("compact exclusion pickers and detail settings share the protected login po
 			exact: true,
 		});
 		const orgToggle = dialog.getByRole("switch", {
-			name: "Enforce Login Policy",
+			name: "Exclude From SSO Enforcement",
 			exact: true,
 		});
-		await expect(orgToggle).not.toBeChecked();
+		await expect(orgToggle).toBeChecked();
 		await orgToggle.scrollIntoViewIfNeeded();
 		await capture("organization-sign-in-desktop");
 		await page.setViewportSize({ width: 390, height: 844 });
 		await orgToggle.scrollIntoViewIfNeeded();
 		await capture("organization-sign-in-mobile");
 		await orgToggle.click();
-		await expect(orgToggle).toBeChecked();
+		await expect(orgToggle).not.toBeChecked();
 		await expect(orgToggle).toBeEnabled();
 		await dialog
 			.getByRole("button", { name: "Cancel", exact: true })

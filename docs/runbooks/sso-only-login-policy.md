@@ -1,9 +1,8 @@
 # SSO-Only Login Policy
 
-Require SSO for everyone except platform admins. When a method is turned off,
-the server refuses it for non-admins; the login page collapses it into a
-visible **Platform Admin Sign-In** expander. There is no secret URL and no
-separate recovery page — the admin exemption is the recovery path.
+Excluded users and organizations can use password and passkey sign-in. Keep at
+least one active platform admin excluded for recovery. Restricted sign-in methods
+remain available through **Excluded Account Sign-In** on the normal login page.
 
 ## Enabling SSO-only
 
@@ -13,11 +12,14 @@ separate recovery page — the admin exemption is the recovery path.
 2. In the **Login Policy** card, turn off **Password Sign-In** and/or
    **Passkey Sign-In**, then **Save Login Policy**.
 3. Verify in a private window: SSO buttons stay primary, the other methods
-   sit behind the admin expander.
+   sit behind **Excluded Account Sign-In**.
 
 Notes:
 
-- Platform admins are always exempt and sign in normally.
+- **Exclude From SSO Enforcement** has the same meaning on the user and
+  organization screens: on means excluded. The central **SSO Exclusions**
+  selections use the same policy. At least one active platform admin must remain
+  excluded.
 - Enabling the policy does **not** revoke live sessions. Password-derived
   sessions keep working until they expire. To force re-authentication,
   each user can sign out everywhere via `POST /auth/revoke-all`, or an
@@ -27,7 +29,7 @@ Notes:
 
 If the identity provider is unreachable:
 
-1. A platform admin signs in through the **Platform Admin Sign-In**
+1. An excluded platform admin signs in through **Excluded Account Sign-In**
    expander with a password or passkey. No special URL or flag is needed.
 2. Fix or disable the broken provider under **Settings → Authentication**.
    If SSO cannot be restored quickly, re-enable password sign-in in the

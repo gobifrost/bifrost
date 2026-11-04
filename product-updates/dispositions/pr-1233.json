@@ -1,1 +1,20 @@
-{"classification":"other","entry_ids":[],"key":"pr:1233","review":{"evidence":["https://github.com/gobifrost/bifrost/pull/1233","Implements gobifrost/bifrost#567 per the maintainer direction (platform-admin exemption, no hidden break-glass page). Server-side 403 gates verified by api/tests/e2e/api/test_sso_only_enforcement.py (11 tests); Login gating and settings card covered by vitest and Playwright e2e/sso-only-login.unauth.spec.ts.","Product review: awaiting Jack's approval of the summary."],"status":"draft"},"summary":"Settings Authentication gains a Login Policy card to switch off password or passkey sign-in for non-admins, enforcing IdP-only login with platform admins exempt as the recovery path.","category":"hardening"}
+{
+  "key": "pr:1233",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Optional authentication-policy hardening; sign-in defaults remain unchanged and no customer upgrade action or security disclosure is required.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1233",
+      "https://github.com/gobifrost/bifrost/issues/567",
+      "Verified original contribution by MTG-Thomas from MTG-Thomas/bifrost-upstream into gobifrost/bifrost; original commits remain in the history.",
+      "Maintainer-scoped copy alignment and protected-merge authorization verified privately on 2026-11-04. Announcement omitted under the security-hardening visibility policy; no customer-facing release prose approved or added.",
+      "Security review: independent Codex sensitive-auth review found no material issues. Password/passkey enforcement uses resolved accounts; challenges do not disclose account membership; shared role locking protects the last excluded active human admin and serializes provider deletion. No published advisory, CVE or incident is claimed.",
+      "Final merged-main candidate: 167 focused backend tests passed, including password/passkey enforcement, shared exclusions and final-admin guards, OAuth identity/photo consumers, CLI/DTO contracts and live API boundaries. Client type/lint and 44 focused control/consumer tests passed. Independent sensitive-auth review found no material issues; final live UI verification recorded with follow-through artifacts. Final desktop/mobile browser journey passed with both controls using the same exclusion wording and on-means-excluded semantics."
+    ]
+  },
+  "security_review": {
+    "status": "not_required"
+  }
+}

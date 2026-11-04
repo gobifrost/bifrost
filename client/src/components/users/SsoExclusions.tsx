@@ -49,17 +49,14 @@ function PolicyToggle({
 		(kind === "user" &&
 			preference?.excluded_user_ids == null &&
 			adminDefault);
-	const label =
-		kind === "user"
-			? "Exclude From SSO Enforcement"
-			: "Enforce Login Policy";
+	const label = "Exclude From SSO Enforcement";
 	return (
 		<div className="space-y-2 rounded-md border p-4">
 			<div className="flex items-center justify-between gap-4">
 				<Label htmlFor={`sso-${kind}-${id}`}>{label}</Label>
 				<Switch
 					id={`sso-${kind}-${id}`}
-					checked={kind === "user" ? excluded : !excluded}
+					checked={excluded}
 					disabled={
 						disabled ||
 						!preference ||
@@ -70,7 +67,7 @@ function PolicyToggle({
 					onCheckedChange={async (checked) => {
 						if (!preference) return;
 						setError(null);
-						const exclude = kind === "user" ? checked : !checked;
+						const exclude = checked;
 						try {
 							await update.mutateAsync({
 								body: {
@@ -92,9 +89,8 @@ function PolicyToggle({
 				/>
 			</div>
 			<p className="text-sm text-muted-foreground">
-				{kind === "user"
-					? "Excluded accounts can use password and passkey sign-in. Changes apply immediately."
-					: "Apply the platform login policy to this organization. Turn off to exclude its accounts. Changes apply immediately."}
+				Excluded accounts can use password and passkey sign-in. Changes
+				apply immediately.
 			</p>
 			{update.isPending && (
 				<p role="status" className="text-sm text-muted-foreground">
@@ -120,7 +116,7 @@ export function UserSsoExclusion({ user }: { user: User }) {
 	);
 }
 
-export function OrganizationSsoEnforcement({
+export function OrganizationSsoExclusion({
 	organizationId,
 	disabled,
 }: {

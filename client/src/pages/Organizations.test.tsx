@@ -128,7 +128,7 @@ vi.mock("@/hooks/useOrganizations", () => ({
 }));
 
 vi.mock("@/components/users/SsoExclusions", () => ({
-	OrganizationSsoEnforcement: () => (
+	OrganizationSsoExclusion: () => (
 		<div>Shared Organization Sign-In Control</div>
 	),
 }));

@@ -3,7 +3,7 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 import {
 	SsoExclusions,
 	UserSsoExclusion,
-	OrganizationSsoEnforcement,
+	OrganizationSsoExclusion,
 } from "./SsoExclusions";
 import type { components } from "@/lib/v1";
 
@@ -121,15 +121,17 @@ describe("SSO exclusions", () => {
 			"active platform admin",
 		);
 	});
-	it("organization detail reads the same exclusion and preserves user exclusions", async () => {
+	it("organization detail uses the same exclusion wording and selected meaning", async () => {
 		fixture.preference.excluded_user_ids = ["recovery-admin"];
 		fixture.preference.excluded_organization_ids = ["org"];
 		const { user } = renderWithProviders(
-			<OrganizationSsoEnforcement organizationId="org" />,
+			<OrganizationSsoExclusion organizationId="org" />,
 		);
 		expect(
-			screen.getByRole("switch", { name: "Enforce Login Policy" }),
-		).not.toBeChecked();
+			screen.getByRole("switch", {
+				name: "Exclude From SSO Enforcement",
+			}),
+		).toBeChecked();
 		await user.click(screen.getByRole("switch"));
 		await waitFor(() =>
 			expect(fixture.update).toHaveBeenCalledWith({
@@ -163,5 +165,29 @@ describe("SSO exclusions", () => {
 		expect(
 			screen.getByRole("combobox", { name: "Excluded Users" }),
 		).toHaveTextContent("1 selected");
+	});
+	it("turning on the organization exclusion adds it without changing user exclusions", async () => {
+		fixture.preference.excluded_user_ids = ["recovery-admin"];
+		const { user } = renderWithProviders(
+			<OrganizationSsoExclusion organizationId="org" />,
+		);
+		const toggle = screen.getByRole("switch", {
+			name: "Exclude From SSO Enforcement",
+		});
+		expect(toggle).not.toBeChecked();
+		expect(
+			screen.getByText(
+				"Excluded accounts can use password and passkey sign-in. Changes apply immediately.",
+			),
+		).toBeVisible();
+		await user.click(toggle);
+		await waitFor(() =>
+			expect(fixture.update).toHaveBeenCalledWith({
+				body: expect.objectContaining({
+					excluded_user_ids: ["recovery-admin"],
+					excluded_organization_ids: ["org"],
+				}),
+			}),
+		);
 	});
 });

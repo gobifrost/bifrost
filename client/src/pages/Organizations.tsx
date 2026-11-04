@@ -1,4 +1,4 @@
-import { OrganizationSsoEnforcement } from "@/components/users/SsoExclusions";
+import { OrganizationSsoExclusion } from "@/components/users/SsoExclusions";
 import {
 	useEffect,
 	useMemo,
@@ -1046,7 +1046,7 @@ export function Organizations() {
 											<h3 className="font-medium">
 												Sign-In Settings
 											</h3>
-											<OrganizationSsoEnforcement
+											<OrganizationSsoExclusion
 												organizationId={selectedOrg.id}
 												disabled={
 													updateMutation.isPending
