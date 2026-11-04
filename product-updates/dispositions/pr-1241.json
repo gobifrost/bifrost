@@ -1,0 +1,16 @@
+{
+  "key": "pr:1241",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Keep unpushed Git changes available when jobs move between executors.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1241",
+      "Source contribution by MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream; functional head 770591ad0f1010073acf72b95289b7717535545a; depends on S3 conditional-write prerequisite PR 1240.",
+      "Codex reviewed this routine-fix wording under Thomas Bray's explicit publication authorization. This is contributor editorial classification, not maintainer approval, security approval or merge authorization.",
+      "Exact functional source passed 122 focused unit/harness tests, full API Ruff/Pyright, and 16 real-S3 handoff/conflict/cleanup/overlap/freshness tests. Hosted checks and normal sensitive-path maintainer review remain separate requirements."
+    ]
+  }
+}
