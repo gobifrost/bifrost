@@ -53,11 +53,17 @@ class ToolResult(BaseModel):
 # ==================== AGENT MODELS ====================
 
 
+#: Max characters for an agent system prompt. Shared by agent CRUD and the
+#: tuning dry-run/apply DTOs so a prompt that saves on the agent also passes
+#: dry-run validation (previously dry-run capped at 20k vs 50k here).
+AGENT_PROMPT_MAX_LENGTH = 50000
+
+
 class AgentCreate(BaseModel):
     """Request model for creating an agent."""
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
-    system_prompt: str = Field(..., min_length=1, max_length=50000)
+    system_prompt: str = Field(..., min_length=1, max_length=AGENT_PROMPT_MAX_LENGTH)
     channels: list[AgentChannel] = Field(default_factory=lambda: [AgentChannel.CHAT])
     access_level: AgentAccessLevel = Field(default=AgentAccessLevel.ROLE_BASED)
     organization_id: UUID | None = Field(
@@ -86,7 +92,7 @@ class AgentUpdate(BaseModel):
     """Request model for updating an agent."""
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
-    system_prompt: str | None = Field(default=None, min_length=1, max_length=50000)
+    system_prompt: str | None = Field(default=None, min_length=1, max_length=AGENT_PROMPT_MAX_LENGTH)
     channels: list[AgentChannel] | None = None
     access_level: AgentAccessLevel | None = None
     organization_id: UUID | None = Field(

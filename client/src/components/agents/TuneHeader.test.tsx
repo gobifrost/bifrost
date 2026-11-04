@@ -42,20 +42,21 @@ describe("TuneHeader", () => {
 		).toBeInTheDocument();
 	});
 
-	it("renders the 4 stat cards with expected values", () => {
+	it("keeps statistics in a compact inline strip", () => {
 		renderHeader();
-		expect(screen.getByText("Flagged runs")).toBeInTheDocument();
-		expect(screen.getByText("2")).toBeInTheDocument();
-		expect(screen.getByText("Runs (7d)")).toBeInTheDocument();
-		expect(screen.getByText("47")).toBeInTheDocument();
-		expect(screen.getByText("Success rate")).toBeInTheDocument();
-		expect(screen.getByText("92%")).toBeInTheDocument();
-		expect(screen.getByText("Last run")).toBeInTheDocument();
+		expect(screen.getByLabelText("Agent Statistics")).toHaveTextContent(
+			"2 Flagged Runs",
+		);
+		expect(screen.getByLabelText("Agent Statistics")).toHaveTextContent(
+			"47",
+		);
+		expect(screen.getByLabelText("Agent Statistics")).toHaveTextContent(
+			"92%",
+		);
 	});
-
-	it("renders skeletons for the stat strip while stats are loading", () => {
+	it("shows an inline loading state for statistics", () => {
 		renderHeader({ stats: null, statsLoading: true });
-		expect(screen.getAllByTestId("stat-skeleton")).toHaveLength(4);
+		expect(screen.getByTestId("stat-skeleton")).toBeInTheDocument();
 	});
 
 	it("renders the Review flagged runs link next to the breadcrumb", () => {

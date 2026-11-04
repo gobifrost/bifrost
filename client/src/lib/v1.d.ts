@@ -17142,6 +17142,11 @@ export interface components {
             reasoning: string;
             /** Confidence */
             confidence: number;
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
         };
         /**
          * DryRunRequest
@@ -17169,6 +17174,11 @@ export interface components {
             alternative_action?: string | null;
             /** Confidence */
             confidence: number;
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
         };
         /** DryRunTurn */
         DryRunTurn: {
@@ -17187,6 +17197,11 @@ export interface components {
              * @enum {string}
              */
             predicted: "up" | "down";
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
             /**
              * At
              * Format: date-time
