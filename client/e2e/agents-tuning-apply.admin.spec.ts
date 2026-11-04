@@ -14,7 +14,7 @@ import type { Page } from "./fixtures/api-fixture";
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
 const ORIGINAL_PROMPT = `Original tuning prompt ${UNIQUE}`;
 const PROPOSED_PROMPT = `Proposed tuning prompt ${UNIQUE}`;
-const FINAL_PROMPT = `Final applied tuning prompt ${UNIQUE}`;
+const FINAL_PROMPT = `Ask a clarifying question before routing.\n`.repeat(750);
 
 type Agent = { id: string; name: string; system_prompt: string };
 
@@ -164,6 +164,7 @@ test.describe("agent tuning apply acceptance", () => {
 		page,
 		api,
 	}) => {
+		await page.setViewportSize({ width: 1440, height: 1100 });
 		const agent = await createAgent(api);
 		try {
 			await routeDeterministicTuningSetup(page, agent);
@@ -179,6 +180,63 @@ test.describe("agent tuning apply acceptance", () => {
 			const promptEditor = page.getByLabel("Proposed prompt (editable)");
 			await expect(promptEditor).toHaveValue(PROPOSED_PROMPT);
 			await promptEditor.fill(FINAL_PROMPT);
+			await expect(promptEditor).toHaveValue(FINAL_PROMPT);
+			await expect(promptEditor).toHaveAttribute("maxlength", "50000");
+			await expect(
+				page.getByText(
+					`${FINAL_PROMPT.length.toLocaleString()} / 50,000 characters`,
+					{ exact: true },
+				),
+			).toBeVisible();
+			expect(
+				(await promptEditor.boundingBox())!.height,
+			).toBeLessThanOrEqual(384);
+			await page
+				.getByText("Proposed prompt (editable)", { exact: true })
+				.scrollIntoViewIfNeeded();
+			await page.screenshot({
+				path: "playwright-results/1223-long-prompt.png",
+				fullPage: true,
+			});
+			await page.route(
+				`**/api/agents/${agent.id}/tuning-session/dry-run`,
+				async (route) => {
+					expect(route.request().postDataJSON().proposed_prompt).toBe(
+						FINAL_PROMPT,
+					);
+					await route.fulfill({
+						json: {
+							results: [
+								{
+									run_id: flaggedRun(agent).id,
+									would_still_decide_same: false,
+									evaluation_failed: true,
+									reasoning:
+										"Unable to evaluate (model returned invalid JSON)",
+									confidence: 0,
+								},
+							],
+						},
+					});
+				},
+			);
+			await page.getByRole("button", { name: /run dry-run/i }).click();
+			await expect(
+				page.getByText("Evaluation Failed", { exact: true }),
+			).toBeVisible();
+			await expect(
+				page.getByText(/0 of 0 evaluated runs would change behavior/),
+			).toHaveText(/1 evaluation failed/);
+			await expect(
+				page.getByText("Would change", { exact: true }),
+			).toHaveCount(0);
+			await page
+				.getByRole("heading", { name: "Dry-run results", exact: true })
+				.scrollIntoViewIfNeeded();
+			await page.screenshot({
+				path: "playwright-results/1223-evaluation-failed.png",
+				fullPage: true,
+			});
 
 			const applied = page.waitForResponse(
 				(response) =>

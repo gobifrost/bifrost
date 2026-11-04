@@ -13,6 +13,7 @@ confused with the agent's own reasoning.
 """
 import json
 import logging
+import math
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -113,6 +114,7 @@ def parse_evaluator_output(content: str | None) -> DryRunResult:
         or (alt is not None and not isinstance(alt, str))
         or isinstance(conf, bool)
         or not isinstance(conf, (int, float))
+        or not math.isfinite(conf)
     ):
         return _evaluation_failure(
             "Unable to evaluate (model returned a malformed verdict)"

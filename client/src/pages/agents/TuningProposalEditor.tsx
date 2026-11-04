@@ -1,3 +1,4 @@
+import { AGENT_PROMPT_MAX_LENGTH } from "@/lib/agent-prompt";
 import { TuningActionError } from "./TuningActionError";
 import { useId } from "react";
 import { Check, Loader2, X } from "lucide-react";
@@ -43,9 +44,13 @@ export function TuningProposalEditor({
 					disabled={busy}
 					onChange={(event) => onChange(event.target.value)}
 					rows={12}
-					maxLength={20000}
-					className="min-h-72 resize-y rounded-none border-0 p-4 font-mono text-base sm:text-sm [field-sizing:fixed] focus-visible:ring-0"
+					maxLength={AGENT_PROMPT_MAX_LENGTH}
+					className="min-h-72 max-h-96 overflow-y-auto resize-y rounded-none border-0 p-4 font-mono text-base sm:text-sm [field-sizing:fixed] focus-visible:ring-0"
 				/>
+				<p className="border-t px-4 py-2 text-xs text-muted-foreground">
+					{edits.length.toLocaleString()} /{" "}
+					{AGENT_PROMPT_MAX_LENGTH.toLocaleString()} characters
+				</p>
 			</div>
 			{summary && (
 				<p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">

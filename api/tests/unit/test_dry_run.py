@@ -19,7 +19,8 @@ from src.models.contracts.agent_tuning import (
     ConsolidatedDryRunResponse,
     DryRunPerRun,
 )
-from src.models.contracts.agents import AGENT_PROMPT_MAX_LENGTH
+from src.models.contracts.agents import AGENT_PROMPT_MAX_LENGTH, AgentCreate, AgentUpdate
+from src.models.contracts.agent_run_flag_conversations import DryRunTurn
 
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
@@ -245,6 +246,9 @@ def test_parse_evaluator_output_accepts_trailing_prose():
         '{"would_still_decide_same": true, "reasoning": "r", '
         + '"alternative_action": 5, "confidence": 0.5}',
         "[1, 2, 3]",
+        '{"would_still_decide_same": true, "reasoning": "r", "confidence": NaN}',
+        '{"would_still_decide_same": true, "reasoning": "r", "confidence": Infinity}',
+
     ],
 )
 def test_parse_evaluator_output_failures_are_explicit(bad):
@@ -261,6 +265,8 @@ def test_parse_evaluator_output_failures_are_explicit(bad):
 def test_prompt_dtos_share_platform_cap():
     """All prompt DTOs accept >20k and reject above the 50k platform cap."""
     assert AGENT_PROMPT_MAX_LENGTH == 50000
+    assert AgentCreate(name="Long prompt", system_prompt="x" * AGENT_PROMPT_MAX_LENGTH)
+    assert AgentUpdate(system_prompt="x" * AGENT_PROMPT_MAX_LENGTH)
     long_prompt = "x" * 25000
     assert DryRunRequest(proposed_prompt=long_prompt).proposed_prompt == long_prompt
     assert (
@@ -294,3 +300,8 @@ def test_dry_run_responses_carry_evaluation_failed():
         evaluation_failed=True,
     )
     assert ConsolidatedDryRunResponse(results=[per]).results[0].evaluation_failed is True
+
+
+def test_individual_review_turn_preserves_evaluation_failure():
+    turn = DryRunTurn(before="Old answer", after="Unable to evaluate", predicted="down", evaluation_failed=True)
+    assert DryRunTurn.model_validate(turn.model_dump()).evaluation_failed is True
