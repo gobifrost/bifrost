@@ -18,11 +18,10 @@ from src.core.security import create_access_token
 from src.services.mcp_server.auth import (
     BifrostAuthProvider,
     create_bifrost_auth_provider,
-    _mcp_auth_code_key,
-    _mcp_client_key,
-    _mcp_state_key,
 )
 
+
+from shared.mcp_oauth import _mcp_auth_code_key, _mcp_state_key
 
 # ==================== Fixtures ====================
 
@@ -210,11 +209,6 @@ class TestRedisKeys:
         assert prefixed
         assert "test-code-123" not in key
         assert key == again
-
-    def test_mcp_client_key(self):
-        """Should generate correct client key."""
-        key = _mcp_client_key("client-id-456")
-        assert key == "bifrost:mcp:client:client-id-456"
 
     def test_mcp_state_key(self):
         """Should generate correct state key."""

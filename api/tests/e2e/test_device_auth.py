@@ -10,20 +10,26 @@ import jwt
 import time
 
 
+@pytest.fixture(autouse=True)
+def fresh_browser_credentials(org1_user, human_minter):
+    """Approval needs the matching live cookie as well as the bearer token."""
+    human_minter(org1_user)
+
+
 @pytest.mark.e2e
 def test_denied_device_login_is_final(e2e_client: httpx.Client, org1_user):
     code = e2e_client.post("/auth/device/code").json()
     decision = e2e_client.post(
         "/auth/device/deny",
         json={"user_code": code["user_code"]},
-        headers=org1_user.headers,
+        headers=browser_headers(org1_user),
     )
     assert decision.status_code == 200
     # A second browser tab cannot reverse the first decision.
     repeated = e2e_client.post(
         "/auth/device/authorize",
         json={"user_code": code["user_code"]},
-        headers=org1_user.headers,
+        headers=browser_headers(org1_user),
     )
     assert repeated.status_code == 409
     token = e2e_client.post("/auth/device/token", json={"device_code": code["device_code"]})
@@ -73,7 +79,7 @@ def test_device_flow_complete_success(
     response = e2e_client.post(
         "/auth/device/authorize",
         json={"user_code": user_code},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 200
     auth_data = response.json()
@@ -81,7 +87,7 @@ def test_device_flow_complete_success(
     repeated = e2e_client.post(
         "/auth/device/deny",
         json={"user_code": user_code},
-        headers=org1_user.headers,
+        headers=browser_headers(org1_user),
     )
     assert repeated.status_code == 409
 
@@ -144,7 +150,7 @@ def test_device_flow_invalid_user_code(
     response = e2e_client.post(
         "/auth/device/authorize",
         json={"user_code": "INVALID-CODE"},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 404
     data = response.json()
@@ -171,7 +177,7 @@ def test_device_flow_one_time_use(
     response = e2e_client.post(
         "/auth/device/authorize",
         json={"user_code": user_code},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 200
 
@@ -264,7 +270,7 @@ def test_device_flow_refresh_token_works(
     response = private_client.post(
         "/auth/device/authorize",
         json={"user_code": user_code},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 200
 
@@ -293,3 +299,7 @@ def test_device_flow_refresh_token_works(
         headers={"Authorization": f"Bearer {new_tokens['access_token']}"}
     )
     assert response.status_code == 200
+
+
+def browser_headers(user):
+    return {**user.headers, "Cookie": f"refresh_token={user.refresh_token}"}

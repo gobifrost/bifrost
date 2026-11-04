@@ -631,6 +631,8 @@
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
 | GET | `/api/workflows/{workflow_id}/run-identities` |
 | POST | `/auth/admin/revoke-user` |
+| GET | `/auth/app-connections/{request_id}` |
+| POST | `/auth/app-connections/{request_id}` |
 | GET | `/auth/authorization` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
