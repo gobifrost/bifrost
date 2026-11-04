@@ -1173,19 +1173,15 @@ httpx==0.28.1 \
     # via
     #   bifrost-api (pyproject.toml)
     #   google-genai
-    #   mcp
     #   pydantic-ai-harness
     #   pydantic-ai-slim
-httpx-sse==0.4.3 \
-    --hash=sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc \
-    --hash=sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d
-    # via mcp
 httpx2==2.12.0 \
     --hash=sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf \
     --hash=sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36
     # via
     #   anthropic
     #   genai-prices
+    #   mcp
     #   openai
     #   pydantic-ai-slim
 idna==3.19 \
@@ -1690,10 +1686,14 @@ markupsafe==3.0.3 \
     # via
     #   jinja2
     #   mako
-mcp==1.30.0 \
-    --hash=sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4 \
-    --hash=sha256:666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0
+mcp==2.3.0 \
+    --hash=sha256:8b147a50441cf059dc88c684e0aeed3687f0aa0f39c6cde7b90330effd2b34d8 \
+    --hash=sha256:dd0c44c089d16453e8ae31a3877a0054d7a2314caaa81f5e0541b9b1734b2377
     # via bifrost-api (pyproject.toml)
+mcp-types==2.3.0 \
+    --hash=sha256:968efdbdaedfab06adae40d378a34395f1090c5921d4be3c9cde283aaf76d91d \
+    --hash=sha256:d1e46549edb35ee19a94940fcee6d1addd7e589ab7ea92dda83f5d84781fc362
+    # via mcp
 mdit-py-plugins==0.5.0 \
     --hash=sha256:07a08422fc1936a5d26d146759e9155ea466e842f5ab2f7d2266dd084c8dab1f \
     --hash=sha256:f4918cb50119f50446560513a8e311d574ff6aaed72606ddae6d35716fe809c6
@@ -1871,6 +1871,7 @@ opentelemetry-api==1.41.1 \
     --hash=sha256:a22df900e75c76dc08440710e51f52f1aa6b451b429298896023e60db5b3139f
     # via
     #   anthropic
+    #   mcp
     #   pydantic-ai-slim
 packaging==26.2 \
     --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e \
@@ -2165,6 +2166,7 @@ pydantic==2.13.3 \
     #   genai-prices
     #   google-genai
     #   mcp
+    #   mcp-types
     #   openai
     #   pydantic-ai-slim
     #   pydantic-graph
@@ -2426,9 +2428,7 @@ pydantic-monty-runtime==1.4.0 \
 pydantic-settings==2.14.0 \
     --hash=sha256:24285fd4b0e0c06507dd9fdfd331ee23794305352aaec8fc4eb92d4047aeb67d \
     --hash=sha256:fc8d5d692eb7092e43c8647c1c35a3ecd00e040fcf02ed86f4cb5458ca62182e
-    # via
-    #   bifrost-api (pyproject.toml)
-    #   mcp
+    # via bifrost-api (pyproject.toml)
 pygithub==2.9.1 \
     --hash=sha256:2ec78fca30092d51a42d76f4ddb02131b6f0c666a35dfdf364cf302cdda115b9 \
     --hash=sha256:59771d7ff63d54d427be2e7d0dad2208dfffc2b0a045fec959263787739b611c
@@ -3081,6 +3081,7 @@ typing-extensions==4.15.0 \
     #   fastapi
     #   google-genai
     #   mcp
+    #   mcp-types
     #   openai
     #   opentelemetry-api
     #   pydantic
