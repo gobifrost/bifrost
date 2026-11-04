@@ -240,12 +240,17 @@ async def test_form_upload_response_materializes_in_selected_transport(
 
     settings, client, _ = backend
     form_id = uuid4()
+    selected_org = uuid4()
     form = SimpleNamespace(is_active=True, fields=[])
     db = SimpleNamespace(
         execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: form))
     )
     # Authorization has its own HTTP tests; isolate this protocol/data boundary.
     monkeypatch.setattr(forms, "_authorize_form_runtime", AsyncMock())
+    monkeypatch.setattr(
+        forms, "_form_launch_authority",
+        AsyncMock(return_value=(selected_org, SimpleNamespace())),
+    )
     monkeypatch.setattr(forms, "_limit_embed_action", AsyncMock())
     original_storage = storage_module.FileStorageService
     monkeypatch.setattr(
@@ -267,7 +272,7 @@ async def test_form_upload_response_materializes_in_selected_transport(
     assert response.headers.get("x-ms-blob-type") == (
         "BlockBlob" if settings.object_storage_provider == "azure_blob" else None
     )
-    key = resolve_s3_key("uploads", "global", response.blob_uri)
+    key = resolve_s3_key("uploads", str(selected_org), response.blob_uri)
     try:
         async with httpx.AsyncClient() as http:
             uploaded = await http.put(
