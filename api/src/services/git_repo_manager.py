@@ -22,7 +22,7 @@ import logging
 import os
 import re
 from uuid import UUID, uuid4
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -164,16 +164,21 @@ class GitRepoManager:
         return (PERSISTENT_WORK_DIR / ".git").is_dir()
 
     @asynccontextmanager
-    async def checkout(self, *, reset_local_state: bool = False) -> AsyncIterator[Path]:
+    async def checkout(
+        self, *, reset_local_state: bool = False, isolated: bool = False,
+    ) -> AsyncIterator[Path]:
         """
         Acquire a deployment-scoped Redis lock, sync _repo/ from S3 to the
-        persistent working dir, yield it, then sync back and release the lock.
+        working dir, yield it, then sync back and release the lock.
+
+        Reimport uses an isolated snapshot so published-file maintenance cannot
+        replace pending Git state or its local receipt.
 
         The lock prevents concurrent git operations from overwriting each
         other's changes in the shared S3 _repo/ prefix.
 
-        The working directory is NOT deleted on exit — it persists for
-        incremental syncs on subsequent operations.
+        By default the working directory persists for incremental syncs.
+        An isolated checkout and its receipt are removed on exit.
 
         Usage:
             async with repo_manager.checkout() as work_dir:
@@ -185,13 +190,15 @@ class GitRepoManager:
         async with self._acquire_lock():
             from src.services.git_workspace_state import GitWorkspaceState
 
-            state = GitWorkspaceState(self)
-            previous, etag = await state.read() if reset_local_state else (None, None)
-            await self.sync_down(self.work_dir)
-            yield self.work_dir
-            await self.sync_up(self.work_dir)
-            if reset_local_state:
-                await state.persist(self.work_dir, previous, etag, force=True)
+            with TemporaryDirectory(prefix="bifrost-git-checkout-") if isolated else nullcontext() as temporary:
+                work_dir = Path(temporary) / "repo" if temporary is not None else self.work_dir
+                state = GitWorkspaceState(self)
+                previous, etag = await state.read() if reset_local_state else (None, None)
+                await self.sync_down(work_dir)
+                yield work_dir
+                await self.sync_up(work_dir)
+                if reset_local_state:
+                    await state.persist(work_dir, previous, etag, force=True)
 
     @asynccontextmanager
     async def checkout_readonly(self) -> AsyncIterator[Path]:

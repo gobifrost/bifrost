@@ -207,8 +207,8 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     persistent_dir.mkdir()
 
     @asynccontextmanager
-    async def local_checkout():
-        """Simulates S3 sync down -> yield -> S3 sync up."""
+    async def local_checkout(*, reset_local_state=False, isolated=False):
+        """Simulate published checkout; this fixture always uses a temp copy."""
         import tempfile
         work_dir = Path(tempfile.mkdtemp(prefix="bifrost-test-repo-"))
         try:

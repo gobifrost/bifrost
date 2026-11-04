@@ -1748,7 +1748,7 @@ class GitHubSyncService:
         are returned as ``pending_deletes``; removing them goes through a git
         sync, which asks for confirmation.
         """
-        async with self.repo_manager.checkout() as work_dir:
+        async with self.repo_manager.checkout(isolated=True) as work_dir:
             storage_is_empty = not _has_workspace_files(work_dir)
 
             # Regenerate manifest from current DB state
