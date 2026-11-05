@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError, TimeoutError as SQLAlchemyTimeoutError
 from starlette.websockets import WebSocketState
 
@@ -35,7 +35,7 @@ from src.services.worker_pool.claims import (
 )
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
-from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, remote_owner_context
+from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, fence_remote_owner, remote_owner_context
 from src.worker.remote.ownership import (
     DEFAULT_OWNER_LEASE_SECONDS,
     RemoteOwnerLease,
@@ -181,17 +181,31 @@ class Bridge:
 
     async def acknowledge(self, event_id: str) -> None:
         """Release a launcher-retained terminal result after canonical delivery."""
-        ref = current_remote_lease_ref()
+        ref = current_remote_lease_ref() or self.lease_ref
         lease = ref.lease if ref is not None else self.lease
         socket = self.socket
-        async with self.lock:
+        async with self.lock, contextlib.AsyncExitStack() as stack:
             if ref is not None:
                 if self.lease != lease or self.socket is not socket:
                     raise ConnectionError("Remote session was replaced before ACK")
-                if not await owns_remote_session(lease):
-                    raise ConnectionError("Remote ownership was lost before ACK")
+                await stack.enter_async_context(asyncio.timeout(DEFAULT_OWNER_LEASE_SECONDS))
+                db = await stack.enter_async_context(get_liveness_db_context())
+                with remote_owner_context(LeaseRef(lease)):
+                    if not await fence_remote_owner(db):
+                        raise ConnectionError("Remote ownership was lost before ACK")
+                # Hold the ownership row lock through send, serializing ACK
+                # with cross-API takeover. Bound a slow transport by the DB's
+                # remaining lease, measured conservatively before the read.
+                reading_at = time.monotonic()
+                seconds = await db.scalar(select(func.extract(
+                    "epoch", ExecutionWorker.remote_owner_lease_expires_at - func.clock_timestamp()
+                )).where(ExecutionWorker.id == lease.worker_id))
+                remaining = float(seconds or 0) - (time.monotonic() - reading_at)
+                if remaining <= 0:
+                    raise ConnectionError("Remote lease expired before ACK")
                 if self.lease != lease or self.socket is not socket:
                     raise ConnectionError("Remote session was replaced during ACK check")
+                await stack.enter_async_context(asyncio.timeout(remaining))
             self._sequence += 1
             await socket.send_text(ControlEnvelope(
                 session_generation=lease.session_generation,

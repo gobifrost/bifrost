@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 from dataclasses import replace
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -182,7 +183,7 @@ async def test_terminal_delivery_cannot_borrow_a_reconnected_sessions_permission
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fence", [False, RuntimeError("database unavailable"), True])
-async def test_terminal_ack_requires_current_database_ownership(fence):
+async def test_terminal_ack_requires_current_database_ownership(fence, ack_database):
     from src.worker.remote.fencing import LeaseRef, remote_owner_context
 
     socket = Mock(send_text=AsyncMock())
@@ -190,7 +191,7 @@ async def test_terminal_ack_requires_current_database_ownership(fence):
     check = AsyncMock(side_effect=fence) if isinstance(fence, Exception) else AsyncMock(return_value=fence)
     with (
         remote_owner_context(LeaseRef(LEASE)),
-        patch("src.worker.remote.host.owns_remote_session", new=check),
+        patch("src.worker.remote.host.fence_remote_owner", new=check),
     ):
         if fence is True:
             await bridge.acknowledge("terminal")
@@ -202,22 +203,34 @@ async def test_terminal_ack_requires_current_database_ownership(fence):
 
 
 @pytest.mark.asyncio
-async def test_ack_rechecks_socket_after_awaited_database_confirmation():
+async def test_ack_rechecks_socket_after_awaited_database_confirmation(ack_database):
     from src.worker.remote.fencing import LeaseRef, remote_owner_context
 
     socket = Mock(send_text=AsyncMock())
     replacement = Mock(send_text=AsyncMock())
     bridge = _bridge(socket)
 
-    async def check(lease):
-        bridge.replace_socket(replacement, replace(lease, session_generation=2))
+    async def check(db):
+        bridge.replace_socket(replacement, replace(LEASE, session_generation=2))
         return True
 
     with (
         remote_owner_context(LeaseRef(LEASE)),
-        patch("src.worker.remote.host.owns_remote_session", new=check),
+        patch("src.worker.remote.host.fence_remote_owner", new=check),
     ):
         with pytest.raises(ConnectionError, match="replaced"):
             await bridge.acknowledge("terminal")
     socket.send_text.assert_not_awaited()
     replacement.send_text.assert_not_awaited()
+
+
+@pytest.fixture
+def ack_database(monkeypatch):
+    db = Mock(scalar=AsyncMock(return_value=20))
+
+    @asynccontextmanager
+    async def context():
+        yield db
+
+    monkeypatch.setattr("src.worker.remote.host.get_liveness_db_context", context)
+    return db
