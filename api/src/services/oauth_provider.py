@@ -474,8 +474,8 @@ async def build_token_refresh_context(
       1. the integration mapping directly linked to ``token.id``
       2. the integration mapping for the selected token's organization, or
          the explicit organization when no token has been selected
-      3. ``integration.default_entity_id`` (global tokens only)
-      4. ``integration.entity_id`` (global tokens only)
+      3. integration defaults for a global token or a caller-authorized
+         client-credentials acquisition without a selected token
 
     The resolved value is injected into the returned ``token_url_defaults``
     dict under the ``entity_id`` key so ``resolve_url_template`` picks it up
@@ -515,6 +515,9 @@ async def build_token_refresh_context(
         and token_org_id != org_id
     )
 
+    # A fresh client-credentials acquisition uses configured defaults; it
+    # does not repurpose an existing organization-bound credential.
+    is_acquisition = token is None and provider.oauth_flow_type == "client_credentials"
     resolved_entity_id: str | None = None
     if provider.integration_id and not tenant_context_mismatch:
         # 1. A mapping that explicitly references this token is the strongest
@@ -551,10 +554,9 @@ async def build_token_refresh_context(
             if mapping and mapping.entity_id:
                 resolved_entity_id = mapping.entity_id
 
-        # 3/4. Integration-wide defaults are valid only without tenant context.
-        # Falling back to them for an org-scoped token can mint a credential
-        # for the wrong tenant and overwrite the tenant's stored token.
-        if resolved_entity_id is None and effective_org_id is None:
+        # Shared defaults remain valid for new, authorized acquisitions.
+        # Existing org-bound tokens must retain their own tenant context.
+        if resolved_entity_id is None and (effective_org_id is None or is_acquisition):
             integration_result = await db.execute(
                 select(Integration).where(Integration.id == provider.integration_id)
             )
@@ -570,7 +572,7 @@ async def build_token_refresh_context(
         context_error = "OAuth token organization does not match refresh context"
     elif resolved_entity_id:
         token_url_defaults["entity_id"] = resolved_entity_id
-    elif effective_org_id is not None and provider.integration_id:
+    elif effective_org_id is not None and provider.integration_id and not is_acquisition:
         token_url_defaults.pop("entity_id", None)
         if provider.token_url and "{entity_id}" in provider.token_url:
             context_error = (

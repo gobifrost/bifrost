@@ -927,12 +927,13 @@ async def refresh_sdk_oauth_token(
         )
 
     # Build the context dict and delegate to the shared primitive.
-    # The selected token binds URL resolution; a new acquisition uses the
-    # authorized organization. Global read fallback retains its stored scope.
+    # An authorization-code refresh uses the selected credential's scope.
+    # Client credentials mint afresh from the caller-authorized configuration;
+    # the existing token is only an exact-scope write target, not refresh input.
     td = await build_token_refresh_context(
         db=session,
         provider=provider,
-        token=stored_token,
+        token=stored_token if provider.oauth_flow_type == "authorization_code" else None,
         org_id=org_id,
     )
     outcome = await refresh_oauth_token_http(td)

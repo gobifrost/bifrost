@@ -117,3 +117,52 @@ async def test_stored_token_org_selects_url_without_caller_context(db_session, c
     td = await build_token_refresh_context(db_session, c.provider, c.foreign_token, org_id=None)
     assert td["token_url_defaults"]["entity_id"] == "tenant-1"
     assert td["context_error"] is None
+
+
+@pytest.mark.parametrize("consumer", ["sdk", "webhook"])
+async def test_new_acquisition_preserves_shared_defaults_without_mapping(
+    db_session, credentials, monkeypatch, consumer
+):
+    from src.services.webhooks.auth import (
+        build_trusted_renewal_webhook_credentials,
+        resolve_webhook_integration_auth,
+    )
+
+    c = credentials
+    await db_session.execute(delete(IntegrationMapping).where(
+        IntegrationMapping.integration_id == c.provider.integration_id,
+        IntegrationMapping.organization_id == c.org,
+    ))
+    await db_session.commit()
+
+    async def exchange(td):
+        assert td["context_error"] is None
+        assert td["token_url_defaults"]["entity_id"] == "shared-tenant"
+        return {"success": True, "access_token": "new-access",
+                "encrypted_access_token": b"new-access", "expires_at": None}
+
+    monkeypatch.setattr("src.services.oauth_provider.refresh_oauth_token_http", exchange)
+    monkeypatch.setattr("src.services.webhooks.auth.refresh_oauth_token_http", exchange)
+    if consumer == "sdk":
+        # Repeat after persistence: the write target is not acquisition input.
+        for _ in range(2):
+            result = await refresh_sdk_oauth_token(
+                db_session, connection_name=c.provider.provider_name,
+                scope=None, caller=c.caller,
+            )
+            assert result["access_token"] == "new-access"
+        org_token = (await db_session.execute(select(OAuthToken).where(
+            OAuthToken.provider_id == c.provider_id, OAuthToken.organization_id == c.org,
+        ))).scalar_one()
+        assert org_token.encrypted_access_token == b"new-access"
+        await db_session.refresh(c.global_token)
+        assert c.global_token.organization_id is None
+        assert c.global_token.encrypted_access_token == b"global"
+    else:
+        selected = await build_trusted_renewal_webhook_credentials(
+            db_session, c.provider.integration_id, c.org,
+        )
+        auth = await resolve_webhook_integration_auth(selected)
+        assert auth.organization_id == c.org
+        assert auth.entity_id == "shared-tenant"
+        assert auth.access_token == "new-access"
