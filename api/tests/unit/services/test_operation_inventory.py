@@ -23,7 +23,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 173,
         "manifest": 16,
         "mcp": 94,
-        "rest": 697,
+        "rest": 702,  # Includes five agent package branding settings/logo endpoints.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
