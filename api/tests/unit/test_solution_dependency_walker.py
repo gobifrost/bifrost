@@ -273,3 +273,48 @@ async def test_form_resolves_workflow_ref_stored_as_pathfn(db_session) -> None:
         sol, forms=[form.id]
     )
     assert ("workflow", str(wf.id)) in {(d.kind, d.ref) for d in preview.pulled_in}
+
+
+async def test_workflow_execute_refs_are_followed_transitively(db_session) -> None:
+    db = db_session
+    sol = await _solution(db)
+    parent = await _wf(db, path="workflows/parent.py", name="parent")
+    child = await _wf(db, path="workflows/child.py", fn="run", name="child")
+    grandchild = await _wf(
+        db, path="workflows/grandchild.py", fn="finish", name="grandchild"
+    )
+    repo = _FakeRepo({
+        "workflows/parent.py": b'await workflows.execute("workflows/child.py::run")',
+        "workflows/child.py": (
+            b'await sdk.workflows.execute("workflows/grandchild.py::finish")'
+        ),
+    })
+
+    preview = await SolutionDependencyWalker(db, repo=repo).preview(
+        sol, workflows=[parent.id]
+    )
+    refs = {(d.kind, d.ref) for d in preview.pulled_in}
+    assert ("workflow", str(child.id)) in refs
+    assert ("workflow", str(grandchild.id)) in refs
+
+
+async def test_outside_workflow_execute_caller_is_reported(db_session) -> None:
+    db = db_session
+    sol = await _solution(db)
+    target = await _wf(db, path="workflows/target.py", name="target")
+    caller = await _wf(db, path="workflows/caller.py", name="caller")
+    repo = _FakeRepo({
+        "workflows/target.py": b"",
+        "workflows/caller.py": b'await workflows.execute("workflows/target.py::main")',
+    })
+
+    preview = await SolutionDependencyWalker(db, repo=repo).preview(
+        sol, workflows=[target.id]
+    )
+    assert any(
+        warning.referencer_kind == "workflow"
+        and warning.referencer_ref == str(caller.id)
+        and warning.target_kind == "workflow"
+        and warning.target_ref == str(target.id)
+        for warning in preview.outside_references
+    )

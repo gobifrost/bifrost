@@ -8,8 +8,8 @@ The scans are STATIC and intentionally simple:
 - Python module imports reuse the canonical AST scanner in
   ``solution_vendoring`` (workflows -> ``modules/*.py``).
 - Entity name/path references (``tables.get("x")``, ``config.get("k")``,
-  ``useWorkflow("p::f")``, ``useTable("x")``, ``integrations.get("Name")``) are
-  matched as STRING LITERALS via
+  ``useWorkflow("p::f")``, ``workflows.execute("p::f")``, ``useTable("x")``,
+  ``integrations.get("Name")``) are matched as STRING LITERALS via
   regex. Dynamic references built from variables are invisible — which is
   exactly why the capture/export preview is a deselectable human-checked list
   (capture-design §3.3), not an automatic gate.
@@ -47,12 +47,12 @@ _TABLE_RE = re.compile(
 _CONFIG_RE = re.compile(rf"""\bconfig\s*\.\s*get\s*\(\s*{_STR}""")
 
 # App workflow hooks (TSX): ``useWorkflow`` / ``useWorkflowQuery`` /
-# ``useWorkflowMutation``. The first arg is a workflow IDENTIFIER — either a
-# bare name (``'get_clients'``) or a portable ``path::function`` ref — so the
-# walker resolves the captured value both ways. ``(?:Query|Mutation)?`` keeps
-# the three hook names in one pattern.
+# ``useWorkflowMutation`` and Python/TSX workflow dispatches:
+# ``workflows.execute`` / ``sdk.workflows.execute``. The first arg is a
+# workflow IDENTIFIER — either a bare name (``'get_clients'``) or a portable
+# ``path::function`` ref — so the walker resolves the captured value both ways.
 _WORKFLOW_RE = re.compile(
-    rf"""\buseWorkflow(?:Query|Mutation)?\s*\(\s*{_STR}"""
+    rf"""(?:\buseWorkflow(?:Query|Mutation)?|\b(?:sdk\s*\.\s*)?workflows\s*\.\s*execute)\s*\(\s*{_STR}"""
 )
 
 
@@ -77,8 +77,9 @@ def scan_config_refs(source: str) -> set[str]:
 def scan_workflow_refs(source: str) -> set[str]:
     """Return workflow identifiers in ``source``.
 
-    Matches ``useWorkflow``/``useWorkflowQuery``/``useWorkflowMutation``; the
-    captured value is a bare name OR a ``path::fn`` ref (caller resolves both).
+    Matches ``useWorkflow``/``useWorkflowQuery``/``useWorkflowMutation`` and
+    ``workflows.execute``; the captured value is a bare name OR a ``path::fn``
+    ref (caller resolves both).
     """
     return set(_WORKFLOW_RE.findall(source))
 
