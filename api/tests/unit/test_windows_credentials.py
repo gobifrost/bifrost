@@ -100,6 +100,14 @@ class TestWindowsCredentialStore(unittest.TestCase):
     def test_adapter_does_not_leak_into_global_backend_discovery(self):
         self.assertNotIn(type(self.kr), keyring.backend.KeyringBackend._classes)
 
+    def test_wincred_limit_counts_utf16_bytes_including_surrogate_pairs(self):
+        for valid, invalid in (("a" * 1280, "a" * 1281), ("🔐" * 640, "🔐" * 641)):
+            self.kr.set_password("bifrost.boundary", "synthetic", valid)
+            self.assertEqual(self.kr.get_password("bifrost.boundary", "synthetic"), valid)
+            with self.assertRaises(WinError):
+                self.kr.set_password("bifrost.boundary", "synthetic", invalid)
+            self.assertEqual(self.kr.get_password("bifrost.boundary", "synthetic"), valid)
+
     def test_original_oversize_write_reproduces_native_failure(self):
         with self.assertRaises(WinError) as caught:
             self.kr.set_password("bifrost", "https://one.example", json.dumps(record()))
