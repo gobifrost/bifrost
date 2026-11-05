@@ -23,7 +23,7 @@ export class CanonicalApi extends WorkerEntrypoint {
     const slot = attempts.get(this.ctx.props.id);
     if (!slot) return new Response('Attempt capability closed', {status: 410});
     let target;
-    try {target = apiTarget(request.url, this.env.API_ORIGIN);}
+    try {target = apiTarget(request.url, slot.apiOrigin);}
     catch {return new Response('API capability denied', {status: 403});}
     const response = await slot.egress.fetch(new Request(target, request));
     const path = new URL(request.url).pathname;
@@ -57,7 +57,7 @@ export default {
         headers.delete('Host'); headers.set('User-Agent', 'bifrost-pyodide-dev-executor/1.0');
         return env.DEV_API.fetch(new Request(outgoing, {headers, redirect: 'manual'}));
       });
-      const slot = {egress, calls: [], manifest: body.manifest};
+      const slot = {egress, calls: [], manifest: body.manifest, apiOrigin: env.API_ORIGIN};
       attempts.set(id, slot);
       const cleanup = () => {egress.close(); attempts.delete(id);};
       const execute = async () => {
