@@ -509,9 +509,13 @@ class SolutionDependencyWalker:
 
     @staticmethod
     def _resolve_workflow_ref(ref: str, wf_by_id, wf_by_pathfn) -> Workflow | None:
-        """Resolve a workflow ref string (``path::fn`` OR bare name) to a row."""
+        """Resolve a workflow UUID, portable ``path::fn``, or bare name."""
         if "::" in ref:
             return wf_by_pathfn.get(ref)
+        try:
+            return wf_by_id.get(UUID(ref))
+        except ValueError:
+            pass
         # Bare name — match against the loose-universe name index.
         for wf in wf_by_id.values():
             if wf.name == ref:

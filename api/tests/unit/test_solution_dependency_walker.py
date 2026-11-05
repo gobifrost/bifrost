@@ -275,7 +275,8 @@ async def test_form_resolves_workflow_ref_stored_as_pathfn(db_session) -> None:
     assert ("workflow", str(wf.id)) in {(d.kind, d.ref) for d in preview.pulled_in}
 
 
-async def test_workflow_execute_refs_are_followed_transitively(db_session) -> None:
+@pytest.mark.parametrize("by_id", [False, True], ids=["portable", "uuid"])
+async def test_workflow_execute_refs_are_followed_transitively(db_session, by_id) -> None:
     db = db_session
     sol = await _solution(db)
     parent = await _wf(db, path="workflows/parent.py", name="parent")
@@ -283,11 +284,11 @@ async def test_workflow_execute_refs_are_followed_transitively(db_session) -> No
     grandchild = await _wf(
         db, path="workflows/grandchild.py", fn="finish", name="grandchild"
     )
+    child_ref = str(child.id) if by_id else "workflows/child.py::run"
+    grandchild_ref = str(grandchild.id) if by_id else "workflows/grandchild.py::finish"
     repo = _FakeRepo({
-        "workflows/parent.py": b'await workflows.execute("workflows/child.py::run")',
-        "workflows/child.py": (
-            b'await sdk.workflows.execute("workflows/grandchild.py::finish")'
-        ),
+        "workflows/parent.py": f'await workflows.execute("{child_ref}")'.encode(),
+        "workflows/child.py": f'await sdk.workflows.execute("{grandchild_ref}")'.encode(),
     })
 
     preview = await SolutionDependencyWalker(db, repo=repo).preview(
@@ -298,14 +299,16 @@ async def test_workflow_execute_refs_are_followed_transitively(db_session) -> No
     assert ("workflow", str(grandchild.id)) in refs
 
 
-async def test_outside_workflow_execute_caller_is_reported(db_session) -> None:
+@pytest.mark.parametrize("by_id", [False, True], ids=["portable", "uuid"])
+async def test_outside_workflow_execute_caller_is_reported(db_session, by_id) -> None:
     db = db_session
     sol = await _solution(db)
     target = await _wf(db, path="workflows/target.py", name="target")
     caller = await _wf(db, path="workflows/caller.py", name="caller")
+    target_ref = str(target.id) if by_id else "workflows/target.py::main"
     repo = _FakeRepo({
         "workflows/target.py": b"",
-        "workflows/caller.py": b'await workflows.execute("workflows/target.py::main")',
+        "workflows/caller.py": f'await workflows.execute("{target_ref}")'.encode(),
     })
 
     preview = await SolutionDependencyWalker(db, repo=repo).preview(
