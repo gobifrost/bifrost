@@ -403,6 +403,44 @@ describe("apiClient (openapi-fetch middleware) transient 5xx retry", () => {
 		sessionStorage.clear();
 	});
 
+	it("preserves a consumed workflow POST body and rotated auth on a refresh challenge", async () => {
+		const initialToken = buildFakeToken("before-refresh");
+		const rotatedToken = buildFakeToken("after-refresh");
+		localStorage.setItem(ACCESS_TOKEN_KEY, initialToken);
+		const bodies: string[] = [];
+		const authorizations: (string | null)[] = [];
+		let endpointEffects = 0;
+		fetchMock.mockImplementation(async (input: Request | string) => {
+			if (input === "/api/auth/refresh") {
+				return mockJsonResponse(200, { access_token: rotatedToken });
+			}
+			const request = input as Request;
+			authorizations.push(request.headers.get("Authorization"));
+			bodies.push(await request.text());
+			if (bodies.length === 1) return refreshRequiredResponse();
+			endpointEffects += 1;
+			return mockJsonResponse(200, { execution_id: "exec-1", status: "Running" });
+		});
+		const body = {
+			workflow_id: "workflow-1",
+			input_data: { message: "Keep this request body" },
+		};
+
+		const { response } = await apiClient.POST("/api/workflows/execute", {
+			body,
+			fetch: fetchMock,
+		} as never);
+
+		expect(response.status).toBe(200);
+		expect(bodies.map((value) => JSON.parse(value))).toEqual([body, body]);
+		expect(authorizations).toEqual([
+			`Bearer ${initialToken}`,
+			`Bearer ${rotatedToken}`,
+		]);
+		expect(endpointEffects).toBe(1);
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
 	it("apiClient.GET retries a transient 5xx and returns the eventual 200", async () => {
 		fetchMock
 			.mockResolvedValueOnce(mockResponse(503))

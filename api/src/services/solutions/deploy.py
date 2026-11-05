@@ -469,7 +469,10 @@ class SolutionDeployer:
         # Raised as SolutionDeployConflict so it rolls back with no side effects.
         from src.services.solutions.dependency_walker import check_install_needs
 
-        needs = check_install_needs(bundle.python_files)
+        needs = check_install_needs(
+            bundle.python_files,
+            allow_outbound_access=bool(bundle.solution.allow_outbound_access),
+        )
         if needs:
             items = ", ".join(
                 f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs

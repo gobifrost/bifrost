@@ -10,6 +10,18 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
+@pytest.fixture
+def created_apps(e2e_client, platform_admin):
+    """Remove test sources, including invalid TSX, before workspace-wide jobs."""
+    app_ids: list[str] = []
+    yield app_ids
+    for app_id in reversed(app_ids):
+        response = e2e_client.delete(
+            f"/api/applications/{app_id}", headers=platform_admin.headers,
+        )
+        assert response.status_code == 204, response.text
+
+
 def _create_app(
     e2e_client,
     headers,
@@ -69,7 +81,8 @@ def _poll_notification(
 
 
 def test_publish_success_deduplication_and_requester_visibility(
-    e2e_client, platform_admin, second_platform_admin, org1_user, provider_org_user
+    e2e_client, platform_admin, second_platform_admin, org1_user, provider_org_user,
+    created_apps,
 ):
     # Global scope (explicit organization_id=None) so the provider-org
     # member can read it — their REST read access is global-or-own-org —
@@ -86,6 +99,7 @@ def test_publish_success_deduplication_and_requester_visibility(
     )
     assert create_response.status_code == 201, create_response.text
     app = create_response.json()
+    created_apps.append(app["id"])
     barrier = Barrier(2)
 
     def enqueue():
@@ -165,12 +179,14 @@ def test_publish_success_deduplication_and_requester_visibility(
 def test_bundle_failure_is_persisted_and_does_not_publish(
     e2e_client,
     platform_admin,
+    created_apps,
 ):
     app = _create_app(
         e2e_client,
         platform_admin.headers,
         f"failed-publish-{uuid.uuid4().hex[:8]}",
     )
+    created_apps.append(app["id"])
     update = e2e_client.put(
         f"/api/applications/{app['id']}/files/pages/index.tsx",
         headers=platform_admin.headers,
