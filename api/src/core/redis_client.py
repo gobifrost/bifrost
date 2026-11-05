@@ -59,6 +59,9 @@ class PendingExecution(TypedDict):
     embed: dict[str, Any]
     sync: bool  # If True, worker pushes result to Redis for sync execution
     is_platform_admin: bool  # Whether the caller is a platform admin
+    is_agent: bool
+    execution_origin: str | None
+    agent_id: str | None
     event: dict[str, Any] | None  # EventContext fields if event-triggered; None otherwise
     artifact_workspace_id: str | None
     # Run lineage bound to this execution (shared.run_lineage). Absent on
@@ -87,6 +90,9 @@ def pending_execution_record(
     api_key_id: str | None = None,
     sync: bool = False,
     is_platform_admin: bool = False,
+    is_agent: bool = False,
+    execution_origin: str | None = None,
+    agent_id: str | None = None,
     event: dict[str, Any] | None = None,
     artifact_workspace_id: str | None = None,
     lineage: dict[str, str] | None,
@@ -109,6 +115,9 @@ def pending_execution_record(
         "embed": embed or {},
         "sync": sync,
         "is_platform_admin": is_platform_admin,
+        "is_agent": is_agent,
+        "execution_origin": execution_origin,
+        "agent_id": agent_id,
         "event": event,
         "artifact_workspace_id": artifact_workspace_id,
         "lineage": lineage,

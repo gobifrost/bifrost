@@ -106,6 +106,9 @@ async def stage_workflow_run(
     record_exists: bool,
 ) -> AcceptedRun:
     """Add the run's durable records to the caller's transaction."""
+    from shared.execution_provenance import execution_provenance
+
+    provenance = execution_provenance(pending.get("execution_origin"), pending.get("agent_id"))
     execution_id = UUID(pending["execution_id"])
     if record_exists:
         memory_request_bytes = await _request_for(db, pending)
@@ -124,6 +127,8 @@ async def stage_workflow_run(
                 form_id=UUID(pending["form_id"]) if pending["form_id"] else None,
                 api_key_id=UUID(pending["api_key_id"]) if pending["api_key_id"] else None,
                 execution_context={"is_platform_admin": pending["is_platform_admin"]},
+                execution_origin=provenance.origin,
+                agent_id=provenance.agent_id,
                 **lineage_columns(pending.get("lineage")),
                 **pending_durable_impersonation(
                     pending.get("impersonation_provenance")

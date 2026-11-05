@@ -81,6 +81,8 @@ class ExecutionRepository(BaseRepository[Execution]):
         *,
         lineage: dict[str, str] | None,
         impersonation_provenance: dict[str, str] | None = None,
+        execution_origin: str | None = None,
+        agent_id: str | None = None,
         credential_version: int | None = None,
     ) -> Execution:
         """
@@ -108,6 +110,10 @@ class ExecutionRepository(BaseRepository[Execution]):
         Returns:
             Created Execution record
         """
+        from shared.execution_provenance import execution_provenance
+
+        provenance = execution_provenance(execution_origin, agent_id)
+
         # Parse org_id - strip "ORG:" prefix if present
         parsed_org_id = None
         if org_id and org_id != "GLOBAL":
@@ -148,6 +154,8 @@ class ExecutionRepository(BaseRepository[Execution]):
             existing.api_key_id = parsed_api_key_id
             existing.execution_model = execution_model
             existing.started_at = datetime.now(timezone.utc)
+            existing.execution_origin = provenance.origin
+            existing.agent_id = provenance.agent_id
             existing.credential_version = credential_version
             if lineage is not None:
                 for column, value in lineage_columns(lineage).items():
@@ -176,6 +184,8 @@ class ExecutionRepository(BaseRepository[Execution]):
             api_key_id=parsed_api_key_id,
             execution_model=execution_model,
             started_at=datetime.now(timezone.utc),
+            execution_origin=provenance.origin,
+            agent_id=provenance.agent_id,
             credential_version=credential_version,
             **lineage_columns(lineage),
             **pending_durable_impersonation(impersonation_provenance).columns(),
@@ -756,6 +766,8 @@ async def create_execution(
     *,
     lineage: dict[str, str] | None,
     impersonation_provenance: dict[str, str] | None = None,
+    execution_origin: str | None = None,
+    agent_id: str | None = None,
     credential_version: int | None = None,
 ) -> None:
     """
@@ -789,6 +801,8 @@ async def create_execution(
             check_existing=check_existing,
             lineage=lineage,
             impersonation_provenance=impersonation_provenance,
+            execution_origin=execution_origin,
+            agent_id=agent_id,
             credential_version=credential_version,
         )
 

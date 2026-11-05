@@ -784,6 +784,8 @@ class WorkflowExecutionConsumer:
         artifact_workspace_id = pending.get("artifact_workspace_id")
         lineage = pending.get("lineage")
         impersonation_provenance = pending.get("impersonation_provenance")
+        execution_origin = pending.get("execution_origin")
+        agent_id = pending.get("agent_id")
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
@@ -881,6 +883,8 @@ class WorkflowExecutionConsumer:
                         check_existing=True,
                         lineage=lineage,
                         impersonation_provenance=impersonation_provenance,
+                        execution_origin=execution_origin,
+                        agent_id=agent_id,
                     )
                     await update_execution(
                         execution_id=execution_id,
@@ -932,6 +936,8 @@ class WorkflowExecutionConsumer:
                 check_existing=True,
                 lineage=lineage,
                 impersonation_provenance=impersonation_provenance,
+                execution_origin=execution_origin,
+                agent_id=agent_id,
                 credential_version=credential_version_for(credential_route.protocol),
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
@@ -986,6 +992,29 @@ class WorkflowExecutionConsumer:
                 legacy_lifetime_seconds=legacy_engine_token_lifetime(timeout_seconds),
             )
 
+            from src.services.authorization.runtime import (
+                RuntimeIdentityError,
+                load_execution_provenance,
+                load_runtime_authority,
+            )
+
+            origin = "unknown"
+            origin_agent_id = None
+            original_user_id = None
+            original_user_is_platform_admin = False
+            try:
+                async with get_db_context() as db:
+                    authority = await load_runtime_authority(db, "workflow_execution", UUID(execution_id))
+                    provenance = await load_execution_provenance(db, authority)
+                origin = provenance.origin
+                origin_agent_id = None if provenance.agent_id is None else str(provenance.agent_id)
+                original_user_id = str(authority.run_user.user_id)
+                original_user_is_platform_admin = authority.run_user.is_platform_admin
+            except RuntimeIdentityError:
+                # Historic executions without proven lineage may still run,
+                # but cannot claim a direct-human policy exception.
+                logger.warning("Execution %s has no current runtime authority", execution_id)
+
             # Build context for worker process
             context_data = {
                 "execution_id": execution_id,
@@ -1005,6 +1034,11 @@ class WorkflowExecutionConsumer:
                 "cache_ttl_seconds": cache_ttl_seconds,
                 "transient": False,
                 "is_platform_admin": pending.get("is_platform_admin", False),
+                "is_agent": origin == "agent",
+                "execution_origin": origin,
+                "agent_id": origin_agent_id,
+                "original_user_is_platform_admin": original_user_is_platform_admin,
+                "original_user_id": original_user_id,
                 "startup": startup,  # Launch workflow results (available via context.startup)
                 "form_inputs": form_inputs,
                 "embed": embed,

@@ -230,6 +230,12 @@ def test_pending_execution_record_carries_lineage():
         user_name="n",
         user_email="",
         lineage=lineage,
+        execution_origin="agent",
+        agent_id="00000000-0000-0000-0000-0000000000aa",
+        is_agent=True,
     )
 
     assert record.get("lineage") == lineage
+    assert record["execution_origin"] == "agent"
+    assert record["agent_id"] == "00000000-0000-0000-0000-0000000000aa"
+    assert record["is_agent"] is True

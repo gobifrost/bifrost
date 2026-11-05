@@ -246,9 +246,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
       - name: Build and push SHA-addressed API candidate
         id: api
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -273,9 +270,9 @@ jobs:
             -c "import os; from shared.version import get_version; from src.main import app; assert app is not None; assert get_version() == os.environ['EXPECTED_VERSION']"
 
       - name: Sign API candidate digest
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: cosign sign --yes ghcr.io/${{ env.API_IMAGE }}@${{ steps.api.outputs.digest }}
+        uses: ./.github/actions/sign-image
+        with:
+          image: ghcr.io/${{ env.API_IMAGE }}@${{ steps.api.outputs.digest }}
 
       - name: Attest API candidate provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -316,9 +313,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
       - name: Build and push SHA-addressed client candidate
         id: client
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -334,9 +328,9 @@ jobs:
           cache-to: type=gha,scope=dev-candidate-client,mode=max
 
       - name: Sign client candidate digest
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: cosign sign --yes ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.client.outputs.digest }}
+        uses: ./.github/actions/sign-image
+        with:
+          image: ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.client.outputs.digest }}
 
       - name: Attest client candidate provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -814,9 +808,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -847,11 +838,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Sign API image
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          cosign sign --yes \
-            ghcr.io/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
+        uses: ./.github/actions/sign-image
+        with:
+          image: ghcr.io/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
 
       - name: Attest API image provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -905,9 +894,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -939,11 +925,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Sign client image
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          cosign sign --yes \
-            ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
+        uses: ./.github/actions/sign-image
+        with:
+          image: ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
 
       - name: Attest client image provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

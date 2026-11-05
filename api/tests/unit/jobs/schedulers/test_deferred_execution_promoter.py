@@ -660,6 +660,9 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
         "api_key_id": None,
         "sync": False,
         "is_platform_admin": True,
+        "is_agent": False,
+        "execution_origin": "unknown",
+        "agent_id": None,
         "event": None,
         "artifact_workspace_id": None,
         "lineage": None,
@@ -700,3 +703,27 @@ async def test_an_initiator_deleted_during_the_recheck_fails_that_row_only(db_se
     await db_session.refresh(orphaned)
     assert orphaned.status == ExecutionStatus.FAILED
     assert orphaned.error_message == "Run As is no longer permitted: The user who scheduled this run no longer exists"
+
+
+@pytest.mark.asyncio
+async def test_promoted_agent_execution_keeps_its_origin(db_session):
+    row = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    row.execution_origin = "agent"
+    row.agent_id = uuid4()
+    db_session.add(row)
+    await db_session.commit()
+
+    pub = await _promote(db_session)
+
+    [pending] = [call.args[0].pending for call in pub.await_args_list if call.args[0].pending["execution_id"] == str(row.id)]
+    assert (pending["execution_origin"], pending["agent_id"], pending["is_agent"]) == ("agent", str(row.agent_id), True)
+
+
+def test_promoted_malformed_origin_is_conservative():
+    from src.jobs.schedulers.deferred_execution_promoter import _pending_record
+
+    row = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
+    row.execution_origin = "agent"
+    row.agent_id = None
+    pending = _pending_record(row)
+    assert (pending["execution_origin"], pending["agent_id"], pending["is_agent"]) == ("unknown", None, False)

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
 from shared.system_account_guard import is_system_account
+from shared.execution_provenance import ExecutionProvenance
 from src.models.enums import LIVE_EXECUTION_STATUSES
 from src.models.orm.agent_runs import LIVE_AGENT_RUN_STATUSES, AgentRun
 from src.models.orm.agents import Agent
@@ -292,3 +293,29 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
     )
 
 
+async def load_execution_provenance(db: AsyncSession, authority: RuntimeAuthority) -> ExecutionProvenance:
+    """Read immutable origin for SDK calls on both credential protocols.
+
+    Claims credentials deliberately keep their existing wire format. Origin
+    is not an authorization grant and is read from the run's durable record
+    only by operations that need it, not by every authenticated request.
+    """
+    from shared.execution_provenance import durable_execution_provenance
+
+    if authority.kind == "workflow_execution":
+        row = (
+            await db.execute(
+                select(Execution.execution_origin, Execution.agent_id).where(
+                    Execution.id == authority.credential_id
+                )
+            )
+        ).one_or_none()
+        return ExecutionProvenance("unknown") if row is None else durable_execution_provenance(*row)
+    if authority.kind == "agent_run":
+        agent_id = await db.scalar(select(AgentRun.agent_id).where(AgentRun.id == authority.credential_id))
+        return (
+            durable_execution_provenance("agent", agent_id)
+            if agent_id is not None
+            else ExecutionProvenance("unknown")
+        )
+    return ExecutionProvenance("unknown")
