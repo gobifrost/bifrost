@@ -9758,6 +9758,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/{solution_id}/app-builds/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lookup Solution App Builds */
+        post: operations["solutions.app_builds.lookup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/{solution_id}/deploy": {
         parameters: {
             query?: never;
@@ -27987,6 +28004,31 @@ export interface components {
             name?: string | null;
             /** Email */
             email: string;
+        };
+        /**
+         * SolutionAppBuildCandidate
+         * @description Manifest app identity and a digest computed before local compilation.
+         */
+        SolutionAppBuildCandidate: {
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+        };
+        /** SolutionAppBuildLookup */
+        SolutionAppBuildLookup: {
+            /** Apps */
+            apps: components["schemas"]["SolutionAppBuildCandidate"][];
+        };
+        /** SolutionAppBuildMatches */
+        SolutionAppBuildMatches: {
+            /** Matches */
+            matches: {
+                [key: string]: string;
+            };
         };
         /** SolutionAppSdkStatus */
         SolutionAppSdkStatus: {
@@ -49452,6 +49494,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SolutionDeletionSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "solutions.app_builds.lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionAppBuildLookup"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionAppBuildMatches"];
                 };
             };
             /** @description Validation Error */
