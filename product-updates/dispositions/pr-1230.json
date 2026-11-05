@@ -1,0 +1,17 @@
+{
+  "key": "pr:1230",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Cosmetic synchronization of an existing avatar from Entra; no substantive new capability or required customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1230",
+      "Jack authorized the scoped download repair and protected merge. Original contribution by plexustech2006 from plexustech2006/bifrost-upstream; preserve PR authorship.",
+      "Reviewed OAuth callback identity boundaries, Graph-only bearer token forwarding, image validation, bounded download, and total deadline."
+    ]
+  },
+  "security_review": {
+    "status": "not_required"
+  }
+}

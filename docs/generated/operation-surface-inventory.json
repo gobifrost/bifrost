@@ -10250,7 +10250,7 @@
     "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 695,
+    "rest": 697,
     "sdk": 21
   },
   "schema_version": 1,
@@ -14514,6 +14514,20 @@
         "path": "/auth/admin/revoke-user",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/auth/app-connections/{request_id}",
+        "reason": "Reviews or records the user's app authentication decision; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/app-connections/{request_id}",
+        "reason": "Reviews or records the user's app authentication decision; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "GET",

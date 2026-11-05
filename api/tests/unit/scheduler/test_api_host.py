@@ -176,8 +176,10 @@ async def test_lifespan_hosts_control_and_remote_launchers(
     monkeypatch.setattr(api_main, "record_protocol_start", protocol_start)
     shared_redis_start = AsyncMock()
     shared_redis_close = AsyncMock(side_effect=lambda: shutdown.append("redis"))
+    shared_s3_close = AsyncMock(side_effect=lambda: shutdown.append("s3"))
     monkeypatch.setattr(api_main, "initialize_shared_redis", shared_redis_start)
     monkeypatch.setattr(api_main, "close_shared_redis", shared_redis_close)
+    monkeypatch.setattr(api_main, "close_shared_s3_client", shared_s3_close)
     monkeypatch.setattr(
         api_main.pubsub_manager,
         "close",
@@ -202,8 +204,9 @@ async def test_lifespan_hosts_control_and_remote_launchers(
     host.stop.assert_awaited_once()
     remote_stop.assert_awaited_once()
     shared_redis_close.assert_awaited_once()
+    shared_s3_close.assert_awaited_once()
     assert shutdown.index("remote") < shutdown.index("control") < shutdown.index("pubsub")
-    assert shutdown.index("pubsub") < shutdown.index("redis")
+    assert shutdown.index("pubsub") < shutdown.index("s3") < shutdown.index("redis")
 
 @pytest.mark.asyncio
 async def test_lifespan_imports_kubernetes_settings_before_serving(
@@ -239,6 +242,7 @@ async def test_lifespan_imports_kubernetes_settings_before_serving(
     monkeypatch.setattr(api_main, "record_protocol_start", AsyncMock())
     monkeypatch.setattr(api_main, "initialize_shared_redis", AsyncMock())
     monkeypatch.setattr(api_main, "close_shared_redis", AsyncMock())
+    monkeypatch.setattr(api_main, "close_shared_s3_client", AsyncMock())
     monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
     monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
     monkeypatch.setattr(api_host, "ApiControlHost", lambda: MagicMock(start=AsyncMock(), stop=AsyncMock()))

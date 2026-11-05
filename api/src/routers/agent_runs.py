@@ -925,6 +925,7 @@ async def dry_run_agent_run(
         reasoning=result.reasoning,
         alternative_action=result.alternative_action,
         confidence=result.confidence,
+        evaluation_failed=result.evaluation_failed,
     )
 
 

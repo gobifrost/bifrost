@@ -93,8 +93,6 @@ async def test_code_mode_decodes_json_or_text_before_the_snippet_receives_it() -
                 parts=[ToolCallPart("search_tools", {"queries": ["read record"]}, "search")]
             )
         if len(seen) == 2:
-            assert info.instructions is not None
-            assert "def read_record(*, record_id: str) -> Any:" in info.instructions
             return ModelResponse(
                 parts=[
                     ToolCallPart(

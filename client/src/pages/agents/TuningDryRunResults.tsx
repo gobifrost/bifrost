@@ -5,8 +5,11 @@ import { cn } from "@/lib/utils";
 export function TuningDryRunResults({ results }: ConsolidatedDryRunResponse) {
 	const headingId = useId();
 	const changed = results.filter(
-		(result) => !result.would_still_decide_same,
+		(result) =>
+			!result.evaluation_failed && !result.would_still_decide_same,
 	).length;
+	const failed = results.filter((result) => result.evaluation_failed).length;
+	const evaluated = results.length - failed;
 	return (
 		<section
 			aria-labelledby={headingId}
@@ -18,7 +21,10 @@ export function TuningDryRunResults({ results }: ConsolidatedDryRunResponse) {
 					Dry-run results
 				</h2>
 				<p className="text-sm text-muted-foreground">
-					{changed} of {results.length} would change behavior
+					{changed} of {evaluated} evaluated runs would change
+					behavior
+					{failed > 0 &&
+						` · ${failed} evaluation${failed === 1 ? "" : "s"} failed`}
 				</p>
 			</div>
 			{results.length === 0 ? (
@@ -39,23 +45,29 @@ export function TuningDryRunResults({ results }: ConsolidatedDryRunResponse) {
 								<span
 									className={cn(
 										"rounded-full px-2 py-1 text-xs font-medium",
-										result.would_still_decide_same
-											? "bg-[var(--bf-warning-soft)] text-[var(--bf-warning)]"
-											: "bg-[var(--bf-success-soft)] text-[var(--bf-success)]",
+										result.evaluation_failed
+											? "bg-muted text-muted-foreground"
+											: result.would_still_decide_same
+												? "bg-[var(--bf-warning-soft)] text-[var(--bf-warning)]"
+												: "bg-[var(--bf-success-soft)] text-[var(--bf-success)]",
 									)}
 								>
-									{result.would_still_decide_same
-										? "Same decision"
-										: "Would change"}
+									{result.evaluation_failed
+										? "Evaluation Failed"
+										: result.would_still_decide_same
+											? "Same decision"
+											: "Would change"}
 								</span>
 							</div>
 							<p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
 								{result.reasoning}
 							</p>
-							<p className="mt-3 text-xs text-muted-foreground">
-								Confidence:{" "}
-								{Math.round(result.confidence * 100)}%
-							</p>
+							{!result.evaluation_failed && (
+								<p className="mt-3 text-xs text-muted-foreground">
+									Confidence:{" "}
+									{Math.round(result.confidence * 100)}%
+								</p>
+							)}
 						</li>
 					))}
 				</ul>

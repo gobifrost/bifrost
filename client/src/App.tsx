@@ -336,6 +336,7 @@ const routeElements = (
 		<Route path="mfa-setup" element={<MFASetup />} />
 		<Route path="auth/callback/:provider" element={<AuthCallback />} />
 		<Route path="mcp/callback" element={<MCPCallback />} />
+		<Route path="connect-app" element={<MCPCallback />} />
 
 		{/* Device authorization - requires auth, handles redirect internally */}
 		<Route path="device" element={<DevicePage />} />

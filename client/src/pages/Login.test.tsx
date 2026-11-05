@@ -5,6 +5,7 @@ import {
 	getAuthStatus,
 	initOAuth,
 	PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY,
+	type AuthStatus,
 } from "@/services/auth";
 
 const login = vi.fn();
@@ -46,6 +47,7 @@ vi.mock("@/lib/applicationName", () => ({
 const preferredStatus = {
 	needs_setup: false,
 	password_login_enabled: true,
+	passkey_login_enabled: true,
 	mfa_required_for_password: false,
 	oauth_providers: [
 		{
@@ -139,5 +141,86 @@ describe("Login preferred SSO redirect", () => {
 				false,
 			),
 		);
+	});
+});
+
+describe("SSO-only login policy", () => {
+	const interactiveStatus: AuthStatus = {
+		needs_setup: false,
+		password_login_enabled: true,
+		passkey_login_enabled: true,
+		mfa_required_for_password: false,
+		oauth_providers: [
+			{
+				name: "microsoft",
+				display_name: "Microsoft",
+				icon: "microsoft",
+			},
+		],
+		auto_redirect_to_sso: false,
+		default_sso_provider: null,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		login.mockReset();
+		loginWithMfa.mockReset();
+		loginWithPasskey.mockReset();
+		sessionStorage.clear();
+	});
+
+	it("collapses password and passkey into the platform admin expander", async () => {
+		const status: AuthStatus = {
+			...interactiveStatus,
+			password_login_enabled: false,
+			passkey_login_enabled: false,
+		};
+		vi.mocked(getAuthStatus).mockResolvedValue(status);
+
+		const { user } = renderWithProviders(<Login />, {
+			initialEntries: ["/login"],
+		});
+
+		expect(
+			await screen.findByRole("button", { name: "Microsoft" }),
+		).toBeInTheDocument();
+		// The admin form lives inside the closed expander, not on the page.
+		const expander = screen
+			.getByText("Excluded Account Sign-In")
+			.closest("details");
+		expect(expander).not.toHaveAttribute("open");
+		expect(screen.getByLabelText("Email").closest("details")).toBe(
+			expander,
+		);
+		expect(loginWithPasskey).not.toHaveBeenCalled();
+
+		await user.click(screen.getByText("Excluded Account Sign-In"));
+		expect(expander).toHaveAttribute("open");
+		expect(await screen.findByLabelText("Password")).toBeInTheDocument();
+	});
+
+	it("collapses the passkey button into the expander and skips the automatic attempt", async () => {
+		const status: AuthStatus = {
+			...interactiveStatus,
+			passkey_login_enabled: false,
+		};
+		vi.mocked(getAuthStatus).mockResolvedValue(status);
+
+		renderWithProviders(<Login />, { initialEntries: ["/login"] });
+
+		expect(await screen.findByLabelText("Email")).toBeInTheDocument();
+		const expander = screen
+			.getByText("Excluded Account Sign-In")
+			.closest("details");
+		expect(expander).not.toHaveAttribute("open");
+		expect(
+			screen
+				.getByRole("button", { name: /sign in with passkey/i })
+				.closest("details"),
+		).toBe(expander);
+
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(loginWithPasskey).not.toHaveBeenCalled();
+		expect(sessionStorage.getItem("passkey_auto_attempted")).toBeNull();
 	});
 });

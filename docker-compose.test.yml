@@ -476,7 +476,7 @@ services:
   # production client before this runner executes TypeScript, ESLint, and the
   # complete Vitest suite against the same source snapshot.
   client-check-runner:
-    image: bifrost-test-client-check:latest
+    image: bifrost-test-client-check:${BIFROST_TEST_IMAGE_TAG:-latest}
     environment:
       # Respect Vitest's worker override on shared development hosts while
       # retaining the configured default when no override is supplied.
@@ -509,7 +509,7 @@ services:
   # in the real client image. A Vite dev server made full-suite timing depend
   # on cold, on-demand module transforms and never tested the production build.
   client:
-    image: bifrost-test-client-e2e:latest
+    image: bifrost-test-client-e2e:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: ./client
       dockerfile: Dockerfile
@@ -535,7 +535,7 @@ services:
   # Playwright E2E test runner
   # Runs browser tests against the client service
   playwright-runner:
-    image: bifrost-test-playwright:latest
+    image: bifrost-test-playwright:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: ./client
       dockerfile: Dockerfile.playwright

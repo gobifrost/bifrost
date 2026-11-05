@@ -1,0 +1,17 @@
+{
+  "key": "pr:1242",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1242",
+      "Source contribution by MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream; functional head 4b42c44cf7054ca6794d19affaa317719a10a041.",
+      "Codex reviewed this routine-fix wording under Thomas Bray's explicit publication authorization. Contributor editorial review is not maintainer approval, security attestation or merge authorization.",
+      "Preserves the already-valid null/global scope rather than emitting the string None; organization UUID serialization and authorization are unchanged. Exact source passed 41 codec/fixture/ordered Git tests, full API Ruff and Pyright.",
+      "Jack approved scoped repairs, verification and protected merge via resolved native request async:call_e05fb62d15d54682a9882efb29a3fc06 question 0 on 2026-11-04; routine fix omitted under standing release visibility policy.",
+      "Maintainer scope review: existing null/global and UUID scopes preserved; no permission changes or security disclosure introduced."
+    ]
+  },
+  "reason": "Routine serialization bug fix; no new customer capability or required action."
+}

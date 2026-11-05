@@ -190,6 +190,32 @@ async def test_network_outlives_launcher_execution_and_drains_on_failure(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_launcher_closes_the_shared_s3_pool_after_its_network_stops(monkeypatch):
+    from src.core import s3_transport
+    from src.worker import network
+    from src.worker.remote import launcher
+
+    events = []
+
+    @asynccontextmanager
+    async def transport():
+        try:
+            yield
+        finally:
+            events.append("network-stop")
+
+    async def close_s3() -> None:
+        events.append("s3-close")
+
+    monkeypatch.setattr(network, "worker_network", transport)
+    monkeypatch.setattr(launcher, "_run_launcher", AsyncMock(return_value=0))
+    monkeypatch.setattr(s3_transport, "close_shared_s3_client", close_s3)
+
+    assert await launcher.run_launcher() == 0
+    assert events == ["network-stop", "s3-close"]
+
+
+@pytest.mark.asyncio
 async def test_duplex_stream_larger_than_window_preserves_bytes_and_half_close():
     payload = bytes(range(256)) * (WINDOW // 256 * 8)
     failures = []

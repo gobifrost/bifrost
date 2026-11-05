@@ -1,3 +1,4 @@
+import { ExecutionOrganizationSelect } from "@/components/execution/ExecutionOrganizationSelect";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -185,6 +186,14 @@ export function RunPanel({ executeRef }: RunPanelProps) {
 		null,
 	);
 	const firstInputRef = useRef<HTMLInputElement>(null);
+	const [organization, setOrganization] = useState<{
+		workflowId: string;
+		orgId?: string;
+	}>();
+	const executionOrgId =
+		organization?.workflowId === selectedWorkflowId
+			? organization.orgId
+			: undefined;
 	const runContextKey = `${openFile?.path ?? ""}::${selectedWorkflowId ?? ""}`;
 	const [prevRunContextKey, setPrevRunContextKey] = useState<string | null>(
 		null,
@@ -486,6 +495,7 @@ export function RunPanel({ executeRef }: RunPanelProps) {
 			const result = (await executeWorkflow.mutateAsync({
 				body: {
 					workflow_id: selectedWorkflow.id,
+					...(executionOrgId ? { org_id: executionOrgId } : {}),
 					input_data: params,
 					form_id: null,
 					transient: true, // Editor executions are transient (no DB writes)
@@ -934,7 +944,21 @@ export function RunPanel({ executeRef }: RunPanelProps) {
 								</Button>
 							</div>
 						) : selectedWorkflow ? (
-							<div className="p-3">
+							<div className="space-y-4 p-3">
+								<ExecutionOrganizationSelect
+									contentClassName="z-[200]"
+									value={executionOrgId}
+									organizationId={
+										selectedWorkflow.organization_id
+									}
+									disabled={isLoading}
+									onChange={(orgId) =>
+										setOrganization({
+											workflowId: selectedWorkflowId!,
+											orgId,
+										})
+									}
+								/>
 								<WorkflowParametersForm
 									key={selectedWorkflowId} // Reset form when workflow changes
 									parameters={

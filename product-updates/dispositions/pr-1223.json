@@ -1,0 +1,19 @@
+{
+  "key": "pr:1223",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine agent tuning bug fix and review-layout correction; no new capability or required customer action.",
+  "security_review": {
+    "status": "not_required"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1223",
+      "https://github.com/gobifrost/bifrost/issues/657",
+      "Verified original contributor: MTG-Thomas (Thomas Bray), source MTG-Thomas/bifrost-upstream, target gobifrost/bifrost; original commits retained.",
+      "Reviewed reliability and layout repair; no authentication, tenant isolation or execution authority changes.",
+      "Jack release visibility policy: routine bug fixes stay out of the in-app Product Updates modal."
+    ]
+  }
+}

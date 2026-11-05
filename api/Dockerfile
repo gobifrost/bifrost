@@ -3,13 +3,13 @@
 # Multi-stage build for efficient image size
 
 # Use the same supported Node runtime for every App build surface.
-FROM node:26.12.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS node-toolchain
+FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-toolchain
 
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
-# python:3.14-slim
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS builder
+# Python security patch: interpreter denylist and patched bundled pip.
+FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS builder
 
 WORKDIR /app
 
@@ -27,15 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations, and the pip shipped in
-# python:3.14-slim already supports --require-hashes (>= 8.0).
+# python:3.14.10-slim already supports --require-hashes (>= 8.0).
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
-# python:3.14-slim
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+# Python security patch: interpreter denylist and patched bundled pip.
+FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966
 
 WORKDIR /app
 ARG BIFROST_VERSION=unknown
@@ -68,6 +68,11 @@ COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin /usr/local/bin
 RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
 
+# Keep OpenSSL's system/private CA selection. Exclude only retired distro
+# roots, including their hashed-directory entries, and persist those exclusions.
+COPY api/scripts/prune_retired_ca.py /tmp/prune_retired_ca.py
+RUN python /tmp/prune_retired_ca.py && rm /tmp/prune_retired_ca.py
+
 # Install `bifrost` CLI shim. The bifrost Python package is mounted at
 # /app/bifrost/ via PYTHONPATH=/app, so `python -m bifrost` works. The shim
 # below exposes that as the `bifrost` console script on PATH, matching the
@@ -95,6 +100,10 @@ RUN PYTHONPATH=/app python /app/scripts/build_cli_artifact.py \
       --source /app/bifrost \
       --output /app/artifacts \
       --version "${BIFROST_VERSION}"
+
+# Compile platform source after CLI packaging, before npm adds dependency trees.
+# Checked hashes preserve source-change invalidation; keep the full preload graph.
+RUN python -m compileall -f --invalidation-mode checked-hash -q /app/src /app/shared /app/bifrost
 
 # Install app compiler Node.js dependencies
 COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/

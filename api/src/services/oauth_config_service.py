@@ -9,6 +9,7 @@ accessing OAuth provider settings.
 import logging
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 import httpx
 from sqlalchemy import delete, select
@@ -37,6 +38,7 @@ from src.models.contracts.oauth_config import (
     OIDCConfigRequest,
 )
 from src.models.orm.config import SystemConfig
+from src.models.orm.users import User
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,12 @@ class OAuthLoginPreferenceError(ValueError):
 
 class OAuthProviderPreferenceConflict(ValueError):
     """Raised when deleting the provider used by an active preference."""
+
+
+#: Refusal details for SSO-only enforcement (routers share these so the
+#: login, MFA, registration, passkey, and profile surfaces stay consistent).
+PASSWORD_SSO_ONLY_DETAIL = "Password login is disabled (SSO-only). Sign in with SSO."
+PASSKEY_SSO_ONLY_DETAIL = "Passkey login is disabled (SSO-only)."
 
 
 @dataclass
@@ -168,12 +176,87 @@ class OAuthConfigService:
             return OAuthLoginPreference()
         return OAuthLoginPreference.model_validate(config.value_json)
 
+    async def get_login_preference_for_settings(self) -> OAuthLoginPreference:
+        """Resolve the safe legacy admin default into editable user exclusions."""
+
+        preference = await self.get_login_preference()
+        if preference.excluded_user_ids is None:
+            preference.excluded_user_ids = list(
+                (
+                    await self.db.execute(
+                        select(User.id).where(
+                            User.is_superuser.is_(True), User.identity_kind.is_(None)
+                        )
+                    )
+                ).scalars()
+            )
+        return preference
+
+    async def _is_login_method_allowed_for(
+        self,
+        preference: OAuthLoginPreference,
+        enabled: bool,
+        user: User | None = None,
+        *,
+        registration_organization_id: UUID | None = None,
+    ) -> bool:
+        """Evaluate the shared policy against a resolved account, never caller claims."""
+        if enabled:
+            return True
+        if user is not None:
+            excluded = preference.excluded_user_ids
+            if (excluded is None and user.is_superuser) or (
+                excluded is not None and user.id in excluded
+            ):
+                return True
+        organization_id = (
+            user.organization_id if user is not None else registration_organization_id
+        )
+        if organization_id in preference.excluded_organization_ids:
+            return True
+        from src.repositories.users import UserRepository
+
+        return not await UserRepository(self.db).has_any_users()
+
+    async def is_password_allowed_for(self, user: User | None = None) -> bool:
+        preference = await self.get_login_preference()
+        return await self._is_login_method_allowed_for(
+            preference, preference.password_login_enabled, user
+        )
+
+    async def is_password_registration_allowed(self, email: str) -> bool:
+        from src.repositories.users import UserRepository
+        from src.repositories.organizations import OrganizationRepository
+
+        user = await UserRepository(self.db).get_by_email(email)
+        if user is None:
+            org = await OrganizationRepository(self.db).get_by_domain(
+                email.split("@")[1].lower()
+            )
+            preference = await self.get_login_preference()
+            return await self._is_login_method_allowed_for(
+                preference,
+                preference.password_login_enabled,
+                registration_organization_id=org.id if org else None,
+            )
+        return await self.is_password_allowed_for(user)
+
+    async def is_passkey_allowed_for(self, user: User | None = None) -> bool:
+        preference = await self.get_login_preference()
+        return await self._is_login_method_allowed_for(
+            preference, preference.passkey_login_enabled, user
+        )
+
     async def set_login_preference(
         self,
         preference: OAuthLoginPreference,
         updated_by: str = "system",
     ) -> OAuthLoginPreference:
         """Persist a preferred provider after verifying it is configured."""
+        from shared.sso_policy import validate_recovery_admin
+
+        await validate_recovery_admin(self.db, preference)
+
         if preference.default_sso_provider is not None:
             provider_config = await self.get_provider_config(
                 preference.default_sso_provider
@@ -183,6 +266,15 @@ class OAuthConfigService:
                     f"{preference.default_sso_provider.title()} SSO must be configured "
                     "before it can be preferred"
                 )
+
+        if (
+            not preference.password_login_enabled
+            or not preference.passkey_login_enabled
+        ) and not await self.get_available_providers():
+            raise OAuthLoginPreferenceError(
+                "An SSO provider must be configured before disabling "
+                "password or passkey login"
+            )
 
         result = await self.db.execute(
             select(SystemConfig).where(
@@ -337,6 +429,9 @@ class OAuthConfigService:
         updated_by: str = "system",
     ) -> bool:
         """Delete all configuration for a provider."""
+        from shared.sso_policy import lock_login_policy
+
+        await lock_login_policy(self.db)
         preference = await self.get_login_preference()
         if (
             preference.auto_redirect_to_sso
@@ -345,6 +440,16 @@ class OAuthConfigService:
             raise OAuthProviderPreferenceConflict(
                 f"Disable preferred SSO redirect before removing {provider.title()}"
             )
+        if (
+            not preference.password_login_enabled
+            or not preference.passkey_login_enabled
+        ):
+            available = await self.get_available_providers()
+            if provider in available and len(available) == 1:
+                raise OAuthProviderPreferenceConflict(
+                    f"Re-enable password and passkey login before removing "
+                    f"{provider.title()} (last SSO provider)"
+                )
 
         if provider == "microsoft":
             keys = [
@@ -370,7 +475,12 @@ class OAuthConfigService:
         await self._delete_config_keys(keys)
         if preference.default_sso_provider == provider:
             await self.set_login_preference(
-                OAuthLoginPreference(),
+                OAuthLoginPreference(
+                    excluded_user_ids=preference.excluded_user_ids,
+                    excluded_organization_ids=preference.excluded_organization_ids,
+                    password_login_enabled=preference.password_login_enabled,
+                    passkey_login_enabled=preference.passkey_login_enabled,
+                ),
                 updated_by=updated_by,
             )
         logger.info(f"OAuth config deleted for provider: {log_safe(provider)}")
@@ -394,8 +504,12 @@ class OAuthConfigService:
                         client_id=config.client_id,
                         client_secret_set=bool(config.client_secret),
                         tenant_id=config.tenant_id if provider == "microsoft" else None,
-                        discovery_url=config.discovery_url if provider == "oidc" else None,
-                        display_name=config.display_name if provider == "oidc" else None,
+                        discovery_url=config.discovery_url
+                        if provider == "oidc"
+                        else None,
+                        display_name=config.display_name
+                        if provider == "oidc"
+                        else None,
                     )
                 )
             else:
@@ -455,7 +569,9 @@ class OAuthConfigService:
                         message=f"Successfully connected to Microsoft Entra ID (tenant: {tenant})",
                         details={
                             "issuer": data.get("issuer"),
-                            "authorization_endpoint": data.get("authorization_endpoint"),
+                            "authorization_endpoint": data.get(
+                                "authorization_endpoint"
+                            ),
                             "token_endpoint": data.get("token_endpoint"),
                         },
                     )
@@ -500,7 +616,9 @@ class OAuthConfigService:
                         message="Successfully connected to Google OAuth",
                         details={
                             "issuer": data.get("issuer"),
-                            "authorization_endpoint": data.get("authorization_endpoint"),
+                            "authorization_endpoint": data.get(
+                                "authorization_endpoint"
+                            ),
                             "token_endpoint": data.get("token_endpoint"),
                         },
                     )
@@ -564,7 +682,9 @@ class OAuthConfigService:
                         message=f"Successfully connected to OIDC provider: {data.get('issuer')}",
                         details={
                             "issuer": data.get("issuer"),
-                            "authorization_endpoint": data.get("authorization_endpoint"),
+                            "authorization_endpoint": data.get(
+                                "authorization_endpoint"
+                            ),
                             "token_endpoint": data.get("token_endpoint"),
                             "userinfo_endpoint": data.get("userinfo_endpoint"),
                             "scopes_supported": data.get("scopes_supported", [])[:10],

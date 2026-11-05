@@ -9,9 +9,11 @@ Tests the complete flow of:
 import sys
 from typing import Awaitable, cast
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+from tests.helpers.polling import poll_until
 
 
 @pytest.mark.e2e
@@ -183,9 +185,72 @@ class TestVirtualImportIntegration:
                 "kind": "not_found",
                 "path": "resolver_live/missing",
             }
+
         finally:
             await clear_module_cache()
             await storage.delete("resolver_live/pkg/helper.py")
+
+    @pytest.mark.asyncio
+    async def test_inline_execution_loads_direct_workspace_imports(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        """One real worker execution loads a root and two direct helpers."""
+        from src.core.module_cache import invalidate_module, set_module
+        from src.services.repo_storage import RepoStorage
+
+        prefix = f"import_batch_{uuid4().hex}"
+        root_path = f"{prefix}.py"
+        first_path = f"{prefix}_first.py"
+        second_path = f"{prefix}_second.py"
+        root_source = (
+            f"import {prefix}_first\n"
+            f"import {prefix}_second\n"
+            f"VALUES = ({prefix}_first.VALUE, {prefix}_second.VALUE)\n"
+        )
+        sources = {
+            root_path: root_source,
+            first_path: "VALUE = 'first'\n",
+            second_path: "VALUE = 'second'\n",
+        }
+        storage = RepoStorage()
+        try:
+            for path, source in sources.items():
+                await storage.write(path, source.encode())
+                await set_module(path, source, f"{prefix}-{path}")
+
+            response = e2e_client.post(
+                "/api/workflows/execute",
+                headers=platform_admin.headers,
+                json={
+                    "code": (
+                        f"import {prefix}\n"
+                        f"result = {{'values': list({prefix}.VALUES)}}\n"
+                    ),
+                    "script_name": f"{prefix}_inline.py",
+                    "sync": True,
+                },
+            )
+            assert response.status_code == 200, response.text
+            execution_id = response.json()["execution_id"]
+
+            def completed():
+                detail = e2e_client.get(
+                    f"/api/executions/{execution_id}", headers=platform_admin.headers
+                )
+                assert detail.status_code == 200, detail.text
+                result = detail.json()
+                return result if result["status"] in ("Success", "Failed") else None
+
+            execution = poll_until(completed, max_wait=30, interval=0.2)
+            assert execution is not None, f"Execution {execution_id} did not finish"
+            assert execution["status"] == "Success", execution
+            assert execution["result"] == {"values": ["first", "second"]}
+        finally:
+            for path in sources:
+                await invalidate_module(path)
+                await storage.delete(path)
 
     @pytest.mark.asyncio
     async def test_virtual_import_package_with_submodule(self, db_session: AsyncSession):

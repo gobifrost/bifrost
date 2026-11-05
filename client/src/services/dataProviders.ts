@@ -50,11 +50,15 @@ export async function getFormFieldOptions(
 	formId: string,
 	fieldName: string,
 	inputs?: Record<string, unknown>,
+	orgId?: string,
 ): Promise<DataProviderOption[]> {
 	const { data, error } = await apiClient.POST(
 		"/api/forms/{form_id}/fields/{field_name}/options",
 		{
-			params: { path: { form_id: formId, field_name: fieldName } },
+			params: {
+				path: { form_id: formId, field_name: fieldName },
+				...(orgId ? { query: { org_id: orgId } } : {}),
+			},
 			body: { inputs: inputs || {} },
 		},
 	);

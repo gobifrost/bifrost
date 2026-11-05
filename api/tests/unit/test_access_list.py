@@ -2014,6 +2014,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.mcp_server.server._get_context_from_token": (3, "actor_facts"),
     "src.services.mcp_server.server._get_runtime_context": (3, "actor_facts"),
     "src.services.mcp_server.server.context_from_principal": (3, "actor_facts"),
+    # Shared login policy derives the legacy recovery exclusion from persisted
+    # Platform Admin facts; explicit user/org exclusions replace blanket exemption.
+    "src.services.oauth_config_service.OAuthConfigService._is_login_method_allowed_for": (1, "current_role_derivation"),
+    "src.services.oauth_config_service.OAuthConfigService.get_login_preference_for_settings": (1, "current_role_derivation"),
     "src.services.policy_rule_service.PolicyRuleService._get": (1, "internal_authorized_resource"),
     "src.services.solutions.deploy.SolutionDeployer._upsert_file_policies": (1, "internal_authorized_resource"),
     "src.services.solutions.deploy.SolutionDeployer._upsert_tables": (1, "internal_authorized_resource"),
@@ -2087,6 +2091,8 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {}
 # trusts); workflow code can write Redis today, so each one closes at the
 # cutover.
 _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
+    "bifrost._logging.append_log_to_stream": (2, "cutover"),
+    "bifrost._logging.append_log_to_stream_async": (2, "cutover"),
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
     "shared.browser_impersonation.validate_browser_impersonation": (1, "cutover"),
@@ -2098,9 +2104,10 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.embed_middleware.embed_session_owns_execution": (1, "cutover"),
     "src.core.locks.DistributedLockService.extend_lock": (1, "cutover"),
     "src.core.locks.DistributedLockService.release_lock": (1, "cutover"),
-    "src.core.module_cache.get_module": (1, "cutover"),
+    "src.core.module_cache.get_module": (2, "cutover"),  # Source read and generation-fenced refill.
     "src.core.module_cache.get_module_resolution_cache": (1, "cutover"),
     "src.core.module_cache.get_module_resolution_generation": (1, "cutover"),
+    "src.core.module_cache.refresh_modules_from_directory": (1, "cutover"),  # Executable-source index reconciliation.
     "src.core.module_cache.set_module_resolution_cache": (1, "cutover"),
     "src.core.module_cache_sync._get_cached_module_resolution": (2, "cutover"),
     "src.core.module_cache_sync._get_exact_scoped_module": (1, "cutover"),
@@ -2119,7 +2126,9 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.services.legacy_broker_drain._redis_json": (1, "cutover"),
     "src.services.legacy_broker_drain.recover_agent_run": (1, "cutover"),
     "src.services.legacy_broker_drain.recover_workflow_run": (2, "cutover"),
-    "src.services.mcp_server.auth.BifrostAuthProvider._callback": (2, "cutover"),
+    "shared.app_connections.begin_mcp_connection": (1, "cutover"),  # One-way import of legacy callback metadata into the durable registry.
+    "shared.app_connections._pending_mcp": (1, "cutover"),  # Signed state is authenticated before consent.
+    "shared.app_connections.decide_app_connection": (1, "cutover"),  # One-time, user-bound consent consumes state.
     "src.services.mcp_server.auth.BifrostAuthProvider._token": (1, "cutover"),
     "shared.runtime_io.service_control": (2, "internal_authorized_resource"),
     "src.services.notification_service.NotificationService._is_admin_notification": (1, "cutover"),
@@ -3030,6 +3039,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/auth/revoke-all"): "Own sessions.",
     ("POST", "/auth/device/authorize"): "Own device-code authorization.",
     ("POST", "/auth/device/deny"): "Own device-code denial.",
+    ("POST", "/auth/app-connections/{request_id}"): "Own account connection; approval proof binds the authenticated human/session to the signed request.",
     ("POST", "/auth/mfa/totp/setup"): "Own MFA enrollment.",
     ("POST", "/auth/mfa/totp/verify"): "Own MFA enrollment.",
     ("DELETE", "/auth/mfa"): "Own MFA enrollment.",

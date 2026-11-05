@@ -775,6 +775,36 @@ describe("ExecutionDetails — editable rerun", () => {
 		} as Awaited<ReturnType<typeof executeWorkflowWithContext>>);
 	});
 
+	it("passes an explicit Global organization when rerunning a Global execution", async () => {
+		mockUseExecution.mockReturnValue({
+			data: {
+				...execution,
+				org_id: null,
+				org_name: null,
+				input_data: { message: "previous" },
+			},
+			isLoading: false,
+			error: null,
+		});
+		const { user } = renderWithProviders(
+			<ExecutionDetails executionId={execution.execution_id} />,
+		);
+		await user.click(screen.getByRole("button", { name: "Rerun" }));
+		await user.click(
+			screen.getByRole("button", { name: "Rerun Workflow" }),
+		);
+		await waitFor(() =>
+			expect(executeWorkflowWithContext).toHaveBeenCalledWith(
+				execution.workflow_id,
+				{ message: "previous" },
+				undefined,
+				undefined,
+				undefined,
+				{ orgId: null },
+			),
+		);
+	});
+
 	it.each([false, true])(
 		"submits edited values from the shared dialog (embedded=%s)",
 		async (embedded) => {
@@ -806,6 +836,10 @@ describe("ExecutionDetails — editable rerun", () => {
 				expect(executeWorkflowWithContext).toHaveBeenCalledWith(
 					execution.workflow_id,
 					{ message: "edited" },
+					undefined,
+					undefined,
+					undefined,
+					{ orgId: execution.org_id ?? null },
 				),
 			);
 			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
