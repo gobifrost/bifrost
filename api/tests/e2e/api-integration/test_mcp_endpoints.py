@@ -691,7 +691,9 @@ class TestMCPPackageBranding(_PersistedMCPCallers):
             assert saved.json()["slug"] == "covi-production"
             uploaded = requests.post(url + "/logo", files={"file": ("brand.png", original.getvalue(), "image/png")}, headers=upload_headers)
             assert uploaded.status_code == 200, uploaded.text
-            assert requests.get(url, headers=self.admin_headers).json()["name"] == "Covi Production"
+            persisted = requests.get(url, headers=self.admin_headers)
+            assert persisted.status_code == 200
+            assert persisted.json()["name"] == "Covi Production"
             logo = requests.get(url + "/logo")
             assert logo.status_code == 200
             with Image.open(BytesIO(logo.content)) as image:
@@ -707,7 +709,8 @@ class TestMCPPackageBranding(_PersistedMCPCallers):
             removed = requests.delete(url + "/logo", headers=self.admin_headers)
             assert removed.status_code == 200
             assert removed.json()["logo_url"] is None
-            assert requests.get(url + "/logo").status_code == 404
+            absent_logo = requests.get(url + "/logo")
+            assert absent_logo.status_code == 404
         finally:
             restored = requests.put(url, json={"name": previous.json()["name"]}, headers=self.admin_headers)
             assert restored.status_code == 200
@@ -715,7 +718,8 @@ class TestMCPPackageBranding(_PersistedMCPCallers):
                 restored_logo = requests.post(url + "/logo", files={"file": ("old.png", old_logo.content, "image/png")}, headers=upload_headers)
                 assert restored_logo.status_code == 200
             else:
-                assert requests.delete(url + "/logo", headers=self.admin_headers).status_code == 200
+                cleaned_up = requests.delete(url + "/logo", headers=self.admin_headers)
+                assert cleaned_up.status_code == 200
 
     @pytest.mark.e2e
     @pytest.mark.parametrize("method,path,kwargs", [
