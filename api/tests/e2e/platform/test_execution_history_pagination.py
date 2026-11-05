@@ -1,6 +1,9 @@
 """Execution History ordering and keyset pagination regressions."""
 
+import base64
 from datetime import datetime, timedelta, timezone
+import json
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -123,3 +126,54 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     assert len(set(all_ids)) == len(rows)
     assert all_ids[-1] == str(stale_cancelled.id)
     assert final_token is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("via_handler", [False, True], ids=["sdk", "http-handler"])
+@pytest.mark.parametrize("legacy_started_at", [None, "2026-08-27T17:00:00+00:00"])
+async def test_legacy_history_position_restarts_on_display_timeline(
+    db_session, via_handler, legacy_started_at,
+):
+    now = datetime(2026, 8, 27, 18, 0, tzinfo=timezone.utc)
+    user_id = uuid4()
+    name = f"legacy-history-{uuid4().hex}"
+    db_session.add(User(
+        id=user_id, email=f"{name}@example.com", name="History pagination test",
+        organization_id=PROVIDER_ORG_ID,
+    ))
+    rows = [
+        _execution(
+            name=name, status=ExecutionStatus.PENDING,
+            created_at=now - timedelta(minutes=index), executed_by=user_id,
+        )
+        for index in range(3)
+    ]
+    db_session.add_all(rows)
+    await db_session.flush()
+    principal = UserPrincipal(
+        user_id=user_id, email=f"{name}@example.com",
+        organization_id=PROVIDER_ORG_ID, is_superuser=True,
+    )
+    legacy_token = base64.urlsafe_b64encode(json.dumps({
+        "v": 1, "s": legacy_started_at, "i": str(rows[-1].id),
+    }).encode()).decode()
+
+    if via_handler:
+        from src.routers.executions import list_executions
+
+        result = await list_executions(
+            SimpleNamespace(db=db_session, user=principal),
+            SimpleNamespace(query_params={"continuationToken": legacy_token}),
+            scope=None, workflowName=name, workflowId=None, status_filter=None,
+            startDate=None, endDate=None, limit=2, continuationToken=None,
+        )
+        page, token = result.executions, result.continuation_token
+    else:
+        page, token = await list_sdk_executions(
+            db_session, principal, workflow_name=name, limit=2,
+            cursor=decode_history_cursor(legacy_token),
+        )
+
+    assert [row.execution_id for row in page] == [str(row.id) for row in rows[:2]]
+    assert token is not None
+    assert json.loads(base64.urlsafe_b64decode(token))["v"] == 2

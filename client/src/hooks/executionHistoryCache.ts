@@ -20,7 +20,7 @@ function encodeHistoryCursor(execution: HistoryExecutionRecord): string {
 		execution.completed_at ??
 		execution.created_at;
 	const payload = JSON.stringify({
-		v: 1,
+		v: 2,
 		s: timelineAt,
 		i: execution.execution_id,
 	});
