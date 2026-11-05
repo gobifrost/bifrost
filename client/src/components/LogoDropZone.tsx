@@ -159,9 +159,11 @@ export function LogoDropZone({
 				isDragging ? "ring-2 ring-primary ring-offset-2" : ""
 			}`}
 		>
-			<div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-				{fallback}
-			</div>
+			{(!imageLoaded || isErrored) && (
+				<div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+					{fallback}
+				</div>
+			)}
 			{!isErrored && (
 				<img
 					data-testid="logo-drop-zone-img"
