@@ -324,6 +324,15 @@ def _load_workflow_runtime(pipe: Connection) -> dict[str, Any] | None:
         "BIFROST_S3_ENDPOINT_URL",
         "BIFROST_S3_BUCKET",
         "BIFROST_S3_REGION",
+        "BIFROST_S3_PUBLIC_ENDPOINT_URL",
+        # Blob is also parent-only. Forked workflows use the same SDK boundary.
+        "BIFROST_OBJECT_STORAGE_PROVIDER",
+        "BIFROST_AZURE_BLOB_ACCOUNT_URL",
+        "BIFROST_AZURE_BLOB_CONTAINER",
+        "BIFROST_AZURE_BLOB_ACCOUNT_NAME",
+        "BIFROST_AZURE_BLOB_ACCOUNT_KEY",
+        "BIFROST_AZURE_BLOB_AUTH",
+        "BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID",
         # Execution children receive a freshly minted process-scoped SDK token
         # only after fork. Never let ambient API credentials cross the template.
         "BIFROST_ACCESS_TOKEN",

@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from src.config import Settings, get_settings
 from src.core.log_safety import log_safe
+from src.core.storage_transport import storage_transport
 from src.core.s3_transport import S3NoSuchKey, S3Transport
 
 logger = logging.getLogger(__name__)
@@ -40,16 +41,11 @@ class AppStorageService:
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
+        self._bucket: str = self._settings.storage_bucket or ""
 
     @asynccontextmanager
     async def _get_client(self):
-        async with S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        ) as client:
+        async with storage_transport(self._settings, s3_factory=S3Transport) as client:
             yield client
 
     def _key(self, app_id: str, mode: AppMode, relative_path: str = "") -> str:

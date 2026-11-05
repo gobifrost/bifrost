@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 import httpx
 
 from src.config import Settings
+from src.core.storage_transport import storage_transport
 from src.core.s3_transport import S3Error, S3Transport
 
 logger = logging.getLogger(__name__)
@@ -111,15 +112,10 @@ class S3StorageClient:
         Raises:
             RuntimeError: If S3 storage is not configured
         """
-        if not self.settings.s3_configured:
-            raise RuntimeError("S3 storage not configured")
+        if not self.settings.storage_configured:
+            raise RuntimeError("Object storage not configured")
 
-        async with S3Transport(
-            endpoint_url=self.settings.s3_endpoint_url,
-            access_key_id=self.settings.s3_access_key,
-            secret_access_key=self.settings.s3_secret_key,
-            region=self.settings.s3_region,
-        ) as client:
+        async with storage_transport(self.settings, s3_factory=S3Transport) as client:
             yield client
 
     def _rewrite_presigned_url(self, url: str) -> str:
@@ -129,6 +125,8 @@ class S3StorageClient:
         scheme+host+port of the presigned URL so the browser routes through
         the Vite proxy instead of hitting the internal Docker endpoint.
         """
+        if self.settings.object_storage_provider == "azure_blob":
+            return url
         public = self.settings.s3_public_endpoint_url
         if not public:
             return url
@@ -136,6 +134,11 @@ class S3StorageClient:
         parsed = urlparse(url)
         # public is a path prefix like "/s3" — make the URL origin-relative
         return f"{public}{parsed.path}?{parsed.query}"
+
+    def presigned_upload_headers(self, content_type: str) -> dict[str, str]:
+        if self.settings.object_storage_provider == "azure_blob":
+            return {"Content-Type": content_type, "x-ms-blob-type": "BlockBlob"}
+        return {"Content-Type": content_type}
 
     @staticmethod
     def compute_hash(content: bytes) -> str:
@@ -188,7 +191,7 @@ class S3StorageClient:
             url = await s3.generate_presigned_url(
                 "put_object",
                 Params={
-                    "Bucket": self.settings.s3_bucket,
+                    "Bucket": self.settings.storage_bucket,
                     "Key": path,
                     "ContentType": content_type,
                 },
@@ -215,7 +218,7 @@ class S3StorageClient:
             Presigned GET URL for direct download
         """
         params = {
-            "Bucket": self.settings.s3_bucket,
+            "Bucket": self.settings.storage_bucket,
             "Key": path,
         }
         if response_content_type is not None:
@@ -247,7 +250,7 @@ class S3StorageClient:
         async with self.get_client() as s3:
             try:
                 response = await s3.get_object(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=path,
                 )
                 return await response["Body"].read()
@@ -264,7 +267,7 @@ class S3StorageClient:
         async with self.get_client() as s3:
             try:
                 response = await s3.get_object(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=path,
                 )
             except s3.exceptions.NoSuchKey:
@@ -305,7 +308,7 @@ class S3StorageClient:
                 if upload_id is not None:
                     return upload_id
                 created = await s3.create_multipart_upload(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=path,
                     ContentType=content_type or self.guess_content_type(path),
                 )
@@ -319,7 +322,7 @@ class S3StorageClient:
                 nonlocal part_number
                 current_upload_id = await ensure_upload()
                 response = await s3.upload_part(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=path,
                     UploadId=current_upload_id,
                     PartNumber=part_number,
@@ -342,7 +345,7 @@ class S3StorageClient:
 
                 if upload_id is None:
                     await s3.put_object(
-                        Bucket=self.settings.s3_bucket,
+                        Bucket=self.settings.storage_bucket,
                         Key=path,
                         Body=bytes(buffer),
                         ContentType=content_type or self.guess_content_type(path),
@@ -351,18 +354,21 @@ class S3StorageClient:
                     if buffer:
                         await upload_part(bytes(buffer))
                     await s3.complete_multipart_upload(
-                        Bucket=self.settings.s3_bucket,
+                        Bucket=self.settings.storage_bucket,
                         Key=path,
                         UploadId=upload_id,
                         MultipartUpload={"Parts": parts},
                     )
-            except Exception:
+            except BaseException:
                 if upload_id is not None:
-                    await s3.abort_multipart_upload(
-                        Bucket=self.settings.s3_bucket,
-                        Key=path,
-                        UploadId=upload_id,
-                    )
+                    try:
+                        await s3.abort_multipart_upload(
+                            Bucket=self.settings.storage_bucket,
+                            Key=path,
+                            UploadId=upload_id,
+                        )
+                    except Exception:
+                        logger.warning("Could not abort multipart upload", exc_info=True)
                 raise
 
         return digest.hexdigest(), total
@@ -371,7 +377,7 @@ class S3StorageClient:
         """HeadObject; ``None`` only when the key does not exist, anything else raises."""
         async with self.get_client() as s3:
             try:
-                response = await s3.head_object(Bucket=self.settings.s3_bucket, Key=key)
+                response = await s3.head_object(Bucket=self.settings.storage_bucket, Key=key)
             except S3Error as exc:
                 if _error_code(exc) in _NOT_FOUND_CODES:
                     return None
@@ -408,7 +414,7 @@ class S3StorageClient:
         Explicit stream mode replaces large part-copy operations with ranged
         conditional reads, retaining the same conditional multipart publication.
         """
-        bucket = self.settings.s3_bucket
+        bucket = self.settings.storage_bucket
         copy_source = {"Bucket": bucket, "Key": source_key}
         async with self.get_client() as s3:
             if source.size <= multipart_threshold:
@@ -429,7 +435,9 @@ class S3StorageClient:
                     raise mapped from exc
                 return
 
-            copy_mode = self.settings.s3_multipart_copy_mode
+            # This setting selects an S3 compatibility strategy. Blob uses its
+            # native conditional block-copy protocol regardless of S3 settings.
+            copy_mode = self.settings.s3_multipart_copy_mode if self.settings.object_storage_provider == "s3" else "server"
             minimum_part = _STREAM_COPY_PART if copy_mode == "stream" else MIN_COPY_PART
             size_per_part = part_size or max(minimum_part, math.ceil(source.size / _MAX_PARTS))
             created = await s3.create_multipart_upload(
@@ -490,7 +498,7 @@ class S3StorageClient:
     ) -> bytes:
         """Read only the pinned source version; reject ignored ranges/conditions."""
         response = await s3.get_object(
-            Bucket=self.settings.s3_bucket, Key=source_key,
+            Bucket=self.settings.storage_bucket, Key=source_key,
             IfMatch=source.etag, Range=f"bytes={start}-{end}",
         )
         body = response["Body"]
@@ -520,13 +528,13 @@ class S3StorageClient:
     async def delete_object_strict(self, key: str) -> None:
         """DeleteObject that raises on any failure (unlike ``delete_raw_from_s3``)."""
         async with self.get_client() as s3:
-            await s3.delete_object(Bucket=self.settings.s3_bucket, Key=key)
+            await s3.delete_object(Bucket=self.settings.storage_bucket, Key=key)
 
     async def list_keys(self, prefix: str, *, delimiter: str = "/") -> list[str]:
         """Keys directly under ``prefix`` (no deeper ``delimiter``), all pages."""
         keys: list[str] = []
         kwargs: dict[str, Any] = {
-            "Bucket": self.settings.s3_bucket,
+            "Bucket": self.settings.storage_bucket,
             "Prefix": prefix,
             "Delimiter": delimiter,
         }

@@ -58,7 +58,7 @@ describe("AuditPageLayout", () => {
 
 		await waitFor(() =>
 			expect(screen.getByLabelText("Current route")).toHaveTextContent(
-				"/audit/access-checks",
+				/^\/audit\/access-checks$/,
 			),
 		);
 		expect(
@@ -101,7 +101,7 @@ describe("AuditPageLayout", () => {
 
 		await waitFor(() =>
 			expect(screen.getByLabelText("Current route")).toHaveTextContent(
-				"/audit/access-checks",
+				/^\/audit\/access-checks$/,
 			),
 		);
 		expect(
@@ -118,7 +118,7 @@ describe("AuditPageLayout", () => {
 
 		await waitFor(() =>
 			expect(screen.getByLabelText("Current route")).toHaveTextContent(
-				"/audit",
+				/^\/audit$/,
 			),
 		);
 		expect(screen.getByRole("tab", { name: "Activity" })).toHaveAttribute(

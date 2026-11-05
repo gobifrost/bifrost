@@ -165,6 +165,9 @@ class FileStorageService:
     # S3 Direct Operations (delegate to S3StorageClient)
     # ========================================================================
 
+    def presigned_upload_headers(self, content_type: str) -> dict[str, str]:
+        return self._s3_storage.presigned_upload_headers(content_type)
+
     async def generate_presigned_upload_url(
         self,
         path: str,
@@ -309,7 +312,7 @@ class FileStorageService:
         """Write content directly to S3 without workspace indexing."""
         async with self._s3_storage.get_client() as s3:
             await s3.put_object(
-                Bucket=self.settings.s3_bucket,
+                Bucket=self.settings.storage_bucket,
                 Key=path,
                 Body=content,
                 ContentType=S3StorageClient.guess_content_type(path),
@@ -334,7 +337,7 @@ class FileStorageService:
         async with self._s3_storage.get_client() as s3:
             try:
                 await s3.delete_object(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=path,
                 )
             except Exception:
@@ -346,7 +349,7 @@ class FileStorageService:
         async with self._s3_storage.get_client() as s3:
             paginator = s3.get_paginator("list_objects_v2")
             async for page in paginator.paginate(
-                Bucket=self.settings.s3_bucket,
+                Bucket=self.settings.storage_bucket,
                 Prefix=prefix,
             ):
                 for obj in page.get("Contents", []):
@@ -360,7 +363,7 @@ class FileStorageService:
         async with self._s3_storage.get_client() as s3:
             try:
                 await s3.head_object(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=path,
                 )
                 return True

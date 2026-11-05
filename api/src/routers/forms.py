@@ -2227,6 +2227,7 @@ async def generate_upload_url(
 
     return FileUploadResponse(
         upload_url=upload_url,
+        headers=storage.presigned_upload_headers(request.content_type),
         blob_uri=relative_path,
         expires_at=expires_at,
         file_metadata=UploadedFileMetadata(

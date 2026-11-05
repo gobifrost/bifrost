@@ -1,3 +1,4 @@
+import type { components } from "@/lib/v1";
 import { getBifrostTransport } from "./transport";
 import {
 	FileAccessDeniedError,
@@ -52,6 +53,7 @@ export interface SignedUrlResult {
 	url: string;
 	path: string;
 	expiresIn: number;
+	headers?: Record<string, string>;
 }
 
 type FileUploadContent = string | Blob | Uint8Array | ArrayBuffer;
@@ -211,15 +213,12 @@ function normalizeListResponse(response: {
 	};
 }
 
-function normalizeSignedUrl(response: {
-	url: string;
-	path: string;
-	expires_in: number;
-}): SignedUrlResult {
+function normalizeSignedUrl(response: components["schemas"]["SignedUrlResponse"]): SignedUrlResult {
 	return {
 		url: response.url,
 		path: response.path,
 		expiresIn: response.expires_in,
+		...(response.headers ? { headers: response.headers } : {}),
 	};
 }
 
@@ -340,11 +339,7 @@ export const files = {
 		path: string,
 		options: SignedUrlOptions = {},
 	): Promise<SignedUrlResult> {
-		const response = await http<{
-			url: string;
-			path: string;
-			expires_in: number;
-		}>(withSolution("/api/files/signed-url", options.solution), {
+		const response = await http<components["schemas"]["SignedUrlResponse"]>(withSolution("/api/files/signed-url", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				path,
@@ -358,17 +353,7 @@ export const files = {
 		paths: string[],
 		options: SignedUrlOptions = {},
 	): Promise<SignedUrlResult[]> {
-		const response = await http<{
-			results: Array<{
-				path: string;
-				resolved_path?: string | null;
-				method: SignedUrlMethod;
-				url?: string | null;
-				expires_in: number;
-				error?: string | null;
-				status_code: number;
-			}>;
-		}>(withSolution("/api/files/signed-urls", options.solution), {
+		const response = await http<components["schemas"]["SignedUrlBatchResponse"]>(withSolution("/api/files/signed-urls", options.solution), {
 			method: "POST",
 			body: JSON.stringify({
 				requests: paths.map((path) => ({
@@ -387,6 +372,7 @@ export const files = {
 				url: item.url,
 				path: item.resolved_path ?? item.path,
 				expiresIn: item.expires_in,
+				...(item.headers ? { headers: item.headers } : {}),
 			};
 		});
 	},
@@ -409,7 +395,7 @@ export const files = {
 		const body = await toUploadBlob(content, contentType);
 		const response = await fetch(signed.url, {
 			method: "PUT",
-			headers: { "content-type": contentType },
+			headers: signed.headers ?? { "content-type": contentType },
 			body,
 		});
 		if (!response.ok) {

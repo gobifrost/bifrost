@@ -11,7 +11,7 @@ import ast
 import asyncio
 import os
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -128,8 +128,8 @@ class _FakeProcess:
 
 
 @pytest.fixture
-def recorded(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Record the keyword arguments of every subprocess started."""
+def recorded(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[dict[str, Any]]]:
+    """Record command arguments and environment of every subprocess started."""
     calls: list[dict[str, Any]] = []
 
     def fake_run(
@@ -159,7 +159,14 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.setenv("BIFROST_SECRET_KEY", "platform-secret-value-for-unit-tests-only")
     monkeypatch.setenv("PIP_INDEX_URL", "https://index.example/simple")
-    return calls
+    try:
+        yield calls
+    finally:
+        # Call sites may load settings while the fake secret is installed.
+        # Do not leave that secret cached for subsequent integration tests.
+        from src.config import get_settings
+
+        get_settings.cache_clear()
 
 
 async def _simple_worker_pip_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -283,6 +290,8 @@ async def test_call_site_passes_package_tool_env(
 
 
 # --- guard: new pip / npm / npx / uv subprocesses must use the helper ---------
+
+
 
 _PACKAGE_TOOLS = {"pip", "npm", "npx", "uv"}
 _SUBPROCESS_FUNCS = {"run", "Popen", "call", "check_call", "check_output"}

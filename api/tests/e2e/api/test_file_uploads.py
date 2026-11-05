@@ -74,13 +74,17 @@ class TestFileUploads:
         assert "blob_uri" in data, "Missing blob_uri"
         assert "expires_at" in data, "Missing expires_at"
         assert "file_metadata" in data, "Missing file_metadata"
+        from src.config import get_settings
+
+        expected_headers = {"Content-Type": "text/plain"}
+        if get_settings().object_storage_provider == "azure_blob":
+            expected_headers["x-ms-blob-type"] = "BlockBlob"
+        assert data["headers"] == expected_headers
 
         # blob_uri is now the path relative to the uploads/ location:
         # `{form_id}/{uuid}/{filename}`. The full S3 key is
         # `uploads/{scope}/{blob_uri}` and the SDK handles that translation.
-        assert "/" in data["blob_uri"], (
-            f"Invalid blob_uri: {data['blob_uri']}"
-        )
+        assert "/" in data["blob_uri"], f"Invalid blob_uri: {data['blob_uri']}"
         assert not data["blob_uri"].startswith("uploads/"), (
             f"blob_uri should be location-relative, got: {data['blob_uri']}"
         )
@@ -122,7 +126,7 @@ class TestFileUploads:
             response = s3_client.put(
                 upload_url,
                 content=file_content,
-                headers={"Content-Type": "text/plain"},
+                headers=data["headers"],
             )
         # S3/Minio accepts 200, 201, or 204 for successful upload
         assert response.status_code in [200, 201, 204], (
@@ -168,7 +172,7 @@ class TestFileUploads:
             s3_response = s3_client.put(
                 upload_url,
                 content=file_content,
-                headers={"Content-Type": "text/plain"},
+                headers=upload_data["headers"],
             )
         assert s3_response.status_code in [200, 201, 204], (
             f"S3 upload failed: {s3_response.status_code}"

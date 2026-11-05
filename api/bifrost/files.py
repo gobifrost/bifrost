@@ -516,7 +516,7 @@ class files:
         expires_in: int = 600,
     ) -> dict:
         """
-        Generate a presigned S3 URL for direct file upload or download.
+        Generate a signed object-storage URL for direct upload or download.
 
         Args:
             path: File path relative to location root (NOT including scope segment)
@@ -529,7 +529,8 @@ class files:
             expires_in: URL lifetime in seconds, from 1 second through 7 days.
 
         Returns:
-            dict with keys: url, path, expires_in
+            dict with keys: url, path, expires_in, headers. Send the returned
+            headers with a direct PUT; Azure Blob requires x-ms-blob-type.
 
         Example:
             >>> # Generate a download URL for a file written to workspace

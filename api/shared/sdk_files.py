@@ -592,6 +592,7 @@ class SignedUrlResult:
     url: str
     path: str
     expires_in: int
+    headers: dict[str, str] | None = None
 
 
 async def sdk_signed_url(
@@ -712,7 +713,12 @@ async def sdk_signed_url(
                 content_type=content_type,
                 expires_in=expires_in,
             )
-        return SignedUrlResult(url=url, path=s3_path, expires_in=expires_in)
+        headers = None
+        if method == "PUT":
+            from src.config import get_settings
+            from src.services.file_storage.s3_client import S3StorageClient
+            headers = S3StorageClient(get_settings()).presigned_upload_headers(content_type)
+        return SignedUrlResult(url=url, path=s3_path, expires_in=expires_in, headers=headers)
     except FileServiceError:
         raise
 

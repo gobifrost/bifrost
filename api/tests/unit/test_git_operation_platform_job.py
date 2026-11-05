@@ -1,18 +1,53 @@
 """Workspace Git platform-job dispatch contracts."""
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock
 from uuid import uuid4
 
 import pytest
 
 from src.jobs.platform.git_operation import (
+    GIT_OPERATION_DEFINITION,
     GitOperationPayload,
     dispatch_git_operation,
     run_git_operation,
 )
 from src.models.contracts.github import GitConnectRequest, SyncResult, WorkspaceSyncPlan
+
+
+def test_git_payload_version_fences_old_executors_and_retains_queued_schema():
+    assert GIT_OPERATION_DEFINITION.payload_version == 2
+    assert GIT_OPERATION_DEFINITION.payload_model_for_version(1) is GitOperationPayload
+    assert GIT_OPERATION_DEFINITION.payload_model_for_version(2) is GitOperationPayload
+
+
+@pytest.mark.asyncio
+async def test_old_git_runner_refuses_durable_workspace_jobs(monkeypatch):
+    from src.jobs.platform import runner
+
+    job_id, lease_token = uuid4(), uuid4()
+    job = SimpleNamespace(id=job_id, status="running", job_type="workspace.git", payload_version=2)
+    db = AsyncMock()
+    db.execute.return_value = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = job
+
+    @asynccontextmanager
+    async def context():
+        yield db
+
+    handler = AsyncMock()
+    legacy = replace(
+        GIT_OPERATION_DEFINITION, payload_version=1, historical_payload_models={}, handler=handler,
+    )
+    monkeypatch.setattr(runner, "get_db_context", context)
+    monkeypatch.setattr(runner, "get_platform_job_definition", Mock(return_value=legacy))
+    finish = AsyncMock(return_value=True)
+    monkeypatch.setattr(runner, "finish_platform_job", finish)
+    assert not await runner.run_claimed_platform_job(job_id, lease_token)
+    handler.assert_not_awaited()
+    assert finish.await_args.kwargs["error_code"] == "unsupported_payload_version"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,16 @@
 # Usage: see ./test.sh --help
 
 services:
+  # Both storage contracts run against real local services in every test lane.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
+    command: [azurite-blob, --blobHost, 0.0.0.0, --location, /data, --skipApiVersionCheck, --silent]
+    environment:
+      # Public local fixture account; has no Azure authority.
+      AZURITE_ACCOUNTS: bifrostcontract:MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+    tmpfs:
+      - /data
+
   # PostgreSQL Database (Test) - with pgvector extension
   # Uses tmpfs so data is NOT persisted between test runs - fresh database each time
   postgres:
@@ -75,7 +85,9 @@ services:
   # SeaweedFS - S3-compatible object storage (Test)
   # Stores workspace files and runtime outputs
   seaweedfs:
-    image: chrislusf/seaweedfs:latest
+    # 4.52 contains the atomic multipart precondition fix (SeaweedFS #12209).
+    # The real-backend race contract fails against cached 4.50; do not weaken it.
+    image: chrislusf/seaweedfs:4.52@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
     # Its default admin gRPC port 33646 can collide with an ephemeral port.
     command: ["mini", "-dir=/data", "-admin.port=12646"]
     environment:
@@ -131,10 +143,17 @@ services:
       # access tokens valid for the longest supported local/CI run.
       BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES: "120"
       # S3-compatible object storage
-      BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
-      BIFROST_S3_ACCESS_KEY: bifrost
-      BIFROST_S3_SECRET_KEY: bifrost_test_key
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
+      BIFROST_S3_BUCKET: ${BIFROST_TEST_S3_BUCKET-bifrost-test}
+      BIFROST_S3_ENDPOINT_URL: ${BIFROST_TEST_S3_ENDPOINT_URL-http://seaweedfs:8333}
+      BIFROST_S3_ACCESS_KEY: ${BIFROST_TEST_S3_ACCESS_KEY-bifrost}
+      BIFROST_S3_SECRET_KEY: ${BIFROST_TEST_S3_SECRET_KEY-bifrost_test_key}
       BIFROST_S3_REGION: us-east-1
       # Enable registration for E2E tests
       BIFROST_ALLOW_REGISTRATION: "true"
@@ -197,6 +216,7 @@ services:
       context: .
       dockerfile: api/Dockerfile.dev
     environment:
+      BIFROST_GIT_WORK_DIR: /tmp/bifrost/solution-repo-fixtures/git-checkouts/worker
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
@@ -208,10 +228,17 @@ services:
       BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
       BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
       # S3-compatible object storage
-      BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
-      BIFROST_S3_ACCESS_KEY: bifrost
-      BIFROST_S3_SECRET_KEY: bifrost_test_key
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
+      BIFROST_S3_BUCKET: ${BIFROST_TEST_S3_BUCKET-bifrost-test}
+      BIFROST_S3_ENDPOINT_URL: ${BIFROST_TEST_S3_ENDPOINT_URL-http://seaweedfs:8333}
+      BIFROST_S3_ACCESS_KEY: ${BIFROST_TEST_S3_ACCESS_KEY-bifrost}
+      BIFROST_S3_SECRET_KEY: ${BIFROST_TEST_S3_SECRET_KEY-bifrost_test_key}
       BIFROST_S3_REGION: us-east-1
       # Executors run Git sync platform jobs too.
       GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
@@ -238,7 +265,6 @@ services:
       # The same as the scheduler: both are executors and run any work.
       - test-mounts:/mounts
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
-      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/worker:/tmp/git
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
@@ -274,6 +300,7 @@ services:
       context: .
       dockerfile: api/Dockerfile.dev
     environment:
+      BIFROST_GIT_WORK_DIR: /tmp/bifrost/solution-repo-fixtures/git-checkouts/scheduler
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
@@ -282,10 +309,17 @@ services:
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # S3-compatible object storage
-      BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
-      BIFROST_S3_ACCESS_KEY: bifrost
-      BIFROST_S3_SECRET_KEY: bifrost_test_key
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
+      BIFROST_S3_BUCKET: ${BIFROST_TEST_S3_BUCKET-bifrost-test}
+      BIFROST_S3_ENDPOINT_URL: ${BIFROST_TEST_S3_ENDPOINT_URL-http://seaweedfs:8333}
+      BIFROST_S3_ACCESS_KEY: ${BIFROST_TEST_S3_ACCESS_KEY-bifrost}
+      BIFROST_S3_SECRET_KEY: ${BIFROST_TEST_S3_SECRET_KEY-bifrost_test_key}
       BIFROST_S3_REGION: us-east-1
       # GitHub E2E test configuration
       GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
@@ -312,7 +346,6 @@ services:
       # server-side. Same safety shape as the api mount: only the
       # uid-1000-created fixture subdir, never the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
-      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/scheduler:/tmp/git
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
@@ -376,13 +409,24 @@ services:
       BIFROST_ENVIRONMENT: testing
       BIFROST_ALLOW_REGISTRATION: "true"
       # S3-compatible object storage
-      BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
-      BIFROST_S3_ACCESS_KEY: bifrost
-      BIFROST_S3_SECRET_KEY: bifrost_test_key
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
+      BIFROST_S3_BUCKET: ${BIFROST_TEST_S3_BUCKET-bifrost-test}
+      BIFROST_S3_ENDPOINT_URL: ${BIFROST_TEST_S3_ENDPOINT_URL-http://seaweedfs:8333}
+      BIFROST_S3_ACCESS_KEY: ${BIFROST_TEST_S3_ACCESS_KEY-bifrost}
+      BIFROST_S3_SECRET_KEY: ${BIFROST_TEST_S3_SECRET_KEY-bifrost_test_key}
       BIFROST_S3_REGION: us-east-1
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
+      # Explicit-selection Azure qualification only. Unset host variables stay
+      # unset; no cloud endpoint or identity is supplied by the normal suite.
+      BIFROST_AZURE_QUALIFICATION_ACCOUNT_URL:
+      BIFROST_AZURE_QUALIFICATION_CONTAINER:
       PYTHONPATH: /app
       # The hardened uid-1000 runner cannot write a root-owned named volume.
       # Keep coverage data beside the already-permissioned per-worktree results.
@@ -454,6 +498,8 @@ services:
       - ${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost
     working_dir: /app
     depends_on:
+      azurite:
+        condition: service_started
       pgbouncer:
         condition: service_healthy
       redis:

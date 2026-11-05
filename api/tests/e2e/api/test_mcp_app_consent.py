@@ -96,9 +96,23 @@ def browser_headers(human_minter):
     return current_pair
 
 
-@pytest.fixture
-async def stale_browser_access(org1_user, async_session_factory):
-    """Reproduce the preceding shard tests advancing authorization state."""
+@pytest.fixture(params=["authority", "expiry"])
+async def stale_browser_access(org1_user, async_session_factory, human_minter, request):
+    """Exercise stale authorization state and expiry before cookie capture."""
+    if request.param == "expiry":
+        from time import time
+        from unittest.mock import patch
+        from uuid import UUID
+        from src.core.security import decode_token
+        from src.services.authorization.tokens import HumanSubject, issue_access_token
+
+        human_minter(org1_user)
+        claims = decode_token(org1_user.access_token, expected_type="access")
+        assert claims is not None
+        with patch("src.services.authorization.tokens._now", return_value=int(time()) - 7200):
+            expired = await issue_access_token(HumanSubject(user_id=org1_user.user_id, session_id=UUID(claims["sid"])))
+        org1_user.set_tokens(expired.token, org1_user.refresh_token)
+        return
     from sqlalchemy import update
     from src.models.orm.authz import AuthzVersion
     from src.services.authorization.authz import GLOBAL_SUBJECT_ID, GLOBAL_SUBJECT_KIND

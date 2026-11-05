@@ -80,10 +80,10 @@ class WorkspaceBundleStorage:
             async with self._storage.get_client() as client:
                 token = None
                 while True:
-                    response = await client.list_objects_v2(Bucket=self._settings.s3_bucket, Prefix=self.root + "/", **({"ContinuationToken": token} if token else {}))
+                    response = await client.list_objects_v2(Bucket=self._settings.storage_bucket, Prefix=self.root + "/", **({"ContinuationToken": token} if token else {}))
                     keys = [{"Key": key} for obj in response.get("Contents", []) if (key := obj.get("Key")) is not None]
                     if keys:
-                        await client.delete_objects(Bucket=self._settings.s3_bucket, Delete={"Objects": keys})
+                        await client.delete_objects(Bucket=self._settings.storage_bucket, Delete={"Objects": keys})
                     if not response.get("IsTruncated"):
                         break
                     token = response.get("NextContinuationToken")
@@ -101,7 +101,7 @@ async def cleanup_expired_workspace_bundle_previews(*, now: datetime | None = No
     async with storage.get_client() as client:
         token = None
         while True:
-            response = await client.list_objects_v2(Bucket=settings.s3_bucket, Prefix=WORKSPACE_BUNDLE_IMPORTS_ROOT + "/", **({"ContinuationToken": token} if token else {}))
+            response = await client.list_objects_v2(Bucket=settings.storage_bucket, Prefix=WORKSPACE_BUNDLE_IMPORTS_ROOT + "/", **({"ContinuationToken": token} if token else {}))
             for obj in response.get("Contents", []):
                 key = obj.get("Key", "")
                 if key.endswith("/preview.json"):

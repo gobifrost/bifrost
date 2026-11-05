@@ -340,6 +340,17 @@ describe("files web SDK", () => {
 		expect(fetchMock.mock.calls[1][1].method).toBe("GET");
 	});
 
+	it("upload forwards provider-required signed request headers", async () => {
+		const headers = { "Content-Type": "text/plain", "x-ms-blob-type": "BlockBlob" };
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(okJson({ url: "https://blob/upload", path: "uploads/a.txt", expires_in: 600, headers }))
+			.mockResolvedValueOnce(new Response(null, { status: 201 }))
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		vi.stubGlobal("fetch", fetchMock);
+		await files.upload("a.txt", "hello", { contentType: "text/plain" });
+		expect(fetchMock.mock.calls[1][1].headers).toEqual(headers);
+	});
+
 	it("maps 403, 404, and policy validation errors to distinct classes", async () => {
 		vi.stubGlobal(
 			"fetch",

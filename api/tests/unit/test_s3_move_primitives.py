@@ -9,6 +9,7 @@ import pytest
 import httpx
 
 from src.core.s3_transport import S3Error
+from src.config import Settings
 
 from src.services.file_storage.s3_client import (
     COPY_OBJECT_LIMIT,
@@ -27,7 +28,7 @@ def client_error(code: str, status: int, operation: str = "Op") -> S3Error:
 
 def storage_with(monkeypatch, **methods):
     client = SimpleNamespace(**methods)
-    storage = S3StorageClient(SimpleNamespace(s3_bucket="bucket", s3_multipart_copy_mode="server"))
+    storage = S3StorageClient(Settings(_env_file=None, s3_bucket="bucket"))
 
     @asynccontextmanager
     async def get_client():
@@ -222,6 +223,18 @@ async def test_multipart_copy_ranges_parts_and_refuses_existing_destination(monk
     assert complete["IfNoneMatch"] == "*"
     assert [p["PartNumber"] for p in complete["MultipartUpload"]["Parts"]] == [1, 2, 3]
     client.abort_multipart_upload.assert_not_awaited()
+
+
+async def test_s3_stream_setting_does_not_change_blob_block_copy(monkeypatch) -> None:
+    storage, client = multipart_client(monkeypatch)
+    storage.settings = Settings(
+        _env_file=None, object_storage_provider="azure_blob", azure_blob_container="blob-container",
+        s3_multipart_copy_mode="stream",
+    )
+    await storage.copy_object("src", "dst", source=SOURCE, metadata={}, multipart_threshold=4, part_size=4)
+    assert client.upload_part_copy.await_count == 3
+    assert all(call.kwargs["Bucket"] == "blob-container" for call in client.upload_part_copy.await_args_list)
+    assert client.complete_multipart_upload.await_args.kwargs["IfNoneMatch"] == "*"
 
 
 @pytest.mark.parametrize(

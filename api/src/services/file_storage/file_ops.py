@@ -115,7 +115,7 @@ class FileOperationsService:
         async with self._s3_client.get_client() as s3:
             try:
                 response = await s3.get_object(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=s3_key,
                 )
                 content = await response["Body"].read()
@@ -200,7 +200,7 @@ class FileOperationsService:
         s3_key = f"{REPO_PREFIX}{path}"
         async with self._s3_client.get_client() as s3:
             await s3.put_object(
-                Bucket=self.settings.s3_bucket,
+                Bucket=self.settings.storage_bucket,
                 Key=s3_key,
                 Body=content,
                 ContentType=content_type,
@@ -376,7 +376,7 @@ class FileOperationsService:
         """Delete from S3 _repo/ — source-of-truth operation."""
         s3_key = f"{REPO_PREFIX}{path}"
         async with self._s3_client.get_client() as s3:
-            await s3.delete_object(Bucket=self.settings.s3_bucket, Key=s3_key)
+            await s3.delete_object(Bucket=self.settings.storage_bucket, Key=s3_key)
 
     async def _remove_from_search_index(self, path: str) -> None:
         """Remove from the source search index if present."""
@@ -634,12 +634,12 @@ class FileOperationsService:
         try:
             async with self._s3_client.get_client() as s3:
                 await s3.copy_object(
-                    Bucket=self.settings.s3_bucket,
-                    CopySource={"Bucket": self.settings.s3_bucket, "Key": old_s3_key},
+                    Bucket=self.settings.storage_bucket,
+                    CopySource={"Bucket": self.settings.storage_bucket, "Key": old_s3_key},
                     Key=new_s3_key,
                 )
                 await s3.delete_object(
-                    Bucket=self.settings.s3_bucket,
+                    Bucket=self.settings.storage_bucket,
                     Key=old_s3_key,
                 )
             storage_completed = True

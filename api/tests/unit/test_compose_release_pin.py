@@ -19,7 +19,10 @@ _PINNED = {
 
 
 def _compose_file() -> Path:
-    for candidate in (Path("/app/docker-compose.yml"), Path(__file__).resolve().parents[3] / "docker-compose.yml"):
+    for candidate in (
+        Path("/app/docker-compose.yml"),
+        Path(__file__).resolve().parents[3] / "docker-compose.yml",
+    ):
         if candidate.exists():
             return candidate
     raise FileNotFoundError("docker-compose.yml is not mounted")
@@ -34,3 +37,32 @@ def test_every_bifrost_image_follows_the_release_variable() -> None:
     }
 
     assert bifrost_images == _PINNED
+
+
+def test_compose_forwards_blob_selection_to_every_storage_process() -> None:
+    services = yaml.safe_load(_compose_file().read_text())["services"]
+    blob_keys = {
+        "BIFROST_OBJECT_STORAGE_PROVIDER",
+        "BIFROST_AZURE_BLOB_ACCOUNT_URL",
+        "BIFROST_AZURE_BLOB_CONTAINER",
+        "BIFROST_AZURE_BLOB_AUTH",
+        "BIFROST_AZURE_BLOB_ACCOUNT_NAME",
+        "BIFROST_AZURE_BLOB_ACCOUNT_KEY",
+        "BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID",
+    }
+    environments = [services[name]["environment"] for name in ("init", "api", "worker")]
+    assert all(blob_keys <= environment.keys() for environment in environments)
+    assert all(
+        environment["BIFROST_OBJECT_STORAGE_PROVIDER"]
+        == "${BIFROST_OBJECT_STORAGE_PROVIDER:-s3}"
+        for environment in environments
+    )
+    assert all(
+        environment["BIFROST_AZURE_BLOB_AUTH"]
+        == "${BIFROST_AZURE_BLOB_AUTH:-managed_identity}"
+        for environment in environments
+    )
+    assert all(
+        environment["BIFROST_AZURE_BLOB_ACCOUNT_KEY"] is None
+        for environment in environments
+    )

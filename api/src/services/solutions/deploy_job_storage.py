@@ -23,7 +23,7 @@ class SolutionDeployJobStorage:
         self.job_id = str(job_id)
         self._settings = settings or get_settings()
         self._storage = S3StorageClient(self._settings)
-        self._bucket = self._settings.s3_bucket or ""
+        self._bucket = self._settings.storage_bucket or ""
         self.key = f"{DEPLOY_JOB_ARTIFACTS_ROOT}/{self.job_id}/input.zip"
 
     async def write_path(self, path: Path) -> tuple[str, int]:

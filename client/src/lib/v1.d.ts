@@ -19358,6 +19358,13 @@ export interface components {
              */
             upload_url: string;
             /**
+             * Headers
+             * @description Required headers for the direct upload request
+             */
+            headers?: {
+                [key: string]: string;
+            };
+            /**
              * Blob Uri
              * @description Final file URI
              */
@@ -27795,6 +27802,10 @@ export interface components {
              * @default 200
              */
             status_code: number;
+            /** Headers */
+            headers?: {
+                [key: string]: string;
+            } | null;
         };
         /**
          * SignedUrlRequest
@@ -27858,6 +27869,13 @@ export interface components {
              * @default 600
              */
             expires_in: number;
+            /**
+             * Headers
+             * @description Headers required for the signed request
+             */
+            headers?: {
+                [key: string]: string;
+            } | null;
         };
         /**
          * SimpleFileListResponse

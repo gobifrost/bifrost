@@ -238,6 +238,7 @@ class SignedUrlResponse(BaseModel):
     url: str = Field(..., description="Presigned S3 URL")
     path: str = Field(..., description="Full S3 path")
     expires_in: int = Field(default=600, description="URL expiration in seconds")
+    headers: dict[str, str] | None = Field(default=None, description="Headers required for the signed request")
 
 
 class SignedUrlBatchRequest(BaseModel):
@@ -254,6 +255,7 @@ class SignedUrlBatchResult(BaseModel):
     expires_in: int = 600
     error: str | None = None
     status_code: int = 200
+    headers: dict[str, str] | None = None
 
 
 class SignedUrlBatchResponse(BaseModel):
@@ -757,6 +759,7 @@ async def _build_signed_url(
         url=result.url,
         path=result.path,
         expires_in=result.expires_in,
+        headers=result.headers,
     )
 
 
@@ -1189,6 +1192,7 @@ async def get_signed_urls(
                     method=item.method,
                     url=signed.url,
                     expires_in=signed.expires_in,
+                    headers=signed.headers,
                     status_code=200,
                 )
             )

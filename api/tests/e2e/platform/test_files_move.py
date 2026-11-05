@@ -321,8 +321,14 @@ async def test_multipart_copy_against_object_storage(
     # SeaweedFS gives a multipart object an "<md5>-<parts>" ETag. The source's
     # own chunked upload is multipart too ("-2" in 8 MiB parts), so only "-3"
     # proves the copy was assembled from this move's three part copies.
-    assert source_head.etag.endswith('-2"'), source_head.etag
-    assert landed.etag.endswith('-3"'), landed.etag
+    if get_settings().object_storage_provider == "s3":
+        assert source_head.etag.endswith('-2"'), source_head.etag
+        assert landed.etag.endswith('-3"'), landed.etag
+    else:
+        # Blob ETags are opaque versions. The recorded calls above prove the
+        # three-part path; exact payload readback below proves its contents.
+        assert source_head.etag
+        assert landed.etag
     moved = await storage.read_uploaded_file(destination_key)
     assert moved == payload
     assert await storage.head_object(resolve_s3_key(LOCATION, sid, source)) is None

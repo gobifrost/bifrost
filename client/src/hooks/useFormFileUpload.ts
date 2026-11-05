@@ -1,9 +1,9 @@
 /**
- * Hook for handling form file uploads via presigned S3 URLs.
+ * Hook for handling form file uploads via signed object-storage URLs.
  *
  * Flow:
  * 1. Request presigned URL from API
- * 2. Upload file directly to S3
+ * 2. Upload file directly with the returned storage headers
  * 3. Return the file path (without uploads/ prefix) for form submission
  */
 
@@ -184,7 +184,7 @@ export function useFormFileUpload(
 
 				const uploadResponse = data as FileUploadResponse;
 
-				// Step 2: Upload to S3 using XMLHttpRequest for progress
+				// Step 2: Upload directly using XMLHttpRequest for progress
 				setUploadState({
 					status: "uploading",
 					progress: { loaded: 0, total: file.size, percentage: 0 },
@@ -234,9 +234,16 @@ export function useFormFileUpload(
 					});
 
 					xhr.open("PUT", uploadResponse.upload_url);
-					xhr.setRequestHeader(
-						"Content-Type",
-						file.type || "application/octet-stream",
+					const headers = new Headers({
+						"Content-Type": file.type || "application/octet-stream",
+					});
+					for (const [name, value] of Object.entries(
+						uploadResponse.headers ?? {},
+					)) {
+						headers.set(name, value);
+					}
+					headers.forEach((value, name) =>
+						xhr.setRequestHeader(name, value),
 					);
 					xhr.send(file);
 				});

@@ -21,9 +21,9 @@ class ArchiveStorageUnavailable(Exception):
 
 class AuditArchiveStore:
     def __init__(self, settings: Settings) -> None:
-        if not settings.s3_configured:
+        if not settings.storage_configured:
             raise ArchiveStorageUnavailable("object storage is not configured")
-        self._bucket = settings.s3_bucket
+        self._bucket = settings.storage_bucket
         self._client = S3StorageClient(settings)
 
     async def put(self, key: str, body: bytes) -> None:
