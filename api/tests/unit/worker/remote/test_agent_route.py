@@ -188,19 +188,24 @@ async def test_a_lost_launch_reply_keeps_the_route_for_inventory(announce) -> No
     assert route_id not in consumer.routes
 
 
-async def test_a_route_is_released_even_when_its_end_cannot_be_recorded(announce) -> None:
-    announce.side_effect = RuntimeError("database unavailable")
-    launcher = Launcher(refuse=ConnectionError("Launcher disconnected"))
+async def test_missing_route_is_retained_when_its_end_cannot_be_recorded(announce) -> None:
+    launcher = Launcher()
     consumer = RemoteAgentConsumer(launcher, worker_id=LEASE.worker_id)
+    waiting, route_id = await _launch(consumer, launcher, _body())
+    try:
+        announce.side_effect = RuntimeError("database unavailable")
+        with pytest.raises(RuntimeError):
+            await consumer.reject_missing({"routes": [], "terminal_routes": []})
+        assert consumer.tracks(route_id)
+        assert not waiting.done()
 
-    waiting = asyncio.create_task(consumer.process_message(_body()))
-    await asyncio.sleep(0.05)
-    [route_id] = consumer.routes
-
-    with pytest.raises(RuntimeError):
+        announce.side_effect = None
         await consumer.reject_missing({"routes": [], "terminal_routes": []})
-    await asyncio.wait_for(waiting, 1)
-    assert not consumer.tracks(route_id)
+        await waiting
+        assert not consumer.tracks(route_id)
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
 
 
 async def test_a_run_past_its_timeout_is_terminated(announce, monkeypatch) -> None:

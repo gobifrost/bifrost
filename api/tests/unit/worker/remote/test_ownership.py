@@ -65,7 +65,7 @@ async def test_terminal_ack_holds_owner_lock_until_its_bounded_send_finishes(
     from unittest.mock import AsyncMock, Mock
 
     from sqlalchemy import select
-    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.exc import DBAPIError
 
     from src.worker.remote.fencing import LeaseRef
     from src.worker.remote.host import Bridge
@@ -102,7 +102,7 @@ async def test_terminal_ack_holds_owner_lock_until_its_bounded_send_finishes(
         # A cross-host owner update requires this exclusive lock. It cannot
         # pass the ACK's shared fence while the network send is suspended.
         async with async_session_factory() as db:
-            with pytest.raises(OperationalError) as blocked:
+            with pytest.raises(DBAPIError) as blocked:
                 await db.scalar(select(ExecutionWorker.id).where(
                     ExecutionWorker.id == worker_id
                 ).with_for_update(nowait=True))
