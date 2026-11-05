@@ -1,143 +1,164 @@
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { AppConnectionApproval } from "@/components/auth/AppConnectionApproval";
 import { AuthTransition } from "@/components/auth/AuthTransition";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
-/**
- * MCP OAuth Callback Page
- *
- * Handles the OAuth callback for MCP (Model Context Protocol) clients.
- * This page is loaded after the user authenticates via Bifrost login.
- *
- * The flow:
- * 1. MCP client (e.g., Claude Desktop) initiates OAuth at /authorize
- * 2. User is redirected to Bifrost login
- * 3. After login, browser navigates to /mcp/callback with internal_state
- * 4. This component fetches /mcp/callback via XHR (works with Vite proxy)
- * 5. Server returns redirect_url in JSON response (claude:// protocol URL)
- * 6. Component opens the URL (triggers Claude Desktop) and closes the tab
- */
-
-import { useEffect, useState, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { authFetch } from "@/lib/api-client";
+import { useAuth } from "@/contexts/AuthContext";
+import { apiClient } from "@/lib/api-client";
+import { parseApiError } from "@/lib/api-error";
+import type { components } from "@/lib/v1";
 
+/** Opening a connection link displays consent and never issues a code. */
 export function MCPCallback() {
-	const [searchParams] = useSearchParams();
-	const [error, setError] = useState<string | null>(null);
-	const [success, setSuccess] = useState(false);
-	const hasHandledRef = useRef(false);
-
-	useEffect(() => {
-		// Prevent double execution in strict mode
-		if (hasHandledRef.current) return;
-		hasHandledRef.current = true;
-
-		async function handleCallback() {
-			const internalState = searchParams.get("internal_state");
-
-			if (!internalState) {
-				setError(
-					"This authorization link is incomplete. Start the connection again from your app.",
-				);
-				return;
-			}
-
-			try {
-				// The server returns the refresh_required challenge before it consumes
-				// OAuth state, so authFetch can safely rotate a stale human session and
-				// replay this cookie-authenticated handoff.
-				const response = await authFetch(
-					`/mcp/callback?internal_state=${internalState}`,
-					{
-						headers: {
-							Accept: "application/json",
-						},
-					},
-				);
-
-				if (!response.ok) {
-					const data = await response.json().catch(() => ({}));
-					setError(
-						data.error_description ||
-							data.error ||
-							`Callback failed: ${response.status}`,
-					);
-					return;
-				}
-
-				const data = await response.json();
-
-				if (data.redirect_url) {
-					// Show success state first
-					setSuccess(true);
-
-					// Use location.replace to redirect to the protocol URL (e.g., claude://)
-					// This triggers the desktop app and doesn't trigger popup blockers
-					// The page will show the success message while the protocol handler takes over
-					setTimeout(() => {
-						window.location.replace(data.redirect_url);
-					}, 100);
-				} else {
-					setError("No redirect URL returned from server");
-				}
-			} catch (err) {
-				setError(
-					err instanceof Error ? err.message : "MCP callback failed",
-				);
-			}
-		}
-
-		handleCallback();
-	}, [searchParams]);
-
-	if (error) {
-		return (
-			<div className="min-h-svh flex items-center justify-center bg-background px-4 py-8">
-				<Card className="w-full max-w-md rounded-[var(--bf-radius-feature)]">
-					<CardHeader>
-						<h1 className="font-display text-2xl font-semibold tracking-tight">
-							Authorization could not be completed
-						</h1>
-					</CardHeader>
-					<CardContent className="space-y-4">
-						<Alert variant="destructive">
-							<AlertCircle className="size-4" />
-							<AlertDescription className="[overflow-wrap:anywhere]">
-								{error}
-							</AlertDescription>
-						</Alert>
-						<Button
-							className="min-h-11 w-full"
-							onClick={() => {
-								window.location.href = "/";
-							}}
-						>
-							Return to Home
-						</Button>
-					</CardContent>
-				</Card>
-			</div>
-		);
-	}
-
-	if (success) {
-		return (
-			<div className="min-h-svh flex items-center justify-center bg-background px-4 py-8">
-				<div className="w-full max-w-md space-y-4 rounded-[var(--bf-radius-feature)] border border-border bg-card p-6 text-center">
-					<CheckCircle2 className="h-12 w-12 mx-auto text-[var(--bf-success)]" />
-					<h1 className="font-display text-2xl font-semibold">
-						Authorization Complete
-					</h1>
-					<p className="text-muted-foreground">
-						You can close this tab and return to your app.
-					</p>
-				</div>
-			</div>
-		);
-	}
-
-	return <AuthTransition message="Completing MCP authorization…" />;
+	const [search] = useSearchParams();
+	const requestId = search.get("request") ?? search.get("internal_state");
+	return <MCPConnection key={requestId} requestId={requestId} />;
 }
 
-export default MCPCallback;
+function MCPConnection({ requestId }: { requestId: string | null }) {
+	const { isAuthenticated, isLoading, user } = useAuth();
+	const location = useLocation();
+	const navigate = useNavigate();
+	const [details, setDetails] = useState<
+		components["schemas"]["AppConnectionDetails"] | null
+	>(null);
+	const [error, setError] = useState<string | null>(
+		requestId
+			? null
+			: "This connection link is incomplete. Start again from your app.",
+	);
+	const [pendingDecision, setPendingDecision] = useState<boolean | null>(
+		null,
+	);
+	const [outcome, setOutcome] = useState<boolean | null>(null);
+
+	useEffect(() => {
+		if (isLoading) return;
+		if (!isAuthenticated) {
+			const returnTo = `${location.pathname}${location.search}`;
+			navigate(`/login?return_to=${encodeURIComponent(returnTo)}`, {
+				replace: true,
+			});
+			return;
+		}
+		if (!requestId) return;
+		const controller = new AbortController();
+		async function load() {
+			try {
+				const result = await apiClient.GET(
+					"/auth/app-connections/{request_id}",
+					{
+						params: { path: { request_id: requestId! } },
+						signal: controller.signal,
+					},
+				);
+				if (!result.data && result.error)
+					throw parseApiError(result.error, result.response.status);
+				if (!result.data)
+					throw new Error(
+						"This connection is unavailable or has expired. Start again from your app.",
+					);
+				if (!controller.signal.aborted) setDetails(result.data);
+			} catch (cause) {
+				if (!controller.signal.aborted)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Could not load this connection.",
+					);
+			}
+		}
+		void load();
+		return () => controller.abort();
+	}, [
+		requestId,
+		isAuthenticated,
+		isLoading,
+		location.pathname,
+		location.search,
+		navigate,
+	]);
+
+	async function decide(approved: boolean) {
+		if (!details || !requestId || pendingDecision !== null) return;
+		setPendingDecision(approved);
+		setError(null);
+		try {
+			const result = await apiClient.POST(
+				"/auth/app-connections/{request_id}",
+				{
+					params: { path: { request_id: requestId } },
+					body: { approved, consent_token: details.consent_token },
+				},
+			);
+			if (!result.data && result.error)
+				throw parseApiError(result.error, result.response.status);
+			if (!result.data?.redirect_url)
+				throw new Error(
+					"This connection could not be completed. Start again from your app.",
+				);
+			setOutcome(approved);
+			window.location.assign(result.data.redirect_url);
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Could not complete this connection.",
+			);
+		} finally {
+			setPendingDecision(null);
+		}
+	}
+
+	if (isLoading || (!details && !error))
+		return <AuthTransition message="Loading app connection…" />;
+	return (
+		<div className="min-h-svh flex items-center justify-center bg-background px-4 py-8">
+			<Card className="w-full max-w-md rounded-[var(--bf-radius-feature)] border-border shadow-none">
+				<CardHeader>
+					<p className="font-display font-semibold">Bifrost</p>
+					<h1 className="font-display text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">
+						{outcome !== null
+							? outcome
+								? "App Connected"
+								: "Connection Denied"
+							: details
+								? `Allow ${details.client_name} to Access Bifrost?`
+								: "Connection Unavailable"}
+					</h1>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					{error && (
+						<Alert variant="destructive" role="alert">
+							<AlertDescription>{error}</AlertDescription>
+						</Alert>
+					)}
+					{outcome !== null ? (
+						<p className="text-sm text-muted-foreground">
+							Return to your app. You can close this window.
+						</p>
+					) : (
+						details && (
+							<AppConnectionApproval
+								email={user?.email}
+								clientName={details.client_name}
+								returnAddress={details.redirect_uri}
+								pendingDecision={pendingDecision}
+								onDecision={decide}
+							/>
+						)
+					)}
+					<Button
+						variant="ghost"
+						className="min-h-11 w-full"
+						onClick={() => navigate("/")}
+					>
+						Return to Dashboard
+					</Button>
+				</CardContent>
+			</Card>
+		</div>
+	);
+}

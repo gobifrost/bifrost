@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import asyncio
 import hashlib
+import logging
 import os
 import random
 import ssl
@@ -19,6 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mappin
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from io import BytesIO
+from threading import Lock
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote, unquote_plus, urlencode
@@ -29,6 +31,10 @@ from awscrt import auth, checksums, http
 
 _ssl_context: tuple[int, ssl.SSLContext] | None = None
 _default_credentials_provider: tuple[int, auth.AwsCredentialsProvider] | None = None
+_shared_http_client: httpx.AsyncClient | None = None
+_shared_http_client_loop: asyncio.AbstractEventLoop | None = None
+_shared_http_client_pid: int | None = None
+_shared_http_client_lock = Lock()
 _MAX_ATTEMPTS = 5
 _RETRYABLE_S3_CODES = frozenset({"InternalError", "SlowDown", "RequestTimeout", "BadDigest"})
 # HTTPX adds Connection before signing. Spaces' ingress removes that hop-by-hop
@@ -38,6 +44,7 @@ _UNSIGNED_HEADERS = frozenset({
     "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
     "expect", "user-agent", "x-amzn-trace-id",
 })
+logger = logging.getLogger(__name__)
 
 
 def _retry_delay(attempt: int, random_value: Callable[[], float]) -> float:
@@ -56,6 +63,92 @@ def _process_ssl_context() -> ssl.SSLContext:
     if _ssl_context is None or _ssl_context[0] != pid:
         _ssl_context = (pid, ssl.create_default_context())
     return _ssl_context[1]
+
+
+def _owns_shared_http_client() -> bool:
+    """Whether this task may borrow or close the process's default S3 pool."""
+    return (
+        _shared_http_client is not None
+        and _shared_http_client_pid == os.getpid()
+        and _shared_http_client_loop is asyncio.get_running_loop()
+    )
+
+
+def _reset_shared_s3_after_fork() -> None:
+    """Discard inherited pool references and a possibly locked parent mutex."""
+    global _shared_http_client, _shared_http_client_loop, _shared_http_client_pid
+    global _shared_http_client_lock
+    _shared_http_client = None
+    _shared_http_client_loop = None
+    _shared_http_client_pid = None
+    _shared_http_client_lock = Lock()
+
+
+os.register_at_fork(after_in_child=_reset_shared_s3_after_fork)
+
+
+def _new_http_client() -> httpx.AsyncClient:
+    """Create an S3 HTTP client with the established TLS and timeout policy."""
+    return httpx.AsyncClient(verify=_process_ssl_context(), timeout=60.0)
+
+
+async def _default_http_client() -> tuple[httpx.AsyncClient, bool]:
+    """Return this loop's S3 client and whether it is the shared default pool.
+
+    A service's primary event loop owns one process-local pool.  Other loops
+    get a transport-local client instead of sharing loop-bound HTTP resources.
+    That keeps the registry bounded and avoids keeping foreign event loops
+    alive.  A fork similarly discards the inherited reference without closing
+    the parent's socket.
+    """
+    global _shared_http_client, _shared_http_client_loop, _shared_http_client_pid
+
+    with _shared_http_client_lock:
+        if _owns_shared_http_client():
+            assert _shared_http_client is not None
+            if not _shared_http_client.is_closed:
+                return _shared_http_client, True
+            _shared_http_client = None
+            _shared_http_client_loop = None
+            _shared_http_client_pid = None
+
+        pid = os.getpid()
+        loop = asyncio.get_running_loop()
+        if _shared_http_client is not None:
+            if _shared_http_client_pid != pid:
+                # A fork inherited the parent process's event-loop-bound
+                # client. The child must not close or reuse that socket.
+                _shared_http_client = None
+                _shared_http_client_loop = None
+                _shared_http_client_pid = None
+            elif _shared_http_client_loop is not loop:
+                # Another loop in this process cannot borrow the primary
+                # pool. This client is owned by the S3Transport that uses it.
+                return _new_http_client(), False
+
+        client = _new_http_client()
+        _shared_http_client = client
+        _shared_http_client_loop = loop
+        _shared_http_client_pid = pid
+        return client, True
+
+
+async def close_shared_s3_client() -> None:
+    """Close the default S3 HTTP pool from its owning service lifecycle."""
+    global _shared_http_client, _shared_http_client_loop, _shared_http_client_pid
+    with _shared_http_client_lock:
+        if _shared_http_client is None:
+            return
+        if not _owns_shared_http_client():
+            logger.warning("Refusing to close shared S3 HTTP client from another loop or process")
+            return
+
+        client = _shared_http_client
+        _shared_http_client = None
+        _shared_http_client_loop = None
+        _shared_http_client_pid = None
+    await client.aclose()
+    logger.debug("Closed shared S3 HTTP client")
 
 
 class S3Error(RuntimeError):
@@ -376,8 +469,8 @@ class S3Transport:
         self.secret_access_key = secret_access_key
         self.session_token = session_token
         self.region = region or "us-east-1"
-        self._client = client or httpx.AsyncClient(verify=_process_ssl_context(), timeout=60.0)
-        self._owns_client = client is None
+        self._client = client
+        self._owns_client = False
         self._now = now or (lambda: datetime.now(UTC))
         self._sleep = sleep or asyncio.sleep
         self._random_value = random_value or random.random
@@ -389,8 +482,18 @@ class S3Transport:
         await self.aclose()
 
     async def aclose(self) -> None:
-        if self._owns_client or not self._client.is_closed:
+        if self._owns_client and self._client is not None and not self._client.is_closed:
             await self._client.aclose()
+
+    async def _http_client(self) -> httpx.AsyncClient:
+        """Resolve an injected, shared, or loop-local HTTP client on demand."""
+        if self._client is not None:
+            return self._client
+        client, shared = await _default_http_client()
+        if not shared:
+            self._client = client
+            self._owns_client = True
+        return client
 
     async def _request(
         self,
@@ -406,8 +509,11 @@ class S3Transport:
     ) -> httpx.Response:
         content = _to_bytes(body)
         for attempt in range(_MAX_ATTEMPTS):
-            url = _query_url(_endpoint_url(self.endpoint_url, bucket, key, region=self.region), query)
-            request = self._client.build_request(method, url, headers=headers, content=content)
+            url = _query_url(
+                _endpoint_url(self.endpoint_url, bucket, key, region=self.region), query
+            )
+            client = await self._http_client()
+            request = client.build_request(method, url, headers=headers, content=content)
             signed = _sign_request(
                 request,
                 access_key_id=self.access_key_id,
@@ -417,7 +523,7 @@ class S3Transport:
                 now=self._now(),
             )
             try:
-                response = await self._client.send(signed, stream=stream)
+                response = await client.send(signed, stream=stream)
             except (httpx.TimeoutException, httpx.TransportError):
                 if attempt == _MAX_ATTEMPTS - 1:
                     raise

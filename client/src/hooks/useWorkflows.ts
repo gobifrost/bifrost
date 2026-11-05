@@ -212,7 +212,7 @@ export function useReloadWorkflowFile() {
 }
 
 /**
- * Execute a workflow with user context override (admin only)
+ * Execute a workflow with an explicit organization or user context
  * Used when re-running executions from ExecutionDetails page
  *
  * @param workflowId - UUID of the workflow to execute (required if code not provided)
@@ -220,7 +220,7 @@ export function useReloadWorkflowFile() {
  * @param transient - If true, skip database persistence (for debugging)
  * @param code - Optional Python code to execute instead of a workflow
  * @param scriptName - Name for the script (used for logging when code is provided)
- * @param options - Optional user context override (orgId is ignored, org filtering uses query params)
+ * @param options - Optional execution organization and user context overrides
  */
 export async function executeWorkflowWithContext(
 	workflowId: string | undefined,
@@ -228,7 +228,7 @@ export async function executeWorkflowWithContext(
 	transient?: boolean,
 	code?: string,
 	scriptName?: string,
-	options?: { orgId?: string; userId?: string },
+	options?: { orgId?: string | null; userId?: string },
 ) {
 	const client = options?.userId
 		? withUserContext(options.userId)
@@ -237,6 +237,9 @@ export async function executeWorkflowWithContext(
 	const { data, error } = await client.POST("/api/workflows/execute", {
 		body: {
 			workflow_id: workflowId ?? null,
+			...(options?.orgId !== undefined
+				? { org_id: options.orgId ?? "global" }
+				: {}),
 			input_data: parameters,
 			form_id: null,
 			transient: transient ?? false,

@@ -281,6 +281,11 @@ class KeyringBackend:
         if _keyring is None:
             import keyring as _keyring  # noqa: PLR0402
         self._kr = _keyring
+        self._windows = None
+        if platform.system() == "Windows":
+            from bifrost.windows_credentials import WindowsCredentialStore
+
+            self._windows = WindowsCredentialStore(_keyring, get_config_dir())
 
     def _load_index(self) -> set[str]:
         raw = self._kr.get_password(KEYRING_SERVICE, self.INDEX_USERNAME)
@@ -296,6 +301,9 @@ class KeyringBackend:
 
     def get(self, api_url: str) -> Credentials | None:
         api_url = api_url.rstrip("/")
+        if self._windows is not None:
+            record = self._windows.get(api_url)
+            return Credentials.from_dict(record) if record is not None else None
         raw = self._kr.get_password(KEYRING_SERVICE, api_url)
         if not raw:
             return None
@@ -306,6 +314,9 @@ class KeyringBackend:
 
     def save(self, creds: Credentials) -> None:
         api_url = creds.api_url.rstrip("/")
+        if self._windows is not None:
+            self._windows.save({**creds.to_dict(), "api_url": api_url})
+            return
         self._kr.set_password(KEYRING_SERVICE, api_url, json.dumps(creds.to_dict()))
         idx = self._load_index()
         idx.add(api_url)
@@ -313,6 +324,9 @@ class KeyringBackend:
 
     def clear(self, api_url: str) -> None:
         api_url = api_url.rstrip("/")
+        if self._windows is not None:
+            self._windows.clear(api_url)
+            return
         try:
             self._kr.delete_password(KEYRING_SERVICE, api_url)
         except Exception:
@@ -322,6 +336,8 @@ class KeyringBackend:
         self._save_index(idx)
 
     def list_urls(self) -> list[str]:
+        if self._windows is not None:
+            return self._windows.list_urls()
         return sorted(self._load_index())
 
 

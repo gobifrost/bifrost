@@ -2374,6 +2374,7 @@ async def delete_solution(
             ),
         )
 
+    from src.core.module_cache import invalidate_module
     from src.services.file_storage import FileStorageService
     from src.services.solution_files import enumerate_solution_files
     from src.services.solutions.app_build import SolutionAppBuilder
@@ -2430,6 +2431,8 @@ async def delete_solution(
             storage = SolutionStorage(solution_id)
             for rel in await storage.list(""):
                 await storage.delete(rel)
+                if rel.endswith(".py"):
+                    await invalidate_module(storage._key(rel))
             await SolutionSourceArtifactStorage(solution_id).delete()
             builder = SolutionAppBuilder()
             for app_id in app_ids:

@@ -76,20 +76,13 @@ class _DecoratorValidator:
 
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._validate_decorators(statement.decorator_list, scope)
-                nested = dict(scope)
-                for argument in (*statement.args.posonlyargs, *statement.args.args, *statement.args.kwonlyargs):
-                    nested[argument.arg] = None
-                if statement.args.vararg is not None:
-                    nested[statement.args.vararg.arg] = None
-                if statement.args.kwarg is not None:
-                    nested[statement.args.kwarg.arg] = None
-                self.visit_body(statement.body, nested)
+                self._visit_definition_body(statement, scope)
                 scope[statement.name] = None
                 continue
 
             if isinstance(statement, ast.ClassDef):
                 self._validate_decorators(statement.decorator_list, scope)
-                self.visit_body(statement.body, dict(scope))
+                self._visit_definition_body(statement, scope)
                 scope[statement.name] = None
                 continue
 
@@ -105,6 +98,21 @@ class _DecoratorValidator:
                 continue
 
             self._shadow_bound_names(statement, scope)
+
+    def _visit_definition_body(
+        self,
+        statement: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+        scope: dict[str, str | None],
+    ) -> None:
+        nested = dict(scope)
+        if not isinstance(statement, ast.ClassDef):
+            for argument in (*statement.args.posonlyargs, *statement.args.args, *statement.args.kwonlyargs):
+                nested[argument.arg] = None
+            if statement.args.vararg is not None:
+                nested[statement.args.vararg.arg] = None
+            if statement.args.kwarg is not None:
+                nested[statement.args.kwarg.arg] = None
+        self.visit_body(statement.body, nested)
 
     def _visit_control_flow(
         self, statement: ast.For | ast.AsyncFor | ast.With | ast.AsyncWith | ast.Try,
@@ -300,3 +308,36 @@ def _literal_mapping_keys(node: ast.expr) -> list[str] | None:
             return None
         keys.append(key.value)
     return keys
+
+
+class _ExecutableDeclarationFinder(_DecoratorValidator):
+    """Share decorator binding rules without running source or validating settings."""
+
+    found = False
+
+    def _validate_decorators(self, decorators: list[ast.expr], bindings: dict[str, str | None]) -> None:
+        for decorator in decorators:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if self._decorator_name(target, bindings) is not None:
+                self.found = True
+
+    def _visit_definition_body(
+        self,
+        statement: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+        scope: dict[str, str | None],
+    ) -> None:
+        # Nested test fixtures and class methods aren't module entry points.
+        pass
+
+
+def has_executable_declaration(source: str, *, path: str) -> bool:
+    """Find module-level SDK entry points using the same bindings as acceptance.
+
+    Control-flow blocks can declare entry points, but function/class bodies
+    must not be searched: a test defining an inner workflow is not itself an
+    executable module. Syntax errors remain loud to the caller.
+    """
+    tree = ast.parse(source, filename=path)
+    finder = _ExecutableDeclarationFinder(path)
+    finder.visit_body(tree.body, {})
+    return finder.found

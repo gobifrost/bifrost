@@ -805,6 +805,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/app-connections/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Connection
+         * @description Review one MCP connection; opening this endpoint never issues credentials.
+         */
+        get: operations["get_app_connection_auth_app_connections__request_id__get"];
+        put?: never;
+        /**
+         * Decide App Connection Request
+         * @description Record a user-bound, explicit approval or denial before handing off to the app.
+         */
+        post: operations["decide_app_connection_request_auth_app_connections__request_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/register-from-invite": {
         parameters: {
             query?: never;
@@ -8290,6 +8314,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/run/branding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Package Branding */
+        get: operations["get_package_branding_api_mcp_run_branding_get"];
+        /** Update Package Branding */
+        put: operations["update_package_branding_api_mcp_run_branding_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/run/branding/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Package Logo */
+        get: operations["get_package_logo_api_mcp_run_branding_logo_get"];
+        put?: never;
+        /** Upload Package Logo */
+        post: operations["upload_package_logo_api_mcp_run_branding_logo_post"];
+        /** Delete Package Logo */
+        delete: operations["delete_package_logo_api_mcp_run_branding_logo_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/status": {
         parameters: {
             query?: never;
@@ -13264,6 +13325,30 @@ export interface components {
             /** Ai Cost */
             ai_cost?: string;
         };
+        /** AppConnectionDecision */
+        AppConnectionDecision: {
+            /** Approved */
+            approved: boolean;
+            /** Consent Token */
+            consent_token: string;
+        };
+        /**
+         * AppConnectionDetails
+         * @description A user-bound preview of one external app connection.
+         */
+        AppConnectionDetails: {
+            /** Client Name */
+            client_name: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /** Consent Token */
+            consent_token: string;
+        };
+        /** AppConnectionResult */
+        AppConnectionResult: {
+            /** Redirect Url */
+            redirect_url?: string | null;
+        };
         /**
          * AppDependencyIssue
          * @description A missing dependency issue in an app.
@@ -14372,6 +14457,38 @@ export interface components {
             /** Default Sso Provider */
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
         };
+        /**
+         * AuthenticatedFormRuntimeDefinition
+         * @description Execution scope metadata for signed-in callers, excluded from embeds.
+         */
+        AuthenticatedFormRuntimeDefinition: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            form_schema: components["schemas"]["FormRuntimeSchema"];
+            /** Allowed Query Params */
+            allowed_query_params?: string[] | null;
+            /**
+             * Has Startup
+             * @default false
+             */
+            has_startup: boolean;
+            /**
+             * Captcha Required
+             * @default false
+             */
+            captcha_required: boolean;
+            /** Is Active */
+            is_active: boolean;
+            /** Organization Id */
+            organization_id: string | null;
+        };
         /** AuthorizationBaseRole */
         AuthorizationBaseRole: {
             /**
@@ -14724,6 +14841,11 @@ export interface components {
              * File
              * @description Logo image file
              */
+            file: string;
+        };
+        /** Body_upload_package_logo_api_mcp_run_branding_logo_post */
+        Body_upload_package_logo_api_mcp_run_branding_logo_post: {
+            /** File */
             file: string;
         };
         /**
@@ -22365,6 +22487,26 @@ export interface components {
              * @default false
              */
             schema_included: boolean;
+        };
+        /**
+         * MCPPackageBranding
+         * @description Saved package display name, installation identifier, and optional logo.
+         */
+        MCPPackageBranding: {
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            /** Logo Url */
+            logo_url?: string | null;
+        };
+        /**
+         * MCPPackageBrandingUpdate
+         * @description Instance-wide identity for downloaded agent plugin packages.
+         */
+        MCPPackageBrandingUpdate: {
+            /** Name */
+            name: string;
         };
         /**
          * MCPRunInfoResponse
@@ -30515,7 +30657,7 @@ export interface components {
             script_name?: string | null;
             /**
              * Org Id
-             * @description Override execution org context within the caller's reach. Requires workflows.execute in the target organization.
+             * @description Override execution org context within the caller's reach; use global for Global scope. Requires workflows.execute in the target organization.
              */
             org_id?: string | null;
             /**
@@ -32521,6 +32663,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_app_connection_auth_app_connections__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectionDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_app_connection_request_auth_app_connections__request_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppConnectionDecision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectionResult"];
                 };
             };
             /** @description Validation Error */
@@ -36035,7 +36243,10 @@ export interface operations {
     };
     get_form_runtime_api_forms__form_id__runtime_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to load a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36050,7 +36261,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FormRuntimeDefinition"];
+                    "application/json": components["schemas"]["AuthenticatedFormRuntimeDefinition"] | components["schemas"]["FormRuntimeDefinition"];
                 };
             };
             /** @description Validation Error */
@@ -36303,7 +36514,10 @@ export interface operations {
     };
     submit_form_api_forms__form_id__submissions_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36338,7 +36552,10 @@ export interface operations {
     };
     execute_startup_workflow_api_forms__form_id__startup_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36375,7 +36592,10 @@ export interface operations {
     };
     get_form_field_options_api_forms__form_id__fields__field_name__options_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36411,7 +36631,10 @@ export interface operations {
     };
     generate_upload_url_api_forms__form_id__upload_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to store a global form upload. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -46351,6 +46574,132 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "application/zip": unknown;
+                };
+            };
+        };
+    };
+    get_package_branding_api_mcp_run_branding_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+        };
+    };
+    update_package_branding_api_mcp_run_branding_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPPackageBrandingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_package_logo_api_mcp_run_branding_logo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    upload_package_logo_api_mcp_run_branding_logo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_package_logo_api_mcp_run_branding_logo_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_package_logo_api_mcp_run_branding_logo_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
                 };
             };
         };

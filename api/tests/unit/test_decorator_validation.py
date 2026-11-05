@@ -2,8 +2,24 @@ import inspect
 
 import pytest
 
-from bifrost.decorator_validation import _SUPPORTED_KEYS, validate_python_decorators
+from bifrost.decorator_validation import (
+    _SUPPORTED_KEYS,
+    has_executable_declaration,
+    validate_python_decorators,
+)
 from bifrost.definition_validation import DefinitionValidationError
+
+
+@pytest.mark.parametrize("source, expected", [
+    ("from bifrost import workflow\nif True:\n @workflow\n def main(): pass\n", True),
+    ("from bifrost import workflow\ndef test_fixture():\n @workflow\n def main(): pass\n", False),
+    ("from bifrost import workflow\nclass Tests:\n @workflow\n def main(): pass\n", False),
+    ("from bifrost import workflow\nworkflow = other\n@workflow\ndef main(): pass\n", False),
+    ("from unrelated import workflow\n@workflow\ndef main(): pass\n", False),
+    ("from bifrost import workflow\nraise RuntimeError('do not execute')\n@workflow(timeout_seconds=1)\ndef main(): pass\n", True),
+])
+def test_finds_only_module_entry_points_without_executing_or_validating_settings(source, expected):
+    assert has_executable_declaration(source, path="entry.py") is expected
 
 
 @pytest.mark.parametrize(

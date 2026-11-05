@@ -90,6 +90,29 @@ class TestPasswordLoginFlagParsing:
 
 
 class TestPasswordLoginSuccess:
+    def test_storage_failure_returns_nonzero_without_writing_env(self, monkeypatch, tmp_path, capsys):
+        from bifrost.windows_credentials import CredentialStorageError
+
+        monkeypatch.setattr("httpx.AsyncClient", _stub_post({
+            "access_token": "synthetic-access", "refresh_token": "synthetic-refresh",
+        }))
+        monkeypatch.chdir(tmp_path)
+
+        def fail(**_kwargs):
+            raise CredentialStorageError("Credential storage failed at fragment write.")
+
+        monkeypatch.setattr(cli.credentials, "save_credentials", fail)
+        result = cli.handle_login([
+            "--email", "dev@example.test", "--password", "synthetic-password",
+            "--url", "https://example.test",
+        ])
+        assert result == 1
+        assert not (tmp_path / ".env").exists()
+        output = capsys.readouterr()
+        assert "fragment write" in output.err
+        assert "synthetic-access" not in output.err
+        assert "Logged in" not in output.out
+
     def test_writes_only_url_to_env_and_credentials_to_global_store(
         self, capsys, monkeypatch, tmp_path, isolated_credentials,
     ):

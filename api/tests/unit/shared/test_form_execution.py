@@ -8,6 +8,89 @@ import pytest
 
 from shared import form_execution
 from shared.run_lineage import RunLineage
+from src.core.principal import UserPrincipal
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    RoleGrant,
+)
+from src.services.authorization.enforce import Caller
+
+
+def _caller(*, home, organization_grants=()) -> Caller:
+    principal = UserPrincipal(
+        user_id=uuid4(), email="form-scope@contoso.example", organization_id=home
+    )
+    return Caller(
+        principal,
+        AuthorizationContext(
+            user_id=principal.user_id,
+            home_organization_id=home,
+            base_role_id=uuid4(),
+            is_external=False,
+            base_permissions=frozenset(),
+            role_grants=tuple(organization_grants),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_global_form_uses_reachable_requested_organization(monkeypatch):
+    home = uuid4()
+    selected = uuid4()
+    caller = _caller(
+        home=home,
+        organization_grants=(
+            RoleGrant(
+                role_id=uuid4(),
+                permissions=frozenset({"workflows.execute"}),
+                boundaries=(Boundary(BoundaryKind.ORGANIZATION, selected),),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "src.services.authorization.enforce.load_caller", AsyncMock(return_value=caller)
+    )
+
+    scope = await form_execution.resolve_form_execution_scope(
+        AsyncMock(),
+        user=caller.principal,
+        form_organization_id=None,
+        requested_organization_id=selected,
+    )
+
+    assert scope.organization_id == selected
+    assert scope.caller is caller
+
+
+@pytest.mark.asyncio
+async def test_scoped_form_rejects_a_different_requested_organization():
+    form_organization = uuid4()
+
+    with pytest.raises(form_execution.FormExecutionScopeError) as exc_info:
+        await form_execution.resolve_form_execution_scope(
+            AsyncMock(),
+            user=SimpleNamespace(embed=False),
+            form_organization_id=form_organization,
+            requested_organization_id=uuid4(),
+        )
+
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_embed_form_cannot_select_an_organization():
+    with pytest.raises(form_execution.FormExecutionScopeError) as exc_info:
+        await form_execution.resolve_form_execution_scope(
+            AsyncMock(),
+            user=SimpleNamespace(embed=True),
+            form_organization_id=None,
+            requested_organization_id=uuid4(),
+            embed_organization_id=uuid4(),
+        )
+
+    assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -156,3 +239,57 @@ async def test_embed_provider_runs_with_the_accepted_lineage(monkeypatch):
     assert options == [
         {"value": "contoso", "label": "Contoso", "description": None, "metadata": None}
     ]
+
+
+@pytest.mark.asyncio
+async def test_global_form_provider_uses_the_selected_execution_organization(monkeypatch):
+    from shared import form_provider
+    from src.repositories import workflows
+    from src.services.execution import service
+
+    selected_organization_id = uuid4()
+    lineage = RunLineage(uuid4(), uuid4(), None)
+    provider_id = uuid4()
+    form = SimpleNamespace(id=uuid4(), organization_id=None, solution_id=None)
+    field = SimpleNamespace(data_provider_id=provider_id, data_provider_inputs={}, auto_fill={})
+    provider = SimpleNamespace(
+        id=provider_id,
+        organization_id=None,
+        is_active=True,
+        type="data_provider",
+    )
+    repo = SimpleNamespace(resolve=AsyncMock(return_value=provider))
+    workflow_repository = MagicMock(return_value=repo)
+    monkeypatch.setattr(workflows, "WorkflowRepository", workflow_repository)
+    context = SimpleNamespace(user_id=str(lineage.run_user_id))
+    create_context = AsyncMock(return_value=context)
+    monkeypatch.setattr(form_provider, "create_form_execution_context", create_context)
+    monkeypatch.setattr(
+        service,
+        "run_workflow",
+        AsyncMock(return_value=SimpleNamespace(result=[])),
+    )
+    user = SimpleNamespace(embed=True, user_id=uuid4(), is_superuser=False)
+    db = AsyncMock()
+
+    await form_provider.execute_form_field_provider(
+        db=db,
+        form=form,
+        field=field,
+        user=user,
+        caller_org_id=selected_organization_id,
+        browser_inputs={},
+        lineage=lineage,
+    )
+
+    workflow_repository.assert_called_once_with(
+        db, org_id=selected_organization_id, is_superuser=True
+    )
+    create_context.assert_awaited_once_with(
+        db,
+        user=user,
+        lineage=lineage,
+        execution_id=ANY,
+        organization_id=selected_organization_id,
+        is_platform_admin=False,
+    )

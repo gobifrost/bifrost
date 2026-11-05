@@ -20,10 +20,16 @@ from src.core.log_safety import log_safe
 from src.core.module_cache_contract import (
     MODULE_INDEX_KEY,
     MODULE_KEY_PREFIX,
+    MODULE_RESOLUTION_GENERATION_INDEX_KEY,
     MODULE_RESOLUTION_KEY_PREFIX,
     MODULE_RESOLUTION_GENERATION_PREFIX,
     MODULE_RESOLUTION_GENERATION_SCRIPT,
+    MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT,
+    MODULE_RESOLUTION_INDEX_KEY,
+    MODULE_RESOLUTION_MAX_ENTRIES,
+    MODULE_RESOLUTION_MAX_RESULT_BYTES,
     MODULE_RESOLUTION_READ_SCRIPT,
+    MODULE_SOURCE_RECACHE_SCRIPT,
     MODULE_RESOLUTION_WRITE_SCRIPT,
     module_resolution_generation_key,
     MODULE_RESOLUTION_NEGATIVE_TTL,
@@ -32,6 +38,7 @@ from src.core.module_cache_contract import (
     module_resolution_cache_key as module_resolution_cache_key,
 )
 from src.core.redis_client import get_redis_client
+from src.core.s3_transport import S3Error
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SOLUTIONS_ROOT, SolutionStorage
 
@@ -68,18 +75,28 @@ async def get_module(path: str) -> CachedModule | None:
     if data:
         return json.loads(data)
 
+    redis_conn = await redis._get_redis()
+    source_cache_key = _module_resolution_cache_key_for_path(path)
+    generation = (
+        await get_module_resolution_generation(source_cache_key)
+        if source_cache_key is not None
+        else None
+    )
+
     # Redis miss — try S3 fallback
     try:
         content_bytes = await _read_module_from_storage(path)
-    except Exception:
+    except S3Error as exc:
+        if exc.code not in {"NoSuchKey", "404", "NotFound"}:
+            raise
         logger.debug(f"Module not in cache or S3: {log_safe(path)}")
         return None
 
     try:
         content_str = content_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        logger.warning(f"Could not decode {log_safe(path)} as UTF-8, skipping")
-        return None
+        logger.warning("Could not decode %s as UTF-8", log_safe(path))
+        raise
 
     content_hash = hashlib.sha256(content_bytes).hexdigest()
     module: CachedModule = {
@@ -90,9 +107,12 @@ async def get_module(path: str) -> CachedModule | None:
 
     # Re-cache to Redis (self-healing)
     try:
-        await redis.setex(key, 86400, json.dumps(module))
-        redis_conn = await redis._get_redis()
-        await cast(Awaitable[int], redis_conn.sadd(MODULE_INDEX_KEY, path))
+        if source_cache_key is not None and generation is not None:
+            await cast(Awaitable[int], redis_conn.eval(
+                MODULE_SOURCE_RECACHE_SCRIPT, 3,
+                module_resolution_generation_key(source_cache_key), key, MODULE_INDEX_KEY,
+                generation, json.dumps(module), MODULE_RESOLUTION_TTL, path,
+            ))
     except Exception as e:
         logger.warning(f"Failed to re-cache S3 module to Redis: {e}")
 
@@ -103,8 +123,10 @@ async def get_module_resolution_generation(cache_key: str) -> str:
     """Capture a generation before probing storage; expired tokens never revive."""
     redis_conn = await get_redis_client()._get_redis()
     return await cast(Awaitable[str], redis_conn.eval(
-        MODULE_RESOLUTION_GENERATION_SCRIPT, 1,
-        module_resolution_generation_key(cache_key), uuid4().hex, MODULE_RESOLUTION_TTL,
+        MODULE_RESOLUTION_GENERATION_SCRIPT, 2,
+        module_resolution_generation_key(cache_key),
+        MODULE_RESOLUTION_GENERATION_INDEX_KEY,
+        uuid4().hex, MODULE_RESOLUTION_TTL, MODULE_RESOLUTION_MAX_ENTRIES,
     ))
 
 
@@ -128,12 +150,18 @@ async def set_module_resolution_cache(
         if result.get("kind") == "not_found"
         else MODULE_RESOLUTION_TTL
     )
+    entry = json.dumps({"generation": generation, "result": result})
+    if len(entry.encode("utf-8")) > MODULE_RESOLUTION_MAX_RESULT_BYTES:
+        logger.debug("Skipping oversized module resolution metadata for %s", log_safe(cache_key))
+        return
     redis_conn = await get_redis_client()._get_redis()
     await cast(Awaitable[int], redis_conn.eval(
-        MODULE_RESOLUTION_WRITE_SCRIPT, 2,
+        MODULE_RESOLUTION_WRITE_SCRIPT, 3,
         module_resolution_generation_key(cache_key),
         f"{MODULE_RESOLUTION_KEY_PREFIX}{cache_key}",
-        generation, ttl, json.dumps({"generation": generation, "result": result}),
+        MODULE_RESOLUTION_INDEX_KEY,
+        generation, ttl, entry,
+        MODULE_RESOLUTION_MAX_ENTRIES,
     ))
 
 
@@ -147,7 +175,7 @@ async def _scan_keys(redis_conn, pattern: str) -> list[str]:
     return [key async for key in iterator]
 
 
-def _resolver_names_for_path(path: str) -> set[str]:
+def _resolver_logical_name_for_path(path: str) -> str | None:
     """Logical names and ancestor namespace names affected by a module path."""
     parts = path.split("/", 2)
     if len(parts) == 3 and parts[0] == SOLUTIONS_ROOT:
@@ -161,10 +189,41 @@ def _resolver_names_for_path(path: str) -> set[str]:
         logical = path
 
     dotted = logical.replace("/", ".").strip(".")
-    if not dotted:
+    return dotted or None
+
+
+def _resolver_names_for_path(path: str) -> set[str]:
+    """Logical names and ancestor namespace names affected by a module path."""
+    dotted = _resolver_logical_name_for_path(path)
+    if dotted is None:
         return set()
     name_parts = dotted.split(".")
     return {".".join(name_parts[:i]) for i in range(1, len(name_parts) + 1)}
+
+
+def _module_resolution_cache_key_for_path(path: str) -> str | None:
+    """Return the bounded cache key whose generation fences one source path."""
+    name = _resolver_logical_name_for_path(path)
+    if name is None:
+        return None
+    return module_resolution_cache_key(name, solution_id=None, global_repo_access=False)
+
+
+def _queue_generation_rotations(pipeline, path: str) -> None:
+    for name in sorted(_resolver_names_for_path(path)):
+        cache_key = module_resolution_cache_key(
+            name, solution_id=None, global_repo_access=False,
+        )
+        if cache_key is None:
+            continue
+        pipeline.eval(
+            MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT, 2,
+            module_resolution_generation_key(cache_key),
+            MODULE_RESOLUTION_GENERATION_INDEX_KEY,
+            uuid4().hex,
+            MODULE_RESOLUTION_TTL,
+            MODULE_RESOLUTION_MAX_ENTRIES,
+        )
 
 
 async def invalidate_module_resolution_cache(path: str) -> None:
@@ -176,12 +235,10 @@ async def invalidate_module_resolution_cache(path: str) -> None:
     redis = get_redis_client()
     redis_conn = await redis._get_redis()
     # No scope index and no keyspace walk: every scope checks this same token.
+    # Evicting a generation makes every result guarded by it unreadable, and an
+    # in-flight writer cannot restore one because the write checks the token.
     async with redis_conn.pipeline(transaction=True) as pipeline:
-        for name in sorted(names):
-            pipeline.set(
-                f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}",
-                uuid4().hex, ex=MODULE_RESOLUTION_TTL,
-            )
+        _queue_generation_rotations(pipeline, path)
         await pipeline.execute()
 
 
@@ -196,16 +253,22 @@ async def set_module(path: str, content: str, content_hash: str) -> None:
         content: Python source code
         content_hash: SHA-256 hash of content (for change detection)
     """
-    redis = get_redis_client()
     key = f"{MODULE_KEY_PREFIX}{path}"
-
     cached = CachedModule(content=content, path=path, hash=content_hash)
-    await redis.setex(key, 86400, json.dumps(cached))  # 24hr TTL
+    if _module_resolution_cache_key_for_path(path) is None:
+        logger.debug("Skipping oversized module cache entry: %s", log_safe(path))
+        await invalidate_module(path)
+        return
+    redis_conn = await get_redis_client()._get_redis()
 
-    # Add to index set
-    redis_conn = await redis._get_redis()
-    await cast(Awaitable[int], redis_conn.sadd(MODULE_INDEX_KEY, path))
-    await invalidate_module_resolution_cache(path)
+    # Source bytes and the generations that make resolver metadata current
+    # change in one Redis transaction. A cold read's CAS cannot restore old
+    # source between these operations.
+    async with redis_conn.pipeline(transaction=True) as pipeline:
+        pipeline.setex(key, MODULE_RESOLUTION_TTL, json.dumps(cached))
+        pipeline.sadd(MODULE_INDEX_KEY, path)
+        _queue_generation_rotations(pipeline, path)
+        await pipeline.execute()
 
     logger.debug(f"Cached module: {log_safe(path)}")
 
@@ -221,13 +284,12 @@ async def invalidate_module(path: str) -> None:
     """
     redis = get_redis_client()
     key = f"{MODULE_KEY_PREFIX}{path}"
-
-    await redis.delete(key)
-    await invalidate_module_resolution_cache(path)
-
-    # Remove from index set
     redis_conn = await redis._get_redis()
-    await cast(Awaitable[int], redis_conn.srem(MODULE_INDEX_KEY, path))
+    async with redis_conn.pipeline(transaction=True) as pipeline:
+        pipeline.delete(key)
+        pipeline.srem(MODULE_INDEX_KEY, path)
+        _queue_generation_rotations(pipeline, path)
+        await pipeline.execute()
 
     logger.debug(f"Invalidated module cache: {log_safe(path)}")
 
@@ -244,9 +306,11 @@ async def refresh_modules_from_directory(work_dir: Path) -> int:
     Returns:
         Number of modules refreshed.
     """
-    count = 0
+    refreshed_paths: set[str] = set()
     for py_file in work_dir.rglob("*.py"):
-        rel_path = str(py_file.relative_to(work_dir))
+        if ".git" in py_file.relative_to(work_dir).parts:
+            continue
+        rel_path = py_file.relative_to(work_dir).as_posix()
         content_bytes = py_file.read_bytes()
         try:
             content_str = content_bytes.decode("utf-8")
@@ -254,9 +318,27 @@ async def refresh_modules_from_directory(work_dir: Path) -> int:
             continue
         content_hash = hashlib.sha256(content_bytes).hexdigest()
         await set_module(rel_path, content_str, content_hash)
-        count += 1
-    logger.info(f"Refreshed {count} module(s) in Redis cache from {work_dir}")
-    return count
+        refreshed_paths.add(rel_path)
+
+    redis_conn = await get_redis_client()._get_redis()
+    cached_paths = await cast(Awaitable[set[str]], redis_conn.smembers(MODULE_INDEX_KEY))
+    cached_path_names = {
+        path.decode() if isinstance(path, bytes) else path
+        for path in cached_paths
+        if isinstance(path, (str, bytes))
+    }
+    workspace_cached_paths = {
+        path for path in cached_path_names
+        if not path.startswith(f"{SOLUTIONS_ROOT}/") and path.endswith(".py")
+    }
+    for path in workspace_cached_paths - refreshed_paths:
+        await invalidate_module(path)
+
+    logger.info(
+        "Refreshed %d module(s) and invalidated %d removed workspace module(s) from %s",
+        len(refreshed_paths), len(workspace_cached_paths - refreshed_paths), work_dir,
+    )
+    return len(refreshed_paths)
 
 
 async def clear_module_cache() -> int:

@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import textwrap
 from pathlib import Path
 
@@ -96,7 +97,12 @@ def test_discovery_records_import_failures(tmp_path: Path):
 def test_host_exposes_failures(tmp_path: Path):
     (tmp_path / "bifrost.solution.yaml").write_text("slug: demo\nname: Demo\n")
     _write(tmp_path / "functions/broken.py", '''
+        from bifrost import workflow
         raise RuntimeError("boom at import time")
+
+        @workflow
+        async def main():
+            return {}
     ''')
 
     host = FunctionHost(tmp_path)
@@ -104,6 +110,82 @@ def test_host_exposes_failures(tmp_path: Path):
 
     assert host.refs() == []
     assert "boom at import time" in host.failures()["functions/broken.py"]
+
+
+def test_discovery_does_not_execute_diagnostics_or_nested_test_workflows(tmp_path: Path):
+    sdk = sys.modules["bifrost"]
+    _write(tmp_path / "a_diagnostic.py", '''
+        import sys, types
+        sys.modules["bifrost"] = types.SimpleNamespace()
+        raise RuntimeError("diagnostic executed during discovery")
+    ''')
+    _write(tmp_path / "b_tests.py", '''
+        from bifrost import workflow
+        raise RuntimeError("test setup executed during discovery")
+
+        def test_workflow():
+            @workflow
+            async def nested():
+                return {}
+    ''')
+    _write(tmp_path / "z_workflow.py", '''
+        from bifrost import workflow
+
+        @workflow
+        async def main():
+            return {"ok": True}
+    ''')
+
+    fns, failures = discover_functions(tmp_path)
+
+    assert sys.modules["bifrost"] is sdk
+    assert set(fns) == {"z_workflow.py::main"}
+    assert failures == {}
+
+
+@pytest.mark.parametrize("declaration", [
+    "from bifrost import workflow as execute\n@execute()",
+    "import bifrost as sdk\n@sdk.workflow",
+    "from bifrost.decorators import tool as execute\n@execute()",
+    "from bifrost import data_provider\n@data_provider()",
+    "import bifrost.decorators as decorators\n@decorators.workflow()",
+    "import bifrost.decorators\n@bifrost.decorators.workflow",
+    "from bifrost import decorators as d\n@d.workflow()",
+    "from bifrost import *\n@workflow",
+    "from bifrost.decorators import *\n@tool()",
+    "from bifrost import workflow\nexecute = workflow\n@execute()",
+])
+def test_discovery_recognizes_sdk_decorator_aliases(tmp_path: Path, declaration: str):
+    _write(tmp_path / "arbitrary/entry.py", declaration + '\nasync def main():\n    return {}\n')
+
+    fns, failures = discover_functions(tmp_path)
+
+    assert set(fns) == {"arbitrary/entry.py::main"}
+    assert failures == {}
+
+
+def test_manifest_target_can_reexport_a_workflow(tmp_path: Path):
+    _write(tmp_path / "actual.py", '''
+        from bifrost import workflow
+
+        @workflow
+        async def main():
+            return {"ok": True}
+    ''')
+    _write(tmp_path / "entry.py", "from actual import main\n")
+    _write(tmp_path / ".bifrost/workflows.yaml", '''
+        workflows:
+          11111111-1111-1111-1111-111111111111:
+            name: Reexport
+            path: entry.py
+            function_name: main
+    ''')
+    host = FunctionHost(tmp_path)
+    try:
+        host.reload()
+        assert host.resolve("Reexport") == "entry.py::main"
+    finally:
+        sys.modules.pop("actual", None)
 
 
 def test_host_resolves_manifest_uuid_and_name_to_local_ref(tmp_path: Path):

@@ -1,6 +1,7 @@
 import { MCPResetDialog } from "./MCPResetDialog";
 import { MCPToolPicker } from "./MCPToolPicker";
 import { MCPConnectionDetails } from "./MCPConnectionDetails";
+import { MCPPackageBranding } from "./MCPPackageBranding";
 import { SettingsReadError } from "./SettingsReadError";
 /**
  * MCP Configuration Settings
@@ -165,17 +166,28 @@ export function MCP() {
 
 	if (configLoading) {
 		return (
-			<div className="flex items-center justify-center h-64">
-				<Loader2 className="h-8 w-8 animate-spin motion-reduce:animate-none text-muted-foreground" />
+			<div className="space-y-6">
+				<MCPPackageBranding />
+				<div className="flex items-center justify-center h-64">
+					<Loader2 className="h-8 w-8 animate-spin motion-reduce:animate-none text-muted-foreground" />
+				</div>
 			</div>
 		);
 	}
 
 	const readError = configError ? <SettingsReadError resource="MCP configuration" cached={!!config} pending={configFetching} onRetry={() => { void refetch(); }} /> : null;
-	if (!config) return readError;
+	if (!config) {
+		return (
+			<div className="space-y-6">
+				<MCPPackageBranding />
+				{readError}
+			</div>
+		);
+	}
 
 	return (
 		<div className="space-y-6">
+			<MCPPackageBranding />
 			{readError}
 			{toolsError && <SettingsReadError resource="MCP tools" cached={!!toolsData} pending={toolsFetching} onRetry={() => { void refetchTools(); }} />}
 			<MCPConnectionDetails configured={config.is_configured} updatedAt={config.configured_at} updatedBy={config.configured_by} url={`${window.location.origin}/mcp`} />
