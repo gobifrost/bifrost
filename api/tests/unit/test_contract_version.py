@@ -193,6 +193,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # Additive Global scope marker on the existing string org_id field; its
 # description now documents that value. Existing CLI shapes and minimum version
 # are unchanged.
+# Additive agent package branding settings models; existing CLI shapes are unchanged.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -408,7 +409,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
     # App consent models and the Global org_id scope marker are additive.
     # Existing CLI shapes and minimum version remain unchanged (2026-11-04).
-    "7dfcf4345ddc44ffc94aaf4445547640dd77ded3ab6a1fb57a50186c543d2b32"
+    "aa99fd64dc5781610c0fbc4fbad820a8ac84a3925447ef5393649ee17992f39d"
 )
 
 

@@ -29,9 +29,9 @@ Usage:
 """
 
 import logging
-from typing import NoReturn
+from typing import Annotated, NoReturn
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
 from mcp.server.auth.routes import build_resource_metadata_url
@@ -44,6 +44,9 @@ from starlette.routing import Route
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from shared.run_lineage import principal_lineage
+from shared.models import MCPPackageBranding, MCPPackageBrandingUpdate
+from shared.mcp_package_branding import MCPPackageBrandingService
+from shared.logo_processing import LOGO_MAX_SOURCE_BYTES, LogoProcessingError
 from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
     MCPConfigRequest,
@@ -221,23 +224,73 @@ async def download_mcp_run_plugin(
     """Download the instance-matched Bifrost Agent package."""
     from shared.version import get_version
     from src.services.mcp_server.run_package import (
-        PLUGIN_FILENAME,
+        PackageIdentity,
         build_bifrost_run_plugin,
     )
 
     await _require_mcp_enabled(db)
+    service = MCPPackageBrandingService(db)
+    branding = await service.get()
+    identity = PackageIdentity(branding.name, await service.logo())
     zip_bytes = build_bifrost_run_plugin(
-        get_settings().public_url,
-        get_version(),
+        get_settings().public_url, get_version(), identity,
     )
     return Response(
         content=zip_bytes,
         media_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="{PLUGIN_FILENAME}"',
+            "Content-Disposition": f'attachment; filename="{identity.filename}"',
             "Cache-Control": "no-store",
         },
     )
+
+
+@router.get("/run/branding", response_model=MCPPackageBranding)
+async def get_package_branding(current_user: CurrentActiveUser, db: DbSession) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.read", None)
+    return await MCPPackageBrandingService(db).get()
+
+
+@router.put("/run/branding", response_model=MCPPackageBranding)
+async def update_package_branding(
+    request: MCPPackageBrandingUpdate, current_user: CurrentActiveUser, db: DbSession,
+) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
+    result = await MCPPackageBrandingService(db).update(request, current_user.email)
+    await db.commit()
+    return result
+
+
+@router.get("/run/branding/logo")
+async def get_package_logo(db: DbSession) -> Response:
+    logo = await MCPPackageBrandingService(db).logo()
+    if logo is None:
+        raise HTTPException(status_code=404, detail="No custom package logo")
+    return Response(logo, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/run/branding/logo", response_model=MCPPackageBranding)
+async def upload_package_logo(
+    file: Annotated[UploadFile, File()], current_user: CurrentActiveUser, db: DbSession,
+) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
+    content = await file.read(LOGO_MAX_SOURCE_BYTES + 1)
+    try:
+        result = await MCPPackageBrandingService(db).upload_logo(
+            content, file.content_type or "", current_user.email,
+        )
+    except LogoProcessingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    return result
+
+
+@router.delete("/run/branding/logo", response_model=MCPPackageBranding)
+async def delete_package_logo(current_user: CurrentActiveUser, db: DbSession) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
+    result = await MCPPackageBrandingService(db).delete_logo(current_user.email)
+    await db.commit()
+    return result
 
 
 @router.get("/status")
