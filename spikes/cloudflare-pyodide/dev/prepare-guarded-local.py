@@ -1,8 +1,10 @@
 """Fresh local packet combining the guarded candidate and existing canonical tests."""
 import gzip
+import argparse
 import hashlib
 from pathlib import Path
 import shutil
+import re
 import subprocess
 
 ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
@@ -11,7 +13,12 @@ PACKET = ROOT / 'inbox/staged-runtime-v2'
 BASE = ROOT / 'inbox/staged-runtime-v1'
 
 
-def main():
+def main(*, source_packet='guarded-source-v1', revision=2):
+    global SOURCE, PACKET
+    if not re.fullmatch(r'guarded-source-v[1-9][0-9]*', source_packet) or not 2 <= revision <= 20:
+        raise ValueError('Bounded owned qualification packet required')
+    SOURCE = ROOT / 'inbox' / source_packet / 'spikes/cloudflare-pyodide'
+    PACKET = ROOT / f'inbox/staged-runtime-v{revision}'
     if PACKET.exists():
         raise RuntimeError('Reconcile existing packet before retry')
     shutil.copytree(BASE, PACKET, ignore=shutil.ignore_patterns('node_modules', '.wrangler', '__pycache__', '*.gz'))
@@ -41,4 +48,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--source-packet', default='guarded-source-v1')
+    parser.add_argument('--revision', type=int, default=2)
+    args = parser.parse_args()
+    main(source_packet=args.source_packet, revision=args.revision)

@@ -2,10 +2,11 @@
 import candidate from './canonical-entry.mjs';
 import legacyFixture from '../../backend/authorized-local-entry.mjs';
 export {CanonicalApi} from './canonical-entry.mjs';
-const expiry = String(Date.now()+120000);
+let expiry;
 export default {
   async fetch(request, env, ctx) {
     if (env.ISOLATED_TEST_STACK !== 'true') return new Response('Local test stack required', {status: 403});
+    expiry ??= String(Date.now()+120000);
     if (new URL(request.url).pathname === '/__fixture_warmup') return legacyFixture.fetch(request, env, ctx);
     const headers = new Headers(request.headers);
     headers.set('X-Dev-Auth', 'synthetic-local-guard');
