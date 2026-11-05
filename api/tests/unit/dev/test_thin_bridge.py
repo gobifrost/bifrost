@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from dataclasses import replace
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from uuid import UUID
@@ -146,3 +148,89 @@ async def test_inventory_missing_uncertain_platform_route_unblocks_supervisor_as
     assert await process.wait() == 1
     assert bridge.jobs == {}
     assert bridge.platform_routes == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["result", "agent_exit"])
+async def test_terminal_delivery_cannot_borrow_a_reconnected_sessions_permission(event_type):
+    from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref
+
+    socket = Mock(send_text=AsyncMock(), close=AsyncMock())
+    replacement = Mock(send_text=AsyncMock(), close=AsyncMock())
+    bridge = _bridge(socket)
+    bridge.lease_ref = LeaseRef(LEASE)
+    bridge.reconciliation_ready.set()
+    observed = []
+
+    async def deliver(event):
+        observed.append(current_remote_lease_ref().lease)
+
+    bridge.pool = Mock(handle_event=AsyncMock(side_effect=deliver))
+    bridge.agents = Mock(tracks=Mock(return_value=True), handle_exit=AsyncMock(side_effect=deliver))
+    await bridge.receive({"event": event_type, "route_id": "route", "_event_id": "terminal"})
+    # Replace the connection before the detached delivery task gets to run.
+    newer = replace(LEASE, session_generation=2)
+    bridge.lease_ref.lease = newer
+    bridge.replace_socket(replacement, newer)
+    with patch("src.worker.remote.host.owns_remote_session", new=AsyncMock(return_value=True)):
+        outcomes = await asyncio.gather(*bridge.results, return_exceptions=True)
+    assert observed == [LEASE]
+    assert isinstance(outcomes[0], ConnectionError)
+    socket.send_text.assert_not_awaited()
+    replacement.send_text.assert_not_awaited()
+    replacement.close.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fence", [False, RuntimeError("database unavailable"), True])
+async def test_terminal_ack_requires_current_database_ownership(fence, ack_database):
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    socket = Mock(send_text=AsyncMock())
+    bridge = _bridge(socket)
+    check = AsyncMock(side_effect=fence) if isinstance(fence, Exception) else AsyncMock(return_value=fence)
+    with (
+        remote_owner_context(LeaseRef(LEASE)),
+        patch("src.worker.remote.host.fence_remote_owner", new=check),
+    ):
+        if fence is True:
+            await bridge.acknowledge("terminal")
+            socket.send_text.assert_awaited_once()
+        else:
+            with pytest.raises((ConnectionError, RuntimeError)):
+                await bridge.acknowledge("terminal")
+            socket.send_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ack_rechecks_socket_after_awaited_database_confirmation(ack_database):
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    socket = Mock(send_text=AsyncMock())
+    replacement = Mock(send_text=AsyncMock())
+    bridge = _bridge(socket)
+
+    async def check(db):
+        bridge.replace_socket(replacement, replace(LEASE, session_generation=2))
+        return True
+
+    with (
+        remote_owner_context(LeaseRef(LEASE)),
+        patch("src.worker.remote.host.fence_remote_owner", new=check),
+    ):
+        with pytest.raises(ConnectionError, match="replaced"):
+            await bridge.acknowledge("terminal")
+    socket.send_text.assert_not_awaited()
+    replacement.send_text.assert_not_awaited()
+
+
+@pytest.fixture
+def ack_database(monkeypatch):
+    db = Mock(scalar=AsyncMock(return_value=20))
+
+    @asynccontextmanager
+    async def context():
+        yield db
+
+    monkeypatch.setattr("src.worker.remote.host.get_db_context", context)
+    return db
