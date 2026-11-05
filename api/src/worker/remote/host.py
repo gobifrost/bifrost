@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError, TimeoutError as SQLAlchemyTimeoutError
 from starlette.websockets import WebSocketState
 
 from src.config import get_settings
@@ -789,6 +790,7 @@ class RemoteSession:
         async with self._release_lock:
             if self._lease_released:
                 return
+            self.owned_until = 0.0
             self._lease_released = True
             await release_remote_owner(self.lease)
 
@@ -876,22 +878,37 @@ class RemoteSession:
             await self.lose_ownership("Remote API owner lease could not be renewed")
 
     async def may_accept(self, kind: str, payload: dict[str, Any]) -> bool:
-        """Whether this owner may act on a launcher message. Telemetry changes
-        nothing durable, so a lease known to be current is enough; everything
-        else is fenced in the database."""
+        """Defer messages during DB outages; never substitute time for a fence.
+
+        Only telemetry may use the known lease without a DB confirmation. A
+        retry cannot outlive the lease captured at entry, borrow a reconnect's
+        generation, or deliver anything while ownership is unknown.
+        """
         if kind == "event" and payload.get("event") == "sample" and time.monotonic() < self.owned_until:
             return True
-        try:
-            return await owns_remote_session(self.lease)
-        except Exception:
-            # A transient read failure must not manufacture a new session: a
-            # replacement is still caught on the next successful read, and the
-            # fallback expires with the last known lease.
-            logging.getLogger(__name__).warning(
-                "Remote owner fence read failed; falling back to owned_until",
-                exc_info=True,
-            )
-            return time.monotonic() < self.owned_until
+        lease, deadline = self.lease, self.owned_until
+        while True:
+            if self.lease != lease:
+                raise ProtocolError("superseded remote control session")
+            remaining = min(deadline, self.owned_until) - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                owns = await asyncio.wait_for(owns_remote_session(lease), timeout=remaining)
+            except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
+                if self.lease != lease:
+                    raise ProtocolError("superseded remote control session")
+                if min(deadline, self.owned_until) - time.monotonic() <= RENEW_RETRY_SECONDS:
+                    return False
+                logging.getLogger(__name__).warning(
+                    "Remote owner fence read failed; deferring message until ownership is confirmed",
+                    exc_info=True,
+                )
+                await asyncio.sleep(RENEW_RETRY_SECONDS)
+                continue
+            if self.lease != lease:
+                raise ProtocolError("superseded remote control session")
+            return owns and time.monotonic() < min(deadline, self.owned_until)
 
     async def lose_ownership(self, reason: str) -> None:
         self.owned_until = 0.0
@@ -1126,7 +1143,13 @@ async def remote_control(socket: WebSocket) -> None:
             logical = assembler.feed(frame)
             if logical is None:
                 continue
-            if not await session.may_accept(logical.kind, logical.payload):
+            owns = await session.may_accept(logical.kind, logical.payload)
+            if (
+                session.bridge.socket is not socket
+                or frame.session_generation != session.lease.session_generation
+            ):
+                raise ProtocolError("superseded remote control socket")
+            if not owns:
                 await session.lose_ownership("Remote API owner fence was replaced")
                 raise ProtocolError("remote API owner fence was replaced")
             if logical.kind != "event":
