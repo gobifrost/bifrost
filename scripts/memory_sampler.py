@@ -157,28 +157,30 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _detect_container() -> str:
-    """Find the test api container for the current worktree."""
-    # Same project-name derivation as test.sh: hash of the absolute worktree
-    # root. Selecting the first running test API can silently sample a different
-    # worktree when several isolated stacks are active.
+def _worktree_container() -> str:
+    """Stable API name, also usable while a command-owned stack is booting."""
     try:
         repo_root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            text=True,
+            ["git", "rev-parse", "--show-toplevel"], text=True,
         ).strip()
+    except subprocess.CalledProcessError:
+        sys.exit("Failed to resolve the worktree")
+    worktree_hash = hashlib.sha256(repo_root.encode()).hexdigest()[:8]
+    return f"bifrost-test-{worktree_hash}-api-1"
+
+
+def _detect_container() -> str:
+    expected = _worktree_container()
+    try:
         out = subprocess.check_output(
-            ["docker", "ps", "--format", "{{.Names}}"],
-            text=True,
+            ["docker", "ps", "--format", "{{.Names}}"], text=True,
         )
     except subprocess.CalledProcessError:
-        sys.exit("Failed to resolve the worktree or list Docker containers")
-    worktree_hash = hashlib.sha256(repo_root.encode()).hexdigest()[:8]
-    expected = f"bifrost-test-{worktree_hash}-api-1"
+        sys.exit("Failed to list Docker containers")
     if expected not in out.splitlines():
         sys.exit(
-            f"No API container found for this worktree ({expected}). Start it "
-            "with `./test.sh stack up` or pass --container explicitly."
+            f"No API container found for this worktree ({expected}). Run a test "
+            "command in another terminal or pass --container explicitly."
         )
     return expected
 
@@ -246,7 +248,7 @@ def main() -> int:
                 time.sleep(args.interval)
                 continue
             if proc.returncode != 0:
-                # ./test.sh stack reset stops+starts the api container mid-
+                # Combined test commands reset and replace the api container mid-
                 # run. The old container exits; a NEW container comes up
                 # under the same NAME. docker exec by name should resolve
                 # to the new one once it's healthy — so we just record a

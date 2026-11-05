@@ -22,7 +22,6 @@ tests/
 
 ```bash
 # ALWAYS use test.sh - it manages Docker dependencies
-./test.sh stack up                        # Boot the stack (per-worktree, long-lived)
 ./test.sh                                 # Run unit tests (fast default)
 ./test.sh unit                            # Same as above
 ./test.sh e2e                             # Run e2e tests
@@ -30,6 +29,8 @@ tests/
 ./test.sh tests/e2e/platform/test_sdk_from_workflow.py  # Pass through to pytest
 ./test.sh all --coverage                  # Run with coverage report
 ```
+
+Each stateful test command boots its isolated stack and removes its containers, networks, and volumes when it finishes or is interrupted. Combined commands share one stack internally. Logs and JUnit results remain under `/tmp/bifrost-<project>/`.
 
 **Do NOT run pytest directly** - integration tests need Docker infrastructure.
 

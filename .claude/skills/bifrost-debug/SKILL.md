@@ -5,7 +5,7 @@ description: Boot an isolated, hot-reload Bifrost dev stack for the current work
 
 # Bifrost Debug
 
-Bring up a per-worktree, hot-reload Bifrost dev stack via `./debug.sh`. Hand the user the URL. Don't restart containers for code changes (hot reload handles it).
+Bring up a per-worktree, hot-reload Bifrost dev stack via `./debug.sh`. The command is the foreground owner: after it prints the URL, it streams logs until exit and then cleans up. Don't restart containers for code changes (hot reload handles it).
 
 ## When to activate
 
@@ -39,16 +39,13 @@ Mode A stores a strong generated admin password per worktree under the user's lo
 
    If the output shows `Status:   UP`, parse the `Open:` line and hand the URL straight to the user. Stop.
 
-2. **If down, boot it (backgrounded).** `./debug.sh up` runs `docker compose up -d --build` and then waits up to 180s for the API health check. First boot can take 1-3 minutes for the image build, so use a background shell:
+2. **If down, boot it in the foreground.** `./debug.sh up` waits for readiness, prints the URL, then streams logs as the stack owner. First boot can take 1-3 minutes for the image build. Keep the command running while you use the stack:
 
    ```bash
-   # Bash(run_in_background=true)
    ./debug.sh up
    ```
 
-   Tail the background output with BashOutput until you see one of:
-   - `Open:     http://...` — success. Hand the URL to the user.
-   - `ERROR: api did not become ready` — failure. Run `./debug.sh logs api` and report what's wrong.
+   It prints `Open: ...` once ready. On startup failure, inspect the preserved `api.log` and `init.log` under `/tmp/bifrost-<project>/` and report the cause. Ctrl+C exits the owner and removes the stack; `./debug.sh down` from another terminal does the same explicitly.
 
 3. **Tell the user the credentials.** Login is `dev@gobifrost.com` / `password`. MFA is off. No setup wizard. Mention this once with the URL.
 
@@ -94,12 +91,12 @@ cd /tmp/bifrost-cli-<worktree-name>
 ./.venv/bin/bifrost logout --url <URL_FROM_DEBUG_STATUS> --yes
 ```
 
-## Lifecycle: who tears down what
+## Lifecycle: foreground ownership
 
-- **The stack outlives this Claude session.** Closing or clearing the session does NOT tear it down. This is intentional — the user might come back, or have another Claude session attach to the same stack.
-- To tear down explicitly: `./debug.sh down`. This removes containers and volumes (postgres data is lost — fine for a debug stack; not fine for the prod stack).
-- If the user says "stop the debug stack" or "wipe the debug data," run `./debug.sh down`.
-- If a second Claude session or a new conversation comes up while the stack is already running, that's fine — `./debug.sh status` will reveal it. Don't call `./debug.sh up` redundantly; just hand over the URL from `status`.
+- `./debug.sh` and `./debug.sh up` own the dev stack in the foreground after readiness. They stream logs and remove containers, networks, volumes, and locally generated debug images on normal exit, Ctrl+C, `INT`, `TERM`, `HUP`, or an essential-service stop. Docker's shared build cache remains reusable.
+- There is no detached mode, daemon, or TTL. Keep the owner command running for the period you need the stack.
+- `./debug.sh down` remains available from another terminal for explicit cleanup. It is also the command to use when the user asks to stop the debug stack or wipe its data.
+- `./debug.sh status` is diagnostic. If another owner is already running, use it to find the URL; do not start a competing owner.
 
 ## Hot reload — don't restart for code changes
 
@@ -127,8 +124,8 @@ Group by project name to find each worktree's URL: `cd <worktree> && ./debug.sh 
 ## Common failures
 
 **API won't come up:**
-- `./debug.sh logs init` — migrations failing? Compare `git log origin/main -- api/alembic/versions/` against the worktree.
-- `./debug.sh logs api` — usually a config / import error. The traceback is usually in the first 30 lines of output after the start banner.
+- Preserved `/tmp/bifrost-<project>/init.log` — migrations failing? Compare `git log origin/main -- api/alembic/versions/` against the worktree.
+- Preserved `/tmp/bifrost-<project>/api.log` — usually a config / import error. The traceback is usually in the first 30 lines of output after the start banner.
 
 **Login still shows the setup wizard:**
 - The seed-user provisioning runs on every API boot. If the wizard appears, the seed env vars probably aren't loaded — check `docker compose -f docker-compose.debug.yml exec api env | grep BIFROST_DEFAULT_USER`. If empty, `.env.debug` isn't being sourced; investigate `load_env_files` in `debug.sh`.
@@ -151,4 +148,4 @@ Group by project name to find each worktree's URL: `cd <worktree> && ./debug.sh 
 - Doesn't manage NetBird account settings. Peer Expose must already be enabled for the debug peer group.
 - Doesn't set up `~/.config/bifrost/debug.env` — point the user at it, don't write keys there for them.
 - Doesn't run tests. That's the `bifrost-testing` skill's job.
-- Doesn't reset DB state. `./debug.sh down` wipes the volume; there's no fast in-place reset (unlike `./test.sh stack reset`).
+- Doesn't reset DB state. `./debug.sh down` wipes the volume; start a new foreground owner for a fresh stack.

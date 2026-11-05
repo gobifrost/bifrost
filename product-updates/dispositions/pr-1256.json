@@ -1,0 +1,14 @@
+{
+  "key": "pr:1256",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal developer and CI stack lifecycle cleanup; production product behavior is unchanged.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1256",
+      "Jack authorized implementation and merge of command-owned test/debug teardown: Let's pursue and merge.",
+      "32 focused Dockerized contract tests, 18 lifecycle/sampler tests, API pyright and ruff passed. Real debug Ctrl+C removed all 10 containers, the network, generated images and all 19 tracked named/anonymous volumes."
+    ]
+  }
+}

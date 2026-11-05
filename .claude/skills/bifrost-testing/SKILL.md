@@ -52,13 +52,13 @@ and compare its cost with an existing full-path test.
 
 ## Workflow
 
-### 1. Is the stack up?
+### 1. Command-owned stack lifecycle
 
-```bash
-./test.sh stack status
-```
+Every stateful test command owns its per-worktree Docker stack. It boots the stack before testing and removes containers, networks, volumes, and its per-worktree image tag on success, failure, `INT`, `TERM`, or `HUP`; Docker's shared build cache remains reusable. Do not boot or reset a test stack first: `./test.sh stack up` and `./test.sh stack reset` are intentionally unavailable. `./test.sh stack status` and `./test.sh stack down` remain diagnostics/manual cleanup for a failed or interrupted command.
 
-If `DOWN` → `./test.sh stack up`. Each worktree runs its own isolated stack (Compose project name derives from the worktree path), so two worktrees can have stacks up simultaneously without conflict.
+`./test.sh ci`, `./test.sh pre-pr`, and `./test.sh pr-preflight` share one stack across their internal stages, then tear it down once at command end. Each worktree still has isolated Compose names, so commands in different worktrees do not conflict.
+
+`./test.sh quality api` uses one-off resources only and does not boot the full stack.
 
 ### 2. Which test command?
 
@@ -66,10 +66,13 @@ If `DOWN` → `./test.sh stack up`. Each worktree runs its own isolated stack (C
 - Backend with live services → `./test.sh e2e` (or `./test.sh tests/e2e/test_foo.py -v`)
 - React component behavior → `./test.sh client unit` (vitest on host, no stack needed)
 - Full user flow through UI → `./test.sh client e2e`
+- Critical browser gate → `./test.sh client smoke`
+- Full product browser suite → `./test.sh client nightly`
+- Documentation screenshot capture → `./test.sh client docs`
 - All available suites (manual broad run) → `./test.sh all` (backend) + `./test.sh client unit` + `./test.sh client e2e`
 - Optional full local reproduction of the merge gate (diagnostics, risky changes) → `./test.sh pre-pr`
 
-State is auto-reset before every test subcommand. If migrations changed, run `./test.sh stack reset` once — that rebuilds the template DB.
+Stateful commands begin from their own clean stack. Run the relevant command again after changing migrations; it rebuilds the template database as part of startup.
 
 ### 3. Before declaring implementation done: scoped verification
 
