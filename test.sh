@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # Bifrost test runner — verb-style subcommand interface.
 #
-# Stack lifecycle (long-lived, per worktree):
-#   ./test.sh stack up                  Boot the stack.
+# Stack lifecycle (owned by each test command, per worktree):
 #   ./test.sh stack down                Tear it down + remove volumes.
-#   ./test.sh stack reset               Fast state reset (DB clone, redis flush, object storage wipe).
 #   ./test.sh stack status              Print project name and running services.
 #
-# Backend tests (stack must be up):
+# Backend tests (boot automatically; always tear down on exit):
 #   ./test.sh                           Unit tests only (fast default).
 #   ./test.sh unit                      Same as above.
 #   ./test.sh e2e                       Backend e2e tests.
@@ -27,6 +25,7 @@
 #   ./test.sh client e2e                Playwright in the stack's client container.
 #   ./test.sh client smoke              Critical zero-retry Playwright merge gate.
 #   ./test.sh client nightly            Full product Playwright (docs capture excluded).
+#   ./test.sh client docs               Capture documentation screenshots.
 #   ./test.sh client e2e --screenshots  Capture a screenshot for every test (UX review).
 #   ./test.sh client e2e e2e/auth.unauth.spec.ts   Pass through to playwright.
 #
@@ -56,6 +55,10 @@ fi
 
 # shellcheck source=scripts/lib/test_helpers.sh
 source "$SCRIPT_DIR/scripts/lib/test_helpers.sh"
+source "$SCRIPT_DIR/scripts/lib/stack_lifecycle.sh"
+
+TEST_STACK_READY=0
+TEST_STACK_CLEAN=0
 
 COMPOSE_FILE="docker-compose.test.yml"
 export COMPOSE_PROJECT_NAME
@@ -116,24 +119,8 @@ print_project() {
 }
 
 require_stack_up() {
-    if ! stack_is_up "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; then
-        echo "ERROR: stack not running for this worktree. Run:" >&2
-        echo "  ./test.sh stack up" >&2
-        exit 1
-    fi
-    # A unit-only run stops the API; every caller resets state next, which
-    # starts it again and waits for it to serve.
-    if [ -z "$(docker compose -f "$COMPOSE_FILE" ps -q --status running api)" ]; then
-        return 0
-    fi
-    # Containers may report "running" before the API is actually serving
-    # traffic (uvicorn boot, alembic, app startup hooks). Block here until
-    # /health/ready returns 200 so callers don't race the API. Idempotent
-    # and fast (<1s) when the API is already ready.
-    if ! wait_for_api_ready "$COMPOSE_FILE"; then
-        echo "ERROR: stack containers running but API not serving traffic." >&2
-        echo "  Check: docker compose -f $COMPOSE_FILE logs api" >&2
-        exit 1
+    if [ "$TEST_STACK_READY" = 0 ]; then
+        stack_up
     fi
 }
 
@@ -160,6 +147,9 @@ reset_state() {
 import shutil
 from pathlib import Path
 for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdir():
+    if not checkout.is_dir() or checkout.is_symlink():
+        checkout.unlink()
+        continue
     for entry in checkout.iterdir():
         if entry.is_dir() and not entry.is_symlink():
             shutil.rmtree(entry)
@@ -197,25 +187,18 @@ for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdi
 }
 
 prepare_test_state() {
-    local boot_marker="$LOG_DIR/.clean-boot-consumed"
-
-    # GitHub-hosted jobs boot one new, empty Compose project and run exactly one
-    # suite. Re-cloning the template DB and restarting every service immediately
-    # afterward is equivalent state with roughly a minute of avoidable churn.
-    # The marker makes this a one-shot optimization: a second suite in the same
-    # project still receives the normal full reset.
-    if [ "${BIFROST_TEST_USE_CLEAN_BOOT:-0}" = "1" ] && [ ! -e "$boot_marker" ]; then
-        mkdir -p "$LOG_DIR"
-        touch "$boot_marker"
+    # The first suite can use a fresh command-owned stack directly. Combined
+    # commands reset between suites; adopted stacks also require a reset.
+    if [ "$TEST_STACK_CLEAN" = 1 ]; then
+        TEST_STACK_CLEAN=0
         echo "Using clean state from the newly booted test stack."
         return
     fi
-
     reset_state
 }
 
 # =============================================================================
-# stack up|down|reset|status
+# stack down|status
 # =============================================================================
 
 cmd_stack() {
@@ -223,13 +206,11 @@ cmd_stack() {
     shift || true
 
     case "$subcmd" in
-        up) stack_up "$@" ;;
         down) stack_down ;;
-        reset) stack_reset ;;
         status) stack_status ;;
         *)
             echo "Unknown stack subcommand: $subcmd" >&2
-            echo "Valid: up, down, reset, status" >&2
+            echo "Tests boot and tear down their own stack. Valid: down, status" >&2
             exit 2
             ;;
     esac
@@ -253,10 +234,11 @@ stack_up() {
             docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate api
         fi
         # Idempotent: still confirm API is serving traffic before returning
-        # success. A previous `stack up` may have exited before the API
+        # success. A previous launcher may have exited before the API
         # finished booting; without this, the next test command would race.
         if wait_for_api_ready "$COMPOSE_FILE"; then
-            echo "Stack already up."
+            TEST_STACK_READY=1
+            echo "Adopted existing stack; this command will tear it down on exit."
             return 0
         fi
         echo "Stack containers running but API not ready — see logs above." >&2
@@ -272,51 +254,43 @@ stack_up() {
     docker compose -f "$COMPOSE_FILE" up -d pgbouncer
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
 
-    # CI pre-builds the API dev image via docker/build-push-action with GHA cache
-    # and tags it as bifrost-test-api-dev:latest before calling stack up
-    # (BIFROST_TEST_IMAGE_TAG; locally each worktree uses its project name).
-    # Setting BIFROST_SKIP_BUILD=1 tells compose to
-    # use those local images directly instead of building. Local dev leaves
-    # this unset so `--build` continues to apply (image layer cache makes the
-    # rebuilds fast after the first one).
-    local build_flag="--build"
+    # All API services share one image. Build it once before migrations, then
+    # reuse it for every service instead of exporting the same image repeatedly.
+    # CI supplies a cached image and opts out of local builds.
     if [ "${BIFROST_SKIP_BUILD:-0}" = "1" ]; then
-        build_flag="--no-build"
         echo "BIFROST_SKIP_BUILD=1 — using pre-built images from local docker."
+    else
+        docker compose -f "$COMPOSE_FILE" build test-runner
     fi
 
     echo "Building template database..."
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
 
     echo "Starting API + Worker + Scheduler..."
-    docker compose -f "$COMPOSE_FILE" --profile e2e up -d "$build_flag"
+    docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build
     echo "Waiting for API to be serving traffic on /health/ready..."
     wait_for_api_ready "$COMPOSE_FILE"
 
     echo ""
+    TEST_STACK_READY=1
+    TEST_STACK_CLEAN=1
     echo "Stack is up. Project: $COMPOSE_PROJECT_NAME"
 }
 
 stack_down() {
+    local images
     print_project
     echo "Tearing down stack..."
     export_logs "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"
-    docker compose -f "$COMPOSE_FILE" --profile e2e --profile test --profile client down -v
+    docker compose -f "$COMPOSE_FILE" --profile '*' down --volumes --remove-orphans || return $?
+    # Drop only this worktree's tags; shared CI images and build cache remain.
+    images=$(docker image ls --format '{{.Repository}}:{{.Tag}}' \
+        --filter "reference=bifrost-test-*:$COMPOSE_PROJECT_NAME") || return $?
+    if [ -n "$images" ]; then
+        xargs -r docker image rm <<<"$images" || return $?
+    fi
+    echo "Logs and results: $LOG_DIR"
     echo "Done."
-}
-
-stack_reset() {
-    require_stack_up
-    # Stop DB consumers before template_init runs — template_init may need to
-    # DROP bifrost_test (when migrations changed), and it cannot do so while
-    # api/worker/scheduler hold live connections to it. reset_state will
-    # restart them afterward. Don't stop pgbouncer — compose's `start` later
-    # won't re-attach its network endpoint cleanly, and its pool only proxies
-    # bifrost_test anyway (nothing here connects to bifrost_test through it
-    # while it's stopped).
-    docker compose -f "$COMPOSE_FILE" stop api worker scheduler 2>/dev/null || true
-    "$SCRIPT_DIR/scripts/stack_template_init.sh"
-    reset_state
 }
 
 stack_status() {
@@ -371,12 +345,7 @@ run_pytest() {
     cleanup_pytest_runner() {
         docker rm -f "$runner_name" > /dev/null 2>&1 || true
     }
-    trap cleanup_pytest_runner INT TERM
 
-    # Note: we deliberately do NOT re-run stack_template_init.sh here.
-    # `stack reset` / `stack up` is where migration changes flow into the
-    # template. `run_pytest` clones the current template, so if the user
-    # changed migrations they should run `./test.sh stack reset` once.
     require_stack_up
     prepare_test_state
     if [[ "$unit_only" == "1" ]]; then
@@ -401,7 +370,6 @@ run_pytest() {
         | tee "$LOG_DIR/test-runner.log" || runner_status="${PIPESTATUS[0]}"
 
     cleanup_pytest_runner
-    trap - INT TERM
     exec {runner_lock_fd}>&-
     return "$runner_status"
 }
@@ -479,6 +447,7 @@ client_ci_checks() {
 
 repository_ci_checks() {
     bash scripts/lib/test_stack_lock_test.sh
+    python3 -m unittest scripts.test_stack_lifecycle scripts.test_memory_sampler
     python3 -m unittest scripts.test_codeql_changed_lines
     python3 -m unittest scripts.test_e2e_shard
     python3 -m unittest scripts.test_pool_drills
@@ -616,7 +585,7 @@ client_docs() {
         passthrough+=("$a")
     done
 
-    reset_state
+    prepare_test_state
     start_test_client
 
     export DOCS_REPO_PATH
@@ -631,9 +600,6 @@ client_docs() {
 
 cmd_ci() {
     print_project
-    # Install teardown trap BEFORE stack_up so a boot-time failure still tears
-    # down the partially-booted stack instead of leaking containers/volumes.
-    trap 'export_logs "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; stack_down' EXIT
     stack_up
     cmd_all
     client_unit
@@ -641,7 +607,7 @@ cmd_ci() {
 }
 
 cmd_pre_pr() {
-    local head_sha stack_was_up
+    local head_sha
 
     if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
         echo "ERROR: ./test.sh pre-pr requires a clean worktree." >&2
@@ -659,14 +625,6 @@ cmd_pre_pr() {
     fi
 
     head_sha="$(git rev-parse HEAD)"
-    stack_was_up=0
-    if stack_is_up "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; then
-        stack_was_up=1
-    else
-        # Install the trap before boot so a partial startup is cleaned up too.
-        trap 'export_logs "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; stack_down' EXIT
-    fi
-
     print_project
     echo "Pre-PR candidate: $head_sha"
     repository_ci_checks
@@ -686,9 +644,6 @@ cmd_pre_pr() {
     fi
 
     echo "Local PR gate passed for $head_sha"
-    if [ "$stack_was_up" = "1" ]; then
-        echo "The pre-existing test stack remains running."
-    fi
 }
 
 cmd_pr_preflight() {
@@ -719,21 +674,32 @@ cmd_pr_preflight() {
 # Dispatch
 # =============================================================================
 
-# All stack-mutating commands share one lock, including Playwright and lifecycle
-# resets. Pytest's inner runner lock alone cannot prevent a browser run resetting
+# All stack-mutating commands share one lock, including Playwright and teardown.
+# Pytest's inner runner lock alone cannot prevent a browser run resetting
 # its database, or two browser runs replacing each other's API containers.
-case "${1:-}:${2:-}" in
-    help:*|-h:*|--help:*|stack:status|client:unit) ;;
-    *)
+case "${1:-unit}:${2:-}" in
+    help:*|-h:*|--help:*) ;;
+    unit:*|e2e:*|all:*|tests/*:*|--*:*|quality:api|client:e2e|client:smoke|client:nightly|client:docs|ci:*|pre-pr:*|pr-preflight:*|stack:down)
         exec {test_command_lock_fd}>"$LOG_DIR/test-stack.lock"
         if ! flock -n "$test_command_lock_fd"; then
             echo "ERROR: another test command owns this worktree's test stack." >&2
             echo "Wait for it to finish before starting tests or changing the stack." >&2
             exit 1
         fi
+        if [ "${1:-}:${2:-}" != stack:down ]; then
+            # Docker runners can outlive a forcibly killed parent and its lock.
+            # Refuse ownership before installing cleanup so they remain intact.
+            if [ -n "$(docker ps -q \
+                --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+                --filter 'label=com.docker.compose.oneoff=True')" ]; then
+                echo "ERROR: a runner still owns this worktree's test stack; stop it explicitly before starting another command." >&2
+                exit 1
+            fi
+            # Install before any build/start so partial failures are cleaned too.
+            stack_lifecycle_start stack_down
+        fi
         ;;
 esac
-
 
 if [ $# -eq 0 ]; then
     cmd_unit
@@ -762,10 +728,10 @@ ERROR: '$1' is no longer supported. The test.sh interface is now verb-style.
   old                          new
   ./test.sh --e2e              ./test.sh e2e
   ./test.sh --client           ./test.sh client e2e
-  ./test.sh --client-dev       ./test.sh client e2e   (stack stays up between runs)
+  ./test.sh --client-dev       ./test.sh client e2e
   ./test.sh --client-only      ./test.sh client e2e
-  ./test.sh --local            ./test.sh stack up     (then run playwright locally)
-  ./test.sh --reset-db         ./test.sh stack reset
+  ./test.sh --local            ./test.sh client e2e
+  ./test.sh --reset-db         ./test.sh e2e          (fresh stack per command)
   ./test.sh --coverage         ./test.sh all --coverage     (pytest passthrough)
   ./test.sh --ci               ./test.sh ci
 

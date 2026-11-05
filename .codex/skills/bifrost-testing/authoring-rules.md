@@ -58,7 +58,7 @@ If in doubt whether a component is "trivial" — err on writing the test. If the
 
 **What to cover:** pure logic — anything that can run without a database, queue, or HTTP server.
 
-**Patterns:** mock dependencies with `unittest.mock` or pytest fixtures. Don't use `./test.sh stack up` — unit tests run inside `test-runner` against an ephemeral config.
+**Patterns:** mock dependencies with `unittest.mock` or pytest fixtures. Run unit tests through `./test.sh`; the command owns its ephemeral Docker resources and cleans them up when it ends.
 
 ## Backend e2e tests
 
@@ -110,9 +110,10 @@ Before adding an expensive case:
    blanket duration gate: timing and ownership change, but the unique boundary
    and measured cost can be reviewed.
 
-Batch related focused tests in one `./test.sh` invocation. Each separate local
-invocation resets the stack; that reset is command overhead, not a test's JUnit
-case time. Preserve test isolation and explicit cleanup when sharing fixtures.
+Batch related focused tests in one `./test.sh` invocation. Each stateful
+invocation boots and tears down a private stack; that setup/cleanup is command
+overhead, not a test's JUnit case time. Preserve test isolation and explicit
+cleanup when sharing fixtures.
 
 ## Running tests
 
@@ -126,7 +127,10 @@ All via `./test.sh`. Never `pytest` or `npx vitest` / `npx playwright` directly 
 ./test.sh tests/unit/test_foo.py::test_bar -v   # Single test
 
 ./test.sh client unit              # Vitest on host
-./test.sh client e2e               # Playwright in containers
+./test.sh client e2e               # Playwright; owns its stack
+./test.sh client smoke             # Critical zero-retry Playwright suite
+./test.sh client nightly           # Full product Playwright suite
+./test.sh client docs              # Documentation screenshot capture
 ./test.sh client e2e --screenshots # Capture screenshots for UX review
 ./test.sh client e2e e2e/auth.unauth.spec.ts    # Single spec
 ```

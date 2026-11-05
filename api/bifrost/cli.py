@@ -1807,7 +1807,7 @@ def _warn_if_git_workspace(target_path: str) -> None:
 def _sync_use_tui(force: bool, is_tty: bool) -> bool:
     """Single source of truth for whether sync may use any interactive TUI.
 
-    Returns False (headless) when --yes/-y (``force``) is set, when
+    Returns False (headless) when --force is set, when
     ``BIFROST_NONINTERACTIVE=1`` is in the environment, or when stdin/stdout
     is not a TTY. Gating BOTH the selection TUI and the progress TUI on this
     keeps the headless contract whole: the progress TUI blocks on "press Enter"
@@ -1843,10 +1843,7 @@ def _parse_push_watch_args(args: list[str]) -> _PushWatchArgs | None:
         elif arg == "--validate":
             result.validate = True
         elif arg in ("--force", "--yes", "-y"):
-            # --yes/-y are the intent-revealing aliases for headless runs:
-            # take the default per-file action for every change (the
-            # full-replace contract) instead of opening the interactive TUI.
-            # They share --force's mechanism — see _sync_files's guard.
+            # Keep existing automation aliases; --force is the documented option.
             result.force = True
         elif arg.startswith("-"):
             print(f"Unknown option: {arg}", file=sys.stderr)
@@ -1886,12 +1883,11 @@ Arguments:
 Options:
   --mirror              Make target match source exactly (delete files not present locally)
   --validate            Validate after push (for apps)
-  --force               Skip confirmation prompts
-  --yes, -y             Non-interactive: take default actions, no TUI (alias of --force)
+  --force               Apply default actions without confirmation
   --help, -h            Show this help message
 
-Non-interactive: pass --yes/-y, set BIFROST_NONINTERACTIVE=1, or run without a
-TTY (e.g. in CI) to skip the selection TUI and apply default actions.
+Plain push works unattended. For directory --mirror pushes without a terminal,
+pass --force or set BIFROST_NONINTERACTIVE=1 to approve default actions.
 
 Use 'bifrost watch' for continuous file watching.
 A pushed file lands at the same relative path under _repo, based on the
@@ -1986,18 +1982,17 @@ Arguments:
 Options:
   --mirror              Include server-only files (for pull or delete)
   --validate            Validate after sync (for apps)
-  --force               Skip confirmation prompts (use default actions)
-  --yes, -y             Non-interactive: take default actions, no TUI (alias of --force)
+  --force               Apply default actions without confirmation
   --help, -h            Show this help message
 
-Non-interactive: pass --yes/-y, set BIFROST_NONINTERACTIVE=1, or run without a
-TTY (e.g. in CI) to skip the selection TUI and apply default actions.
+Without a terminal, pass --force or set BIFROST_NONINTERACTIVE=1 to approve
+default actions. Redirecting input or output alone does not approve overwrites.
 
 Examples:
   bifrost sync
   bifrost sync apps/my-app
   bifrost sync --mirror
-  bifrost sync --yes
+  bifrost sync --force
 """.strip())
         return 0
 
@@ -2064,8 +2059,11 @@ Arguments:
 Options:
   --mirror              Make target match source exactly (delete files not present locally)
   --validate            Validate after push (for apps)
-  --force               Skip repo dirty check
+  --force               Apply initial sync defaults without confirmation
   --help, -h            Show this help message
+
+Without a terminal, the initial sync requires --force or
+BIFROST_NONINTERACTIVE=1. Later file changes continue syncing automatically.
 
 Examples:
   bifrost watch
@@ -2171,10 +2169,8 @@ Options:
   --help, -h            Show this help message
 
 Overwrite safety:
-  - Files with uncommitted git changes trigger a warning
-  - Git-tracked files can be recovered from history
-  - Non-git files warn about irreversible loss
-  - Use --force to skip all prompts
+  - Without a terminal, use --force or set BIFROST_NONINTERACTIVE=1
+  - Explicitly approved defaults can overwrite local edits without a backup
 
 Examples:
   bifrost pull
@@ -2282,7 +2278,10 @@ async def _push_with_precheck(
         repo_prefix = _detect_repo_prefix(path)
 
     if watch:
-        return await _watch_and_push(local_path, repo_prefix=repo_prefix, mirror=mirror, validate=validate, client=client)
+        return await _watch_and_push(
+            local_path, repo_prefix=repo_prefix, mirror=mirror, validate=validate,
+            client=client, force=force,
+        )
     else:
         return await _sync_files(local_path, repo_prefix=repo_prefix, mirror=mirror, validate=validate, force=force, client=client)
 
@@ -2980,6 +2979,7 @@ async def _watch_and_push(
     mirror: bool,
     validate: bool,
     client: "BifrostClient",
+    force: bool = False,
 ) -> int:
     """Watch directory for changes and auto-push."""
     from watchdog.observers import Observer
@@ -3009,7 +3009,8 @@ async def _watch_and_push(
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(f"Initial sync of {path}...", flush=True)
     initial_rc = await _sync_files(
-        str(path), repo_prefix=repo_prefix, mirror=mirror, validate=validate, client=client
+        str(path), repo_prefix=repo_prefix, mirror=mirror, validate=validate,
+        client=client, force=force,
     )
     if initial_rc != 0:
         return initial_rc
@@ -3229,6 +3230,17 @@ async def _sync_files(
     at the file itself — the containing directory is used as the sync root.
     """
     push_only = single_file is not None or one_way
+    is_tty = _resolve_is_tty()
+    if (
+        not push_only and not is_tty and not force
+        and os.environ.get("BIFROST_NONINTERACTIVE") != "1"
+    ):
+        print(
+            "Error: unattended sync can overwrite files. Pass --force or set "
+            "BIFROST_NONINTERACTIVE=1 to approve default actions.",
+            file=sys.stderr,
+        )
+        return 1
     if single_file is not None:
         # Single-file push: anchor the sync root at the file's containing
         # directory so prefix detection and repo keys stay correct whether
@@ -3254,7 +3266,7 @@ async def _sync_files(
     # Non-TTY (CI, piped, agent-driven) runs get line-oriented progress so a
     # large push never looks hung. Detect once up front so the phase banners
     # can be printed before the slow scan/compare/upload steps.
-    line_progress = push_only and not _resolve_is_tty()
+    line_progress = push_only and not is_tty
     if line_progress:
         print("Scanning files...", flush=True)
     files, skipped = _collect_push_files(path, repo_prefix, single_file=single_file)
@@ -3434,9 +3446,8 @@ async def _sync_files(
         subtitle += f", {skipped} skipped"
 
     # ── 6. Interactive TUI or auto-accept ────────────────────────────────
-    is_tty = _resolve_is_tty()
     # _use_tui is the single source of truth for both the selection TUI (below)
-    # AND the progress TUI (further down). When --yes/-y (force), or
+    # AND the progress TUI (further down). When --force, or
     # BIFROST_NONINTERACTIVE=1, or no TTY, we must use NEITHER — the progress TUI
     # blocks on "press Enter" when a file errors, which would hang an unattended
     # run despite skipping the selection TUI (criterion 17).

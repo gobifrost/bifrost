@@ -1,0 +1,23 @@
+{
+  "key": "pr:1023",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal execution-origin hardening and shared CI image-signing maintenance; no new customer capability or required customer action. Original implementation and authorship remain credited to Jack Musick (@jackmusick) in PR #1023 and commit 4ee2fb5612314dc0d1bc3bae3fd99288552bc111.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1023",
+      "https://github.com/gobifrost/bifrost/commit/4ee2fb5612314dc0d1bc3bae3fd99288552bc111",
+      "Jack authorized scoped repairs, preservation of credit, and protected merge in the private review on 2026-11-05. Reviewed for omission under his internal-hardening visibility policy.",
+      "Security review: origin comes from validated durable run records on both legacy and claims credential paths; malformed and historical origin remains unknown. Actor flags and request fields cannot grant original-user authority. Existing signed credential wire format is unchanged.",
+      "Jack explicitly approved expanding this PR to repair shared image signing in the native reply \"Yes.\" to the preceding scope request on 2026-11-05.",
+      "https://github.com/sigstore/sigstore-go/pull/647",
+      "https://github.com/sigstore/cosign/blob/v3.1.4/go.mod",
+      "Shared signer pins cosign v3.1.4 (sigstore-go v1.3.0 includes Rekor v1 duplicate-entry recovery), retains keyless signing and transparency verification, and verifies the immutable image digest with the exact GitHub workflow identity and GitHub OIDC issuer. Release-asset blob signing retains its existing bundle contract."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1023"
+  }
+}

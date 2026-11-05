@@ -59,10 +59,8 @@ jobs:
       - name: Run full product browser suite once
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           ./test.sh client nightly
 
       - name: Export stack logs and tear down
@@ -104,10 +102,8 @@ jobs:
       - name: Run slow backend contracts once
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           ./test.sh tests/ --ignore=tests/e2e/ -m slow -v
 
       - name: Export stack logs and tear down
@@ -147,10 +143,8 @@ jobs:
       - name: Measure backend unit coverage
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           ./test.sh unit \
             --cov=src \
             --cov=shared \

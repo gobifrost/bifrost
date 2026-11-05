@@ -105,6 +105,8 @@ async def insert_scheduled_execution(
     is_platform_admin: bool,
     lineage: RunLineage | None,
     run_as: dict[str, Any] | None,
+    execution_origin: str,
+    agent_id: UUID | None,
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
@@ -134,6 +136,8 @@ async def insert_scheduled_execution(
             form_id=form_id,
             api_key_id=api_key_id,
             execution_context=execution_context,
+            execution_origin=execution_origin,
+            agent_id=agent_id,
             **lineage_columns(lineage.bound(exec_id) if lineage else None),
             **current_durable_impersonation().columns(),
         )
@@ -448,6 +452,16 @@ async def execute_sdk_workflow(
     lookup_org_id = resolved.lookup_org_id
     execution_org_id = resolved.execution_org_id
 
+    from shared.execution_provenance import ExecutionProvenance
+    from src.services.authorization.runtime import load_execution_provenance
+
+    runtime = principal.runtime_authority
+    provenance = (
+        await load_execution_provenance(session, runtime)
+        if runtime is not None
+        else ExecutionProvenance("unknown" if principal.embed else "human")
+    )
+
     # The acting user: the caller, or the run_as user when the caller may act as them.
     exec_user_id = str(principal.user_id)
     exec_user_name = principal.name or principal.email or "Unknown"
@@ -532,6 +546,8 @@ async def execute_sdk_workflow(
             is_platform_admin=exec_is_admin,
             lineage=lineage,
             run_as=scheduled_run_as,
+            execution_origin=provenance.origin,
+            agent_id=provenance.agent_id,
         )
         return WorkflowExecutionResponse(
             execution_id=str(exec_id),
@@ -579,6 +595,9 @@ async def execute_sdk_workflow(
             is_platform_admin=exec_is_admin,
             is_function_key=False,
             execution_id=str(uuid4()),
+            is_agent=provenance.origin == "agent",
+            execution_origin=provenance.origin,
+            agent_id=None if provenance.agent_id is None else str(provenance.agent_id),
         )
 
     try:

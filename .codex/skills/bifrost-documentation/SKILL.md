@@ -51,7 +51,7 @@ The named modes below are the surgical primitives this default orchestrates. Rea
      ```
      Print both. If `BIFROST_LAST > DOCS_LAST`, that's normal — diff mode handles it. If `DOCS_LAST > BIFROST_LAST`, something is unusual (docs ahead of code); flag it but proceed.
    - Cut a fresh branch: `docs/screenshot-refresh-YYYY-MM-DD-<short-sha>`.
-   - Verify bifrost test stack is up: `./test.sh stack status` in the bifrost worktree. If down, `./test.sh stack up`. The boot is ~2-5 minutes; warn the user up front.
+   - The capture command owns its test stack: run `./test.sh client docs` from the Bifrost worktree (or let the pipeline invoke it). It boots the isolated stack, captures, and removes it at command end. The first boot is ~2-5 minutes; warn the user up front.
    - Set `DOCS_REPO_PATH=<absolute path to docs repo>` for downstream tools.
 
 2. **Mode dispatch**

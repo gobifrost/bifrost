@@ -197,6 +197,7 @@ services:
       context: .
       dockerfile: api/Dockerfile.dev
     environment:
+      BIFROST_GIT_WORK_DIR: /tmp/bifrost/solution-repo-fixtures/git-checkouts/worker
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
@@ -238,7 +239,6 @@ services:
       # The same as the scheduler: both are executors and run any work.
       - test-mounts:/mounts
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
-      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/worker:/tmp/git
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
@@ -274,6 +274,7 @@ services:
       context: .
       dockerfile: api/Dockerfile.dev
     environment:
+      BIFROST_GIT_WORK_DIR: /tmp/bifrost/solution-repo-fixtures/git-checkouts/scheduler
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
@@ -312,7 +313,6 @@ services:
       # server-side. Same safety shape as the api mount: only the
       # uid-1000-created fixture subdir, never the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
-      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/scheduler:/tmp/git
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
@@ -422,7 +422,7 @@ services:
       - ./api/scripts/api-allocator.sh:/usr/local/bin/api-allocator.sh:ro
       - ./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro
       - ./api/Dockerfile:/app/api/Dockerfile:ro
-      - ./.github/workflows:/app/.github/workflows:ro  # CI topology contract tests
+      - ./.github:/app/.github:ro  # CI workflow and composite action contract tests
       - ./test.sh:/app/test.sh:ro
       - ./k8s:/k8s:ro  # Kubernetes deployment contract tests
       - ./deploy:/deploy:ro  # Optional Kubernetes deployment overlays

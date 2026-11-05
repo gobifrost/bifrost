@@ -112,12 +112,12 @@ If main has migrations the branch lacks, warn: "main has migrations ahead of thi
 
 Debug stacks are per-worktree — `./debug.sh` derives its Compose project name from the worktree path, so two worktrees running their own stacks don't conflict. See the `bifrost-debug` skill for the lifecycle (boot, status, teardown, two-mode behavior).
 
-**Most worktrees don't need a debug stack.** The test stack (`./test.sh stack up`) is already per-worktree and is enough for unit/E2E coverage. Type generation can extract OpenAPI from the test-stack's API container. Only invoke the `bifrost-debug` skill when you actually need to click around the UI in this worktree.
+**Most worktrees don't need a debug stack.** Stateful `./test.sh` commands create and clean up their own per-worktree test stack, which is enough for unit/E2E coverage. Invoke the `bifrost-debug` skill only when you need to click around the UI or regenerate API types; it owns the foreground dev stack for that session.
 
 ### 5. Doing the work
 
 - Make the change in the worktree, not in main.
-- Use `./test.sh stack up` once per worktree, then `./test.sh` many times.
+- Run the focused `./test.sh` command directly; it owns setup and cleanup for its test stack.
 - Use targeted tests and quality checks while iterating (CLAUDE.md's verification checklist).
 - Use `./test.sh quality api` for Dockerized pyright and ruff parity; do not depend on a host `.venv`.
 
@@ -141,7 +141,7 @@ Run cheap, targeted tripwires for the surfaces you touched before opening the PR
 |---|---|
 | CLI help, entity commands, DTO flags, or SDK-facing command surface | `./test.sh tests/unit/test_cli_surface_smoke.py tests/unit/test_skill_appendix_fresh.py` |
 | DTO models or CLI/MCP mutation flags | `./test.sh tests/unit/test_dto_flags.py tests/unit/test_contract_version.py` |
-| Bifrost skills under `.claude/skills/` | `bash scripts/sync-codex-skills.sh`, then `./test.sh tests/unit/test_skill_appendix_fresh.py tests/unit/test_codex_mirror_sync.py` |
+| Bifrost skills under `.claude/skills/` | `bash scripts/sync-codex-skills.sh`, then `./test.sh tests/unit/test_skill_appendix_fresh.py` and `python3 scripts/check_skill_mirrors.py` |
 | Public plugin skills under `plugins/bifrost/skills/` | Confirm canonical `.claude/skills/` and plugin mirror match (`diff -qr ...`) and that public skill names do not repeat the plugin namespace |
 
 If `test_skill_appendix_fresh.py` fails, run the generator before pushing:

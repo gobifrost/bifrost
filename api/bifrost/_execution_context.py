@@ -110,6 +110,14 @@ class ExecutionContext:
     workflow_timeout_seconds: int | None = None
     workflow_name: str = field(default="")  # Name of the executing workflow
     is_agent: bool = False  # True when triggered by an autonomous agent
+    # Durable provenance is server-controlled; unknown is conservative for
+    # executions created before this field existed or without a proven origin.
+    execution_origin: str = field(default="unknown")
+    agent_id: str | None = field(default=None)
+    # Current original-user authority, resolved by the runtime authorizer.
+    # It is separate from the effective actor's is_platform_admin fact.
+    original_user_is_platform_admin: bool = field(default=False)
+    original_user_id: str | None = field(default=None)
     # Shared file workspace inherited by nested tools. Chat uses the
     # conversation id; autonomous/coding runs use their root run id.
     artifact_workspace_id: str | None = field(default=None)
@@ -238,6 +246,10 @@ class ExecutionContext:
             "workflow_timeout_seconds": self.workflow_timeout_seconds,
             "workflow_name": self.workflow_name,
             "is_agent": self.is_agent,
+            "execution_origin": self.execution_origin,
+            "agent_id": self.agent_id,
+            "original_user_is_platform_admin": self.original_user_is_platform_admin,
+            "original_user_id": self.original_user_id,
             "artifact_workspace_id": self.artifact_workspace_id,
             "public_url": self.public_url,
             "parameters": self.parameters,

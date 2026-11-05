@@ -47,11 +47,7 @@ if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
     (cd "$SCRIPT_DIR" && npm ci --silent)
 fi
 
-# Reset the test-stack state before capturing. The capture spec's global setup
-# registers fixture users (bob@example.com etc.); a non-fresh DB fails with
-# "Resource already exists" and aborts the whole run. Reset makes capture
-# deterministic. Best-effort: skip if the stack isn't up yet (test.sh boots it).
-(cd "$BIFROST_REPO" && ./test.sh stack reset >/dev/null 2>&1) || true
+# The capture command creates fresh state and tears down its stack on exit.
 
 # Wipe stale tmp captures from prior runs. They are owned by root (containers
 # run as root), so use sudo if available, else just remove what we can.

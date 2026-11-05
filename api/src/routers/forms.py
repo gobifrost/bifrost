@@ -1588,6 +1588,8 @@ async def submit_form(
             is_platform_admin=shared_ctx.is_platform_admin,
             lineage=accepted_lineage,
             run_as=None,
+            execution_origin=shared_ctx.execution_origin,
+            agent_id=UUID(shared_ctx.agent_id) if shared_ctx.agent_id else None,
         )
         logger.info(
             f"Form {log_safe(form_id)} scheduled by user {ctx.user.email}, "

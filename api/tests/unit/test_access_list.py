@@ -1951,6 +1951,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.core.auth._get_current_user_optional": (3, "actor_facts"),
     "src.core.auth.get_original_human_user": (2, "actor_facts"),
     "src.core.auth.get_current_user_ws": (3, "actor_facts"),
+    "src.jobs.consumers.workflow_execution.WorkflowExecutionConsumer.process_message": (1, "actor_facts"),
     "src.jobs.consumers.agent_run._load_acting_user": (2, "actor_facts"),
     "src.jobs.consumers.agent_run._load_run_as": (3, "actor_facts"),
     "src.jobs.platform.application_publish.run_application_publish": (1, "internal_authorized_resource"),

@@ -10,7 +10,7 @@ This module is the single source of truth for what files should be
 excluded from the workspace.
 """
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 # Directories to exclude from workspace operations
 EXCLUDED_DIRECTORIES = frozenset({
@@ -88,6 +88,25 @@ def is_excluded_path(path: str | Path) -> bool:
         return True
 
     return False
+
+
+def normalize_workspace_delete_path(path: str) -> str:
+    """Validate a destructive editor target, allowing one trailing folder slash.
+
+    Inspect the raw spelling before pathlib can collapse empty/dot components.
+    Root listings are valid for reads, but must never be deletion targets.
+    """
+    if "\x00" in path or "\\" in path:
+        raise ValueError("Invalid workspace delete path")
+    if path.startswith("/") or PureWindowsPath(path).drive:
+        raise ValueError("Workspace delete path must be relative")
+
+    target = path.removesuffix("/")
+    if any(part in {"", ".", ".."} for part in target.split("/")):
+        raise ValueError("Workspace delete path must name a normalized file or folder")
+    if is_excluded_path(target):
+        raise ValueError("Path is excluded from workspace operations")
+    return target
 
 
 def is_allowed_path(path: str | Path) -> bool:

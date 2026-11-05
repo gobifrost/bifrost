@@ -25,10 +25,10 @@ async def test_desktop_commit_regenerates_manifest_before_staging():
     mock_repo.untracked_files = []
     mock_repo.index.commit.return_value = MagicMock(hexsha="abc12345")
 
-    # desktop_commit uses repo_manager.lock(), not checkout()
+    # Desktop operations retain local Git state through the durable workspace.
     mock_rm = MagicMock()
-    mock_rm.lock.return_value.__aenter__ = AsyncMock(return_value=mock_work_dir)
-    mock_rm.lock.return_value.__aexit__ = AsyncMock(return_value=False)
+    mock_rm.workspace.return_value.__aenter__ = AsyncMock(return_value=mock_work_dir)
+    mock_rm.workspace.return_value.__aexit__ = AsyncMock(return_value=False)
     mock_rm.ensure_storage_unchanged = AsyncMock()
     service.repo_manager = mock_rm
 

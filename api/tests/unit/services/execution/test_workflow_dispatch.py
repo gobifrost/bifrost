@@ -317,3 +317,19 @@ async def test_pending_run_belongs_to_an_org_scoped_workflows_organization(harne
 
     execution = await harness.execution(execution_id)
     assert (execution.organization_id, execution.workflow_name) == (org_id, workflow_name)
+
+
+@pytest.mark.asyncio
+async def test_agent_origin_survives_durable_acceptance_and_claim(harness):
+    agent_id = str(uuid4())
+    execution_id = await _accept(execution_origin="agent", agent_id=agent_id, is_agent=True)
+    execution = await harness.execution(execution_id)
+    assert execution is not None
+    assert (execution.execution_origin, str(execution.agent_id)) == ("agent", agent_id)
+    dispatch = await harness.dispatch(execution_id)
+    assert dispatch is not None
+    async with harness.sessions() as session:
+        pending = await claim_workflow_dispatch(session, dispatch_id=dispatch.id, execution_id=UUID(execution_id))
+        await session.commit()
+    assert pending is not None
+    assert (pending["execution_origin"], pending["agent_id"], pending["is_agent"]) == ("agent", agent_id, True)
