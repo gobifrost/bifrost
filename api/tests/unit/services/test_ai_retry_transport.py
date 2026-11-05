@@ -15,12 +15,12 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from src.services.agent_runtime.retry_transport import (
+from src.services.agent_runtime.retry_transport import _create_retry_transport
+from shared.ai_http_retry import (
     FALLBACK_WAIT_INITIAL_SECONDS,
     FALLBACK_WAIT_MAX_SECONDS,
     MAX_ATTEMPTS,
     MAX_RETRY_WINDOW_SECONDS,
-    _create_retry_transport,
     ai_retry_context,
 )
 
@@ -87,7 +87,7 @@ async def test_non_positive_retry_after_uses_bounded_fallback_jitter(
     attempts = 0
     delays: list[float] = []
     monkeypatch.setattr(
-        "src.services.agent_runtime.retry_transport.random.uniform",
+        "shared.ai_http_retry.random.uniform",
         lambda start, end: start + ((end - start) * 0.75),
     )
 
@@ -338,7 +338,7 @@ async def test_concurrent_429_bursts_use_divergent_bounded_fallback_schedules(
 ) -> None:
     jitter_fractions = iter(([0.0] * 5) + ([0.5] * 5) + ([1.0] * 5))
     monkeypatch.setattr(
-        "src.services.agent_runtime.retry_transport.random.uniform",
+        "shared.ai_http_retry.random.uniform",
         lambda start, end: start + ((end - start) * next(jitter_fractions)),
     )
 

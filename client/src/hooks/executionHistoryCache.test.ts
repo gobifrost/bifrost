@@ -60,7 +60,7 @@ describe("mergeExecutionHistoryPage", () => {
 			"b",
 		]);
 		expect(decodeCursor(result.continuation_token!)).toEqual({
-			v: 1,
+			v: 2,
 			s: "2026-08-27T17:59:00.000000Z",
 			i: "b",
 		});

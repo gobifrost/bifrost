@@ -1,0 +1,15 @@
+{
+  "key": "pr:1148",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1148",
+      "Reviewed the supported SDK decorator bindings, manifest overrides and broken-entry behavior; 103 focused tests and Python type/lint checks passed. Routine development-preview repair; no customer upgrade action required.",
+      "Jack authorized repair and protected merge in the private review thread. Original PR and commits are authored by jackmusick; no security disclosure or customer action is required.",
+      "After merging current main, 111 focused discovery, reload, proxy and decorator tests passed; Python type/lint checks passed. Initial local startup failed because the old test image lacked main\u2019s MCP dependency; rebuilding from the current lock resolved it."
+    ]
+  },
+  "reason": "Routine local Solution development-preview repair; no customer announcement or upgrade action is needed."
+}

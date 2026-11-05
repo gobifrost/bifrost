@@ -132,6 +132,8 @@ async def execute_agent_workflow_tool(
             org_id=None if workflow_permission_org is None else str(workflow_permission_org),
             is_platform_admin=refreshed.principal.is_superuser,
             is_agent=True,
+            execution_origin="agent",
+            agent_id=str(agent.id),
             execution_id=execution_id,
             artifact_workspace_id=artifact_workspace_id,
             sync=sync,

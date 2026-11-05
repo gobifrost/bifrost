@@ -24,7 +24,10 @@ async def test_engine_uses_explicit_runtime_url_without_loading_settings(monkeyp
     monkeypatch.setattr("src.config.get_settings", forbidden)
 
     async def workflow(context: ExecutionContext):
-        return {"public_url": context.public_url}
+        return {"public_url": context.public_url, "is_agent": context.is_agent,
+                "execution_origin": context.execution_origin, "agent_id": context.agent_id,
+                "original_user_is_platform_admin": context.original_user_is_platform_admin,
+                "original_user_id": context.original_user_id}
 
     result = await execute(ExecutionRequest(
         execution_id="runtime-metadata-test",
@@ -32,8 +35,16 @@ async def test_engine_uses_explicit_runtime_url_without_loading_settings(monkeyp
         organization=None,
         func=workflow,
         public_url="https://isolated.example.invalid",
+        is_agent=True,
+        execution_origin="agent",
+        agent_id="synthetic-agent",
+        original_user_is_platform_admin=True,
+        original_user_id="synthetic-original-user",
     ))
-    assert result.result == {"public_url": "https://isolated.example.invalid"}
+    assert result.result == {"public_url": "https://isolated.example.invalid", "is_agent": True,
+                             "execution_origin": "agent", "agent_id": "synthetic-agent",
+                             "original_user_is_platform_admin": True,
+                             "original_user_id": "synthetic-original-user"}
     forbidden.assert_not_called()
 
 

@@ -119,6 +119,8 @@ async def test_bound_tool_uses_original_user_for_authority_and_actor_for_effects
     ]
     assert execute_tool.await_args.kwargs["user_id"] == str(actor_id)
     assert execute_tool.await_args.kwargs["org_id"] == str(organization_id)
+    assert execute_tool.await_args.kwargs["agent_id"] == str(agent_id)
+    assert execute_tool.await_args.kwargs["execution_origin"] == "agent"
     lineage = execute_tool.await_args.kwargs["lineage"]
     assert lineage.run_user_id == original_user_id
     assert lineage.started_by_user_id == original_user_id

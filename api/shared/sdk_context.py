@@ -96,6 +96,16 @@ async def get_sdk_context(
             "is_provider": org.is_provider,
         }
 
+    from shared.execution_provenance import ExecutionProvenance
+    from src.services.authorization.runtime import load_execution_provenance
+
+    runtime = principal.runtime_authority
+    provenance = (
+        await load_execution_provenance(session, runtime)
+        if runtime is not None
+        else ExecutionProvenance("human" if caller.ctx is not None else "unknown")
+    )
+
     return {
         "user": {
             "id": str(principal.user_id),
@@ -106,4 +116,8 @@ async def get_sdk_context(
         "organization": org_data,
         "default_parameters": {},
         "track_executions": True,
+        "execution_origin": provenance.origin,
+        "agent_id": str(provenance.agent_id) if provenance.agent_id else None,
+        "original_user_is_platform_admin": caller.is_platform_admin,
+        "original_user_id": None if caller.ctx is None else str(caller.ctx.user_id),
     }

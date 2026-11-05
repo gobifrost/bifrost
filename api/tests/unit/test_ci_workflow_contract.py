@@ -7,9 +7,14 @@ that candidate reaches ``main``. The live required-check settings are audited
 separately because they are GitHub repository configuration, not source code.
 """
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from scripts.verify_merge_candidate import REQUIRED_JOBS
@@ -91,6 +96,7 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
         "test-e2e",
         "test-client-unit",
         "test-client-smoke",
+        "windows-credentials",
         "build-dev-api-candidate",
         "build-dev-client-candidate",
     }
@@ -145,7 +151,7 @@ def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> Non
 
     compose = yaml.safe_load(TEST_COMPOSE.read_text())
     client = compose["services"]["client"]
-    assert client["image"] == "bifrost-test-client-e2e:latest"
+    assert client["image"] == "bifrost-test-client-e2e:${BIFROST_TEST_IMAGE_TAG:-latest}"
     assert client["build"]["dockerfile"] == "Dockerfile"
     assert client["build"]["target"] == "production"
     assert "volumes" not in client
@@ -359,3 +365,76 @@ def test_nightly_owns_full_browser_slow_and_clean_build_discovery() -> None:
     test_script = TEST_SCRIPT.read_text()
     assert "client_e2e --grep @smoke" in test_script
     assert "--project=docs" not in test_script.split("client_nightly()", 1)[1].split("}", 1)[0]
+
+
+def test_windows_storage_runs_native_checks_and_blocks_the_shared_gate() -> None:
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    windows = jobs["windows-credentials"]
+    assert windows["runs-on"] == "windows-2025"
+    assert windows["if"] == "github.event_name != 'push' || github.ref != 'refs/heads/main'"
+    commands = "\n".join(step.get("run", "") for step in windows["steps"])
+    assert "--require-hashes -r requirements-windows-credentials.lock" in commands
+    assert "test_windows_credentials.py" in commands
+    assert "python scripts/windows_credential_smoke.py" in commands
+    source = "\n".join(step.get("run", "") for step in jobs["test-e2e-gate"]["steps"])
+    # Native checks must gate even the fast PR path, before its early exit.
+    assert source.index("needs.windows-credentials.result") < source.index("pull_request")
+    assert 'needs.windows-credentials.result }}" != "success"' in source
+
+
+SIGN_IMAGE_ACTION = REPO_ROOT / ".github" / "actions" / "sign-image" / "action.yml"
+
+
+def test_all_image_publishers_use_the_verified_signer() -> None:
+    consumers = []
+    for path in (CI_WORKFLOW, REPO_ROOT / ".github/workflows/dev-worker-image.yml"):
+        for job_id, job in _load_workflow(path)["jobs"].items():
+            for step in job["steps"]:
+                # Image signing shares one implementation; release-asset blob
+                # signing retains its separate existing bundle contract.
+                assert "cosign sign --" not in step.get("run", "")
+                if step.get("uses") == "./.github/actions/sign-image":
+                    consumers.append(job_id)
+                    assert "@${{ steps." in step["with"]["image"]
+                    assert job["permissions"]["id-token"] == "write"
+    assert sorted(consumers) == sorted([
+        "build-dev-api-candidate", "build-dev-client-candidate", "build-api", "build-client", "publish",
+    ])
+    installer = _load_workflow(SIGN_IMAGE_ACTION)["runs"]["steps"][0]
+    assert installer["with"]["cosign-release"] == "v3.1.4"
+
+
+@pytest.mark.parametrize("sign_status,verify_status", [(0, 0), (17, 0), (0, 23)])
+def test_image_signing_requires_a_valid_signature_from_this_workflow(
+    tmp_path: Path, sign_status: int, verify_status: int
+) -> None:
+    """Execute the real action shell: either signing or verification failure stops CI."""
+    calls_file = tmp_path / "calls.jsonl"
+    cosign = tmp_path / "cosign"
+    cosign.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['CALLS_FILE'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "sys.exit(int(os.environ['SIGN_STATUS' if sys.argv[1] == 'sign' else 'VERIFY_STATUS']))\n"
+    )
+    cosign.chmod(0o755)
+    image = "ghcr.io/gobifrost/bifrost-api@sha256:" + "a" * 64
+    workflow = "gobifrost/bifrost/.github/workflows/ci.yml@refs/heads/gh-readonly-queue/main/pr-1023"
+    action = _load_workflow(SIGN_IMAGE_ACTION)
+    command = action["runs"]["steps"][1]["run"]
+    result = subprocess.run(
+        ["bash", "-c", command],
+        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "IMAGE": image,
+             "GITHUB_WORKFLOW_REF": workflow, "CALLS_FILE": str(calls_file),
+             "SIGN_STATUS": str(sign_status), "VERIFY_STATUS": str(verify_status)},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == (sign_status or verify_status), result.stderr
+    calls = [json.loads(line) for line in calls_file.read_text().splitlines()]
+    expected = [["sign", "--yes", image]]
+    if sign_status == 0:
+        expected.append([
+            "verify", "--certificate-identity", f"https://github.com/{workflow}",
+            "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", image,
+        ])
+    assert calls == expected

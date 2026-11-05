@@ -113,9 +113,12 @@ def test_executor_git_caches_are_separate_and_accessible_to_isolation_fixtures()
     script = _find_repo_file("test.sh").read_text()
     for service in ("worker", "scheduler"):
         source = f"solution-repo-fixtures/git-checkouts/{service}"
-        assert f"${{LOG_DIR:-/tmp/bifrost}}/{source}:/tmp/git" in (
-            compose["services"][service]["volumes"]
-        )
+        executor = compose["services"][service]
+        # The external receipt lives beside the checkout. Mount their common
+        # parent, rather than only the tree at /tmp/git inside the executor.
+        assert executor["environment"]["BIFROST_GIT_WORK_DIR"] == f"/tmp/bifrost/{source}"
+        assert "${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures" in executor["volumes"]
+        assert not any(mount.endswith(":/tmp/git") for mount in executor["volumes"])
         assert f'mkdir -p "$LOG_DIR/{source}"' in script
     assert "${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost" in (
         compose["services"]["test-runner"]["volumes"]
@@ -357,7 +360,7 @@ def test_playwright_uses_the_production_client_image():
     """Browser gates must cover compiled assets and nginx, not Vite transforms."""
     compose = yaml.safe_load(_COMPOSE.read_text())
     client = compose["services"]["client"]
-    assert client["image"] == "bifrost-test-client-e2e:latest"
+    assert client["image"] == "bifrost-test-client-e2e:${BIFROST_TEST_IMAGE_TAG:-latest}"
     assert client["build"]["dockerfile"] == "Dockerfile"
     assert client["build"]["target"] == "production"
     assert "volumes" not in client

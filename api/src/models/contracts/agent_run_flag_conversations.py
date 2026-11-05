@@ -49,6 +49,7 @@ class DryRunTurn(BaseModel):
     before: str
     after: str
     predicted: Literal["up", "down"]
+    evaluation_failed: bool = False
     at: datetime = Field(default_factory=_utcnow)
 
 

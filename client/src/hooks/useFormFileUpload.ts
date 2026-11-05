@@ -45,6 +45,7 @@ const initialState: UploadState = {
 };
 
 interface UseFormFileUploadOptions {
+	orgId?: string;
 	/** Called when upload starts */
 	onUploadStart?: () => void;
 	/** Called when upload completes or errors */
@@ -59,7 +60,10 @@ interface UseFormFileUploadOptions {
 
 interface UseFormFileUploadReturn {
 	/** Upload a single file, returns the path for form submission */
-	uploadFile: (file: File, onProgress?: (progress: UploadProgress) => void) => Promise<string>;
+	uploadFile: (
+		file: File,
+		onProgress?: (progress: UploadProgress) => void,
+	) => Promise<string>;
 	/** Current upload state */
 	uploadState: UploadState;
 	/** Reset state to idle */
@@ -77,14 +81,24 @@ export function useFormFileUpload(
 	options: UseFormFileUploadOptions = {},
 ): UseFormFileUploadReturn {
 	const [uploadState, setUploadState] = useState<UploadState>(initialState);
-	const { onUploadStart, onUploadEnd, maxSizeMb, allowedTypes, fieldName } = options;
+	const {
+		orgId,
+		onUploadStart,
+		onUploadEnd,
+		maxSizeMb,
+		allowedTypes,
+		fieldName,
+	} = options;
 
 	const reset = useCallback(() => {
 		setUploadState(initialState);
 	}, []);
 
 	const uploadFile = useCallback(
-		async (file: File, onProgress?: (progress: UploadProgress) => void): Promise<string> => {
+		async (
+			file: File,
+			onProgress?: (progress: UploadProgress) => void,
+		): Promise<string> => {
 			// Client-side validation
 			if (maxSizeMb && file.size > maxSizeMb * 1024 * 1024) {
 				const error = `File size exceeds ${maxSizeMb}MB limit`;
@@ -140,7 +154,10 @@ export function useFormFileUpload(
 				const { data, error } = await apiClient.POST(
 					"/api/forms/{form_id}/upload",
 					{
-						params: { path: { form_id: formId } },
+						params: {
+							path: { form_id: formId },
+							...(orgId ? { query: { org_id: orgId } } : {}),
+						},
 						body: {
 							file_name: file.name,
 							content_type:
@@ -183,7 +200,11 @@ export function useFormFileUpload(
 							const percentage = Math.round(
 								(event.loaded / event.total) * 100,
 							);
-							const progress = { loaded: event.loaded, total: event.total, percentage };
+							const progress = {
+								loaded: event.loaded,
+								total: event.total,
+								percentage,
+							};
 							setUploadState((prev) => ({
 								...prev,
 								progress,
@@ -258,7 +279,15 @@ export function useFormFileUpload(
 				throw err;
 			}
 		},
-		[formId, maxSizeMb, allowedTypes, fieldName, onUploadStart, onUploadEnd],
+		[
+			orgId,
+			formId,
+			maxSizeMb,
+			allowedTypes,
+			fieldName,
+			onUploadStart,
+			onUploadEnd,
+		],
 	);
 
 	return {

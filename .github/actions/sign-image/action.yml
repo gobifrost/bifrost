@@ -1,0 +1,26 @@
+name: Sign and Verify Image
+description: Sign an immutable image digest and verify its workflow identity and transparency proof.
+inputs:
+  image:
+    description: Fully qualified image reference including its SHA-256 digest.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        # Includes sigstore-go v1.3.0's verified Rekor v1 conflict recovery:
+        # https://github.com/sigstore/sigstore-go/pull/647
+        cosign-release: v3.1.4
+    - name: Sign and verify digest
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        cosign sign --yes "$IMAGE"
+        cosign verify \
+          --certificate-identity "https://github.com/${GITHUB_WORKFLOW_REF}" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          "$IMAGE"

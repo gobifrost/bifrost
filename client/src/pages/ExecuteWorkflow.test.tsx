@@ -267,3 +267,34 @@ describe("ExecuteWorkflow — mutation errors", () => {
 		expect(mockToastError).not.toHaveBeenCalled();
 	});
 });
+
+vi.mock("@/components/execution/ExecutionOrganizationSelect", () => ({
+	ExecutionOrganizationSelect: ({
+		onChange,
+		disabled,
+	}: {
+		onChange: (id: string) => void;
+		disabled?: boolean;
+	}) => (
+		<button
+			type="button"
+			disabled={disabled}
+			onClick={() => onChange("contoso")}
+		>
+			Run in Contoso
+		</button>
+	),
+}));
+
+it("sends the selected organization with the workflow execution", async () => {
+	const { user } = await renderPage();
+	await user.click(screen.getByRole("button", { name: "Run in Contoso" }));
+	await user.click(
+		screen.getByRole("button", { name: "Execute Workflow" }),
+	);
+	expect(mockMutateAsync).toHaveBeenCalledWith(
+		expect.objectContaining({
+			body: expect.objectContaining({ org_id: "contoso" }),
+		}),
+	);
+});

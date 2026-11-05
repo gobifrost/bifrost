@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import src.core.module_cache_contract as module_cache_contract
 import src.core.module_cache_sync as module_cache_sync
 
 
@@ -54,7 +55,8 @@ class TestModuleCacheAsync:
         mock_client.get.return_value = None
 
         mock_repo = AsyncMock()
-        mock_repo.read.side_effect = Exception("NoSuchKey")
+        from src.core.s3_transport import S3NoSuchKey
+        mock_repo.read.side_effect = S3NoSuchKey("NoSuchKey", 404)
 
         with (
             patch("src.core.module_cache.get_redis_client", return_value=mock_client),
@@ -87,7 +89,7 @@ class TestModuleCacheAsync:
             assert result["path"] == "shared/test.py"
             assert result["hash"]  # SHA-256 hash present
             # Verify re-cached to Redis
-            mock_client.setex.assert_called_once()
+            assert mock_redis.eval.await_count == 2
 
     async def test_get_module_falls_back_to_solution_storage_for_solution_module(self, mock_redis_client):
         """Cold solution module lookups read from _solutions storage and re-cache."""
@@ -117,8 +119,7 @@ class TestModuleCacheAsync:
             assert result["hash"]
             solution_storage_cls.assert_called_once_with(solution_id)
             mock_solution_storage.read.assert_called_once_with("workflows/triage.py")
-            mock_client.setex.assert_called_once()
-            mock_redis.sadd.assert_called_once_with("bifrost:module:index", storage_path)
+            assert mock_redis.eval.await_count == 2
 
     async def test_get_module_s3_not_found(self, mock_redis_client):
         """When both Redis and S3 miss, get_module returns None."""
@@ -126,7 +127,8 @@ class TestModuleCacheAsync:
         mock_client.get.return_value = None
 
         mock_repo = AsyncMock()
-        mock_repo.read.side_effect = Exception("NoSuchKey")
+        from src.core.s3_transport import S3NoSuchKey
+        mock_repo.read.side_effect = S3NoSuchKey("NoSuchKey", 404)
 
         with (
             patch("src.core.module_cache.get_redis_client", return_value=mock_client),
@@ -137,8 +139,67 @@ class TestModuleCacheAsync:
             result = await get_module("nonexistent.py")
             assert result is None
 
-    async def test_get_module_s3_fallback_handles_binary(self, mock_redis_client):
-        """S3 fallback gracefully handles non-UTF-8 content."""
+    async def test_get_module_propagates_storage_failure(self, mock_redis_client):
+        """Only confirmed absent objects become cacheable resolver misses."""
+        mock_client, _ = mock_redis_client
+        mock_client.get.return_value = None
+        mock_repo = AsyncMock()
+        from src.core.s3_transport import S3Error
+        error = S3Error("ServiceUnavailable", 503)
+        mock_repo.read.side_effect = error
+
+        with (
+            patch("src.core.module_cache.get_redis_client", return_value=mock_client),
+            patch("src.core.module_cache.RepoStorage", return_value=mock_repo),
+        ):
+            from src.core.module_cache import get_module
+
+            with pytest.raises(S3Error) as raised:
+                await get_module("shared/unavailable.py")
+
+        assert raised.value is error
+
+    async def test_refresh_invalidates_removed_workspace_modules_but_keeps_solution_cache(
+        self, mock_redis_client, tmp_path,
+    ):
+        """A full Git workspace refresh must clear cached files removed by Git."""
+        mock_client, mock_redis = mock_redis_client
+        source = tmp_path / "workflows" / "current.py"
+        source.parent.mkdir()
+        source.write_text("VALUE = 1\n")
+        mock_redis.smembers.return_value = {
+            "workflows/current.py",
+            "workflows/removed.py",
+            "_solutions/install-id/workflows/retained.py",
+        }
+
+        with (
+            patch("src.core.module_cache.get_redis_client", return_value=mock_client),
+            patch("src.core.module_cache.set_module", new_callable=AsyncMock) as set_cached,
+            patch("src.core.module_cache.invalidate_module", new_callable=AsyncMock) as invalidate,
+        ):
+            from src.core.module_cache import refresh_modules_from_directory
+
+            assert await refresh_modules_from_directory(tmp_path) == 1
+
+        set_cached.assert_awaited_once()
+        assert set_cached.await_args.args[0] == "workflows/current.py"
+        invalidate.assert_awaited_once_with("workflows/removed.py")
+
+    async def test_oversized_resolution_metadata_is_not_written(self, mock_redis_client):
+        mock_client, _ = mock_redis_client
+        from src.core.module_cache import set_module_resolution_cache
+
+        await set_module_resolution_cache(
+            "-:0:oversized",
+            {"kind": "not_found", "path": "m" * 2_048},
+            generation="generation",
+        )
+
+        mock_client._get_redis.assert_not_awaited()
+
+    async def test_get_module_s3_fallback_propagates_non_utf8_source(self, mock_redis_client):
+        """Undecodable source is not treated as a cacheable missing module."""
         mock_client, _ = mock_redis_client
         mock_client.get.return_value = None
 
@@ -151,8 +212,8 @@ class TestModuleCacheAsync:
         ):
             from src.core.module_cache import get_module
 
-            result = await get_module("image.png")
-            assert result is None
+            with pytest.raises(UnicodeDecodeError):
+                await get_module("image.png")
 
     async def test_set_module(self, mock_redis_client):
         """Test caching a module."""
@@ -167,9 +228,10 @@ class TestModuleCacheAsync:
                 content_hash="abc123",
             )
 
-            # Verify module was cached
-            mock_client.setex.assert_called_once()
-            call_args = mock_client.setex.call_args
+            # Verify module was cached in the atomic source+generation transaction.
+            pipeline = mock_redis.pipeline.return_value
+            pipeline.setex.assert_called_once()
+            call_args = pipeline.setex.call_args
             assert call_args[0][0] == "bifrost:module:shared/test.py"
             assert call_args[0][1] == 86400  # 24hr TTL
 
@@ -180,7 +242,7 @@ class TestModuleCacheAsync:
             assert stored_data["hash"] == "abc123"
 
             # Verify path was added to index
-            mock_redis.sadd.assert_called_once_with("bifrost:module:index", "shared/test.py")
+            pipeline.sadd.assert_called_once_with("bifrost:module:index", "shared/test.py")
 
     async def test_invalidate_module(self, mock_redis_client):
         """Test removing a module from cache."""
@@ -191,8 +253,9 @@ class TestModuleCacheAsync:
 
             await invalidate_module("shared/test.py")
 
-            mock_client.delete.assert_called_once_with("bifrost:module:shared/test.py")
-            mock_redis.srem.assert_called_once_with("bifrost:module:index", "shared/test.py")
+            pipeline = mock_redis.pipeline.return_value
+            pipeline.delete.assert_called_once_with("bifrost:module:shared/test.py")
+            pipeline.srem.assert_called_once_with("bifrost:module:index", "shared/test.py")
 
     async def test_clear_module_cache(self, mock_redis_client):
         """Test clearing all modules from cache."""
@@ -328,7 +391,6 @@ async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors()
     path = "modules/helpers/tool.py"
     names = ["modules", "modules.helpers", "modules.helpers.tool"]
     from src.core.module_cache import set_module
-    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
     pipeline = MagicMock()
     pipeline.__aenter__ = AsyncMock(return_value=pipeline)
@@ -341,10 +403,16 @@ async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors()
     with patch("src.core.module_cache.get_redis_client", return_value=client):
         await set_module(path, "VALUE = 1", "hash")
 
-    assert [call.args[0] for call in pipeline.set.call_args_list] == [
-        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
+    assert [call.args[2] for call in pipeline.eval.call_args_list] == [
+        f"{module_cache_contract.MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
-    assert all(call.kwargs == {"ex": 86400} for call in pipeline.set.call_args_list)
+    assert all(
+        call.args[0] == module_cache_contract.MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT
+        and call.args[1] == 2
+        and call.args[3] == module_cache_contract.MODULE_RESOLUTION_GENERATION_INDEX_KEY
+        and call.args[5:] == (86400, module_cache_contract.MODULE_RESOLUTION_MAX_ENTRIES)
+        for call in pipeline.eval.call_args_list
+    )
     connection.pipeline.assert_called_once_with(transaction=True)
     connection.scan_iter.assert_not_called()
     connection.delete.assert_not_awaited()
@@ -356,7 +424,6 @@ async def test_invalidate_module_resolution_cache_handles_solution_package_paths
     path = "_solutions/solution-a/workflows/triage/__init__.py"
     names = ["workflows", "workflows.triage"]
     from src.core.module_cache import invalidate_module_resolution_cache
-    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
     pipeline = MagicMock()
     pipeline.__aenter__ = AsyncMock(return_value=pipeline)
@@ -369,10 +436,16 @@ async def test_invalidate_module_resolution_cache_handles_solution_package_paths
     with patch("src.core.module_cache.get_redis_client", return_value=client):
         await invalidate_module_resolution_cache(path)
 
-    assert [call.args[0] for call in pipeline.set.call_args_list] == [
-        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
+    assert [call.args[2] for call in pipeline.eval.call_args_list] == [
+        f"{module_cache_contract.MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
-    assert all(call.kwargs == {"ex": 86400} for call in pipeline.set.call_args_list)
+    assert all(
+        call.args[0] == module_cache_contract.MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT
+        and call.args[1] == 2
+        and call.args[3] == module_cache_contract.MODULE_RESOLUTION_GENERATION_INDEX_KEY
+        and call.args[5:] == (86400, module_cache_contract.MODULE_RESOLUTION_MAX_ENTRIES)
+        for call in pipeline.eval.call_args_list
+    )
     connection.pipeline.assert_called_once_with(transaction=True)
     connection.scan_iter.assert_not_called()
     connection.delete.assert_not_awaited()
@@ -385,7 +458,6 @@ async def test_invalidate_module_resolution_cache_skips_delete_when_no_names_mat
     path = "modules/helpers/tool.py"
     names = ["modules", "modules.helpers", "modules.helpers.tool"]
     from src.core.module_cache import invalidate_module_resolution_cache
-    from src.core.module_cache_contract import MODULE_RESOLUTION_GENERATION_PREFIX
 
     pipeline = MagicMock()
     pipeline.__aenter__ = AsyncMock(return_value=pipeline)
@@ -398,10 +470,16 @@ async def test_invalidate_module_resolution_cache_skips_delete_when_no_names_mat
     with patch("src.core.module_cache.get_redis_client", return_value=client):
         await invalidate_module_resolution_cache(path)
 
-    assert [call.args[0] for call in pipeline.set.call_args_list] == [
-        f"{MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
+    assert [call.args[2] for call in pipeline.eval.call_args_list] == [
+        f"{module_cache_contract.MODULE_RESOLUTION_GENERATION_PREFIX}{name}" for name in names
     ]
-    assert all(call.kwargs == {"ex": 86400} for call in pipeline.set.call_args_list)
+    assert all(
+        call.args[0] == module_cache_contract.MODULE_RESOLUTION_GENERATION_ROTATE_SCRIPT
+        and call.args[1] == 2
+        and call.args[3] == module_cache_contract.MODULE_RESOLUTION_GENERATION_INDEX_KEY
+        and call.args[5:] == (86400, module_cache_contract.MODULE_RESOLUTION_MAX_ENTRIES)
+        for call in pipeline.eval.call_args_list
+    )
     connection.pipeline.assert_called_once_with(transaction=True)
     connection.scan_iter.assert_not_called()
     connection.delete.assert_not_awaited()

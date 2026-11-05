@@ -46,6 +46,8 @@ class SolutionAppTransport(BaseModel):
     dist_files: dict[str, str] | None = None
     bin_dist_files: dict[str, str] | None = None
     prebuilt_sdk_metadata: dict[str, Any] | None = None
+    build_recipe: dict[str, Any] | None = None
+    reuse_deployment_id: str | None = None
 
 
 class SolutionFormTransport(BaseModel):

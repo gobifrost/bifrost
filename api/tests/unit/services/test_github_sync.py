@@ -27,7 +27,7 @@ class _StatusRepoManager:
         self.is_initialized = is_initialized
 
     @asynccontextmanager
-    async def lock(self):
+    async def workspace(self, *, readonly: bool = False):
         yield self.work_dir
 
 
@@ -811,3 +811,45 @@ def test_git_commands_authenticate_through_their_environment(tmp_path: Path) -> 
     basic = base64.b64encode(f"x-access-token:{PAT}".encode()).decode()
     assert header == f"Authorization: Basic {basic}"
     assert PAT not in (tmp_path / ".git" / "config").read_text()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("index_fails", [False, True])
+async def test_discard_refreshes_executable_source_before_search_index(tmp_path, monkeypatch, index_fails):
+    from unittest.mock import AsyncMock
+
+    from src.core import module_cache
+
+    repo = Repo.init(tmp_path)
+    (tmp_path / "removed.py").write_text("VALUE = 1\n")
+    service = _status_service(tmp_path)
+    events = []
+
+    async def sync_up(work_dir):
+        assert work_dir == tmp_path
+        events.append("storage")
+
+    async def refresh(work_dir):
+        assert work_dir == tmp_path
+        events.append("cache")
+
+    async def index(work_dir):
+        events.append("search")
+        if index_fails:
+            raise RuntimeError("search unavailable")
+
+    service.repo_manager.ensure_storage_unchanged = AsyncMock()
+    service.repo_manager.sync_up = sync_up
+    service._open_or_init = lambda work_dir: repo
+    service._update_file_index = index
+    service.db = AsyncMock()
+    monkeypatch.setattr(module_cache, "refresh_modules_from_directory", refresh)
+
+    result = await service.desktop_discard(["removed.py"])
+
+    assert events == ["storage", "cache", "search"]
+    assert result.success is not index_fails
+    if index_fails:
+        service.db.commit.assert_not_awaited()
+    else:
+        service.db.commit.assert_awaited_once()

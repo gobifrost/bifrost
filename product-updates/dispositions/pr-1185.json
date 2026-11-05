@@ -1,0 +1,22 @@
+{
+  "key": "pr:1185",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1185",
+      "https://github.com/gobifrost/bifrost/blob/20c9db7be9fdbdd617ecd338adba11eb4657c292/docs/product-updates-authoring.md",
+      "Jack authorized scoped compatibility repairs and the protected merge lifecycle on 2026-11-03.",
+      "Verified Dependabot contribution from gobifrost/bifrost into gobifrost/bifrost main; original dependency-update commits and author credit retained.",
+      "Reviewed upstream compatibility changes, sandbox limits and deferred-tool visibility. PyPI metadata for the five updated direct/provider packages reports no published advisories at review time; this is routine dependency maintenance, not a security disclosure.",
+      "Compatibility review disposition: upstream catalog/visibility, retry-part and provider-auth changes made existing assertions obsolete. Repaired two actual runtime incompatibilities: preserve non-success framework results as errors and recognize new capability-load receipts when restoring conversation history. Existing stored receipt support is retained.",
+      "The dependency-only auto-merge job intentionally rejects this now-maintainer-repaired PR because it includes runtime code and regression tests (job 126193255658). Disposition: supervised protected merge under Jack’s explicit approval; retain the dependency-only automation guard and all required CI gates. The required Product Updates check passes.",
+      "Queue failure 126201698410: the specialist-composition E2E test read deprecated LoadCapabilityReturnPart.instructions. Upstream now projects loaded instructions into model-visible instruction messages (system-framed UserPromptPart for TestModel’s default profile); updated the existing test to require the complete specialist policy exactly once before workflow dispatch. No customer workflow, configuration, SDK contract or integration setup changes are required; compatibility is handled inside the platform."
+    ]
+  },
+  "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required.",
+  "security_review": {
+    "status": "not_required"
+  }
+}

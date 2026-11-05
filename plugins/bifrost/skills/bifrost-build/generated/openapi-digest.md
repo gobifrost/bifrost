@@ -365,6 +365,11 @@
 | POST | `/api/mcp/gateway/capabilities/search` |
 | GET | `/api/mcp/gateway/executions/{execution_id}` |
 | GET | `/api/mcp/run` |
+| GET | `/api/mcp/run/branding` |
+| PUT | `/api/mcp/run/branding` |
+| DELETE | `/api/mcp/run/branding/logo` |
+| GET | `/api/mcp/run/branding/logo` |
+| POST | `/api/mcp/run/branding/logo` |
 | GET | `/api/mcp/run/plugin` |
 | GET | `/api/mcp/status` |
 | GET | `/api/mcp/tools` |
@@ -552,6 +557,7 @@
 | DELETE | `/api/solutions/{solution_id}` |
 | GET | `/api/solutions/{solution_id}` |
 | PATCH | `/api/solutions/{solution_id}` |
+| POST | `/api/solutions/{solution_id}/app-builds/lookup` |
 | POST | `/api/solutions/{solution_id}/capture` |
 | GET | `/api/solutions/{solution_id}/capture/candidates` |
 | POST | `/api/solutions/{solution_id}/capture/preview` |
@@ -631,6 +637,8 @@
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
 | GET | `/api/workflows/{workflow_id}/run-identities` |
 | POST | `/auth/admin/revoke-user` |
+| GET | `/auth/app-connections/{request_id}` |
+| POST | `/auth/app-connections/{request_id}` |
 | GET | `/auth/authorization` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |

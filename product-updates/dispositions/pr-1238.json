@@ -1,0 +1,23 @@
+{
+  "key": "pr:1238",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1238",
+      "User authorized completing, testing and merging the runtime cache and startup improvements. This editorial approval records the contributor disposition, not maintainer review or a bypass of merge protection.",
+      "Focused cache, real Redis, HTTP pool ownership, native-thread/fork, worker import, Solution lifecycle, permission inventory and DTO/CLI checks passed. API Pyright/Ruff and generated OpenAPI TypeScript checks passed; the merge queue supplies complete-suite verification.",
+      "Measured component results, memory bounds, exact commands and iteration failure dispositions are documented in docs/benchmarks/2026-11-04-runtime-module-loading.md. No additive or end-to-end performance guarantee is made.",
+      "Visibility review: omit internal cache/connection work from the in-app modal; no new customer action or security disclosure identified.",
+      "Maintainer scope approval: native mobile message e498d796-e5a8-4a01-8db6-67eec20e489e following scoped decision msg_02ac6d4af802a260016aeb3b22967087d288bea5369b713ee4 in coordinator 33cee9be-e5c2-58e2-9c09-2f6298100009; verified directly.",
+      "Source and contributor: gobifrost/bifrost PR #1238 by jackmusick; original commits retained.",
+      "Security review: scoped module authorization remains authoritative; speculative results never populate the execution demand cache. No security disclosure or customer action identified.",
+      "Maintainer approved the recommended narrowed cache/S3 scope in the owner thread: \"Proceed to merge as you see appropriate.\" Speculative batching and its API were removed; no measured validation slowdown was accepted.",
+      "Final narrowed source verified against main 418d8ca97: 323 unit/contract checks, 19 live checks and 36 Git sync consumer checks passed; API Pyright/Ruff passed. No net API schema or UI changes. Full suites are delegated to protected checks.",
+      "Rolling-upgrade security/correctness review: retain the established generation namespace so older and newer writers invalidate each other. Bidirectional real-Redis invalidation and workspace/Solution create-update-delete-before-first-import checks passed. Git Discard also refreshes executable cache before fallible search maintenance.",
+      "Merge-group E2E shard 2 and aggregate failure on dc831bae were traced to stale explicit test cookies after automatic access refresh. MCP test setup now uses the existing human minter; authority-change regression and spent-cookie rejection remain covered. Eight focused E2E checks and API Pyright/Ruff passed. Runtime auth/consent code is unchanged; details and job IDs are recorded in the benchmark verification ledger."
+    ]
+  },
+  "reason": "Internal workflow startup caching and storage connection reuse; no new front-facing capability or required customer action."
+}

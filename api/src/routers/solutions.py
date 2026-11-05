@@ -40,7 +40,10 @@ from shared.app_build_errors import AppBuildMemoryError
 from shared.logo_processing import is_logo_thumbnail_version
 from src.core.auth import Context, CurrentActiveUser
 from src.core.principal import UserPrincipal
-from shared.models import SolutionDevContextRequest, SolutionDevContextResponse
+from shared.models import (
+    SolutionDevContextRequest, SolutionDevContextResponse,
+    SolutionAppBuildLookup, SolutionAppBuildMatches,
+)
 from src.models.contracts.applications import (
     ApplicationSdkUpdateSkipped,
 )
@@ -2374,6 +2377,7 @@ async def delete_solution(
             ),
         )
 
+    from src.core.module_cache import invalidate_module
     from src.services.file_storage import FileStorageService
     from src.services.solution_files import enumerate_solution_files
     from src.services.solutions.app_build import SolutionAppBuilder
@@ -2430,6 +2434,8 @@ async def delete_solution(
             storage = SolutionStorage(solution_id)
             for rel in await storage.list(""):
                 await storage.delete(rel)
+                if rel.endswith(".py"):
+                    await invalidate_module(storage._key(rel))
             await SolutionSourceArtifactStorage(solution_id).delete()
             builder = SolutionAppBuilder()
             for app_id in app_ids:
@@ -2755,6 +2761,18 @@ async def _run_install_job(
         await _set_status("succeeded", result=install_result)
     finally:
         _cleanup_file(zip_path)
+
+
+@router.post(
+    "/{solution_id}/app-builds/lookup", response_model=SolutionAppBuildMatches,
+    **operation_route("solutions.app_builds.lookup"))
+async def lookup_solution_app_builds(
+    solution_id: UUID, request: SolutionAppBuildLookup, ctx: Context, user: CurrentActiveUser,
+) -> SolutionAppBuildMatches:
+    from shared.solution_app_build_reuse import lookup_app_builds
+
+    await authorize_solution(ctx.db, user, solution_id, "solutions.deploy")
+    return await lookup_app_builds(ctx.db, solution_id, request)
 
 
 @router.post(

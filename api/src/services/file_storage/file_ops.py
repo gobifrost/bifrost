@@ -17,7 +17,7 @@ from src.core.log_safety import log_safe
 from src.models import Workflow
 from src.models.orm.file_index import FileIndex
 from src.services.file_index_service import FileIndexService
-from src.core.module_cache import set_module, invalidate_module
+from src.core.module_cache import invalidate_module, set_module
 from src.services.repo_storage import REPO_PREFIX
 from .models import WriteResult
 from .entity_detector import detect_platform_entity_type
@@ -193,7 +193,22 @@ class FileOperationsService:
             )
             detection_result = detect_python_entity_type_with_ast(content)
             cached_ast = detection_result.ast_tree
-            cached_content_str = detection_result.content_str
+            # Syntax failures must reach the full metadata path, which emits
+            # diagnostics. Passing cached content with no AST would instead
+            # take the decorator-free fast path and silently skip it.
+            cached_content_str = (
+                None
+                if detection_result.syntax_error is not None
+                else detection_result.content_str
+            )
+
+        # Validate an app source file before its first durable write. The
+        # lookup also gives the later preview refresh the same owning app.
+        app = await self._find_app_by_path(path)
+        if app is not None:
+            from src.services.app_resource_limits import validate_app_source_write
+
+            validate_app_source_write(path, content)
 
         # Write ALL files to S3 under _repo/ prefix — this is the durable store.
         # Platform entities also go to S3 so the Redis→S3 fallback works for workers.
@@ -206,14 +221,15 @@ class FileOperationsService:
                 ContentType=content_type,
             )
 
-        await FileIndexService(self.db).index(path, content, content_hash, updated_by)
-        await self.db.flush()
         content_str = cached_content_str or content.decode("utf-8", errors="replace")
 
         # Update module cache in Redis for immediate availability in virtual imports.
         # Both workflows and modules need caching — workers load code via Redis→S3.
         if path.endswith(".py"):
             await set_module(path, content_str, content_hash)
+
+        await FileIndexService(self.db).index(path, content, content_hash, updated_by)
+        await self.db.flush()
 
         # Extract metadata for workflows/forms/agents
         # Pass cached AST and content_str to avoid re-parsing large Python files
@@ -278,7 +294,6 @@ class FileOperationsService:
                 )
 
         # App files: rebuild bundle + fire pubsub for real-time preview
-        app = await self._find_app_by_path(path)
         if not app and path.startswith("apps/"):
             logger.info(
                 f"No Application matched path {log_safe(path)!r} — preview refresh skipped. "
@@ -334,12 +349,16 @@ class FileOperationsService:
         # === S3: Source of truth (must succeed) ===
         await self._delete_from_s3(path)
 
+        # A completed source deletion must never leave a virtual-import cache
+        # entry behind. Unlike search and app-preview maintenance this affects
+        # executable source, so let a cache failure reach the caller.
+        await self._invalidate_module_cache_if_python(path)
+
         # === Side effects (best-effort, independent) ===
         for op in (
             self._remove_from_search_index,
             self._handle_app_file_cleanup,
             self._remove_metadata,
-            self._invalidate_module_cache_if_python,
         ):
             try:
                 await op(path)
@@ -622,32 +641,12 @@ class FileOperationsService:
         if fi_result2.scalar_one_or_none():
             raise FileExistsError(f"File already exists: {new_path}")
 
-        # Update entity table paths for Python files. Scope to _repo/ rows
-        # (solution_id IS NULL): renaming a WORKSPACE file must never rewrite the
-        # path of a solution-managed workflow at the same path — deploy owns those
-        # rows and their paths are install-relative, not workspace-relative
-        # (Codex #14).
-        if old_path.endswith(".py"):
-            # Update any _repo/ workflows that reference this path
-            stmt = update(Workflow).where(
-                Workflow.path == old_path,
-                Workflow.solution_id.is_(None),
-            ).values(
-                path=new_path,
-                updated_at=now,
-            )
-            await self.db.execute(stmt)
-
-            # Update module cache
-            await invalidate_module(old_path)
-            if old_record.content:
-                await set_module(new_path, old_record.content, old_record.content_hash or "")
-
         # Move file in S3 _repo/ prefix for all file types
         old_s3_key = f"{REPO_PREFIX}{old_path}"
         new_s3_key = f"{REPO_PREFIX}{new_path}"
-        async with self._s3_client.get_client() as s3:
-            try:
+        storage_completed = False
+        try:
+            async with self._s3_client.get_client() as s3:
                 await s3.copy_object(
                     Bucket=self.settings.s3_bucket,
                     CopySource={"Bucket": self.settings.s3_bucket, "Key": old_s3_key},
@@ -657,11 +656,36 @@ class FileOperationsService:
                     Bucket=self.settings.s3_bucket,
                     Key=old_s3_key,
                 )
-            except Exception as e:
-                logger.warning(
-                    f"S3 move failed for {log_safe(old_path)} -> "
-                    f"{log_safe(new_path)}: {log_safe(e)}"
+            storage_completed = True
+        finally:
+            # Cleanup also runs during cancellation, without intercepting the
+            # original exception. Invalidate before fallible DB maintenance.
+            try:
+                if old_path.endswith(".py"):
+                    await invalidate_module(old_path)
+                if new_path.endswith(".py"):
+                    await invalidate_module(new_path)
+            except Exception:
+                if storage_completed:
+                    raise
+                logger.exception(
+                    "Module cache invalidation failed after storage move failure: %s -> %s",
+                    log_safe(old_path), log_safe(new_path),
                 )
+
+        # Update entity table paths for Python files. Scope to _repo/ rows
+        # (solution_id IS NULL): renaming a WORKSPACE file must never rewrite the
+        # path of a solution-managed workflow at the same path — deploy owns those
+        # rows and their paths are install-relative, not workspace-relative.
+        if old_path.endswith(".py"):
+            stmt = update(Workflow).where(
+                Workflow.path == old_path,
+                Workflow.solution_id.is_(None),
+            ).values(
+                path=new_path,
+                updated_at=now,
+            )
+            await self.db.execute(stmt)
 
         await FileIndexService(self.db).move_index(old_path, new_path)
 

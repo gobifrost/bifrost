@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
 from shared.run_lineage import RunLineage
+from shared.execution_provenance import durable_execution_provenance
 from shared.run_cancellation import RUN_USER_DELETED_ERROR
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
@@ -122,6 +123,7 @@ async def promote_due_executions() -> int:
 
 def _pending_record(row: Execution) -> PendingExecution:
     """The worker context for a promoted row."""
+    provenance = durable_execution_provenance(row.execution_origin, row.agent_id)
     return pending_execution_record(
         execution_id=str(row.id),
         workflow_id=str(row.workflow_id) if row.workflow_id else None,
@@ -134,6 +136,9 @@ def _pending_record(row: Execution) -> PendingExecution:
         startup=None,  # Scheduled runs do not carry stale startup results.
         api_key_id=str(row.api_key_id) if row.api_key_id else None,
         sync=False,
+        is_agent=provenance.origin == "agent",
+        execution_origin=provenance.origin,
+        agent_id=None if provenance.agent_id is None else str(provenance.agent_id),
         is_platform_admin=bool(
             (row.execution_context or {}).get("is_platform_admin", False)
         ),

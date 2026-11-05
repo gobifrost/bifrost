@@ -160,6 +160,9 @@ reset_state() {
 import shutil
 from pathlib import Path
 for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdir():
+    if not checkout.is_dir() or checkout.is_symlink():
+        checkout.unlink()
+        continue
     for entry in checkout.iterdir():
         if entry.is_dir() and not entry.is_symlink():
             shutil.rmtree(entry)
@@ -522,10 +525,9 @@ start_test_client() {
     # startup out of stack_up so backend-only lanes never build or boot a
     # client they do not use. Both product and documentation browser projects
     # call this helper before starting the Playwright runner.
-    # The client service uses the shared bifrost-test-client-e2e:latest tag.
-    # Always rebuild it here, even when BIFROST_SKIP_BUILD=1 asks backend lanes
-    # to reuse cached API/test-runner images, so one worktree cannot silently
-    # run browser tests against another worktree's previously tagged client.
+    # Browser images use the same per-worktree tag as the API, so concurrent
+    # worktrees cannot replace the frontend between this build and startup.
+    # Rebuild here even when backend images are being reused.
     docker compose -f "$COMPOSE_FILE" build client
     # reset_state stops and starts the API, which can change its container IP.
     # Nginx resolves the `api` upstream when it starts, so retaining a client

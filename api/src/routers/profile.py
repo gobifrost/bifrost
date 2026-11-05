@@ -278,6 +278,18 @@ async def change_password(
             detail="User not found",
         )
 
+    # SSO-only policy: non-admins cannot set or change a password.
+    from src.services.oauth_config_service import (
+        PASSWORD_SSO_ONLY_DETAIL,
+        OAuthConfigService,
+    )
+
+    if not await OAuthConfigService(db).is_password_allowed_for(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
+
     # If user has a password, require current_password and verify it
     if user.hashed_password:
         if not request.current_password:

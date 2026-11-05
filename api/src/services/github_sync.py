@@ -133,6 +133,10 @@ class GitConnectDecisionError(SyncError):
     """A chosen connect strategy is unsafe or lacks required decisions."""
 
 
+class AppPreviewSyncError(SyncError):
+    """Preview publication failed after source storage was updated."""
+
+
 class _GitConnectPreviewRecord(BaseModel):
     token: str
     repository_url: str
@@ -543,7 +547,7 @@ class GitHubSyncService:
         decisions = resolve_connect_items(
             record.items, strategy=request.strategy, decisions=request.decisions
         )
-        async with self.repo_manager.checkout() as work_dir:
+        async with self.repo_manager.checkout(reset_local_state=True) as work_dir:
             local = _connect_tree_hashes(work_dir)
             if _connect_tree_fingerprint(local) != record.local_fingerprint:
                 raise GitConnectPreviewStale("workspace changed after the connection preview")
@@ -634,10 +638,10 @@ class GitHubSyncService:
         """
         Validate the remote repo's health without syncing.
 
-        Uses GitRepoManager to restore persistent .git/ from S3.
+        Uses an isolated published snapshot, preserving pending local Git work.
         Checks: Python syntax, ruff lint, UUID ref resolution, manifest validity.
         """
-        async with self.repo_manager.checkout() as work_dir:
+        async with self.repo_manager.checkout_readonly() as work_dir:
             if not (work_dir / ".git").exists():
                 self._clone_or_init(work_dir)
             return await self._run_preflight(work_dir)
@@ -1016,7 +1020,7 @@ class GitHubSyncService:
 
         try:
             await _progress("Syncing from storage...")
-            async with self.repo_manager.checkout() as work_dir:
+            async with self.repo_manager.checkout(reset_local_state=True) as work_dir:
                 repo = self._open_or_init(work_dir)
                 await _progress("Generating manifest...")
                 await self._regenerate_manifest_to_dir(self.db, work_dir)
@@ -1027,14 +1031,13 @@ class GitHubSyncService:
             return FetchResult(success=False, error=str(e))
 
     async def desktop_status(self) -> "WorkingTreeStatus":
-        """Get working tree status under the repo lock, without S3 sync."""
+        """Inspect durable Git state under the lock without publishing changes."""
         from src.models.contracts.github import WorkingTreeStatus
 
-        if not self.repo_manager.is_initialized:
-            return WorkingTreeStatus()
-
         try:
-            async with self.repo_manager.lock() as work_dir:
+            async with self.repo_manager.workspace(readonly=True) as work_dir:
+                if not self.repo_manager.is_initialized:
+                    return WorkingTreeStatus()
                 return self._do_status(work_dir, GitRepo(str(work_dir)))
         except GitStatusError:
             raise
@@ -1114,13 +1117,14 @@ class GitHubSyncService:
 
     async def desktop_commit(self, message: str) -> "CommitResult":
         """
-        Commit working tree changes (local only, no push, no S3 sync).
+        Commit working tree changes without pushing or publishing to _repo/.
+        Retain a private durable snapshot for later jobs on other executors.
         Runs preflight, commits if valid.
         """
         from src.models.contracts.github import CommitResult
 
         try:
-            async with self.repo_manager.lock() as work_dir:
+            async with self.repo_manager.workspace() as work_dir:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
@@ -1288,6 +1292,25 @@ class GitHubSyncService:
                     publication_plan.checkpoint_id
                 )
         except Exception as error:
+            from src.services.app_resource_limits import (
+                AppSourceCompilationError,
+                AppSourceLimitError,
+            )
+
+            if isinstance(error, (AppSourceLimitError, AppSourceCompilationError)):
+                logger.warning(
+                    "Workspace publication blocked by App source limits; source editing is required: %s",
+                    error,
+                )
+                return SyncResult(
+                    pull_success=True,
+                    pushed_commits=push_result.pushed_commits,
+                    commit_sha=push_result.commit_sha,
+                    entities_imported=entities_imported,
+                    entity_changes=all_entity_changes,
+                    error=str(error),
+                    retryable=False,
+                )
             logger.warning(
                 "Workspace publication failed after import; retaining local dirty state for retry: %s",
                 error,
@@ -1332,7 +1355,7 @@ class GitHubSyncService:
                 await progress_fn(phase, current, total)
 
         try:
-            async with self.repo_manager.lock() as work_dir:
+            async with self.repo_manager.workspace() as work_dir:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 if retry_plan and retry_plan.db_applied:
                     if not retry_plan.checkpoint_id:
@@ -1366,7 +1389,7 @@ class GitHubSyncService:
         from src.models.contracts.github import AbortMergeResult
 
         try:
-            async with self.repo_manager.lock() as work_dir:
+            async with self.repo_manager.workspace() as work_dir:
                 repo = self._open_or_init(work_dir)
 
                 merge_head = work_dir / ".git" / "MERGE_HEAD"
@@ -1384,12 +1407,12 @@ class GitHubSyncService:
         """
         Resolve merge conflicts after a failed pull.
         Applies ours/theirs per file, creates a merge commit.
-        NO push, NO S3 sync, NO entity import — those happen when user pushes via sync.
+        No push, _repo/ publication or entity import; retain private Git state.
         """
         from src.models.contracts.github import ResolveResult
 
         try:
-            async with self.repo_manager.lock() as work_dir:
+            async with self.repo_manager.workspace() as work_dir:
                 repo = self._open_or_init(work_dir)
 
                 # Check for merge state or unmerged entries (stash pop conflicts)
@@ -1444,11 +1467,11 @@ class GitHubSyncService:
             return ResolveResult(success=False, error=str(e))
 
     async def desktop_diff(self, path: str) -> "DiffResult":
-        """Get file diff: HEAD content vs working tree content. No S3 sync."""
+        """Get file diff from the durable local Git tree without publishing it."""
         from src.models.contracts.github import DiffResult
 
         try:
-            async with self.repo_manager.lock() as work_dir:
+            async with self.repo_manager.workspace(readonly=True) as work_dir:
                 repo = self._open_or_init(work_dir)
 
                 # Get HEAD content
@@ -1479,7 +1502,7 @@ class GitHubSyncService:
         from src.models.contracts.github import DiscardResult
 
         try:
-            async with self.repo_manager.lock() as work_dir:
+            async with self.repo_manager.workspace() as work_dir:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = self._open_or_init(work_dir)
                 if merge_in_progress(work_dir, repo):
@@ -1512,15 +1535,13 @@ class GitHubSyncService:
                     except Exception as e:
                         logger.warning(f"Failed to discard {path}: {e}")
 
-                # S3 sync up so other containers see the reverted files, and
-                # keep source search in step with what storage now holds
+                # Keep executable source current as soon as storage changes;
+                # fallible search-index maintenance must not leave stale code.
                 await self.repo_manager.sync_up(work_dir)
-                await self._update_file_index(work_dir)
-                await self.db.commit()
-
-                # Refresh Redis module cache so editor + workers see reverted .py content
                 from src.core.module_cache import refresh_modules_from_directory
                 await refresh_modules_from_directory(work_dir)
+                await self._update_file_index(work_dir)
+                await self.db.commit()
 
                 logger.info(f"Discarded {len(discarded)} file(s)")
                 return DiscardResult(success=True, discarded=discarded)
@@ -1712,27 +1733,37 @@ class GitHubSyncService:
             return
 
         import asyncio
+        from src.services.app_resource_limits import AppSourceCompilationError, AppSourceLimitError
 
         app_storage = AppStorageService(self.repo_manager._settings)
 
+        semaphore = asyncio.Semaphore(2)
+
         async def _sync_one_app(mapp_id: str, source_dir: str) -> None:
-            try:
+            async with semaphore:
                 synced, compile_errors = await app_storage.sync_preview_compiled(
                     mapp_id, source_dir
                 )
-                logger.info(f"Synced {synced} compiled preview files for app {mapp_id}")
-                if compile_errors:
-                    logger.warning(
-                        f"Compile errors for app {mapp_id}: {compile_errors}"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to sync preview for app {mapp_id}: {e}")
+            logger.info(f"Synced {synced} compiled preview files for app {mapp_id}")
+            if compile_errors:
+                raise AppSourceCompilationError(
+                    f"App {mapp_id} returned compilation errors: {compile_errors[:5]}"
+                )
 
-        # Process all apps concurrently
-        await asyncio.gather(*(
+        results = await asyncio.gather(*(
             _sync_one_app(mapp.id, mapp.path)
             for mapp in manifest.apps.values()
-        ))
+        ), return_exceptions=True)
+        for result in results:
+            if isinstance(result, (AppSourceLimitError, AppSourceCompilationError)):
+                raise result
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            first = failures[0]
+            raise AppPreviewSyncError(
+                "One or more app previews failed; successful peer previews remain "
+                f"published: {first}"
+            ) from first
 
     # -----------------------------------------------------------------
     # Reimport from repo (no git operations)
@@ -1748,7 +1779,7 @@ class GitHubSyncService:
         are returned as ``pending_deletes``; removing them goes through a git
         sync, which asks for confirmation.
         """
-        async with self.repo_manager.checkout() as work_dir:
+        async with self.repo_manager.checkout(isolated=True) as work_dir:
             storage_is_empty = not _has_workspace_files(work_dir)
 
             # Regenerate manifest from current DB state

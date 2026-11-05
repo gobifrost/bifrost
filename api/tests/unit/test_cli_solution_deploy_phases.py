@@ -270,6 +270,7 @@ def test_deploy_embeds_local_prebuild_without_mutating_workspace(tmp_path) -> No
             "bifrost.commands.solution._prebuild_apps",
             return_value=prebuilt,
         ),
+        mock.patch("bifrost.commands.solution._lookup_local_builds", new=mock.AsyncMock(return_value=(b"sdk", {}, {}))),
     ):
         result = CliRunner().invoke(
             solution_group, ["deploy", str(ws)], catch_exceptions=False

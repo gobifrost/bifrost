@@ -3360,7 +3360,8 @@ Options:
   --params-file FILE  Path to a JSON file with input parameters. Mutually
                       exclusive with --params.
   --org TEXT          Override execution org context (UUID or name). Requires
-                      platform admin. Omit to use the caller's default org.
+                      workflow execution permission at a reachable
+                      organization. Omit to use the caller's default org.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```

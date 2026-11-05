@@ -131,6 +131,9 @@ def _context():
         embed={},
         is_platform_admin=False,
         artifact_workspace_id="workspace-1",
+        is_agent=True,
+        execution_origin="agent",
+        agent_id="00000000-0000-0000-0000-0000000000aa",
     )
 
 
@@ -149,6 +152,9 @@ async def test_enqueue_code_execution_accepts_script_context_and_code_message():
 
     assert execution_id == "exec-sync"
     pending, message = accept.await_args.args
+    assert pending["execution_origin"] == "agent"
+    assert pending["agent_id"] == "00000000-0000-0000-0000-0000000000aa"
+    assert pending["is_agent"] is True
     assert pending["sync"] is True
     assert pending["script_name"] == "inline.py"
     assert pending["workflow_id"] is None

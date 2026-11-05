@@ -182,6 +182,8 @@ def test_export_apps_round_trip_source_and_logo() -> None:
         "fingerprint": "sdk-built-by-cli",
         "contract_version": 42,
     }
+    bundle.apps[0]["build_recipe"] = {"schema": 1}
+    bundle.apps[0]["reuse_deployment_id"] = "deployment"
     data = build_workspace_zip(bundle)
     result = preview_zip(data)
 
@@ -202,6 +204,8 @@ def test_export_apps_round_trip_source_and_logo() -> None:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         manifest = archive.read(".bifrost/apps.yaml").decode()
     assert "prebuilt_sdk_metadata" not in manifest
+    assert "build_recipe" not in manifest
+    assert "reuse_deployment_id" not in manifest
 
 
 def test_export_uses_source_logo_member_when_it_matches_metadata_logo() -> None:

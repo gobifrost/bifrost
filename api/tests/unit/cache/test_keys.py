@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 from src.core.cache.keys import (
     CONFIG_CACHE_COMPLETE_FIELD,
     TTL_CONFIG,
+    TTL_EXECUTION_LOGS,
     TTL_FORMS,
     TTL_ORGS,
     TTL_ROLES,
@@ -193,6 +194,10 @@ class TestTTLConstants:
     def test_ttl_roles(self):
         """Roles TTL is 10 minutes."""
         assert TTL_ROLES == 600
+
+    def test_ttl_execution_logs(self):
+        """Execution log streams expire after seven days at most."""
+        assert TTL_EXECUTION_LOGS == 604800
 
     def test_ttl_orgs(self):
         """Organizations TTL is 1 hour."""

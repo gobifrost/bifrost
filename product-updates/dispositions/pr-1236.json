@@ -1,0 +1,14 @@
+{
+  "key": "pr:1236",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal image-build bytecode preparation; no new capability, customer action, or end-to-end startup performance promise.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1236",
+      "Codex reviewed this editorial classification under the customer-facing selection policy. It records contributor disposition, not maintainer review or merge approval.",
+      "Fresh-interpreter component evidence and full-image/startup limitations are retained in docs/benchmarks/2026-11-04-checked-hash-image-bytecode.md."
+    ]
+  }
+}

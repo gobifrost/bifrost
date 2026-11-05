@@ -34,6 +34,20 @@ def test_scan_workflow_refs_query_and_mutation_hooks() -> None:
     assert scan_workflow_refs(src) == {"get_clients", "workflows/m.py::save"}
 
 
+def test_scan_workflow_refs_includes_literal_execute_calls() -> None:
+    src = (
+        'const queued = useWorkflow("queued");\n'
+        'await workflows.execute("workflows/report.py::run");\n'
+        'await sdk.workflows.execute("workflows/sync.py::main");\n'
+        "await workflows.execute(workflowRef);"
+    )
+    assert scan_workflow_refs(src) == {
+        "queued",
+        "workflows/report.py::run",
+        "workflows/sync.py::main",
+    }
+
+
 def test_scanners_ignore_unrelated_strings() -> None:
     # A bare string or a similarly-named symbol must NOT be picked up.
     src = 'name = "orders"\nimport environment\nconfigure("x")'

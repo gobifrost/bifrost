@@ -23,8 +23,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from src.core.principal import UserPrincipal
@@ -272,7 +272,7 @@ async def test_sdk_generator_keeps_json_alias_in_schema_and_calls_python_paramet
         seen["async_"] = async_
         return direct_result({"ok": True})
 
-    mcp = FastMCP("test")
+    mcp = MCPServer("test")
     context = object()
     register_tool_with_context(
         mcp,
@@ -287,7 +287,7 @@ async def test_sdk_generator_keeps_json_alias_in_schema_and_calls_python_paramet
     assert "async" in tool.parameters["properties"]
     assert "async_" not in tool.parameters["properties"]
 
-    await tool.run({"async": True}, convert_result=True)
+    await tool.run({"async": True}, context=Context(mcp_server=mcp), convert_result=True)
 
     assert seen == {"context": context, "async_": True}
 
@@ -321,7 +321,7 @@ async def test_sdk_refresh_rebinds_a_reused_workflow_tool_name(monkeypatch, org_
     monkeypatch.setattr(server, "_WORKFLOW_ID_TO_TOOL_NAME", {})
     monkeypatch.setattr(server, "_get_context_from_token", lambda: org_user_context)
     monkeypatch.setattr(server, "_execute_workflow_tool_impl", execute)
-    mcp = FastMCP("refresh-test")
+    mcp = MCPServer("refresh-test")
 
     assert await server._register_workflow_tools(mcp) == 1
     original = mcp._tool_manager.get_tool("reused_tool")
@@ -376,7 +376,7 @@ async def test_sdk_workflow_tools_share_metadata_and_keep_dynamic_schema(
     )
     monkeypatch.setattr(server, "_get_context_from_token", lambda: org_user_context)
     monkeypatch.setattr(server, "_execute_workflow_tool_impl", execute)
-    mcp = FastMCP("metadata-test")
+    mcp = MCPServer("metadata-test")
 
     assert await server._register_workflow_tools(mcp) == 2
     listed = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
@@ -697,3 +697,32 @@ class TestMCPContextInputCoercion:
     def test_none_org_id_remains_none(self):
         ctx = MCPContext(user_id=uuid4(), org_id=None)
         assert ctx.org_id is None
+
+
+@pytest.mark.asyncio
+async def test_sdk_dispatch_preserves_request_context_and_authorization(monkeypatch):
+    """The v2 dispatch hook must authorize before forwarding its request context."""
+    from mcp.server.mcpserver import Context
+    from src.services.mcp_server.server import BifrostSDKServer
+    from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+    mcp = BifrostSDKServer("context-test")
+    seen = []
+
+    async def context_tool(ctx: Context) -> str:
+        seen.append(ctx)
+        return "ok"
+
+    mcp.add_tool(context_tool)
+    authorize = AsyncMock()
+    monkeypatch.setattr(ToolFilterMiddleware, "authorize_tool_call", authorize)
+    context = Context(mcp_server=mcp)
+    result = await mcp.call_tool("context_tool", {}, context)
+    authorize.assert_awaited_once_with("context_tool")
+    assert seen == [context]
+    assert result.content[0].text == "ok"
+
+    authorize.side_effect = ToolError("Access denied")
+    with pytest.raises(ToolError, match="Access denied"):
+        await mcp.call_tool("context_tool", {}, context)
+    assert seen == [context]

@@ -1073,38 +1073,6 @@ async def update_delivery_from_execution(
                 error_message=error_message or "Delivery failed after all retry attempts.",
             )
 
-        # Broadcast event status update to WebSocket subscribers
-        event = await EventRepository(db).get_by_id(delivery.event_id)
-        if event and event.event_source:
-            from src.core.pubsub import manager
-
-            # Get delivery counts for this event
-            deliveries = await delivery_repo.get_by_event(delivery.event_id)
-            success_count = sum(1 for d in deliveries if d.status == EventDeliveryStatus.SUCCESS)
-            failed_count = sum(1 for d in deliveries if d.status == EventDeliveryStatus.FAILED)
-
-            channel = f"event-source:{event.event_source_id}"
-            message = {
-                "type": "event_updated",
-                "event": {
-                    "id": str(event.id),
-                    "event_source_id": str(event.event_source_id),
-                    "event_type": event.event_type,
-                    "status": getattr(event.status, "value", event.status),
-                    "received_at": event.received_at.isoformat() if event.received_at else None,
-                    "source_ip": event.source_ip,
-                    "success_count": success_count,
-                    "failed_count": failed_count,
-                    "delivery_count": len(deliveries),
-                },
-            }
-
-            try:
-                await manager.broadcast(channel, message)
-                logger.debug(f"Broadcast event_updated for {event.id}")
-            except Exception as e:
-                logger.warning(f"Failed to broadcast event update: {e}")
-
         return delivery
 
     if session is not None:
@@ -1118,4 +1086,57 @@ async def update_delivery_from_execution(
         async with session_factory() as db:
             delivery = await _do_update(db)
             await db.commit()
+            try:
+                await broadcast_delivery_update_after_commit(db, delivery)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to broadcast committed event delivery for %s: %s",
+                    execution_id,
+                    exc,
+                )
             return delivery
+
+
+async def broadcast_delivery_update_after_commit(
+    db: AsyncSession,
+    delivery: EventDelivery | None,
+) -> None:
+    """Broadcast one event delivery update after its owning commit succeeds."""
+    if delivery is None:
+        return
+
+    event = await EventRepository(db).get_by_id(delivery.event_id)
+    if not event or not event.event_source:
+        return
+
+    delivery_repo = EventDeliveryRepository(db)
+    deliveries = await delivery_repo.get_by_event(delivery.event_id)
+    success_count = sum(
+        1 for candidate in deliveries if candidate.status == EventDeliveryStatus.SUCCESS
+    )
+    failed_count = sum(
+        1 for candidate in deliveries if candidate.status == EventDeliveryStatus.FAILED
+    )
+    channel = f"event-source:{event.event_source_id}"
+    message = {
+        "type": "event_updated",
+        "event": {
+            "id": str(event.id),
+            "event_source_id": str(event.event_source_id),
+            "event_type": event.event_type,
+            "status": getattr(event.status, "value", event.status),
+            "received_at": event.received_at.isoformat() if event.received_at else None,
+            "source_ip": event.source_ip,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "delivery_count": len(deliveries),
+        },
+    }
+
+    try:
+        from src.core.pubsub import manager
+
+        await manager.broadcast(channel, message)
+        logger.debug("Broadcast event_updated for %s", event.id)
+    except Exception as exc:
+        logger.warning("Failed to broadcast event update: %s", exc)
