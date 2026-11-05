@@ -88,3 +88,140 @@ form_schema:
         )).scalars().all()
         assert len(fields) == 1
         assert fields[0].name == "email"
+
+    async def test_invalid_schema_preserves_existing_form_and_fields(
+        self, db_session: AsyncSession
+    ):
+        """A malformed replacement never partially overwrites a file-synced form."""
+        form_id = uuid4()
+        indexer = FormIndexer(db_session)
+        await indexer.index_form(
+            "forms/atomic.form.yaml",
+            f"""id: {form_id}
+name: Existing Form
+description: Existing metadata
+form_schema:
+  fields:
+  - name: email
+    type: text
+    label: Email
+""".encode(),
+        )
+        await db_session.flush()
+
+        await indexer.index_form(
+            "forms/atomic.form.yaml",
+            f"""id: {form_id}
+name: Replacement Must Not Apply
+description: Invalid metadata
+form_schema:
+  fields:
+  - name: missing_type
+    label: Missing Type
+""".encode(),
+        )
+        await db_session.flush()
+
+        form = await db_session.get(Form, form_id)
+        fields = (
+            await db_session.execute(
+                select(FormField)
+                .where(FormField.form_id == form_id)
+                .order_by(FormField.position)
+            )
+        ).scalars().all()
+        assert form is not None
+        assert form.name == "Existing Form"
+        assert form.description == "Existing metadata"
+        assert [(field.name, field.label) for field in fields] == [("email", "Email")]
+
+    async def test_valid_schema_replaces_all_existing_fields(
+        self, db_session: AsyncSession
+    ):
+        """A fully valid explicit schema atomically replaces the old field set."""
+        form_id = uuid4()
+        indexer = FormIndexer(db_session)
+        await indexer.index_form(
+            "forms/replacement.form.yaml",
+            f"""id: {form_id}
+name: Original Form
+form_schema:
+  fields:
+  - name: old_field
+    type: text
+    label: Old Field
+""".encode(),
+        )
+        await db_session.flush()
+
+        await indexer.index_form(
+            "forms/replacement.form.yaml",
+            f"""id: {form_id}
+name: Replaced Form
+fields:
+- name: count
+  type: number
+  label: Count
+  default: 5
+- name: notes
+  type: text
+  label: Notes
+""".encode(),
+        )
+        await db_session.flush()
+
+        form = await db_session.get(Form, form_id)
+        fields = (
+            await db_session.execute(
+                select(FormField)
+                .where(FormField.form_id == form_id)
+                .order_by(FormField.position)
+            )
+        ).scalars().all()
+        assert form is not None
+        assert form.name == "Replaced Form"
+        assert [(field.name, field.default_value) for field in fields] == [
+            ("count", 5),
+            ("notes", None),
+        ]
+
+    async def test_too_many_fields_preserves_existing_schema(
+        self, db_session: AsyncSession
+    ):
+        """The FormSchema 50-field limit applies before deletion or upsert."""
+        form_id = uuid4()
+        indexer = FormIndexer(db_session)
+        await indexer.index_form(
+            "forms/limit.form.yaml",
+            f"""id: {form_id}
+name: Existing Limited Form
+fields:
+- name: retained
+  type: text
+  label: Retained
+""".encode(),
+        )
+        await db_session.flush()
+
+        oversized_fields = "\n".join(
+            f"- name: field_{index}\n  type: text\n  label: Field {index}"
+            for index in range(51)
+        )
+        await indexer.index_form(
+            "forms/limit.form.yaml",
+            (
+                f"id: {form_id}\nname: Too Many Fields\nfields:\n"
+                f"{oversized_fields}\n"
+            ).encode(),
+        )
+        await db_session.flush()
+
+        form = await db_session.get(Form, form_id)
+        fields = (
+            await db_session.execute(
+                select(FormField).where(FormField.form_id == form_id)
+            )
+        ).scalars().all()
+        assert form is not None
+        assert form.name == "Existing Limited Form"
+        assert [field.name for field in fields] == ["retained"]

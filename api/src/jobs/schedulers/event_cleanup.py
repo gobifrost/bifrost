@@ -80,6 +80,11 @@ async def cleanup_stuck_events() -> dict[str, Any]:
                         )
                         if updated is not None:
                             results["deliveries_reconciled"] += 1
+                            # update_delivery_from_execution deliberately
+                            # defers its WebSocket publication when sharing our
+                            # transaction. Include this update in the batch
+                            # that is emitted only after cleanup commits.
+                            broadcast_deliveries.append(updated)
                     elif delivery.agent_run is not None:
                         delivery_status = (
                             EventDeliveryStatus.SUCCESS
@@ -150,6 +155,12 @@ async def cleanup_stuck_events() -> dict[str, Any]:
                             "event_source_id": str(delivery.event.event_source_id),
                             "event_type": delivery.event.event_type,
                             "status": getattr(delivery.event.status, "value", delivery.event.status),
+                            "received_at": (
+                                delivery.event.received_at.isoformat()
+                                if delivery.event.received_at
+                                else None
+                            ),
+                            "source_ip": delivery.event.source_ip,
                             "success_count": success_count,
                             "failed_count": failed_count,
                             "delivery_count": len(deliveries),
@@ -164,15 +175,17 @@ async def cleanup_stuck_events() -> dict[str, Any]:
 
         for data in broadcast_data:
             try:
-                await manager.publish(
+                await manager.broadcast(
                     channel=data["channel"],
                     message={
-                        "type": "event_update",
+                        "type": "event_updated",
                         "event": {
                             "id": data["event_id"],
                             "event_source_id": data["event_source_id"],
                             "event_type": data["event_type"],
                             "status": data["status"],
+                            "received_at": data["received_at"],
+                            "source_ip": data["source_ip"],
                             "success_count": data["success_count"],
                             "failed_count": data["failed_count"],
                             "delivery_count": data["delivery_count"],

@@ -77,6 +77,23 @@ async def test_retry_timeout_uses_attempt_age(
 async def test_stuck_delivery_cleanup_follows_attached_run_liveness(
     event_source, subscription, test_workflow, db_session, monkeypatch
 ):
+    cleanup_committed = False
+    original_commit = db_session.commit
+
+    async def commit_cleanup_transaction():
+        nonlocal cleanup_committed
+        await original_commit()
+        cleanup_committed = True
+
+    published_updates: list[dict] = []
+
+    async def publish_after_commit(channel, message):
+        assert cleanup_committed
+        published_updates.append({"channel": channel, "message": message})
+
+    monkeypatch.setattr(db_session, "commit", commit_cleanup_transaction)
+    monkeypatch.setattr("src.core.pubsub.manager.broadcast", publish_after_commit)
+
     old = datetime.now(timezone.utc) - timedelta(minutes=10)
     event = Event(
         id=uuid4(),
@@ -221,6 +238,26 @@ async def test_stuck_delivery_cleanup_follows_attached_run_liveness(
     monkeypatch.setattr(event_cleanup, "get_db_context", db_context)
 
     result = await event_cleanup.cleanup_stuck_events()
+
+    assert published_updates
+    for update in published_updates:
+        assert update["message"]["type"] == "event_updated"
+        assert set(update["message"]["event"]) == {
+            "id",
+            "event_source_id",
+            "event_type",
+            "status",
+            "received_at",
+            "source_ip",
+            "success_count",
+            "failed_count",
+            "delivery_count",
+        }
+        assert update["message"]["event"]["id"] == str(event.id)
+        assert update["message"]["event"]["event_source_id"] == str(event.event_source_id)
+        assert update["message"]["event"]["event_type"] == event.event_type
+        assert update["message"]["event"]["received_at"] == event.received_at.isoformat()
+        assert update["message"]["event"]["source_ip"] == event.source_ip
 
     for delivery in deliveries.values():
         await db_session.refresh(delivery)
