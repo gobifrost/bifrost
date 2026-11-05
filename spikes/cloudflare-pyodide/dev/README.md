@@ -1,5 +1,9 @@
 # Isolated development deployment
 
+[Latest guarded canonical integration](GUARDED-LOCAL.md) now passes the real
+engine/SDK, duplicate/reconciliation and cleanup fixture locally. Deployed
+combined acceptance remains separate.
+
 [Optional provider configuration and boundaries](PROVIDERS.md): Cloudflare
 hosting/ingress/execution are independent choices behind upstream contracts.
 
