@@ -2,11 +2,13 @@
 
 import asyncio
 import os
+import threading
 
 import pytest
 
 from src.services import node_subprocess
 from src.services.node_subprocess import (
+    NodeScriptAdmissionError,
     NodeScriptOutputLimitError,
     NodeScriptPolicy,
     NodeScriptTimeoutError,
@@ -119,3 +121,45 @@ async def test_mixed_tools_share_the_process_wide_admission_cap(tmp_path):
     )
 
     assert asyncio.get_running_loop().time() - started >= 0.55
+
+
+@pytest.mark.asyncio
+async def test_admission_timeout_releases_the_tool_slot(tmp_path, monkeypatch):
+    script = tmp_path / "exit.js"
+    script.write_text("process.exit(0);")
+    process_slots = threading.BoundedSemaphore(1)
+    process_slots.acquire()
+    monkeypatch.setattr(node_subprocess, "_process_admission", process_slots)
+    policy = NodeScriptPolicy("busy tool", 1024, 1024, 5, 0.01, 64, 1)
+
+    with pytest.raises(NodeScriptAdmissionError):
+        await run_node_script(script, b"", policy=policy)
+
+    process_slots.release()
+    assert await run_node_script(script, b"", policy=policy) == (0, b"", b"")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_admission_releases_the_tool_slot(tmp_path, monkeypatch):
+    script = tmp_path / "exit.js"
+    script.write_text("process.exit(0);")
+    process_slots = threading.BoundedSemaphore(1)
+    process_slots.acquire()
+    monkeypatch.setattr(node_subprocess, "_process_admission", process_slots)
+    waiting = asyncio.Event()
+    acquire_process_slot = node_subprocess._acquire_process_slot
+
+    async def record_admission(timeout_seconds):
+        waiting.set()
+        await acquire_process_slot(timeout_seconds)
+
+    monkeypatch.setattr(node_subprocess, "_acquire_process_slot", record_admission)
+    policy = NodeScriptPolicy("cancelled tool", 1024, 1024, 5, 1, 64, 1)
+    task = asyncio.create_task(run_node_script(script, b"", policy=policy))
+    await waiting.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.gather(task)
+
+    process_slots.release()
+    assert await run_node_script(script, b"", policy=policy) == (0, b"", b"")

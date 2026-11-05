@@ -165,6 +165,8 @@ async def _write_stdin(proc: asyncio.subprocess.Process, input_data: bytes) -> N
         try:
             await proc.stdin.wait_closed()
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # Closing stdin can repeat the child's early-exit pipe error;
+            # stdout, stderr and its exit status carry the actual failure.
             pass
 
 
@@ -193,25 +195,19 @@ async def run_node_script(
         )
     policy_admission = _admission_locks_for(policy)
     policy_acquired = False
-    process_acquired = False
     try:
         await asyncio.wait_for(
             policy_admission.acquire(), timeout=policy.admission_timeout_seconds
         )
         policy_acquired = True
         await _acquire_process_slot(policy.admission_timeout_seconds)
-        process_acquired = True
     except TimeoutError as exc:
-        if process_acquired:
-            _process_admission.release()
         if policy_acquired:
             policy_admission.release()
         raise NodeScriptAdmissionError(
             f"{policy.name} is busy; retry after other App builds finish."
         ) from exc
     except BaseException:
-        if process_acquired:
-            _process_admission.release()
         if policy_acquired:
             policy_admission.release()
         raise
@@ -255,10 +251,8 @@ async def run_node_script(
                 task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        if process_acquired:
-            _process_admission.release()
-        if policy_acquired:
-            policy_admission.release()
+        _process_admission.release()
+        policy_admission.release()
     memory_error = subprocess_memory_error(proc.returncode, stderr, stdout)
     if memory_error is not None:
         stderr = str(memory_error).encode()
