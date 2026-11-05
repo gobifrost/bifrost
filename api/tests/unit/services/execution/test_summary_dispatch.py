@@ -304,3 +304,25 @@ async def test_regeneration_replaces_pending_work_and_preserves_active_backfill_
     assert new_dispatch is not None and new_dispatch.id != old_dispatch.id
     assert [entry.id for entry in await world.dispatches(run_id)] == [new_dispatch.id]
 
+
+
+async def test_replaced_summary_owner_refuses_settlement_without_reporting_success(monkeypatch):
+    from unittest.mock import Mock
+
+    db = Mock(commit=AsyncMock(), scalar=AsyncMock())
+
+    @asynccontextmanager
+    async def context():
+        yield db
+
+    monkeypatch.setattr(summary_dispatch, "get_db_context", context)
+    monkeypatch.setattr(summary_dispatch, "fence_remote_owner", AsyncMock(return_value=False))
+    report = AsyncMock()
+    monkeypatch.setattr(summary_dispatch, "report_unclaimed_summary", report)
+    with pytest.raises(ConnectionError, match="ownership"):
+        await summary_dispatch.fail_remote_summary(
+            worker_id=uuid4(), run_id=uuid4(), claim_id=uuid4(), reason="child stopped",
+        )
+    db.scalar.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    report.assert_not_awaited()

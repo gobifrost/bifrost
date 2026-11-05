@@ -23,6 +23,7 @@ from src.services.execution.agent_run_dispatch import (
     hand_off_agent_run,
     stage_agent_run,
 )
+from src.worker.remote.fencing import fence_remote_owner
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -306,6 +307,8 @@ async def announce_ended_agent_run(run_id: UUID, error: str) -> bool:
     whether this call ended the run.
     """
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            raise ConnectionError("Remote ownership was lost before ending the agent run")
         run = await db.get(AgentRun, run_id, with_for_update={"of": AgentRun})
         if run is None or run.status not in ("queued", "running", "cancelling"):
             return False

@@ -585,3 +585,22 @@ async def test_a_reconnected_launcher_gets_no_work_until_its_inventory_is_reconc
 
     consumer.detach()
     await asyncio.gather(*executor._tasks["agent.run"], return_exceptions=True)
+
+
+async def test_failed_terminal_commit_keeps_route_for_replay(announce) -> None:
+    launcher = Launcher()
+    consumer = RemoteAgentConsumer(launcher, worker_id=LEASE.worker_id)
+    waiting, route_id = await _launch(consumer, launcher, _body())
+    try:
+        announce.side_effect = ConnectionError("database unavailable")
+        with pytest.raises(ConnectionError):
+            await consumer.handle_exit({"event": "agent_exit", "route_id": route_id, "ok": False})
+        assert consumer.tracks(route_id)
+        assert not consumer.routes[route_id].exited.done()
+        announce.side_effect = None
+        await consumer.handle_exit({"event": "agent_exit", "route_id": route_id, "ok": False})
+        await waiting
+        assert not consumer.tracks(route_id)
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)

@@ -35,7 +35,7 @@ from src.services.worker_pool.claims import (
 )
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
-from src.worker.remote.fencing import LeaseRef, remote_owner_context
+from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, remote_owner_context
 from src.worker.remote.ownership import (
     DEFAULT_OWNER_LEASE_SECONDS,
     RemoteOwnerLease,
@@ -181,10 +181,20 @@ class Bridge:
 
     async def acknowledge(self, event_id: str) -> None:
         """Release a launcher-retained terminal result after canonical delivery."""
+        ref = current_remote_lease_ref()
+        lease = ref.lease if ref is not None else self.lease
+        socket = self.socket
         async with self.lock:
+            if ref is not None:
+                if self.lease != lease or self.socket is not socket:
+                    raise ConnectionError("Remote session was replaced before ACK")
+                if not await owns_remote_session(lease):
+                    raise ConnectionError("Remote ownership was lost before ACK")
+                if self.lease != lease or self.socket is not socket:
+                    raise ConnectionError("Remote session was replaced during ACK check")
             self._sequence += 1
-            await self.socket.send_text(ControlEnvelope(
-                session_generation=self.lease.session_generation,
+            await socket.send_text(ControlEnvelope(
+                session_generation=lease.session_generation,
                 sequence=self._sequence,
                 kind="ack",
                 payload={"event_id": event_id},
@@ -386,14 +396,21 @@ class Bridge:
         # Completion may call SDK/Redis/DB or send a new command. Never
         # block this receiver, which must also deliver command replies. The
         # launcher receives ACK only after that canonical mutation returns.
+        inherited_ref = current_remote_lease_ref() or self.lease_ref
+        # A terminal event belongs to the generation that delivered it. Unlike
+        # the executor's mutable reconnect ref, it cannot adopt a newer owner.
+        terminal_ref = LeaseRef(inherited_ref.lease) if inherited_ref is not None else None
+
         async def handle_event() -> None:
-            if self.lease_ref is None:
+            if terminal_ref is None:
                 await deliver(event)
+                if isinstance(event_id, str):
+                    await self.acknowledge(event_id)
             else:
-                with remote_owner_context(self.lease_ref):
+                with remote_owner_context(terminal_ref):
                     await deliver(event)
-            if isinstance(event_id, str):
-                await self.acknowledge(event_id)
+                    if isinstance(event_id, str):
+                        await self.acknowledge(event_id)
 
         task = asyncio.create_task(handle_event())
         self.results.add(task)
@@ -1154,7 +1171,8 @@ async def remote_control(socket: WebSocket) -> None:
                 raise ProtocolError("remote API owner fence was replaced")
             if logical.kind != "event":
                 raise ProtocolError("launcher may only send events")
-            await session.bridge.receive(logical.payload)
+            with remote_owner_context(LeaseRef(session.lease)):
+                await session.bridge.receive(logical.payload)
             if logical.payload.get("event") == "inventory":
                 session.reconcile_transport_inventory(socket)
             elif logical.payload.get("event") == "draining":
