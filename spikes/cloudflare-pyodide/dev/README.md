@@ -1,5 +1,8 @@
 # Isolated development deployment
 
+[Optional provider configuration and boundaries](PROVIDERS.md): Cloudflare
+hosting/ingress/execution are independent choices behind upstream contracts.
+
 Current preparation: [guarded canonical candidate](CANONICAL-CANDIDATE.md) builds
 offline with cf CLI; [closed-guard/API alignment](CANONICAL-ALIGNMENT.md) verifies
 local denial and an actual dev-schema mismatch. This candidate is not deployed.

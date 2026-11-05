@@ -1,12 +1,14 @@
 import {defineConfig} from 'cf/config';
+import {deploymentOptions} from './deployment-options.mjs';
+const deployment = deploymentOptions(process.env);
 export default defineConfig({
-  accountId: 'b5fc61a1bec847ecc83b3b880b563aaf',
+  accountId: deployment.accountId,
   worker: {
-    name: 'bifrost-pyodide-spike-ddf316c1',
+    name: deployment.executorName,
     entrypoint: './entry.mjs', compatibilityDate: '2026-10-30',
     workersDev: process.env.DEV_EXECUTOR_OPEN === 'true', previewUrls: false,
-    env: {LOADER: {type: 'worker-loader'}, DEV_API: {type: 'worker', worker: 'bifrost-pyodide-dev-ui-ddf316c1'},
-      API_ORIGIN: {type: 'text', value: 'https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev'},
+    env: {LOADER: {type: 'worker-loader'}, DEV_API: {type: 'worker', worker: deployment.apiWorker},
+      API_ORIGIN: {type: 'text', value: deployment.apiOrigin},
       DEV_EXPIRES_AT: {type: 'text', value: process.env.DEV_EXECUTOR_EXPIRES_AT ?? '0'}},
     limits: {cpuMs: 1000}, observability: {enabled: false},
   },

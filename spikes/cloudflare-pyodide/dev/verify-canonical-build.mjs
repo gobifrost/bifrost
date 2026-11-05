@@ -11,7 +11,7 @@ const receipt = JSON.parse(read('canonical-build-v2-receipt.json'));
 for (const [name, digest] of Object.entries(source.files_sha256)) {
   if (name.endsWith('cooperative-code.mjs') || name.endsWith('rpc-serialization-code.mjs')) continue;
   // The v2 build predates the separate declared-capability admission guard.
-  const bytes = name === 'dev/executor/canonical-entry.mjs'
+  const bytes = ['dev/executor/canonical-entry.mjs', 'dev/executor/cloudflare.config.ts'].includes(name)
     ? execFileSync('git', ['show', 'b578cae4b561cf213ea44339a2afe96885e174ca:spikes/cloudflare-pyodide/'+name])
     : readFileSync(new URL('../'+name, import.meta.url));
   const actual = name === 'dev/executor/cloudflare.config.ts'
