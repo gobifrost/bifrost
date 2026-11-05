@@ -84,7 +84,7 @@ async def test_terminal_ack_holds_owner_lock_until_its_bounded_send_finishes(
         sending.set()
         await finish_send.wait()
 
-    monkeypatch.setattr("src.worker.remote.host.get_liveness_db_context", context)
+    monkeypatch.setattr("src.worker.remote.host.get_db_context", context)
     async with async_session_factory() as db:
         db.add(ExecutionWorker(
             id=worker_id, form="static", state="ready", resource_class="standard", slots=1,

@@ -20,7 +20,7 @@ from sqlalchemy.exc import DBAPIError, TimeoutError as SQLAlchemyTimeoutError
 from starlette.websockets import WebSocketState
 
 from src.config import get_settings
-from src.core.database import get_liveness_db_context
+from src.core.database import get_db_context, get_liveness_db_context
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.schedulers.platform_jobs import claim_platform_job, run_claimed_platform_job
 from src.models.orm.execution_workers import ExecutionWorker
@@ -189,7 +189,7 @@ class Bridge:
                 if self.lease != lease or self.socket is not socket:
                     raise ConnectionError("Remote session was replaced before ACK")
                 await stack.enter_async_context(asyncio.timeout(DEFAULT_OWNER_LEASE_SECONDS))
-                db = await stack.enter_async_context(get_liveness_db_context())
+                db = await stack.enter_async_context(get_db_context())
                 with remote_owner_context(LeaseRef(lease)):
                     if not await fence_remote_owner(db):
                         raise ConnectionError("Remote ownership was lost before ACK")

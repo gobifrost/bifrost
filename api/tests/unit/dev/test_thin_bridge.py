@@ -232,5 +232,5 @@ def ack_database(monkeypatch):
     async def context():
         yield db
 
-    monkeypatch.setattr("src.worker.remote.host.get_liveness_db_context", context)
+    monkeypatch.setattr("src.worker.remote.host.get_db_context", context)
     return db
