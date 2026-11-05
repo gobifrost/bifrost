@@ -167,8 +167,8 @@ def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> Non
         assert 'tag: "@smoke"' in source, relative_path
 
 
-def test_fresh_ci_jobs_consume_clean_boot_state_once() -> None:
-    """Fresh hosted jobs must opt into the one-shot redundant-reset bypass."""
+def test_ci_jobs_use_command_owned_stacks() -> None:
+    """Each CI test invocation owns startup, diagnostics and teardown."""
     ci_jobs = _load_workflow(CI_WORKFLOW)["jobs"]
     nightly_jobs = _load_workflow(NIGHTLY_WORKFLOW)["jobs"]
     selected = [
@@ -181,14 +181,13 @@ def test_fresh_ci_jobs_consume_clean_boot_state_once() -> None:
     ]
 
     for job in selected:
-        run_step = next(
-            step
+        commands = "\n".join(step.get("run", "") for step in job["steps"])
+        assert "./test.sh stack up" not in commands
+        assert "./test.sh" in commands
+        assert all(
+            "BIFROST_TEST_USE_CLEAN_BOOT" not in step.get("env", {})
             for step in job["steps"]
-            if "./test.sh stack up" in step.get("run", "")
         )
-        assert run_step["env"]["BIFROST_TEST_USE_CLEAN_BOOT"] == "1"
-        commands = run_step["run"]
-        assert commands.index("./test.sh stack up") < commands.rindex("./test.sh")
 
 
 def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild() -> None:

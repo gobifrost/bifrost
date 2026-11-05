@@ -103,6 +103,11 @@ jobs:
       - name: Check E2E shard allocation
         run: python3 -m unittest scripts.test_e2e_shard
 
+      - name: Check stack lifecycle and ownership
+        run: |
+          python3 -m unittest scripts.test_stack_lifecycle scripts.test_memory_sampler
+          bash scripts/lib/test_stack_lock_test.sh
+
       - name: Check Rewst extraction helper offline
         run: |
           python3 scripts/sync_rewst_migration_client.py --check
@@ -424,10 +429,8 @@ jobs:
       - name: Run critical browser smoke
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           ./test.sh client smoke
 
       - name: Export stack logs and tear down
@@ -479,10 +482,8 @@ jobs:
       - name: Run unit tests
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           ./test.sh unit
 
   # =============================================================================
@@ -533,10 +534,8 @@ jobs:
       - name: Run E2E tests (shard ${{ matrix.shard }}/3)
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           mapfile -t shard_files < <(python3 scripts/e2e_shard.py --shard-id ${{ matrix.shard }} --total 3)
           if [ ${#shard_files[@]} -eq 0 ]; then
             echo "ERROR: shard ${{ matrix.shard }} resolved to zero files" >&2
@@ -550,7 +549,7 @@ jobs:
         run: |
           source scripts/lib/test_helpers.sh
           bifrost_test_project="$(compute_project_name .)"
-          COMPOSE_PROJECT_NAME="$bifrost_test_project" docker compose -f docker-compose.test.yml logs --tail=300 api
+          tail -n 300 "/tmp/bifrost-$bifrost_test_project/api.log"
 
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
   # Fails if any backend E2E shard, the client unit suite, or the critical
