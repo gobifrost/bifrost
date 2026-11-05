@@ -75,14 +75,20 @@ class AppStorageService:
         Returns:
             Number of files synced.
         """
+        from src.services.app_resource_limits import validate_app_source_metadata
         from src.services.repo_storage import REPO_PREFIX
 
         source_prefix = f"{REPO_PREFIX}{source_dir_in_repo.rstrip('/')}/"
         preview_prefix = self._key(app_id, "preview")
 
         async with self._get_client() as client:
-            # List source files in _repo/
-            source_keys = await self._list_keys(client, source_prefix)
+            source_entries = await self._list_keys_with_sizes(client, source_prefix)
+            source_keys = list(source_entries)
+            validate_app_source_metadata({
+                key[len(source_prefix):]: size
+                for key, size in source_entries.items()
+                if key[len(source_prefix):]
+            })
 
             # List existing preview files
             existing_preview_keys = await self._list_keys(client, preview_prefix)
@@ -141,15 +147,32 @@ class AppStorageService:
         Returns:
             Tuple of (files_synced, compile_errors).
         """
-        from src.services.app_compiler import AppCompilerService
+        from src.services.app_compiler import (
+            AppCompilerInfrastructureError,
+            AppCompilerService,
+        )
+        from src.services.app_resource_limits import (
+            AppSourceCompilationError,
+            validate_app_source_metadata,
+            validate_app_source_write,
+        )
         from src.services.repo_storage import REPO_PREFIX
 
         source_prefix = f"{REPO_PREFIX}{source_dir_in_repo.rstrip('/')}/"
         preview_prefix = self._key(app_id, "preview")
 
         async with self._get_client() as client:
-            # List source files in _repo/
-            source_keys = await self._list_keys(client, source_prefix)
+            # List source metadata before any object body is read. This keeps a
+            # Git preview from turning an arbitrary source prefix into an
+            # unbounded API allocation.
+            source_entries = await self._list_keys_with_sizes(client, source_prefix)
+            source_keys = list(source_entries)
+            source_sizes = {
+                key[len(source_prefix):]: size
+                for key, size in source_entries.items()
+                if key[len(source_prefix):]
+            }
+            validate_app_source_metadata(source_sizes)
 
             # List existing preview files
             existing_preview_keys = await self._list_keys(client, preview_prefix)
@@ -157,7 +180,9 @@ class AppStorageService:
                 k[len(preview_prefix):] for k in existing_preview_keys
             }
 
-            # Read all source files and collect TS/TSX for compilation
+            # Read all source files and collect TS/TSX for compilation. No
+            # preview object or cache changes occur until this complete staged
+            # input compiles successfully.
             source_files: list[tuple[str, bytes]] = []  # (rel_path, content)
             for source_key in source_keys:
                 rel_path = source_key[len(source_prefix):]
@@ -165,6 +190,7 @@ class AppStorageService:
                     continue
                 response = await client.get_object(Bucket=self._bucket, Key=source_key)
                 content = await response["Body"].read()
+                validate_app_source_write(rel_path, content)
                 source_files.append((rel_path, content))
 
             # Batch-compile TS/TSX files
@@ -183,6 +209,12 @@ class AppStorageService:
                     for rel, content in ts_files
                 ]
                 results = await compiler.compile_batch(batch_input)
+                expected_paths = {path for path, _ in ts_files}
+                result_paths = [result.path for result in results]
+                if len(result_paths) != len(expected_paths) or set(result_paths) != expected_paths:
+                    raise AppCompilerInfrastructureError(
+                        "Compiler response did not cover every preview source file"
+                    )
 
                 for result in results:
                     if result.success and result.compiled:
@@ -192,6 +224,12 @@ class AppStorageService:
                         logger.warning(
                             f"Compilation failed for {result.path}: {result.error}"
                         )
+
+            if compile_errors:
+                raise AppSourceCompilationError(
+                    "App preview compilation failed; existing preview artifacts were retained: "
+                    + "; ".join(compile_errors[:5])
+                )
 
             # Write to preview (compiled JS for TS/TSX, raw for others)
             synced = 0
@@ -285,6 +323,17 @@ class AppStorageService:
         async with self._get_client() as client:
             keys = await self._list_keys(client, prefix)
             return [k[len(prefix):] for k in keys if k[len(prefix):]]
+
+    async def list_files_with_metadata(self, app_id: str, mode: AppMode) -> dict[str, int]:
+        """List App files with byte sizes before a caller reads their bodies."""
+        prefix = self._key(app_id, mode)
+        async with self._get_client() as client:
+            entries = await self._list_keys_with_sizes(client, prefix)
+        return {
+            key[len(prefix):]: size
+            for key, size in entries.items()
+            if key[len(prefix):]
+        }
 
     # -----------------------------------------------------------------
     # Publish: copy preview → live
@@ -538,3 +587,25 @@ class AppStorageService:
             continuation_token = response.get("NextContinuationToken")
 
         return keys
+
+    async def _list_keys_with_sizes(self, client, prefix: str) -> dict[str, int]:
+        """List objects under a prefix with their S3-reported byte sizes."""
+        entries: dict[str, int] = {}
+        continuation_token = None
+
+        while True:
+            kwargs = {"Bucket": self._bucket, "Prefix": prefix}
+            if continuation_token:
+                kwargs["ContinuationToken"] = continuation_token
+
+            response = await client.list_objects_v2(**kwargs)
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                if not key.endswith("/"):
+                    entries[key] = int(obj["Size"])
+
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
+
+        return entries

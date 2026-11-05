@@ -193,7 +193,22 @@ class FileOperationsService:
             )
             detection_result = detect_python_entity_type_with_ast(content)
             cached_ast = detection_result.ast_tree
-            cached_content_str = detection_result.content_str
+            # Syntax failures must reach the full metadata path, which emits
+            # diagnostics. Passing cached content with no AST would instead
+            # take the decorator-free fast path and silently skip it.
+            cached_content_str = (
+                None
+                if detection_result.syntax_error is not None
+                else detection_result.content_str
+            )
+
+        # Validate an app source file before its first durable write. The
+        # lookup also gives the later preview refresh the same owning app.
+        app = await self._find_app_by_path(path)
+        if app is not None:
+            from src.services.app_resource_limits import validate_app_source_write
+
+            validate_app_source_write(path, content)
 
         # Write ALL files to S3 under _repo/ prefix — this is the durable store.
         # Platform entities also go to S3 so the Redis→S3 fallback works for workers.
@@ -279,7 +294,6 @@ class FileOperationsService:
                 )
 
         # App files: rebuild bundle + fire pubsub for real-time preview
-        app = await self._find_app_by_path(path)
         if not app and path.startswith("apps/"):
             logger.info(
                 f"No Application matched path {log_safe(path)!r} — preview refresh skipped. "

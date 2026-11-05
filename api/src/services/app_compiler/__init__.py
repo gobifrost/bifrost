@@ -13,7 +13,19 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.services.node_subprocess import run_node_script
+from src.services.node_subprocess import (
+    APP_COMPILER_NODE_POLICY,
+    NodeScriptInputLimitError,
+    NodeScriptLimitError,
+    TAILWIND_NODE_POLICY,
+    run_node_script,
+)
+from src.services.app_resource_limits import (
+    AppSourceCompilationError,
+    AppSourceLimitError,
+    validate_app_source_metadata,
+    validate_app_source_write,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +44,14 @@ class CompileResult:
     named_exports: list[str] = field(default_factory=list)
 
 
+class TailwindGenerationError(ValueError):
+    """The required Tailwind build step could not produce CSS."""
+
+
+class AppCompilerInfrastructureError(RuntimeError):
+    """The compiler process or its response was unavailable or malformed."""
+
+
 class AppCompilerService:
     """Compile TSX/JSX source files via Node.js subprocess."""
 
@@ -45,57 +65,122 @@ class AppCompilerService:
         if not files:
             return []
 
+        _validate_compile_input(files)
         input_data = json.dumps({"files": files})
 
         try:
-            returncode, stdout, stderr = await run_node_script(COMPILE_SCRIPT, input_data.encode())
+            returncode, stdout, stderr = await run_node_script(
+                COMPILE_SCRIPT, input_data.encode(), policy=APP_COMPILER_NODE_POLICY
+            )
 
             if returncode != 0:
                 error_msg = stderr.decode().strip() or "Node process exited with error"
                 logger.error(f"Compiler process failed: {error_msg}")
-                return [
-                    CompileResult(path=f["path"], success=False, error=error_msg)
-                    for f in files
-                ]
+                raise AppCompilerInfrastructureError(error_msg)
 
-            output = json.loads(stdout.decode())
+            try:
+                output = json.loads(stdout.decode())
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise AppCompilerInfrastructureError(
+                    f"Compiler returned invalid JSON: {exc}"
+                ) from exc
 
             if "error" in output:
-                return [
-                    CompileResult(path=f["path"], success=False, error=output["error"])
-                    for f in files
-                ]
+                raise AppCompilerInfrastructureError(str(output["error"]))
 
-            results = []
-            for item in output.get("results", []):
+            raw_results = output.get("results")
+            if not isinstance(raw_results, list):
+                raise AppCompilerInfrastructureError("Compiler response omitted its results list")
+            expected_paths = [file["path"] for file in files]
+            if len(raw_results) != len(expected_paths):
+                raise AppCompilerInfrastructureError(
+                    "Compiler response did not return exactly one result for every source file"
+                )
+
+            results: list[CompileResult] = []
+            result_paths: set[str] = set()
+            for item in raw_results:
+                if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                    raise AppCompilerInfrastructureError("Compiler response has a malformed result")
+                path = item["path"]
+                if path in result_paths:
+                    raise AppCompilerInfrastructureError(
+                        "Compiler response returned duplicate source paths"
+                    )
+                result_paths.add(path)
                 if item.get("error"):
                     results.append(CompileResult(
-                        path=item["path"],
+                        path=path,
                         success=False,
-                        error=item["error"],
+                        error=str(item["error"]),
                     ))
                 else:
+                    if not isinstance(item.get("compiled"), str):
+                        raise AppCompilerInfrastructureError(
+                            f"Compiler response omitted compiled output for {path!r}"
+                        )
+                    default_export = item.get("defaultExport")
+                    named_exports = item.get("namedExports", [])
+                    if default_export is not None and not isinstance(default_export, str):
+                        raise AppCompilerInfrastructureError(
+                            f"Compiler response has an invalid default export for {path!r}"
+                        )
+                    if not isinstance(named_exports, list) or not all(
+                        isinstance(name, str) for name in named_exports
+                    ):
+                        raise AppCompilerInfrastructureError(
+                            f"Compiler response has invalid named exports for {path!r}"
+                        )
                     results.append(CompileResult(
-                        path=item["path"],
+                        path=path,
                         success=True,
                         compiled=item["compiled"],
-                        default_export=item.get("defaultExport"),
-                        named_exports=item.get("namedExports", []),
+                        default_export=default_export,
+                        named_exports=named_exports,
                     ))
+            if result_paths != set(expected_paths):
+                raise AppCompilerInfrastructureError(
+                    "Compiler response paths do not match the submitted source files"
+                )
             return results
 
+        except NodeScriptInputLimitError as exc:
+            raise AppSourceLimitError(str(exc)) from exc
+        except NodeScriptLimitError:
+            raise
         except FileNotFoundError:
             logger.error("Node.js not found — cannot compile app files")
-            return [
-                CompileResult(path=f["path"], success=False, error="Node.js not available")
-                for f in files
-            ]
+            raise AppCompilerInfrastructureError("Node.js not available for App compilation")
+        except AppCompilerInfrastructureError:
+            raise
         except Exception as e:
             logger.exception(f"Compilation failed: {e}")
-            return [
-                CompileResult(path=f["path"], success=False, error=str(e))
-                for f in files
-            ]
+            raise AppCompilerInfrastructureError(str(e)) from e
+
+
+def _validate_compile_input(files: list[dict]) -> None:
+    """Validate batch shape and source bounds before serializing to Node."""
+    paths: set[str] = set()
+    sizes: dict[str, int] = {}
+    for item in files:
+        path = item.get("path") if isinstance(item, dict) else None
+        source = item.get("source") if isinstance(item, dict) else None
+        if not isinstance(path, str) or not path:
+            raise AppSourceCompilationError("Compiler input has a missing source path")
+        if not isinstance(source, str):
+            raise AppSourceCompilationError(f"Compiler input {path!r} is not text")
+        if path in paths:
+            raise AppSourceCompilationError(f"Compiler input contains duplicate path {path!r}")
+        paths.add(path)
+        try:
+            encoded = source.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise AppSourceCompilationError(
+                f"Compiler input {path!r} is not valid UTF-8 text"
+            ) from exc
+        validate_app_source_write(path, encoded)
+        sizes[path] = len(encoded)
+    validate_app_source_metadata(sizes)
 
 
 # Extract all string literals from compiled JS output, then split into tokens.
@@ -194,28 +279,32 @@ class AppTailwindService:
 
     @staticmethod
     async def _invoke(payload: dict[str, object]) -> str | None:
-        """Send a payload to tailwind.js, return the css or None on error."""
+        """Send a payload to tailwind.js, returning CSS or a concrete failure."""
         input_data = json.dumps(payload)
 
         try:
-            returncode, stdout, stderr = await run_node_script(TAILWIND_SCRIPT, input_data.encode())
+            returncode, stdout, stderr = await run_node_script(
+                TAILWIND_SCRIPT, input_data.encode(), policy=TAILWIND_NODE_POLICY
+            )
 
             if returncode != 0:
                 error_msg = stderr.decode().strip() or "tailwind.js exited with error"
                 logger.error(f"Tailwind CSS generation failed: {error_msg}")
-                return None
+                raise TailwindGenerationError(error_msg)
 
             output = json.loads(stdout.decode())
             if output.get("error"):
                 logger.error(f"Tailwind CSS generation error: {output['error']}")
-                return None
+                raise TailwindGenerationError(str(output["error"]))
 
             css = output.get("css", "")
             return css if css else None
 
         except FileNotFoundError:
             logger.error("Node.js not found — cannot generate Tailwind CSS")
-            return None
+            raise TailwindGenerationError("Node.js not available for Tailwind CSS generation")
+        except TailwindGenerationError:
+            raise
         except Exception as e:
             logger.exception(f"Tailwind CSS generation failed: {e}")
-            return None
+            raise TailwindGenerationError(str(e)) from e

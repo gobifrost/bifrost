@@ -70,6 +70,19 @@ async def test_missing_workflow_function_refuses_without_writing(db_session):
     assert await db_session.get(Workflow, solution_entity_id(solution.id, manifest_id)) is None
 
 
+async def test_deploy_allows_shared_module_when_target_allows_outbound_access(
+    db_session,
+) -> None:
+    solution = await _install(db_session)
+    solution.allow_outbound_access = True
+    bundle = SolutionBundle(
+        solution=solution,
+        python_files={"workflows/main.py": "from modules.shared import helper\n"},
+    )
+
+    await SolutionDeployer(db_session).deploy(bundle)
+
+
 async def test_deploy_rejects_decorator_settings_before_reporting_or_upsert(
     db_session, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

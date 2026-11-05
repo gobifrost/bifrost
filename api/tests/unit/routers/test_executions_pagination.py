@@ -6,8 +6,12 @@ and an offset token re-serves the previous page's tail — users paginating
 into the past see today's rows (and a "Today" header) on every page.
 """
 
+import base64
 from datetime import datetime, timezone
+import json
 from uuid import uuid4
+
+import pytest
 
 
 def test_cursor_round_trips_timeline_timestamp() -> None:
@@ -25,17 +29,28 @@ def test_cursor_round_trips_timeline_timestamp() -> None:
     assert decoded == (timeline_at, row_id)
 
 
-def test_cursor_round_trips_legacy_null_timestamp() -> None:
-    """Cursors minted before timeline anchors may still carry a null value."""
-    from shared.sdk_execution_reads import (
-        decode_history_cursor,
-        encode_history_cursor,
-    )
+@pytest.mark.parametrize("started_at", [None, "2026-07-10T12:30:45+00:00"])
+def test_legacy_started_at_cursor_restarts(started_at) -> None:
+    """A v1 started_at position cannot be reused against the display timeline."""
+    from shared.sdk_execution_reads import decode_history_cursor
 
     row_id = uuid4()
-    token = encode_history_cursor(None, row_id)
+    token = base64.urlsafe_b64encode(json.dumps({
+        "v": 1, "s": started_at, "i": str(row_id),
+    }).encode()).decode()
 
     assert decode_history_cursor(token) == (None, row_id)
+
+
+@pytest.mark.parametrize("started_at", ["", "not-a-date", 123])
+def test_legacy_restart_requires_valid_timestamp(started_at) -> None:
+    from shared.sdk_execution_reads import decode_history_cursor
+
+    token = base64.urlsafe_b64encode(json.dumps({
+        "v": 1, "s": started_at, "i": str(uuid4()),
+    }).encode()).decode()
+
+    assert decode_history_cursor(token) is None
 
 
 def test_cursor_is_opaque_not_a_bare_offset() -> None:
@@ -44,6 +59,7 @@ def test_cursor_is_opaque_not_a_bare_offset() -> None:
 
     token = encode_history_cursor(None, uuid4())
     assert not token.isdigit()
+    assert json.loads(base64.urlsafe_b64decode(token))["v"] == 2
 
 
 def test_decode_rejects_garbage_and_legacy_offsets() -> None:

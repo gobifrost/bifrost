@@ -188,19 +188,24 @@ async def test_a_lost_launch_reply_keeps_the_route_for_inventory(announce) -> No
     assert route_id not in consumer.routes
 
 
-async def test_a_route_is_released_even_when_its_end_cannot_be_recorded(announce) -> None:
-    announce.side_effect = RuntimeError("database unavailable")
-    launcher = Launcher(refuse=ConnectionError("Launcher disconnected"))
+async def test_missing_route_is_retained_when_its_end_cannot_be_recorded(announce) -> None:
+    launcher = Launcher()
     consumer = RemoteAgentConsumer(launcher, worker_id=LEASE.worker_id)
+    waiting, route_id = await _launch(consumer, launcher, _body())
+    try:
+        announce.side_effect = RuntimeError("database unavailable")
+        with pytest.raises(RuntimeError):
+            await consumer.reject_missing({"routes": [], "terminal_routes": []})
+        assert consumer.tracks(route_id)
+        assert not waiting.done()
 
-    waiting = asyncio.create_task(consumer.process_message(_body()))
-    await asyncio.sleep(0.05)
-    [route_id] = consumer.routes
-
-    with pytest.raises(RuntimeError):
+        announce.side_effect = None
         await consumer.reject_missing({"routes": [], "terminal_routes": []})
-    await asyncio.wait_for(waiting, 1)
-    assert not consumer.tracks(route_id)
+        assert await waiting is None
+        assert not consumer.tracks(route_id)
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
 
 
 async def test_a_run_past_its_timeout_is_terminated(announce, monkeypatch) -> None:
@@ -585,3 +590,22 @@ async def test_a_reconnected_launcher_gets_no_work_until_its_inventory_is_reconc
 
     consumer.detach()
     await asyncio.gather(*executor._tasks["agent.run"], return_exceptions=True)
+
+
+async def test_failed_terminal_commit_keeps_route_for_replay(announce) -> None:
+    launcher = Launcher()
+    consumer = RemoteAgentConsumer(launcher, worker_id=LEASE.worker_id)
+    waiting, route_id = await _launch(consumer, launcher, _body())
+    try:
+        announce.side_effect = ConnectionError("database unavailable")
+        with pytest.raises(ConnectionError):
+            await consumer.handle_exit({"event": "agent_exit", "route_id": route_id, "ok": False})
+        assert consumer.tracks(route_id)
+        assert not consumer.routes[route_id].exited.done()
+        announce.side_effect = None
+        await consumer.handle_exit({"event": "agent_exit", "route_id": route_id, "ok": False})
+        assert await waiting is None
+        assert not consumer.tracks(route_id)
+    finally:
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)

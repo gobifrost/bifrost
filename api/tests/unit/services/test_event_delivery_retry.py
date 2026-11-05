@@ -2,13 +2,17 @@
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from src.models.enums import EventDeliveryStatus
-from src.services.events.processor import EventProcessor, QueuedDeliveries
+from src.services.events.processor import (
+    EventProcessor,
+    QueuedDeliveries,
+    update_delivery_from_execution,
+)
 
 
 @pytest.mark.asyncio
@@ -78,3 +82,67 @@ async def test_retry_delivery_reports_a_per_delivery_queue_failure():
 
     assert message == "Failed to queue retry: queue down"
     assert delivery.completed_at >= delivery.attempt_started_at
+
+
+@pytest.mark.asyncio
+async def test_supplied_session_never_publishes_a_delivery_before_its_owner_commits():
+    """A caller may roll back the supplied session, so publication is deferred."""
+    delivery = SimpleNamespace(id=uuid4(), event_id=uuid4())
+    repository = MagicMock()
+    repository.complete_from_execution = AsyncMock(return_value=delivery)
+    repository.update_event_status = AsyncMock()
+    session = AsyncMock()
+    broadcast = AsyncMock()
+
+    with (
+        patch(
+            "src.services.events.processor.EventDeliveryRepository",
+            return_value=repository,
+        ),
+        patch(
+            "src.services.events.processor.broadcast_delivery_update_after_commit",
+            new=broadcast,
+        ),
+    ):
+        updated = await update_delivery_from_execution(
+            str(uuid4()), "Success", session=session
+        )
+
+    assert updated is delivery
+    session.commit.assert_not_awaited()
+    broadcast.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_self_owned_delivery_update_commits_before_publication():
+    """The standalone helper owns both commit and the follow-up broadcast."""
+    delivery = SimpleNamespace(id=uuid4(), event_id=uuid4())
+    repository = MagicMock()
+    repository.complete_from_execution = AsyncMock(return_value=delivery)
+    repository.update_event_status = AsyncMock()
+    session = AsyncMock()
+    order: list[str] = []
+    session.commit.side_effect = lambda: order.append("commit")
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=session)
+    context.__aexit__ = AsyncMock(return_value=None)
+    broadcast = AsyncMock(side_effect=lambda *_args: order.append("broadcast"))
+
+    with (
+        patch(
+            "src.core.database.get_session_factory", return_value=lambda: context
+        ),
+        patch(
+            "src.services.events.processor.EventDeliveryRepository",
+            return_value=repository,
+        ),
+        patch(
+            "src.services.events.processor.broadcast_delivery_update_after_commit",
+            new=broadcast,
+        ),
+    ):
+        updated = await update_delivery_from_execution(str(uuid4()), "Success")
+
+    assert updated is delivery
+    assert order == ["commit", "broadcast"]
+    broadcast.assert_awaited_once_with(session, delivery)

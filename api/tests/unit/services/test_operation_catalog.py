@@ -295,6 +295,9 @@ PLATFORM_JOB_OPERATIONS = {
 }
 
 SOLUTION_OPERATIONS = {
+    "solutions.app_builds.lookup": (
+        "POST", "/api/solutions/{solution_id}/app-builds/lookup", None, None, False,
+    ),
     "solutions.list": (
         "GET",
         "/api/solutions",

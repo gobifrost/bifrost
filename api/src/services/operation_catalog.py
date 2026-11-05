@@ -879,6 +879,24 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="solutions.app_builds.lookup",
+        summary="Check reusable builds before Solution app compilation",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST", path="/api/solutions/{solution_id}/app-builds/lookup",
+            request_model="SolutionAppBuildLookup", response_model="SolutionAppBuildMatches",
+        ),
+        action_scopes=("solutions.deploy",),
+        authorization_resolver="Solution capability and exact resource boundary",
+        exclusions={
+            "cli": "Internal preflight of solution deploy, not a standalone CLI command.",
+            "mcp": _SOLUTION_ARTIFACT_MCP_EXCLUSION,
+            "native_builder": _SOLUTION_ARTIFACT_MCP_EXCLUSION,
+            "manifest": _SOLUTION_MANIFEST_EXCLUSION,
+            "sdk": _SOLUTION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="solutions.deploy",
         summary="Deploy a local Solution archive into an existing install",
         target_kind=OperationTargetKind.RESOURCE,

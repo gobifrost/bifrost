@@ -15,6 +15,7 @@ This is the ONE canonical build path: git-connected installs always build here
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import subprocess
@@ -22,10 +23,11 @@ import tempfile
 from pathlib import Path
 from uuid import UUID
 
+from bifrost.app_build_identity import build_identity, build_recipe, valid_recipe
 from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
 from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
-from src.core.s3_transport import S3Transport
+from src.core.s3_transport import S3NoSuchKey, S3Transport
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,8 @@ class SolutionAppBuilder:
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
         self._bucket: str = self._settings.s3_bucket or ""
+        self.last_build_identity: str | None = None
+        self._recipes: dict[bool, dict] = {}
 
     def _dist_key(
         self,
@@ -82,6 +86,84 @@ class SolutionAppBuilder:
             region=self._settings.s3_region,
         )
 
+    def source_identity(
+        self, app_id: UUID | str, files: dict[str, bytes], dependencies: dict[str, str],
+        *, require_lockfile: bool = False,
+    ) -> str:
+        from shared.version import get_version
+        from src.services.sdk_package import build_sdk_tarball
+
+        if require_lockfile not in self._recipes:
+            self._recipes[require_lockfile] = build_recipe(
+                build_sdk_tarball(get_version()),
+                variant="server-locked-v1" if require_lockfile else "server-install-v1",
+                environment=package_tool_env(),
+            )
+        return build_identity(app_id, files, dependencies, self._recipes[require_lockfile])
+
+    @staticmethod
+    def attested_identity(
+        app_id: UUID | str, files: dict[str, bytes], dependencies: dict[str, str], recipe: object, *, package_name: str = "bifrost-app",
+    ) -> str | None:
+        from bifrost.app_build_identity import sdk_identity
+        from shared.version import get_version
+        from src.services.sdk_package import build_sdk_tarball
+
+        if not isinstance(recipe, dict) or not valid_recipe(recipe) or recipe["variant"] != "cli-install-v1":
+            return None
+        if recipe["sdk"] != sdk_identity(build_sdk_tarball(get_version())):
+            return None
+        return build_identity(app_id, files, dependencies, recipe, package_name=package_name)
+
+    def _provenance_key(self, app_id: UUID | str, deployment_id: UUID | str) -> str:
+        return f"{APPS_PREFIX}{app_id}/deployments/{deployment_id}/build.json"
+
+    async def write_build_identity(
+        self, app_id: UUID | str, deployment_id: UUID | str,
+        identity: str, dist: dict[str, bytes],
+    ) -> None:
+        record = {
+            "schema": 1, "app_id": str(app_id), "deployment_id": str(deployment_id),
+            "identity": identity,
+            "artifacts": {rel: {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                          for rel, data in sorted(dist.items())},
+        }
+        async with self._client() as client:
+            await client.put_object(Bucket=self._bucket,
+                                    Key=self._provenance_key(app_id, deployment_id),
+                                    Body=json.dumps(record, sort_keys=True).encode())
+
+    async def can_reuse(self, app_id: UUID | str, deployment_id: UUID | str | None, identity: str) -> bool:
+        if deployment_id is None:
+            return False
+        async with self._client() as client:
+            try:
+                response = await client.get_object(Bucket=self._bucket, Key=self._provenance_key(app_id, deployment_id))
+                record = json.loads(await response["Body"].read())
+            except (S3NoSuchKey, ValueError, UnicodeDecodeError):
+                return False
+            if (not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1
+                    or record.get("app_id") != str(app_id)
+                    or record.get("deployment_id") != str(deployment_id)
+                    or record.get("identity") != identity):
+                return False
+            artifacts = record.get("artifacts")
+            if not isinstance(artifacts, dict) or not artifacts or "index.html" not in artifacts:
+                return False
+            # Read every immutable member, not just index.html: partial uploads
+            # and missing binary/public assets must never be accepted as hits.
+            for rel, expected in artifacts.items():
+                if not isinstance(rel, str) or rel.startswith("/") or ".." in Path(rel).parts or not isinstance(expected, dict):
+                    return False
+                try:
+                    response = await client.get_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel, deployment_id=deployment_id))
+                    content = await response["Body"].read()
+                except S3NoSuchKey:
+                    return False
+                if expected != {"size": len(content), "sha256": hashlib.sha256(content).hexdigest()}:
+                    return False
+        return True
+
     def compile_dist(
         self,
         app_id: UUID | str,
@@ -100,20 +182,24 @@ class SolutionAppBuilder:
         fast-path, no build). Synchronous (subprocess-bound); call via
         ``asyncio.to_thread`` from async deploy code.
         """
+        self.last_build_identity = None
         if prebuilt_dist:
             return prebuilt_dist
         with tempfile.TemporaryDirectory(prefix=f"bifrost-appbuild-{app_id}-") as tmp:
             workdir = Path(tmp)
             try:
+                identity = self.source_identity(app_id, src_files, dependencies, require_lockfile=require_lockfile)
                 self._materialize(workdir, src_files, dependencies)
                 # base must match the serving route so emitted asset URLs resolve
                 # under /api/applications/{id}/dist/ rather than the site root.
                 vite_kwargs = {"require_lockfile": True} if require_lockfile else {}
-                return self._run_vite_build(
+                dist = self._run_vite_build(
                     workdir,
                     base=self._dist_base(app_id),
                     **vite_kwargs,
                 )
+                self.last_build_identity = identity
+                return dist
             except ReproducibleDependencyBuildError:
                 raise
             except subprocess.TimeoutExpired as exc:
@@ -434,6 +520,7 @@ class SolutionAppBuilder:
         """Delete one versioned deployment artifact."""
         rels = await self.list_dist(app_id, deployment_id=deployment_id)
         async with self._client() as c:
+            await c.delete_object(Bucket=self._bucket, Key=self._provenance_key(app_id, deployment_id))
             for rel in rels:
                 await c.delete_object(
                     Bucket=self._bucket,

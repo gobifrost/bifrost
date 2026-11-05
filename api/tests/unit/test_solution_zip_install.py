@@ -209,6 +209,39 @@ async def test_install_zip_rejects_missing_module_before_persisting(db_session) 
     assert rows == []
 
 
+@pytest.mark.e2e
+async def test_install_zip_does_not_grant_outbound_access_from_descriptor(
+    db_session,
+) -> None:
+    """A portable descriptor cannot weaken a newly created sealed install."""
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+
+    bundle = _make_workspace_zip(extra={
+        "bifrost.solution.yaml": (
+            "slug: zip-demo\nname: Zip Demo\nscope: global\n"
+            "allow_outbound_access: true\n"
+        ),
+        "workflows/main.py": "from modules.absent import x\n",
+    })
+
+    with pytest.raises(UnmetDependency, match="modules.absent"):
+        await install_zip(
+            db_session,
+            bundle,
+            organization_id=None,
+            config_values={},
+            deployer_email="dev@gobifrost.com",
+        )
+
+    await db_session.rollback()
+    rows = (await db_session.execute(
+        select(Solution).where(Solution.slug == "zip-demo")
+    )).scalars().all()
+    assert rows == []
+
+
 def test_preview_rejects_invalid_decorator_in_unregistered_helper() -> None:
     archive = _make_workspace_zip(extra={
         "helpers/rejected.py": (
