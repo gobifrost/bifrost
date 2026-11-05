@@ -1,9 +1,11 @@
 """One durable workflow-permission conversion journey over live storage and jobs.
 
-This test deliberately runs two jobs: the analysis job proves the repository
+This test runs two platform jobs and one workflow execution: analysis proves the repository
 source -> durable report boundary, while the apply job proves the explicit
 review -> durable workflow mutation boundary.  Source/workflow setup is direct
 because API workflow creation and source writes are already covered elsewhere.
+The converted Solution workflow then runs in the execution worker, proving
+its imported SDK call succeeds with the limited identity and persisted grants.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from src.models.orm.workflows import Workflow
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SolutionStorage
 from src.services.workflow_permissions import load_workflow_permissions, request_digest
+from tests.e2e.conftest import execute_workflow_sync
 
 
 pytestmark = pytest.mark.e2e
@@ -75,8 +78,9 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
     helper_path = f"workflows/conversion_helper_{suffix}.py"
     helper_module = f"conversion_helper_{suffix}"
     source = (
-        "from bifrost import config\n"
+        "from bifrost import config, workflow\n"
         f"from .{helper_module} import load_runtime_setting\n\n"
+        "@workflow()\n"
         "async def run():\n"
         "    return await load_runtime_setting(config)\n"
     )
@@ -104,7 +108,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
     )
     solution_workflow = Workflow(
         id=uuid4(),
-        run_identity_id=platform_admin.user_id,
+        run_identity_id=org1_user.user_id,
         solution_id=solution.id,
         name=f"conversion-solution-{suffix}",
         function_name="run",
@@ -332,6 +336,30 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         )
         assert mode is WorkflowPermissionMode.RESTRICTED
         assert [grant.permission for grant in effective_grants] == ["roles.read"]
+
+        # A limited identity proves the declaration supplies the required
+        # power; a Platform Admin would hide an omitted grant here.
+        limited_user = await load_run_user(db_session, org1_user.user_id)
+        assert limited_user is not None
+        assert check_target(
+            limited_user, Powers(mode, ()), None, permission_entry("roles.read"),
+        ).outcome == "failure"
+        converted = Powers(mode, tuple(effective_grants))
+        assert check_target(
+            limited_user, converted, None, permission_entry("roles.read"),
+        ).outcome == "success"
+        assert check_target(
+            limited_user, converted, None, permission_entry("users.readwrite"),
+        ).outcome == "failure"
+        assert check_target(
+            limited_user, converted, uuid4(), permission_entry("roles.read"),
+        ).outcome == "failure"
+
+        executed = execute_workflow_sync(
+            e2e_client, org1_user.headers, str(solution_workflow.id), input_data={},
+        )
+        assert executed["status"] == "Success", (executed.get("error"), executed.get("error_message"), executed)
+        assert isinstance(executed["result"], list), executed
     finally:
         await storage.delete(entry_path)
         await storage.delete(helper_path)

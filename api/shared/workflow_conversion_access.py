@@ -35,12 +35,24 @@ async def recorded_permission_requirements(
         if not isinstance(details, dict):
             continue
         trace = details.get("trace") or {}
+        candidates: set[str] = set()
         for step in trace.get("steps", []):
             if step.get("key") not in {"permission", "secret", "privileged_target"} or step.get("status") != "passed":
                 continue
             permission = (step.get("facts") or {}).get("permission")
-            if not isinstance(permission, str):
-                continue
+            if isinstance(permission, str):
+                candidates.add(permission)
+            # Named enforcement records the checked permission in its inputs
+            # too. This is direct recorded evidence, including Full Access
+            # decisions whose trace retained only the reason for admission.
+            checked = (details.get("inputs") or {}).get("permission")
+            if (
+                details.get("enforced") is True
+                and step.get("key") == "permission"
+                and isinstance(checked, str)
+            ):
+                candidates.add(checked)
+        for permission in candidates:
             # The closed vocabulary excludes wildcard authority and stale or
             # malformed audit facts from becoming declaration candidates.
             try:
