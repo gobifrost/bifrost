@@ -108,7 +108,7 @@ async def test_terminal_ack_holds_owner_lock_until_its_bounded_send_finishes(
                 ).with_for_update(nowait=True))
             assert blocked.value.orig.sqlstate == "55P03"
         finish_send.set()
-        await ack
+        assert await ack is None
         async with async_session_factory() as db:
             assert await db.scalar(select(ExecutionWorker.id).where(
                 ExecutionWorker.id == worker_id

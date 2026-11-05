@@ -201,7 +201,7 @@ async def test_missing_route_is_retained_when_its_end_cannot_be_recorded(announc
 
         announce.side_effect = None
         await consumer.reject_missing({"routes": [], "terminal_routes": []})
-        await waiting
+        assert await waiting is None
         assert not consumer.tracks(route_id)
     finally:
         waiting.cancel()
@@ -604,7 +604,7 @@ async def test_failed_terminal_commit_keeps_route_for_replay(announce) -> None:
         assert not consumer.routes[route_id].exited.done()
         announce.side_effect = None
         await consumer.handle_exit({"event": "agent_exit", "route_id": route_id, "ok": False})
-        await waiting
+        assert await waiting is None
         assert not consumer.tracks(route_id)
     finally:
         waiting.cancel()
