@@ -25,8 +25,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bifrost.platform_names import PLATFORM_EXPORT_NAMES
 from src.core.log_safety import log_safe
 from src.core.malloc import trim_malloc
+from src.services.app_resource_limits import (
+    AppArtifactLimitError,
+    is_compiler_text_source,
+    validate_app_artifacts,
+    validate_app_source_metadata,
+    validate_app_source_write,
+)
 from src.services.app_storage import AppStorageService
-from src.services.node_subprocess import run_node_script
+from src.services.node_subprocess import APP_BUNDLER_NODE_POLICY, run_node_script
 from src.services.repo_storage import RepoStorage
 
 logger = logging.getLogger(__name__)
@@ -183,9 +190,19 @@ class BundlerService:
             #    `sources` because they're now inlined into the unified
             #    __bifrost_tailwind.css; re-importing them through esbuild
             #    would duplicate (or, if they contain @apply, fail).
-            tailwind_added, consumed_css = await self._generate_app_tailwind(
-                src_dir, sources
-            )
+            try:
+                tailwind_added, consumed_css = await self._generate_app_tailwind(
+                    src_dir, sources
+                )
+            except Exception as exc:
+                from src.services.app_compiler import TailwindGenerationError
+
+                if not isinstance(exc, TailwindGenerationError):
+                    raise
+                return BundleResult(
+                    success=False,
+                    errors=[BundleMessage(text=f"Tailwind CSS generation failed: {exc}")],
+                )
             if tailwind_added:
                 sources = [s for s in sources if s not in consumed_css]
                 sources.append(TAILWIND_OUTPUT_CSS)
@@ -239,6 +256,25 @@ class BundlerService:
 
             # 6. Upload artifacts to S3
             uploaded: list[str] = []
+            try:
+                output_sizes: dict[str, int] = {}
+                output_root = out_dir.resolve()
+                for out in result["outputs"]:
+                    rel = str(out["path"])
+                    artifact_path = (out_dir / rel).resolve()
+                    if not artifact_path.is_relative_to(output_root):
+                        raise ValueError(f"artifact path escapes bundle output: {rel}")
+                    output_sizes[rel] = artifact_path.stat().st_size
+                if len(output_sizes) != len(result["outputs"]):
+                    raise ValueError("duplicate artifact paths")
+                validate_app_artifacts(output_sizes)
+            except (KeyError, OSError, TypeError, ValueError) as exc:
+                message = (
+                    str(exc)
+                    if isinstance(exc, AppArtifactLimitError)
+                    else f"Bundler returned invalid artifact metadata: {exc}"
+                )
+                return BundleResult(success=False, errors=[BundleMessage(text=message)])
             for out in result["outputs"]:
                 rel = out["path"]
                 data = (out_dir / rel).read_bytes()
@@ -292,15 +328,22 @@ class BundlerService:
         Returns list of relative paths (e.g. ["_layout.tsx", "pages/index.tsx"]).
         """
         rel_paths: list[str] = []
-        keys = await self._repo.list(repo_prefix)
-        for key in keys:
+        metadata = await self._repo.list_with_metadata(repo_prefix)
+        source_sizes: dict[str, int] = {}
+        for key, item in metadata.items():
             rel = key[len(repo_prefix):]
             if not rel or rel.endswith("/"):
                 continue
             # Skip app.yaml, editor turds
             if rel == "app.yaml" or ".tmp." in rel:
                 continue
+            source_sizes[rel] = item.size
+        validate_app_source_metadata(source_sizes)
+        for rel in source_sizes:
+            key = repo_prefix + rel
             data = await self._repo.read(key)
+            if is_compiler_text_source(rel):
+                validate_app_source_write(rel, data)
             dest = src_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
@@ -700,7 +743,9 @@ class BundlerService:
           {"success": False, "errors": [...], "warnings": [...], "duration_ms": N}
         """
         input_data = json.dumps(cfg).encode()
-        returncode, stdout, stderr = await run_node_script(BUNDLE_SCRIPT, input_data)
+        returncode, stdout, stderr = await run_node_script(
+            BUNDLE_SCRIPT, input_data, policy=APP_BUNDLER_NODE_POLICY
+        )
         if returncode != 0:
             err_text = stderr.decode(errors="replace").strip() or "non-zero exit from node"
             return {"success": False, "errors": [{"text": err_text}]}

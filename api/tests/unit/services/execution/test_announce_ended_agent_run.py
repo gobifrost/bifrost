@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from src.core.cache.redis_client import get_redis
 from src.models.orm.agent_runs import AgentRun
@@ -121,3 +122,60 @@ async def test_a_finished_run_is_left_alone(monkeypatch, published) -> None:
     assert run.status == "completed"
     published.update.assert_not_awaited()
     assert await _sync_result(run.id) is None
+
+
+@pytest.mark.parametrize("replaced", [False, True])
+async def test_agent_exit_write_rechecks_ownership_in_its_transaction(
+    async_session_factory, monkeypatch, published, replaced,
+) -> None:
+    from src.models.orm.execution_workers import ExecutionWorker
+    from src.worker.remote import ownership
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    worker_id, owner_id, launcher_id, run_id = uuid4(), uuid4(), uuid4(), uuid4()
+    lease = ownership.RemoteOwnerLease(worker_id, owner_id, launcher_id, 1)
+
+    @asynccontextmanager
+    async def context():
+        async with async_session_factory() as db:
+            yield db
+
+    monkeypatch.setattr(agent_run_service, "get_db_context", context)
+    monkeypatch.setattr(ownership, "get_liveness_db_context", context)
+    async with async_session_factory() as db:
+        db.add(ExecutionWorker(
+            id=worker_id, form="static", state="ready", resource_class="standard", slots=1,
+            remote_owner_id=owner_id, remote_launcher_id=launcher_id, remote_session_generation=1,
+            remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        ))
+        db.add(AgentRun(id=run_id, trigger_type="sdk", status="running"))
+        await db.commit()
+    try:
+        # The router's gate passed. Ownership may move before the terminal task writes.
+        assert await ownership.owns_remote_session(lease)
+        if replaced:
+            async with async_session_factory() as db:
+                await db.execute(update(ExecutionWorker).where(ExecutionWorker.id == worker_id).values(
+                    remote_owner_id=uuid4(), remote_session_generation=2,
+                ))
+                await db.commit()
+        with remote_owner_context(LeaseRef(lease)):
+            if replaced:
+                with pytest.raises(ConnectionError, match="ownership"):
+                    await announce_ended_agent_run(run_id, "child stopped")
+            else:
+                assert await announce_ended_agent_run(run_id, "child stopped")
+        async with async_session_factory() as db:
+            run = await db.get(AgentRun, run_id)
+            assert run.status == ("running" if replaced else "failed")
+        if replaced:
+            published.update.assert_not_awaited()
+            assert await _sync_result(run_id) is None
+        else:
+            published.update.assert_awaited_once()
+            assert (await _sync_result(run_id))["status"] == "failed"
+    finally:
+        async with async_session_factory() as db:
+            await db.execute(delete(AgentRun).where(AgentRun.id == run_id))
+            await db.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await db.commit()

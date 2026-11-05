@@ -273,3 +273,51 @@ async def test_form_resolves_workflow_ref_stored_as_pathfn(db_session) -> None:
         sol, forms=[form.id]
     )
     assert ("workflow", str(wf.id)) in {(d.kind, d.ref) for d in preview.pulled_in}
+
+
+@pytest.mark.parametrize("by_id", [False, True], ids=["portable", "uuid"])
+async def test_workflow_execute_refs_are_followed_transitively(db_session, by_id) -> None:
+    db = db_session
+    sol = await _solution(db)
+    parent = await _wf(db, path="workflows/parent.py", name="parent")
+    child = await _wf(db, path="workflows/child.py", fn="run", name="child")
+    grandchild = await _wf(
+        db, path="workflows/grandchild.py", fn="finish", name="grandchild"
+    )
+    child_ref = str(child.id) if by_id else "workflows/child.py::run"
+    grandchild_ref = str(grandchild.id) if by_id else "workflows/grandchild.py::finish"
+    repo = _FakeRepo({
+        "workflows/parent.py": f'await workflows.execute("{child_ref}")'.encode(),
+        "workflows/child.py": f'await sdk.workflows.execute("{grandchild_ref}")'.encode(),
+    })
+
+    preview = await SolutionDependencyWalker(db, repo=repo).preview(
+        sol, workflows=[parent.id]
+    )
+    refs = {(d.kind, d.ref) for d in preview.pulled_in}
+    assert ("workflow", str(child.id)) in refs
+    assert ("workflow", str(grandchild.id)) in refs
+
+
+@pytest.mark.parametrize("by_id", [False, True], ids=["portable", "uuid"])
+async def test_outside_workflow_execute_caller_is_reported(db_session, by_id) -> None:
+    db = db_session
+    sol = await _solution(db)
+    target = await _wf(db, path="workflows/target.py", name="target")
+    caller = await _wf(db, path="workflows/caller.py", name="caller")
+    target_ref = str(target.id) if by_id else "workflows/target.py::main"
+    repo = _FakeRepo({
+        "workflows/target.py": b"",
+        "workflows/caller.py": f'await workflows.execute("{target_ref}")'.encode(),
+    })
+
+    preview = await SolutionDependencyWalker(db, repo=repo).preview(
+        sol, workflows=[target.id]
+    )
+    assert any(
+        warning.referencer_kind == "workflow"
+        and warning.referencer_ref == str(caller.id)
+        and warning.target_kind == "workflow"
+        and warning.target_ref == str(target.id)
+        for warning in preview.outside_references
+    )

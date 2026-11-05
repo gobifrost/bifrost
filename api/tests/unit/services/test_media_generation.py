@@ -272,3 +272,66 @@ async def test_record_media_usage_uses_canonical_ai_ledger() -> None:
         organization_id=None,
         user_id=None,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', ['image', 'video'])
+@pytest.mark.parametrize('failure', ['429', 'timeout', 'redirect'])
+async def test_media_submission_is_never_replayed(kind, failure, caplog):
+    from src.services.media_generation import MediaProviderError, generate_image_with_config
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if failure == 'timeout':
+            # Model a provider accepting work before the response was lost.
+            raise httpx.ReadTimeout('secret request content', request=request)
+        if failure == 'redirect':
+            return httpx.Response(307, headers={'location': '/resubmit'})
+        return httpx.Response(429, json={'error': {'message': 'secret prompt and key'}})
+
+    config = MediaProviderConfig('openai', 'https://openrouter.ai/api/v1', 'secret', 'model', True)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True) as client:
+        with pytest.raises(MediaProviderError) as caught:
+            if kind == 'image':
+                await generate_image_with_config(config, filename='test', prompt='private', client=client)
+            else:
+                await generate_video_with_config(config, filename='test', prompt='private', report=AsyncMock(), client=client)
+    error = caught.value
+    assert len(requests) == 1
+    assert error.provider == 'openrouter'
+    assert error.surface == f'{kind}_submission'
+    assert error.status_code == {'429': 429, 'timeout': None, 'redirect': 307}[failure]
+    assert error.outcome_unknown == (failure != 'redirect')
+    assert 'not retried' in str(error)
+    assert 'secret' not in str(error)
+    assert 'secret' not in caplog.text
+    assert error.operation_ref
+
+
+@pytest.mark.asyncio
+async def test_video_read_rate_limits_never_resubmit(monkeypatch):
+    from shared import ai_http_retry
+    requests = []
+    statuses = iter([429, 200])
+    downloads = iter([429, 200])
+
+    def handler(request):
+        requests.append(request.method)
+        if request.method == 'POST':
+            return httpx.Response(202, json={'id': 'existing-operation'})
+        if request.url.path.endswith('/content'):
+            return httpx.Response(next(downloads), headers={'content-type': 'video/mp4'}, content=MP4_BYTES)
+        return httpx.Response(next(statuses), json={'status': 'completed'})
+
+    original = ai_http_retry.get_ai_provider_read
+
+    async def read(*args, **kwargs):
+        return await original(*args, **kwargs, sleep=AsyncMock())
+
+    monkeypatch.setattr('src.services.media_generation.get_ai_provider_read', read)
+    config = MediaProviderConfig('openai', 'https://openrouter.ai/api/v1', 'secret', 'model', True)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await generate_video_with_config(config, filename='test', prompt='private', report=AsyncMock(), client=client)
+    assert result.content == MP4_BYTES
+    assert requests == ['POST', 'GET', 'GET', 'GET', 'GET']

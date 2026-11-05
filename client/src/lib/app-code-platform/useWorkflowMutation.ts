@@ -138,6 +138,14 @@ export function useWorkflowMutation<T = unknown>(
 						code: null,
 						script_name: null,
 					},
+				}).catch((cause: unknown) => {
+					const failure =
+						cause instanceof Error ? cause : new Error(String(cause));
+					if (mountedRef.current) {
+						setError(failure.message);
+						setIsLoading(false);
+					}
+					throw failure;
 				});
 
 			if (responseError) {

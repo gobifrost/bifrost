@@ -64,6 +64,7 @@ class TestWriteFileDecoratorAcceptance:
         service._s3_client.get_client.return_value.__aenter__.return_value = s3
         service._compute_hash = MagicMock(return_value="source-hash")
         service._guess_content_type = MagicMock(return_value="text/plain")
+        service._find_app_by_path = AsyncMock(return_value=None)
 
         with (
             patch("src.services.file_storage.file_ops.set_module", new_callable=AsyncMock) as cached,
@@ -96,6 +97,50 @@ class TestWriteFileDecoratorAcceptance:
         service._compute_hash.assert_not_called()
         service._guess_content_type.assert_not_called()
         service.db.flush.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_syntax_error_uses_full_metadata_path_for_diagnostics(self):
+        """Syntax failures must not be mistaken for decorator-free modules."""
+        from src.services.file_storage.file_ops import FileOperationsService
+
+        service = FileOperationsService.__new__(FileOperationsService)
+        service.db = AsyncMock()
+        service.settings = SimpleNamespace(s3_bucket="test-bucket")
+        service._s3_client = MagicMock()
+        s3 = AsyncMock()
+        service._s3_client.get_client.return_value.__aenter__.return_value = s3
+        service._compute_hash = MagicMock(return_value="source-hash")
+        service._guess_content_type = MagicMock(return_value="text/plain")
+        service._find_app_by_path = AsyncMock(return_value=None)
+        service._extract_metadata = AsyncMock(
+            return_value=(b"", False, False, None, [], None, None)
+        )
+        service._diagnostics = AsyncMock()
+
+        with (
+            patch(
+                "bifrost.decorator_validation.validate_python_decorators"
+            ),
+            patch(
+                "src.services.file_storage.file_ops.set_module",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.services.file_storage.file_ops.FileIndexService.index",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.core.pubsub.publish_file_activity", new_callable=AsyncMock
+            ),
+        ):
+            await service.write_file(
+                "workflows/broken.py",
+                b"@workflow(\ndef run():\n    pass\n",
+                skip_dirty_flag=True,
+            )
+
+        assert service._extract_metadata.await_args.kwargs["cached_ast"] is None
+        assert service._extract_metadata.await_args.kwargs["cached_content_str"] is None
 
 
 class TestMoveFileModuleCache:

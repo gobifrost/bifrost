@@ -21,6 +21,8 @@ from src.services.app_bundler import (
     BundlerService,
     build_with_migrate,
 )
+from src.services.app_compiler import TailwindGenerationError
+from src.services.app_resource_limits import AppArtifactLimitError, AppSourceLimitError
 
 
 @pytest.fixture
@@ -307,6 +309,83 @@ async def test_build_writes_current_schema_version_into_manifest(
         "manifest must record the bundler's current SCHEMA_VERSION so readers "
         "can detect stale manifests and trigger a rebuild"
     )
+
+
+@pytest.mark.asyncio
+async def test_tailwind_operational_failure_does_not_publish_css_less_bundle(
+    bundler: BundlerService, tmp_path: pathlib.Path
+) -> None:
+    async def fake_materialize(src_dir: pathlib.Path, repo_prefix: str) -> list[str]:
+        (src_dir / "_layout.tsx").write_text("export default function Layout() {}")
+        return ["_layout.tsx"]
+
+    with patch.object(bundler, "_materialize_source", new=fake_materialize), patch.object(
+        bundler,
+        "_generate_app_tailwind",
+        new=AsyncMock(side_effect=TailwindGenerationError("Tailwind unavailable")),
+    ), patch.object(bundler._app_storage, "write_preview_file", new=AsyncMock()) as write:
+        result = await bundler.build("app-id", "apps/test/", "preview")
+
+    assert result.success is False
+    assert result.errors and "Tailwind CSS generation failed" in result.errors[0].text
+    write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_materialize_rejects_oversized_source_before_read(
+    bundler: BundlerService, tmp_path: pathlib.Path
+) -> None:
+    metadata = {
+        "apps/test/pages/large.tsx": type("Metadata", (), {"size": 5})(),
+    }
+    bundler._repo.list_with_metadata = AsyncMock(return_value=metadata)
+    bundler._repo.read = AsyncMock()
+
+    with patch("src.services.app_bundler.validate_app_source_metadata", side_effect=AppSourceLimitError("too large")):
+        with pytest.raises(AppSourceLimitError, match="too large"):
+            await bundler._materialize_source(tmp_path, "apps/test/")
+
+    bundler._repo.read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bundle_uses_actual_artifact_size_before_reading_or_publishing(
+    bundler: BundlerService, tmp_path: pathlib.Path
+) -> None:
+    async def fake_materialize(src_dir: pathlib.Path, repo_prefix: str) -> list[str]:
+        (src_dir / "_layout.tsx").write_text("export default function Layout() {}")
+        return ["_layout.tsx"]
+
+    async def fake_esbuild(cfg: dict) -> dict:
+        out_dir = pathlib.Path(cfg["out_dir"])
+        out_dir.mkdir(exist_ok=True)
+        (out_dir / "entry.js").write_bytes(b"x" * 100)
+        return {
+            "success": True,
+            "outputs": [{"path": "entry.js", "bytes": 1}],
+            "entry_file": "entry.js",
+            "css_file": None,
+            "duration_ms": 1,
+            "warnings": [],
+        }
+
+    async def no_tailwind(*_args):
+        return False, set()
+
+    def check_actual_size(entries: dict[str, int]) -> None:
+        assert entries == {"entry.js": 100}
+        raise AppArtifactLimitError("artifact too large")
+
+    with patch.object(bundler, "_materialize_source", new=fake_materialize), patch.object(
+        bundler, "_generate_app_tailwind", new=no_tailwind
+    ), patch.object(bundler, "_run_esbuild", new=fake_esbuild), patch(
+        "src.services.app_bundler.validate_app_artifacts", side_effect=check_actual_size
+    ), patch.object(bundler._app_storage, "write_preview_file", new=AsyncMock()) as write:
+        result = await bundler.build("app-id", "apps/test/", "preview")
+
+    assert result.success is False
+    assert result.errors and result.errors[0].text == "artifact too large"
+    write.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

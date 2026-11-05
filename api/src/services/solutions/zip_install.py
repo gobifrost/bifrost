@@ -765,7 +765,10 @@ async def _install_workspace(
     # missing module is a silent runtime ModuleNotFoundError post-install.
     from src.services.solutions.dependency_walker import check_install_needs
 
-    needs = check_install_needs(bundle.python_files)
+    needs = check_install_needs(
+        bundle.python_files,
+        allow_outbound_access=bool(solution.allow_outbound_access),
+    )
     if needs:
         items = ", ".join(
             f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
@@ -935,7 +938,10 @@ async def _deploy_workspace_to_solution(
 
     from src.services.solutions.dependency_walker import check_install_needs
 
-    needs = check_install_needs(bundle.python_files)
+    needs = check_install_needs(
+        bundle.python_files,
+        allow_outbound_access=bool(solution.allow_outbound_access),
+    )
     if needs:
         items = ", ".join(
             f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
