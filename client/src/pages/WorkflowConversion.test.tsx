@@ -459,6 +459,9 @@ describe("WorkflowConversion", () => {
 					/Their current run identities and reach are preserved\./,
 				),
 			).toBeVisible();
+			expect(screen.getByRole("alertdialog")).toHaveTextContent(
+				"Suggested permissions may be incomplete or broader than necessary. Conversion does not run your workflows. Review uncertainties and test important workflows after conversion.",
+			);
 			expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 			if (isSolution) {
 				expect(
