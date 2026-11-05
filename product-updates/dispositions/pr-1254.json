@@ -1,0 +1,19 @@
+{
+  "key": "pr:1254",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Retry safe provider reads with the shared bounded policy. Preserve provider error status and prevent automatic media resubmission after errors, timeouts, or redirects.",
+  "security_review": {
+    "status": "not_required"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1254",
+      "Jack approved the exact title and summary text with native owner reply: Send it. I\u2019ll do a separate thread for guaranteed debug and test tear down. Existing scoped completion and protected merge authorization for issue #658 remains in force.",
+      "75 focused regression and consumer tests passed with zero failures, errors or skips; API pyright and ruff passed. A bounded independent Astra source review found no blockers for submission replay, retry classification, cancellation or compatibility.",
+      "No customer configuration, permissions, supported installation or migration changes. Media POST replay remains disabled; shared retry policy and terminal HTTP identity are preserved. The temporary test stack was removed within its heavy resource lease."
+    ]
+  }
+}
