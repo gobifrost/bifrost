@@ -16,6 +16,66 @@ pytestmark = pytest.mark.e2e
 
 
 @pytest_asyncio.fixture
+async def neighboring_workspace(async_session_factory):
+    """Reproduce prior tests leaving committed entities without source files."""
+    from src.models.orm.applications import Application
+    from src.models.orm.workflows import Workflow
+
+    suffix = uuid4().hex
+    workflow = Workflow(name=f"neighbor_{suffix}", function_name="neighbor", path=f"neighbor_{suffix}.py")
+    app = Application(name=f"neighbor-{suffix}", slug=f"neighbor-{suffix}", repo_path=f"apps/neighbor-{suffix}")
+    async with async_session_factory() as session:
+        session.add_all([workflow, app])
+        await session.commit()
+        ids = workflow.id, app.id
+    try:
+        yield
+    finally:
+        async with async_session_factory() as session:
+            restored_workflow = await session.get(Workflow, ids[0])
+            restored_app = await session.get(Application, ids[1])
+            try:
+                assert restored_workflow is not None
+                assert restored_app is not None
+            finally:
+                if restored_workflow is not None:
+                    await session.delete(restored_workflow)
+                if restored_app is not None:
+                    await session.delete(restored_app)
+                await session.commit()
+
+
+@pytest_asyncio.fixture
+async def db_session(async_engine, neighboring_workspace):
+    """Keep synthetic repositories independent of neighboring committed rows.
+
+    Service commits release savepoints only. The outer rollback restores the
+    existing workspace and every row removed by foreign-key cascades.
+    """
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from src.models.orm.applications import Application
+    from src.models.orm.services import ServiceDefinition
+    from src.models.orm.workflows import Workflow
+
+    async with async_engine.connect() as connection:
+        transaction = await connection.begin()
+        async with AsyncSession(
+            bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint",
+        ) as session:
+            try:
+                await session.execute(delete(ServiceDefinition))
+                await session.execute(delete(Workflow).where(Workflow.solution_id.is_(None)))
+                await session.execute(delete(Application).where(Application.solution_id.is_(None)))
+                await session.commit()
+                yield session
+            finally:
+                await session.rollback()
+                await transaction.rollback()
+
+
+@pytest_asyncio.fixture
 async def backend():
     from src.config import get_settings
     from src.core.s3_transport import S3Transport
