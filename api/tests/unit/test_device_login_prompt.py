@@ -52,3 +52,33 @@ def test_login_opens_code_url_and_denial_never_saves_credentials(monkeypatch, mo
     assert asyncio.run(module.login_flow("https://example.test")) is False
     browser.assert_called_once_with("https://example.test/device?user_code=ABCD-EFGH")
     save.assert_not_called()
+
+
+@pytest.mark.parametrize("module_name", ["bifrost.cli", "bifrost.client"])
+def test_login_reports_storage_failure_before_success(monkeypatch, capsys, module_name):
+    from bifrost.windows_credentials import CredentialStorageError
+
+    module = importlib.import_module(module_name)
+    client = AsyncMock()
+    client.post.side_effect = [
+        SimpleNamespace(status_code=200, json=lambda: {
+            "device_code": "device-code", "user_code": "ABCD-EFGH",
+            "verification_url": "/device", "expires_in": 300, "interval": 5,
+        }),
+        SimpleNamespace(status_code=200, json=lambda: {
+            "access_token": "synthetic-access", "refresh_token": "synthetic-refresh",
+        }),
+    ]
+    client.__aenter__.return_value = client
+    monkeypatch.setattr(module.httpx, "AsyncClient", MagicMock(return_value=client))
+    monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
+    save = MagicMock(side_effect=CredentialStorageError("Credential storage failed at fragment write."))
+    owner = module.credentials if module_name == "bifrost.cli" else module
+    monkeypatch.setattr(owner, "save_credentials", save)
+
+    assert asyncio.run(module.login_flow("https://example.test", auto_open=False)) is False
+    output = capsys.readouterr()
+    assert "fragment write" in output.err
+    assert " OK" not in output.out
+    assert "Logged in" not in output.out
+    client.get.assert_not_called()

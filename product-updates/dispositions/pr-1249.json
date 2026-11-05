@@ -1,0 +1,15 @@
+{
+  "key": "pr:1249",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Windows CLI logins can securely save large credentials, with recovery for interrupted saves.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/issues/1243",
+      "https://github.com/gobifrost/bifrost/pull/1249",
+      "Jack approved the protected Windows storage repair and Linux/Windows verification in the private owner conversation on 2026-11-05. Independent Astra review found no material blocker; 161 focused tests, Python types and lint passed locally."
+    ]
+  }
+}
