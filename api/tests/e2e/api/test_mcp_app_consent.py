@@ -1,10 +1,7 @@
 """Inbound MCP OAuth needs a deliberate, user-bound decision before any code."""
 import base64
 import hashlib
-from time import time
-from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
-from uuid import UUID
 
 import pytest
 
@@ -33,36 +30,24 @@ def start(client, *, client_name=None):
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("approved", [True, False])
-@pytest.mark.asyncio
-async def test_personal_mcp_consent_binds_code_to_the_approving_user(e2e_client, org1_user, approved, human_minter):
-    if approved:
-        # Reproduce a long suite reaching consent after the access token expires.
-        from src.core.security import decode_token
-        from src.services.authorization.tokens import HumanSubject, issue_access_token
-
-        human_minter(org1_user)
-        claims = decode_token(org1_user.access_token, expected_type="access")
-        assert claims is not None
-        with patch("src.services.authorization.tokens._now", return_value=int(time()) - 7200):
-            expired = await issue_access_token(HumanSubject(user_id=org1_user.user_id, session_id=UUID(claims["sid"])))
-        org1_user.set_tokens(expired.token, org1_user.refresh_token)
+def test_personal_mcp_consent_binds_code_to_the_approving_user(e2e_client, org1_user, approved, browser_headers, stale_browser_access):
     client_id, request_id = start(e2e_client)
     path = f"/auth/app-connections/{request_id}"
-    preview = e2e_client.get(path, headers=browser_headers(org1_user, human_minter))
+    preview = e2e_client.get(path, headers=browser_headers(org1_user))
     assert preview.status_code == 200, preview.text
     assert preview.json()["client_name"] == "Unnamed App"
     assert preview.json()["redirect_uri"] == URI
     # Opening the legacy callback is safe even with an authenticated browser.
-    opened = e2e_client.get("/mcp/callback", params={"internal_state": request_id}, headers=browser_headers(org1_user, human_minter), follow_redirects=False)
+    opened = e2e_client.get("/mcp/callback", params={"internal_state": request_id}, headers=browser_headers(org1_user), follow_redirects=False)
     assert opened.status_code == 302
     assert "code=" not in opened.headers["location"]
-    assert e2e_client.get(path, headers=browser_headers(org1_user, human_minter)).status_code == 200
-    result = e2e_client.post(path, json={"approved": approved, "consent_token": preview.json()["consent_token"]}, headers=browser_headers(org1_user, human_minter))
+    assert e2e_client.get(path, headers=browser_headers(org1_user)).status_code == 200
+    result = e2e_client.post(path, json={"approved": approved, "consent_token": preview.json()["consent_token"]}, headers=browser_headers(org1_user))
     assert result.status_code == 200, result.text
     query = parse_qs(urlsplit(result.json()["redirect_url"]).query)
     assert query["env"] == ["production"]
     assert query["state"] == ["client-state & value"]
-    assert e2e_client.get(path, headers=browser_headers(org1_user, human_minter)).status_code == 404
+    assert e2e_client.get(path, headers=browser_headers(org1_user)).status_code == 404
     if not approved:
         assert query["error"] == ["access_denied"]
         assert "code" not in query
@@ -78,14 +63,14 @@ async def test_personal_mcp_consent_binds_code_to_the_approving_user(e2e_client,
 
 
 @pytest.mark.e2e
-def test_stolen_consent_and_unauthenticated_posts_do_not_approve_another_user(e2e_client, org1_user, org2_user, human_minter):
+def test_stolen_consent_and_unauthenticated_posts_do_not_approve_another_user(e2e_client, org1_user, org2_user, browser_headers):
     _, request_id = start(e2e_client, client_name="Example Client")
     path = f"/auth/app-connections/{request_id}"
-    preview = e2e_client.get(path, headers=browser_headers(org1_user, human_minter))
+    preview = e2e_client.get(path, headers=browser_headers(org1_user))
     body = {"approved": True, "consent_token": preview.json()["consent_token"]}
-    assert e2e_client.post(path, json=body, headers=browser_headers(org2_user, human_minter)).status_code == 403
+    assert e2e_client.post(path, json=body, headers=browser_headers(org2_user)).status_code == 403
     assert e2e_client.post(path, json=body, headers={"Authorization": "Bearer invalid"}).status_code == 401
-    assert e2e_client.get(path, headers=browser_headers(org1_user, human_minter)).status_code == 200
+    assert e2e_client.get(path, headers=browser_headers(org1_user)).status_code == 200
 
 
 @pytest.mark.e2e
@@ -101,24 +86,56 @@ def test_unregistered_callback_is_rejected_without_redirecting(e2e_client):
     assert response.json()["error"] == "invalid_request"
 
 
-def browser_headers(user, human_minter):
-    # A literal Cookie header is captured before challenge-driven bearer refresh.
-    # Mint the pair first so replay cannot retain a now-revoked refresh cookie.
-    human_minter(user)
-    return {**user.headers, "Cookie": f"refresh_token={user.refresh_token}"}
+@pytest.fixture
+def browser_headers(human_minter):
+    def current_pair(user):
+        # Refresh before snapshotting the pair. Challenge-driven bearer refresh
+        # cannot replace an explicit Cookie header with the rotated token.
+        human_minter(user)
+        return {**user.headers, "Cookie": f"refresh_token={user.refresh_token}"}
+    return current_pair
+
+
+@pytest.fixture(params=["authority", "expiry"])
+async def stale_browser_access(org1_user, async_session_factory, human_minter, request):
+    """Exercise stale authorization state and expiry before cookie capture."""
+    if request.param == "expiry":
+        from time import time
+        from unittest.mock import patch
+        from uuid import UUID
+        from src.core.security import decode_token
+        from src.services.authorization.tokens import HumanSubject, issue_access_token
+
+        human_minter(org1_user)
+        claims = decode_token(org1_user.access_token, expected_type="access")
+        assert claims is not None
+        with patch("src.services.authorization.tokens._now", return_value=int(time()) - 7200):
+            expired = await issue_access_token(HumanSubject(user_id=org1_user.user_id, session_id=UUID(claims["sid"])))
+        org1_user.set_tokens(expired.token, org1_user.refresh_token)
+        return
+    from sqlalchemy import update
+    from src.models.orm.authz import AuthzVersion
+    from src.services.authorization.authz import GLOBAL_SUBJECT_ID, GLOBAL_SUBJECT_KIND
+
+    async with async_session_factory() as db:
+        await db.execute(update(AuthzVersion).where(
+            AuthzVersion.subject_kind == GLOBAL_SUBJECT_KIND,
+            AuthzVersion.subject_id == GLOBAL_SUBJECT_ID,
+        ).values(version=AuthzVersion.version + 1))
+        await db.commit()
 
 
 @pytest.mark.e2e
-def test_access_only_bearer_cannot_bootstrap_a_new_refresh_session(e2e_client, org1_user, human_minter):
+def test_access_only_bearer_cannot_bootstrap_a_new_refresh_session(e2e_client, org1_user, browser_headers):
     _, request_id = start(e2e_client)
     path = f"/auth/app-connections/{request_id}"
     access_only = {**org1_user.headers, "Cookie": ""}
     assert e2e_client.get(path, headers=access_only).status_code == 403
-    preview = e2e_client.get(path, headers=browser_headers(org1_user, human_minter)).json()
+    preview = e2e_client.get(path, headers=browser_headers(org1_user)).json()
     assert e2e_client.post(path, headers=access_only, json={
         "approved": True, "consent_token": preview["consent_token"],
     }).status_code == 403
-    assert e2e_client.get(path, headers=browser_headers(org1_user, human_minter)).status_code == 200
+    assert e2e_client.get(path, headers=browser_headers(org1_user)).status_code == 200
     device = e2e_client.post("/auth/device/code").json()
     assert e2e_client.post("/auth/device/authorize", headers=access_only, json={
         "user_code": device["user_code"],
@@ -129,7 +146,7 @@ def test_access_only_bearer_cannot_bootstrap_a_new_refresh_session(e2e_client, o
 @pytest.mark.e2e
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy_registration", [False, True])
-async def test_official_mcp_client_completes_discovery_registration_and_consent(e2e_api_url, org1_user, legacy_registration, human_minter):
+async def test_official_mcp_client_completes_discovery_registration_and_consent(e2e_api_url, org1_user, legacy_registration, browser_headers):
     """Use the shipped MCP SDK; only route its advertised localhost origin to the test API."""
     import httpx2 as httpx
     from mcp.client.auth import OAuthClientProvider
@@ -176,7 +193,7 @@ async def test_official_mcp_client_completes_discovery_registration_and_consent(
         await redis.setex(f"bifrost:mcp:client:{legacy_id}", 300, json.dumps(metadata))
         storage.client = OAuthClientInformationFull(client_id=legacy_id, **metadata)
     callback = []
-    async with httpx.AsyncClient(transport=LocalAPITransport(), headers=browser_headers(org1_user, human_minter)) as browser:
+    async with httpx.AsyncClient(transport=LocalAPITransport(), headers=browser_headers(org1_user)) as browser:
         async def redirect(url):
             authorization = await browser.get(url, follow_redirects=False)
             assert authorization.status_code == 302, authorization.text
@@ -218,3 +235,17 @@ async def test_official_mcp_client_completes_discovery_registration_and_consent(
         assert redis is not None
         assert storage.client.client_id == legacy_id
         assert not await redis.exists(f"bifrost:mcp:client:{legacy_id}")
+
+
+@pytest.mark.e2e
+def test_spent_refresh_cookie_cannot_approve_with_a_valid_access_token(
+    e2e_client, org1_user, browser_headers, human_minter,
+):
+    _, request_id = start(e2e_client)
+    headers = browser_headers(org1_user)
+    human_minter(org1_user)  # Spend the cookie while retaining a valid access JWT.
+
+    response = e2e_client.get(f"/auth/app-connections/{request_id}", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Sign in again before approving this connection"
