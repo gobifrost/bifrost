@@ -113,6 +113,8 @@ async def rebuild_application_from_source(
             raise PlatformJobFailure("app_build_failed", str(exc)) from exc
 
         await builder.upload_deployment(app_id, deployment_id, dist)
+        if builder.last_build_identity is not None:
+            await builder.write_build_identity(app_id, deployment_id, builder.last_build_identity, dist)
 
         source_zip_to_store: Path | None = None
         with tempfile.TemporaryDirectory(prefix="bifrost-app-retained-source-") as tmp:

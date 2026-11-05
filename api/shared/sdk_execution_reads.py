@@ -86,7 +86,7 @@ class SdkExecutionReadError(Exception):
 def encode_history_cursor(timeline_at: datetime | None, row_id: UUID) -> str:
     """Encode the last-served row's position as an opaque token."""
     payload = {
-        "v": 1,
+        "v": 2,
         "s": timeline_at.isoformat() if timeline_at else None,
         "i": str(row_id),
     }
@@ -94,14 +94,21 @@ def encode_history_cursor(timeline_at: datetime | None, row_id: UUID) -> str:
 
 
 def decode_history_cursor(token: str) -> tuple[datetime | None, UUID] | None:
-    """Decode a keyset cursor; None for legacy offsets or malformed tokens."""
+    """Decode timeline cursors; validated v1 positions restart at page one."""
     try:
         payload = json.loads(base64.urlsafe_b64decode(token.encode()))
-        if not isinstance(payload, dict) or payload.get("v") != 1:
+        if not isinstance(payload, dict) or payload.get("v") not in (1, 2):
             return None
+        row_id = UUID(payload["i"])
         raw_started = payload.get("s")
-        started_at = datetime.fromisoformat(raw_started) if raw_started else None
-        return started_at, UUID(payload["i"])
+        started_at = datetime.fromisoformat(raw_started) if raw_started is not None else None
+        # Historical v1 tokens used started_at rather than the composite
+        # display timeline. Their positions cannot safely be reused, even
+        # when non-null. Preserve a validated restart marker for callers that
+        # distinguish invalid tokens from legacy cursors.
+        if payload["v"] == 1:
+            return None, row_id
+        return started_at, row_id
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         # Not a keyset cursor (legacy numeric offset, or garbage) — the caller
         # falls back to legacy offset parsing / first page.
@@ -622,11 +629,9 @@ async def list_sdk_executions(
 
     if cursor is not None:
         cursor_timeline, cursor_id = cursor
-        if cursor_timeline is None:
-            query = query.where(
-                and_(timeline_at.is_(None), ExecutionModel.id < cursor_id)
-            )
-        else:
+        # A null position marks a legacy restart. created_at is non-null,
+        # so filtering the composite timeline for NULL would return no rows.
+        if cursor_timeline is not None:
             query = query.where(
                 or_(
                     timeline_at < cursor_timeline,

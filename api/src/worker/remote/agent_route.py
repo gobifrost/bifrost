@@ -248,10 +248,8 @@ class RemoteAgentConsumer:
         self.routes.clear()
 
     async def _settle(self, route: AgentRoute, error: str) -> None:
-        try:
-            await self._record_failure(route, error)
-        finally:
-            self._resolve(route)
+        await self._record_failure(route, error)
+        self._resolve(route)
 
     async def _record_failure(self, route: AgentRoute, error: str) -> None:
         if route.handler == "agent.run":

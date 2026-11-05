@@ -15,11 +15,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError, TimeoutError as SQLAlchemyTimeoutError
 from starlette.websockets import WebSocketState
 
 from src.config import get_settings
-from src.core.database import get_liveness_db_context
+from src.core.database import get_db_context, get_liveness_db_context
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.schedulers.platform_jobs import claim_platform_job, run_claimed_platform_job
 from src.models.orm.execution_workers import ExecutionWorker
@@ -34,7 +35,7 @@ from src.services.worker_pool.claims import (
 )
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
-from src.worker.remote.fencing import LeaseRef, remote_owner_context
+from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, fence_remote_owner, remote_owner_context
 from src.worker.remote.ownership import (
     DEFAULT_OWNER_LEASE_SECONDS,
     RemoteOwnerLease,
@@ -180,10 +181,34 @@ class Bridge:
 
     async def acknowledge(self, event_id: str) -> None:
         """Release a launcher-retained terminal result after canonical delivery."""
-        async with self.lock:
+        ref = current_remote_lease_ref() or self.lease_ref
+        lease = ref.lease if ref is not None else self.lease
+        socket = self.socket
+        async with self.lock, contextlib.AsyncExitStack() as stack:
+            if ref is not None:
+                if self.lease != lease or self.socket is not socket:
+                    raise ConnectionError("Remote session was replaced before ACK")
+                await stack.enter_async_context(asyncio.timeout(DEFAULT_OWNER_LEASE_SECONDS))
+                db = await stack.enter_async_context(get_db_context())
+                with remote_owner_context(LeaseRef(lease)):
+                    if not await fence_remote_owner(db):
+                        raise ConnectionError("Remote ownership was lost before ACK")
+                # Hold the ownership row lock through send, serializing ACK
+                # with cross-API takeover. Bound a slow transport by the DB's
+                # remaining lease, measured conservatively before the read.
+                reading_at = time.monotonic()
+                seconds = await db.scalar(select(func.extract(
+                    "epoch", ExecutionWorker.remote_owner_lease_expires_at - func.clock_timestamp()
+                )).where(ExecutionWorker.id == lease.worker_id))
+                remaining = float(seconds or 0) - (time.monotonic() - reading_at)
+                if remaining <= 0:
+                    raise ConnectionError("Remote lease expired before ACK")
+                if self.lease != lease or self.socket is not socket:
+                    raise ConnectionError("Remote session was replaced during ACK check")
+                await stack.enter_async_context(asyncio.timeout(remaining))
             self._sequence += 1
-            await self.socket.send_text(ControlEnvelope(
-                session_generation=self.lease.session_generation,
+            await socket.send_text(ControlEnvelope(
+                session_generation=lease.session_generation,
                 sequence=self._sequence,
                 kind="ack",
                 payload={"event_id": event_id},
@@ -385,14 +410,21 @@ class Bridge:
         # Completion may call SDK/Redis/DB or send a new command. Never
         # block this receiver, which must also deliver command replies. The
         # launcher receives ACK only after that canonical mutation returns.
+        inherited_ref = current_remote_lease_ref() or self.lease_ref
+        # A terminal event belongs to the generation that delivered it. Unlike
+        # the executor's mutable reconnect ref, it cannot adopt a newer owner.
+        terminal_ref = LeaseRef(inherited_ref.lease) if inherited_ref is not None else None
+
         async def handle_event() -> None:
-            if self.lease_ref is None:
+            if terminal_ref is None:
                 await deliver(event)
+                if isinstance(event_id, str):
+                    await self.acknowledge(event_id)
             else:
-                with remote_owner_context(self.lease_ref):
+                with remote_owner_context(terminal_ref):
                     await deliver(event)
-            if isinstance(event_id, str):
-                await self.acknowledge(event_id)
+                    if isinstance(event_id, str):
+                        await self.acknowledge(event_id)
 
         task = asyncio.create_task(handle_event())
         self.results.add(task)
@@ -702,13 +734,16 @@ class ApiExecutor(PoolWorker):
 
         await super()._drain()
         agents = self.bridge.agents
-        if (
-            agents is None
-            or not agents.routes
-            or self._lost
-            or self.bridge.handoff
-            or not await owns_remote_session(self.bridge.lease)
-        ):
+        if agents is None or not agents.routes or self._lost or self.bridge.handoff:
+            return
+        try:
+            owns = await owns_remote_session(self.bridge.lease)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Remote owner fence read failed; skipping drain terminate", exc_info=True
+            )
+            return
+        if not owns:
             return
         await agents.terminate_active_runs(
             error_type=DRAIN_DEADLINE_ERROR_TYPE, error=DRAIN_DEADLINE_ERROR
@@ -721,10 +756,28 @@ class ApiExecutor(PoolWorker):
         results available for a fenced successor to adopt. Retiring its row
         here would strand those still-running durable claims.
         """
-        if self._lost or self.bridge.handoff or not await owns_remote_session(self.bridge.lease):
+        if self._lost or self.bridge.handoff:
+            return
+        try:
+            owns = await owns_remote_session(self.bridge.lease)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Remote owner fence read failed; skipping launcher retire", exc_info=True
+            )
+            return
+        if not owns:
             return
         await super()._retire()
-        if self.bridge.connected and await owns_remote_session(self.bridge.lease):
+        if not self.bridge.connected:
+            return
+        try:
+            still_owns = await owns_remote_session(self.bridge.lease)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "Remote owner fence read failed; skipping retired notice", exc_info=True
+            )
+            return
+        if still_owns:
             with contextlib.suppress(ConnectionError):
                 await self.bridge.request("retired", {})
 
@@ -768,6 +821,7 @@ class RemoteSession:
         async with self._release_lock:
             if self._lease_released:
                 return
+            self.owned_until = 0.0
             self._lease_released = True
             await release_remote_owner(self.lease)
 
@@ -855,12 +909,37 @@ class RemoteSession:
             await self.lose_ownership("Remote API owner lease could not be renewed")
 
     async def may_accept(self, kind: str, payload: dict[str, Any]) -> bool:
-        """Whether this owner may act on a launcher message. Telemetry changes
-        nothing durable, so a lease known to be current is enough; everything
-        else is fenced in the database."""
+        """Defer messages during DB outages; never substitute time for a fence.
+
+        Only telemetry may use the known lease without a DB confirmation. A
+        retry cannot outlive the lease captured at entry, borrow a reconnect's
+        generation, or deliver anything while ownership is unknown.
+        """
         if kind == "event" and payload.get("event") == "sample" and time.monotonic() < self.owned_until:
             return True
-        return await owns_remote_session(self.lease)
+        lease, deadline = self.lease, self.owned_until
+        while True:
+            if self.lease != lease:
+                raise ProtocolError("superseded remote control session")
+            remaining = min(deadline, self.owned_until) - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                owns = await asyncio.wait_for(owns_remote_session(lease), timeout=remaining)
+            except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
+                if self.lease != lease:
+                    raise ProtocolError("superseded remote control session")
+                if min(deadline, self.owned_until) - time.monotonic() <= RENEW_RETRY_SECONDS:
+                    return False
+                logging.getLogger(__name__).warning(
+                    "Remote owner fence read failed; deferring message until ownership is confirmed",
+                    exc_info=True,
+                )
+                await asyncio.sleep(RENEW_RETRY_SECONDS)
+                continue
+            if self.lease != lease:
+                raise ProtocolError("superseded remote control session")
+            return owns and time.monotonic() < min(deadline, self.owned_until)
 
     async def lose_ownership(self, reason: str) -> None:
         self.owned_until = 0.0
@@ -1095,12 +1174,19 @@ async def remote_control(socket: WebSocket) -> None:
             logical = assembler.feed(frame)
             if logical is None:
                 continue
-            if not await session.may_accept(logical.kind, logical.payload):
+            owns = await session.may_accept(logical.kind, logical.payload)
+            if (
+                session.bridge.socket is not socket
+                or frame.session_generation != session.lease.session_generation
+            ):
+                raise ProtocolError("superseded remote control socket")
+            if not owns:
                 await session.lose_ownership("Remote API owner fence was replaced")
                 raise ProtocolError("remote API owner fence was replaced")
             if logical.kind != "event":
                 raise ProtocolError("launcher may only send events")
-            await session.bridge.receive(logical.payload)
+            with remote_owner_context(LeaseRef(session.lease)):
+                await session.bridge.receive(logical.payload)
             if logical.payload.get("event") == "inventory":
                 session.reconcile_transport_inventory(socket)
             elif logical.payload.get("event") == "draining":
