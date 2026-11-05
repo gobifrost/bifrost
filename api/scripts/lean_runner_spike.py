@@ -325,14 +325,19 @@ def launch_probe_child(
 
 
 def _definition_descriptor(definition: Any) -> dict[str, str]:
-    module = importlib.import_module(definition.handler.__module__)
-    names = [name for name, candidate in vars(module).items() if candidate is definition]
-    if len(names) != 1:
+    from src.jobs.platform.catalog import get_platform_job_metadata
+
+    metadata = get_platform_job_metadata(definition.job_type)
+    if metadata is None:
+        raise RuntimeError("CanonicalDefinitionReferenceError")
+    # Handlers may live in a shared service; the catalog owns definition locations.
+    module = importlib.import_module(metadata.module)
+    if getattr(module, metadata.definition_name, None) is not definition:
         raise RuntimeError("CanonicalDefinitionReferenceError")
     return {
         "job_type": definition.job_type,
         "module": module.__name__,
-        "definition_name": names[0],
+        "definition_name": metadata.definition_name,
         "payload_model": f"{definition.payload_model.__module__}.{definition.payload_model.__qualname__}",
         "handler": f"{definition.handler.__module__}.{definition.handler.__qualname__}",
     }

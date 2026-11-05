@@ -37,7 +37,13 @@ def test_parent_module_import_keeps_heavy_runtime_modules_out_of_fresh_interpret
     assert not spike._forbidden_parent_modules(modules)
 
 
-def test_canonical_inventory_metadata_resolves_same_definition_as_eager_registry():
+@pytest.mark.parametrize("job_type", [
+    "application.deploy",
+    "workflow.permissions.analyze",
+    "workflow.permissions.apply",
+    "workflow.permissions.cutover",
+])
+def test_canonical_inventory_metadata_resolves_same_definition_as_eager_registry(job_type):
     """Direct probes are constrained to references the canonical helper emitted."""
     inventory = spike.get_canonical_job_inventory(timeout_seconds=30)
 
@@ -52,7 +58,7 @@ def test_canonical_inventory_metadata_resolves_same_definition_as_eager_registry
         for item in inventory
     )
 
-    selected = next(item for item in inventory if item["job_type"] == "application.deploy")
+    selected = next(item for item in inventory if item["job_type"] == job_type)
     result = spike.launch_probe_child(
         "selected",
         metadata=selected,
@@ -62,7 +68,7 @@ def test_canonical_inventory_metadata_resolves_same_definition_as_eager_registry
 
     assert result["ok"]
     assert result["comparison"]["matches_canonical_helper"]
-    assert result["comparison"]["job_type"] == "application.deploy"
+    assert result["comparison"]["job_type"] == job_type
 
     with pytest.raises(ValueError, match="noncanonical_job_reference"):
         spike.launch_probe_child(
