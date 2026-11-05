@@ -552,6 +552,7 @@
 | DELETE | `/api/solutions/{solution_id}` |
 | GET | `/api/solutions/{solution_id}` |
 | PATCH | `/api/solutions/{solution_id}` |
+| POST | `/api/solutions/{solution_id}/app-builds/lookup` |
 | POST | `/api/solutions/{solution_id}/capture` |
 | GET | `/api/solutions/{solution_id}/capture/candidates` |
 | POST | `/api/solutions/{solution_id}/capture/preview` |

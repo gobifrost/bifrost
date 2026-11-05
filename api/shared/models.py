@@ -251,3 +251,18 @@ class WorkerCapacityResource(BaseModel):
     resource_uid: str = Field(min_length=1, max_length=255, pattern=r"^[a-zA-Z0-9._:-]+$")
     state: Literal["prepared", "starting", "running", "stopped", "deleted"]
     out_of_memory: bool = Field(default=False, strict=True)
+
+
+class SolutionAppBuildCandidate(BaseModel):
+    """Manifest app identity and a digest computed before local compilation."""
+
+    app_id: UUID
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SolutionAppBuildLookup(BaseModel):
+    apps: list[SolutionAppBuildCandidate]
+
+
+class SolutionAppBuildMatches(BaseModel):
+    matches: dict[str, UUID]

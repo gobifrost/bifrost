@@ -2151,6 +2151,59 @@
     {
       "observed": {
         "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "solutions.app_builds.lookup",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "solutions.deploy"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Solution capability and exact resource boundary",
+        "cli": null,
+        "exclusions": {
+          "cli": "Internal preflight of solution deploy, not a standalone CLI command.",
+          "manifest": "A Solution bundle contains manifests; the installed Solution is not itself a workspace manifest entity.",
+          "mcp": "Multipart Solution archive transfer will enter MCP through the canonical ArtifactRef contract rather than a transport-specific byte parameter.",
+          "native_builder": "Multipart Solution archive transfer will enter MCP through the canonical ArtifactRef contract rather than a transport-specific byte parameter.",
+          "sdk": "Solution lifecycle administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "solutions.app_builds.lookup",
+        "rest": {
+          "method": "POST",
+          "path": "/api/solutions/{solution_id}/app-builds/lookup",
+          "request_model": "SolutionAppBuildLookup",
+          "response_model": "SolutionAppBuildMatches"
+        },
+        "side_effects": [],
+        "summary": "Check reusable builds before Solution app compilation",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": [
             "solution",
             "deploy"
@@ -10250,7 +10303,7 @@
     "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 697,
+    "rest": 698,
     "sdk": 21
   },
   "schema_version": 1,
