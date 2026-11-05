@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
+import logging
+from uuid import uuid4
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable, Literal
@@ -13,6 +16,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.ai_http_retry import get_ai_provider_read
 from shared.artifact_generation import (
     GeneratedArtifact,
     safe_artifact_filename,
@@ -87,22 +91,69 @@ def _headers(config: MediaProviderConfig) -> dict[str, str]:
     }
 
 
-def _raise_provider_error(response: httpx.Response, kind: MediaKind) -> None:
-    if response.is_success:
-        return
-    message = f"The media provider rejected the {kind} request ({response.status_code})."
+class MediaProviderError(MediaGenerationError):
+    """Stable provider failure identity, also retained in persisted error text."""
+
+    def __init__(
+        self, *, provider: str, model: str, surface: str,
+        status_code: int | None, root_error_type: str,
+        operation_ref: str, outcome_unknown: bool,
+    ) -> None:
+        self.provider = provider
+        self.model = model
+        self.surface = surface
+        self.status_code = status_code
+        self.root_error_type = root_error_type
+        self.operation_ref = operation_ref
+        self.outcome_unknown = outcome_unknown
+        status = f"HTTP {status_code}" if status_code is not None else root_error_type
+        label = surface.replace("_", " ")
+        message = f"{provider} {label} failed ({status}; {root_error_type}; operation {operation_ref})."
+        if status_code == 429:
+            message += " The provider is rate limiting requests."
+        if outcome_unknown:
+            message += " Submission may have been accepted. It was not retried; check provider activity before submitting again."
+        elif surface.endswith("submission"):
+            message += " Submission was not retried because duplicate prevention is not guaranteed."
+        else:
+            message += " The existing operation was not resubmitted."
+        super().__init__(message)
+
+
+async def _request_media(
+    http: httpx.AsyncClient, config: MediaProviderConfig, url: str, *,
+    surface: str, operation_ref: str, submission: bool = False,
+    payload: dict[str, Any] | None = None,
+) -> httpx.Response:
+    provider = "openrouter" if config.is_openrouter else config.provider
     try:
-        payload = response.json()
-        detail = payload.get("error") if isinstance(payload, dict) else None
-        if isinstance(detail, dict):
-            detail = detail.get("message")
-        if isinstance(detail, str) and detail.strip():
-            message = detail.strip()[:500]
-    except ValueError:
-        # Providers may return HTML or plain text for gateway errors. Keep the
-        # generic, status-bearing message instead of exposing that response body.
-        pass
-    raise MediaGenerationError(message)
+        if submission:
+            # No documented idempotency contract for these media endpoints.
+            # Disable 307/308 redirects too: they would replay a paid POST.
+            response = await http.post(url, headers=_headers(config), json=payload, follow_redirects=False)
+        else:
+            response = await get_ai_provider_read(
+                http, url, headers=_headers(config), provider=provider,
+                model=config.model, surface=surface, operation_ref=operation_ref,
+            )
+        response.raise_for_status()
+        return response
+    except httpx.HTTPError as exc:
+        response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+        status = response.status_code if response is not None else None
+        error = MediaProviderError(
+            provider=provider, model=config.model, surface=surface, status_code=status,
+            root_error_type=type(exc).__name__, operation_ref=operation_ref,
+            outcome_unknown=submission and (status is None or status >= 500 or status in {408, 429}),
+        )
+        logging.getLogger(__name__).warning(
+            "ai_media_request_terminal",
+            extra={"provider": provider, "model": config.model, "surface": surface,
+                   "attempt": 1 if submission else None, "sleep_seconds": 0 if submission else None,
+                   "status_code": status, "error_type": error.root_error_type,
+                   "operation_ref": operation_ref, "outcome_unknown": error.outcome_unknown},
+        )
+        raise error from exc
 
 
 def _image_content_type(item: dict[str, Any]) -> tuple[str, str]:
@@ -153,12 +204,11 @@ async def generate_image_with_config(
     owns_client = client is None
     http = client or httpx.AsyncClient(timeout=180.0, follow_redirects=True)
     try:
-        response = await http.post(
-            f"{config.endpoint}{path}",
-            headers=_headers(config),
-            json={"model": config.model, "prompt": prompt, "n": 1},
+        response = await _request_media(
+            http, config, f"{config.endpoint}{path}", surface="image_submission",
+            operation_ref=uuid4().hex, submission=True,
+            payload={"model": config.model, "prompt": prompt, "n": 1},
         )
-        _raise_provider_error(response, "image")
         payload = response.json()
         data = payload.get("data") if isinstance(payload, dict) else None
         item = data[0] if isinstance(data, list) and data else None
@@ -250,17 +300,16 @@ async def generate_video_with_config(
     http = client or httpx.AsyncClient(timeout=180.0, follow_redirects=True)
     try:
         await report("Submitting video generation", 5)
-        response = await http.post(
-            f"{config.endpoint}/videos",
-            headers=_headers(config),
-            json={"model": config.model, "prompt": prompt},
+        response = await _request_media(
+            http, config, f"{config.endpoint}/videos", surface="video_submission",
+            operation_ref=uuid4().hex, submission=True,
+            payload={"model": config.model, "prompt": prompt},
         )
-        _raise_provider_error(response, "video")
         payload = response.json()
         provider_job_id = payload.get("id") if isinstance(payload, dict) else None
         polling_url = payload.get("polling_url") if isinstance(payload, dict) else None
         if not isinstance(provider_job_id, str) or not provider_job_id:
-            raise MediaGenerationError("The media provider did not return a video job ID.")
+            raise MediaGenerationError("The provider returned no video job ID. Submission may have been accepted; check provider activity before submitting again.")
         status_url = _same_provider_url(
             config.endpoint,
             polling_url
@@ -268,12 +317,14 @@ async def generate_video_with_config(
             else f"videos/{provider_job_id}",
         )
 
+        operation_ref = hashlib.sha256(provider_job_id.encode()).hexdigest()[:24]
         attempts = 0
         while True:
             attempts += 1
             await report("Generating video", min(90, 10 + attempts))
-            status_response = await http.get(status_url, headers=_headers(config))
-            _raise_provider_error(status_response, "video")
+            status_response = await _request_media(
+                http, config, status_url, surface="video_status", operation_ref=operation_ref,
+            )
             status_payload = status_response.json()
             provider_status = str(status_payload.get("status") or "").lower()
             if provider_status == "completed":
@@ -304,8 +355,9 @@ async def generate_video_with_config(
             config.endpoint,
             f"videos/{provider_job_id}/content?index=0",
         )
-        content_response = await http.get(content_url, headers=_headers(config))
-        _raise_provider_error(content_response, "video")
+        content_response = await _request_media(
+            http, config, content_url, surface="video_content", operation_ref=operation_ref,
+        )
         content_type = content_response.headers.get("content-type", "video/mp4")
         content_type = content_type.split(";", 1)[0].strip().lower()
         extension = {"video/mp4": "mp4", "video/webm": "webm"}.get(content_type)
