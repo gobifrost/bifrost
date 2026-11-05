@@ -789,7 +789,7 @@ function WorkflowConversionWizard() {
 								{entries.length} selected workflow
 								{entries.length === 1 ? "" : "s"}. Their current
 								run identities and reach are preserved.
-								{" "}Suggested permissions may be incomplete or broader
+								{" "}Preview: suggested permissions may be incomplete or broader
 								than necessary. Conversion does not run your workflows.
 								Review uncertainties and test important workflows after
 								conversion.
