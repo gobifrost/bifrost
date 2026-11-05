@@ -266,3 +266,28 @@ class SolutionAppBuildLookup(BaseModel):
 
 class SolutionAppBuildMatches(BaseModel):
     matches: dict[str, UUID]
+
+
+class MCPPackageBrandingUpdate(BaseModel):
+    """Instance-wide identity for downloaded agent plugin packages."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=60)
+
+    @field_validator("name")
+    @classmethod
+    def validate_package_name(cls, value: str) -> str:
+        import re
+
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _-]*", value):
+            raise ValueError("Use letters, numbers, spaces, hyphens, or underscores; start with a letter or number")
+        return value
+
+
+class MCPPackageBranding(BaseModel):
+    """Saved package display name, installation identifier, and optional logo."""
+
+    name: str
+    slug: str
+    logo_url: str | None = None

@@ -7,8 +7,6 @@ from io import BytesIO
 import pytest
 
 from src.services.mcp_server.run_package import (
-    MARKETPLACE_ID,
-    PLUGIN_FILENAME,
     build_bifrost_run_plugin,
     build_setup_prompt,
     mcp_url,
@@ -31,7 +29,8 @@ def test_build_bifrost_run_plugin_is_deterministic():
     second = build_bifrost_run_plugin(PUBLIC_URL, INSTANCE_VERSION)
 
     assert first == second
-    assert PLUGIN_FILENAME == "bifrost-agent.zip"
+    from src.services.mcp_server.run_package import PackageIdentity
+    assert PackageIdentity().filename == "bifrost-agent.zip"
 
 
 def test_build_bifrost_run_plugin_contents_and_metadata_are_canonical():
@@ -151,10 +150,9 @@ def test_build_bifrost_run_plugin_includes_native_harness_manifests():
         }
     ]
     assert claude_marketplace["plugins"][0]["source"] == "./"
-    assert claude_marketplace["name"] == MARKETPLACE_ID
+    assert claude_marketplace["name"] == "bifrost-agent"
     assert claude_marketplace["plugins"][0]["version"] == INSTANCE_VERSION
-    assert MARKETPLACE_ID == "bifrost-agent"
-    assert codex_marketplace["name"] == MARKETPLACE_ID
+    assert codex_marketplace["name"] == "bifrost-agent"
     assert codex_marketplace["interface"]["displayName"] == "Bifrost Agent"
     assert codex_marketplace["plugins"][0]["source"] == {
         "source": "local",
@@ -224,3 +222,63 @@ def test_mcp_url_strips_trailing_slash():
     assert mcp_url("https://bifrost.example.com///") == (
         "https://bifrost.example.com/mcp"
     )
+
+
+def test_custom_package_identity_is_consistent_across_clients():
+    from src.services.mcp_server.run_package import PackageIdentity
+
+    identity = PackageIdentity("Covi Production", logo_png=b"custom-png")
+    files = _read_package(build_bifrost_run_plugin(PUBLIC_URL, INSTANCE_VERSION, identity))
+    for path in ("plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/plugin.json",
+                 ".cursor-plugin/plugin.json", ".github/plugin/plugin.json",
+                 ".agents/plugins/marketplace.json", ".claude-plugin/marketplace.json"):
+        assert json.loads(files[path])["name"] == "covi-production"
+    for path in ("mcp.json", ".mcp.json", "gemini-extension.json"):
+        assert list(json.loads(files[path])["mcpServers"]) == ["covi_production"]
+    assert json.loads(files["server.json"])["name"] == "com.gobifrost.mcp/covi-production"
+    assert json.loads(files["gemini-extension.json"])["name"] == "covi-production"
+    assert json.loads(files[".codex-plugin/plugin.json"])["interface"]["displayName"] == identity.name
+    assert files["assets/icon.png"] == files["assets/logo.png"] == b"custom-png"
+    skill = files["skills/covi-production/SKILL.md"].decode()
+    assert "`covi_production`" in skill
+    assert "https://bifrost.example.com/mcp" in skill
+    assert "bifrost_execute_tool" in skill
+    readme = files["README.md"].decode()
+    assert "covi-production@covi-production" in readme
+    assert "/path/to/covi-production.zip" in readme
+    assert "skills/covi-production/SKILL.md" in readme
+    assert identity.filename == "covi-production.zip"
+
+
+@pytest.mark.parametrize("name", ["", " ", "../prod", "production\nlab", "équipe", "x" * 61])
+def test_package_name_rejects_invalid_installation_names(name):
+    from pydantic import ValidationError
+    from shared.models import MCPPackageBrandingUpdate
+
+    with pytest.raises(ValidationError):
+        MCPPackageBrandingUpdate(name=name)
+
+
+def test_logo_uses_shared_containment_and_plugin_png_format():
+    from PIL import Image
+    from shared.mcp_package_branding import package_logo_png
+
+    original = BytesIO()
+    Image.new("RGBA", (600, 300), "red").save(original, "PNG")
+    data = package_logo_png(original.getvalue(), "image/png")
+    with Image.open(BytesIO(data)) as image:
+        assert image.format == "PNG"
+        assert image.size == (128, 128)
+        corner = image.getpixel((64, 0))
+        center = image.getpixel((64, 64))
+        assert isinstance(corner, tuple) and isinstance(center, tuple)
+        assert corner[3] == 0
+        assert center[0] > 240
+
+
+def test_logo_rejects_invalid_bytes():
+    from shared.logo_processing import LogoProcessingError
+    from shared.mcp_package_branding import package_logo_png
+
+    with pytest.raises(LogoProcessingError):
+        package_logo_png(b"not an image", "image/png")
