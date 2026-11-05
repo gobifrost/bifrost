@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID, uuid5
 
 from bifrost.commands import solution as solution_command
+from tests.unit.test_app_build_identity import RECIPE
 
 
 INSTALL_ID = UUID("33333333-3333-3333-3333-333333333333")
@@ -77,7 +78,7 @@ def test_prebuild_apps_builds_in_temp_with_install_scoped_base(
         assert package["dependencies"] == {
             "react-dom": "^18.0.0",
             "react": "^18.0.0",
-            "bifrost": "https://bifrost.example/api/sdk/download",
+            "bifrost": "file:./bifrost-sdk.tgz",
         }
         assert (workdir / "public/logo.png").read_bytes() == b"PNG-SOURCE"
         dist = workdir / "dist"
@@ -104,7 +105,7 @@ def test_prebuild_apps_builds_in_temp_with_install_scoped_base(
         workspace,
         apps,
         install_id=INSTALL_ID,
-        api_url="https://bifrost.example",
+        sdk_package=b"snapshot", recipe=RECIPE,
     )
 
     deployed_id = uuid5(INSTALL_ID, APP_ID)
@@ -117,6 +118,7 @@ def test_prebuild_apps_builds_in_temp_with_install_scoped_base(
             "bin_dist_files": {
                 "asset.bin": base64.b64encode(b"\xff\x00").decode("ascii")
             },
+            "build_recipe": RECIPE,
             "prebuilt_sdk_metadata": {
                 "package_version": "9.9.9",
                 "fingerprint": "sdk-built-by-cli",
@@ -144,7 +146,69 @@ def test_prebuild_apps_preserves_manifest_prebuilt_only_app(tmp_path: Path) -> N
         tmp_path,
         [app],
         install_id=INSTALL_ID,
-        api_url="https://bifrost.example",
+        sdk_package=b"snapshot", recipe=RECIPE,
     )
 
     assert built == {}
+
+
+def test_preflight_hit_skips_materialization_and_build(tmp_path, monkeypatch):
+    def fail(*a, **k):
+        raise AssertionError("unchanged apps must not build")
+
+    monkeypatch.setattr(solution_command, "_materialize_local_app", fail)
+    monkeypatch.setattr(solution_command, "_run_local_vite_build", fail)
+    monkeypatch.setattr(solution_command.shutil, "which", lambda name: f"/usr/bin/{name}")
+    deployment = "44444444-4444-4444-4444-444444444444"
+    result = solution_command._prebuild_apps(
+        tmp_path, [{"id": APP_ID, "slug": "dashboard", "src_files": {"index.html": "hello"}}],
+        install_id=INSTALL_ID, sdk_package=b"snapshot", recipe=RECIPE, reuse={APP_ID: deployment},
+    )
+    assert result[APP_ID]["reuse_deployment_id"] == deployment
+    assert result[APP_ID]["dist_files"] == {}
+
+
+def test_local_materialization_pins_downloaded_sdk(tmp_path):
+    solution_command._materialize_local_app(tmp_path, {"src_files": {}}, sdk_package=b"snapshot")
+    assert (tmp_path / "bifrost-sdk.tgz").read_bytes() == b"snapshot"
+    assert json.loads((tmp_path / "package.json").read_text())["dependencies"]["bifrost"] == "file:./bifrost-sdk.tgz"
+
+
+def test_reuse_overlay_survives_zip_app_collection(tmp_path):
+    import yaml
+    from bifrost.solution_definition import read_solution_apps
+
+    manifest = tmp_path / ".bifrost" / "apps.yaml"
+    manifest.parent.mkdir()
+    manifest.write_text(yaml.safe_dump({"apps": {APP_ID: {"path": "apps/dash", "app_model": "standalone_v2"}}}))
+    (tmp_path / "apps" / "dash").mkdir(parents=True)
+    (tmp_path / "apps" / "dash" / "index.html").write_text("source")
+    manifest.write_text(solution_command._apps_manifest_with_prebuilt_dist(tmp_path, {
+        APP_ID: {"dist_files": {}, "bin_dist_files": {}, "build_recipe": {"schema": 1}, "reuse_deployment_id": "deployment"},
+    }))
+    definition = type("Definition", (), {"entries": lambda self, section: read_solution_apps(tmp_path)})()
+    collected = solution_command._collect_apps(tmp_path, definition=definition)
+    assert collected[0]["build_recipe"] == {"schema": 1}
+    assert collected[0]["reuse_deployment_id"] == "deployment"
+    assert collected[0]["src_files"]["index.html"] == "source"
+
+
+async def test_cli_lookup_uses_install_scoped_input_digest(monkeypatch):
+    import httpx
+    from bifrost.app_build_identity import build_identity
+
+    monkeypatch.setattr("bifrost.app_build_identity.build_recipe", lambda *a, **k: RECIPE)
+    app = {"id": APP_ID, "slug": "dash", "src_files": {"index.html": "source"}, "dependencies": {"react": "18"}}
+    fingerprint = build_identity(uuid5(INSTALL_ID, APP_ID), {"index.html": b"source"}, {"react": "18"}, RECIPE, package_name="dash")
+
+    class Client:
+        async def get(self, path):
+            assert path == "/api/sdk/download"
+            return httpx.Response(200, content=b"sdk-snapshot", request=httpx.Request("GET", "https://test/sdk"))
+
+        async def post(self, path, *, json):
+            assert path == f"/api/solutions/{INSTALL_ID}/app-builds/lookup"
+            assert json == {"apps": [{"app_id": APP_ID, "fingerprint": fingerprint}]}
+            return httpx.Response(200, json={"matches": {}}, request=httpx.Request("POST", "https://test/lookup"))
+
+    assert await solution_command._lookup_local_builds(Client(), [app], str(INSTALL_ID)) == (b"sdk-snapshot", RECIPE, {})

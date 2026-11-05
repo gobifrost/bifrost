@@ -42,6 +42,7 @@ caller's own items.
 | `solutions.delete` | — | `bifrost_solution_delete` | `solutions.readwrite`, `solutions.deploy` |
 | `solutions.sync` | — | `bifrost_solution_sync` | `solutions.readwrite`, `solutions.deploy` |
 | `solutions.export` | `bifrost solution export` | — | `solutions.read`, `solutions.build` |
+| `solutions.app_builds.lookup` | — | — | `solutions.deploy` |
 | `solutions.deploy` | `bifrost solution deploy` | — | `solutions.readwrite`, `solutions.deploy` |
 | `solutions.install` | `bifrost solution install` | — | `solutions.deploy` |
 | `solutions.capture` | `bifrost solution capture` | — | `solutions.readwrite`, `solutions.build` |
