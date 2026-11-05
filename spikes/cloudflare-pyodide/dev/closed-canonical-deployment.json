@@ -1,0 +1,16 @@
+{
+  "worker": "bifrost-pyodide-spike-ddf316c1",
+  "workers_dev": false,
+  "preview_urls": false,
+  "expiry": "0",
+  "temporary_auth_in_build": false,
+  "bundle_bytes": 15299685,
+  "bundle_sha256": "9fd388c49d189320d290573c7d77118f92e1ce81e977cb76afffb1bb2a11f13a",
+  "archive_sha256": "6d8fd169b375a56d7a8cdd0df8c0ab9e5ab66aeac7c24365ef39d4c35a2707a6",
+  "version_id": "074e726f-f924-42f6-9498-6609f4c9cf7d",
+  "deployment_id": "bcd9106f-2f70-402c-93f3-ca640bf3c449",
+  "deployment_percentage": 100,
+  "secrets_after": [],
+  "canonical_cloud_execution_verified": false,
+  "physical_termination_verified": false
+}

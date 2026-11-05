@@ -1,5 +1,9 @@
 # Isolated development deployment
 
+[Closed canonical cloud deployment](CLOSED-CLOUD-CANONICAL.md): the locally
+qualified candidate is uploaded and active with public routes disabled, expiry0
+and no secret. Combined deployed execution remains unqualified.
+
 [Latest guarded canonical integration](GUARDED-LOCAL.md) now passes the real
 engine/SDK, duplicate/reconciliation and cleanup fixture locally. Deployed
 combined acceptance remains separate.
