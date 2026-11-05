@@ -2104,9 +2104,10 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "src.core.embed_middleware.embed_session_owns_execution": (1, "cutover"),
     "src.core.locks.DistributedLockService.extend_lock": (1, "cutover"),
     "src.core.locks.DistributedLockService.release_lock": (1, "cutover"),
-    "src.core.module_cache.get_module": (1, "cutover"),
+    "src.core.module_cache.get_module": (2, "cutover"),  # Source read and generation-fenced refill.
     "src.core.module_cache.get_module_resolution_cache": (1, "cutover"),
     "src.core.module_cache.get_module_resolution_generation": (1, "cutover"),
+    "src.core.module_cache.refresh_modules_from_directory": (1, "cutover"),  # Executable-source index reconciliation.
     "src.core.module_cache.set_module_resolution_cache": (1, "cutover"),
     "src.core.module_cache_sync._get_cached_module_resolution": (2, "cutover"),
     "src.core.module_cache_sync._get_exact_scoped_module": (1, "cutover"),

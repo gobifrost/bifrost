@@ -967,10 +967,6 @@ class SolutionDeployer:
                 content_hash = await _measure(
                     "runtime_source_s3", lambda: storage.write(rel_path, body)
                 )
-                await _measure(
-                    "file_index",
-                    lambda: index.index_solution(sid, rel_path, body, content_hash),
-                )
                 storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
                 # Write-through so the next execution reads the new bytes, not the
                 # 24h-TTL cache. Only .py files are import-cached.
@@ -979,18 +975,22 @@ class SolutionDeployer:
                         "redis_module_cache",
                         lambda: set_module(storage_key, content, content_hash),
                     )
+                await _measure(
+                    "file_index",
+                    lambda: index.index_solution(sid, rel_path, body, content_hash),
+                )
 
             # Remove files dropped from the bundle (full replace of source).
             for rel_path in prior - new_rel:
                 await _measure("runtime_source_s3", lambda: storage.delete(rel_path))
-                await _measure(
-                    "file_index", lambda: index.unindex_solution(sid, rel_path)
-                )
                 if rel_path.endswith(".py"):
                     await _measure(
                         "redis_module_cache",
                         lambda: invalidate_module(storage._key(rel_path)),
                     )
+                await _measure(
+                    "file_index", lambda: index.unindex_solution(sid, rel_path)
+                )
             await self.db.flush()
         finally:
             if self._instrumentation is not None:

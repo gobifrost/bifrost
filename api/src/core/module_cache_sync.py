@@ -436,13 +436,15 @@ def _fetch_via_engine_transport(client: Any, storage_path: str) -> CachedModule 
     return cast(CachedModule, dict(module))
 
 
-def _resolution_redis_key(name: str) -> str:
+def _resolution_redis_key(name: str) -> str | None:
     ctx = get_solution_context()
     cache_key = module_resolution_cache_key(
         name,
         solution_id=ctx.solution_id if ctx is not None else None,
         global_repo_access=ctx.global_repo_access if ctx is not None else False,
     )
+    if cache_key is None:
+        return None
     return f"{MODULE_RESOLUTION_KEY_PREFIX}{cache_key}"
 
 
@@ -475,6 +477,8 @@ def _get_cached_module_resolution(name: str) -> ModuleResolution | None:
     try:
         client = _get_sync_redis()
         resolution_key = _resolution_redis_key(name)
+        if resolution_key is None:
+            return None
         raw_resolution = client.eval(
             MODULE_RESOLUTION_READ_SCRIPT, 2,
             module_resolution_generation_key(resolution_key), resolution_key,
