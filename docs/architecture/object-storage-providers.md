@@ -47,6 +47,12 @@ multipart completion and source-version copy. Listing preserves pagination and
 prefix semantics. SDK clients, credentials and response bodies have explicit
 ownership/closure; failed operations retain native error distinctions.
 
+Keep streamed bodies and multipart sequences inside their owning asynchronous
+client context. Multipart metadata and part receipts are local to that context;
+resuming a multipart session in another context or process is not supported.
+Current upload/copy consumers complete each sequence inside one context. Abort
+does not delete a committed destination; Azure reclaims uncommitted blocks.
+
 Signed upload responses include required headers. Browser, App and manual Python
 PUT callers must send them. Current hosted SDK/form callers forward them; older
 bundled Apps and manually implemented clients require installation-specific
