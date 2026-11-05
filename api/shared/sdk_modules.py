@@ -204,13 +204,19 @@ async def resolve_module_name(
     # Concurrent cold requests for the same import share one storage probe in
     # this API process. This bounds S3 amplification during a workflow fan-out;
     # the Redis result remains the cross-process/pod cache.
-    async with _resolution_lock(cache_key):
-        generation = await get_module_resolution_generation(cache_key)
-        cached = await get_module_resolution_cache(cache_key)
-        if cached is not None:
-            hydrated = await hydrate_cached_resolution(cached)
-            if hydrated is not None:
-                return hydrated
+    # Cache keys have a byte ceiling so untrusted import names cannot consume
+    # unbounded Redis memory. Oversized names retain normal storage resolution;
+    # they simply bypass the shared metadata cache.
+    lock = _resolution_lock(cache_key) if cache_key is not None else asyncio.Lock()
+    async with lock:
+        generation: str | None = None
+        if cache_key is not None:
+            generation = await get_module_resolution_generation(cache_key)
+            cached = await get_module_resolution_cache(cache_key)
+            if cached is not None:
+                hydrated = await hydrate_cached_resolution(cached)
+                if hydrated is not None:
+                    return hydrated
 
         # Resolve one scope completely before considering the next. A Solution
         # namespace is still a hit in that Solution and must not be shadowed by a
@@ -230,16 +236,17 @@ async def resolve_module_name(
                         "content": module["content"],
                         "hash": module["hash"],
                     }
-                    await set_module_resolution_cache(
-                        cache_key,
-                        {
-                            "kind": kind,
-                            "path": relative_path,
-                            "storage_path": storage_path,
-                            "hash": module["hash"],
-                        },
-                        generation=generation,
-                    )
+                    if cache_key is not None and generation is not None:
+                        await set_module_resolution_cache(
+                            cache_key,
+                            {
+                                "kind": kind,
+                                "path": relative_path,
+                                "storage_path": storage_path,
+                                "hash": module["hash"],
+                            },
+                            generation=generation,
+                        )
                     return module_result
 
             # The trailing slash is significant: without it, ``modules/foo``
@@ -250,12 +257,14 @@ async def resolve_module_name(
                     "kind": "namespace",
                     "path": base_path,
                 }
-                await set_module_resolution_cache(cache_key, namespace_result, generation=generation)
+                if cache_key is not None and generation is not None:
+                    await set_module_resolution_cache(cache_key, namespace_result, generation=generation)
                 return namespace_result
 
         logger.debug("SDK module resolver miss: %s", log_safe(name))
         miss_result: dict[str, object] = {"kind": "not_found", "path": base_path}
-        await set_module_resolution_cache(cache_key, miss_result, generation=generation)
+        if cache_key is not None and generation is not None:
+            await set_module_resolution_cache(cache_key, miss_result, generation=generation)
         return miss_result
 
 

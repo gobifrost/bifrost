@@ -30,7 +30,7 @@ def start(client, *, client_name=None):
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("approved", [True, False])
-def test_personal_mcp_consent_binds_code_to_the_approving_user(e2e_client, org1_user, approved):
+def test_personal_mcp_consent_binds_code_to_the_approving_user(e2e_client, org1_user, approved, browser_headers, stale_browser_access):
     client_id, request_id = start(e2e_client)
     path = f"/auth/app-connections/{request_id}"
     preview = e2e_client.get(path, headers=browser_headers(org1_user))
@@ -63,7 +63,7 @@ def test_personal_mcp_consent_binds_code_to_the_approving_user(e2e_client, org1_
 
 
 @pytest.mark.e2e
-def test_stolen_consent_and_unauthenticated_posts_do_not_approve_another_user(e2e_client, org1_user, org2_user):
+def test_stolen_consent_and_unauthenticated_posts_do_not_approve_another_user(e2e_client, org1_user, org2_user, browser_headers):
     _, request_id = start(e2e_client, client_name="Example Client")
     path = f"/auth/app-connections/{request_id}"
     preview = e2e_client.get(path, headers=browser_headers(org1_user))
@@ -86,12 +86,33 @@ def test_unregistered_callback_is_rejected_without_redirecting(e2e_client):
     assert response.json()["error"] == "invalid_request"
 
 
-def browser_headers(user):
-    return {**user.headers, "Cookie": f"refresh_token={user.refresh_token}"}
+@pytest.fixture
+def browser_headers(human_minter):
+    def current_pair(user):
+        # Refresh before snapshotting the pair. Challenge-driven bearer refresh
+        # cannot replace an explicit Cookie header with the rotated token.
+        human_minter(user)
+        return {**user.headers, "Cookie": f"refresh_token={user.refresh_token}"}
+    return current_pair
+
+
+@pytest.fixture
+async def stale_browser_access(org1_user, async_session_factory):
+    """Reproduce the preceding shard tests advancing authorization state."""
+    from sqlalchemy import update
+    from src.models.orm.authz import AuthzVersion
+    from src.services.authorization.authz import GLOBAL_SUBJECT_ID, GLOBAL_SUBJECT_KIND
+
+    async with async_session_factory() as db:
+        await db.execute(update(AuthzVersion).where(
+            AuthzVersion.subject_kind == GLOBAL_SUBJECT_KIND,
+            AuthzVersion.subject_id == GLOBAL_SUBJECT_ID,
+        ).values(version=AuthzVersion.version + 1))
+        await db.commit()
 
 
 @pytest.mark.e2e
-def test_access_only_bearer_cannot_bootstrap_a_new_refresh_session(e2e_client, org1_user):
+def test_access_only_bearer_cannot_bootstrap_a_new_refresh_session(e2e_client, org1_user, browser_headers):
     _, request_id = start(e2e_client)
     path = f"/auth/app-connections/{request_id}"
     access_only = {**org1_user.headers, "Cookie": ""}
@@ -111,7 +132,7 @@ def test_access_only_bearer_cannot_bootstrap_a_new_refresh_session(e2e_client, o
 @pytest.mark.e2e
 @pytest.mark.asyncio
 @pytest.mark.parametrize("legacy_registration", [False, True])
-async def test_official_mcp_client_completes_discovery_registration_and_consent(e2e_api_url, org1_user, legacy_registration):
+async def test_official_mcp_client_completes_discovery_registration_and_consent(e2e_api_url, org1_user, legacy_registration, browser_headers):
     """Use the shipped MCP SDK; only route its advertised localhost origin to the test API."""
     import httpx2 as httpx
     from mcp.client.auth import OAuthClientProvider
@@ -200,3 +221,17 @@ async def test_official_mcp_client_completes_discovery_registration_and_consent(
         assert redis is not None
         assert storage.client.client_id == legacy_id
         assert not await redis.exists(f"bifrost:mcp:client:{legacy_id}")
+
+
+@pytest.mark.e2e
+def test_spent_refresh_cookie_cannot_approve_with_a_valid_access_token(
+    e2e_client, org1_user, browser_headers, human_minter,
+):
+    _, request_id = start(e2e_client)
+    headers = browser_headers(org1_user)
+    human_minter(org1_user)  # Spend the cookie while retaining a valid access JWT.
+
+    response = e2e_client.get(f"/auth/app-connections/{request_id}", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Sign in again before approving this connection"

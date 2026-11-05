@@ -8340,6 +8340,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/run/branding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Package Branding */
+        get: operations["get_package_branding_api_mcp_run_branding_get"];
+        /** Update Package Branding */
+        put: operations["update_package_branding_api_mcp_run_branding_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/run/branding/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Package Logo */
+        get: operations["get_package_logo_api_mcp_run_branding_logo_get"];
+        put?: never;
+        /** Upload Package Logo */
+        post: operations["upload_package_logo_api_mcp_run_branding_logo_post"];
+        /** Delete Package Logo */
+        delete: operations["delete_package_logo_api_mcp_run_branding_logo_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/status": {
         parameters: {
             query?: never;
@@ -14830,6 +14867,11 @@ export interface components {
              * File
              * @description Logo image file
              */
+            file: string;
+        };
+        /** Body_upload_package_logo_api_mcp_run_branding_logo_post */
+        Body_upload_package_logo_api_mcp_run_branding_logo_post: {
+            /** File */
             file: string;
         };
         /**
@@ -22471,6 +22513,26 @@ export interface components {
              * @default false
              */
             schema_included: boolean;
+        };
+        /**
+         * MCPPackageBranding
+         * @description Saved package display name, installation identifier, and optional logo.
+         */
+        MCPPackageBranding: {
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            /** Logo Url */
+            logo_url?: string | null;
+        };
+        /**
+         * MCPPackageBrandingUpdate
+         * @description Instance-wide identity for downloaded agent plugin packages.
+         */
+        MCPPackageBrandingUpdate: {
+            /** Name */
+            name: string;
         };
         /**
          * MCPRunInfoResponse
@@ -46629,6 +46691,132 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "application/zip": unknown;
+                };
+            };
+        };
+    };
+    get_package_branding_api_mcp_run_branding_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+        };
+    };
+    update_package_branding_api_mcp_run_branding_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPPackageBrandingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_package_logo_api_mcp_run_branding_logo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    upload_package_logo_api_mcp_run_branding_logo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_package_logo_api_mcp_run_branding_logo_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_package_logo_api_mcp_run_branding_logo_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
                 };
             };
         };

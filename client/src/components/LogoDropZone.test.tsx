@@ -41,6 +41,23 @@ describe("LogoDropZone", () => {
 		expect(img).toHaveClass("opacity-100");
 	});
 
+	it("hides the placeholder behind loaded transparent logos and restores it on error", () => {
+		render(
+			<LogoDropZone
+				{...baseProps}
+				fallback={<span>Default Logo</span>}
+			/>,
+		);
+		const image = screen
+			.getByRole("group", { name: "Upload image (click or drag)" })
+			.querySelector("img");
+		expect(image).not.toBeNull();
+		fireEvent.load(image!);
+		expect(screen.queryByText("Default Logo")).not.toBeInTheDocument();
+		fireEvent.error(image!);
+		expect(screen.getByText("Default Logo")).toBeVisible();
+	});
+
 	it("shows the fallback when the preview img errors", () => {
 		render(<LogoDropZone {...baseProps} />);
 		const img = screen.getByTestId("logo-drop-zone-img");

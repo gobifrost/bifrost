@@ -20,6 +20,10 @@ vi.mock("@/lib/api-client", () => ({
 
 vi.mock("sonner", () => ({ toast }));
 
+vi.mock("./MCPPackageBranding", () => ({
+	MCPPackageBranding: () => <div>Agent Plugin Package</div>,
+}));
+
 const config = {
 	enabled: true,
 	allowed_tool_ids: null,

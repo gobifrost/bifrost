@@ -5,10 +5,13 @@ from __future__ import annotations
 import base64
 import gzip
 import asyncio
+import os
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from io import BytesIO
+from threading import Lock
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from urllib.parse import parse_qs
 
 import httpx
@@ -17,6 +20,22 @@ from awscrt import checksums
 
 from src.core import s3_transport
 from src.core.s3_transport import S3Error, S3NoSuchKey, S3Transport, SyncS3Transport
+
+
+@pytest.fixture(autouse=True)
+async def reset_shared_s3_http_client() -> AsyncIterator[None]:
+    """Keep default-pool tests isolated from the application process state."""
+    await s3_transport.close_shared_s3_client()
+    s3_transport._shared_http_client = None
+    s3_transport._shared_http_client_loop = None
+    s3_transport._shared_http_client_pid = None
+    s3_transport._shared_http_client_lock = Lock()
+    yield
+    await s3_transport.close_shared_s3_client()
+    s3_transport._shared_http_client = None
+    s3_transport._shared_http_client_loop = None
+    s3_transport._shared_http_client_pid = None
+    s3_transport._shared_http_client_lock = Lock()
 
 
 class RawStream(httpx.AsyncByteStream):
@@ -140,6 +159,106 @@ def test_default_credentials_provider_is_reused_per_process(monkeypatch) -> None
     assert s3_transport._credentials_provider(None, None, None) is first
     assert s3_transport._credentials_provider(None, None, None) is second
     assert factory.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_default_http_client_is_reused_until_shared_pool_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second = Mock(), Mock()
+    first.is_closed = False
+    second.is_closed = False
+    first.aclose = AsyncMock()
+    second.aclose = AsyncMock()
+    factory = Mock(side_effect=[first, second])
+    monkeypatch.setattr(s3_transport.httpx, "AsyncClient", factory)
+
+    one = S3Transport(
+        endpoint_url="https://s3.example.test",
+        access_key_id="access",
+        secret_access_key="secret",
+        region=None,
+    )
+    two = S3Transport(
+        endpoint_url="https://s3.example.test",
+        access_key_id="access",
+        secret_access_key="secret",
+        region=None,
+    )
+
+    assert await one._http_client() is first
+    assert await two._http_client() is first
+    await one.aclose()
+    await two.aclose()
+    first.aclose.assert_not_awaited()
+
+    await s3_transport.close_shared_s3_client()
+    assert first.aclose.await_count == 1
+    assert await S3Transport(
+        endpoint_url="https://s3.example.test",
+        access_key_id="access",
+        secret_access_key="secret",
+        region=None,
+    )._http_client() is second
+    assert factory.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_transport_does_not_close_an_injected_http_client() -> None:
+    external = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200)))
+    transport = S3Transport(
+        endpoint_url="https://s3.example.test",
+        access_key_id="access",
+        secret_access_key="secret",
+        region=None,
+        client=external,
+    )
+
+    await transport.aclose()
+
+    assert external.is_closed is False
+    await external.aclose()
+
+
+@pytest.mark.asyncio
+async def test_default_http_pool_never_crosses_event_loops_or_processes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Client:
+        is_closed = False
+        aclose: AsyncMock
+
+        def __init__(self, **_kwargs) -> None:
+            self.aclose = AsyncMock()
+
+    monkeypatch.setattr(s3_transport.httpx, "AsyncClient", Client)
+    parent = await S3Transport(
+        endpoint_url=None, access_key_id="access", secret_access_key="secret", region=None
+    )._http_client()
+    assert isinstance(parent, Client)
+
+    async def in_foreign_loop() -> object:
+        transport = S3Transport(
+            endpoint_url=None, access_key_id="access", secret_access_key="secret", region=None
+        )
+        client = await transport._http_client()
+        await transport.aclose()
+        return client
+
+    foreign_loop = await asyncio.to_thread(lambda: asyncio.run(in_foreign_loop()))
+    assert isinstance(foreign_loop, Client)
+    assert foreign_loop is not parent
+    foreign_loop.aclose.assert_awaited_once()
+
+    parent_pid = os.getpid()
+    with monkeypatch.context() as child:
+        child.setattr(s3_transport.os, "getpid", lambda: parent_pid + 1)
+        child_client = await S3Transport(
+            endpoint_url=None, access_key_id="access", secret_access_key="secret", region=None
+        )._http_client()
+    assert child_client is not parent
+    parent.aclose.assert_not_awaited()
+    await child_client.aclose()
 
 
 @pytest.mark.parametrize("access_key_id,secret_access_key", [("access", None), (None, "secret")])
@@ -590,3 +709,71 @@ async def test_presigned_urls_are_usable_by_ordinary_http_clients() -> None:
         assert (await browser.get(get_url)).status_code == 200
     assert [request.method for request in seen] == ["PUT", "GET"]
     await signer.aclose()
+
+
+def test_concurrent_thread_loops_publish_only_one_default_pool(monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event
+
+    first_factory_started = Event()
+    second_thread_started = Event()
+    release_factory = Event()
+    acquired = Barrier(2)
+    original_factory = s3_transport._new_http_client
+
+    def create_client():
+        first_factory_started.set()
+        assert release_factory.wait(5)
+        return original_factory()
+
+    monkeypatch.setattr(s3_transport, "_new_http_client", create_client)
+
+    def run(second=False):
+        if second:
+            second_thread_started.set()
+
+        async def acquire_and_close():
+            client, shared = await s3_transport._default_http_client()
+            acquired.wait(timeout=5)
+            if shared:
+                await s3_transport.close_shared_s3_client()
+            else:
+                await client.aclose()
+            return shared, client.is_closed
+
+        return asyncio.run(acquire_and_close())
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(run)
+        assert first_factory_started.wait(5)
+        second = pool.submit(run, True)
+        assert second_thread_started.wait(5)
+        release_factory.set()
+        results = [first.result(timeout=5), second.result(timeout=5)]
+
+    assert sum(shared for shared, _closed in results) == 1
+    assert all(closed for _shared, closed in results)
+
+
+def test_fork_replaces_an_inherited_locked_pool_mutex() -> None:
+    read_fd, write_fd = os.pipe()
+    parent_lock = s3_transport._shared_http_client_lock
+    try:
+        with parent_lock:
+            pid = os.fork()
+            if pid == 0:
+                os.close(read_fd)
+                acquired = s3_transport._shared_http_client_lock.acquire(blocking=False)
+                os.write(write_fd, b"1" if acquired else b"0")
+                os._exit(0)
+            os.close(write_fd)
+            write_fd = -1
+            result = os.read(read_fd, 1)
+            _pid, status = os.waitpid(pid, 0)
+            assert status == 0
+            assert result == b"1"
+            assert parent_lock.locked()
+    finally:
+        os.close(read_fd)
+        if write_fd >= 0:
+            os.close(write_fd)
